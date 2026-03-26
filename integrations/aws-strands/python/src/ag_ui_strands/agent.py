@@ -15,15 +15,27 @@ from ag_ui.core import (
     AssistantMessage,
     CustomEvent,
     EventType,
-    MessagesSnapshotEvent,
+    ReasoningEncryptedValueEvent,
+    ReasoningEndEvent,
+    ReasoningMessageContentEvent,
+    ReasoningMessageEndEvent,
+    ReasoningMessageStartEvent,
+    ReasoningStartEvent,
     RunAgentInput,
     RunErrorEvent,
     RunFinishedEvent,
     RunStartedEvent,
     StateSnapshotEvent,
+    StepFinishedEvent,
+    StepStartedEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
+    ThinkingEndEvent,
+    ThinkingStartEvent,
+    ThinkingTextMessageContentEvent,
+    ThinkingTextMessageEndEvent,
+    ThinkingTextMessageStartEvent,
     ToolCall,
     ToolCallArgsEvent,
     ToolCallEndEvent,
@@ -284,6 +296,10 @@ class StrandsAgent:
             stop_text_streaming = False
             halt_event_stream = False
 
+            # Reasoning/thinking state tracking
+            reasoning_started = False
+            reasoning_message_id = None
+
             logger.debug(
                 f"Starting agent run: thread_id={input_data.thread_id}, run_id={input_data.run_id}, has_pending_tool_result={has_pending_tool_result}, message_count={len(input_data.messages)}, strands_message_count={len(strands_messages)}"
             )
@@ -328,6 +344,106 @@ class StrandsAgent:
                             type=EventType.TEXT_MESSAGE_CONTENT,
                             message_id=message_id,
                             delta=text_chunk,
+                        )
+
+                    # Handle reasoning/thinking text streaming
+                    elif "reasoningText" in event and event.get("reasoning"):
+                        reasoning_text = event["reasoningText"]
+
+                        if not reasoning_started:
+                            reasoning_message_id = str(uuid.uuid4())
+
+                            # Emit thinking phase events (for UIs that use THINKING_* events)
+                            yield ThinkingStartEvent(
+                                type=EventType.THINKING_START,
+                                title="Thinking..."
+                            )
+                            yield ThinkingTextMessageStartEvent(
+                                type=EventType.THINKING_TEXT_MESSAGE_START
+                            )
+
+                            # Emit reasoning events (for UIs that use REASONING_* events)
+                            yield ReasoningStartEvent(
+                                type=EventType.REASONING_START,
+                                message_id=reasoning_message_id
+                            )
+                            yield ReasoningMessageStartEvent(
+                                type=EventType.REASONING_MESSAGE_START,
+                                message_id=reasoning_message_id,
+                                role="reasoning"
+                            )
+                            reasoning_started = True
+
+                        # Stream reasoning content
+                        if reasoning_text:
+                            yield ThinkingTextMessageContentEvent(
+                                type=EventType.THINKING_TEXT_MESSAGE_CONTENT,
+                                delta=reasoning_text
+                            )
+                            yield ReasoningMessageContentEvent(
+                                type=EventType.REASONING_MESSAGE_CONTENT,
+                                message_id=reasoning_message_id,
+                                delta=reasoning_text
+                            )
+
+                    # Handle encrypted/redacted reasoning content
+                    elif "reasoningRedactedContent" in event and event.get("reasoning"):
+                        import base64
+                        redacted_content = event["reasoningRedactedContent"]
+
+                        if not reasoning_started:
+                            reasoning_message_id = str(uuid.uuid4())
+                            yield ReasoningStartEvent(
+                                type=EventType.REASONING_START,
+                                message_id=reasoning_message_id
+                            )
+                            reasoning_started = True
+
+                        # Encode bytes to base64 string for transport
+                        encrypted_value = (
+                            base64.b64encode(redacted_content).decode()
+                            if isinstance(redacted_content, bytes)
+                            else str(redacted_content)
+                        )
+                        yield ReasoningEncryptedValueEvent(
+                            type=EventType.REASONING_ENCRYPTED_VALUE,
+                            subtype="message",
+                            entity_id=reasoning_message_id,
+                            encrypted_value=encrypted_value
+                        )
+
+                    # Handle reasoning signature (verification token) - typically not exposed to UI
+                    elif "reasoning_signature" in event and event.get("reasoning"):
+                        logger.debug(f"Received reasoning signature: {event['reasoning_signature'][:20]}...")
+
+                    # Handle multi-agent node start (maps to STEP_STARTED)
+                    elif isinstance(event, dict) and event.get("type") == "multiagent_node_start":
+                        node_id = event.get("node_id", "unknown")
+                        node_type = event.get("node_type", "agent")
+                        yield StepStartedEvent(
+                            type=EventType.STEP_STARTED,
+                            step_name=f"{node_type}:{node_id}"
+                        )
+
+                    # Handle multi-agent node stop (maps to STEP_FINISHED)
+                    elif isinstance(event, dict) and event.get("type") == "multiagent_node_stop":
+                        node_id = event.get("node_id", "unknown")
+                        node_type = event.get("node_type", "agent")
+                        yield StepFinishedEvent(
+                            type=EventType.STEP_FINISHED,
+                            step_name=f"{node_type}:{node_id}"
+                        )
+
+                    # Handle multi-agent handoff (emit as CUSTOM event)
+                    elif isinstance(event, dict) and event.get("type") == "multiagent_handoff":
+                        yield CustomEvent(
+                            type=EventType.CUSTOM,
+                            name="MultiAgentHandoff",
+                            value={
+                                "from_nodes": event.get("from_node_ids", []),
+                                "to_nodes": event.get("to_node_ids", []),
+                                "message": event.get("message")
+                            }
                         )
 
                     # Handle tool streaming events for real-time state updates
@@ -546,6 +662,25 @@ class StrandsAgent:
                     elif "event" in event and isinstance(event.get("event"), dict):
                         inner_event = event["event"]
                         if "contentBlockStop" in inner_event:
+                            # Close reasoning events if active
+                            if reasoning_started:
+                                yield ThinkingTextMessageEndEvent(
+                                    type=EventType.THINKING_TEXT_MESSAGE_END
+                                )
+                                yield ThinkingEndEvent(
+                                    type=EventType.THINKING_END
+                                )
+                                yield ReasoningMessageEndEvent(
+                                    type=EventType.REASONING_MESSAGE_END,
+                                    message_id=reasoning_message_id
+                                )
+                                yield ReasoningEndEvent(
+                                    type=EventType.REASONING_END,
+                                    message_id=reasoning_message_id
+                                )
+                                reasoning_started = False
+                                reasoning_message_id = None
+
                             # Find the most recent tool call that hasn't been emitted yet
                             tool_name = None
                             tool_input = None

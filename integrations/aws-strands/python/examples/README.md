@@ -46,22 +46,22 @@ poetry run python -m server
 
 The root route lists the available demos:
 
-| Route | Description |
-| --- | --- |
-| `/agentic-chat` | Simple chat agent with a frontend-only `change_background` tool |
+| Route                     | Description                                                     |
+| ------------------------- | --------------------------------------------------------------- |
+| `/agentic-chat`           | Simple chat agent with a frontend-only `change_background` tool |
 | `/backend-tool-rendering` | Backend-executed tools (charts, faux weather) rendered in AG-UI |
-| `/agentic-generative-ui` | Demonstrates `PredictState` + delta streaming for plan tracking |
-| `/shared-state` | Recipe builder showing shared JSON state + tool arguments |
+| `/agentic-generative-ui`  | Demonstrates `PredictState` + delta streaming for plan tracking |
+| `/shared-state`           | Recipe builder showing shared JSON state + tool arguments       |
 
 Point the AG-UI Dojo (or any AG-UI client) at these SSE endpoints to see the
 Strands wrapper translate Gemini events into protocol-native messages.
 
 ## Environment reference
 
-| Variable | Required | Purpose |
-| --- | --- | --- |
-| `GOOGLE_API_KEY` | Yes | Auth for the Gemini SDK (`strands.models.gemini.GeminiModel`) |
-| `PORT` | No | Overrides the default `8000` uvicorn port |
+| Variable         | Required | Purpose                                                       |
+| ---------------- | -------- | ------------------------------------------------------------- |
+| `GOOGLE_API_KEY` | Yes      | Auth for the Gemini SDK (`strands.models.gemini.GeminiModel`) |
+| `PORT`           | No       | Overrides the default `8000` uvicorn port                     |
 
 All OpenTelemetry exporters are disabled by default in code (`OTEL_SDK_DISABLED`
 and `OTEL_PYTHON_DISABLED_INSTRUMENTATIONS`), so you do not need to set those
@@ -77,6 +77,3 @@ manually.
   develop the integration and server side-by-side without publishing a wheel.
 - Want a different Gemini tier? Update the `model_id` argument in the agent
   definitions inside `server/api/*.py`.
-
-
-
