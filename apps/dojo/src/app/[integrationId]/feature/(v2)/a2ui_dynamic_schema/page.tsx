@@ -7,6 +7,7 @@ import {
   useConfigureSuggestions,
 } from "@copilotkit/react-core/v2";
 import { CopilotKit } from "@copilotkit/react-core";
+import { customCatalog } from "../a2ui_fixed_schema/custom-catalog";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +18,11 @@ interface PageProps {
 function Chat() {
   useConfigureSuggestions({
     suggestions: [
+      {
+        title: "Hotel comparison",
+        message:
+          "Use the generate_a2ui tool to create a comparison of 3 hotels with name, location, price per night, and star rating using the StarRating component.",
+      },
       {
         title: "Product comparison",
         message:
@@ -47,7 +53,7 @@ export default function Page({ params }: PageProps) {
       runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
       agent="a2ui_dynamic_schema"
-      a2ui={{}}
+      a2ui={{ catalogs: [customCatalog] }}
     >
       <div className="flex justify-center items-center h-full w-full">
         <div className="h-full w-full md:w-8/10 md:h-8/10 rounded-lg">
