@@ -46,6 +46,26 @@ def render_a2ui(
     return "rendered"
 
 
+def _build_context_addendum(state: dict) -> str:
+    """Extract agent context from state and format as a prompt addendum."""
+    ag_ui = state.get("ag-ui", {})
+    context_entries = ag_ui.get("context", [])
+    if not context_entries:
+        return ""
+    parts = ["\n\n## Additional Context from Client:\n"]
+    for entry in context_entries:
+        desc = entry.get("description", "")
+        value = entry.get("value", "")
+        if desc:
+            parts.append(f"### {desc}\n{value}\n")
+        else:
+            parts.append(f"{value}\n")
+    return "\n".join(parts)
+
+
+CUSTOM_CATALOG_ID = "https://a2ui.org/demos/dojo/custom_catalog.json"
+
+
 @tool()
 def generate_a2ui(runtime: ToolRuntime[Any]) -> str:
     """Generate dynamic A2UI components based on the conversation.
@@ -57,6 +77,10 @@ def generate_a2ui(runtime: ToolRuntime[Any]) -> str:
     # as it is not yet balanced with a tool call response.
     messages = runtime.state["messages"][:-1]
 
+    # Inject client-provided context (e.g. custom catalog definitions)
+    context_addendum = _build_context_addendum(runtime.state)
+    prompt = A2UI_GENERATION_PROMPT + context_addendum
+
     model = ChatOpenAI(model="gpt-4.1")
     model_with_tool = model.bind_tools(
         [render_a2ui],
@@ -64,7 +88,7 @@ def generate_a2ui(runtime: ToolRuntime[Any]) -> str:
     )
 
     response = model_with_tool.invoke(
-        [SystemMessage(content=A2UI_GENERATION_PROMPT), *messages],
+        [SystemMessage(content=prompt), *messages],
     )
 
     # Extract the render_a2ui tool call arguments
@@ -82,7 +106,7 @@ def generate_a2ui(runtime: ToolRuntime[Any]) -> str:
     # Wrap as v0.9 a2ui_operations so the middleware detects it
     result = a2ui.render(
         operations=[
-            a2ui.create_surface(surface_id),
+            a2ui.create_surface(surface_id, catalog_id=CUSTOM_CATALOG_ID),
             a2ui.update_components(surface_id, components),
             a2ui.update_data_model(surface_id, {"items": items}),
         ],
