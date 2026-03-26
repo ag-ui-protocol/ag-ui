@@ -1,6 +1,7 @@
 import { Page, Locator, expect } from "@playwright/test";
 import { CopilotSelectors } from "../utils/copilot-selectors";
 import { sendChatMessage, awaitLLMResponseDone } from "../utils/copilot-actions";
+import { DEFAULT_WELCOME_MESSAGE } from "../lib/constants";
 
 export class AgenticChatPage {
   readonly page: Page;
@@ -15,7 +16,7 @@ export class AgenticChatPage {
     this.page = page;
     this.openChatButton = CopilotSelectors.chatToggle(page);
     this.agentGreeting = page
-      .getByText("Hi, I'm an agent. Want to chat?");
+      .getByText(DEFAULT_WELCOME_MESSAGE);
     this.chatInput = CopilotSelectors.chatTextarea(page);
     this.sendButton = CopilotSelectors.sendButton(page);
     this.agentMessage = CopilotSelectors.assistantMessages(page);

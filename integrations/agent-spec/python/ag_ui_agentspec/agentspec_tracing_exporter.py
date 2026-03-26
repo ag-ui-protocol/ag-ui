@@ -20,8 +20,11 @@ import ast
 import os
 import json
 import uuid
+import logging
+import traceback
 from contextvars import ContextVar
 from typing import Any, Dict, List
+from json_repair import repair_json
 
 # AG‑UI Python SDK (events)
 from ag_ui.core.events import (
@@ -53,6 +56,17 @@ from pyagentspec.tracing.spans.span import Span
 # ContextVar used to bridge events into the FastAPI endpoint queue. The server
 # should set this per request to an asyncio.Queue that receives AG‑UI events.
 EVENT_QUEUE = ContextVar("AG_UI_EVENT_QUEUE", default=None)
+logger = logging.getLogger("ag_ui_agentspec.tracing")
+
+
+def _safe_model_dump(obj: Any) -> Any:
+    model_dump = getattr(obj, "model_dump", None)
+    if callable(model_dump):
+        try:
+            return model_dump()
+        except Exception:  # pylint: disable=broad-exception-caught
+            return repr(obj)
+    return repr(obj)
 
 
 class AgUiSpanProcessor(SpanProcessor):
@@ -84,7 +98,11 @@ class AgUiSpanProcessor(SpanProcessor):
             raise RuntimeError("AG-UI event queue is not set")
         queue.put_nowait(event_obj)
         if self._debug:
-            print("[AGUI DEBUG]" + str(event_obj))
+            logger.info(
+                "AGUI DEBUG event=%s payload=%s",
+                type(event_obj).__name__,
+                _safe_model_dump(event_obj),
+            )
 
     async def _aemit(self, event_obj) -> None:
         queue = EVENT_QUEUE.get()
@@ -92,7 +110,11 @@ class AgUiSpanProcessor(SpanProcessor):
             raise RuntimeError("AG-UI event queue is not set")
         await queue.put(event_obj)
         if self._debug:
-            print("[AGUI DEBUG]" + str(event_obj))
+            logger.info(
+                "AGUI DEBUG event=%s payload=%s",
+                type(event_obj).__name__,
+                _safe_model_dump(event_obj),
+            )
 
     @property
     def _run_started_event(self):
@@ -207,9 +229,15 @@ class AgUiSpanProcessor(SpanProcessor):
                             )
                         )
                     self._llm_chunks_seen[span.id] = True
-                # if a tool_call was not streamed, we emit it here
+                # if a tool_call was not streamed, emit a single ToolCallChunkEvent
+                # Normalize arguments to a JSON string so frontends can JSON.parse() reliably
                 for tool_call in event.tool_calls:
                     if tool_call.call_id not in self._started_tool_calls:
+                        args_dict = json.loads(tool_call.arguments)
+                        if isinstance(args_dict, dict) and (a2ui_json := args_dict.get("a2ui_json")):
+                            args_dict["a2ui_json"] = repair_a2ui_json(a2ui_json)
+                        tool_call.arguments = json.dumps(args_dict)
+
                         events.append(
                             ToolCallChunkEvent(
                                 tool_call_id=tool_call.call_id,
@@ -235,12 +263,21 @@ class AgUiSpanProcessor(SpanProcessor):
                     tool_call_id = span.description.replace("tcid__", "")
                     self._tool_run_id_to_tool_call_id[event.request_id] = tool_call_id
             case ToolExecutionResponse():
-                tool_call_id = self._tool_run_id_to_tool_call_id[event.request_id]
-                message_id = self._started_tool_calls[tool_call_id]["message_id"]
+                if self._runtime == "langgraph":
+                    tool_call_id = self._tool_run_id_to_tool_call_id[event.request_id]
+                else:
+                    tool_call_id = event.request_id
                 content = _normalize_tool_output(event.outputs)
+                # Tool results are emitted as separate "tool" messages on the client.
+                # Use a unique message_id here (not the parent assistant message id), otherwise
+                # the message list can contain duplicate IDs (assistant + tool), which breaks
+                # React keys and message deduping logic downstream.
+                #
+                # Generate a fresh id so tool results never collide with assistant/user ids.
+                tool_message_id = str(uuid.uuid4())
                 events.append(
                     ToolCallResultEvent(
-                        message_id=message_id,
+                        message_id=tool_message_id,
                         tool_call_id=tool_call_id,
                         content=content,
                         role="tool",
@@ -248,13 +285,28 @@ class AgUiSpanProcessor(SpanProcessor):
                 )
             case ExceptionRaised():
                 raise RuntimeError(
-                    "[AG-UI SpanProcessor] Exception occurred during agent execution:"
+                    "[AG-UI SpanProcessor] ExceptionRaised occurred during agent execution:"
                     + event.exception_message
-                    + f"\n\nStacktrace: {event.exception_stacktrace}"
+                    + f"\n\nStacktrace: {traceback.format_exc()}"
                 )
             case _:
                 return events
         return events
+
+
+def repair_a2ui_json(a2ui_json: Any) -> str:
+    if isinstance(a2ui_json, (list, dict)):
+        parsed = a2ui_json
+    elif isinstance(a2ui_json, str):
+        s = a2ui_json.strip()
+        try:
+            parsed = json.loads(s)
+        except json.JSONDecodeError:
+            s2 = repair_json(s)
+            parsed = json.loads(s2)
+    else:
+        raise NotImplementedError(f"Unexpected type for a2ui_json: {type(a2ui_json)}")
+    return json.dumps(parsed, ensure_ascii=False)
 
 
 def _escape_html(text: str) -> str:

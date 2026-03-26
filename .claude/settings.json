@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx nx show projects)",
+      "Bash(pnpm nx run dojo:check-types)",
+      "Bash(pnpm nx show projects)",
+      "Bash(pnpm nx run demo-viewer:check-types)",
+      "Bash(pnpm nx show project demo-viewer)",
+      "Bash(pnpm nx run demo-viewer:lint)"
+    ]
+  }
+}

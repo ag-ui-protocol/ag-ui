@@ -1,10 +1,9 @@
-import { test, expect, retryOnAIFailure } from "../../test-isolation-helper";
+import { test, expect } from "../../test-isolation-helper";
 import { awaitLLMResponseDone } from "../../utils/copilot-actions";
 
 test("[Agno] Backend Tool Rendering displays weather cards", async ({
   page,
 }) => {
-  await retryOnAIFailure(async () => {
   await page.goto("/agno/feature/backend_tool_rendering");
 
   // Verify suggestion buttons are visible
@@ -56,5 +55,4 @@ test("[Agno] Backend Tool Rendering displays weather cards", async ({
     .getByText(/Weather|Humidity|Wind|Temperature/i)
     .count();
   expect(weatherElements).toBeGreaterThan(0);
-  });
 });

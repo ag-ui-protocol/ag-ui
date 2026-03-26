@@ -10,6 +10,7 @@ from ag_ui.core.events import (
     TextMessageStartEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
+    TextMessageChunkEvent,
     ToolCallStartEvent,
     ToolCallArgsEvent,
     ToolCallEndEvent,
@@ -573,6 +574,46 @@ class TestEvents(unittest.TestCase):
             ["news", "social", "tech"]
         )
         self.assertEqual(deserialized.snapshot["settings"]["timezone"], "UTC-5")
+
+    def test_text_message_start_with_name(self):
+        """Test TextMessageStartEvent with name"""
+        event = TextMessageStartEvent(
+            message_id="msg_123",
+            name="research-agent",
+        )
+        self.assertEqual(event.name, "research-agent")
+        self.assertEqual(event.role, "assistant")
+
+        serialized = event.model_dump(by_alias=True)
+        self.assertEqual(serialized["name"], "research-agent")
+        self.assertEqual(serialized["messageId"], "msg_123")
+
+    def test_text_message_start_without_name(self):
+        """Test TextMessageStartEvent without name defaults to None"""
+        event = TextMessageStartEvent(
+            message_id="msg_123",
+        )
+        self.assertIsNone(event.name)
+
+    def test_text_message_chunk_with_name(self):
+        """Test TextMessageChunkEvent with name"""
+        event = TextMessageChunkEvent(
+            message_id="msg_123",
+            delta="Hello",
+            name="research-agent",
+        )
+        self.assertEqual(event.name, "research-agent")
+
+        serialized = event.model_dump(by_alias=True)
+        self.assertEqual(serialized["name"], "research-agent")
+
+    def test_text_message_chunk_without_name(self):
+        """Test TextMessageChunkEvent without name defaults to None"""
+        event = TextMessageChunkEvent(
+            message_id="msg_123",
+            delta="Hello",
+        )
+        self.assertIsNone(event.name)
 
     def test_event_with_unicode_and_special_chars(self):
         """Test events with Unicode and special characters"""

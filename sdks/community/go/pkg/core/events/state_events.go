@@ -185,6 +185,10 @@ func validateMessage(msg Message) error {
 				return fmt.Errorf("content field must be a string for assistant messages")
 			}
 		}
+	case coretypes.RoleReasoning:
+		if _, ok := msg.ContentString(); !ok {
+			return fmt.Errorf("content field must be a string for reasoning messages")
+		}
 	case coretypes.RoleUser:
 		if _, ok := msg.ContentString(); ok {
 			break

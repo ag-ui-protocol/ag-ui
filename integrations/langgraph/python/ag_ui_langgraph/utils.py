@@ -5,7 +5,7 @@ from enum import Enum
 from pydantic import TypeAdapter
 from pydantic_core import PydanticSerializationError
 from typing import List, Any, Dict, Union
-from dataclasses import is_dataclass, asdict
+from dataclasses import is_dataclass, asdict, fields
 from datetime import date, datetime
 
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
@@ -365,17 +365,13 @@ def camel_to_snake(name):
     return re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower()
 
 def json_safe_stringify(o):
-    if is_dataclass(o):          # dataclasses like Flight(...)
-        return asdict(o)
-    if hasattr(o, "model_dump"): # pydantic v2
-        return o.model_dump()
-    if hasattr(o, "dict"):       # pydantic v1
-        return o.dict()
-    if hasattr(o, "__dict__"):   # plain objects
-        return vars(o)
+    """Fallback encoder used by json.dumps(default=...)."""
     if isinstance(o, (datetime, date)):
         return o.isoformat()
-    return str(o)                # last resort
+    try:
+        return make_json_safe(o)
+    except Exception:
+        return str(o)
 
 def make_json_safe(value: Any, _seen: set[int] | None = None) -> Any:
     """
@@ -411,9 +407,11 @@ def make_json_safe(value: Any, _seen: set[int] | None = None) -> Any:
     # --- 3. Dicts ----------------------------------------------------------
     if isinstance(value, dict):
         _seen.add(obj_id)
+        # LangGraph/LangChain tool calls inject non-serializable runtime/config; skip them.
         return {
             make_json_safe(k, _seen): make_json_safe(v, _seen)
             for k, v in value.items()
+            if k not in ("runtime", "config")
         }
 
     # --- 4. Iterable containers -------------------------------------------
@@ -424,7 +422,9 @@ def make_json_safe(value: Any, _seen: set[int] | None = None) -> Any:
     # --- 5. Dataclasses ----------------------------------------------------
     if is_dataclass(value):
         _seen.add(obj_id)
-        return make_json_safe(asdict(value), _seen)
+        # Skip runtime/config (LangGraph-injected, not serializable)
+        d = {f.name: getattr(value, f.name) for f in fields(value) if f.name not in ("runtime", "config")}
+        return make_json_safe(d, _seen)
 
     # --- 6. Pydantic-like models (v2: model_dump) -------------------------
     if hasattr(value, "model_dump") and callable(getattr(value, "model_dump")):

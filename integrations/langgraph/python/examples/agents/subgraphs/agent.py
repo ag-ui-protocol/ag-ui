@@ -127,7 +127,7 @@ async def flights_finder(state: TravelAgentState, config: RunnableConfig):
             },
             "messages": state["messages"] + [{
                 "role": "assistant",
-                "content": f"Flights Agent: Great. I'll book you the {selected_flight["airline"]} flight from {selected_flight["departure"]} to {selected_flight["arrival"]}."
+                "content": f"Flights Agent: Great. I'll book you the {selected_flight['airline']} flight from {selected_flight['departure']} to {selected_flight['arrival']}."
             }]
         }
     )
@@ -161,7 +161,7 @@ async def hotels_finder(state: TravelAgentState, config: RunnableConfig):
                 },
                 "messages": state["messages"] + [{
                     "role": "assistant",
-                    "content": f"Hotels Agent: Excellent choice! You'll like {selected_hotel["name"]}."
+                    "content": f"Hotels Agent: Excellent choice! You'll like {selected_hotel['name']}."
                 }]
             }
         )

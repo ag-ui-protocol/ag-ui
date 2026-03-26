@@ -3,7 +3,7 @@ A simple agentic chat flow.
 """
 
 from crewai.flow.flow import Flow, start
-from litellm import completion
+from litellm import acompletion
 from ..sdk import copilotkit_stream, CopilotKitState
 
 class AgenticChatFlow(Flow[CopilotKitState]):
@@ -16,7 +16,7 @@ class AgenticChatFlow(Flow[CopilotKitState]):
         #    Note: In order to stream the response, wrap the completion call in
         #    copilotkit_stream and set stream=True.
         response = await copilotkit_stream(
-            completion(
+            await acompletion(
 
                 # 1.1 Specify the model to use
                 model="openai/gpt-4o",

@@ -35,6 +35,7 @@ message TextMessageStartEvent {
   BaseEvent base_event = 1;
   string message_id = 2;
   optional string role = 3;
+  optional string name = 4;
 }
 
 message TextMessageContentEvent {
@@ -127,6 +128,7 @@ message TextMessageChunkEvent {
   optional string message_id = 2;
   optional string role = 3;
   optional string delta = 4;
+  optional string name = 5;
 }
 
 message ToolCallChunkEvent {

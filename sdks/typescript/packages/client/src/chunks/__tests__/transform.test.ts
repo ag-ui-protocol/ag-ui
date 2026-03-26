@@ -593,6 +593,51 @@ describe("transformChunks", () => {
     expect(events[6].type).toBe(EventType.RUN_FINISHED);
   });
 
+  it("should pass name from TEXT_MESSAGE_CHUNK to TEXT_MESSAGE_START", async () => {
+    const chunk: TextMessageChunkEvent = {
+      type: EventType.TEXT_MESSAGE_CHUNK,
+      messageId: "msg-123",
+      delta: "Hello",
+      name: "research-agent",
+    };
+
+    const closeEvent: RunFinishedEvent = {
+      type: EventType.RUN_FINISHED,
+      threadId: "thread-123",
+      runId: "run-123",
+    };
+
+    const events$ = concat(of(chunk), of(closeEvent));
+    const transformed$ = transformChunks(false)(events$);
+    const events = await firstValueFrom(transformed$.pipe(toArray()));
+
+    const startEvent = events[0] as TextMessageStartEvent;
+    expect(startEvent.type).toBe(EventType.TEXT_MESSAGE_START);
+    expect(startEvent.name).toBe("research-agent");
+  });
+
+  it("should not include name on TEXT_MESSAGE_START when chunk has no name", async () => {
+    const chunk: TextMessageChunkEvent = {
+      type: EventType.TEXT_MESSAGE_CHUNK,
+      messageId: "msg-123",
+      delta: "Hello",
+    };
+
+    const closeEvent: RunFinishedEvent = {
+      type: EventType.RUN_FINISHED,
+      threadId: "thread-123",
+      runId: "run-123",
+    };
+
+    const events$ = concat(of(chunk), of(closeEvent));
+    const transformed$ = transformChunks(false)(events$);
+    const events = await firstValueFrom(transformed$.pipe(toArray()));
+
+    const startEvent = events[0] as TextMessageStartEvent;
+    expect(startEvent.type).toBe(EventType.TEXT_MESSAGE_START);
+    expect(startEvent.name).toBeUndefined();
+  });
+
   it("should handle interleaved chunks with different message and tool call IDs", async () => {
     // Create a complex sequence that alternates between different types of chunks
     const events: BaseEvent[] = [

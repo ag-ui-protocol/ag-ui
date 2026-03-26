@@ -6,6 +6,7 @@ import "./style.css";
 import {
   CopilotChat,
   CopilotKitProvider,
+  useConfigureSuggestions,
 } from "@copilotkit/react-core/v2";
 import { createA2UIMessageRenderer } from "@copilotkit/a2ui-renderer";
 import { theme } from "./theme";
@@ -21,6 +22,20 @@ interface PageProps {
 }
 
 function Chat({ agentId }: { agentId: string }) {
+  useConfigureSuggestions({
+    suggestions: [
+      {
+        title: "Tell a story",
+        message: "Tell me a short story with rich formatting.",
+      },
+      {
+        title: "Create a list",
+        message: "Create a structured list of the top 5 programming languages.",
+      },
+    ],
+    available: "always",
+  });
+
   return <CopilotChat className="flex-1 overflow-hidden" agentId={agentId} />;
 }
 

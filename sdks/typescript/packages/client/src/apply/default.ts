@@ -112,7 +112,7 @@ export const defaultApplyEvents = (
           applyMutation(mutation);
 
           if (mutation.stopPropagation !== true) {
-            const { messageId, role = "assistant" } = event as TextMessageStartEvent;
+            const { messageId, role = "assistant", name } = event as TextMessageStartEvent;
 
             // Check if a message with this ID already exists (e.g., created by TOOL_CALL_START
             // with the same parentMessageId)
@@ -125,6 +125,7 @@ export const defaultApplyEvents = (
                 id: messageId,
                 role: role,
                 content: "",
+                ...(name !== undefined && { name }),
               };
 
               // Add the new message to the messages array

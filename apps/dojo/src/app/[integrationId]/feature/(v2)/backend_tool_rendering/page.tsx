@@ -91,7 +91,6 @@ const Chat = () => {
         <CopilotChat
           agentId="backend_tool_rendering"
           className="h-full rounded-2xl max-w-6xl mx-auto"
-          labels={{ welcomeMessageText: "Hi! I can look up the weather for you. Just ask!" }}
         />
       </div>
     </div>

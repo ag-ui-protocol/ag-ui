@@ -15,6 +15,7 @@ from .types import (
     PredictStateTool
 )
 from .endpoint import add_langgraph_fastapi_endpoint
+from .middlewares.state_streaming import StateStreamingMiddleware, StateItem
 
 __all__ = [
     "LangGraphAgent",
@@ -31,5 +32,7 @@ __all__ = [
     "LangGraphPlatformActionExecutionMessage",
     "LangGraphPlatformMessage",
     "PredictStateTool",
-    "add_langgraph_fastapi_endpoint"
+    "add_langgraph_fastapi_endpoint",
+    "StateStreamingMiddleware",
+    "StateItem",
 ]

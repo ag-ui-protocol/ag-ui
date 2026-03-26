@@ -60,19 +60,26 @@ const Chat = () => {
     available: "always",
   });
 
+  const steps = agentState?.steps;
+
   return (
-    <div className="flex flex-col justify-center items-center h-full w-full gap-4">
-      {/* State-based progress UI */}
-      {agentState?.steps && agentState.steps.length > 0 && (
-        <TaskProgress steps={agentState.steps} theme={theme} />
-      )}
+    <div className="flex justify-center items-center h-full w-full">
       <div className="h-full w-full md:w-8/10 md:h-8/10 rounded-lg">
         <CopilotChat
           agentId="agentic_generative_ui"
           className="h-full rounded-2xl max-w-6xl mx-auto"
-          labels={{
-            welcomeMessageText:
-              "Hi, I'm an agent! I can help you with anything you need and will show you progress as I work. What can I do for you?",
+          messageView={{
+            children: ({ messageElements, interruptElement }  ) => (
+              <div data-testid="copilot-message-list" className="flex flex-col">
+                {messageElements}
+                {steps && steps.length > 0 && (
+                  <div className="my-4">
+                    <TaskProgress steps={steps} theme={theme} />
+                  </div>
+                )}
+                {interruptElement}
+              </div>
+            ),
           }}
         />
       </div>

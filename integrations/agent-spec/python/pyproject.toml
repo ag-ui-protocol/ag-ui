@@ -9,6 +9,7 @@ dependencies = [
   "fastapi>=0.115.0",
   "ag-ui-protocol>=0.1.10",
   "pyagentspec",
+  "json-repair>=0.30.0,<0.45.0",
 ]
 authors = [{ name = "Agent Spec team" }]
 

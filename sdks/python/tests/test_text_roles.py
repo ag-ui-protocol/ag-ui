@@ -131,6 +131,18 @@ class TestTextMessageRoles(unittest.TestCase):
                 delta="Tool message",
             )
 
+    def test_text_message_start_name_preserved_with_roles(self) -> None:
+        """Test that name is preserved alongside role."""
+        for role in TEXT_MESSAGE_ROLES:
+            with self.subTest(role=role):
+                event = TextMessageStartEvent(
+                    message_id="test-msg",
+                    role=role,
+                    name="test-agent",
+                )
+                self.assertEqual(event.role, role)
+                self.assertEqual(event.name, "test-agent")
+
     def test_text_message_start_default_role(self) -> None:
         """Test that TextMessageStartEvent defaults to 'assistant' role."""
         event = TextMessageStartEvent(
