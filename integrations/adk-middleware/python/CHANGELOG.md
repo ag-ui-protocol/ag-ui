@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **CHORE**: Cap `google-adk` dependency at `<2.0.0` to prevent breakage when ADK 2.0 ships
+  - ADK 2.0.0a1 introduces breaking changes to the agent API, event model, and session schema, and requires Python 3.11+
+  - The middleware remains compatible across the full `1.16.0–1.27.5` range — verified by running the full test suite (647 tests) against `1.22.1`, `1.24.1`, and `1.27.5`
+
 ### Added
 
 - **NEW**: `use_thread_id_as_session_id` option for `ADKAgent` and `SessionManager`
