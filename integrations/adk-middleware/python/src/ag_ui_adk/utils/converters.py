@@ -15,6 +15,8 @@ from ag_ui.core import (
 from google.adk.events import Event as ADKEvent
 from google.genai import types
 
+from ..serialization import serialize_tool_args
+
 logger = logging.getLogger(__name__)
 
 def _get_text_value(item: Union[dict, TextInputContent]) -> Optional[str]:
@@ -234,7 +236,7 @@ def convert_adk_event_to_ag_ui_message(event: ADKEvent) -> Optional[Message]:
                         type="function",
                         function=FunctionCall(
                             name=part.function_call.name,
-                            arguments=json.dumps(part.function_call.args) if hasattr(part.function_call, 'args') else "{}"
+                            arguments=serialize_tool_args(part.function_call.args) if hasattr(part.function_call, 'args') else "{}"
                         )
                     ))
             

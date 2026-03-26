@@ -20,6 +20,7 @@ from ag_ui.core import (
 )
 
 from .config import PredictStateMapping
+from .serialization import serialize_tool_args
 
 logger = logging.getLogger(__name__)
 
@@ -241,7 +242,7 @@ class ClientProxyTool(BaseTool):
             logger.debug(f"Emitted TOOL_CALL_START for {tool_call_id}")
 
             # Emit TOOL_CALL_ARGS event
-            args_json = json.dumps(args)
+            args_json = serialize_tool_args(args)
             args_event = ToolCallArgsEvent(
                 type=EventType.TOOL_CALL_ARGS,
                 tool_call_id=tool_call_id,
