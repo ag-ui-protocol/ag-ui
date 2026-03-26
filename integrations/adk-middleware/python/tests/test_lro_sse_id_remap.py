@@ -17,6 +17,7 @@ Integration tests require GOOGLE_API_KEY or Vertex AI auth.
 """
 
 import asyncio
+import json
 import os
 import uuid
 import warnings
@@ -250,6 +251,85 @@ class TestEventTranslatorLroTracking:
         translator.lro_emitted_ids_by_name["some_tool"] = "some-id"
         translator.reset()
         assert translator.lro_emitted_ids_by_name == {}
+
+    @pytest.mark.asyncio
+    async def test_lro_adk_request_credential_oauth2(self, translator):
+        """Regression (#1331): adk_request_credential with OAuth2 AuthConfig must serialize.
+
+        ADK emits a long-running function call named ``adk_request_credential``
+        whose args dict contains an ``AuthConfig`` Pydantic model.  The model
+        in turn nests ``OAuth2`` which has a ``type_: SecuritySchemeType`` enum
+        field.  Before the fix, ``json.dumps`` raised:
+
+            TypeError: Object of type SecuritySchemeType is not JSON serializable
+        """
+        from fastapi.openapi.models import OAuthFlowAuthorizationCode
+        from google.adk.auth.auth_schemes import OAuth2, OAuthFlows, SecuritySchemeType
+        from google.adk.auth import AuthConfig
+        from google.adk.auth.auth_credential import (
+            AuthCredential,
+            AuthCredentialTypes,
+            OAuth2Auth,
+        )
+
+        auth_scheme = OAuth2(
+            flows=OAuthFlows(
+                authorizationCode=OAuthFlowAuthorizationCode(
+                    authorizationUrl="https://accounts.google.com/o/oauth2/auth",
+                    tokenUrl="https://oauth2.googleapis.com/token",
+                    scopes={
+                        "https://www.googleapis.com/auth/calendar": "Calendar access",
+                    },
+                ),
+            ),
+        )
+        raw_credential = AuthCredential(
+            auth_type=AuthCredentialTypes.OAUTH2,
+            oauth2=OAuth2Auth(
+                client_id="123456.apps.googleusercontent.com",
+                client_secret="GOCSPX-secret",
+            ),
+        )
+        auth_config = AuthConfig(
+            auth_scheme=auth_scheme,
+            raw_auth_credential=raw_credential,
+        )
+
+        fc = MagicMock()
+        fc.id = "adk-cred-123"
+        fc.name = "adk_request_credential"
+        fc.args = {
+            "function_call_id": "adk-cred-123",
+            "auth_config": auth_config,
+        }
+        part = MagicMock()
+        part.function_call = fc
+        part.text = None
+        evt = MagicMock()
+        evt.content = MagicMock()
+        evt.content.parts = [part]
+        evt.long_running_tool_ids = ["adk-cred-123"]
+
+        events = []
+        async for e in translator.translate_lro_function_calls(evt):
+            events.append(e)
+
+        assert len(events) == 3
+        assert events[0].type == EventType.TOOL_CALL_START
+        assert events[0].tool_call_name == "adk_request_credential"
+
+        args_event = events[1]
+        assert args_event.type == EventType.TOOL_CALL_ARGS
+        parsed = json.loads(args_event.delta)
+        assert parsed["function_call_id"] == "adk-cred-123"
+
+        ac = parsed["auth_config"]
+        assert ac["auth_scheme"]["type_"] == "oauth2"
+        assert ac["raw_auth_credential"]["auth_type"] == "oauth2"
+        assert ac["raw_auth_credential"]["oauth2"]["client_id"] == "123456.apps.googleusercontent.com"
+        auth_code_flow = ac["auth_scheme"]["flows"]["authorizationCode"]
+        assert auth_code_flow["authorizationUrl"] == "https://accounts.google.com/o/oauth2/auth"
+        assert auth_code_flow["tokenUrl"] == "https://oauth2.googleapis.com/token"
 
 
 class TestDrainPathCapturesRemap:
