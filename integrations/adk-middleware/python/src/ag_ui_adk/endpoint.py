@@ -237,22 +237,34 @@ def add_adk_fastapi_endpoint(
 
             # Cache miss - search backend by thread_id
             if not session:
-                session = await agent._session_manager._find_session_by_thread_id(
-                    app_name=app_name,
-                    user_id=user_id,
-                    thread_id=thread_id
-                )
-                if session:
-                    # Found - cache for future lookups
-                    session_id = session.id
-                    agent._session_lookup_cache[(thread_id, user_id)] = (session_id, app_name, user_id)
-
-                    # Reload session to populate events (list_sessions returns metadata only)
-                    session = await agent._session_manager._session_service.get_session(
-                        session_id=session_id,
-                        app_name=app_name,
-                        user_id=user_id
+                # O(1) direct lookup when use_thread_id_as_session_id is enabled
+                if agent._session_manager._use_thread_id_as_session_id:
+                    session = await agent._session_manager.get_session(
+                        thread_id, app_name, user_id
                     )
+                    if session:
+                        session_id = session.id
+                        agent._session_lookup_cache[(thread_id, user_id)] = (session_id, app_name, user_id)
+
+                # Fallback to O(n) scan (always used when flag is False,
+                # also used as legacy fallback when flag is True but direct lookup misses)
+                if not session:
+                    session = await agent._session_manager._find_session_by_thread_id(
+                        app_name=app_name,
+                        user_id=user_id,
+                        thread_id=thread_id
+                    )
+                    if session:
+                        # Found - cache for future lookups
+                        session_id = session.id
+                        agent._session_lookup_cache[(thread_id, user_id)] = (session_id, app_name, user_id)
+
+                        # Reload session to populate events (list_sessions returns metadata only)
+                        session = await agent._session_manager._session_service.get_session(
+                            session_id=session_id,
+                            app_name=app_name,
+                            user_id=user_id
+                        )
 
             thread_exists = session is not None
 

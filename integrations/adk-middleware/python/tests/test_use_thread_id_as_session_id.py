@@ -355,3 +355,86 @@ class TestADKAgentWithThreadIdAsSessionId:
             user_id="user",
         )
         assert adk._session_manager._use_thread_id_as_session_id is False
+
+
+class TestAgentsStateEndpointWithDirectLookup:
+    """Tests for /agents/state endpoint with use_thread_id_as_session_id=True."""
+
+    @pytest.fixture(autouse=True)
+    def reset_session_manager(self):
+        SessionManager.reset_instance()
+        yield
+        SessionManager.reset_instance()
+
+    @pytest.fixture
+    def mock_agent(self):
+        agent = Mock(spec=Agent)
+        agent.name = "test_agent"
+        agent.instruction = "Test instruction"
+        agent.tools = []
+        return agent
+
+    @pytest.fixture
+    def adk_agent(self, mock_agent):
+        return ADKAgent(
+            adk_agent=mock_agent,
+            app_name="test_app",
+            user_id="test_user",
+            use_in_memory_services=True,
+            use_thread_id_as_session_id=True,
+        )
+
+    @pytest.fixture
+    def app(self, adk_agent):
+        from fastapi import FastAPI
+        from ag_ui_adk import add_adk_fastapi_endpoint
+        app = FastAPI()
+        add_adk_fastapi_endpoint(app, adk_agent)
+        return app
+
+    @pytest.fixture
+    def client(self, app):
+        from starlette.testclient import TestClient
+        return TestClient(app)
+
+    @pytest.mark.asyncio
+    async def test_agents_state_uses_direct_lookup(self, adk_agent, client):
+        """When use_thread_id_as_session_id=True, /agents/state uses O(1) lookup."""
+        # Create a session first via the session manager
+        session, sid = await adk_agent._session_manager.get_or_create_session(
+            thread_id="state-thread-123",
+            app_name="test_app",
+            user_id="test_user",
+        )
+        assert sid == "state-thread-123"
+
+        # Ensure the cache is clear so endpoint must look up from backend
+        adk_agent._session_lookup_cache.clear()
+
+        # Spy on list_sessions to verify it's NOT called
+        with patch.object(
+            adk_agent._session_manager._session_service,
+            "list_sessions",
+            wraps=adk_agent._session_manager._session_service.list_sessions,
+        ) as spy:
+            response = client.post(
+                "/agents/state",
+                json={"threadId": "state-thread-123"},
+            )
+            assert response.status_code == 200
+            data = response.json()
+            assert data["threadExists"] is True
+            assert data["threadId"] == "state-thread-123"
+            # The key assertion: list_sessions should NOT be called
+            spy.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_agents_state_nonexistent_thread(self, adk_agent, client):
+        """/agents/state returns threadExists=False for unknown thread."""
+        response = client.post(
+            "/agents/state",
+            json={"threadId": "nonexistent-thread"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["threadExists"] is False
