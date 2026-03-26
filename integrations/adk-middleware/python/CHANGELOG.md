@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-03-26
+
 ### Changed
 
 - **CHORE**: Cap `google-adk` dependency at `<2.0.0` to prevent breakage when ADK 2.0 ships
