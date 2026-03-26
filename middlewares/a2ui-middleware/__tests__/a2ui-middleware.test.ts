@@ -493,6 +493,170 @@ describe("tryParseA2UIOperations", () => {
     expect(tryParseA2UIOperations('"hello"')).toBeNull();
     expect(tryParseA2UIOperations("true")).toBeNull();
   });
+
+  // ── ADK {"result": ...} unwrapping ──────────────────────────────────────────
+
+  it("should unwrap ADK {result: array} and return A2UI operations", () => {
+    const ops = [
+      { surfaceUpdate: { surfaceId: "s1", components: [] } },
+      { beginRendering: { surfaceId: "s1", root: "root" } },
+    ];
+    const input = JSON.stringify({ result: ops });
+    const result = tryParseA2UIOperations(input);
+    expect(result).toHaveLength(2);
+    expect(result![0]).toHaveProperty("surfaceUpdate");
+    expect(result![1]).toHaveProperty("beginRendering");
+  });
+
+  it("should return null when {result: array} contains no A2UI operations", () => {
+    const input = JSON.stringify({ result: [{ foo: "bar" }, { baz: 42 }] });
+    expect(tryParseA2UIOperations(input)).toBeNull();
+  });
+
+  it("should return null when {result: string} — string is not A2UI", () => {
+    const input = JSON.stringify({ result: "some plain text response" });
+    expect(tryParseA2UIOperations(input)).toBeNull();
+  });
+
+  it("should return null when {result: number}", () => {
+    expect(tryParseA2UIOperations(JSON.stringify({ result: 42 }))).toBeNull();
+  });
+
+  it("should return null when {result: null}", () => {
+    expect(tryParseA2UIOperations(JSON.stringify({ result: null }))).toBeNull();
+  });
+
+  it("should return null when {result: object} that is not an A2UI op", () => {
+    const input = JSON.stringify({ result: { some: "data", not: "a2ui" } });
+    expect(tryParseA2UIOperations(input)).toBeNull();
+  });
+
+  it("should NOT unwrap when object has multiple keys alongside result", () => {
+    // A tool that intentionally returns {"result": ..., "status": "ok"} should not be unwrapped
+    const input = JSON.stringify({
+      result: [{ beginRendering: { surfaceId: "s1", root: "root" } }],
+      status: "ok",
+    });
+    expect(tryParseA2UIOperations(input)).toBeNull();
+  });
+
+  it("should NOT unwrap when key is not named result", () => {
+    const input = JSON.stringify({
+      output: [{ beginRendering: { surfaceId: "s1", root: "root" } }],
+    });
+    expect(tryParseA2UIOperations(input)).toBeNull();
+  });
+
+  it("should unwrap {result: single-A2UI-op} into a one-element array", () => {
+    const op = { beginRendering: { surfaceId: "s1", root: "root" } };
+    const input = JSON.stringify({ result: op });
+    const result = tryParseA2UIOperations(input);
+    expect(result).toHaveLength(1);
+    expect(result![0]).toHaveProperty("beginRendering");
+  });
+});
+
+// ── Pydantic-AI: immediate TOOL_CALL_RESULT for send_a2ui_json_to_client ──────
+
+describe("A2UIMiddleware — immediate TOOL_CALL_RESULT (pydantic-ai pattern)", () => {
+  const validA2uiOps = [
+    { surfaceUpdate: { surfaceId: "s1", components: [{ id: "root", component: { Card: { child: "col" } } }] } },
+    { beginRendering: { surfaceId: "s1", root: "root" } },
+  ];
+
+  function makeStream(toolCallId: string, a2uiJson: string, includeResult: boolean): BaseEvent[] {
+    const events: BaseEvent[] = [
+      { type: EventType.RUN_STARTED, runId: "r1", threadId: "t1" },
+      { type: EventType.TOOL_CALL_START, toolCallId, toolCallName: SEND_A2UI_TOOL_NAME } as any,
+      { type: EventType.TOOL_CALL_ARGS, toolCallId, delta: JSON.stringify({ a2ui_json: a2uiJson }) } as any,
+      { type: EventType.TOOL_CALL_END, toolCallId } as any,
+    ];
+    if (includeResult) {
+      events.push({ type: EventType.TOOL_CALL_RESULT, messageId: "m1", toolCallId, content: "[]" } as any);
+    }
+    events.push({ type: EventType.RUN_FINISHED, runId: "r1", threadId: "t1" });
+    return events;
+  }
+
+  it("renders surface when framework emits immediate TOOL_CALL_RESULT", async () => {
+    const middleware = new A2UIMiddleware();
+    const toolCallId = "tc-pydantic";
+    const a2uiJson = JSON.stringify(validA2uiOps);
+
+    const mockAgent = new MockAgent(makeStream(toolCallId, a2uiJson, true));
+    const events = await collectEvents(middleware.run(createRunAgentInput(), mockAgent));
+
+    const activity = events.find((e) => e.type === EventType.ACTIVITY_SNAPSHOT);
+    expect(activity).toBeDefined();
+    expect((activity as any).activityType).toBe(A2UIActivityType);
+    expect((activity as any).content.operations).toHaveLength(2);
+  });
+
+  it("renders surface when framework leaves tool call pending at RUN_FINISHED (LangGraph pattern)", async () => {
+    const middleware = new A2UIMiddleware();
+    const toolCallId = "tc-langgraph";
+    const a2uiJson = JSON.stringify(validA2uiOps);
+
+    const mockAgent = new MockAgent(makeStream(toolCallId, a2uiJson, false));
+    const events = await collectEvents(middleware.run(createRunAgentInput(), mockAgent));
+
+    const activity = events.find((e) => e.type === EventType.ACTIVITY_SNAPSHOT);
+    expect(activity).toBeDefined();
+    expect((activity as any).activityType).toBe(A2UIActivityType);
+  });
+
+  it("does not double-render when framework emits immediate TOOL_CALL_RESULT", async () => {
+    const middleware = new A2UIMiddleware();
+    const toolCallId = "tc-no-double";
+    const a2uiJson = JSON.stringify(validA2uiOps);
+
+    const mockAgent = new MockAgent(makeStream(toolCallId, a2uiJson, true));
+    const events = await collectEvents(middleware.run(createRunAgentInput(), mockAgent));
+
+    const activityEvents = events.filter((e) => e.type === EventType.ACTIVITY_SNAPSHOT);
+    expect(activityEvents).toHaveLength(1);
+  });
+
+  it("accumulates streamed TOOL_CALL_ARGS deltas before processing", async () => {
+    const middleware = new A2UIMiddleware();
+    const toolCallId = "tc-stream";
+    const a2uiJson = JSON.stringify(validA2uiOps);
+    const fullArgs = JSON.stringify({ a2ui_json: a2uiJson });
+    const mid = Math.floor(fullArgs.length / 2);
+
+    const mockAgent = new MockAgent([
+      { type: EventType.RUN_STARTED, runId: "r1", threadId: "t1" },
+      { type: EventType.TOOL_CALL_START, toolCallId, toolCallName: SEND_A2UI_TOOL_NAME } as any,
+      { type: EventType.TOOL_CALL_ARGS, toolCallId, delta: fullArgs.slice(0, mid) } as any,
+      { type: EventType.TOOL_CALL_ARGS, toolCallId, delta: fullArgs.slice(mid) } as any,
+      { type: EventType.TOOL_CALL_END, toolCallId } as any,
+      { type: EventType.TOOL_CALL_RESULT, messageId: "m1", toolCallId, content: "[]" } as any,
+      { type: EventType.RUN_FINISHED, runId: "r1", threadId: "t1" },
+    ]);
+
+    const events = await collectEvents(middleware.run(createRunAgentInput(), mockAgent));
+    const activity = events.find((e) => e.type === EventType.ACTIVITY_SNAPSHOT);
+    expect(activity).toBeDefined();
+    expect((activity as any).content.operations).toHaveLength(2);
+  });
+
+  it("does not emit activity for other tools that return immediate TOOL_CALL_RESULT", async () => {
+    const middleware = new A2UIMiddleware();
+    const toolCallId = "tc-other";
+
+    const mockAgent = new MockAgent([
+      { type: EventType.RUN_STARTED, runId: "r1", threadId: "t1" },
+      { type: EventType.TOOL_CALL_START, toolCallId, toolCallName: "some_other_tool" } as any,
+      { type: EventType.TOOL_CALL_ARGS, toolCallId, delta: '{"arg":"val"}' } as any,
+      { type: EventType.TOOL_CALL_END, toolCallId } as any,
+      { type: EventType.TOOL_CALL_RESULT, messageId: "m1", toolCallId, content: '"done"' } as any,
+      { type: EventType.RUN_FINISHED, runId: "r1", threadId: "t1" },
+    ]);
+
+    const events = await collectEvents(middleware.run(createRunAgentInput(), mockAgent));
+    const activity = events.find((e) => e.type === EventType.ACTIVITY_SNAPSHOT);
+    expect(activity).toBeUndefined();
+  });
 });
 
 describe("extractSurfaceIds", () => {
