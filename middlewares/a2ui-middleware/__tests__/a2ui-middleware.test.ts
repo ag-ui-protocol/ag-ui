@@ -494,65 +494,49 @@ describe("tryParseA2UIOperations", () => {
     expect(tryParseA2UIOperations("true")).toBeNull();
   });
 
-  // ── ADK {"result": ...} unwrapping ──────────────────────────────────────────
+  // ── Single-key envelope unwrapping (key-name agnostic) ──────────────────────
 
-  it("should unwrap ADK {result: array} and return A2UI operations", () => {
+  it("should unwrap a single-key envelope regardless of key name when value is A2UI", () => {
     const ops = [
       { surfaceUpdate: { surfaceId: "s1", components: [] } },
       { beginRendering: { surfaceId: "s1", root: "root" } },
     ];
-    const input = JSON.stringify({ result: ops });
-    const result = tryParseA2UIOperations(input);
-    expect(result).toHaveLength(2);
-    expect(result![0]).toHaveProperty("surfaceUpdate");
-    expect(result![1]).toHaveProperty("beginRendering");
+    for (const key of ["result", "response", "output", "data", "value"]) {
+      const input = JSON.stringify({ [key]: ops });
+      const result = tryParseA2UIOperations(input);
+      expect(result, `key="${key}" should be unwrapped`).toHaveLength(2);
+      expect(result![0]).toHaveProperty("surfaceUpdate");
+      expect(result![1]).toHaveProperty("beginRendering");
+    }
   });
 
-  it("should return null when {result: array} contains no A2UI operations", () => {
+  it("should return null when envelope value is an array with no A2UI operations", () => {
     const input = JSON.stringify({ result: [{ foo: "bar" }, { baz: 42 }] });
     expect(tryParseA2UIOperations(input)).toBeNull();
   });
 
-  it("should return null when {result: string} — string is not A2UI", () => {
-    const input = JSON.stringify({ result: "some plain text response" });
-    expect(tryParseA2UIOperations(input)).toBeNull();
+  it("should return null when envelope value is a string", () => {
+    expect(tryParseA2UIOperations(JSON.stringify({ result: "some text" }))).toBeNull();
   });
 
-  it("should return null when {result: number}", () => {
+  it("should return null when envelope value is a number", () => {
     expect(tryParseA2UIOperations(JSON.stringify({ result: 42 }))).toBeNull();
   });
 
-  it("should return null when {result: null}", () => {
+  it("should return null when envelope value is null", () => {
     expect(tryParseA2UIOperations(JSON.stringify({ result: null }))).toBeNull();
   });
 
-  it("should return null when {result: object} that is not an A2UI op", () => {
-    const input = JSON.stringify({ result: { some: "data", not: "a2ui" } });
-    expect(tryParseA2UIOperations(input)).toBeNull();
+  it("should return null when envelope value is a plain object (not A2UI)", () => {
+    expect(tryParseA2UIOperations(JSON.stringify({ result: { some: "data" } }))).toBeNull();
   });
 
-  it("should NOT unwrap when object has multiple keys alongside result", () => {
-    // A tool that intentionally returns {"result": ..., "status": "ok"} should not be unwrapped
+  it("should NOT unwrap when object has more than one key", () => {
     const input = JSON.stringify({
       result: [{ beginRendering: { surfaceId: "s1", root: "root" } }],
       status: "ok",
     });
     expect(tryParseA2UIOperations(input)).toBeNull();
-  });
-
-  it("should NOT unwrap when key is not named result", () => {
-    const input = JSON.stringify({
-      output: [{ beginRendering: { surfaceId: "s1", root: "root" } }],
-    });
-    expect(tryParseA2UIOperations(input)).toBeNull();
-  });
-
-  it("should unwrap {result: single-A2UI-op} into a one-element array", () => {
-    const op = { beginRendering: { surfaceId: "s1", root: "root" } };
-    const input = JSON.stringify({ result: op });
-    const result = tryParseA2UIOperations(input);
-    expect(result).toHaveLength(1);
-    expect(result![0]).toHaveProperty("beginRendering");
   });
 });
 
