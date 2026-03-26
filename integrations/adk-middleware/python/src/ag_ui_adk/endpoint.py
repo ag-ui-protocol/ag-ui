@@ -238,7 +238,7 @@ def add_adk_fastapi_endpoint(
             # Cache miss - search backend by thread_id
             if not session:
                 # O(1) direct lookup when use_thread_id_as_session_id is enabled
-                if agent._session_manager._use_thread_id_as_session_id:
+                if getattr(agent._session_manager, '_use_thread_id_as_session_id', False) is True:
                     session = await agent._session_manager.get_session(
                         thread_id, app_name, user_id
                     )
