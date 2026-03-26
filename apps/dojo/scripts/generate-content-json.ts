@@ -421,6 +421,51 @@ const agentFilesMapper: Record<
   "a2a": () => ({}),
   // Built-in agent with A2UI middleware - uses dedicated API route
   "builtin": () => ({}),
+  "claude-agent-sdk-python": (agentKeys: string[]) => {
+    return agentKeys.reduce(
+      (acc, agentId) => ({
+        ...acc,
+        [agentId]: [
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/claude-agent-sdk/python/examples/agents/${agentId}.py`,
+          ),
+        ],
+      }),
+      {},
+    );
+  },
+  "claude-agent-sdk-typescript": (agentKeys: string[]) => {
+    return agentKeys.reduce(
+      (acc, agentId) => ({
+        ...acc,
+        [agentId]: [
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/claude-agent-sdk/typescript/examples/${agentId}.ts`,
+          ),
+        ],
+      }),
+      {},
+    );
+  },
+  "langroid": (agentKeys: string[]) => {
+    return agentKeys.reduce(
+      (acc, agentId) => ({
+        ...acc,
+        [agentId]: [
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/langroid/python/examples/server/api/${agentId}.py`,
+          ),
+        ],
+      }),
+      {},
+    );
+  },
 };
 
 async function runGenerateContent() {

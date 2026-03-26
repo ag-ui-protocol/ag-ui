@@ -62,7 +62,6 @@ function SidebarWithSuggestions({ defaultOpen }: { defaultOpen: boolean }) {
       defaultOpen={defaultOpen}
       labels={{
         modalHeaderTitle: "Haiku Generator",
-        welcomeMessageText: "I'm a haiku generator. How can I help you?",
       }}
     />
   );

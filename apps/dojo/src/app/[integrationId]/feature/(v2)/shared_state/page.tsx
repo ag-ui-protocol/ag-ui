@@ -1,8 +1,9 @@
 "use client";
-import { 
+import {
   useAgent,
   UseAgentUpdate,
   useCopilotKit,
+  useConfigureSuggestions,
   CopilotChat,
   CopilotSidebar,
 } from "@copilotkit/react-core/v2";
@@ -30,7 +31,6 @@ export default function SharedState({ params }: SharedStateProps) {
 
   const chatTitle = "AI Recipe Assistant";
   const chatDescription = "Ask me to craft recipes";
-  const initialLabel = "Hi 👋 How can I help with your recipe?";
 
   return (
     <CopilotKit
@@ -130,9 +130,6 @@ export default function SharedState({ params }: SharedStateProps) {
                 <CopilotChat
                   agentId="shared_state"
                   className="h-full flex flex-col"
-                  labels={{
-                    welcomeMessageText: initialLabel,
-                  }}
                 />
               </div>
             </div>
@@ -148,7 +145,6 @@ export default function SharedState({ params }: SharedStateProps) {
             defaultOpen={chatDefaultOpen}
             labels={{
               modalHeaderTitle: chatTitle,
-              welcomeMessageText: initialLabel,
             }}
           />
         )}
@@ -229,6 +225,24 @@ function Recipe() {
     updates: [UseAgentUpdate.OnStateChanged, UseAgentUpdate.OnRunStatusChanged],
   });
   const { copilotkit } = useCopilotKit();
+
+  useConfigureSuggestions({
+    suggestions: [
+      {
+        title: "Create Italian recipe",
+        message: "Create a delicious Italian pasta recipe.",
+      },
+      {
+        title: "Make it healthier",
+        message: "Make the recipe healthier with more vegetables.",
+      },
+      {
+        title: "Suggest variations",
+        message: "Suggest some creative variations of this recipe.",
+      },
+    ],
+    available: "always",
+  });
 
   const agentState = agent.state as RecipeAgentState | undefined;
   const setAgentState = (s: RecipeAgentState) => agent.setState(s);

@@ -1,6 +1,7 @@
 import { Page, Locator, expect } from "@playwright/test";
 import { CopilotSelectors } from "../utils/copilot-selectors";
 import { sendChatMessage, awaitLLMResponseDone } from "../utils/copilot-actions";
+import { DEFAULT_WELCOME_MESSAGE } from "../lib/constants";
 
 export class ToolBaseGenUIPage {
   readonly page: Page;
@@ -14,7 +15,7 @@ export class ToolBaseGenUIPage {
 
   constructor(page: Page) {
     this.page = page;
-    this.haikuAgentIntro = page.getByText("I'm a haiku generator. How can I help you?").first();
+    this.haikuAgentIntro = page.getByText(DEFAULT_WELCOME_MESSAGE).first();
     this.messageBox = CopilotSelectors.chatTextarea(page);
     this.sendButton = CopilotSelectors.sendButton(page);
     this.haikuBlock = page.locator('[data-testid="haiku-card"]');

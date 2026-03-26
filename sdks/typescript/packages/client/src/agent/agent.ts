@@ -1,5 +1,13 @@
 import { defaultApplyEvents } from "@/apply/default";
-import { Message, State, RunAgentInput, BaseEvent, ToolCall, AssistantMessage } from "@ag-ui/core";
+import {
+  Message,
+  State,
+  RunAgentInput,
+  BaseEvent,
+  ToolCall,
+  AssistantMessage,
+  AgentCapabilities,
+} from "@ag-ui/core";
 
 import { AgentConfig, RunAgentParameters } from "./types";
 import { v4 as uuidv4 } from "uuid";
@@ -8,7 +16,7 @@ import { compareVersions } from "compare-versions";
 import { catchError, map, tap } from "rxjs/operators";
 import { finalize } from "rxjs/operators";
 import { takeUntil } from "rxjs/operators";
-import { pipe, Observable, from, of, EMPTY, Subject } from "rxjs";
+import { pipe, Observable, from, of, EMPTY, Subject, defer } from "rxjs";
 import { verifyEvents } from "@/verify";
 import { convertToLegacyEvents } from "@/legacy/convert";
 import { LegacyRuntimeProtocolEvent } from "@/legacy/types";
@@ -85,6 +93,12 @@ export abstract class AbstractAgent {
 
   abstract run(input: RunAgentInput): Observable<BaseEvent>;
 
+  /**
+   * Returns the agent's current capabilities.
+   * Optional — subclasses implement this to advertise what they support.
+   */
+  getCapabilities?(): Promise<AgentCapabilities>;
+
   public use(...middlewares: (Middleware | MiddlewareFunction)[]): this {
     const normalizedMiddlewares = middlewares.map((middleware) =>
       typeof middleware === "function" ? new FunctionMiddleware(middleware) : middleware,
@@ -134,8 +148,12 @@ export abstract class AbstractAgent {
             (nextAgent: AbstractAgent, middleware) =>
               ({
                 run: (i: RunAgentInput) => middleware.run(i, nextAgent),
-                get messages() { return nextAgent.messages; },
-                get state() { return nextAgent.state; },
+                get messages() {
+                  return nextAgent.messages;
+                },
+                get state() {
+                  return nextAgent.state;
+                },
               }) as AbstractAgent,
             this, // Original agent is the final 'next'
           );
@@ -206,7 +224,7 @@ export abstract class AbstractAgent {
       });
 
       const pipeline = pipe(
-        () => this.connect(input),
+        () => defer(() => this.connect(input)),
         transformChunks(this.debug),
         verifyEvents(this.debug),
         // Stop processing immediately when this run is detached
@@ -230,7 +248,9 @@ export abstract class AbstractAgent {
         }),
       );
 
-      await lastValueFrom(pipeline(of(null))); // wait for stream completion before toggling isRunning
+      // defaultValue prevents EmptyError when catchError returns EMPTY
+      // (e.g. ConnectNotImplementedError path)
+      await lastValueFrom(pipeline(of(null)), { defaultValue: undefined });
       const newMessages = structuredClone_(this.messages).filter(
         (message: Message) => !currentMessageIds.has(message.id),
       );
@@ -584,8 +604,12 @@ export abstract class AbstractAgent {
         (nextAgent: AbstractAgent, middleware) =>
           ({
             run: (i: RunAgentInput) => middleware.run(i, nextAgent),
-            get messages() { return nextAgent.messages; },
-            get state() { return nextAgent.state; },
+            get messages() {
+              return nextAgent.messages;
+            },
+            get state() {
+              return nextAgent.state;
+            },
           }) as AbstractAgent,
         this,
       );

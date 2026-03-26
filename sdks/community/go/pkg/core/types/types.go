@@ -22,6 +22,8 @@ const (
 	RoleTool Role = "tool"
 	// RoleActivity is the activity role.
 	RoleActivity Role = "activity"
+	// RoleReasoning is the reasoning role.
+	RoleReasoning Role = "reasoning"
 )
 
 // FunctionCall represents a function call name and arguments.
@@ -118,6 +120,10 @@ type Message struct {
 	Content any `json:"content,omitempty"`
 	// Name is an optional sender name.
 	Name string `json:"name,omitempty"`
+	// EncryptedContent is an optional encrypted content blob for state continuity.
+	EncryptedContent string `json:"encryptedContent,omitempty"`
+	// EncryptedValue is an optional encrypted reasoning blob for state continuity.
+	EncryptedValue string `json:"encryptedValue,omitempty"`
 	// ToolCalls is an optional list of tool calls associated with an assistant message.
 	ToolCalls []ToolCall `json:"toolCalls,omitempty"`
 	// ToolCallID is an optional tool call identifier associated with a tool message.
@@ -145,6 +151,12 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	if err := unmarshalField(raw, &m.Name, "name"); err != nil {
+		return err
+	}
+	if err := unmarshalField(raw, &m.EncryptedContent, "encryptedContent", "encrypted_content"); err != nil {
+		return err
+	}
+	if err := unmarshalField(raw, &m.EncryptedValue, "encryptedValue", "encrypted_value"); err != nil {
 		return err
 	}
 	if err := unmarshalField(raw, &m.ToolCalls, "toolCalls", "tool_calls"); err != nil {

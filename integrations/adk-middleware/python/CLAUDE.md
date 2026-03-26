@@ -123,7 +123,7 @@ LOG_SESSION_MANAGER=WARNING # session_manager component
 
 ## Testing
 
-The test suite has 270+ tests covering:
+The test suite has 670+ tests covering:
 - Unit tests for each component
 - Integration tests for end-to-end flows
 - HITL (human-in-the-loop) tool tracking
@@ -131,5 +131,103 @@ The test suite has 270+ tests covering:
 - Session management and cleanup
 - Concurrent execution limits
 - Predictive state updates
+- Vertex AI session service (mock + optional live)
 
 Tests use pytest-asyncio for async test support.
+
+### Running All Tests
+
+```bash
+# Unit + mock-based integration tests (no credentials needed beyond GOOGLE_API_KEY)
+set -a && source .env && set +a
+.venv/bin/pytest tests/
+
+# Run a specific test class
+.venv/bin/pytest tests/test_vertex_session_service.py::TestVertexSessionServiceMock -v
+```
+
+### Vertex AI Session Service Live Tests
+
+The `TestVertexSessionServiceLive` class in `tests/test_vertex_session_service.py`
+runs against a real Vertex AI Agent Engine. These tests are **skipped by default**
+and only run when `VERTEX_REASONING_ENGINE_ID` is set.
+
+Mock-based tests (10 tests) always run and cover the same middleware code paths
+using a `MockVertexAiSessionService` that faithfully replicates Vertex behaviour
+(generates numeric IDs, rejects caller-provided `session_id`).
+
+#### Prerequisites
+
+- **GCP Project** with the Vertex AI API enabled
+- **Application Default Credentials** (ADC) with Vertex AI permissions
+- A **deployed ReasoningEngine** (Agent Engine) — the sessions API requires one
+
+#### 1. Enable the Vertex AI API (if not already)
+
+Via GCP Console: APIs & Services > Library > search "Vertex AI API" > Enable.
+
+Or via gcloud CLI:
+```bash
+gcloud services enable aiplatform.googleapis.com --project=<PROJECT_ID>
+```
+
+#### 2. Deploy a Minimal ReasoningEngine
+
+The engine does not need agent code — it just needs to exist so the sessions
+endpoint is available. From the project `.venv`:
+
+```python
+import vertexai
+
+client = vertexai.Client(project='<PROJECT_ID>', location='us-central1')
+result = client.agent_engines.create(
+    config={
+        'display_name': 'ag-ui-test-sessions',
+        'description': 'Minimal engine for AG-UI middleware session tests',
+    }
+)
+# Extract the engine ID from the resource name
+print(result.api_resource.name)
+# e.g. projects/123456/locations/us-central1/reasoningEngines/987654321
+```
+
+Note the numeric ID at the end of the resource name.
+
+#### 3. Run the Live Tests
+
+```bash
+GOOGLE_CLOUD_PROJECT=<PROJECT_ID> \
+GOOGLE_CLOUD_LOCATION=us-central1 \
+VERTEX_REASONING_ENGINE_ID=<ENGINE_ID> \
+.venv/bin/pytest tests/test_vertex_session_service.py -v
+```
+
+The live test fixture automatically removes `GOOGLE_API_KEY` and overrides
+`GOOGLE_CLOUD_LOCATION` to `us-central1` via `monkeypatch`, since the Vertex
+sessions API requires OAuth2/ADC (not API keys) and a real region (not `global`).
+
+#### 4. Cleanup (Important — Avoid Ongoing Charges)
+
+ReasoningEngines incur hosting costs while deployed. Delete after testing:
+
+```python
+import vertexai
+
+client = vertexai.Client(project='<PROJECT_ID>', location='us-central1')
+engine = client.agent_engines.get(agent_engine_id='<ENGINE_ID>')
+engine.delete()
+```
+
+Or via REST API (use `?force=true` to delete child sessions left by tests):
+```bash
+curl -X DELETE \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  "https://us-central1-aiplatform.googleapis.com/v1beta1/projects/<PROJECT_ID>/locations/us-central1/reasoningEngines/<ENGINE_ID>?force=true"
+```
+
+Verify deletion:
+```bash
+curl -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  "https://us-central1-aiplatform.googleapis.com/v1beta1/projects/<PROJECT_ID>/locations/us-central1/reasoningEngines"
+```
+An empty response (or `{}`) confirms no engines remain.

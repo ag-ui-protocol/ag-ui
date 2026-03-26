@@ -52,16 +52,13 @@ class AgentState(MessagesState):
 async def start_node(state: AgentState, config: RunnableConfig): # pylint: disable=unused-argument
     """
     This is the entry point for the flow.
+    Always clear steps so old steps from previous runs don't persist.
     """
-
-    if "steps" not in state:
-        state["steps"] = []
-
     return Command(
         goto="chat_node",
         update={
             "messages": state["messages"],
-            "steps": state["steps"]
+            "steps": []
         }
     )
 
@@ -147,7 +144,7 @@ async def chat_node(state: AgentState, config: Optional[RunnableConfig] = None):
                 )
 
             return Command(
-                goto='start_node',
+                goto='chat_node',
                 update={
                     "messages": messages,
                     "steps": state["steps"]

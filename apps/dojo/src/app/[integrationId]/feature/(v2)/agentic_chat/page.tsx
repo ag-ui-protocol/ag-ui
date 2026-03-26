@@ -100,7 +100,6 @@ const Chat = () => {
         <CopilotChat
           agentId="agentic_chat"
           className="h-full rounded-2xl max-w-6xl mx-auto"
-          labels={{ welcomeMessageText: "Hi, I'm an agent. Want to chat?" }}
         />
       </div>
     </div>

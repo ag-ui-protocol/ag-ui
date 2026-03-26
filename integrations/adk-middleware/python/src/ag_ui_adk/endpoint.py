@@ -2,7 +2,6 @@
 
 """FastAPI endpoint for ADK middleware."""
 
-import json
 import logging
 import warnings
 from typing import Any, Callable, Coroutine, List, Optional
@@ -35,8 +34,8 @@ class AgentStateResponse(BaseModel):
     """Response body for /agents/state endpoint."""
     threadId: str
     threadExists: bool
-    state: str  # JSON stringified
-    messages: str  # JSON stringified
+    state: dict
+    messages: list
 
 
 def _header_to_key(header_name: str) -> str:
@@ -224,7 +223,7 @@ def add_adk_fastapi_endpoint(
             session_id = None
 
             # Fast path: check cache first
-            metadata = agent._get_session_metadata(thread_id)
+            metadata = agent._get_session_metadata(thread_id, user_id)
             if metadata:
                 session_id, cached_app_name, cached_user_id = metadata
                 session = await agent._session_manager._session_service.get_session(
@@ -246,7 +245,7 @@ def add_adk_fastapi_endpoint(
                 if session:
                     # Found - cache for future lookups
                     session_id = session.id
-                    agent._session_lookup_cache[thread_id] = (session_id, app_name, user_id)
+                    agent._session_lookup_cache[(thread_id, user_id)] = (session_id, app_name, user_id)
 
                     # Reload session to populate events (list_sessions returns metadata only)
                     session = await agent._session_manager._session_service.get_session(
@@ -277,8 +276,8 @@ def add_adk_fastapi_endpoint(
             return JSONResponse(content={
                 "threadId": thread_id,
                 "threadExists": thread_exists,
-                "state": json.dumps(state),
-                "messages": json.dumps(messages_dict)
+                "state": state,
+                "messages": messages_dict
             })
 
         except Exception as e:
@@ -288,8 +287,8 @@ def add_adk_fastapi_endpoint(
                 content={
                     "threadId": thread_id,
                     "threadExists": False,
-                    "state": "{}",
-                    "messages": "[]",
+                    "state": {},
+                    "messages": [],
                     "error": str(e)
                 }
             )

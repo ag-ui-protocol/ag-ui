@@ -1,6 +1,7 @@
 import { Page, Locator, expect } from '@playwright/test';
 import { CopilotSelectors } from '../../utils/copilot-selectors';
 import { sendChatMessage, awaitLLMResponseDone } from '../../utils/copilot-actions';
+import { DEFAULT_WELCOME_MESSAGE } from '../../lib/constants';
 
 export class PredictiveStateUpdatesPage {
   readonly page: Page;
@@ -19,7 +20,7 @@ export class PredictiveStateUpdatesPage {
 
   constructor(page: Page) {
     this.page = page;
-    this.agentGreeting = page.getByText("Hi 👋 How can I help with your document?");
+    this.agentGreeting = page.getByText(DEFAULT_WELCOME_MESSAGE);
     this.chatInput = CopilotSelectors.chatTextarea(page);
     this.sendButton = CopilotSelectors.sendButton(page);
     this.agentResponsePrompt = page.locator('div.tiptap.ProseMirror');
