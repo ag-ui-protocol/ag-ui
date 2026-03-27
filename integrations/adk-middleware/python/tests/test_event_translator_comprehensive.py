@@ -766,7 +766,7 @@ class TestEventTranslatorComprehensive:
         assert events[0].tool_call_id == "call_123"
         assert events[0].tool_call_name == "test_function"
         assert events[1].tool_call_id == "call_123"
-        assert events[1].delta == '{"param1": "value1"}'
+        assert json.loads(events[1].delta) == {"param1": "value1"}
         assert events[2].tool_call_id == "call_123"
 
     @pytest.mark.asyncio
