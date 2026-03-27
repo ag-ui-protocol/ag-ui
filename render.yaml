@@ -10,6 +10,11 @@ projects:
       runtime: python
       repo: https://github.com/ag-ui-protocol/ag-ui
       plan: starter
+      scaling:
+        minInstances: 1
+        maxInstances: 3
+        targetMemoryPercent: 70
+        targetCPUPercent: 70
       envVars:
       - key: PYTHON_VERSION
         sync: false
@@ -25,6 +30,11 @@ projects:
       runtime: python
       repo: https://github.com/ag-ui-protocol/ag-ui
       plan: starter
+      scaling:
+        minInstances: 1
+        maxInstances: 3
+        targetMemoryPercent: 70
+        targetCPUPercent: 70
       envVars:
       - key: OPENAI_API_KEY
         sync: false
@@ -38,6 +48,11 @@ projects:
       runtime: python
       repo: https://github.com/ag-ui-protocol/ag-ui
       plan: starter
+      scaling:
+        minInstances: 1
+        maxInstances: 3
+        targetMemoryPercent: 70
+        targetCPUPercent: 70
       envVars:
       - key: UVICORN_HOST
         sync: false
@@ -53,6 +68,11 @@ projects:
       runtime: node
       repo: https://github.com/ag-ui-protocol/ag-ui
       plan: starter
+      scaling:
+        minInstances: 1
+        maxInstances: 3
+        targetMemoryPercent: 70
+        targetCPUPercent: 70
       envVars:
       - key: OPENAI_API_KEY
         sync: false
@@ -66,6 +86,11 @@ projects:
       runtime: python
       repo: https://github.com/ag-ui-protocol/ag-ui
       plan: starter
+      scaling:
+        minInstances: 1
+        maxInstances: 3
+        targetMemoryPercent: 70
+        targetCPUPercent: 70
       envVars:
       - key: OPENAI_API_KEY
         sync: false
@@ -79,6 +104,11 @@ projects:
       runtime: python
       repo: https://github.com/ag-ui-protocol/ag-ui
       plan: starter
+      scaling:
+        minInstances: 1
+        maxInstances: 3
+        targetMemoryPercent: 70
+        targetCPUPercent: 70
       envVars:
       - key: OPENAI_API_KEY
         sync: false
@@ -92,6 +122,11 @@ projects:
       runtime: python
       repo: https://github.com/ag-ui-protocol/ag-ui
       plan: standard
+      scaling:
+        minInstances: 1
+        maxInstances: 3
+        targetMemoryPercent: 70
+        targetCPUPercent: 70
       envVars:
       - key: GOOGLE_API_KEY
         sync: false
@@ -105,6 +140,11 @@ projects:
       runtime: python
       repo: https://github.com/ag-ui-protocol/ag-ui
       plan: starter
+      scaling:
+        minInstances: 1
+        maxInstances: 3
+        targetMemoryPercent: 70
+        targetCPUPercent: 70
       envVars:
       - key: OPENAI_API_KEY
         sync: false
@@ -120,6 +160,11 @@ projects:
       runtime: python
       repo: https://github.com/ag-ui-protocol/ag-ui
       plan: starter
+      scaling:
+        minInstances: 1
+        maxInstances: 3
+        targetMemoryPercent: 70
+        targetCPUPercent: 70
       envVars:
       - key: GOOGLE_API_KEY
         sync: false
@@ -133,6 +178,11 @@ projects:
       runtime: python
       repo: https://github.com/ag-ui-protocol/ag-ui
       plan: starter
+      scaling:
+        minInstances: 1
+        maxInstances: 3
+        targetMemoryPercent: 70
+        targetCPUPercent: 70
       envVars:
       - key: GOOGLE_API_KEY
         sync: false
@@ -146,6 +196,11 @@ projects:
       runtime: python
       repo: https://github.com/ag-ui-protocol/ag-ui
       plan: starter
+      scaling:
+        minInstances: 1
+        maxInstances: 3
+        targetMemoryPercent: 70
+        targetCPUPercent: 70
       envVars:
       - key: GOOGLE_API_KEY
         sync: false
@@ -159,6 +214,11 @@ projects:
       runtime: python
       repo: https://github.com/ag-ui-protocol/ag-ui
       plan: starter
+      scaling:
+        minInstances: 1
+        maxInstances: 3
+        targetMemoryPercent: 70
+        targetCPUPercent: 70
       region: virginia
       buildCommand: poetry install
       startCommand: poetry run dev
@@ -169,6 +229,11 @@ projects:
       runtime: python
       repo: https://github.com/ag-ui-protocol/ag-ui
       plan: starter
+      scaling:
+        minInstances: 1
+        maxInstances: 3
+        targetMemoryPercent: 70
+        targetCPUPercent: 70
       envVars:
       - key: OPENAI_API_KEY
         sync: false
@@ -182,6 +247,11 @@ projects:
       runtime: python
       repo: https://github.com/ag-ui-protocol/ag-ui
       plan: starter
+      scaling:
+        minInstances: 1
+        maxInstances: 3
+        targetMemoryPercent: 70
+        targetCPUPercent: 70
       envVars:
       - key: OPENAI_MODEL
         sync: false
@@ -199,6 +269,11 @@ projects:
       runtime: docker
       repo: https://github.com/ag-ui-protocol/ag-ui
       plan: starter
+      scaling:
+        minInstances: 1
+        maxInstances: 3
+        targetMemoryPercent: 70
+        targetCPUPercent: 70
       envVars:
       - key: AZURE_CLIENT_ID
         sync: false
@@ -220,6 +295,11 @@ projects:
       runtime: python
       repo: https://github.com/ag-ui-protocol/ag-ui
       plan: starter
+      scaling:
+        minInstances: 1
+        maxInstances: 3
+        targetMemoryPercent: 70
+        targetCPUPercent: 70
       envVars:
       - key: OPENAI_API_KEY
         sync: false
@@ -243,6 +323,11 @@ projects:
       runtime: python
       repo: https://github.com/ag-ui-protocol/ag-ui
       plan: starter
+      scaling:
+        minInstances: 1
+        maxInstances: 3
+        targetMemoryPercent: 70
+        targetCPUPercent: 70
       envVars:
       - key: GOOGLE_API_KEY
         sync: false
@@ -256,6 +341,11 @@ projects:
       runtime: python
       repo: https://github.com/ag-ui-protocol/ag-ui
       plan: starter
+      scaling:
+        minInstances: 1
+        maxInstances: 3
+        targetMemoryPercent: 70
+        targetCPUPercent: 70
       envVars:
       - key: GOOGLE_API_KEY
         sync: false
@@ -269,6 +359,11 @@ projects:
       runtime: python
       repo: https://github.com/ag-ui-protocol/ag-ui
       plan: starter
+      scaling:
+        minInstances: 1
+        maxInstances: 3
+        targetMemoryPercent: 70
+        targetCPUPercent: 70
       envVars:
       - key: ANTHROPIC_API_KEY
         sync: false
@@ -282,6 +377,11 @@ projects:
       runtime: node
       repo: https://github.com/ag-ui-protocol/ag-ui
       plan: starter
+      scaling:
+        minInstances: 1
+        maxInstances: 3
+        targetMemoryPercent: 70
+        targetCPUPercent: 70
       envVars:
       - key: ANTHROPIC_API_KEY
         sync: false
