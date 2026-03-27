@@ -294,7 +294,12 @@ projects:
       name: ag-ui-dojo-app
       runtime: node
       repo: https://github.com/ag-ui-protocol/ag-ui
-      plan: starter
+      plan: standard
+      scaling:
+        minInstances: 1
+        maxInstances: 5
+        targetMemoryPercent: 70
+        targetCPUPercent: 70
       envVars:
       - key: OPENAI_API_KEY
         sync: false
