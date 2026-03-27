@@ -179,7 +179,7 @@ export class LangGraphAgent extends AbstractAgent {
     if (event.type !== EventType.RAW && event.rawEvent !== undefined) {
       const emitRawData = this.activeRun?.emitRawEventData ?? true;
       if (!emitRawData) {
-        delete event.rawEvent;
+        event.rawEvent = undefined;
       }
     }
     this.subscriber.next(event);
@@ -545,6 +545,11 @@ export class LangGraphAgent extends AbstractAgent {
         const currentNodeName = metadata.langgraph_node;
         const eventType = chunkData.event;
 
+        // Set emit_raw_event_data per-event (before any dispatchEvent call)
+        // so typed events in this iteration use the correct value.
+        const rawDataFlag = chunkData.metadata?.["emit-raw-event-data"];
+        this.activeRun!.emitRawEventData = rawDataFlag != null ? Boolean(rawDataFlag) : true;
+
         // Set server-assigned run id as soon as available
         if (metadata.run_id) {
           this.activeRun!.id = metadata.run_id;
@@ -615,11 +620,8 @@ export class LangGraphAgent extends AbstractAgent {
           );
         }
 
-        const shouldEmitRaw = chunkData.metadata?.["emit-raw-events"] ?? true;
-        const emitRawEventData = chunkData.metadata?.["emit-raw-event-data"];
-        if (emitRawEventData !== undefined) {
-          this.activeRun!.emitRawEventData = emitRawEventData;
-        }
+        const rawEmitFlag = chunkData.metadata?.["emit-raw-events"];
+        const shouldEmitRaw = rawEmitFlag != null ? Boolean(rawEmitFlag) : true;
 
         if (shouldEmitRaw) {
           this.dispatchEvent({

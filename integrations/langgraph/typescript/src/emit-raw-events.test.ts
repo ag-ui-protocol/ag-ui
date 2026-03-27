@@ -101,23 +101,19 @@ describe("emit-raw-event-data flag", () => {
 // emit-raw-events — controls whether RAW events are emitted at all
 // ---------------------------------------------------------------------------
 describe("emit-raw-events flag", () => {
-  it("suppresses RAW dispatch when metadata has emit-raw-events=false", () => {
-    const agent = makeAgent();
-    const events = collectEvents(agent);
-    agent.activeRun = { id: "run-1" };
+  // Note: These tests simulate the streaming loop's flag-reading logic because
+  // testing through the full agent pipeline would require extensive LangGraph SDK
+  // mocking. The logic below mirrors agent.ts's _handle_stream_events.
 
-    const chunkData = {
-      event: "on_chain_start",
-      data: {},
-      metadata: { "langgraph_node": "node1", "emit-raw-events": false },
-    };
-
-    // Simulate what the streaming loop does:
-    const shouldEmitRaw = chunkData.metadata?.["emit-raw-events"] ?? true;
-    const emitRawEventData = chunkData.metadata?.["emit-raw-event-data" as keyof typeof chunkData.metadata];
-    if (emitRawEventData !== undefined) {
-      agent.activeRun!.emitRawEventData = emitRawEventData as boolean;
-    }
+  /** Simulate the streaming loop's flag-reading and conditional RAW dispatch. */
+  function simulateRawEventDispatch(
+    agent: LangGraphAgent,
+    chunkData: { metadata?: Record<string, unknown> },
+  ) {
+    const rawEmitFlag = chunkData.metadata?.["emit-raw-events"];
+    const shouldEmitRaw = rawEmitFlag != null ? Boolean(rawEmitFlag) : true;
+    const rawDataFlag = chunkData.metadata?.["emit-raw-event-data"];
+    agent.activeRun!.emitRawEventData = rawDataFlag != null ? Boolean(rawDataFlag) : true;
 
     if (shouldEmitRaw) {
       agent.dispatchEvent({
@@ -125,9 +121,18 @@ describe("emit-raw-events flag", () => {
         event: chunkData,
       } as any);
     }
+  }
 
-    const rawEvents = events.filter((e) => e.type === EventType.RAW);
-    expect(rawEvents).toHaveLength(0);
+  it("suppresses RAW dispatch when metadata has emit-raw-events=false", () => {
+    const agent = makeAgent();
+    const events = collectEvents(agent);
+    agent.activeRun = { id: "run-1" };
+
+    simulateRawEventDispatch(agent, {
+      metadata: { langgraph_node: "node1", "emit-raw-events": false },
+    });
+
+    expect(events.filter((e) => e.type === EventType.RAW)).toHaveLength(0);
   });
 
   it("emits RAW events by default (no flag in metadata)", () => {
@@ -135,23 +140,11 @@ describe("emit-raw-events flag", () => {
     const events = collectEvents(agent);
     agent.activeRun = { id: "run-1" };
 
-    const chunkData = {
-      event: "on_chain_start",
-      data: {},
+    simulateRawEventDispatch(agent, {
       metadata: { langgraph_node: "node1" },
-    };
+    });
 
-    const shouldEmitRaw = chunkData.metadata?.["emit-raw-events" as keyof typeof chunkData.metadata] ?? true;
-
-    if (shouldEmitRaw) {
-      agent.dispatchEvent({
-        type: EventType.RAW,
-        event: chunkData,
-      } as any);
-    }
-
-    const rawEvents = events.filter((e) => e.type === EventType.RAW);
-    expect(rawEvents).toHaveLength(1);
+    expect(events.filter((e) => e.type === EventType.RAW)).toHaveLength(1);
   });
 
   it("emits RAW events when metadata has emit-raw-events=true", () => {
@@ -159,22 +152,10 @@ describe("emit-raw-events flag", () => {
     const events = collectEvents(agent);
     agent.activeRun = { id: "run-1" };
 
-    const chunkData = {
-      event: "on_chain_start",
-      data: {},
-      metadata: { "langgraph_node": "node1", "emit-raw-events": true },
-    };
+    simulateRawEventDispatch(agent, {
+      metadata: { langgraph_node: "node1", "emit-raw-events": true },
+    });
 
-    const shouldEmitRaw = chunkData.metadata?.["emit-raw-events"] ?? true;
-
-    if (shouldEmitRaw) {
-      agent.dispatchEvent({
-        type: EventType.RAW,
-        event: chunkData,
-      } as any);
-    }
-
-    const rawEvents = events.filter((e) => e.type === EventType.RAW);
-    expect(rawEvents).toHaveLength(1);
+    expect(events.filter((e) => e.type === EventType.RAW)).toHaveLength(1);
   });
 });
