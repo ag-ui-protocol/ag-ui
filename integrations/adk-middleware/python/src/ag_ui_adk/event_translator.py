@@ -23,6 +23,7 @@ import json
 from google.adk.events import Event as ADKEvent
 
 from .config import PredictStateMapping, normalize_predict_state
+from .serialization import serialize_tool_args
 
 import logging
 logger = logging.getLogger(__name__)
@@ -761,9 +762,7 @@ class EventTranslator:
                             parent_message_id=None
                         )
                         if hasattr(fc, 'args') and fc.args:
-                            # Convert args to string (JSON format)
-                            import json
-                            args_str = json.dumps(fc.args) if isinstance(fc.args, dict) else str(fc.args)
+                            args_str = serialize_tool_args(fc.args)
                             yield ToolCallArgsEvent(
                                 type=EventType.TOOL_CALL_ARGS,
                                 tool_call_id=fc.id,
@@ -839,8 +838,7 @@ class EventTranslator:
 
             # Emit TOOL_CALL_ARGS if we have arguments
             if hasattr(func_call, 'args') and func_call.args:
-                # Convert args to string (JSON format)
-                args_str = json.dumps(func_call.args) if isinstance(func_call.args, dict) else str(func_call.args)
+                args_str = serialize_tool_args(func_call.args)
 
                 yield ToolCallArgsEvent(
                     type=EventType.TOOL_CALL_ARGS,
@@ -1198,7 +1196,7 @@ def _translate_function_calls_to_tool_calls(function_calls: List[Any]) -> List[T
             type="function",
             function=FunctionCall(
                 name=fc.name,
-                arguments=json.dumps(fc.args) if hasattr(fc, 'args') and fc.args else "{}"
+                arguments=serialize_tool_args(fc.args) if hasattr(fc, 'args') and fc.args else "{}"
             )
         )
         tool_calls.append(tool_call)

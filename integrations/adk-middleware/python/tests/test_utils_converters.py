@@ -399,7 +399,7 @@ class TestConvertADKEventToAGUIMessage:
         assert tool_call.id == "call_123"
         assert tool_call.type == "function"
         assert tool_call.function.name == "get_weather"
-        assert tool_call.function.arguments == '{"location": "Boston"}'
+        assert json.loads(tool_call.function.arguments) == {"location": "Boston"}
 
     def test_convert_assistant_event_with_text_and_function_call(self):
         """Test converting assistant event with both text and function call."""
