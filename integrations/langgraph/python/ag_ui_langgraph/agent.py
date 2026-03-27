@@ -113,7 +113,11 @@ class LangGraphAgent:
         if event.type == EventType.RAW:
             event.event = make_json_safe(event.event)
         elif event.raw_event:
-            event.raw_event = make_json_safe(event.raw_event)
+            emit_raw_data = self.active_run.get("emit_raw_event_data", True) if self.active_run else True
+            if not emit_raw_data:
+                event.raw_event = None
+            else:
+                event.raw_event = make_json_safe(event.raw_event)
 
         return event
 
