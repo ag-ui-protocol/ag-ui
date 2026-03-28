@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package ag_ui;
 
+import "google/protobuf/struct.proto";
+
 message ToolCall {
   string id = 1;
   string type = 2; 
@@ -10,6 +12,7 @@ message ToolCall {
     string arguments = 2; 
   }  
   Function function = 3;
+  map<string, google.protobuf.Struct> provider_metadata = 4;
 }
 
 message Message {

@@ -112,6 +112,56 @@ class TestEvents(unittest.TestCase):
         self.assertEqual(serialized["toolCallName"], "get_weather")
         self.assertEqual(serialized["parentMessageId"], "msg_456")
 
+    def test_tool_call_start_provider_metadata(self):
+        """Test that ToolCallStartEvent supports provider_metadata field"""
+        metadata = {"google": {"thought_signature": "sig_abc"}}
+        event = ToolCallStartEvent(
+            tool_call_id="call_123",
+            tool_call_name="run_query",
+            provider_metadata=metadata,
+            timestamp=1648214400000
+        )
+
+        self.assertEqual(event.provider_metadata, metadata)
+
+        # Serialization should use camelCase key
+        serialized = event.model_dump(by_alias=True)
+        self.assertEqual(serialized["type"], "TOOL_CALL_START")
+        self.assertIn("providerMetadata", serialized)
+        self.assertEqual(serialized["providerMetadata"], metadata)
+
+    def test_tool_call_start_provider_metadata_optional(self):
+        """Test that provider_metadata is optional on ToolCallStartEvent"""
+        event = ToolCallStartEvent(
+            tool_call_id="call_123",
+            tool_call_name="noop"
+        )
+
+        self.assertIsNone(event.provider_metadata)
+
+        serialized = event.model_dump(by_alias=True)
+        self.assertIsNone(serialized["providerMetadata"])
+
+    def test_tool_call_start_provider_metadata_round_trip(self):
+        """Test ToolCallStartEvent with provider_metadata survives Event union round-trip"""
+        metadata = {"openai": {"reasoning_tokens": 42}}
+        event_data = {
+            "type": "TOOL_CALL_START",
+            "toolCallId": "call_rt",
+            "toolCallName": "think",
+            "providerMetadata": metadata
+        }
+
+        adapter = TypeAdapter(Event)
+        parsed = adapter.validate_python(event_data)
+
+        self.assertIsInstance(parsed, ToolCallStartEvent)
+        self.assertEqual(parsed.provider_metadata, metadata)
+
+        # Re-serialise and check the field survives
+        serialized = parsed.model_dump(by_alias=True)
+        self.assertEqual(serialized["providerMetadata"], metadata)
+
     def test_tool_call_args(self):
         """Test creating and serializing a ToolCallArgsEvent event"""
         event = ToolCallArgsEvent(

@@ -235,7 +235,8 @@ export const defaultApplyEvents = (
           applyMutation(mutation);
 
           if (mutation.stopPropagation !== true) {
-            const { toolCallId, toolCallName, parentMessageId } = event as ToolCallStartEvent;
+            const { toolCallId, toolCallName, parentMessageId, providerMetadata } =
+              event as ToolCallStartEvent;
 
             let targetMessage: AssistantMessage;
 
@@ -266,6 +267,7 @@ export const defaultApplyEvents = (
                 name: toolCallName,
                 arguments: "",
               },
+              ...(providerMetadata !== undefined && { providerMetadata }),
             });
 
             applyMutation({ messages });

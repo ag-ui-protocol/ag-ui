@@ -167,6 +167,70 @@ describe("convertAGUIMessagesToMastra", () => {
       ]);
     });
 
+    it("preserves providerMetadata on tool calls when present", () => {
+      const providerMetadata = { google: { thoughtSignature: "abc123" } };
+      const messages: Message[] = [
+        {
+          id: "1",
+          role: "assistant",
+          content: "",
+          toolCalls: [
+            {
+              id: "tc-1",
+              type: "function",
+              function: {
+                name: "get_weather",
+                arguments: JSON.stringify({ city: "NYC" }),
+              },
+              providerMetadata,
+            },
+          ],
+        },
+      ];
+
+      const result = convertAGUIMessagesToMastra(messages);
+
+      expect(result).toEqual([
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "tc-1",
+              toolName: "get_weather",
+              args: { city: "NYC" },
+              providerMetadata,
+            },
+          ],
+        },
+      ]);
+    });
+
+    it("omits providerMetadata from tool-call part when absent", () => {
+      const messages: Message[] = [
+        {
+          id: "1",
+          role: "assistant",
+          content: "",
+          toolCalls: [
+            {
+              id: "tc-1",
+              type: "function",
+              function: {
+                name: "search",
+                arguments: JSON.stringify({ q: "test" }),
+              },
+            },
+          ],
+        },
+      ];
+
+      const result = convertAGUIMessagesToMastra(messages);
+
+      const toolCallPart = (result[0].content as any[])[0];
+      expect(toolCallPart).not.toHaveProperty("providerMetadata");
+    });
+
     it("omits text part when content is empty", () => {
       const messages: Message[] = [
         {

@@ -45,6 +45,7 @@ interface MastraAgentStreamOptions {
     toolCallId: string;
     toolName: string;
     args: any;
+    providerMetadata?: Record<string, Record<string, any>>;
   }) => void;
   onToolResultPart?: (streamPart: { toolCallId: string; result: any }) => void;
   onError?: (error: Error) => void;
@@ -151,6 +152,9 @@ export class MastraAgent extends AbstractAgent {
                 parentMessageId: messageId,
                 toolCallId: streamPart.toolCallId,
                 toolCallName: streamPart.toolName,
+                ...(streamPart.providerMetadata !== undefined && {
+                  providerMetadata: streamPart.providerMetadata,
+                }),
               };
               subscriber.next(startEvent);
 
@@ -318,6 +322,7 @@ export class MastraAgent extends AbstractAgent {
                   toolCallId: chunk.payload.toolCallId,
                   toolName: chunk.payload.toolName,
                   args: chunk.payload.args,
+                  providerMetadata: chunk.payload.providerMetadata,
                 });
                 break;
               }
@@ -375,6 +380,7 @@ export class MastraAgent extends AbstractAgent {
                     toolCallId: chunk.payload.toolCallId,
                     toolName: chunk.payload.toolName,
                     args: chunk.payload.args,
+                    providerMetadata: chunk.payload.providerMetadata,
                   });
                   break;
                 }

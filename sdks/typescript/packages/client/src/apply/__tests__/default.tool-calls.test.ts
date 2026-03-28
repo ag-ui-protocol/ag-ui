@@ -342,6 +342,84 @@ describe("defaultApplyEvents with tool calls", () => {
     );
   });
 
+  it("should preserve providerMetadata on a tool call when present in TOOL_CALL_START", async () => {
+    const events$ = new Subject<BaseEvent>();
+    const initialState: RunAgentInput = {
+      messages: [],
+      state: {},
+      threadId: "test-thread",
+      runId: "test-run",
+      tools: [],
+      context: [],
+    };
+
+    const agent = createAgent(initialState.messages);
+    const result$ = defaultApplyEvents(initialState, events$, agent, []);
+    const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
+
+    const providerMetadata = { google: { thoughtSignature: "sig-xyz" } };
+
+    events$.next({ type: EventType.RUN_STARTED } as RunStartedEvent);
+    events$.next({
+      type: EventType.TOOL_CALL_START,
+      toolCallId: "tool1",
+      toolCallName: "search",
+      providerMetadata,
+    } as ToolCallStartEvent);
+    events$.next({
+      type: EventType.TOOL_CALL_ARGS,
+      toolCallId: "tool1",
+      delta: '{"q":"test"}',
+    } as ToolCallArgsEvent);
+    events$.next({
+      type: EventType.TOOL_CALL_END,
+      toolCallId: "tool1",
+    } as ToolCallEndEvent);
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    events$.complete();
+
+    const stateUpdates = await stateUpdatesPromise;
+    const toolCall = (stateUpdates[0].messages?.[0] as AssistantMessage).toolCalls?.[0];
+
+    expect(toolCall?.providerMetadata).toEqual(providerMetadata);
+  });
+
+  it("should not set providerMetadata on a tool call when absent from TOOL_CALL_START", async () => {
+    const events$ = new Subject<BaseEvent>();
+    const initialState: RunAgentInput = {
+      messages: [],
+      state: {},
+      threadId: "test-thread",
+      runId: "test-run",
+      tools: [],
+      context: [],
+    };
+
+    const agent = createAgent(initialState.messages);
+    const result$ = defaultApplyEvents(initialState, events$, agent, []);
+    const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
+
+    events$.next({ type: EventType.RUN_STARTED } as RunStartedEvent);
+    events$.next({
+      type: EventType.TOOL_CALL_START,
+      toolCallId: "tool1",
+      toolCallName: "search",
+    } as ToolCallStartEvent);
+    events$.next({
+      type: EventType.TOOL_CALL_END,
+      toolCallId: "tool1",
+    } as ToolCallEndEvent);
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    events$.complete();
+
+    const stateUpdates = await stateUpdatesPromise;
+    const toolCall = (stateUpdates[0].messages?.[0] as AssistantMessage).toolCalls?.[0];
+
+    expect(toolCall).not.toHaveProperty("providerMetadata");
+  });
+
   it("should handle advanced scenarios with multiple tools and text messages", async () => {
     // Create a subject and state for events
     const events$ = new Subject<BaseEvent>();

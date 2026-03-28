@@ -123,6 +123,7 @@ export const ToolCallStartEventSchema = BaseEventSchema.extend({
   toolCallId: z.string(),
   toolCallName: z.string(),
   parentMessageId: z.string().optional(),
+  providerMetadata: z.record(z.string(), z.record(z.string(), z.any())).optional(),
 });
 
 export const ToolCallArgsEventSchema = BaseEventSchema.extend({

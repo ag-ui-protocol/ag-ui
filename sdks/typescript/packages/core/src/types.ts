@@ -10,6 +10,7 @@ export const ToolCallSchema = z.object({
   type: z.literal("function"),
   function: FunctionCallSchema,
   encryptedValue: z.string().optional(),
+  providerMetadata: z.record(z.string(), z.record(z.string(), z.any())).optional(),
 });
 
 export const BaseMessageSchema = z.object({

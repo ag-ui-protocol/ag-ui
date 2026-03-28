@@ -35,6 +35,7 @@ class ToolCall(ConfiguredBaseModel):
     type: Literal["function"] = "function"  # pyright: ignore[reportIncompatibleVariableOverride]
     function: FunctionCall
     encrypted_value: Optional[str] = None
+    provider_metadata: Optional[Dict[str, Dict[str, Any]]] = None
 
 
 class BaseMessage(ConfiguredBaseModel):

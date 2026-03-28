@@ -46,6 +46,9 @@ export function convertAGUIMessagesToMastra(messages: Message[]): CoreMessage[] 
           toolCallId: toolCall.id,
           toolName: toolCall.function.name,
           args: JSON.parse(toolCall.function.arguments),
+          ...(toolCall.providerMetadata !== undefined && {
+            providerMetadata: toolCall.providerMetadata,
+          }),
         });
       }
       result.push({
