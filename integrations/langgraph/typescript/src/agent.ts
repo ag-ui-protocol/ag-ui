@@ -973,25 +973,35 @@ export class LangGraphAgent extends AbstractAgent {
           break;
         }
 
-        if (!this.activeRun!.hasFunctionStreaming) {
-          this.dispatchEvent({
-            type: EventType.TOOL_CALL_START,
-            toolCallId: toolCallOutput.tool_call_id,
-            toolCallName: toolCallOutput.name,
-            parentMessageId: toolCallOutput.id,
-            rawEvent: event,
-          })
-          this.dispatchEvent({
-            type: EventType.TOOL_CALL_ARGS,
-            toolCallId: toolCallOutput.tool_call_id,
-            delta: JSON.stringify(event.data.input),
-            rawEvent: event,
-          });
-          this.dispatchEvent({
-            type: EventType.TOOL_CALL_END,
-            toolCallId: toolCallOutput.tool_call_id,
-            rawEvent: event,
-          });
+        // Emit TOOL_CALL_START + ARGS + END for tool calls that were not
+        // already handled by the streaming path. This covers:
+        // 1. Non-streaming runs (hasFunctionStreaming is false)
+        // 2. Parallel tool calls where only the first one was streamed
+        //    (hasFunctionStreaming is true but this specific tool call
+        //    was never emitted as TOOL_CALL_START during streaming)
+        {
+          const currentInProgress = this.getMessageInProgress(this.activeRun!.id);
+          const wasStreamedAsCurrentTool = currentInProgress?.toolCallId === toolCallOutput.tool_call_id;
+          if (!wasStreamedAsCurrentTool) {
+            this.dispatchEvent({
+              type: EventType.TOOL_CALL_START,
+              toolCallId: toolCallOutput.tool_call_id,
+              toolCallName: toolCallOutput.name,
+              parentMessageId: toolCallOutput.id,
+              rawEvent: event,
+            })
+            this.dispatchEvent({
+              type: EventType.TOOL_CALL_ARGS,
+              toolCallId: toolCallOutput.tool_call_id,
+              delta: JSON.stringify(event.data.input),
+              rawEvent: event,
+            });
+            this.dispatchEvent({
+              type: EventType.TOOL_CALL_END,
+              toolCallId: toolCallOutput.tool_call_id,
+              rawEvent: event,
+            });
+          }
         }
 
         const content: string = Array.isArray(toolCallOutput.content)
