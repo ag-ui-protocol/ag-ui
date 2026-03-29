@@ -281,6 +281,14 @@ export class A2UIMiddleware extends Middleware {
         next: (eventWithState) => {
           const event = eventWithState.event;
 
+          // === A2UI MIDDLEWARE DEBUG ===
+          if (event.type === EventType.TOOL_CALL_START || event.type === EventType.TOOL_CALL_RESULT || event.type === EventType.RUN_STARTED || event.type === EventType.RUN_FINISHED || event.type === EventType.ACTIVITY_SNAPSHOT) {
+            const ts = new Date().toISOString().substring(11, 23);
+            const detail = (event as any).toolCallName ?? (event as any).toolCallId?.substring(0,8) ?? (event as any).activityType ?? '';
+            console.log(`[A2UI-MW-DEBUG] ${ts} ${event.type} ${detail}`);
+          }
+          // === END DEBUG ===
+
           if (event.type === EventType.TOOL_CALL_START) {
             const startEvent = event as ToolCallStartEvent;
 
