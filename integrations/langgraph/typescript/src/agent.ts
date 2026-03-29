@@ -302,21 +302,9 @@ export class LangGraphAgent extends AbstractAgent {
     let stateValues = threadState.values;
     this.activeRun!.schemaKeys = await this.getSchemaKeys();
 
-    // Detect regeneration vs new message: check if the latest user message
-    // from the AG-UI input already exists in the LangGraph thread state.
-    // If it does AND there are more messages in state, it's a regeneration.
-    // If the latest user message is NEW (not in state), it's a fresh run.
-    const lastInputUserMessage = [...messages].reverse().find((m) => m.role === "user");
-    const lastInputUserContent = lastInputUserMessage?.content ?? "";
-    const stateHasMoreMessages =
-      (agentState.values.messages ?? []).length > messages.filter((m) => m.role !== "system").length;
-    const lastUserAlreadyInState = lastInputUserMessage && agentStateMessages.some(
-      (m: LangGraphPlatformMessage) =>
-        m.type === "human" && m.content === lastInputUserContent,
-    );
-    const isRegeneration = stateHasMoreMessages && lastUserAlreadyInState;
-
-    if (isRegeneration) {
+    if (
+      (agentState.values.messages ?? []).length > messages.filter((m) => m.role !== "system").length
+    ) {
       let lastUserMessage: LangGraphMessage | null = null;
       // Find the first user message by working backwards from the last message
       for (let i = messages.length - 1; i >= 0; i--) {
