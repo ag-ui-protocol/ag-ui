@@ -455,12 +455,45 @@ export class A2UIMiddleware extends Middleware {
               if (!isTrackedA2UI && !streamingHandled) {
                 const parsed = tryParseA2UIOperations(resultEvent.content);
                 if (parsed) {
-                  for (const activityEvent of this.createA2UIActivityEvents(
-                    parsed.operations,
-                    parsed.actionHandlers,
-                    resultEvent.toolCallId,
-                  )) {
-                    subscriber.next(activityEvent);
+                  // Two-phase rendering: emit schema (createSurface + updateComponents)
+                  // first, then data (updateDataModel) separately. This gives the renderer
+                  // the component tree before data arrives, enabling progressive display.
+                  const schemaOps = parsed.operations.filter(
+                    (op: any) => op.createSurface || op.updateComponents,
+                  );
+                  const dataOps = parsed.operations.filter(
+                    (op: any) => op.updateDataModel,
+                  );
+
+                  if (schemaOps.length > 0) {
+                    // Phase 1: emit schema
+                    for (const activityEvent of this.createA2UIActivityEvents(
+                      schemaOps,
+                      parsed.actionHandlers,
+                      resultEvent.toolCallId,
+                    )) {
+                      subscriber.next(activityEvent);
+                    }
+                  }
+
+                  if (dataOps.length > 0) {
+                    // Phase 2: emit data (replaces the schema-only snapshot)
+                    for (const activityEvent of this.createA2UIActivityEvents(
+                      [...schemaOps, ...dataOps],
+                      parsed.actionHandlers,
+                      resultEvent.toolCallId,
+                    )) {
+                      subscriber.next(activityEvent);
+                    }
+                  } else if (schemaOps.length === 0) {
+                    // No schema/data split possible — emit all at once
+                    for (const activityEvent of this.createA2UIActivityEvents(
+                      parsed.operations,
+                      parsed.actionHandlers,
+                      resultEvent.toolCallId,
+                    )) {
+                      subscriber.next(activityEvent);
+                    }
                   }
                 }
               }
