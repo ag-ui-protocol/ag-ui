@@ -302,26 +302,44 @@ export class LangGraphAgent extends AbstractAgent {
     let stateValues = threadState.values;
     this.activeRun!.schemaKeys = await this.getSchemaKeys();
 
+    // Detect regeneration: the LangGraph state may have more messages than
+    // the AG-UI input (e.g., tool call/result messages not in the frontend's
+    // message array). This is normal for sequential runs with tool calls.
+    //
+    // Only enter the regeneration path if:
+    // 1. State has more messages than input, AND
+    // 2. The last user message from the input ALREADY EXISTS in the state
+    //    (by ID). If the last user message is NEW, it's a fresh run.
     if (
       (agentState.values.messages ?? []).length > messages.filter((m) => m.role !== "system").length
     ) {
-      let lastUserMessage: LangGraphMessage | null = null;
-      // Find the first user message by working backwards from the last message
+      // Find the last user message in the AG-UI input
+      let lastInputUserMessage: typeof messages[0] | null = null;
       for (let i = messages.length - 1; i >= 0; i--) {
         if (messages[i].role === "user") {
-          lastUserMessage = aguiMessagesToLangChain([messages[i]])[0];
+          lastInputUserMessage = messages[i];
           break;
         }
       }
 
-      if (!lastUserMessage) {
+      if (!lastInputUserMessage) {
         return this.subscriber.error("No user message found in messages to regenerate");
       }
 
-      return this.prepareRegenerateStream(
-        { ...input, messageCheckpoint: lastUserMessage },
-        streamMode,
+      // Check if this user message already exists in the LangGraph state
+      const messageExistsInState = agentStateMessages.some(
+        (m: LangGraphPlatformMessage) => m.id === lastInputUserMessage!.id,
       );
+
+      if (messageExistsInState) {
+        // The last user message is already processed — this is a regeneration
+        const lastUserMessage = aguiMessagesToLangChain([lastInputUserMessage])[0];
+        return this.prepareRegenerateStream(
+          { ...input, messageCheckpoint: lastUserMessage },
+          streamMode,
+        );
+      }
+      // Otherwise: last user message is new — fall through to fresh run
     }
     this.activeRun!.graphInfo = await this.client.assistants.getGraph(this.assistant.assistant_id);
 
