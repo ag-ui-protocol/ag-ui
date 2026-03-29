@@ -182,7 +182,13 @@ export class LangGraphAgent extends AbstractAgent {
 
   run(input: RunAgentInput) {
     return new Observable<ProcessedEvents>((subscriber) => {
-      this.runAgentStream(input, subscriber);
+      this.runAgentStream(input, subscriber).catch((err) => {
+        // Propagate unhandled errors from the async stream to the Observable
+        // so the frontend receives them instead of getting stuck.
+        if (!subscriber.closed) {
+          subscriber.error(err);
+        }
+      });
       return () => {};
     });
   }
@@ -1443,7 +1449,7 @@ export class LangGraphAgent extends AbstractAgent {
       (state.values as State).messages?.some((m: LangGraphPlatformMessage) => m.id === messageId),
     );
 
-    if (!targetState) throw new Error("Message not found");
+    if (!targetState) return null as any;
 
     const targetStateMessages = (targetState.values as State).messages ?? [];
     const messageIndex = targetStateMessages.findIndex(
