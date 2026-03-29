@@ -298,8 +298,18 @@ export class A2UIMiddleware extends Middleware {
               a2uiJsonStreams.set(startEvent.toolCallId, { args: "", emittedCount: 0 });
             }
 
-            // render_a2ui: dynamic streaming is handled via auto-detect on
-            // the outer tool's TOOL_CALL_RESULT. Tracking render_a2ui args
+            // render_a2ui: dynamic streaming. Track streaming args to
+            // extract schema (components) first, then data (items).
+            // Do NOT add to a2uiToolCallIds — if streaming extraction fails,
+            // auto-detect on the outer tool's TOOL_CALL_RESULT still works.
+            if (startEvent.toolCallName === RENDER_A2UI_TOOL) {
+              streamingToolCalls.set(startEvent.toolCallId, {
+                schema: null, args: "", emittedCount: 0,
+                dataKey: "items", schemaEmitted: false,
+              });
+            }
+
+            // Note: previously render_a2ui tracking was disabled because it
             // directly causes duplicate surfaces when it's called as an inner
             // tool inside generate_a2ui. Leave this to the auto-detect path.
 
@@ -473,8 +483,8 @@ export class A2UIMiddleware extends Middleware {
                     (op: any) => op.updateDataModel,
                   );
 
-                  if (schemaOps.length > 0) {
-                    // Phase 1: emit schema
+                  if (schemaOps.length > 0 && dataOps.length > 0) {
+                    // Phase 1: emit schema immediately
                     for (const activityEvent of this.createA2UIActivityEvents(
                       schemaOps,
                       parsed.actionHandlers,
@@ -482,12 +492,30 @@ export class A2UIMiddleware extends Middleware {
                     )) {
                       subscriber.next(activityEvent);
                     }
-                  }
-
-                  if (dataOps.length > 0) {
-                    // Phase 2: emit data (replaces the schema-only snapshot)
+                    // Phase 2: defer data emission to allow a render frame
+                    // between schema and data, making the progressive display visible
+                    setTimeout(() => {
+                      for (const activityEvent of this.createA2UIActivityEvents(
+                        [...schemaOps, ...dataOps],
+                        parsed.actionHandlers,
+                        resultEvent.toolCallId,
+                      )) {
+                        subscriber.next(activityEvent);
+                      }
+                    }, 50);
+                  } else if (schemaOps.length > 0) {
+                    // Schema only (no data) — emit immediately
                     for (const activityEvent of this.createA2UIActivityEvents(
-                      [...schemaOps, ...dataOps],
+                      schemaOps,
+                      parsed.actionHandlers,
+                      resultEvent.toolCallId,
+                    )) {
+                      subscriber.next(activityEvent);
+                    }
+                  } else if (schemaOps.length === 0 && dataOps.length > 0) {
+                    // Data only — emit immediately
+                    for (const activityEvent of this.createA2UIActivityEvents(
+                      dataOps,
                       parsed.actionHandlers,
                       resultEvent.toolCallId,
                     )) {
