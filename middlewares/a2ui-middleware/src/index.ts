@@ -282,10 +282,11 @@ export class A2UIMiddleware extends Middleware {
           const event = eventWithState.event;
 
           // === A2UI MIDDLEWARE DEBUG ===
-          if (event.type === EventType.TOOL_CALL_START || event.type === EventType.TOOL_CALL_RESULT || event.type === EventType.RUN_STARTED || event.type === EventType.RUN_FINISHED || event.type === EventType.ACTIVITY_SNAPSHOT) {
+          if (event.type === EventType.TOOL_CALL_START || event.type === EventType.TOOL_CALL_RESULT || event.type === EventType.TOOL_CALL_ARGS || event.type === EventType.RUN_STARTED || event.type === EventType.RUN_FINISHED || event.type === EventType.ACTIVITY_SNAPSHOT) {
             const ts = new Date().toISOString().substring(11, 23);
             const detail = (event as any).toolCallName ?? (event as any).toolCallId?.substring(0,8) ?? (event as any).activityType ?? '';
-            console.log(`[A2UI-MW-DEBUG] ${ts} ${event.type} ${detail}`);
+            const argsLen = event.type === EventType.TOOL_CALL_ARGS ? ` delta_len=${((event as any).delta ?? '').length}` : '';
+            console.log(`[A2UI-MW-DEBUG] ${ts} ${event.type} ${detail}${argsLen}`);
           }
           // === END DEBUG ===
 
@@ -354,16 +355,60 @@ export class A2UIMiddleware extends Middleware {
               // We wait for the components array to be fully closed before setting
               // the schema, because partial components (e.g., only the root Column
               // without its children) cause the Lit processor to fail validation.
-              if (!streaming.schema && deltaHasStructuralChar) {
+              if (deltaHasStructuralChar) {
                 const result = extractCompleteItemsWithStatus(streaming.args, "components");
                 const surfaceId = extractStringField(streaming.args, "surfaceId");
                 const rawCatalogId = extractStringField(streaming.args, "catalogId") ?? "basic";
                 const catalogId = rawCatalogId === "basic"
                   ? "https://a2ui.org/specification/v0_9/basic_catalog.json"
                   : rawCatalogId;
-                if (result?.arrayClosed && result.items.length > 0 && surfaceId) {
-                  streaming.schema = { surfaceId, catalogId, components: result.items as any[], dataKey: "items" };
-                  streaming.dataKey = "items";
+
+                if (result && result.items.length > 0 && surfaceId) {
+                  // Progressive component streaming: emit activity snapshots
+                  // as components arrive, not just when the full array closes.
+                  const newComponents = result.items.length > streaming.emittedCount;
+
+                  if (newComponents) {
+                    if (!streaming.schema) {
+                      // First emission — create the schema object
+                      streaming.schema = { surfaceId, catalogId, components: result.items as any[], dataKey: "items" };
+                    } else {
+                      // Update components in existing schema
+                      streaming.schema.components = result.items as any[];
+                    }
+
+                    const isFirstEmission = !streaming.schemaEmitted;
+                    streaming.schemaEmitted = true;
+                    streaming.emittedCount = result.items.length;
+
+                    console.log(`[A2UI-STREAM] Progressive emit: components=${result.items.length} arrayClosed=${result.arrayClosed} first=${isFirstEmission} surface=${surfaceId}`);
+
+                    // Emit surface with current components (no data yet if items not parsed)
+                    const ops: Array<Record<string, unknown>> = [];
+                    if (isFirstEmission) {
+                      ops.push({ version: "v0.9", createSurface: { surfaceId, catalogId } });
+                    }
+                    ops.push({ version: "v0.9", updateComponents: { surfaceId, components: result.items } });
+
+                    // Try to include data model if items are available
+                    const items = extractCompleteItems(streaming.args, streaming.dataKey);
+                    if (items && items.length > 0) {
+                      ops.push({ version: "v0.9", updateDataModel: { surfaceId, path: "/", value: { [streaming.dataKey]: items } } });
+                    }
+
+                    const content: Record<string, unknown> = { [A2UI_OPERATIONS_KEY]: ops };
+                    if (streaming.actionHandlers) {
+                      content.actionHandlers = streaming.actionHandlers;
+                    }
+                    const snapshotEvent: ActivitySnapshotEvent = {
+                      type: EventType.ACTIVITY_SNAPSHOT,
+                      messageId: `a2ui-surface-${surfaceId}-${argsEvent.toolCallId}`,
+                      activityType: A2UIActivityType,
+                      content,
+                      replace: true,
+                    };
+                    subscriber.next(snapshotEvent);
+                  }
                 }
               }
 
@@ -393,20 +438,9 @@ export class A2UIMiddleware extends Middleware {
               // always created with data, avoiding a race condition where an empty-data
               // ACTIVITY_SNAPSHOT followed by a data ACTIVITY_SNAPSHOT can cause the
               // frontend to lose the data update.
-              if (streaming.schema && deltaHasStructuralChar) {
-                const items = extractCompleteItems(streaming.args, streaming.dataKey);
-                const newItems = items && items.length > streaming.emittedCount;
-                // Re-emit if actionHandlers were just extracted (even with no new items)
-                const actionHandlersJustExtracted = !hadActionHandlers && !!streaming.actionHandlers && streaming.emittedCount > 0;
-                if (newItems || actionHandlersJustExtracted) {
-                  const currentItems = items ?? [];
-                  // On the first emission for dynamic surfaces, include createSurface
-                  const isFirstEmission = !streaming.schemaEmitted;
-                  streaming.schemaEmitted = true;
-                  if (newItems) streaming.emittedCount = currentItems.length;
-                  emitStreamingData(subscriber, streaming.schema, streaming.dataKey, currentItems, argsEvent.toolCallId, streaming.actionHandlers, isFirstEmission);
-                }
-              }
+              // Note: the old data extraction path for "items" is replaced by
+              // the progressive component streaming above. For dashboard-style
+              // A2UI, data is inline in component props, not in a separate items array.
             }
 
             // ── send_a2ui_json_to_client: progressive parsing (non-streaming path) ──
