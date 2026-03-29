@@ -503,8 +503,25 @@ export class A2UIMiddleware extends Middleware {
               const streamingEntry = streamingToolCalls.get(resultEvent.toolCallId);
               const streamingHandled = isStreaming && streamingEntry?.schemaEmitted;
 
-              // Skip if this is a fully-handled streaming tool call or send_a2ui tool
-              if (!isTrackedA2UI && !streamingHandled) {
+              // Also check if ANY streaming entry already handled a surface.
+              // This covers the case where render_a2ui (inner tool) streamed the
+              // surface, but the TOOL_CALL_RESULT belongs to generate_a2ui (outer
+              // tool) — different toolCallId, but same surface already rendered.
+              let anyStreamingHandled = streamingHandled;
+              if (!anyStreamingHandled) {
+                for (const entry of streamingToolCalls.values()) {
+                  if (entry.schemaEmitted) {
+                    anyStreamingHandled = true;
+                    break;
+                  }
+                }
+              }
+
+              // Skip if this is a fully-handled streaming tool call or send_a2ui tool.
+              // Also skip if any streaming entry already rendered a surface (e.g.,
+              // render_a2ui streamed the surface, and now generate_a2ui's result
+              // would duplicate it).
+              if (!isTrackedA2UI && !anyStreamingHandled) {
                 const parsed = tryParseA2UIOperations(resultEvent.content);
                 if (parsed) {
                   // Two-phase rendering: emit schema (createSurface + updateComponents)
