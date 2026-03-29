@@ -290,15 +290,10 @@ export class A2UIMiddleware extends Middleware {
               a2uiJsonStreams.set(startEvent.toolCallId, { args: "", emittedCount: 0 });
             }
 
-            // render_a2ui: dynamic streaming.
-            // NOTE: When render_a2ui is called as an inner LLM tool inside
-            // generate_a2ui, the auto-detect path on generate_a2ui's
-            // TOOL_CALL_RESULT already provides the complete operations
-            // (createSurface + updateComponents + updateDataModel with proper
-            // data bindings). Tracking render_a2ui for streaming creates a
-            // duplicate surface that interferes with data binding resolution.
-            // Only enable this for standalone render_a2ui calls (not nested).
-            // For now, we rely on the auto-detect path which works correctly.
+            // render_a2ui: dynamic streaming is handled via auto-detect on
+            // the outer tool's TOOL_CALL_RESULT. Tracking render_a2ui args
+            // directly causes duplicate surfaces when it's called as an inner
+            // tool inside generate_a2ui. Leave this to the auto-detect path.
 
             // Fixed-schema streaming surfaces: schema comes from config
             const schema = surfacesByTool.get(startEvent.toolCallName);
