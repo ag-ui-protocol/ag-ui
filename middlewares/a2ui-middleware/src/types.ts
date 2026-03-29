@@ -34,9 +34,33 @@ export interface A2UIStreamingSurface {
 }
 
 /**
+ * A2UI component schema definition.
+ * Declares which components are available, their props, and slots.
+ * This is the contract between the application and the AI agent —
+ * the agent can only generate UI using components defined here.
+ */
+export interface A2UIComponentSchema {
+  /** Component name (e.g. "TodoCard", "FlightResult") */
+  name: string;
+  /** Human-readable description for the AI agent */
+  description?: string;
+  /** Component props as JSON Schema */
+  props?: Record<string, unknown>;
+  /** Named slots for child components */
+  slots?: string[];
+}
+
+/**
  * Configuration for the A2UI Middleware
  */
 export interface A2UIMiddlewareConfig {
+  /**
+   * Component schema — declares which components are available to agents.
+   * When provided, the schema is injected as context into RunAgentInput
+   * so agents know what components they can generate.
+   */
+  schema?: A2UIComponentSchema[];
+
   /**
    * If true, the middleware injects the `send_a2ui_json_to_client` tool
    * into the agent's tool list so the LLM can call it directly.
