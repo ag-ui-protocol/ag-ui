@@ -118,13 +118,37 @@ export class A2UIMiddleware extends Middleware {
     // Process user action from forwardedProps (append synthetic messages)
     const enhancedInput = this.processUserAction(input);
 
+    // Inject A2UI component schema as context so agents know what components are available
+    const withSchema = this.injectSchemaContext(enhancedInput);
+
     // Conditionally inject the send_a2ui_json_to_client tool
     const finalInput = this.config.injectA2UITool
-      ? this.injectTool(enhancedInput)
-      : enhancedInput;
+      ? this.injectTool(withSchema)
+      : withSchema;
 
     // Process the event stream using runNextWithState for automatic message tracking
     return this.processStream(this.runNextWithState(finalInput, next));
+  }
+
+  /**
+   * Inject the A2UI component schema into RunAgentInput.context.
+   * This makes the schema available to agents as a context entry,
+   * similar to how useAgentContext propagates application context.
+   */
+  private injectSchemaContext(input: RunAgentInput): RunAgentInput {
+    if (!this.config.schema || this.config.schema.length === 0) {
+      return input;
+    }
+
+    const schemaContext = {
+      description: "A2UI Component Schema — available components for generating UI surfaces. Use these component names and props when creating A2UI operations.",
+      value: JSON.stringify(this.config.schema),
+    };
+
+    return {
+      ...input,
+      context: [...(input.context || []), schemaContext],
+    };
   }
 
   /**
