@@ -1,6 +1,5 @@
-import { Catalog } from "@a2ui/web_core/v0_9";
-import { basicCatalog } from "@a2ui/react/v0_9";
-import type { ReactComponentImplementation } from "@a2ui/react/v0_9";
+import { Catalog, basicCatalog } from "@copilotkit/a2ui-renderer";
+import type { ReactComponentImplementation } from "@copilotkit/a2ui-renderer";
 import { ReactStarRating } from "./ReactStarRating";
 
 export const CUSTOM_CATALOG_ID = "https://a2ui.org/demos/dojo/custom_catalog.json";

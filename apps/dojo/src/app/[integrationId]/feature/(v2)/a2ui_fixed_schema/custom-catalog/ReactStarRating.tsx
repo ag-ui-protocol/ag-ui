@@ -1,4 +1,4 @@
-import { createReactComponent } from "@a2ui/react/v0_9";
+import { createReactComponent } from "@copilotkit/a2ui-renderer";
 import { StarRatingApi } from "./StarRatingApi";
 
 export const ReactStarRating = createReactComponent(
