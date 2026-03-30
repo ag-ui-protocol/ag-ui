@@ -62,8 +62,9 @@ export interface A2UIMiddlewareConfig {
   schema?: A2UIComponentSchema[];
 
   /**
-   * If true, the middleware injects the `send_a2ui_json_to_client` tool
-   * into the agent's tool list so the LLM can call it directly.
+   * If true, the middleware injects the `render_a2ui` tool into the
+   * agent's tool list so the LLM can call it directly with structured
+   * parameters (surfaceId, catalogId, components, items, actionHandlers).
    *
    * If false (default), the middleware does not inject the tool and relies
    * on the agent producing A2UI JSON through its own means (e.g. backend
