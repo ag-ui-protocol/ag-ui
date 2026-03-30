@@ -13,12 +13,6 @@ export interface A2UISurfaceConfig {
    * E.g. "flights" means the tool arg `{ flights: [...] }` is used for updateDataModel.
    */
   dataKey: string;
-  /**
-   * Pre-declared action handlers. When a button action is dispatched,
-   * the renderer checks for an exact action name match, then "*" catch-all.
-   * Same interface as a2ui.render(action_handlers={...}) in the Python SDK.
-   */
-  actionHandlers?: Record<string, Array<Record<string, unknown>>>;
 }
 
 /**
@@ -64,7 +58,7 @@ export interface A2UIMiddlewareConfig {
   /**
    * If true, the middleware injects the `render_a2ui` tool into the
    * agent's tool list so the LLM can call it directly with structured
-   * parameters (surfaceId, catalogId, components, items, actionHandlers).
+   * parameters (surfaceId, catalogId, components, items).
    *
    * If false (default), the middleware does not inject the tool and relies
    * on the agent producing A2UI JSON through its own means (e.g. backend
