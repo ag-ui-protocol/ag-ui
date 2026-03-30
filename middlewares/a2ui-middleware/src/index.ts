@@ -77,7 +77,6 @@ function emitStreamingData(
   dataKey: string,
   items: unknown[],
   toolCallId: string,
-  dynamicActionHandlers?: Record<string, Array<Record<string, unknown>>>,
   firstEmission: boolean = false,
 ) {
   const surfaceId = schema.surfaceId;
@@ -91,11 +90,6 @@ function emitStreamingData(
     { version: "v0.9", updateDataModel: { surfaceId, path: "/", value: { [dataKey]: items } } },
   );
   const content: Record<string, unknown> = { [A2UI_OPERATIONS_KEY]: allOps };
-  // Include actionHandlers from either the fixed-schema config or dynamic extraction
-  const actionHandlers = schema.actionHandlers ?? dynamicActionHandlers;
-  if (actionHandlers) {
-    content.actionHandlers = actionHandlers;
-  }
   const snapshotEvent: ActivitySnapshotEvent = {
     type: EventType.ACTIVITY_SNAPSHOT,
     messageId,
@@ -269,7 +263,6 @@ export class A2UIMiddleware extends Middleware {
         emittedCount: number;
         dataKey: string;         // which key to extract items from
         schemaEmitted: boolean;  // whether schema has been sent to the renderer
-        actionHandlers?: Record<string, Array<Record<string, unknown>>>; // dynamic action handlers
       }>();
 
       const subscription = source.subscribe({
@@ -317,7 +310,7 @@ export class A2UIMiddleware extends Middleware {
                 { version: "v0.9", updateComponents: { surfaceId: schema.surfaceId, components: schema.components } },
               ];
               for (const activityEvent of this.createA2UIActivityEvents(
-                schemaOps, schema.actionHandlers, startEvent.toolCallId,
+                schemaOps, startEvent.toolCallId,
               )) {
                 subscriber.next(activityEvent);
               }
@@ -386,9 +379,6 @@ export class A2UIMiddleware extends Middleware {
                     }
 
                     const content: Record<string, unknown> = { [A2UI_OPERATIONS_KEY]: ops };
-                    if (streaming.actionHandlers) {
-                      content.actionHandlers = streaming.actionHandlers;
-                    }
                     const snapshotEvent: ActivitySnapshotEvent = {
                       type: EventType.ACTIVITY_SNAPSHOT,
                       messageId: `a2ui-surface-${surfaceId}-${argsEvent.toolCallId}`,
@@ -397,25 +387,6 @@ export class A2UIMiddleware extends Middleware {
                       replace: true,
                     };
                     subscriber.next(snapshotEvent);
-                  }
-                }
-              }
-
-              // Try to extract actionHandlers from the accumulated args.
-              // actionHandlers is a dict, so we attempt to parse the full args JSON
-              // and extract it when available. Only attempt JSON.parse when the
-              // accumulated string ends with '}', avoiding costly exception creation
-              // on every delta (the actionHandlers field comes last in the JSON).
-              if (!streaming.actionHandlers && deltaHasClosingBrace) {
-                const trimmed = streaming.args.trimEnd();
-                if (trimmed.endsWith("}")) {
-                  try {
-                    const fullArgs = JSON.parse(streaming.args);
-                    if (fullArgs.actionHandlers && typeof fullArgs.actionHandlers === "object" && !Array.isArray(fullArgs.actionHandlers)) {
-                      streaming.actionHandlers = fullArgs.actionHandlers;
-                    }
-                  } catch {
-                    // Partial JSON — not yet parseable, will try again on next delta
                   }
                 }
               }
@@ -489,7 +460,6 @@ export class A2UIMiddleware extends Middleware {
                     // Phase 1: emit schema immediately
                     for (const activityEvent of this.createA2UIActivityEvents(
                       schemaOps,
-                      parsed.actionHandlers,
                       resultEvent.toolCallId,
                     )) {
                       subscriber.next(activityEvent);
@@ -499,7 +469,6 @@ export class A2UIMiddleware extends Middleware {
                     setTimeout(() => {
                       for (const activityEvent of this.createA2UIActivityEvents(
                         [...schemaOps, ...dataOps],
-                        parsed.actionHandlers,
                         resultEvent.toolCallId,
                       )) {
                         subscriber.next(activityEvent);
@@ -509,7 +478,6 @@ export class A2UIMiddleware extends Middleware {
                     // Schema only (no data) — emit immediately
                     for (const activityEvent of this.createA2UIActivityEvents(
                       schemaOps,
-                      parsed.actionHandlers,
                       resultEvent.toolCallId,
                     )) {
                       subscriber.next(activityEvent);
@@ -518,7 +486,6 @@ export class A2UIMiddleware extends Middleware {
                     // Data only — emit immediately
                     for (const activityEvent of this.createA2UIActivityEvents(
                       dataOps,
-                      parsed.actionHandlers,
                       resultEvent.toolCallId,
                     )) {
                       subscriber.next(activityEvent);
@@ -527,7 +494,6 @@ export class A2UIMiddleware extends Middleware {
                     // No schema/data split possible — emit all at once
                     for (const activityEvent of this.createA2UIActivityEvents(
                       parsed.operations,
-                      parsed.actionHandlers,
                       resultEvent.toolCallId,
                     )) {
                       subscriber.next(activityEvent);
@@ -604,16 +570,13 @@ export class A2UIMiddleware extends Middleware {
   }
 
   /**
-   * Create ACTIVITY_DELTA + ACTIVITY_SNAPSHOT events from A2UI operations,
-   * grouped by surfaceId.
+   * Create ACTIVITY_SNAPSHOT events from A2UI operations, grouped by surfaceId.
    *
    * @param operations - A2UI operations to emit
-   * @param actionHandlers - Optional pre-declared action handlers
    * @param toolCallId - Unique tool call ID to isolate surfaces between invocations
    */
   private createA2UIActivityEvents(
     operations: Array<Record<string, unknown>>,
-    actionHandlers?: Record<string, Array<Record<string, unknown>>>,
     toolCallId?: string,
   ): BaseEvent[] {
     const events: BaseEvent[] = [];
@@ -640,9 +603,6 @@ export class A2UIMiddleware extends Middleware {
         : `a2ui-surface-${surfaceId}`;
 
       const content: Record<string, unknown> = { [A2UI_OPERATIONS_KEY]: surfaceOps };
-      if (actionHandlers) {
-        content.actionHandlers = actionHandlers;
-      }
 
       const snapshotEvent: ActivitySnapshotEvent = {
         type: EventType.ACTIVITY_SNAPSHOT,

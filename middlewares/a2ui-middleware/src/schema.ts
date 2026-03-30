@@ -837,14 +837,12 @@ export const A2UI_OPERATIONS_KEY = "a2ui_operations";
  */
 export interface A2UIParseResult {
   operations: Array<Record<string, unknown>>;
-  actionHandlers?: Record<string, Array<Record<string, unknown>>>;
 }
 
 /**
  * Try to parse text as an A2UI container.
- * Returns operations and optional action handlers if the text contains
- * a valid { a2ui_operations: [...], a2ui_action_handlers?: {...} } container,
- * or null otherwise.
+ * Returns operations if the text contains a valid { a2ui_operations: [...] }
+ * container, or null otherwise.
  */
 export function tryParseA2UIOperations(text: string): A2UIParseResult | null {
   let parsed: unknown;

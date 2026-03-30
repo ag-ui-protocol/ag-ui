@@ -28,7 +28,6 @@ def render_a2ui(
     surfaceId: str,
     components: list[dict],
     items: list[dict],
-    actionHandlers: dict | None = None,
 ) -> str:
     """Render a dynamic A2UI v0.9 surface.
 
@@ -40,8 +39,6 @@ def render_a2ui(
         items: Plain JSON array of data objects. Each object's keys
             correspond to the path bindings in the template components.
             Use relative paths (no leading /) inside templates.
-        actionHandlers: Optional dict mapping action names to arrays of
-            v0.9 A2UI operations for optimistic UI updates on button click.
     """
     return "rendered"
 
