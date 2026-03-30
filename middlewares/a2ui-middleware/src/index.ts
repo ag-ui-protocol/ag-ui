@@ -136,6 +136,9 @@ export class A2UIMiddleware extends Middleware {
    * Inject the A2UI component schema into RunAgentInput.context.
    * This makes the schema available to agents as a context entry,
    * similar to how useAgentContext propagates application context.
+   *
+   * If the frontend already provided a schema context entry (via includeSchema),
+   * the server-side schema replaces it.
    */
   private injectSchemaContext(input: RunAgentInput): RunAgentInput {
     if (!this.config.schema || this.config.schema.length === 0) {
@@ -147,9 +150,14 @@ export class A2UIMiddleware extends Middleware {
       value: JSON.stringify(this.config.schema),
     };
 
+    // Replace any existing entry with the same description (e.g. from the frontend)
+    const filtered = (input.context || []).filter(
+      (c) => c.description !== A2UI_SCHEMA_CONTEXT_DESCRIPTION,
+    );
+
     return {
       ...input,
-      context: [...(input.context || []), schemaContext],
+      context: [...filtered, schemaContext],
     };
   }
 
@@ -277,15 +285,6 @@ export class A2UIMiddleware extends Middleware {
         next: (eventWithState) => {
           const event = eventWithState.event;
 
-          // === A2UI MIDDLEWARE DEBUG ===
-          if (event.type === EventType.TOOL_CALL_START || event.type === EventType.TOOL_CALL_RESULT || event.type === EventType.TOOL_CALL_ARGS || event.type === EventType.RUN_STARTED || event.type === EventType.RUN_FINISHED || event.type === EventType.ACTIVITY_SNAPSHOT) {
-            const ts = new Date().toISOString().substring(11, 23);
-            const detail = (event as any).toolCallName ?? (event as any).toolCallId?.substring(0,8) ?? (event as any).activityType ?? '';
-            const argsLen = event.type === EventType.TOOL_CALL_ARGS ? ` delta_len=${((event as any).delta ?? '').length}` : '';
-            console.log(`[A2UI-MW-DEBUG] ${ts} ${event.type} ${detail}${argsLen}`);
-          }
-          // === END DEBUG ===
-
           if (event.type === EventType.TOOL_CALL_START) {
             const startEvent = event as ToolCallStartEvent;
 
@@ -370,8 +369,6 @@ export class A2UIMiddleware extends Middleware {
                     const isFirstEmission = !streaming.schemaEmitted;
                     streaming.schemaEmitted = true;
                     streaming.emittedCount = result.items.length;
-
-                    console.log(`[A2UI-STREAM] Progressive emit: components=${result.items.length} arrayClosed=${result.arrayClosed} first=${isFirstEmission} surface=${surfaceId}`);
 
                     // Emit surface with current components (no data yet if items not parsed)
                     const ops: Array<Record<string, unknown>> = [];

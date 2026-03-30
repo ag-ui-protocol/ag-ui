@@ -53,7 +53,7 @@ export default function Page({ params }: PageProps) {
       runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
       agent="a2ui_dynamic_schema"
-      a2ui={{ catalogs: [customCatalog] }}
+      a2ui={{ catalog: customCatalog }}
     >
       <div className="flex justify-center items-center h-full w-full">
         <div className="h-full w-full md:w-8/10 md:h-8/10 rounded-lg">
