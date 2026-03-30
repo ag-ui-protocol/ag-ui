@@ -183,9 +183,8 @@ export class LangGraphAgent extends AbstractAgent {
 
   run(input: RunAgentInput) {
     return new Observable<ProcessedEvents>((subscriber) => {
-      console.log(`[LG-DEBUG] run() called, runId=${input.runId?.substring(0,8)} threadId=${input.threadId?.substring(0,8)} messages=${input.messages?.length}`);
       this.runAgentStream(input, subscriber).catch((err) => {
-        console.error(`[LG-DEBUG] runAgentStream UNHANDLED ERROR:`, err);
+        console.error(`[LangGraph] runAgentStream error:`, err);
         if (!subscriber.closed) {
           subscriber.error(err);
         }
@@ -223,8 +222,6 @@ export class LangGraphAgent extends AbstractAgent {
   async prepareRegenerateStream(input: RegenerateInput, streamMode: StreamMode | StreamMode[]) {
     const { threadId, messageCheckpoint } = input;
 
-    console.log(`[LG-DEBUG] prepareRegenerateStream messageCheckpoint.id=${messageCheckpoint?.id?.substring(0,8)} threadId=${threadId?.substring(0,8)}`);
-
     const timeTravelCheckpoint = await this.getCheckpointByMessage(
       messageCheckpoint!.id!,
       threadId,
@@ -234,10 +231,8 @@ export class LangGraphAgent extends AbstractAgent {
     }
 
     if (!timeTravelCheckpoint) {
-      console.log(`[LG-DEBUG]   → ERROR: no checkpoint found for message ${messageCheckpoint?.id?.substring(0,8)}`);
       return this.subscriber.error("No checkpoint found for message");
     }
-    console.log(`[LG-DEBUG]   → found checkpoint, next=[${timeTravelCheckpoint.next}]`);
 
     const fork = await this.client.threads.updateState(threadId, {
       values: this.langGraphDefaultMergeState(timeTravelCheckpoint.values, [], input),
@@ -307,29 +302,12 @@ export class LangGraphAgent extends AbstractAgent {
     let stateValues = threadState.values;
     this.activeRun!.schemaKeys = await this.getSchemaKeys();
 
-    // === DEBUG LOGGING ===
-    const stateMessageCount = (agentState.values.messages ?? []).length;
-    const debugInputNonSystemCount = messages.filter((m) => m.role !== "system").length;
-    const inputUserMessages = messages.filter((m) => m.role === "user").map((m) => ({ id: m.id, content: typeof m.content === "string" ? m.content.substring(0, 80) : "[multimodal]" }));
-    const stateUserMessages = agentStateMessages.filter((m: any) => m.type === "human").map((m: any) => ({ id: m.id, content: typeof m.content === "string" ? m.content.substring(0, 80) : "[multimodal]" }));
-    const stateMessageTypes = agentStateMessages.map((m: any) => `${m.type}(${m.id?.substring(0,8)})`);
-
-    console.log(`[LG-DEBUG] prepareStream runId=${input.runId?.substring(0,8)} threadId=${threadId.substring(0,8)}`);
-    console.log(`[LG-DEBUG]   stateMessages=${stateMessageCount} inputNonSystem=${debugInputNonSystemCount} willRegenerate(old)=${stateMessageCount > debugInputNonSystemCount}`);
-    console.log(`[LG-DEBUG]   stateMessageTypes=[${stateMessageTypes.join(", ")}]`);
-    console.log(`[LG-DEBUG]   inputUserMessages=${JSON.stringify(inputUserMessages)}`);
-    console.log(`[LG-DEBUG]   stateUserMessages=${JSON.stringify(stateUserMessages)}`);
-    console.log(`[LG-DEBUG]   nodeName=${this.activeRun!.nodeName} nodeNameInput=${nodeNameInput}`);
-    // === END DEBUG LOGGING ===
-
     // Compare non-system message counts to detect regeneration.
     // Both sides must filter system messages for an accurate comparison,
     // since the LangGraph state may contain system messages injected by
     // the connector (e.g. CopilotKit context) that the frontend doesn't track.
     const stateNonSystemCount = agentStateMessages.filter((m: LangGraphPlatformMessage) => m.type !== "system").length;
     const inputNonSystemCount = messages.filter((m) => m.role !== "system").length;
-
-    console.log(`[LG-DEBUG]   FIXED comparison: stateNonSystem=${stateNonSystemCount} inputNonSystem=${inputNonSystemCount} willRegenerate=${stateNonSystemCount > inputNonSystemCount}`);
 
     if (stateNonSystemCount > inputNonSystemCount) {
       let lastUserMessage: LangGraphMessage | null = null;
@@ -342,18 +320,14 @@ export class LangGraphAgent extends AbstractAgent {
       }
 
       if (!lastUserMessage) {
-        console.log(`[LG-DEBUG]   → ERROR: no user message found for regeneration`);
         return this.subscriber.error("No user message found in messages to regenerate");
       }
-
-      console.log(`[LG-DEBUG]   → entering REGENERATION path with lastUserMessage.id=${lastUserMessage.id?.substring(0,8)} content="${typeof lastUserMessage.content === "string" ? lastUserMessage.content.substring(0,60) : "[complex]"}"`);
 
       return this.prepareRegenerateStream(
         { ...input, messageCheckpoint: lastUserMessage },
         streamMode,
       );
     }
-    console.log(`[LG-DEBUG]   → entering FRESH RUN path`);
     this.activeRun!.graphInfo = await this.client.assistants.getGraph(this.assistant.assistant_id);
 
     const mode =
