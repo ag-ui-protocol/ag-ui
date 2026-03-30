@@ -926,6 +926,7 @@ class LangGraphAgent:
                             role="tool"
                         )
                     )
+                self.active_run["has_function_streaming"] = False
                 return
 
             if not self.active_run["has_function_streaming"]:
@@ -966,6 +967,7 @@ class LangGraphAgent:
 
             self.active_run["model_made_tool_call"] = False
             self.active_run["state_reliable"] = True
+            self.active_run["has_function_streaming"] = False
 
     def handle_reasoning_event(self, reasoning_data: LangGraphReasoning) -> Generator[str, Any, str | None]:
         if not reasoning_data or "type" not in reasoning_data or "text" not in reasoning_data:
