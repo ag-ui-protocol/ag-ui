@@ -56,16 +56,16 @@ export interface A2UIMiddlewareConfig {
   schema?: A2UIComponentSchema[];
 
   /**
-   * If true, the middleware injects the `render_a2ui` tool into the
-   * agent's tool list so the LLM can call it directly with structured
-   * parameters (surfaceId, catalogId, components, items).
+   * Controls whether the middleware injects an A2UI rendering tool into
+   * the agent's tool list.
    *
-   * If false (default), the middleware does not inject the tool and relies
-   * on the agent producing A2UI JSON through its own means (e.g. backend
-   * tools, hardcoded responses). The middleware will still detect and
-   * render any valid A2UI JSON that appears in the event stream.
+   * - `true` — injects a tool named `"render_a2ui"` (default name).
+   * - `string` — injects the tool with the given custom name.
+   * - `false` / omitted — no tool is injected; the middleware relies on
+   *   the agent producing A2UI JSON through its own means and will still
+   *   detect and render any valid A2UI JSON in the event stream.
    */
-  injectA2UITool?: boolean;
+  injectA2UITool?: boolean | string;
 
   /**
    * Tool names the middleware recognizes as A2UI rendering tools.
