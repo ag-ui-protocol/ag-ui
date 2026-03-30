@@ -109,6 +109,14 @@ class LangGraphAgent:
         self.active_run: Optional[RunMetadata] = None
         self.constant_schema_keys = ['messages', 'tools']
 
+    def clone(self) -> "LangGraphAgent":
+        return LangGraphAgent(
+            name=self.name,
+            graph=self.graph,
+            description=self.description,
+            config=self.config,
+        )
+
     def _dispatch_event(self, event: ProcessedEvents) -> str:
         if event.type == EventType.RAW:
             event.event = make_json_safe(event.event)
@@ -896,7 +904,7 @@ class LangGraphAgent:
                             ToolCallStartEvent(
                                 type=EventType.TOOL_CALL_START,
                                 tool_call_id=tool_msg.tool_call_id,
-                                tool_call_name=tool_msg.name,
+                                tool_call_name=tool_msg.name or event.get("name", ""),
                                 parent_message_id=tool_msg.id,
                                 raw_event=event,
                             )
