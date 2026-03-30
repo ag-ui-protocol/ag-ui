@@ -6,7 +6,6 @@ import {
   CopilotChat,
   useConfigureSuggestions,
   useRenderTool,
-  useA2UIActionHandler,
 } from "@copilotkit/react-core/v2";
 import { CopilotKit } from "@copilotkit/react-core";
 import { customCatalog } from "../a2ui_fixed_schema/custom-catalog";
@@ -112,33 +111,6 @@ function useAdvancedA2UIFeatures() {
     [],
   );
 
-  // Optimistic action handler for button clicks
-  useA2UIActionHandler((action, declaredOps) => {
-    // Use pre-declared ops from the agent if available
-    if (declaredOps) return declaredOps;
-
-    // Otherwise, show a generic confirmation (v0.9 format)
-    const { surfaceId } = action;
-    return [
-      {
-        version: "v0.9",
-        updateComponents: {
-          surfaceId,
-          components: [
-            { id: "root", component: "Card", child: "confirm-col" },
-            {
-              id: "confirm-col",
-              component: "Column",
-              children: ["confirm-title", "confirm-detail"],
-              align: "center",
-            },
-            { id: "confirm-title", component: "Text", text: "Product Selected!", variant: "h2" },
-            { id: "confirm-detail", component: "Text", text: "Your selection has been received.", variant: "body" },
-          ],
-        },
-      },
-    ];
-  });
 }
 
 // ---------------------------------------------------------------------------
