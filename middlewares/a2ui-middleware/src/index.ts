@@ -14,6 +14,7 @@ import {
   ToolCallResultEvent,
   ToolCallStartEvent,
   ToolCallArgsEvent,
+  Tool,
 } from "@ag-ui/client";
 import { Observable } from "rxjs";
 
@@ -225,15 +226,19 @@ export class A2UIMiddleware extends Middleware {
   }
 
   /**
-   * Inject the render_a2ui tool into the input.
-   * Always replaces the tool schema if it already exists, to ensure
-   * the well-defined structured parameter schema is used.
+   * Inject the A2UI rendering tool into the input.
+   * Uses the configured name from `injectA2UITool` (string) or defaults to "render_a2ui".
+   * Always replaces the tool if it already exists to ensure the correct parameter schema.
    */
   private injectTool(input: RunAgentInput): RunAgentInput {
-    const filteredTools = input.tools.filter((t) => t.name !== RENDER_A2UI_TOOL_NAME);
+    const toolName = typeof this.config.injectA2UITool === "string"
+      ? this.config.injectA2UITool
+      : RENDER_A2UI_TOOL_NAME;
+    const tool: Tool = { ...RENDER_A2UI_TOOL, name: toolName };
+    const filteredTools = input.tools.filter((t) => t.name !== toolName);
     return {
       ...input,
-      tools: [...filteredTools, RENDER_A2UI_TOOL],
+      tools: [...filteredTools, tool],
     };
   }
 
