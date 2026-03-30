@@ -37,6 +37,13 @@ export * from "./schema";
 export const A2UIActivityType = "a2ui-surface";
 
 /**
+ * Context description used to identify the A2UI component schema in RunAgentInput.context.
+ * The LangGraph connector uses this to extract the schema from context and inject it
+ * into the agent's key/value state instead of the system prompt.
+ */
+export const A2UI_SCHEMA_CONTEXT_DESCRIPTION = "A2UI Component Schema — available components for generating UI surfaces. Use these component names and props when creating A2UI operations.";
+
+/**
  * Extract EventWithState type from Middleware.runNextWithState return type
  */
 type ExtractObservableType<T> = T extends Observable<infer U> ? U : never;
@@ -141,7 +148,7 @@ export class A2UIMiddleware extends Middleware {
     }
 
     const schemaContext = {
-      description: "A2UI Component Schema — available components for generating UI surfaces. Use these component names and props when creating A2UI operations.",
+      description: A2UI_SCHEMA_CONTEXT_DESCRIPTION,
       value: JSON.stringify(this.config.schema),
     };
 
