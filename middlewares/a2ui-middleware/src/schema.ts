@@ -831,7 +831,6 @@ const _REMOVED_V08_SCHEMA = `"accountCircle","warning"
  * and A2UIMessageRenderer (React).
  */
 export const A2UI_OPERATIONS_KEY = "a2ui_operations";
-export const A2UI_ACTION_HANDLERS_KEY = "a2ui_action_handlers";
 
 /**
  * Parsed A2UI container result.
@@ -863,12 +862,11 @@ export function tryParseA2UIOperations(text: string): A2UIParseResult | null {
       ) {
         const obj = inner as Record<string, unknown>;
         const result: A2UIParseResult = {
-          operations: obj[A2UI_OPERATIONS_KEY] as Array<Record<string, unknown>>,
+          operations: obj[A2UI_OPERATIONS_KEY] as Array<
+            Record<string, unknown>
+          >,
         };
-        const handlers = obj[A2UI_ACTION_HANDLERS_KEY];
-        if (handlers && typeof handlers === "object" && !Array.isArray(handlers)) {
-          result.actionHandlers = handlers as Record<string, Array<Record<string, unknown>>>;
-        }
+
         return result;
       }
     } catch {
@@ -887,10 +885,7 @@ export function tryParseA2UIOperations(text: string): A2UIParseResult | null {
     const result: A2UIParseResult = {
       operations: obj[A2UI_OPERATIONS_KEY] as Array<Record<string, unknown>>,
     };
-    const handlers = obj[A2UI_ACTION_HANDLERS_KEY];
-    if (handlers && typeof handlers === "object" && !Array.isArray(handlers)) {
-      result.actionHandlers = handlers as Record<string, Array<Record<string, unknown>>>;
-    }
+
     return result;
   }
 
@@ -906,12 +901,10 @@ export function tryParseA2UIOperations(text: string): A2UIParseResult | null {
       ) {
         const obj = inner as Record<string, unknown>;
         const result: A2UIParseResult = {
-          operations: obj[A2UI_OPERATIONS_KEY] as Array<Record<string, unknown>>,
+          operations: obj[A2UI_OPERATIONS_KEY] as Array<
+            Record<string, unknown>
+          >,
         };
-        const handlers = obj[A2UI_ACTION_HANDLERS_KEY];
-        if (handlers && typeof handlers === "object" && !Array.isArray(handlers)) {
-          result.actionHandlers = handlers as Record<string, Array<Record<string, unknown>>>;
-        }
         return result;
       }
     } catch {
@@ -925,12 +918,22 @@ export function tryParseA2UIOperations(text: string): A2UIParseResult | null {
 /**
  * Extract surfaceId from a single A2UI operation (v0.9 keys)
  */
-export function getOperationSurfaceId(operation: Record<string, unknown>): string | undefined {
+export function getOperationSurfaceId(
+  operation: Record<string, unknown>,
+): string | undefined {
   // v0.9 message types
-  const createSurface = operation.createSurface as { surfaceId?: string } | undefined;
-  const updateComponents = operation.updateComponents as { surfaceId?: string } | undefined;
-  const updateDataModel = operation.updateDataModel as { surfaceId?: string } | undefined;
-  const deleteSurface = operation.deleteSurface as { surfaceId?: string } | undefined;
+  const createSurface = operation.createSurface as
+    | { surfaceId?: string }
+    | undefined;
+  const updateComponents = operation.updateComponents as
+    | { surfaceId?: string }
+    | undefined;
+  const updateDataModel = operation.updateDataModel as
+    | { surfaceId?: string }
+    | undefined;
+  const deleteSurface = operation.deleteSurface as
+    | { surfaceId?: string }
+    | undefined;
 
   return (
     createSurface?.surfaceId ??
@@ -944,7 +947,7 @@ export function getOperationSurfaceId(operation: Record<string, unknown>): strin
  * Extract surface IDs from A2UI messages
  */
 export function extractSurfaceIds(
-  messages: Array<{ [key: string]: unknown }>
+  messages: Array<{ [key: string]: unknown }>,
 ): string[] {
   const surfaceIds = new Set<string>();
   for (const msg of messages) {

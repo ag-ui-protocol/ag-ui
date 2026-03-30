@@ -101,7 +101,6 @@ def generate_a2ui(runtime: ToolRuntime[Any]) -> str:
     surface_id = args.get("surfaceId", "dynamic-surface")
     components = args.get("components", [])
     items = args.get("items", [])
-    action_handlers = args.get("actionHandlers")
 
     # Wrap as v0.9 a2ui_operations so the middleware detects it
     result = a2ui.render(
@@ -110,7 +109,6 @@ def generate_a2ui(runtime: ToolRuntime[Any]) -> str:
             a2ui.update_components(surface_id, components),
             a2ui.update_data_model(surface_id, {"items": items}),
         ],
-        action_handlers=action_handlers,
     )
     return result
 
