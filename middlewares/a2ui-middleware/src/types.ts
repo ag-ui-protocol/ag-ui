@@ -68,6 +68,16 @@ export interface A2UIMiddlewareConfig {
   injectA2UITool?: boolean;
 
   /**
+   * Tool names the middleware recognizes as A2UI rendering tools.
+   * When the middleware sees a TOOL_CALL_START for any of these names,
+   * it tracks streaming args to progressively extract components/items
+   * and emits a synthetic TOOL_CALL_RESULT at RUN_FINISHED.
+   *
+   * Defaults to `["render_a2ui"]`.
+   */
+  a2uiToolNames?: string[];
+
+  /**
    * Surfaces that stream progressively when their tool is called.
    * Schema is emitted at TOOL_CALL_START, data streams as args are generated.
    */
