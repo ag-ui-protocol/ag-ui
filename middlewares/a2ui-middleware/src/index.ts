@@ -251,6 +251,9 @@ export class A2UIMiddleware extends Middleware {
       surfacesByTool.set(entry.toolName, entry.surface);
     }
 
+    // Tool names recognized as A2UI rendering tools
+    const a2uiToolNames = new Set(this.config.a2uiToolNames ?? [RENDER_A2UI_TOOL_NAME]);
+
     return new Observable<BaseEvent>((subscriber) => {
       let heldRunFinished: EventWithState | null = null;
 
@@ -285,7 +288,7 @@ export class A2UIMiddleware extends Middleware {
             // extract schema (components) first, then data (items).
             // If streaming extraction fails, auto-detect on the outer
             // tool's TOOL_CALL_RESULT still works as a fallback.
-            if (startEvent.toolCallName === RENDER_A2UI_TOOL_NAME) {
+            if (a2uiToolNames.has(startEvent.toolCallName)) {
               streamingToolCalls.set(startEvent.toolCallId, {
                 schema: null, args: "", emittedCount: 0,
                 dataKey: "items", schemaEmitted: false,
@@ -519,7 +522,7 @@ export class A2UIMiddleware extends Middleware {
             // TOOL_CALL_ARGS, so we just need to close the tool call.
             const pendingToolCalls = this.findPendingToolCalls(heldRunFinished.messages);
             const pendingRenderCalls = pendingToolCalls.filter(
-              (tc) => tc.function.name === RENDER_A2UI_TOOL_NAME
+              (tc) => a2uiToolNames.has(tc.function.name)
             );
             for (const toolCall of pendingRenderCalls) {
               const resultEvent: ToolCallResultEvent = {
