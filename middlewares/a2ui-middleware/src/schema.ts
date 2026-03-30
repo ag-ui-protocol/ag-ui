@@ -10,9 +10,9 @@
  */
 
 /**
- * The A2UI JSON Schema for system prompts.
- * This is the complete schema including all message types and component definitions.
- * Include this in your agent's system prompt to enable A2UI rendering.
+ * @deprecated Do not use built-in schemas. Component schemas must be passed
+ * explicitly from application code via CopilotRuntime's `a2ui.schema` config.
+ * The middleware injects these as context for agents automatically.
  */
 export const A2UI_PROMPT = `---BEGIN A2UI JSON SCHEMA---
 
