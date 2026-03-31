@@ -68,7 +68,18 @@ You can also use the helper functions `add_strands_fastapi_endpoint` and `add_pi
     add_ping(app, "/ping")
 ```
 
-Requests to AC endpoint needs to be authenticated and authorized. You can configure your agent runtime to accept JWT bearer tokens, and configure the server-side component of the UI to send access token as an HTTP header to AC.
+Requests to the AC endpoint must be authenticated. You can configure your agent runtime to accept JWT bearer tokens (via Amazon Cognito) or use SigV4. See [Set up authentication](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-agui.html) in the AgentCore documentation.
+
+For details on how AgentCore handles AG-UI requests, event streaming, and error formatting, see the [AG-UI protocol contract](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-agui-protocol-contract.html).
+
+To deploy, use the [AgentCore Starter Toolkit](https://github.com/awslabs/bedrock-agentcore-starter-toolkit):
+```bash
+pip install bedrock-agentcore-starter-toolkit
+agentcore configure -e my_agui_server.py --protocol AGUI
+agentcore deploy
+```
+
+For the complete deployment walkthrough, see [Deploy AG-UI servers in AgentCore Runtime](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-agui.html).
 
 
 ## Next Steps

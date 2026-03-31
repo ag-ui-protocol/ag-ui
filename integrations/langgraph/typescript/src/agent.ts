@@ -198,6 +198,7 @@ export class LangGraphAgent extends AbstractAgent {
       id: input.runId,
       threadId: input.threadId,
       hasFunctionStreaming: false,
+      hasPredictState: false,
     };
     // Reset per-run flags
     this.cancelRequested = false;
@@ -302,31 +303,46 @@ export class LangGraphAgent extends AbstractAgent {
     let stateValues = threadState.values;
     this.activeRun!.schemaKeys = await this.getSchemaKeys();
 
-    // Compare non-system message counts to detect regeneration.
-    // Both sides must filter system messages for an accurate comparison,
-    // since the LangGraph state may contain system messages injected by
-    // the connector (e.g. CopilotKit context) that the frontend doesn't track.
-    const stateNonSystemCount = agentStateMessages.filter((m: LangGraphPlatformMessage) => m.type !== "system").length;
-    const inputNonSystemCount = messages.filter((m) => m.role !== "system").length;
+    if (
+      (agentState.values.messages ?? []).length > messages.filter((m) => m.role !== "system").length
+    ) {
+      // Only trigger time-travel regeneration if the incoming messages are NOT already
+      // in the checkpoint. If they are, this is a continuation (e.g. after CopilotKit
+      // intercepted a tool call), not a time-travel edit — regenerating would loop.
+      //
+      // We exclude tool messages from the ID comparison because CopilotKit assigns new
+      // IDs to tool results that won't match the placeholder IDs the checkpointer
+      // wrote. Human and AI message IDs are stable across requests and are sufficient
+      // to distinguish continuation from time-travel.
+      const checkpointIds = new Set(
+        (agentState.values.messages ?? [])
+          .map((m: LangGraphPlatformMessage) => m.id)
+          .filter(Boolean),
+      );
+      const incomingNonToolIds = new Set(
+        messages.filter((m) => m.role !== "tool" && m.id).map((m) => m.id!),
+      );
+      const isContinuation =
+        incomingNonToolIds.size > 0 &&
+        [...incomingNonToolIds].every((id) => checkpointIds.has(id));
 
-    if (stateNonSystemCount > inputNonSystemCount) {
-      let lastUserMessage: LangGraphMessage | null = null;
-      // Find the first user message by working backwards from the last message
-      for (let i = messages.length - 1; i >= 0; i--) {
-        if (messages[i].role === "user") {
-          lastUserMessage = aguiMessagesToLangChain([messages[i]])[0];
-          break;
+      if (!isContinuation) {
+        let lastUserMessage: LangGraphMessage | null = null;
+        for (let i = messages.length - 1; i >= 0; i--) {
+          if (messages[i].role === "user") {
+            lastUserMessage = aguiMessagesToLangChain([messages[i]])[0];
+            break;
+          }
+        }
+
+        const lastUserId = lastUserMessage?.id;
+        if (lastUserId && checkpointIds.has(lastUserId)) {
+          return this.prepareRegenerateStream(
+            { ...input, messageCheckpoint: lastUserMessage! },
+            streamMode,
+          );
         }
       }
-
-      if (!lastUserMessage) {
-        return this.subscriber.error("No user message found in messages to regenerate");
-      }
-
-      return this.prepareRegenerateStream(
-        { ...input, messageCheckpoint: lastUserMessage },
-        streamMode,
-      );
     }
     this.activeRun!.graphInfo = await this.client.assistants.getGraph(this.assistant.assistant_id);
 
@@ -576,12 +592,16 @@ export class LangGraphAgent extends AbstractAgent {
         }
 
         const hasStateDiff = JSON.stringify(updatedState) !== JSON.stringify(state);
-        // We should not update snapshot while a message is in progress.
+        // We should not update snapshot while a message is in progress or when
+        // a predict_state tool call is pending (the model node exits before the
+        // tool runs, so the state would be stale).
+        const suppressedByPredictState = this.activeRun!.exitingNode && this.activeRun!.hasPredictState;
         if (
           (hasStateDiff ||
             this.activeRun!.prevNodeName != this.activeRun!.nodeName ||
             this.activeRun!.exitingNode) &&
-          !Boolean(this.getMessageInProgress(this.activeRun!.id))
+          !Boolean(this.getMessageInProgress(this.activeRun!.id)) &&
+          !suppressedByPredictState
         ) {
           state = updatedState;
           this.activeRun!.prevNodeName = this.activeRun!.nodeName;
@@ -591,6 +611,10 @@ export class LangGraphAgent extends AbstractAgent {
             snapshot: this.getStateSnapshot(state),
             rawEvent: chunk,
           });
+        } else if (suppressedByPredictState) {
+          console.debug(
+            `[ag-ui/langgraph] Suppressing STATE_SNAPSHOT on node exit (node=${this.activeRun!.nodeName}, hasPredictState=${this.activeRun!.hasPredictState})`,
+          );
         }
 
         this.dispatchEvent({
@@ -670,14 +694,14 @@ export class LangGraphAgent extends AbstractAgent {
 
     switch (event.event) {
       case LangGraphEventTypes.OnChatModelStream:
-        let shouldEmitMessages = event.metadata["emit-messages"] ?? true;
-        let shouldEmitToolCalls = event.metadata["emit-tool-calls"] ?? true;
+        let shouldEmitMessages = event.metadata?.["emit-messages"] ?? true;
+        let shouldEmitToolCalls = event.metadata?.["emit-tool-calls"] ?? true;
 
         if (event.data.chunk.response_metadata.finish_reason) return;
         let currentStream = this.getMessageInProgress(this.activeRun!.id);
         const hasCurrentStream = Boolean(currentStream?.id);
         const toolCallData = event.data.chunk.tool_call_chunks?.[0];
-        const toolCallUsedToPredictState = event.metadata["predict_state"]?.some(
+        const toolCallUsedToPredictState = event.metadata?.["predict_state"]?.some(
           (predictStateTool: PredictStateTool) => predictStateTool.tool === toolCallData?.name,
         );
 
@@ -736,10 +760,11 @@ export class LangGraphAgent extends AbstractAgent {
         }
 
         if (toolCallUsedToPredictState) {
+          this.activeRun!.hasPredictState = true;
           this.dispatchEvent({
             type: EventType.CUSTOM,
             name: "PredictState",
-            value: event.metadata["predict_state"],
+            value: event.metadata?.["predict_state"],
           });
         }
 
@@ -912,6 +937,7 @@ export class LangGraphAgent extends AbstractAgent {
         });
         break;
       case LangGraphEventTypes.OnToolEnd:
+        this.activeRun!.hasPredictState = false;
         let toolCallOutput = event.data?.output
 
         // Command from within a tool. We need to grab result from the tool result message
