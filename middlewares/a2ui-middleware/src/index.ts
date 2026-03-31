@@ -395,58 +395,15 @@ export class A2UIMiddleware extends Middleware {
               if (!anyStreamingHandled) {
                 const parsed = tryParseA2UIOperations(resultEvent.content);
                 if (parsed) {
-                  // Two-phase rendering: emit schema (createSurface + updateComponents)
-                  // first, then data (updateDataModel) separately. This gives the renderer
-                  // the component tree before data arrives, enabling progressive display.
-                  const schemaOps = parsed.operations.filter(
-                    (op: any) => op.createSurface || op.updateComponents,
-                  );
-                  const dataOps = parsed.operations.filter(
-                    (op: any) => op.updateDataModel,
-                  );
-
-                  if (schemaOps.length > 0 && dataOps.length > 0) {
-                    // Phase 1: emit schema immediately
-                    for (const activityEvent of this.createA2UIActivityEvents(
-                      schemaOps,
-                      resultEvent.toolCallId,
-                    )) {
-                      subscriber.next(activityEvent);
-                    }
-                    // Phase 2: defer data emission to allow a render frame
-                    // between schema and data, making the progressive display visible
-                    setTimeout(() => {
-                      for (const activityEvent of this.createA2UIActivityEvents(
-                        [...schemaOps, ...dataOps],
-                        resultEvent.toolCallId,
-                      )) {
-                        subscriber.next(activityEvent);
-                      }
-                    }, 50);
-                  } else if (schemaOps.length > 0) {
-                    // Schema only (no data) — emit immediately
-                    for (const activityEvent of this.createA2UIActivityEvents(
-                      schemaOps,
-                      resultEvent.toolCallId,
-                    )) {
-                      subscriber.next(activityEvent);
-                    }
-                  } else if (schemaOps.length === 0 && dataOps.length > 0) {
-                    // Data only — emit immediately
-                    for (const activityEvent of this.createA2UIActivityEvents(
-                      dataOps,
-                      resultEvent.toolCallId,
-                    )) {
-                      subscriber.next(activityEvent);
-                    }
-                  } else if (schemaOps.length === 0) {
-                    // No schema/data split possible — emit all at once
-                    for (const activityEvent of this.createA2UIActivityEvents(
-                      parsed.operations,
-                      resultEvent.toolCallId,
-                    )) {
-                      subscriber.next(activityEvent);
-                    }
+                  // Emit all operations at once. Unlike the streaming path
+                  // (render_a2ui), explicit a2ui_operations arrive complete —
+                  // splitting schema and data would cause the renderer to
+                  // crash on unresolved path bindings before data exists.
+                  for (const activityEvent of this.createA2UIActivityEvents(
+                    parsed.operations,
+                    resultEvent.toolCallId,
+                  )) {
+                    subscriber.next(activityEvent);
                   }
                 }
               }
