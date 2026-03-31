@@ -20,8 +20,6 @@ from langgraph.prebuilt import ToolNode
 
 from copilotkit import a2ui
 
-A2UI_GENERATION_PROMPT = a2ui.a2ui_prompt()
-
 
 @lc_tool
 def render_a2ui(
@@ -43,20 +41,30 @@ def render_a2ui(
     return "rendered"
 
 
-def _build_context_addendum(state: dict) -> str:
-    """Extract agent context from state and format as a prompt addendum."""
+def _build_context_prompt(state: dict) -> str:
+    """Build the A2UI generation prompt from client-provided context entries.
+
+    The frontend sends generation guidelines, design guidelines, and the
+    component schema as separate context entries. The LangGraph integration
+    also extracts the schema into state["ag-ui"]["a2ui_schema"].
+    """
     ag_ui = state.get("ag-ui", {})
-    context_entries = ag_ui.get("context", [])
-    if not context_entries:
-        return ""
-    parts = ["\n\n## Additional Context from Client:\n"]
-    for entry in context_entries:
+    parts: list[str] = []
+
+    # Include all context entries (generation guidelines, design guidelines, etc.)
+    for entry in ag_ui.get("context", []):
         desc = entry.get("description", "")
         value = entry.get("value", "")
         if desc:
-            parts.append(f"### {desc}\n{value}\n")
+            parts.append(f"## {desc}\n{value}\n")
         else:
             parts.append(f"{value}\n")
+
+    # Include A2UI component schema (separated out by the LangGraph integration)
+    a2ui_schema = ag_ui.get("a2ui_schema")
+    if a2ui_schema:
+        parts.append(f"## Available Components\n{a2ui_schema}\n")
+
     return "\n".join(parts)
 
 
@@ -74,9 +82,9 @@ def generate_a2ui(runtime: ToolRuntime[Any]) -> str:
     # as it is not yet balanced with a tool call response.
     messages = runtime.state["messages"][:-1]
 
-    # Inject client-provided context (e.g. custom catalog definitions)
-    context_addendum = _build_context_addendum(runtime.state)
-    prompt = A2UI_GENERATION_PROMPT + context_addendum
+    # Build prompt entirely from client-provided context (generation guidelines,
+    # design guidelines, component schema, etc.)
+    prompt = _build_context_prompt(runtime.state)
 
     model = ChatOpenAI(model="gpt-4.1")
     model_with_tool = model.bind_tools(
