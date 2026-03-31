@@ -1218,9 +1218,6 @@ importers:
 
   sdks/typescript/packages/core:
     dependencies:
-      rxjs:
-        specifier: 7.8.1
-        version: 7.8.1
       zod:
         specifier: ^3.22.4
         version: 3.25.76
