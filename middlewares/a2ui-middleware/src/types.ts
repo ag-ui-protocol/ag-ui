@@ -1,33 +1,4 @@
 /**
- * A2UI surface configuration: the component tree and data binding (v0.9).
- */
-export interface A2UISurfaceConfig {
-  /** Unique surface ID */
-  surfaceId: string;
-  /** Catalog ID for the v0.9 renderer */
-  catalogId: string;
-  /** The fixed component tree (v0.9 flat format) */
-  components: Array<Record<string, unknown>>;
-  /**
-   * Which arg key contains the data to bind.
-   * E.g. "flights" means the tool arg `{ flights: [...] }` is used for updateDataModel.
-   */
-  dataKey: string;
-}
-
-/**
- * Binds a tool to an A2UI surface. When the middleware sees a TOOL_CALL_START
- * for this tool, it emits the surface schema immediately. As the LLM streams
- * tool args, it partial-parses and emits dataModelUpdate progressively.
- */
-export interface A2UIStreamingSurface {
-  /** The tool name that triggers this surface */
-  toolName: string;
-  /** The A2UI surface to render */
-  surface: A2UISurfaceConfig;
-}
-
-/**
  * A2UI component schema definition.
  * Declares which components are available, their props, and slots.
  * This is the contract between the application and the AI agent —
@@ -77,11 +48,6 @@ export interface A2UIMiddlewareConfig {
    */
   a2uiToolNames?: string[];
 
-  /**
-   * Surfaces that stream progressively when their tool is called.
-   * Schema is emitted at TOOL_CALL_START, data streams as args are generated.
-   */
-  streamingSurfaces?: A2UIStreamingSurface[];
 }
 
 /**
