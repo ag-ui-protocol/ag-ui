@@ -294,15 +294,15 @@ export class A2UIMiddleware extends Middleware {
                       streaming.schema.components = result.items as any[];
                     }
 
-                    const isFirstEmission = !streaming.schemaEmitted;
                     streaming.schemaEmitted = true;
                     streaming.emittedCount = result.items.length;
 
-                    // Emit surface with current components + data if available
+                    // Always include createSurface in every replace:true snapshot.
+                    // If React batches renders and only processes a later snapshot,
+                    // the surface must still be created. The frontend filters out
+                    // duplicate createSurface when the surface already exists.
                     const ops: Array<Record<string, unknown>> = [];
-                    if (isFirstEmission) {
-                      ops.push({ version: "v0.9", createSurface: { surfaceId, catalogId } });
-                    }
+                    ops.push({ version: "v0.9", createSurface: { surfaceId, catalogId } });
                     ops.push({ version: "v0.9", updateComponents: { surfaceId, components: result.items } });
 
                     // Try to include data model if "data" object is available
