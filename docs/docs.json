@@ -47,6 +47,7 @@
               "concepts/state",
               "concepts/serialization",
               "concepts/tools",
+              "concepts/capabilities",
               "concepts/generative-ui-specs"
             ]
           },

@@ -1,0 +1,35 @@
+tool.uv.package = true
+
+[project]
+name = "ag-ui-langroid-examples"
+version = "0.1.0"
+description = "Example server for Langroid AG-UI integration"
+authors = [
+    { name = "AG-UI Contributors" }
+]
+readme = "README.md"
+requires-python = ">=3.10, <3.14"
+dependencies = [
+    "ag-ui-protocol>=0.1.10",
+    "fastapi>=0.115.12",
+    "uvicorn>=0.34.0",
+    "python-dotenv>=1.0.0",
+    "langroid>=0.2.0",
+    "ag_ui_langroid",
+]
+
+[project.scripts]
+dev = "server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["server"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.uv.sources]
+ag_ui_langroid = { path = "../", editable = true }

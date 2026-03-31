@@ -18,7 +18,8 @@
     "paths": {
       "@/*": ["./src/*"]
     },
-    "stripInternal": true
+    "stripInternal": true,
+    "types": ["vitest/globals"]
   },
   "include": ["src"],
   "exclude": ["node_modules", "dist"]

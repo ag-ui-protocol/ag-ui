@@ -39,7 +39,7 @@ dev = [{ name = "fastapi", specifier = ">=0.115.12" }]
 
 [[package]]
 name = "ag-ui-protocol"
-version = "0.1.11"
+version = "0.1.13"
 source = { directory = "../../../../sdks/python" }
 dependencies = [
     { name = "pydantic" },

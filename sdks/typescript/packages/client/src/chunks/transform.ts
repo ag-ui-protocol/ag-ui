@@ -18,6 +18,7 @@ import { EventType } from "@ag-ui/core";
 
 interface TextMessageFields {
   messageId: string;
+  name?: string;
 }
 
 interface ToolCallFields {
@@ -162,6 +163,7 @@ export const transformChunks =
 
               textMessageFields = {
                 messageId: messageChunkEvent.messageId,
+                name: messageChunkEvent.name,
               };
               mode = "text";
 
@@ -169,6 +171,7 @@ export const transformChunks =
                 type: EventType.TEXT_MESSAGE_START,
                 messageId: messageChunkEvent.messageId,
                 role: messageChunkEvent.role || "assistant",
+                ...(messageChunkEvent.name !== undefined && { name: messageChunkEvent.name }),
               } as TextMessageStartEvent;
 
               textMessageResult.push(textMessageStartEvent);

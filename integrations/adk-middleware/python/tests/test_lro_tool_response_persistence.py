@@ -258,7 +258,7 @@ class TestLROToolResponseIntegration:
         # Step 3: Verify session has exactly ONE function_response
         app_name = simple_agent._get_app_name(run_input_2)
         user_id = simple_agent._get_user_id(run_input_2)
-        backend_session_id = simple_agent._get_backend_session_id(thread_id)
+        backend_session_id = simple_agent._get_backend_session_id(thread_id, user_id)
 
         if backend_session_id:
             session = await simple_agent._session_manager._session_service.get_session(
@@ -355,7 +355,7 @@ class TestLROToolResponseIntegration:
         # Verify invocation_id
         app_name = simple_agent._get_app_name(run_input_2)
         user_id = simple_agent._get_user_id(run_input_2)
-        backend_session_id = simple_agent._get_backend_session_id(thread_id)
+        backend_session_id = simple_agent._get_backend_session_id(thread_id, user_id)
 
         if backend_session_id:
             session = await simple_agent._session_manager._session_service.get_session(
@@ -447,7 +447,7 @@ class TestLROToolResponseIntegration:
         # Verify single function_response
         app_name = simple_agent._get_app_name(run_input_2)
         user_id = simple_agent._get_user_id(run_input_2)
-        backend_session_id = simple_agent._get_backend_session_id(thread_id)
+        backend_session_id = simple_agent._get_backend_session_id(thread_id, user_id)
 
         if backend_session_id:
             session = await simple_agent._session_manager._session_service.get_session(
@@ -607,7 +607,7 @@ class TestHITLResumptionIntegration:
         # Verify function_response was persisted correctly
         app_name = hitl_agent._get_app_name(run_input_2)
         user_id = hitl_agent._get_user_id(run_input_2)
-        backend_session_id = hitl_agent._get_backend_session_id(thread_id)
+        backend_session_id = hitl_agent._get_backend_session_id(thread_id, user_id)
 
         if backend_session_id:
             session = await hitl_agent._session_manager._session_service.get_session(

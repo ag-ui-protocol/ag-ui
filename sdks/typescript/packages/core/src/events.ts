@@ -72,6 +72,7 @@ export const TextMessageStartEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.TEXT_MESSAGE_START),
   messageId: z.string(),
   role: TextMessageRoleSchema.default("assistant"),
+  name: z.string().optional(),
 });
 
 export const TextMessageContentEventSchema = BaseEventSchema.extend({
@@ -90,6 +91,7 @@ export const TextMessageChunkEventSchema = BaseEventSchema.extend({
   messageId: z.string().optional(),
   role: TextMessageRoleSchema.optional(),
   delta: z.string().optional(),
+  name: z.string().optional(),
 });
 
 /**

@@ -1,10 +1,10 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "../../test-isolation-helper";
 import { ToolBaseGenUIPage } from "../../featurePages/ToolBaseGenUIPage";
 
 const pageURL = "/adk-middleware/feature/tool_based_generative_ui";
 
 test.describe("Tool Based Generative UI Feature", () => {
-  test('[ADK Middleware] Haiku generation and display verification', async ({
+  test("[ADK Middleware] Haiku generation and display verification", async ({
     page,
   }) => {
     await page.goto(pageURL);
@@ -17,7 +17,7 @@ test.describe("Tool Based Generative UI Feature", () => {
     await genAIAgent.checkHaikuDisplay(page);
   });
 
-  test('[ADK Middleware] Haiku generation and UI consistency for two different prompts', async ({
+  test("[ADK Middleware] Haiku generation and UI consistency for two different prompts", async ({
     page,
   }) => {
     await page.goto(pageURL);

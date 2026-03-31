@@ -63,6 +63,42 @@ describe("event factories", () => {
     expect(event.messageId).toBe("msg-5");
   });
 
+  it("creates TEXT_MESSAGE_START with name", () => {
+    const event = createTextMessageStartEvent({
+      messageId: "msg-1",
+      name: "research-agent",
+    });
+    expect(event.type).toBe(EventType.TEXT_MESSAGE_START);
+    expect(event.messageId).toBe("msg-1");
+    expect(event.role).toBe("assistant");
+    expect(event.name).toBe("research-agent");
+  });
+
+  it("creates TEXT_MESSAGE_START without name", () => {
+    const event = createTextMessageStartEvent({
+      messageId: "msg-1",
+    });
+    expect(event.name).toBeUndefined();
+  });
+
+  it("creates TEXT_MESSAGE_CHUNK with name", () => {
+    const event = createTextMessageChunkEvent({
+      messageId: "msg-1",
+      delta: "Hello",
+      name: "research-agent",
+    });
+    expect(event.type).toBe(EventType.TEXT_MESSAGE_CHUNK);
+    expect(event.name).toBe("research-agent");
+  });
+
+  it("creates TEXT_MESSAGE_CHUNK without name", () => {
+    const event = createTextMessageChunkEvent({
+      messageId: "msg-1",
+      delta: "Hello",
+    });
+    expect(event.name).toBeUndefined();
+  });
+
   it("creates TEXT_MESSAGE_CHUNK with optional fields", () => {
     const event = createTextMessageChunkEvent({ delta: "partial" });
 

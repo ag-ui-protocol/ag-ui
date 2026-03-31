@@ -1,0 +1,41 @@
+{
+  "fixtures": [
+    {
+      "match": { "userMessage": "one step with eggs" },
+      "response": {
+        "toolCalls": [
+          {
+            "name": "generate_task_steps",
+            "arguments": "{\"steps\":[{\"description\":\"Crack eggs into bowl\",\"status\":\"enabled\"},{\"description\":\"Preheat oven to 350F\",\"status\":\"enabled\"},{\"description\":\"Mix and bake for 25 min\",\"status\":\"enabled\"}]}"
+          }
+        ]
+      }
+    },
+    {
+      "match": { "userMessage": "Does the planner include" },
+      "response": { "content": "No" }
+    },
+    {
+      "match": { "userMessage": "Start The Planning" },
+      "response": {
+        "toolCalls": [
+          {
+            "name": "generate_task_steps",
+            "arguments": "{\"steps\":[{\"description\":\"Start The Planning\",\"status\":\"enabled\"},{\"description\":\"Design spacecraft\",\"status\":\"enabled\"},{\"description\":\"Launch mission\",\"status\":\"enabled\"}]}"
+          }
+        ]
+      }
+    },
+    {
+      "match": { "userMessage": "trip to mars" },
+      "response": {
+        "toolCalls": [
+          {
+            "name": "generate_task_steps",
+            "arguments": "{\"steps\":[{\"description\":\"Research mission requirements\",\"status\":\"enabled\"},{\"description\":\"Assemble crew\",\"status\":\"enabled\"},{\"description\":\"Build spacecraft\",\"status\":\"enabled\"},{\"description\":\"Launch from Earth\",\"status\":\"enabled\"},{\"description\":\"Land on Mars\",\"status\":\"enabled\"}]}"
+          }
+        ]
+      }
+    }
+  ]
+}

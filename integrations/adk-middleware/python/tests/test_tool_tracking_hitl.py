@@ -122,7 +122,7 @@ class TestHITLToolTracking:
             assert any(isinstance(e, ToolCallEndEvent) for e in events)
 
             # Check if tool call was tracked
-            has_pending = await adk_middleware._has_pending_tool_calls("test_thread")
+            has_pending = await adk_middleware._has_pending_tool_calls("test_thread", "test_user")
             assert has_pending, "Tool call should be tracked as pending"
 
             # Verify session state contains the tool call (use backend_session_id)
@@ -179,8 +179,8 @@ class TestHITLToolTracking:
                 events.append(event)
 
             # Execution should NOT be cleaned up due to pending tool call
-            assert "test_thread" in adk_middleware._active_executions
-            execution = adk_middleware._active_executions["test_thread"]
+            assert ("test_thread", "test_user") in adk_middleware._active_executions
+            execution = adk_middleware._active_executions[("test_thread", "test_user")]
             assert execution.is_complete
 
     @pytest.mark.asyncio
@@ -234,8 +234,8 @@ class TestHITLToolTracking:
                 events.append(event)
 
             # Execution should NOT be cleaned up due to pending tool call
-            assert "test_thread" in adk_middleware._active_executions
-            execution = adk_middleware._active_executions["test_thread"]
+            assert ("test_thread", "test_user") in adk_middleware._active_executions
+            execution = adk_middleware._active_executions[("test_thread", "test_user")]
             assert execution.is_complete
 
         await adk_middleware._session_manager._cleanup_expired_sessions()
@@ -288,7 +288,7 @@ class TestHITLToolTracking:
                 events.append(event)
 
             # Execution should be cleaned up due to NO pending tool call
-            assert "test_thread" not in adk_middleware._active_executions
+            assert ("test_thread", "test_user") not in adk_middleware._active_executions
 
         await adk_middleware._session_manager._cleanup_expired_sessions()
         # Session should not exist due cleanup
@@ -358,7 +358,7 @@ class TestHITLToolTracking:
         assert pending_after == [], "Stale pending_tool_calls should be cleared"
 
         # Verify has_pending_tool_calls returns False
-        has_pending = await adk_middleware._has_pending_tool_calls(thread_id)
+        has_pending = await adk_middleware._has_pending_tool_calls(thread_id, user_id)
         assert not has_pending, "Should have no pending tool calls"
 
     @pytest.mark.asyncio
@@ -384,4 +384,4 @@ class TestHITLToolTracking:
         assert pending == [], "New session should have no pending_tool_calls"
 
         # Verify cache was populated
-        assert thread_id in adk_middleware._session_lookup_cache
+        assert (thread_id, user_id) in adk_middleware._session_lookup_cache

@@ -19,7 +19,7 @@ pre-commit:
     generate-dojo-content:
       tags: dojo
       glob: "apps/dojo/**"
-      run: pnpm --filter dojo run generate-content-json
+      run: pnpm --filter demo-viewer run generate-content-json
       stage_fixed: true
     lint-fix:
       tags: lint

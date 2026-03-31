@@ -41,6 +41,17 @@ describe("Message Events", () => {
 
       expectRoundTripEquality(event);
     });
+
+    it("should round-trip encode/decode with name", () => {
+      const event: TextMessageStartEvent = {
+        type: EventType.TEXT_MESSAGE_START,
+        timestamp: Date.now(),
+        messageId: "msg-1",
+        role: "assistant",
+        name: "research-agent",
+      };
+      expectRoundTripEquality(event);
+    });
   });
 
   describe("TextMessageContentEvent", () => {

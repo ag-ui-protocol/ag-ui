@@ -382,3 +382,41 @@ type State = any
 
 The state type is flexible and can hold any data structure needed by the agent
 implementation.
+
+## AgentCapabilities
+
+Typed capability declaration returned by `getCapabilities()`. All fields are
+optional — agents only declare what they support.
+
+```typescript
+interface AgentCapabilities {
+  identity?: IdentityCapabilities
+  transport?: TransportCapabilities
+  tools?: ToolsCapabilities
+  output?: OutputCapabilities
+  state?: StateCapabilities
+  multiAgent?: MultiAgentCapabilities
+  reasoning?: ReasoningCapabilities
+  multimodal?: MultimodalCapabilities
+  execution?: ExecutionCapabilities
+  humanInTheLoop?: HumanInTheLoopCapabilities
+  custom?: Record<string, unknown>
+}
+```
+
+| Property         | Type                              | Description                                  |
+| ---------------- | --------------------------------- | -------------------------------------------- |
+| `identity`       | `IdentityCapabilities`            | Agent identity and metadata                  |
+| `transport`      | `TransportCapabilities`           | Supported transport mechanisms               |
+| `tools`          | `ToolsCapabilities`               | Agent-provided tools and tool calling config |
+| `output`         | `OutputCapabilities`              | Output format support                        |
+| `state`          | `StateCapabilities`               | State and memory management                  |
+| `multiAgent`     | `MultiAgentCapabilities`          | Multi-agent coordination                     |
+| `reasoning`      | `ReasoningCapabilities`           | Reasoning and thinking support               |
+| `multimodal`     | `MultimodalCapabilities`          | Multimodal input/output support              |
+| `execution`      | `ExecutionCapabilities`           | Execution control and limits                 |
+| `humanInTheLoop` | `HumanInTheLoopCapabilities`      | Human-in-the-loop support                    |
+| `custom`         | `Record<string, unknown>`         | Integration-specific capabilities            |
+
+See [Capabilities](/concepts/capabilities) for the full category type
+definitions and usage patterns.

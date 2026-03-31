@@ -1,7 +1,7 @@
-import { Page, Locator, expect } from '@playwright/test';
-import { CopilotSelectors } from '../../utils/copilot-selectors';
-import { sendChatMessage, awaitLLMResponseDone } from '../../utils/copilot-actions';
-import { DEFAULT_WELCOME_MESSAGE } from '../../lib/constants';
+import { Page, Locator, expect } from "@playwright/test";
+import { CopilotSelectors } from "../../utils/copilot-selectors";
+import { sendAndAwaitResponse } from "../../utils/copilot-actions";
+import { DEFAULT_WELCOME_MESSAGE } from "../../lib/constants";
 
 export class HumanInLoopPage {
   readonly page: Page;
@@ -19,8 +19,10 @@ export class HumanInLoopPage {
     this.sendButton = CopilotSelectors.sendButton(page);
     // V2 CopilotChat renders inline with this welcome text
     this.agentGreeting = page.getByText(DEFAULT_WELCOME_MESSAGE);
-    this.plan = page.getByTestId('select-steps');
-    this.performStepsButton = page.getByRole('button', { name: '✨Perform Steps' });
+    this.plan = page.getByTestId("select-steps");
+    this.performStepsButton = page.getByRole("button", {
+      name: /Perform Steps/,
+    });
     this.agentMessage = CopilotSelectors.assistantMessages(page);
     this.userMessage = CopilotSelectors.userMessages(page);
   }
@@ -31,8 +33,7 @@ export class HumanInLoopPage {
   }
 
   async sendMessage(message: string) {
-    await sendChatMessage(this.page, message);
-    await awaitLLMResponseDone(this.page);
+    await sendAndAwaitResponse(this.page, message);
   }
 
   async selectItemsInPlanner() {
@@ -41,38 +42,44 @@ export class HumanInLoopPage {
   }
 
   async getPlannerOnClick(name: string | RegExp) {
-    return this.page.getByRole('button', { name });
+    return this.page.getByRole("button", { name });
   }
 
   async uncheckItem(identifier: number | string): Promise<string> {
-    const plannerContainer = this.page.getByTestId('select-steps');
-    const items = plannerContainer.getByTestId('step-item');
+    const plannerContainer = this.page.getByTestId("select-steps");
+    const items = plannerContainer.getByTestId("step-item");
 
     let item;
-    if (typeof identifier === 'number') {
+    if (typeof identifier === "number") {
       item = items.nth(identifier);
     } else {
-      item = items.filter({
-        has: this.page.getByTestId('step-text').filter({ hasText: identifier })
-      }).first();
+      item = items
+        .filter({
+          has: this.page
+            .getByTestId("step-text")
+            .filter({ hasText: identifier }),
+        })
+        .first();
     }
-    const stepTextElement = item.getByTestId('step-text');
+    const stepTextElement = item.getByTestId("step-text");
     const text = await stepTextElement.innerText();
     await item.click();
     return text;
   }
 
   async isStepItemUnchecked(target: number | string): Promise<boolean> {
-    const plannerContainer = this.page.getByTestId('select-steps');
-    const items = plannerContainer.getByTestId('step-item');
+    const plannerContainer = this.page.getByTestId("select-steps");
+    const items = plannerContainer.getByTestId("step-item");
 
     let item;
-    if (typeof target === 'number') {
+    if (typeof target === "number") {
       item = items.nth(target);
     } else {
-      item = items.filter({
-        has: this.page.getByTestId('step-text').filter({ hasText: target })
-      }).first();
+      item = items
+        .filter({
+          has: this.page.getByTestId("step-text").filter({ hasText: target }),
+        })
+        .first();
     }
 
     const checkbox = item.locator('input[type="checkbox"]');
@@ -84,8 +91,30 @@ export class HumanInLoopPage {
     await this.performStepsButton.waitFor({ state: "hidden" });
   }
 
+  async performStepsAndAwait() {
+    const countBefore = await this.page
+      .locator('[data-testid="copilot-assistant-message"]')
+      .count();
+    await this.performStepsButton.click();
+    await this.performStepsButton.waitFor({ state: "hidden" });
+    await this.page.waitForFunction(
+      (before) =>
+        document.querySelectorAll('[data-testid="copilot-assistant-message"]')
+          .length > before,
+      countBefore,
+      { timeout: 30000 },
+    );
+    await this.page.waitForFunction(
+      () => document.querySelector('[data-copilot-running="false"]') !== null,
+      null,
+      { timeout: 60000 },
+    );
+  }
+
   async assertAgentReplyVisible(expectedText: RegExp) {
-    await expect(this.agentMessage.last().getByText(expectedText)).toBeVisible();
+    await expect(
+      this.agentMessage.last().getByText(expectedText),
+    ).toBeVisible();
   }
 
   async assertUserMessageVisible(message: string) {
