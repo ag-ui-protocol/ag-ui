@@ -21,7 +21,6 @@ from .shared_state.agent import graph as shared_state_graph
 from .subgraphs.agent import graph as subgraphs_graph
 from .tool_based_generative_ui.agent import graph as tool_based_generative_ui_graph
 from .a2ui_fixed_schema.agent import graph as a2ui_fixed_schema_graph
-from .a2ui_fixed_schema_streaming.agent import graph as a2ui_fixed_schema_streaming_graph
 from .a2ui_dynamic_schema.agent import graph as a2ui_dynamic_schema_graph
 
 app = FastAPI(title="LangGraph Dojo Example Server")
@@ -78,12 +77,7 @@ agents = {
         description="Fixed-schema A2UI flight search (no streaming).",
         graph=a2ui_fixed_schema_graph,
     ),
-    "a2ui_fixed_schema_streaming": LangGraphAgent(
-        name="a2ui_fixed_schema_streaming",
-        description="Fixed-schema A2UI flight search with streaming rendering.",
-        graph=a2ui_fixed_schema_streaming_graph,
-    ),
-    "a2ui_dynamic_schema": LangGraphAgent(
+"a2ui_dynamic_schema": LangGraphAgent(
         name="a2ui_dynamic_schema",
         description="Dynamic A2UI with LLM-generated UI schema.",
         graph=a2ui_dynamic_schema_graph,
@@ -138,10 +132,6 @@ add_langgraph_fastapi_endpoint(
 
 add_langgraph_fastapi_endpoint(
     app=app, agent=agents["a2ui_fixed_schema"], path="/agent/a2ui_fixed_schema"
-)
-
-add_langgraph_fastapi_endpoint(
-    app=app, agent=agents["a2ui_fixed_schema_streaming"], path="/agent/a2ui_fixed_schema_streaming"
 )
 
 add_langgraph_fastapi_endpoint(

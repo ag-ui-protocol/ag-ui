@@ -25,10 +25,6 @@ FLIGHT_SURFACE_ID = "flight-search-results"
 FLIGHT_SCHEMA = a2ui.load_schema(
     Path(__file__).parent / "schemas" / "flight_schema.json"
 )
-BOOKED_SCHEMA = a2ui.load_schema(
-    Path(__file__).parent / "schemas" / "booked_schema.json"
-)
-
 
 class Flight(TypedDict):
     id: str
@@ -71,16 +67,6 @@ def search_flights(flights: list[Flight]) -> str:
             a2ui.update_components(FLIGHT_SURFACE_ID, FLIGHT_SCHEMA),
             a2ui.update_data_model(FLIGHT_SURFACE_ID, {"flights": flights}),
         ],
-        action_handlers={
-            "book_flight": [
-                a2ui.update_components(FLIGHT_SURFACE_ID, BOOKED_SCHEMA),
-                a2ui.update_data_model(FLIGHT_SURFACE_ID, {
-                    "title": "Booking Confirmed",
-                    "detail": "Your flight has been booked successfully.",
-                    "reference": "CK-74921",
-                }),
-            ],
-        },
     )
 
 
@@ -91,10 +77,6 @@ HOTEL_SURFACE_ID = "hotel-search-results"
 HOTEL_SCHEMA = a2ui.load_schema(
     Path(__file__).parent / "schemas" / "hotel_schema.json"
 )
-HOTEL_BOOKED_SCHEMA = a2ui.load_schema(
-    Path(__file__).parent / "schemas" / "hotel_booked_schema.json"
-)
-
 
 class Hotel(TypedDict):
     id: str
@@ -121,16 +103,6 @@ def search_hotels(hotels: list[Hotel]) -> str:
             a2ui.update_components(HOTEL_SURFACE_ID, HOTEL_SCHEMA),
             a2ui.update_data_model(HOTEL_SURFACE_ID, {"hotels": hotels}),
         ],
-        action_handlers={
-            "book_hotel": [
-                a2ui.update_components(HOTEL_SURFACE_ID, HOTEL_BOOKED_SCHEMA),
-                a2ui.update_data_model(HOTEL_SURFACE_ID, {
-                    "title": "Hotel Booked!",
-                    "detail": "Your reservation is confirmed.",
-                    "reference": "HT-59201",
-                }),
-            ],
-        },
     )
 
 
