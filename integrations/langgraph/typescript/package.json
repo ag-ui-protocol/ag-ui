@@ -53,8 +53,8 @@
       "require": "./dist/index.js"
     },
     "./middlewares": {
-      "require": "./dist/middlewares/index.js",
-      "import": "./dist/middlewares/index.mjs"
+      "import": "./dist/middlewares/index.mjs",
+      "require": "./dist/middlewares/index.js"
     },
     "./package.json": "./package.json"
   }
