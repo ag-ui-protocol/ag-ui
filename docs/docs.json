@@ -1,6 +1,6 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "willow",
+  "theme": "aspen",
   "name": "Agent User Interaction Protocol",
   "colors": {
     "primary": "#09090b",
