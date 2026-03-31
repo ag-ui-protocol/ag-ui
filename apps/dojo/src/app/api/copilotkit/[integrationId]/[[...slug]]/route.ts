@@ -9,10 +9,6 @@ import type { AbstractAgent } from "@ag-ui/client";
 
 import { agentsIntegrations } from "@/agents";
 import { IntegrationId } from "@/menu";
-import flightSchema from "./streaming_flight_schema.json";
-import bookedSchema from "./booked_schema.json";
-import hotelSchema from "./hotel_schema.json";
-import hotelBookedSchema from "./hotel_booked_schema.json";
 
 type RouteParams = {
   params: Promise<{
@@ -39,28 +35,6 @@ async function getHandler(integrationId: string) {
   const runtime = new CopilotRuntime({
     agents: agents as Record<string, AbstractAgent>,
     runner: new InMemoryAgentRunner(),
-    a2ui: {
-      streamingSurfaces: [
-        {
-          toolName: "search_flights_streaming",
-          surface: {
-            surfaceId: "flight-search-streaming",
-            catalogId: "https://a2ui.org/specification/v0_9/basic_catalog.json",
-            components: flightSchema,
-            dataKey: "flights",
-          },
-        },
-        {
-          toolName: "search_hotels_streaming",
-          surface: {
-            surfaceId: "hotel-search-streaming",
-            catalogId: "https://a2ui.org/demos/dojo/custom_catalog.json",
-            components: hotelSchema,
-            dataKey: "hotels",
-          },
-        },
-      ],
-    },
   });
 
   const app = createCopilotEndpointSingleRoute({

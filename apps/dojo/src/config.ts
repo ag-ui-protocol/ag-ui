@@ -94,12 +94,6 @@ export const featureConfig: FeatureConfig[] = [
     tags: ["A2UI", "Generative UI", "Fixed Schema"],
   }),
   createFeatureConfig({
-    id: "a2ui_fixed_schema_streaming",
-    name: "A2UI Fixed Schema (Streaming)",
-    description: "Fixed-schema A2UI flight search with streaming progressive rendering",
-    tags: ["A2UI", "Generative UI", "Fixed Schema", "Streaming"],
-  }),
-  createFeatureConfig({
     id: "a2ui_dynamic_schema",
     name: "A2UI Dynamic Schema",
     description: "Dynamic LLM-generated A2UI surfaces from conversation context",
