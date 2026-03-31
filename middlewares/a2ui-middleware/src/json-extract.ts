@@ -15,6 +15,82 @@ export function extractCompleteItems(partial: string, dataKey: string): unknown[
 }
 
 /**
+ * Extract a complete JSON object value for a given key from partially-streamed JSON.
+ * Given partial JSON like `{"surfaceId": "s1", "data": {"form": {"name": "Alice"}}, "other":`
+ * and dataKey "data", returns the parsed object `{"form": {"name": "Alice"}}` or null if
+ * the object value is not yet fully closed.
+ */
+export function extractCompleteObject(partial: string, dataKey: string): Record<string, unknown> | null {
+  // Find the opening '{' of the target object value using string search
+  const keyPattern = `"${dataKey}"`;
+  const keyIdx = partial.indexOf(keyPattern);
+  if (keyIdx === -1) return null;
+
+  // Skip past the key, colon, and whitespace to find the opening '{'
+  const afterKey = partial.indexOf(":", keyIdx + keyPattern.length);
+  if (afterKey === -1) return null;
+
+  let braceStart = -1;
+  for (let i = afterKey + 1; i < partial.length; i++) {
+    const ch = partial[i];
+    if (ch === "{") {
+      braceStart = i;
+      break;
+    }
+    if (ch !== " " && ch !== "\n" && ch !== "\r" && ch !== "\t") {
+      // Value is not an object (could be array, string, etc.)
+      return null;
+    }
+  }
+  if (braceStart === -1) return null;
+
+  // Use clarinet to find where the top-level object closes
+  const substr = partial.substring(braceStart);
+  const parser = clarinet.parser() as CParserWithError;
+
+  let objectDepth = 0;
+  let objectClosed = false;
+  let closePosition = -1;
+
+  parser.onerror = () => {
+    parser.error = null;
+  };
+
+  parser.onopenobject = () => {
+    objectDepth++;
+  };
+
+  parser.oncloseobject = () => {
+    objectDepth--;
+    if (objectDepth === 0 && !objectClosed) {
+      objectClosed = true;
+      closePosition = parser.position;
+    }
+  };
+
+  // Need array tracking to handle nested arrays within the object
+  parser.onopenarray = () => {};
+  parser.onclosearray = () => {};
+  parser.onvalue = () => {};
+  parser.onkey = () => {};
+
+  try {
+    parser.write(substr);
+  } catch {
+    // Partial JSON will throw; that's expected
+  }
+
+  if (!objectClosed) return null;
+
+  const objStr = substr.substring(0, closePosition);
+  try {
+    return JSON.parse(objStr) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Extended version of extractCompleteItems that also reports whether the
  * array has been fully closed in the stream (i.e., the closing `]` has
  * been received).

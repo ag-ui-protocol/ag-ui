@@ -960,6 +960,7 @@ export function extractSurfaceIds(
 export {
   extractCompleteItems,
   extractCompleteItemsWithStatus,
+  extractCompleteObject,
   extractCompleteA2UIOperations,
   extractStringField,
 } from "./json-extract";

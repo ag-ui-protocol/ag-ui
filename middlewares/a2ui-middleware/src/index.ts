@@ -24,7 +24,7 @@ import {
   A2UIUserAction,
 } from "./types";
 import { RENDER_A2UI_TOOL, RENDER_A2UI_TOOL_NAME, LOG_A2UI_EVENT_TOOL_NAME } from "./tools";
-import { getOperationSurfaceId, tryParseA2UIOperations, A2UI_OPERATIONS_KEY, extractCompleteItems, extractCompleteItemsWithStatus, extractStringField } from "./schema";
+import { getOperationSurfaceId, tryParseA2UIOperations, A2UI_OPERATIONS_KEY, extractCompleteItemsWithStatus, extractCompleteObject, extractStringField } from "./schema";
 
 // Re-exports
 export * from "./types";
@@ -226,11 +226,11 @@ export class A2UIMiddleware extends Middleware {
       // Streaming tracker for dynamic render_a2ui tool calls.
       // Schema is extracted from streaming args when updateComponents completes.
       const streamingToolCalls = new Map<string, {
-        schema: { surfaceId: string; catalogId: string; components: Array<Record<string, unknown>>; dataKey: string } | null;
+        schema: { surfaceId: string; catalogId: string; components: Array<Record<string, unknown>> } | null;
         args: string;
         emittedCount: number;
-        dataKey: string;         // which key to extract items from
         schemaEmitted: boolean;  // whether schema has been sent to the renderer
+        dataEmitted: boolean;    // whether data model has been sent
       }>();
 
       const subscription = source.subscribe({
@@ -241,13 +241,13 @@ export class A2UIMiddleware extends Middleware {
             const startEvent = event as ToolCallStartEvent;
 
             // render_a2ui: dynamic streaming. Track streaming args to
-            // extract schema (components) first, then data (items).
+            // extract schema (components) first, then data.
             // If streaming extraction fails, auto-detect on the outer
             // tool's TOOL_CALL_RESULT still works as a fallback.
             if (a2uiToolNames.has(startEvent.toolCallName)) {
               streamingToolCalls.set(startEvent.toolCallId, {
                 schema: null, args: "", emittedCount: 0,
-                dataKey: "items", schemaEmitted: false,
+                schemaEmitted: false, dataEmitted: false,
               });
             }
           }
@@ -288,7 +288,7 @@ export class A2UIMiddleware extends Middleware {
                   if (newComponents) {
                     if (!streaming.schema) {
                       // First emission — create the schema object
-                      streaming.schema = { surfaceId, catalogId, components: result.items as any[], dataKey: "items" };
+                      streaming.schema = { surfaceId, catalogId, components: result.items as any[] };
                     } else {
                       // Update components in existing schema
                       streaming.schema.components = result.items as any[];
@@ -305,10 +305,11 @@ export class A2UIMiddleware extends Middleware {
                     }
                     ops.push({ version: "v0.9", updateComponents: { surfaceId, components: result.items } });
 
-                    // Try to include data model if items are available
-                    const items = extractCompleteItems(streaming.args, streaming.dataKey);
-                    if (items && items.length > 0) {
-                      ops.push({ version: "v0.9", updateDataModel: { surfaceId, path: "/", value: { [streaming.dataKey]: items } } });
+                    // Try to include data model if "data" object is available
+                    const data = extractCompleteObject(streaming.args, "data");
+                    if (data) {
+                      streaming.dataEmitted = true;
+                      ops.push({ version: "v0.9", updateDataModel: { surfaceId, path: "/", value: data } });
                     }
 
                     const content: Record<string, unknown> = { [A2UI_OPERATIONS_KEY]: ops };
@@ -324,9 +325,30 @@ export class A2UIMiddleware extends Middleware {
                 }
               }
 
-              // Note: the data extraction path for "items" is handled by
-              // the progressive component streaming above. For dashboard-style
-              // A2UI, data is inline in component props, not in a separate items array.
+              // Handle late-arriving data: if components were already emitted but
+              // data wasn't ready yet (streams after components), emit a new snapshot
+              // with the data once it becomes extractable.
+              if (deltaHasStructuralChar && streaming.schemaEmitted && !streaming.dataEmitted && streaming.schema) {
+                const data = extractCompleteObject(streaming.args, "data");
+                if (data) {
+                  streaming.dataEmitted = true;
+                  const { surfaceId, catalogId } = streaming.schema;
+                  const ops: Array<Record<string, unknown>> = [
+                    { version: "v0.9", createSurface: { surfaceId, catalogId } },
+                    { version: "v0.9", updateComponents: { surfaceId, components: streaming.schema.components } },
+                    { version: "v0.9", updateDataModel: { surfaceId, path: "/", value: data } },
+                  ];
+                  const content: Record<string, unknown> = { [A2UI_OPERATIONS_KEY]: ops };
+                  const snapshotEvent: ActivitySnapshotEvent = {
+                    type: EventType.ACTIVITY_SNAPSHOT,
+                    messageId: `a2ui-surface-${surfaceId}-${argsEvent.toolCallId}`,
+                    activityType: A2UIActivityType,
+                    content,
+                    replace: true,
+                  };
+                  subscriber.next(snapshotEvent);
+                }
+              }
             }
 
           }

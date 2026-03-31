@@ -13,7 +13,7 @@ export const LOG_A2UI_EVENT_TOOL_NAME = "log_a2ui_event";
 /**
  * Tool definition for rendering A2UI surfaces.
  * This tool is injected into the agent's available tools when injectA2UITool is true.
- * Uses structured parameters (surfaceId, catalogId, components, items)
+ * Uses structured parameters (surfaceId, catalogId, components, data)
  * instead of a raw JSON string.
  */
 export const RENDER_A2UI_TOOL: Tool = {
@@ -38,10 +38,12 @@ export const RENDER_A2UI_TOOL: Tool = {
           "A2UI v0.9 component array (flat format). The root component must have id \"root\".",
         items: { type: "object" },
       },
-      items: {
-        type: "array",
-        description: "Plain JSON array of data objects for data binding.",
-        items: { type: "object" },
+      data: {
+        type: "object",
+        description:
+          "Initial data model for the surface. Written to the root path. " +
+          "Use for pre-filling form values (e.g. {\"form\": {\"name\": \"Alice\"}}) " +
+          "or providing data for components bound to data model paths.",
       },
     },
     required: ["surfaceId", "components"],

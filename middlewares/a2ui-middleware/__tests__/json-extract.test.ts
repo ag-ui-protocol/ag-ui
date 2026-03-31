@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   extractCompleteItems,
   extractCompleteItemsWithStatus,
+  extractCompleteObject,
   extractCompleteA2UIOperations,
   extractStringField,
 } from "../src/json-extract";
@@ -96,6 +97,77 @@ describe("extractCompleteItemsWithStatus", () => {
       items: [{ type: "a" }],
       arrayClosed: true,
     });
+  });
+});
+
+describe("extractCompleteObject", () => {
+  it("extracts a complete object value", () => {
+    const partial = '{"surfaceId": "s1", "data": {"form": {"name": "Alice"}}, "components": []}';
+    expect(extractCompleteObject(partial, "data")).toEqual({ form: { name: "Alice" } });
+  });
+
+  it("returns null when object is not yet closed", () => {
+    const partial = '{"surfaceId": "s1", "data": {"form": {"name": "Ali';
+    expect(extractCompleteObject(partial, "data")).toBeNull();
+  });
+
+  it("returns null when key is missing", () => {
+    expect(extractCompleteObject('{"other": {"x": 1}}', "data")).toBeNull();
+  });
+
+  it("returns null for empty input", () => {
+    expect(extractCompleteObject("", "data")).toBeNull();
+  });
+
+  it("returns null when colon not yet received", () => {
+    expect(extractCompleteObject('{"data"', "data")).toBeNull();
+  });
+
+  it("returns null when opening brace not yet received", () => {
+    expect(extractCompleteObject('{"data": ', "data")).toBeNull();
+  });
+
+  it("returns null when value is not an object", () => {
+    expect(extractCompleteObject('{"data": [1, 2, 3]}', "data")).toBeNull();
+    expect(extractCompleteObject('{"data": "string"}', "data")).toBeNull();
+    expect(extractCompleteObject('{"data": 42}', "data")).toBeNull();
+  });
+
+  it("handles nested objects", () => {
+    const partial = '{"data": {"a": {"b": {"c": 1}}}, "other": true}';
+    expect(extractCompleteObject(partial, "data")).toEqual({ a: { b: { c: 1 } } });
+  });
+
+  it("handles nested arrays within the object", () => {
+    const partial = '{"data": {"items": [1, 2, 3], "tags": ["a"]}, "x": 1}';
+    expect(extractCompleteObject(partial, "data")).toEqual({ items: [1, 2, 3], tags: ["a"] });
+  });
+
+  it("handles strings containing braces", () => {
+    const partial = '{"data": {"val": "}{]["}, "other": 1}';
+    expect(extractCompleteObject(partial, "data")).toEqual({ val: "}{][" });
+  });
+
+  it("handles empty object", () => {
+    const partial = '{"data": {}, "other": 1}';
+    expect(extractCompleteObject(partial, "data")).toEqual({});
+  });
+
+  it("handles whitespace around colon and value", () => {
+    const partial = '{"data" :  {"name": "Alice"} }';
+    expect(extractCompleteObject(partial, "data")).toEqual({ name: "Alice" });
+  });
+
+  it("extracts form pre-fill data from render_a2ui args", () => {
+    // Simulates actual render_a2ui streaming args
+    const partial = '{"surfaceId": "name-form", "components": [{"id": "root"}], "data": {"form": {"name": "Markus"}}}';
+    expect(extractCompleteObject(partial, "data")).toEqual({ form: { name: "Markus" } });
+  });
+
+  it("returns null when object is partially streamed after components", () => {
+    // Simulates streaming: components done, data still arriving
+    const partial = '{"surfaceId": "s1", "components": [{"id": "root"}], "data": {"form": {"name": "Mar';
+    expect(extractCompleteObject(partial, "data")).toBeNull();
   });
 });
 
