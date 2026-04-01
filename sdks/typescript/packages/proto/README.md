@@ -15,9 +15,10 @@ yarn add @ag-ui/proto
 ## Features
 
 - ⚡ **High performance** – Binary protobuf encoding for minimal bandwidth usage
-- 🔄 **Round-trip safety** – Lossless conversion between JSON and binary formats
+- 🔄 **Round-trip safety** – Compatible conversion between JSON and binary formats
 - 📋 **Generated types** – Auto-generated TypeScript definitions from `.proto` schemas
 - 🔧 **Length-prefixed** – Standard 4-byte length headers for streaming protocols
+- 🖼️ **Multimodal snapshots** – Supports multimodal user content parts in message snapshots
 
 ## Quick example
 
