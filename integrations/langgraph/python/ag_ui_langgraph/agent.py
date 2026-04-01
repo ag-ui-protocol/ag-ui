@@ -896,7 +896,7 @@ class LangGraphAgent:
                             ToolCallStartEvent(
                                 type=EventType.TOOL_CALL_START,
                                 tool_call_id=tool_msg.tool_call_id,
-                                tool_call_name=tool_msg.name,
+                                tool_call_name=tool_msg.name or event.get("name", ""),
                                 parent_message_id=tool_msg.id,
                                 raw_event=event,
                             )
@@ -933,7 +933,7 @@ class LangGraphAgent:
                     ToolCallStartEvent(
                         type=EventType.TOOL_CALL_START,
                         tool_call_id=tool_call_output.tool_call_id,
-                        tool_call_name=tool_call_output.name,
+                        tool_call_name=tool_call_output.name or event.get("name", ""),
                         parent_message_id=tool_call_output.id,
                         raw_event=event,
                     )

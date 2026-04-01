@@ -6,7 +6,7 @@ from ag_ui.encoder import EventEncoder
 
 from .agent import LangGraphAgent
 
-def add_langgraph_fastapi_endpoint(app: FastAPI, agent: LangGraphAgent, path: str = "/"):
+def add_langgraph_fastapi_endpoint(app: FastAPI, agent_factory, path: str = "/"):
     """Adds an endpoint to the FastAPI app."""
 
     @app.post(path)
@@ -16,6 +16,8 @@ def add_langgraph_fastapi_endpoint(app: FastAPI, agent: LangGraphAgent, path: st
 
         # Create an event encoder to properly format SSE events
         encoder = EventEncoder(accept=accept_header)
+
+        agent = agent_factory()
 
         async def event_generator():
             async for event in agent.run(input_data):
