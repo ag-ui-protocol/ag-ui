@@ -1,3 +1,4 @@
+import { TransformHttpEventStreamHandlers } from "@/transform/base-type";
 import { Message, RunAgentInput, State } from "@ag-ui/core";
 
 export interface AgentConfig {
@@ -12,6 +13,7 @@ export interface AgentConfig {
 export interface HttpAgentConfig extends AgentConfig {
   url: string;
   headers?: Record<string, string>;
+  streamHandlers?: TransformHttpEventStreamHandlers[];
 }
 
 export type RunAgentParameters = Partial<
