@@ -40,7 +40,7 @@ export interface MastraAgentConfig extends AgentConfig {
 
 interface MastraAgentStreamOptions {
   onTextPart?: (text: string) => void;
-  onFinishMessagePart?: () => void;
+  onTextEndPart?: () => void;
   onToolCallPart?: (streamPart: {
     toolCallId: string;
     toolName: string;
@@ -178,7 +178,7 @@ export class MastraAgent extends AbstractAgent {
 
               subscriber.next(toolCallResultEvent);
             },
-            onFinishMessagePart: async () => {
+            onTextEndPart: async () => {
               messageId = randomUUID();
             },
             onError: (error) => {
@@ -267,7 +267,7 @@ export class MastraAgent extends AbstractAgent {
     { threadId, runId, messages, tools, context: inputContext }: RunAgentInput,
     {
       onTextPart,
-      onFinishMessagePart,
+      onTextEndPart,
       onToolCallPart,
       onToolResultPart,
       onError,
@@ -334,8 +334,8 @@ export class MastraAgent extends AbstractAgent {
                 break;
               }
 
-              case "finish": {
-                onFinishMessagePart?.();
+              case "text-end": {
+                onTextEndPart?.();
                 break;
               }
             }
@@ -386,8 +386,8 @@ export class MastraAgent extends AbstractAgent {
                   break;
                 }
 
-                case "finish": {
-                  onFinishMessagePart?.();
+                case "text-end": {
+                  onTextEndPart?.();
                   break;
                 }
               }
