@@ -138,14 +138,20 @@ class StrandsAgent:
                     if tool_name:
                         frontend_tool_names.add(tool_name)
 
-            # Check if the last message is a tool result - if so, don't emit tool events again
-            has_pending_tool_result = False
+            # Collect tool_call_ids that already have results in the message history
+            # so we suppress duplicate TOOL_CALL_START events only for those specific calls
+            pending_tool_result_ids: set[str] = set()
             if input_data.messages:
-                last_msg = input_data.messages[-1]
-                if last_msg.role == "tool":
-                    has_pending_tool_result = True
+                for msg in reversed(input_data.messages):
+                    if msg.role == "tool":
+                        tool_call_id = getattr(msg, "tool_call_id", None)
+                        if tool_call_id:
+                            pending_tool_result_ids.add(tool_call_id)
+                    else:
+                        break
+                if pending_tool_result_ids:
                     logger.debug(
-                        f"Has pending tool result detected: tool_call_id={getattr(last_msg, 'tool_call_id', 'unknown')}, thread_id={input_data.thread_id}"
+                        f"Has pending tool results detected: tool_call_ids={pending_tool_result_ids}, thread_id={input_data.thread_id}"
                     )
 
             # Convert AG-UI messages to Strands format
@@ -250,7 +256,7 @@ class StrandsAgent:
             # message from the frontend tool that was just executed so the agent
             # understands the context and can generate a proper conclusion.
             user_message = "Hello"
-            if has_pending_tool_result and input_data.messages:
+            if pending_tool_result_ids and input_data.messages:
                 for msg in reversed(input_data.messages):
                     if msg.role == "tool" and hasattr(msg, "tool_call_id"):
                         tool_name = _tool_call_id_to_name.get(msg.tool_call_id)
@@ -283,9 +289,10 @@ class StrandsAgent:
             current_state = dict(input_data.state or {})  # Track state for final snapshot
             stop_text_streaming = False
             halt_event_stream = False
+            pending_halt = False
 
             logger.debug(
-                f"Starting agent run: thread_id={input_data.thread_id}, run_id={input_data.run_id}, has_pending_tool_result={has_pending_tool_result}, message_count={len(input_data.messages)}, strands_message_count={len(strands_messages)}"
+                f"Starting agent run: thread_id={input_data.thread_id}, run_id={input_data.run_id}, pending_tool_result_ids={pending_tool_result_ids}, message_count={len(input_data.messages)}, strands_message_count={len(strands_messages)}"
             )
 
             # Stream from persistent Strands agent with only the new user message
@@ -345,6 +352,9 @@ class StrandsAgent:
 
                     # Handle tool results from Strands for backend tool rendering
                     elif "message" in event and event["message"].get("role") == "user":
+                        if pending_halt:
+                            halt_event_stream = True
+                            continue
                         message_content = event["message"].get("content", [])
                         if not message_content or not isinstance(message_content, list):
                             continue
@@ -398,7 +408,7 @@ class StrandsAgent:
                             )
 
                             logger.debug(
-                                f"Processing tool result: tool_name={tool_name}, result_tool_id={result_tool_id}, has_pending_tool_result={has_pending_tool_result}, thread_id={input_data.thread_id}"
+                                f"Processing tool result: tool_name={tool_name}, result_tool_id={result_tool_id}, pending_tool_result_ids={pending_tool_result_ids}, thread_id={input_data.thread_id}"
                             )
 
                             # Skip emitting the placeholder result for forwarded/proxy tools
@@ -471,8 +481,8 @@ class StrandsAgent:
                                 logger.debug(
                                     f"Breaking event stream: stop_streaming_after_result behavior triggered (thread_id={input_data.thread_id}, tool_name={tool_name})"
                                 )
-                                # Continue consuming events silently to allow proper cleanup
-                                continue
+                                # Break inner loop — no further results should be emitted
+                                break
 
                     # Handle tool calls
                     elif "current_tool_use" in event and event["current_tool_use"]:
@@ -569,7 +579,7 @@ class StrandsAgent:
                                 behavior = self.config.tool_behaviors.get(tool_name)
 
                                 logger.debug(
-                                    f"Processing tool call on contentBlockStop: tool_name={tool_name}, tool_use_id={tool_use_id}, is_frontend_tool={is_frontend_tool}, has_pending_tool_result={has_pending_tool_result}, args_str={args_str}, thread_id={input_data.thread_id}"
+                                    f"Processing tool call on contentBlockStop: tool_name={tool_name}, tool_use_id={tool_use_id}, is_frontend_tool={is_frontend_tool}, is_pending_result={tool_use_id in pending_tool_result_ids}, args_str={args_str}, thread_id={input_data.thread_id}"
                                 )
                                 call_context = ToolCallContext(
                                     input_data=input_data,
@@ -609,12 +619,16 @@ class StrandsAgent:
                                             name="PredictState",
                                             value=predict_state_payload,
                                         )
-                                if has_pending_tool_result:
+                                # Only suppress START for tool calls whose results are already
+                                # in the conversation history (pending_tool_result_ids).
+                                # New tool calls in this turn must still emit START events.
+                                is_pending = tool_use_id in pending_tool_result_ids
+                                if is_pending:
                                     logger.debug(
-                                        f"Skipping tool call START event due to has_pending_tool_result for {tool_name} (tool_use_id={tool_use_id}, thread_id={input_data.thread_id})"
+                                        f"Skipping tool call START event for already-resolved tool {tool_name} (tool_use_id={tool_use_id}, thread_id={input_data.thread_id})"
                                     )
 
-                                if not has_pending_tool_result:
+                                if not is_pending:
                                     # Close any open text message before starting a tool call
                                     # so each segment has clean start/end boundaries.
                                     if message_started:
@@ -672,11 +686,9 @@ class StrandsAgent:
                                         and behavior.continue_after_frontend_call
                                     ):
                                         logger.debug(
-                                            f"Breaking event stream: frontend tool call completed (thread_id={input_data.thread_id}, tool_name={tool_name}, tool_call_id={tool_use_id}, has_behavior={behavior is not None}, continue_after_frontend_call={behavior.continue_after_frontend_call if behavior else None})"
+                                            f"Deferring halt after frontend tool call: tool_name={tool_name}, tool_call_id={tool_use_id}, thread_id={input_data.thread_id}"
                                         )
-                                        halt_event_stream = True
-                                        # Continue consuming events silently to allow proper cleanup
-                                        continue
+                                        pending_halt = True
             finally:
                 # Properly close the async generator to avoid context detachment errors
                 # The generator should complete naturally when we consume all events,
