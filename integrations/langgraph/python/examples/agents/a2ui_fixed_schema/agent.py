@@ -63,7 +63,7 @@ def search_flights(flights: list[Flight]) -> str:
     """
     return a2ui.render(
         operations=[
-            a2ui.create_surface(FLIGHT_SURFACE_ID),
+            a2ui.create_surface(FLIGHT_SURFACE_ID, catalog_id=CUSTOM_CATALOG_ID),
             a2ui.update_components(FLIGHT_SURFACE_ID, FLIGHT_SCHEMA),
             a2ui.update_data_model(FLIGHT_SURFACE_ID, {"flights": flights}),
         ],
