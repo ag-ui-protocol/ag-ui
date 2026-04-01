@@ -82,14 +82,16 @@ jobs:
 
             echo "=== Processing $NAME@$VERSION ($BUILD_SYSTEM) ==="
 
+            # NOTE: the if-! context disables set -e inside the subshell,
+            # so every fallible command needs an explicit || exit 1.
             if ! (
-              cd "$DIR"
+              cd "$DIR" || exit 1
 
               # Install dependencies
               if [ "$BUILD_SYSTEM" = "poetry" ]; then
-                poetry install
+                poetry install || exit 1
               else
-                uv sync
+                uv sync || exit 1
               fi
 
               # Run tests if configured
@@ -106,9 +108,9 @@ jobs:
               if [ -n "$TEST_CMD" ]; then
                 echo "Running tests: $TEST_CMD"
                 if [ "$BUILD_SYSTEM" = "poetry" ]; then
-                  poetry run $TEST_CMD
+                  poetry run $TEST_CMD || exit 1
                 else
-                  uv run $TEST_CMD
+                  uv run $TEST_CMD || exit 1
                 fi
               else
                 echo "WARNING: No test script configured in [tool.ag-ui.scripts] for $NAME — skipping tests" >&2
@@ -117,9 +119,9 @@ jobs:
 
               # Build
               if [ "$BUILD_SYSTEM" = "poetry" ]; then
-                poetry build
+                poetry build || exit 1
               else
-                uv build
+                uv build || exit 1
               fi
 
               # Verify wheel permissions
@@ -139,12 +141,12 @@ jobs:
                   print(f'  - {f}', file=sys.stderr)
               sys.exit(1)
           print('All files have correct permissions.')
-          "
+          " || exit 1
 
               # Publish
               if [ "$DRY_RUN" != "true" ]; then
                 echo "Publishing $NAME@$VERSION to PyPI..."
-                uv publish
+                uv publish || exit 1
                 echo "Published $NAME@$VERSION" >> $GITHUB_STEP_SUMMARY
               else
                 echo "DRY RUN: Would publish $NAME@$VERSION" >> $GITHUB_STEP_SUMMARY
