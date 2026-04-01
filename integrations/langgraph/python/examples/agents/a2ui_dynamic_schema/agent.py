@@ -24,19 +24,19 @@ from copilotkit import a2ui
 @lc_tool
 def render_a2ui(
     surfaceId: str,
+    catalogId: str,
     components: list[dict],
-    items: list[dict],
+    data: dict | None = None,
 ) -> str:
     """Render a dynamic A2UI v0.9 surface.
 
     Args:
         surfaceId: Unique surface identifier.
+        catalogId: The catalog ID (use "https://a2ui.org/demos/dojo/custom_catalog.json").
         components: A2UI v0.9 component array (flat format). The root
-            component must have id "root". Use a List with
-            children: { componentId, path: "/items" } for repeating cards.
-        items: Plain JSON array of data objects. Each object's keys
-            correspond to the path bindings in the template components.
-            Use relative paths (no leading /) inside templates.
+            component must have id "root".
+        data: Optional initial data model for the surface (e.g. form values,
+            list items for data-bound components).
     """
     return "rendered"
 
@@ -52,9 +52,10 @@ def _build_context_prompt(state: dict) -> str:
     parts: list[str] = []
 
     # Include all context entries (generation guidelines, design guidelines, etc.)
+    # Entries may be Pydantic Context objects or plain dicts.
     for entry in ag_ui.get("context", []):
-        desc = entry.get("description", "")
-        value = entry.get("value", "")
+        desc = entry.description
+        value = entry.value
         if desc:
             parts.append(f"## {desc}\n{value}\n")
         else:
@@ -104,17 +105,19 @@ def generate_a2ui(runtime: ToolRuntime[Any]) -> str:
     args = tool_call["args"]
 
     surface_id = args.get("surfaceId", "dynamic-surface")
+    catalog_id = args.get("catalogId", CUSTOM_CATALOG_ID)
     components = args.get("components", [])
-    items = args.get("items", [])
+    data = args.get("data", {})
 
     # Wrap as v0.9 a2ui_operations so the middleware detects it
-    result = a2ui.render(
-        operations=[
-            a2ui.create_surface(surface_id, catalog_id=CUSTOM_CATALOG_ID),
-            a2ui.update_components(surface_id, components),
-            a2ui.update_data_model(surface_id, {"items": items}),
-        ],
-    )
+    ops = [
+        a2ui.create_surface(surface_id, catalog_id=catalog_id),
+        a2ui.update_components(surface_id, components),
+    ]
+    if data:
+        ops.append(a2ui.update_data_model(surface_id, data))
+
+    result = a2ui.render(operations=ops)
     return result
 
 
@@ -123,6 +126,12 @@ TOOLS = [generate_a2ui]
 
 class AgentState(MessagesState):
     tools: List[Any]
+    copilotkit: dict  # CopilotKit context (actions, etc.)
+
+# LangGraph requires state keys declared in the schema.
+# "ag-ui" uses a hyphen which isn't valid as a Python identifier,
+# so we patch it into the annotations directly.
+AgentState.__annotations__["ag-ui"] = dict
 
 
 SYSTEM_PROMPT = """You are a helpful assistant that creates rich visual UI on the fly.
