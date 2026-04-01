@@ -730,6 +730,242 @@ export async function setupLLMock(): Promise<void> {
     },
   });
 
+  // A2UI fixed schema: the agent registers search_flights and search_hotels.
+  // These are backend tools — the LLM calls them, the agent executes them
+  // server-side, and returns A2UI operations in the tool result. The middleware
+  // detects the a2ui_operations JSON in the result and streams it to the frontend.
+  // We return a tool call that the agent's tool handler will process.
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => {
+        const lastUser = req.messages.filter((m) => m.role === "user").pop();
+        const hasFlightTool = req.tools?.some(
+          (t) => t.function.name === "search_flights",
+        );
+        return (
+          !!hasFlightTool &&
+          textOf(lastUser?.content).toLowerCase().includes("flights")
+        );
+      },
+    },
+    response: {
+      toolCalls: [
+        {
+          name: "search_flights",
+          arguments: JSON.stringify({
+            flights: [
+              {
+                id: "1", airline: "United Airlines", airlineLogo: "https://www.google.com/s2/favicons?domain=united.com&sz=128",
+                flightNumber: "UA 123", origin: "SFO", destination: "JFK",
+                date: "Tue, Apr 8", departureTime: "8:00 AM", arrivalTime: "4:30 PM",
+                duration: "5h 30m", status: "On Time",
+                statusIcon: "https://placehold.co/12/22c55e/22c55e.png", price: "$289",
+              },
+              {
+                id: "2", airline: "Delta", airlineLogo: "https://www.google.com/s2/favicons?domain=delta.com&sz=128",
+                flightNumber: "DL 456", origin: "SFO", destination: "JFK",
+                date: "Tue, Apr 8", departureTime: "10:00 AM", arrivalTime: "6:45 PM",
+                duration: "5h 45m", status: "On Time",
+                statusIcon: "https://placehold.co/12/22c55e/22c55e.png", price: "$315",
+              },
+            ],
+          }),
+        },
+      ],
+    },
+  });
+
+  // A2UI fixed schema: hotel search
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => {
+        const lastUser = req.messages.filter((m) => m.role === "user").pop();
+        const hasHotelTool = req.tools?.some(
+          (t) => t.function.name === "search_hotels",
+        );
+        return (
+          !!hasHotelTool &&
+          textOf(lastUser?.content).toLowerCase().includes("hotels")
+        );
+      },
+    },
+    response: {
+      toolCalls: [
+        {
+          name: "search_hotels",
+          arguments: JSON.stringify({
+            hotels: [
+              { id: "1", name: "The Manhattan Grand", location: "Downtown Manhattan", rating: 4.5, price: "$350" },
+              { id: "2", name: "Downtown Boutique Hotel", location: "SoHo", rating: 4.0, price: "$280" },
+            ],
+          }),
+        },
+      ],
+    },
+  });
+
+  // A2UI dynamic schema: primary LLM decides to call generate_a2ui.
+  // Matches when the request has generate_a2ui in the tools list.
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => {
+        const hasGenerateTool = req.tools?.some(
+          (t) => t.function.name === "generate_a2ui",
+        );
+        return !!hasGenerateTool;
+      },
+    },
+    response: {
+      toolCalls: [
+        {
+          name: "generate_a2ui",
+          arguments: "{}",
+        },
+      ],
+    },
+  });
+
+  // A2UI dynamic schema: secondary LLM inside generate_a2ui calls render_a2ui.
+  // The agent forces tool_choice="render_a2ui" on the secondary call.
+  // Match by detecting render_a2ui in the tools list (the secondary call
+  // has render_a2ui as the only tool, unlike the primary which has generate_a2ui).
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => {
+        const hasRenderTool = req.tools?.some(
+          (t) => t.function.name === "render_a2ui",
+        );
+        const hasGenerateTool = req.tools?.some(
+          (t) => t.function.name === "generate_a2ui",
+        );
+        // Secondary call: has render_a2ui but NOT generate_a2ui
+        if (!hasRenderTool || hasGenerateTool) return false;
+        const lastUser = req.messages.filter((m) => m.role === "user").pop();
+        return textOf(lastUser?.content).toLowerCase().includes("hotel");
+      },
+    },
+    response: {
+      toolCalls: [
+        {
+          name: "render_a2ui",
+          arguments: JSON.stringify({
+            surfaceId: "hotel-comparison",
+            catalogId: "https://a2ui.org/demos/dojo/custom_catalog.json",
+            components: [
+              { id: "root", component: "Row", children: ["card-1", "card-2", "card-3"], gap: 16 },
+              { id: "card-1", component: "Card", child: "col-1" },
+              { id: "col-1", component: "Column", children: ["n1", "p1", "r1"] },
+              { id: "n1", component: "Text", text: "The Ritz" },
+              { id: "p1", component: "Text", text: "$450/night" },
+              { id: "r1", component: "StarRating", value: 4.8, label: "Rating" },
+              { id: "card-2", component: "Card", child: "col-2" },
+              { id: "col-2", component: "Column", children: ["n2", "p2", "r2"] },
+              { id: "n2", component: "Text", text: "Holiday Inn" },
+              { id: "p2", component: "Text", text: "$180/night" },
+              { id: "r2", component: "StarRating", value: 3.5, label: "Rating" },
+              { id: "card-3", component: "Card", child: "col-3" },
+              { id: "col-3", component: "Column", children: ["n3", "p3", "r3"] },
+              { id: "n3", component: "Text", text: "Boutique Loft" },
+              { id: "p3", component: "Text", text: "$320/night" },
+              { id: "r3", component: "StarRating", value: 4.2, label: "Rating" },
+            ],
+          }),
+        },
+      ],
+    },
+  });
+
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => {
+        const hasRenderTool = req.tools?.some(
+          (t) => t.function.name === "render_a2ui",
+        );
+        const hasGenerateTool = req.tools?.some(
+          (t) => t.function.name === "generate_a2ui",
+        );
+        if (!hasRenderTool || hasGenerateTool) return false;
+        const lastUser = req.messages.filter((m) => m.role === "user").pop();
+        return textOf(lastUser?.content).toLowerCase().includes("product");
+      },
+    },
+    response: {
+      toolCalls: [
+        {
+          name: "render_a2ui",
+          arguments: JSON.stringify({
+            surfaceId: "product-comparison",
+            catalogId: "https://a2ui.org/demos/dojo/custom_catalog.json",
+            components: [
+              { id: "root", component: "Row", children: ["card-1", "card-2", "card-3"], gap: 16 },
+              { id: "card-1", component: "Card", child: "col-1" },
+              { id: "col-1", component: "Column", children: ["n1", "p1", "d1"] },
+              { id: "n1", component: "Text", text: "Sony WH-1000XM5" },
+              { id: "p1", component: "Text", text: "$349" },
+              { id: "d1", component: "Text", text: "Industry-leading noise cancellation" },
+              { id: "card-2", component: "Card", child: "col-2" },
+              { id: "col-2", component: "Column", children: ["n2", "p2", "d2"] },
+              { id: "n2", component: "Text", text: "AirPods Max" },
+              { id: "p2", component: "Text", text: "$549" },
+              { id: "d2", component: "Text", text: "Premium Apple ecosystem integration" },
+              { id: "card-3", component: "Card", child: "col-3" },
+              { id: "col-3", component: "Column", children: ["n3", "p3", "d3"] },
+              { id: "n3", component: "Text", text: "Bose QC Ultra" },
+              { id: "p3", component: "Text", text: "$429" },
+              { id: "d3", component: "Text", text: "Comfortable with spatial audio" },
+            ],
+          }),
+        },
+      ],
+    },
+  });
+
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => {
+        const hasRenderTool = req.tools?.some(
+          (t) => t.function.name === "render_a2ui",
+        );
+        const hasGenerateTool = req.tools?.some(
+          (t) => t.function.name === "generate_a2ui",
+        );
+        if (!hasRenderTool || hasGenerateTool) return false;
+        const lastUser = req.messages.filter((m) => m.role === "user").pop();
+        return textOf(lastUser?.content).toLowerCase().includes("team");
+      },
+    },
+    response: {
+      toolCalls: [
+        {
+          name: "render_a2ui",
+          arguments: JSON.stringify({
+            surfaceId: "team-roster",
+            catalogId: "https://a2ui.org/demos/dojo/custom_catalog.json",
+            components: [
+              { id: "root", component: "Column", children: ["card-1", "card-2", "card-3", "card-4"] },
+              { id: "card-1", component: "Card", child: "col-1" },
+              { id: "col-1", component: "Column", children: ["n1", "r1"] },
+              { id: "n1", component: "Text", text: "Alice Chen" },
+              { id: "r1", component: "Text", text: "Engineering Lead" },
+              { id: "card-2", component: "Card", child: "col-2" },
+              { id: "col-2", component: "Column", children: ["n2", "r2"] },
+              { id: "n2", component: "Text", text: "Bob Martinez" },
+              { id: "r2", component: "Text", text: "Product Designer" },
+              { id: "card-3", component: "Card", child: "col-3" },
+              { id: "col-3", component: "Column", children: ["n3", "r3"] },
+              { id: "n3", component: "Text", text: "Carol Davis" },
+              { id: "r3", component: "Text", text: "Backend Engineer" },
+              { id: "card-4", component: "Card", child: "col-4" },
+              { id: "col-4", component: "Column", children: ["n4", "r4"] },
+              { id: "n4", component: "Text", text: "Dan Wilson" },
+              { id: "r4", component: "Text", text: "DevOps Engineer" },
+            ],
+          }),
+        },
+      ],
+    },
+  });
+
   // Load all fixture JSON files from the fixtures directory
   // (HITL fixtures are duplicated but the earlier copies match first)
   mockServer.loadFixtureDir(FIXTURES_DIR);
