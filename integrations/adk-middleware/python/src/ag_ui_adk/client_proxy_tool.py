@@ -20,9 +20,24 @@ from ag_ui.core import (
 )
 
 from .config import PredictStateMapping
+from .serialization import serialize_tool_args
 
 logger = logging.getLogger(__name__)
 
+
+def _strip_json_schema_meta(schema: Any) -> Any:
+    """Recursively strip JSON Schema meta-fields (keys starting with ``$``).
+
+    Fields such as ``$schema``, ``$id``, ``$ref``, ``$defs``, and ``$comment``
+    are valid in JSON Schema but not accepted by ``google.genai.types.Schema``,
+    which uses Pydantic's ``extra = "forbid"``.  Removing them prevents
+    ``ValidationError`` when calling ``Schema.model_validate()``.
+    """
+    if isinstance(schema, dict):
+        return {k: _strip_json_schema_meta(v) for k, v in schema.items() if not k.startswith("$")}
+    if isinstance(schema, list):
+        return [_strip_json_schema_meta(item) for item in schema]
+    return schema
 
 
 class ClientProxyTool(BaseTool):
@@ -134,6 +149,10 @@ class ClientProxyTool(BaseTool):
             parameters = {"type": "object", "properties": {}}
             logger.warning(f"Tool {self.name} had non-dict parameters, using empty schema")
 
+        # Strip JSON Schema meta-fields (keys starting with $) that are not
+        # accepted by google.genai.types.Schema (e.g. $schema, $id, $ref, $defs).
+        parameters = _strip_json_schema_meta(parameters)
+
         # Create FunctionDeclaration
         function_declaration = types.FunctionDeclaration(
             name=self.name,
@@ -223,7 +242,7 @@ class ClientProxyTool(BaseTool):
             logger.debug(f"Emitted TOOL_CALL_START for {tool_call_id}")
 
             # Emit TOOL_CALL_ARGS event
-            args_json = json.dumps(args)
+            args_json = serialize_tool_args(args)
             args_event = ToolCallArgsEvent(
                 type=EventType.TOOL_CALL_ARGS,
                 tool_call_id=tool_call_id,

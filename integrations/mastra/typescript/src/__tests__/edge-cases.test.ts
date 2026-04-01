@@ -1,3 +1,4 @@
+import { vi } from "vitest";
 import { EventType } from "@ag-ui/client";
 import { MastraAgent } from "../mastra";
 import {
@@ -260,6 +261,7 @@ describe("error handling", () => {
   });
 
   it("still emits RUN_FINISHED when getWorkingMemory throws on run finish", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const memory = new FakeMemory();
     memory.getWorkingMemory = async () => {
       throw new Error("Memory service down");
@@ -270,6 +272,11 @@ describe("error handling", () => {
     const events = await collectEvents(agent, makeInput());
 
     expect(events.some((e) => e.type === EventType.RUN_FINISHED)).toBe(true);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Failed to emit working memory snapshot"),
+      expect.any(Error),
+    );
+    warnSpy.mockRestore();
   });
 });
 
