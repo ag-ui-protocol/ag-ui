@@ -1,189 +1,220 @@
-import type { InputContent, Message } from "@ag-ui/client";
-import { AbstractAgent } from "@ag-ui/client";
-import { MastraClient } from "@mastra/client-js";
-import type { Mastra } from "@mastra/core";
-import type { CoreMessage } from "@mastra/core/llm";
-import { Agent as LocalMastraAgent } from "@mastra/core/agent";
-import { RequestContext } from "@mastra/core/request-context";
-import { MastraAgent } from "./mastra";
+import type { BinaryInputContent, InputContent, Message, UserMessage } from '@ag-ui/client';
+import type { MastraMessageV1 } from '@mastra/core/agent/message-list';
+import type { CoreAssistantMessage, CoreUserMessage } from '@mastra/core/llm';
 
-const toMastraTextContent = (content: Message["content"]): string => {
-  if (!content) {
-    return "";
+// ---------------------------------------------------------------------------
+// BUG-1 fix: O(1) tool-name index built in a single pass
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds a Map<toolCallId, toolName> from assistant messages
+ * in a single O(n) pass — fixes the O(n²) nested loop in the original.
+ * @param messages AG-UI message history.
+ */
+export function buildToolNameIndex(messages: Message[]): Map<string, string> {
+  const index = new Map<string, string>();
+  for (const msg of messages) {
+    if (msg.role === 'assistant') {
+      for (const toolCall of msg.toolCalls ?? []) {
+        index.set(toolCall.id, toolCall.function.name);
+      }
+    }
+  }
+  return index;
+}
+
+// ---------------------------------------------------------------------------
+// BUG-2 fix: binary content → Mastra ImagePart / FilePart
+// ---------------------------------------------------------------------------
+
+/**
+ * Converts AG-UI UserMessage content to Mastra UserContent,
+ * preserving text parts and mapping binary parts to ImagePart / FilePart.
+ * @param content AG-UI user message content.
+ */
+// CoreUserMessage["content"] = string | Array<TextPart | ImagePart | FilePart>
+/** User content array variant used when mapping AG-UI input parts to Mastra parts. */
+type MastraUserContentParts = NonNullable<Exclude<CoreUserMessage['content'], string>>;
+
+export function toMastraUserContent(content: UserMessage['content']): CoreUserMessage['content'] {
+  if (!content) return '';
+  if (typeof content === 'string') return content;
+
+  // After ruling out string and falsy, content is InputContent[]
+  const items: InputContent[] = content;
+  const mastraParts: MastraUserContentParts = [];
+
+  for (const item of items) {
+    if (item.type === 'text') {
+      const text = item.text;
+      if (text.trim()) {
+        mastraParts.push({ type: 'text', text });
+      }
+    } else if (item.type === 'binary') {
+      const binary: BinaryInputContent = item;
+      const source: string | URL = binary.url ? new URL(binary.url) : (binary.data ?? '');
+      const mime = binary.mimeType ?? 'application/octet-stream';
+
+      if (mime.startsWith('image/')) {
+        mastraParts.push({ type: 'image', image: source, mimeType: mime });
+      } else {
+        const filePart: MastraUserContentParts[number] & { type: 'file' } = {
+          type: 'file',
+          data: source,
+          mimeType: mime,
+        };
+        if (binary.filename) {
+          filePart.filename = binary.filename;
+        }
+        mastraParts.push(filePart);
+      }
+    }
   }
 
-  if (typeof content === "string") {
-    return content;
+  // Return string if there is only a single text part (simplest form)
+  if (mastraParts.length === 1 && mastraParts[0].type === 'text') {
+    return mastraParts[0].text;
   }
 
-  if (!Array.isArray(content)) {
-    return "";
+  return mastraParts.length > 0 ? mastraParts : '';
+}
+
+/**
+ * Extracts plain text from AG-UI content (used for assistant / system messages).
+ * @param content Raw textual content.
+ */
+function toMastraTextContent(content: string | undefined): string {
+  return content?.trim() ?? '';
+}
+
+// ---------------------------------------------------------------------------
+// BUG-3 fix: system / developer roles are now handled
+// ---------------------------------------------------------------------------
+
+/**
+ * Parses tool call arguments string to a plain object, falling back to empty object on failure.
+ * @param rawArguments JSON argument string from AG-UI tool call.
+ */
+function parseToolCallArgs(rawArguments: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(rawArguments);
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    /* fall through */
   }
+  return {};
+}
 
-  type TextInput = Extract<InputContent, { type: "text" }>;
+/**
+ * Converts AG-UI messages to MastraMessageV1[], fixing:
+ * - BUG-1: single-pass O(n) toolName lookup
+ * - BUG-2: binary content preserved
+ * - BUG-3: `system` and `developer` roles handled
+ * - BUG-13: preserve AG-UI message.id → Mastra deduplicates by id, preventing
+ *   re-insertion of history messages on every turn
+ * @param messages AG-UI message history.
+ */
+export function convertAGUIMessagesToMastra(messages: Message[]): MastraMessageV1[] {
+  // Single-pass index for tool call id → tool name (BUG-1 fix)
+  const toolNameIndex = buildToolNameIndex(messages);
 
-  const textParts = content
-    .filter((part): part is TextInput => part.type === "text")
-    .map((part: TextInput) => part.text.trim())
-    .filter(Boolean);
-
-  return textParts.join("\n");
-};
-
-export function convertAGUIMessagesToMastra(messages: Message[]): CoreMessage[] {
-  const result: CoreMessage[] = [];
+  const result: MastraMessageV1[] = [];
 
   for (const message of messages) {
-    if (message.role === "assistant") {
-      const assistantContent = toMastraTextContent(message.content);
-      const parts: any[] = [];
-      if (assistantContent) {
-        parts.push({ type: "text", text: assistantContent });
-      }
-      for (const toolCall of message.toolCalls ?? []) {
-        parts.push({
-          type: "tool-call",
-          toolCallId: toolCall.id,
-          toolName: toolCall.function.name,
-          args: JSON.parse(toolCall.function.arguments),
-        });
-      }
-      result.push({
-        role: "assistant",
-        content: parts,
-      });
-    } else if (message.role === "user") {
-      const userContent = toMastraTextContent(message.content);
-      result.push({
-        role: "user",
-        content: userContent,
-      });
-    } else if (message.role === "tool") {
-      let toolName = "unknown";
-      for (const msg of messages) {
-        if (msg.role === "assistant") {
-          for (const toolCall of msg.toolCalls ?? []) {
-            if (toolCall.id === message.toolCallId) {
-              toolName = toolCall.function.name;
-              break;
-            }
-          }
+    switch (message.role) {
+      case 'system':
+      case 'developer': {
+        const text = toMastraTextContent(message.content);
+        if (text) {
+          result.push({
+            id: message.id,
+            role: 'system',
+            content: text,
+            type: 'text',
+            createdAt: new Date(),
+          });
         }
+        break;
       }
-      result.push({
-        role: "tool",
-        content: [
-          {
-            type: "tool-result",
-            toolCallId: message.toolCallId,
-            toolName: toolName,
-            result: message.content,
-          },
-        ],
-      });
+
+      case 'assistant': {
+        const textContent = toMastraTextContent(message.content);
+        const toolCalls = message.toolCalls ?? [];
+
+        if (toolCalls.length > 0) {
+          // Assistant message with tool calls — content is the full parts array
+          const parts: CoreAssistantMessage['content'] = [];
+          if (textContent) parts.push({ type: 'text', text: textContent });
+          for (const tc of toolCalls) {
+            parts.push({
+              type: 'tool-call',
+              toolCallId: tc.id,
+              toolName: tc.function.name,
+              args: parseToolCallArgs(tc.function.arguments),
+            });
+          }
+          result.push({
+            id: message.id,
+            role: 'assistant',
+            content: parts,
+            type: 'tool-call',
+            toolCallIds: toolCalls.map((tc) => tc.id),
+            toolNames: toolCalls.map((tc) => tc.function.name),
+            toolCallArgs: toolCalls.map((tc) => parseToolCallArgs(tc.function.arguments)),
+            createdAt: new Date(),
+          });
+        } else if (textContent) {
+          // Text-only assistant message
+          result.push({
+            id: message.id,
+            role: 'assistant',
+            content: textContent,
+            type: 'text',
+            createdAt: new Date(),
+          });
+        }
+        break;
+      }
+
+      case 'user': {
+        const converted = toMastraUserContent(message.content);
+        result.push({
+          id: message.id,
+          role: 'user',
+          content: converted,
+          type: 'text',
+          createdAt: new Date(),
+        });
+        break;
+      }
+
+      case 'tool': {
+        // BUG-1 fix: O(1) lookup
+        const toolName = toolNameIndex.get(message.toolCallId) ?? 'unknown';
+        result.push({
+          id: message.id,
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: message.toolCallId,
+              toolName,
+              result: message.content,
+            },
+          ],
+          type: 'tool-result',
+          createdAt: new Date(),
+        });
+        break;
+      }
+
+      default:
+        // Unknown roles are silently ignored
+        break;
     }
   }
 
   return result;
-}
-
-export interface GetRemoteAgentsOptions {
-  mastraClient: MastraClient;
-  resourceId: string;
-}
-
-export async function getRemoteAgents({
-  mastraClient,
-  resourceId,
-}: GetRemoteAgentsOptions): Promise<Record<string, AbstractAgent>> {
-  const agents = await mastraClient.listAgents();
-
-  return Object.entries(agents).reduce(
-    (acc, [agentId]) => {
-      const agent = mastraClient.getAgent(agentId);
-
-      acc[agentId] = new MastraAgent({
-        agentId,
-        agent,
-        resourceId,
-      });
-
-      return acc;
-    },
-    {} as Record<string, AbstractAgent>,
-  );
-}
-
-export interface GetLocalAgentsOptions {
-  mastra: Mastra;
-  resourceId: string;
-  requestContext?: RequestContext;
-}
-
-export function getLocalAgents({
-  mastra,
-  resourceId,
-  requestContext,
-}: GetLocalAgentsOptions): Record<string, AbstractAgent> {
-  const agents = mastra.listAgents() || {};
-
-  const agentAGUI = Object.entries(agents).reduce(
-    (acc, [agentId, agent]) => {
-      acc[agentId] = new MastraAgent({
-        agentId,
-        agent,
-        resourceId,
-        requestContext,
-      });
-      return acc;
-    },
-    {} as Record<string, AbstractAgent>,
-  );
-
-  return agentAGUI;
-}
-
-export interface GetLocalAgentOptions {
-  mastra: Mastra;
-  agentId: string;
-  resourceId: string;
-  requestContext?: RequestContext;
-}
-
-export function getLocalAgent({
-  mastra,
-  agentId,
-  resourceId,
-  requestContext,
-}: GetLocalAgentOptions) {
-  const agent = mastra.getAgent(agentId);
-  if (!agent) {
-    throw new Error(`Agent ${agentId} not found`);
-  }
-  return new MastraAgent({
-    agentId,
-    agent,
-    resourceId,
-    requestContext,
-  }) as AbstractAgent;
-}
-
-export interface GetNetworkOptions {
-  mastra: Mastra;
-  networkId: string;
-  resourceId: string;
-  requestContext?: RequestContext;
-}
-
-export function getNetwork({ mastra, networkId, resourceId, requestContext }: GetNetworkOptions) {
-  const network = mastra.getAgent(networkId);
-  if (!network) {
-    throw new Error(`Network ${networkId} not found`);
-  }
-  return new MastraAgent({
-    agentId: network.name!,
-    agent: network as unknown as LocalMastraAgent,
-    resourceId,
-    requestContext,
-  }) as AbstractAgent;
 }
