@@ -65,6 +65,19 @@ class StrandsAgent:
             if hasattr(agent, "record_direct_tool_call")
             else True,
         }
+        for _attr in (
+            "trace_attributes",
+            "agent_id",
+            "conversation_manager",
+            "callback_handler",
+            "hooks",
+            "session_manager",
+            "tool_executor",
+        ):
+            if hasattr(agent, _attr):
+                self._agent_kwargs[_attr] = getattr(agent, _attr)
+        if hasattr(agent, "state") and agent.state is not None:
+            self._agent_kwargs["state"] = agent.state._state
 
         self.name = name
         self.description = description
