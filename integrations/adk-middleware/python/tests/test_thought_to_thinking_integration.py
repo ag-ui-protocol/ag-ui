@@ -1,11 +1,12 @@
 #!/usr/bin/env python
-"""Integration tests for thought-to-THINKING events conversion.
+"""Integration tests for thought-to-REASONING events conversion.
 
 This test verifies that when Gemini models return thought summaries
 (via include_thoughts=True), the ADK middleware correctly converts them
-to AG-UI THINKING events.
+to AG-UI REASONING events.
 
 Related issue: https://github.com/ag-ui-protocol/ag-ui/issues/951
+Updated for: https://github.com/ag-ui-protocol/ag-ui/issues/1406
 
 Requirements:
 - GOOGLE_API_KEY environment variable must be set
@@ -39,8 +40,8 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-class TestThoughtToThinkingIntegration:
-    """Integration tests for thought-to-THINKING event conversion with real API calls."""
+class TestThoughtToReasoningIntegration:
+    """Integration tests for thought-to-REASONING event conversion with real API calls."""
 
     @pytest.fixture(autouse=True)
     def reset_session_manager(self):
@@ -121,33 +122,33 @@ class TestThoughtToThinkingIntegration:
         """Count events by type."""
         return Counter(e.type.value if hasattr(e.type, 'value') else str(e.type) for e in events)
 
-    def _has_thinking_events(self, events: List[BaseEvent]) -> bool:
-        """Check if any THINKING events are present."""
-        thinking_types = {
-            EventType.THINKING_START,
-            EventType.THINKING_END,
-            EventType.THINKING_TEXT_MESSAGE_START,
-            EventType.THINKING_TEXT_MESSAGE_CONTENT,
-            EventType.THINKING_TEXT_MESSAGE_END,
+    def _has_reasoning_events(self, events: List[BaseEvent]) -> bool:
+        """Check if any REASONING events are present."""
+        reasoning_types = {
+            EventType.REASONING_START,
+            EventType.REASONING_END,
+            EventType.REASONING_MESSAGE_START,
+            EventType.REASONING_MESSAGE_CONTENT,
+            EventType.REASONING_MESSAGE_END,
         }
-        return any(e.type in thinking_types for e in events)
+        return any(e.type in reasoning_types for e in events)
 
-    def _get_thinking_content(self, events: List[BaseEvent]) -> str:
-        """Extract thinking content from events."""
+    def _get_reasoning_content(self, events: List[BaseEvent]) -> str:
+        """Extract reasoning content from events."""
         content_parts = []
         for event in events:
-            if event.type == EventType.THINKING_TEXT_MESSAGE_CONTENT:
+            if event.type == EventType.REASONING_MESSAGE_CONTENT:
                 content_parts.append(event.delta)
         return "".join(content_parts)
 
     @pytest.mark.asyncio
-    async def test_thinking_agent_emits_thinking_events(self, thinking_agent):
-        """Verify that an agent with include_thoughts=True emits THINKING events.
+    async def test_thinking_agent_emits_reasoning_events(self, thinking_agent):
+        """Verify that an agent with include_thoughts=True emits REASONING events.
 
-        This is the main test for issue #951. The agent should emit:
-        - THINKING_START at the beginning of thought content
-        - THINKING_TEXT_MESSAGE_START/CONTENT/END for thought text
-        - THINKING_END when thoughts are complete
+        This is the main test for issue #951 / #1406. The agent should emit:
+        - REASONING_START at the beginning of thought content
+        - REASONING_MESSAGE_START/CONTENT/END for thought text
+        - REASONING_END when thoughts are complete
         - Regular TEXT_MESSAGE events for the final response
 
         Note: The model may not always return thoughts even with include_thoughts=True,
@@ -164,12 +165,12 @@ class TestThoughtToThinkingIntegration:
         async for event in thinking_agent.run(input_data):
             events.append(event)
             # Print for debugging
-            if event.type in {EventType.THINKING_START, EventType.THINKING_END,
-                              EventType.THINKING_TEXT_MESSAGE_START,
-                              EventType.THINKING_TEXT_MESSAGE_END}:
+            if event.type in {EventType.REASONING_START, EventType.REASONING_END,
+                              EventType.REASONING_MESSAGE_START,
+                              EventType.REASONING_MESSAGE_END}:
                 print(f"🧠 {event.type}")
-            elif event.type == EventType.THINKING_TEXT_MESSAGE_CONTENT:
-                print(f"🧠 THINKING_CONTENT: {event.delta[:50]}...")
+            elif event.type == EventType.REASONING_MESSAGE_CONTENT:
+                print(f"🧠 REASONING_CONTENT: {event.delta[:50]}...")
 
         event_counts = self._count_events(events)
         print(f"\nEvent counts: {dict(event_counts)}")
@@ -178,33 +179,33 @@ class TestThoughtToThinkingIntegration:
         assert event_counts.get("RUN_STARTED", 0) >= 1, "Should have RUN_STARTED"
         assert event_counts.get("RUN_FINISHED", 0) >= 1, "Should have RUN_FINISHED"
 
-        # Check for thinking events
+        # Check for reasoning events
         # Note: The model may or may not return thoughts depending on the prompt
         # and model behavior, so we just verify the structure is correct when present
-        has_thinking = self._has_thinking_events(events)
+        has_reasoning = self._has_reasoning_events(events)
 
-        if has_thinking:
-            print("✅ THINKING events detected!")
+        if has_reasoning:
+            print("✅ REASONING events detected!")
             # Verify proper structure: START before END
-            thinking_start_idx = None
-            thinking_end_idx = None
+            reasoning_start_idx = None
+            reasoning_end_idx = None
             for i, event in enumerate(events):
-                if event.type == EventType.THINKING_START and thinking_start_idx is None:
-                    thinking_start_idx = i
-                if event.type == EventType.THINKING_END:
-                    thinking_end_idx = i
+                if event.type == EventType.REASONING_START and reasoning_start_idx is None:
+                    reasoning_start_idx = i
+                if event.type == EventType.REASONING_END:
+                    reasoning_end_idx = i
 
-            if thinking_start_idx is not None and thinking_end_idx is not None:
-                assert thinking_start_idx < thinking_end_idx, \
-                    "THINKING_START should come before THINKING_END"
+            if reasoning_start_idx is not None and reasoning_end_idx is not None:
+                assert reasoning_start_idx < reasoning_end_idx, \
+                    "REASONING_START should come before REASONING_END"
 
-            # Check that we have thinking content
-            thinking_content = self._get_thinking_content(events)
-            if thinking_content:
-                print(f"✅ Thinking content captured: {len(thinking_content)} chars")
-                assert len(thinking_content) > 0, "Should have non-empty thinking content"
+            # Check that we have reasoning content
+            reasoning_content = self._get_reasoning_content(events)
+            if reasoning_content:
+                print(f"✅ Reasoning content captured: {len(reasoning_content)} chars")
+                assert len(reasoning_content) > 0, "Should have non-empty reasoning content"
         else:
-            print("ℹ️ No THINKING events in this run (model may not have returned thoughts)")
+            print("ℹ️ No REASONING events in this run (model may not have returned thoughts)")
             # This is not a failure - the model may choose not to include thoughts
 
         # Verify we got a text response
@@ -213,10 +214,10 @@ class TestThoughtToThinkingIntegration:
             "Should have text message events for the response"
 
     @pytest.mark.asyncio
-    async def test_non_thinking_agent_no_thinking_events(self, non_thinking_agent):
-        """Verify that an agent without include_thoughts=True does NOT emit THINKING events.
+    async def test_non_thinking_agent_no_reasoning_events(self, non_thinking_agent):
+        """Verify that an agent without include_thoughts=True does NOT emit REASONING events.
 
-        This serves as a control test to ensure THINKING events only appear
+        This serves as a control test to ensure REASONING events only appear
         when the model is configured to include thoughts.
         """
         input_data = self._create_input("What is 2 + 2?")
@@ -232,28 +233,28 @@ class TestThoughtToThinkingIntegration:
         assert event_counts.get("RUN_STARTED", 0) >= 1, "Should have RUN_STARTED"
         assert event_counts.get("RUN_FINISHED", 0) >= 1, "Should have RUN_FINISHED"
 
-        # Should NOT have thinking events (since include_thoughts is not enabled)
-        has_thinking = self._has_thinking_events(events)
-        assert not has_thinking, \
-            "Non-thinking agent should NOT emit THINKING events"
+        # Should NOT have reasoning events (since include_thoughts is not enabled)
+        has_reasoning = self._has_reasoning_events(events)
+        assert not has_reasoning, \
+            "Non-thinking agent should NOT emit REASONING events"
 
         # Should have text message events
         assert event_counts.get("TEXT_MESSAGE_START", 0) >= 1 or \
                event_counts.get("TEXT_MESSAGE_CONTENT", 0) >= 1, \
             "Should have text message events"
 
-        print("✅ No THINKING events as expected for non-thinking agent")
+        print("✅ No REASONING events as expected for non-thinking agent")
 
     @pytest.mark.asyncio
-    async def test_thinking_events_structure(self, thinking_agent):
-        """Verify the structure and ordering of THINKING events.
+    async def test_reasoning_events_structure(self, thinking_agent):
+        """Verify the structure and ordering of REASONING events.
 
-        When THINKING events are emitted, they should follow this pattern:
-        1. THINKING_START (with optional title)
-        2. THINKING_TEXT_MESSAGE_START
-        3. One or more THINKING_TEXT_MESSAGE_CONTENT
-        4. THINKING_TEXT_MESSAGE_END
-        5. THINKING_END
+        When REASONING events are emitted, they should follow this pattern:
+        1. REASONING_START (with message_id)
+        2. REASONING_MESSAGE_START
+        3. One or more REASONING_MESSAGE_CONTENT
+        4. REASONING_MESSAGE_END
+        5. REASONING_END
 
         Then followed by regular TEXT_MESSAGE events for the response.
         """
@@ -267,44 +268,44 @@ class TestThoughtToThinkingIntegration:
         async for event in thinking_agent.run(input_data):
             events.append(event)
 
-        # If we have thinking events, verify structure
-        if self._has_thinking_events(events):
-            thinking_events = [
+        # If we have reasoning events, verify structure
+        if self._has_reasoning_events(events):
+            reasoning_events = [
                 e for e in events
                 if e.type in {
-                    EventType.THINKING_START,
-                    EventType.THINKING_END,
-                    EventType.THINKING_TEXT_MESSAGE_START,
-                    EventType.THINKING_TEXT_MESSAGE_CONTENT,
-                    EventType.THINKING_TEXT_MESSAGE_END,
+                    EventType.REASONING_START,
+                    EventType.REASONING_END,
+                    EventType.REASONING_MESSAGE_START,
+                    EventType.REASONING_MESSAGE_CONTENT,
+                    EventType.REASONING_MESSAGE_END,
                 }
             ]
 
-            if thinking_events:
-                # First thinking event should be THINKING_START
-                assert thinking_events[0].type == EventType.THINKING_START, \
-                    "First thinking event should be THINKING_START"
+            if reasoning_events:
+                # First reasoning event should be REASONING_START
+                assert reasoning_events[0].type == EventType.REASONING_START, \
+                    "First reasoning event should be REASONING_START"
 
-                # Last thinking event should be THINKING_END
-                assert thinking_events[-1].type == EventType.THINKING_END, \
-                    "Last thinking event should be THINKING_END"
+                # Last reasoning event should be REASONING_END
+                assert reasoning_events[-1].type == EventType.REASONING_END, \
+                    "Last reasoning event should be REASONING_END"
 
-                # THINKING_TEXT_MESSAGE_START should come before THINKING_TEXT_MESSAGE_END
+                # REASONING_MESSAGE_START should come before REASONING_MESSAGE_END
                 msg_start_idx = None
                 msg_end_idx = None
-                for i, event in enumerate(thinking_events):
-                    if event.type == EventType.THINKING_TEXT_MESSAGE_START:
+                for i, event in enumerate(reasoning_events):
+                    if event.type == EventType.REASONING_MESSAGE_START:
                         msg_start_idx = i
-                    if event.type == EventType.THINKING_TEXT_MESSAGE_END:
+                    if event.type == EventType.REASONING_MESSAGE_END:
                         msg_end_idx = i
 
                 if msg_start_idx is not None and msg_end_idx is not None:
                     assert msg_start_idx < msg_end_idx, \
-                        "THINKING_TEXT_MESSAGE_START should come before END"
+                        "REASONING_MESSAGE_START should come before END"
 
-                print("✅ THINKING events have correct structure")
+                print("✅ REASONING events have correct structure")
         else:
-            print("ℹ️ No THINKING events to validate structure")
+            print("ℹ️ No REASONING events to validate structure")
 
 
 if __name__ == "__main__":
