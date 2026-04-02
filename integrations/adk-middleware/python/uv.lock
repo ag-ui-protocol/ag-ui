@@ -10,7 +10,7 @@ resolution-markers = [
 
 [[package]]
 name = "ag-ui-adk"
-version = "0.5.2"
+version = "0.6.0"
 source = { editable = "." }
 dependencies = [
     { name = "ag-ui-protocol" },
