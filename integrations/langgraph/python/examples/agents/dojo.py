@@ -20,8 +20,12 @@ from .predictive_state_updates.agent import graph as predictive_state_updates_gr
 from .shared_state.agent import graph as shared_state_graph
 from .subgraphs.agent import graph as subgraphs_graph
 from .tool_based_generative_ui.agent import graph as tool_based_generative_ui_graph
-from .a2ui_fixed_schema.agent import graph as a2ui_fixed_schema_graph
-from .a2ui_dynamic_schema.agent import graph as a2ui_dynamic_schema_graph
+try:
+    from .a2ui_fixed_schema.agent import graph as a2ui_fixed_schema_graph
+    from .a2ui_dynamic_schema.agent import graph as a2ui_dynamic_schema_graph
+    _a2ui_available = True
+except ImportError:
+    _a2ui_available = False
 
 app = FastAPI(title="LangGraph Dojo Example Server")
 
@@ -72,17 +76,19 @@ agents = {
         description="A demo of LangGraph subgraphs using a Game Character Creator.",
         graph=subgraphs_graph,
     ),
-    "a2ui_fixed_schema": LangGraphAgent(
+}
+
+if _a2ui_available:
+    agents["a2ui_fixed_schema"] = LangGraphAgent(
         name="a2ui_fixed_schema",
         description="Fixed-schema A2UI flight search (no streaming).",
         graph=a2ui_fixed_schema_graph,
-    ),
-"a2ui_dynamic_schema": LangGraphAgent(
+    )
+    agents["a2ui_dynamic_schema"] = LangGraphAgent(
         name="a2ui_dynamic_schema",
         description="Dynamic A2UI with LLM-generated UI schema.",
         graph=a2ui_dynamic_schema_graph,
-    ),
-}
+    )
 
 add_langgraph_fastapi_endpoint(
     app=app, agent=agents["agentic_chat"], path="/agent/agentic_chat"
@@ -130,13 +136,14 @@ add_langgraph_fastapi_endpoint(
 )
 
 
-add_langgraph_fastapi_endpoint(
-    app=app, agent=agents["a2ui_fixed_schema"], path="/agent/a2ui_fixed_schema"
-)
+if _a2ui_available:
+    add_langgraph_fastapi_endpoint(
+        app=app, agent=agents["a2ui_fixed_schema"], path="/agent/a2ui_fixed_schema"
+    )
 
-add_langgraph_fastapi_endpoint(
-    app=app, agent=agents["a2ui_dynamic_schema"], path="/agent/a2ui_dynamic_schema"
-)
+    add_langgraph_fastapi_endpoint(
+        app=app, agent=agents["a2ui_dynamic_schema"], path="/agent/a2ui_dynamic_schema"
+    )
 
 
 def main():
