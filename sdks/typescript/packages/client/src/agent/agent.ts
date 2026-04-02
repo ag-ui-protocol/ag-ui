@@ -574,7 +574,36 @@ export abstract class AbstractAgent {
         // Only flush on normal completion; skip on error to avoid
         // delivering potentially inconsistent state to subscribers.
         if (!streamErrored && (pendingMessages || pendingState)) {
-          notify(/* force */ true);
+          if (pendingMessages) {
+            pendingMessages = false;
+            subscribers.forEach((subscriber) => {
+              try {
+                subscriber.onMessagesChanged?.({
+                  messages: this.messages,
+                  state: this.state,
+                  agent: this,
+                  input,
+                });
+              } catch (err) {
+                console.error("AG-UI: Subscriber onMessagesChanged threw during finalize flush:", err);
+              }
+            });
+          }
+          if (pendingState) {
+            pendingState = false;
+            subscribers.forEach((subscriber) => {
+              try {
+                subscriber.onStateChanged?.({
+                  state: this.state,
+                  messages: this.messages,
+                  agent: this,
+                  input,
+                });
+              } catch (err) {
+                console.error("AG-UI: Subscriber onStateChanged threw during finalize flush:", err);
+              }
+            });
+          }
         }
       }),
     );
@@ -754,35 +783,47 @@ export abstract class AbstractAgent {
     (async () => {
       // Fire onNewMessage sequentially
       for (const subscriber of this.subscribers) {
-        await subscriber.onNewMessage?.({
-          message,
-          messages: this.messages,
-          state: this.state,
-          agent: this,
-        });
+        try {
+          await subscriber.onNewMessage?.({
+            message,
+            messages: this.messages,
+            state: this.state,
+            agent: this,
+          });
+        } catch (err) {
+          console.error("AG-UI: Subscriber onNewMessage threw:", err);
+        }
       }
 
       // Fire onNewToolCall if the message is from assistant and contains tool calls
       if (message.role === "assistant" && message.toolCalls) {
         for (const toolCall of message.toolCalls) {
           for (const subscriber of this.subscribers) {
-            await subscriber.onNewToolCall?.({
-              toolCall,
-              messages: this.messages,
-              state: this.state,
-              agent: this,
-            });
+            try {
+              await subscriber.onNewToolCall?.({
+                toolCall,
+                messages: this.messages,
+                state: this.state,
+                agent: this,
+              });
+            } catch (err) {
+              console.error("AG-UI: Subscriber onNewToolCall threw:", err);
+            }
           }
         }
       }
 
       // Fire onMessagesChanged sequentially
       for (const subscriber of this.subscribers) {
-        await subscriber.onMessagesChanged?.({
-          messages: this.messages,
-          state: this.state,
-          agent: this,
-        });
+        try {
+          await subscriber.onMessagesChanged?.({
+            messages: this.messages,
+            state: this.state,
+            agent: this,
+          });
+        } catch (err) {
+          console.error("AG-UI: Subscriber onMessagesChanged threw:", err);
+        }
       }
     })();
   }
@@ -797,24 +838,32 @@ export abstract class AbstractAgent {
       for (const message of messages) {
         // Fire onNewMessage sequentially
         for (const subscriber of this.subscribers) {
-          await subscriber.onNewMessage?.({
-            message,
-            messages: this.messages,
-            state: this.state,
-            agent: this,
-          });
+          try {
+            await subscriber.onNewMessage?.({
+              message,
+              messages: this.messages,
+              state: this.state,
+              agent: this,
+            });
+          } catch (err) {
+            console.error("AG-UI: Subscriber onNewMessage threw:", err);
+          }
         }
 
         // Fire onNewToolCall if the message is from assistant and contains tool calls
         if (message.role === "assistant" && message.toolCalls) {
           for (const toolCall of message.toolCalls) {
             for (const subscriber of this.subscribers) {
-              await subscriber.onNewToolCall?.({
-                toolCall,
-                messages: this.messages,
-                state: this.state,
-                agent: this,
-              });
+              try {
+                await subscriber.onNewToolCall?.({
+                  toolCall,
+                  messages: this.messages,
+                  state: this.state,
+                  agent: this,
+                });
+              } catch (err) {
+                console.error("AG-UI: Subscriber onNewToolCall threw:", err);
+              }
             }
           }
         }
@@ -822,11 +871,15 @@ export abstract class AbstractAgent {
 
       // Fire onMessagesChanged once at the end sequentially
       for (const subscriber of this.subscribers) {
-        await subscriber.onMessagesChanged?.({
-          messages: this.messages,
-          state: this.state,
-          agent: this,
-        });
+        try {
+          await subscriber.onMessagesChanged?.({
+            messages: this.messages,
+            state: this.state,
+            agent: this,
+          });
+        } catch (err) {
+          console.error("AG-UI: Subscriber onMessagesChanged threw:", err);
+        }
       }
     })();
   }
@@ -839,11 +892,15 @@ export abstract class AbstractAgent {
     (async () => {
       // Fire onMessagesChanged sequentially
       for (const subscriber of this.subscribers) {
-        await subscriber.onMessagesChanged?.({
-          messages: this.messages,
-          state: this.state,
-          agent: this,
-        });
+        try {
+          await subscriber.onMessagesChanged?.({
+            messages: this.messages,
+            state: this.state,
+            agent: this,
+          });
+        } catch (err) {
+          console.error("AG-UI: Subscriber onMessagesChanged threw:", err);
+        }
       }
     })();
   }
@@ -856,11 +913,15 @@ export abstract class AbstractAgent {
     (async () => {
       // Fire onStateChanged sequentially
       for (const subscriber of this.subscribers) {
-        await subscriber.onStateChanged?.({
-          messages: this.messages,
-          state: this.state,
-          agent: this,
-        });
+        try {
+          await subscriber.onStateChanged?.({
+            messages: this.messages,
+            state: this.state,
+            agent: this,
+          });
+        } catch (err) {
+          console.error("AG-UI: Subscriber onStateChanged threw:", err);
+        }
       }
     })();
   }

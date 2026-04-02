@@ -495,4 +495,37 @@ describe("Agent Mutations", () => {
       expect(subscriber3.onNewToolCall).toBeUndefined();
     });
   });
+
+  describe("subscriber error isolation", () => {
+    it("addMessage: throwing subscriber does not cause unhandled rejection and next subscriber still fires", async () => {
+      const calls: string[] = [];
+
+      agent.subscribe({
+        onMessagesChanged: () => {
+          throw new Error("subscriber boom");
+        },
+      });
+
+      agent.subscribe({
+        onMessagesChanged: () => {
+          calls.push("reached");
+        },
+      });
+
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      agent.addMessage({ id: "m1", role: "user", content: "hi" } as any);
+
+      // Wait for async IIFE to complete
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(calls).toContain("reached");
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("AG-UI: Subscriber"),
+        expect.any(Error),
+      );
+
+      errorSpy.mockRestore();
+    });
+  });
 });
