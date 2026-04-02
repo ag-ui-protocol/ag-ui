@@ -30,6 +30,36 @@ export function resolveAgentDebugConfig(
   return { enabled: events || lifecycle, events, lifecycle, verbose };
 }
 
+/**
+ * Configuration for throttling subscriber notifications during streaming.
+ *
+ * Mutations are always applied immediately (`agent.messages`/`agent.state`
+ * stay current); only subscriber notifications (`onMessagesChanged`,
+ * `onStateChanged`) are coalesced.
+ *
+ * The first event always fires immediately (leading edge). Subsequent
+ * notifications fire when either threshold is met. A trailing timer
+ * ensures pending notifications are flushed. On stream completion,
+ * any remaining pending notification is always delivered.
+ */
+export interface NotificationThrottleConfig {
+  /**
+   * Time-based throttle window in milliseconds.
+   * Notifications are suppressed for this duration after each delivery;
+   * only the latest state is delivered when the window expires.
+   * Must be a non-negative finite number. Example: `16` ≈ 60 fps.
+   */
+  intervalMs: number;
+  /**
+   * Minimum new characters to accumulate before firing a notification.
+   * When set, a notification also fires when this many new characters
+   * have been appended to the active assistant message, even if the
+   * time window has not yet elapsed.
+   * Must be a non-negative finite number. Default: `0` (no minimum).
+   */
+  minChunkSize?: number;
+}
+
 export interface AgentConfig {
   agentId?: string;
   description?: string;
@@ -38,20 +68,10 @@ export interface AgentConfig {
   initialState?: State;
   debug?: AgentDebugConfig;
   /**
-   * Throttle subscriber notifications by time (milliseconds).
-   * Uses leading+trailing: first notification fires immediately,
-   * subsequent ones within the window are coalesced.
-   * Default: 0 (no throttle).
+   * Throttle subscriber notifications during streaming.
+   * When omitted, every mutation fires a notification immediately.
    */
-  notificationThrottleMs?: number;
-  /**
-   * Throttle subscriber notifications by accumulated content size.
-   * Holds notifications until at least this many new characters have
-   * been appended to the streaming message since the last notification.
-   * Requires `notificationThrottleMs` to provide the trailing timer.
-   * Default: 0 (no minimum).
-   */
-  notificationMinChunkSize?: number;
+  notificationThrottle?: NotificationThrottleConfig;
 }
 
 export interface HttpAgentConfig extends AgentConfig {

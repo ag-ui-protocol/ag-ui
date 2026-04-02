@@ -12,6 +12,7 @@ import {
 import {
   AgentConfig,
   AgentDebugConfig,
+  NotificationThrottleConfig,
   RunAgentParameters,
   ResolvedAgentDebugConfig,
   resolveAgentDebugConfig,
@@ -53,8 +54,7 @@ export abstract class AbstractAgent {
   public state: State;
   private _debug: ResolvedAgentDebugConfig;
   private _debugLogger: DebugLogger | undefined;
-  public notificationThrottleMs: number = 0;
-  public notificationMinChunkSize: number = 0;
+  public readonly notificationThrottle: NotificationThrottleConfig | undefined;
   public subscribers: AgentSubscriber[] = [];
   public isRunning: boolean = false;
   private middlewares: Middleware[] = [];
@@ -96,8 +96,7 @@ export abstract class AbstractAgent {
     initialMessages,
     initialState,
     debug,
-    notificationThrottleMs,
-    notificationMinChunkSize,
+    notificationThrottle,
   }: AgentConfig = {}) {
     this.agentId = agentId;
     this.description = description ?? "";
@@ -106,8 +105,24 @@ export abstract class AbstractAgent {
     this.state = structuredClone_(initialState ?? {});
     this._debug = resolveAgentDebugConfig(debug);
     this._debugLogger = createDebugLogger(this._debug);
-    this.notificationThrottleMs = notificationThrottleMs ?? 0;
-    this.notificationMinChunkSize = notificationMinChunkSize ?? 0;
+
+    if (notificationThrottle) {
+      const { intervalMs, minChunkSize } = notificationThrottle;
+      if (!Number.isFinite(intervalMs) || intervalMs < 0) {
+        throw new Error(
+          `notificationThrottle.intervalMs must be a non-negative finite number, got ${intervalMs}`,
+        );
+      }
+      if (minChunkSize !== undefined && (!Number.isFinite(minChunkSize) || minChunkSize < 0)) {
+        throw new Error(
+          `notificationThrottle.minChunkSize must be a non-negative finite number, got ${minChunkSize}`,
+        );
+      }
+      this.notificationThrottle = {
+        intervalMs,
+        minChunkSize: minChunkSize ?? 0,
+      };
+    }
 
     if (compareVersions(this.maxVersion, "0.0.39") <= 0) {
       this.middlewares.unshift(new BackwardCompatibility_0_0_39());
@@ -346,7 +361,7 @@ export abstract class AbstractAgent {
     );
 
     // Step 2: Notify subscribers — throttled when configured, immediate otherwise
-    if (this.notificationThrottleMs > 0 || this.notificationMinChunkSize > 0) {
+    if (this.notificationThrottle) {
       return this.processThrottledNotifications(mutated$, input, subscribers);
     }
 
@@ -377,65 +392,86 @@ export abstract class AbstractAgent {
   }
 
   /**
-   * Throttled notification layer. Fires when EITHER threshold is hit first:
-   *   - notificationThrottleMs elapsed since last notification
-   *   - notificationMinChunkSize new characters accumulated
-   * Leading+trailing: first event fires immediately, last is never lost.
+   * Throttled notification layer.
+   *
+   * The first event always fires immediately (leading edge). Subsequent
+   * notifications fire when any condition is met:
+   *   - `intervalMs` has elapsed since the last notification, OR
+   *   - `minChunkSize` new characters have accumulated on the active assistant message
+   *
+   * A trailing timer ensures pending notifications are flushed after each
+   * window. On stream completion (or error), any remaining pending
+   * notification is always delivered.
    */
   private processThrottledNotifications(
     mutated$: Observable<AgentStateMutation>,
     input: RunAgentInput,
     subscribers: AgentSubscriber[],
   ): Observable<AgentStateMutation> {
-    const throttleMs = this.notificationThrottleMs;
-    const minChunkSize = this.notificationMinChunkSize;
+    const throttleMs = this.notificationThrottle!.intervalMs;
+    const minChunkSize = this.notificationThrottle!.minChunkSize ?? 0;
 
     let lastNotifyTime = 0;
     let charsSinceLastNotify = 0;
     let lastContentLength = 0;
+    let lastTrackedMessageId: string | null = null;
     let pendingMessages = false;
     let pendingState = false;
     let timerId: ReturnType<typeof setTimeout> | null = null;
+    let disposed = false;
 
     const notify = () => {
+      if (disposed) return;
       if (timerId !== null) {
         clearTimeout(timerId);
         timerId = null;
       }
       lastNotifyTime = Date.now();
       charsSinceLastNotify = 0;
+
+      // Snapshot the content length of the current trailing assistant message
       if (this.messages.length > 0) {
-        const content = (this.messages[this.messages.length - 1] as any)?.content ?? "";
-        lastContentLength = content.length;
+        const lastMsg = this.messages[this.messages.length - 1];
+        if (lastMsg.role === "assistant" && typeof lastMsg.content === "string") {
+          lastContentLength = lastMsg.content.length;
+          lastTrackedMessageId = lastMsg.id;
+        }
       }
 
       if (pendingMessages) {
         pendingMessages = false;
         subscribers.forEach((subscriber) => {
-          subscriber.onMessagesChanged?.({
-            messages: this.messages,
-            state: this.state,
-            agent: this,
-            input,
-          });
+          try {
+            subscriber.onMessagesChanged?.({
+              messages: this.messages,
+              state: this.state,
+              agent: this,
+              input,
+            });
+          } catch (err) {
+            console.error("AG-UI: Subscriber onMessagesChanged threw during throttled notification:", err);
+          }
         });
       }
       if (pendingState) {
         pendingState = false;
         subscribers.forEach((subscriber) => {
-          subscriber.onStateChanged?.({
-            state: this.state,
-            messages: this.messages,
-            agent: this,
-            input,
-          });
+          try {
+            subscriber.onStateChanged?.({
+              state: this.state,
+              messages: this.messages,
+              agent: this,
+              input,
+            });
+          } catch (err) {
+            console.error("AG-UI: Subscriber onStateChanged threw during throttled notification:", err);
+          }
         });
       }
     };
 
     const scheduleTrailing = () => {
       if (timerId !== null) return;
-      if (throttleMs <= 0) return;
       const elapsed = Date.now() - lastNotifyTime;
       const remaining = Math.max(0, throttleMs - elapsed);
       timerId = setTimeout(notify, remaining);
@@ -445,8 +481,15 @@ export abstract class AbstractAgent {
       tap((event) => {
         if (event.messages) {
           if (minChunkSize > 0 && this.messages.length > 0) {
-            const content = (this.messages[this.messages.length - 1] as any)?.content ?? "";
-            charsSinceLastNotify = Math.max(0, content.length - lastContentLength);
+            const lastMsg = this.messages[this.messages.length - 1];
+            if (lastMsg.role === "assistant" && typeof lastMsg.content === "string") {
+              // Reset tracking when the message identity changes
+              if (lastMsg.id !== lastTrackedMessageId) {
+                lastTrackedMessageId = lastMsg.id;
+                lastContentLength = 0;
+              }
+              charsSinceLastNotify = Math.max(0, lastMsg.content.length - lastContentLength);
+            }
           }
           pendingMessages = true;
         }
@@ -455,6 +498,7 @@ export abstract class AbstractAgent {
         }
 
         const now = Date.now();
+        // Sentinel: lastNotifyTime is 0 only before the very first notification
         const isLeading = lastNotifyTime === 0;
         const timeThresholdMet = throttleMs > 0 && (now - lastNotifyTime) >= throttleMs;
         const chunkThresholdMet = minChunkSize > 0 && charsSinceLastNotify >= minChunkSize;
@@ -466,12 +510,16 @@ export abstract class AbstractAgent {
         }
       }),
       finalize(() => {
+        disposed = true;
         if (timerId !== null) {
           clearTimeout(timerId);
           timerId = null;
         }
         if (pendingMessages || pendingState) {
+          // Temporarily allow one final flush even though disposed
+          disposed = false;
           notify();
+          disposed = true;
         }
       }),
     );
@@ -627,8 +675,15 @@ export abstract class AbstractAgent {
     cloned.state = structuredClone_(this.state);
     cloned._debug = this._debug;
     cloned._debugLogger = this._debugLogger;
-    cloned.notificationThrottleMs = this.notificationThrottleMs;
-    cloned.notificationMinChunkSize = this.notificationMinChunkSize;
+    // notificationThrottle is readonly on the class; bypass via Object.defineProperty
+    Object.defineProperty(cloned, "notificationThrottle", {
+      value: this.notificationThrottle
+        ? { ...this.notificationThrottle }
+        : undefined,
+      writable: false,
+      enumerable: true,
+      configurable: true,
+    });
     cloned.isRunning = this.isRunning;
     cloned.subscribers = [...this.subscribers];
     cloned.middlewares = [...this.middlewares];
