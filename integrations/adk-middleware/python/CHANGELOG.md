@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Legacy `BinaryInputContent` continues to work for backward compatibility
   - Adds E2E tests gated on `GOOGLE_API_KEY` covering inline images, document URLs (RFC 2549 via IETF), multi-image messages, and mixed text+image content
 
+### Fixed
+
+- **FIX**: Disable `save_input_blobs_as_artifacts` so inline images reach the model (#1405)
+  - ADK's runner was converting `inline_data` parts to artifact references before the model could see them, replacing images with text like `"Uploaded file: artifact_xxx. It is saved into artifacts"`
+  - Setting `save_input_blobs_as_artifacts=False` in `RunConfig` preserves inline binary data so the model receives the actual image/audio/video/document content
+
 ## [0.5.2] - 2026-03-26
 
 ### Changed
