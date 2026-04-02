@@ -37,7 +37,7 @@ pytestmark = pytest.mark.skipif(
     reason="GOOGLE_API_KEY environment variable not set",
 )
 
-DEFAULT_MODEL = "gemini-2.0-flash"
+DEFAULT_MODEL = "gemini-2.5-flash"
 
 
 # ---------------------------------------------------------------------------
