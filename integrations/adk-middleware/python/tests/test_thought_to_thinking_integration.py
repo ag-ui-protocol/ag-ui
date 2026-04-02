@@ -307,6 +307,173 @@ class TestThoughtToReasoningIntegration:
         else:
             print("ℹ️ No REASONING events to validate structure")
 
+    @pytest.mark.asyncio
+    async def test_reasoning_message_id_consistency(self, thinking_agent):
+        """Verify that all reasoning events in a block share the same message_id.
+
+        REASONING_START, REASONING_MESSAGE_START, REASONING_MESSAGE_CONTENT,
+        REASONING_MESSAGE_END, and REASONING_END should all carry the same
+        message_id so the client can correlate them.
+        """
+        input_data = self._create_input(
+            "What is the sum of the first 10 prime numbers? "
+            "Show your work step by step."
+        )
+
+        events = []
+        async for event in thinking_agent.run(input_data):
+            events.append(event)
+
+        if self._has_reasoning_events(events):
+            reasoning_events = [
+                e for e in events
+                if e.type in {
+                    EventType.REASONING_START,
+                    EventType.REASONING_END,
+                    EventType.REASONING_MESSAGE_START,
+                    EventType.REASONING_MESSAGE_CONTENT,
+                    EventType.REASONING_MESSAGE_END,
+                }
+            ]
+
+            # All reasoning events should have a message_id
+            message_ids = set()
+            for event in reasoning_events:
+                assert hasattr(event, 'message_id'), \
+                    f"{event.type} should have a message_id attribute"
+                assert event.message_id, \
+                    f"{event.type} should have a non-empty message_id"
+                message_ids.add(event.message_id)
+
+            # All message_ids should be the same within a single reasoning block
+            assert len(message_ids) == 1, \
+                f"All reasoning events should share one message_id, got {message_ids}"
+
+            print(f"✅ All reasoning events share message_id: {message_ids.pop()}")
+        else:
+            print("ℹ️ No REASONING events to validate message_id consistency")
+
+    @pytest.mark.asyncio
+    async def test_reasoning_message_start_has_role(self, thinking_agent):
+        """Verify that REASONING_MESSAGE_START events include role='reasoning'."""
+        input_data = self._create_input(
+            "Is 97 a prime number? Think carefully."
+        )
+
+        events = []
+        async for event in thinking_agent.run(input_data):
+            events.append(event)
+
+        msg_start_events = [
+            e for e in events
+            if e.type == EventType.REASONING_MESSAGE_START
+        ]
+
+        if msg_start_events:
+            for event in msg_start_events:
+                assert event.role == "reasoning", \
+                    f"REASONING_MESSAGE_START should have role='reasoning', got '{event.role}'"
+            print("✅ REASONING_MESSAGE_START events have role='reasoning'")
+        else:
+            print("ℹ️ No REASONING_MESSAGE_START events to validate role")
+
+    @pytest.mark.asyncio
+    async def test_reasoning_encrypted_value_emitted(self, thinking_agent):
+        """Verify that REASONING_ENCRYPTED_VALUE events are emitted for thought signatures.
+
+        When the Gemini model returns thought_signature bytes on thought parts,
+        the middleware should emit REASONING_ENCRYPTED_VALUE events with:
+        - subtype="message"
+        - entity_id matching the reasoning message_id
+        - encrypted_value containing the base64-encoded signature
+
+        Note: Whether the model returns thought_signature depends on the API
+        configuration. This test validates the flow when signatures are present.
+        """
+        import base64
+
+        input_data = self._create_input(
+            "Explain why the square root of 2 is irrational. "
+            "Reason through the proof step by step."
+        )
+
+        events = []
+        async for event in thinking_agent.run(input_data):
+            events.append(event)
+
+        encrypted_events = [
+            e for e in events
+            if e.type == EventType.REASONING_ENCRYPTED_VALUE
+        ]
+
+        if encrypted_events:
+            print(f"✅ Found {len(encrypted_events)} REASONING_ENCRYPTED_VALUE event(s)")
+
+            for event in encrypted_events:
+                assert event.subtype == "message", \
+                    f"Expected subtype='message', got '{event.subtype}'"
+                assert event.entity_id, \
+                    "entity_id should be non-empty"
+                assert event.encrypted_value, \
+                    "encrypted_value should be non-empty"
+
+                # Verify it's valid base64
+                try:
+                    decoded = base64.b64decode(event.encrypted_value)
+                    assert len(decoded) > 0, "Decoded signature should be non-empty"
+                    print(f"  ✅ Valid base64 encrypted_value ({len(decoded)} bytes)")
+                except Exception as e:
+                    pytest.fail(f"encrypted_value is not valid base64: {e}")
+
+                # entity_id should match one of our reasoning message_ids
+                reasoning_msg_ids = {
+                    e.message_id for e in events
+                    if e.type == EventType.REASONING_MESSAGE_START
+                }
+                if reasoning_msg_ids:
+                    assert event.entity_id in reasoning_msg_ids, \
+                        f"entity_id '{event.entity_id}' should match a reasoning message_id"
+        else:
+            print("ℹ️ No REASONING_ENCRYPTED_VALUE events (model may not have returned thought_signature)")
+
+    @pytest.mark.asyncio
+    async def test_reasoning_stream_closed_before_text(self, thinking_agent):
+        """Verify reasoning stream is fully closed before text message events begin.
+
+        The event sequence should be:
+        ... REASONING_MESSAGE_END, REASONING_END, ... TEXT_MESSAGE_START ...
+
+        There should be no interleaving of reasoning and text events.
+        """
+        input_data = self._create_input(
+            "What is 15 factorial? Show your calculation."
+        )
+
+        events = []
+        async for event in thinking_agent.run(input_data):
+            events.append(event)
+
+        if not self._has_reasoning_events(events):
+            print("ℹ️ No REASONING events to validate stream closure ordering")
+            return
+
+        # Find the last REASONING_END and first TEXT_MESSAGE_START
+        last_reasoning_end_idx = None
+        first_text_start_idx = None
+
+        for i, event in enumerate(events):
+            if event.type == EventType.REASONING_END:
+                last_reasoning_end_idx = i
+            if event.type == EventType.TEXT_MESSAGE_START and first_text_start_idx is None:
+                first_text_start_idx = i
+
+        if last_reasoning_end_idx is not None and first_text_start_idx is not None:
+            assert last_reasoning_end_idx < first_text_start_idx, \
+                "REASONING_END should come before TEXT_MESSAGE_START"
+            print("✅ Reasoning stream fully closed before text message starts")
+        else:
+            print("ℹ️ Could not verify ordering (missing REASONING_END or TEXT_MESSAGE_START)")
+
 
 if __name__ == "__main__":
     # Allow running directly for debugging
