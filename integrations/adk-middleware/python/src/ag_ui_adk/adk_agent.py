@@ -725,7 +725,7 @@ class ADKAgent:
         """
         config_kwargs = {
             'streaming_mode': StreamingMode.SSE,
-            'save_input_blobs_as_artifacts': True,
+            'save_input_blobs_as_artifacts': False,
         }
 
         # For ADK 1.22.0+, also include context in custom_metadata

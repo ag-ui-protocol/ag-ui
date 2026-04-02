@@ -78,7 +78,7 @@ export const TextMessageStartEventSchema = BaseEventSchema.extend({
 export const TextMessageContentEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.TEXT_MESSAGE_CONTENT),
   messageId: z.string(),
-  delta: z.string().refine((s) => s.length > 0, "Delta must not be an empty string"),
+  delta: z.string(),
 });
 
 export const TextMessageEndEventSchema = BaseEventSchema.extend({
@@ -260,7 +260,7 @@ export const ReasoningMessageStartEventSchema = BaseEventSchema.extend({
 export const ReasoningMessageContentEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.REASONING_MESSAGE_CONTENT),
   messageId: z.string(),
-  delta: z.string().refine((s) => s.length > 0, "Delta must not be an empty string"),
+  delta: z.string(),
 });
 
 export const ReasoningMessageEndEventSchema = BaseEventSchema.extend({
