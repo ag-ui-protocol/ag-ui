@@ -16,12 +16,12 @@
   ],
   "exports": {
     ".": {
-      "import": "./dist/index.mjs",
-      "require": "./dist/index.js"
+      "require": "./dist/index.js",
+      "import": "./dist/index.mjs"
     },
     "./copilotkit": {
-      "import": "./dist/copilotkit.mjs",
-      "require": "./dist/copilotkit.js"
+      "require": "./dist/copilotkit.js",
+      "import": "./dist/copilotkit.mjs"
     },
     "./package.json": "./package.json"
   },
