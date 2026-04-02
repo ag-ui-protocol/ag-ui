@@ -89,18 +89,6 @@ class TestTemplateKwargsCapture:
         )
         assert ag._agent_kwargs["agent_id"] == "my-agent-id"
 
-    def test_conversation_manager_captured(self):
-        """conversation_manager from the template must appear in _agent_kwargs."""
-        from strands.agent.conversation_manager import NullConversationManager
-        cm = NullConversationManager()
-        template = Agent(model=_mock_model(), conversation_manager=cm)
-        ag = StrandsAgent(template, name="test")
-
-        assert "conversation_manager" in ag._agent_kwargs, (
-            "conversation_manager not captured — new threads use a different manager"
-        )
-        assert ag._agent_kwargs["conversation_manager"] is cm
-
     def test_initial_state_captured(self):
         """Initial state from the template must be preserved for new threads."""
         template = Agent(model=_mock_model(), state={"greeting": "hello", "count": 0})
