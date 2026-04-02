@@ -22,6 +22,7 @@ from .subgraphs.agent import graph as subgraphs_graph
 from .tool_based_generative_ui.agent import graph as tool_based_generative_ui_graph
 from .a2ui_fixed_schema.agent import graph as a2ui_fixed_schema_graph
 from .a2ui_dynamic_schema.agent import graph as a2ui_dynamic_schema_graph
+from .open_gen_ui.agent import graph as open_gen_ui_graph
 
 app = FastAPI(title="LangGraph Dojo Example Server")
 
@@ -82,6 +83,11 @@ agents = {
         description="Dynamic A2UI with LLM-generated UI schema.",
         graph=a2ui_dynamic_schema_graph,
     ),
+    "open_gen_ui": LangGraphAgent(
+        name="open_gen_ui",
+        description="An open generative UI agent.",
+        graph=open_gen_ui_graph,
+    ),
 }
 
 add_langgraph_fastapi_endpoint(
@@ -136,6 +142,10 @@ add_langgraph_fastapi_endpoint(
 
 add_langgraph_fastapi_endpoint(
     app=app, agent=agents["a2ui_dynamic_schema"], path="/agent/a2ui_dynamic_schema"
+)
+
+add_langgraph_fastapi_endpoint(
+    app=app, agent=agents["open_gen_ui"], path="/agent/open_gen_ui"
 )
 
 

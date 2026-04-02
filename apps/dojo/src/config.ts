@@ -105,6 +105,12 @@ export const featureConfig: FeatureConfig[] = [
     description: "Dynamic A2UI with custom progress renderer and frontend action handlers",
     tags: ["A2UI", "Advanced", "Progress", "Action Handlers"],
   }),
+  createFeatureConfig({
+    id: "open_gen_ui",
+    name: "Open Generative UI",
+    description: "Agent-generated HTML/CSS/JS UIs streamed live into the chat",
+    tags: ["Open Gen UI", "Sandboxed", "Streaming"],
+  }),
 ];
 
 export default featureConfig;

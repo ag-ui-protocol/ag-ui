@@ -13,7 +13,8 @@
     "agentic_chat_reasoning": "./agents/agentic_chat_reasoning/agent.py:graph",
     "subgraphs": "./agents/subgraphs/agent.py:graph",
     "a2ui_fixed_schema": "./agents/a2ui_fixed_schema/agent.py:graph",
-    "a2ui_dynamic_schema": "./agents/a2ui_dynamic_schema/agent.py:graph"
+    "a2ui_dynamic_schema": "./agents/a2ui_dynamic_schema/agent.py:graph",
+    "open_gen_ui": "./agents/open_gen_ui/agent.py:graph"
   },
   "env": ".env"
 }

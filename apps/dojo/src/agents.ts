@@ -150,6 +150,7 @@ export const agentsIntegrations = {
     a2ui_dynamic_schema: new LangGraphHttpAgent({ url: `${envVars.langgraphFastApiUrl}/agent/a2ui_dynamic_schema` }),
     // Advanced: same backend agent, frontend adds custom progress renderer + action handlers
     a2ui_advanced: new LangGraphHttpAgent({ url: `${envVars.langgraphFastApiUrl}/agent/a2ui_dynamic_schema` }),
+    open_gen_ui: new LangGraphHttpAgent({ url: `${envVars.langgraphFastApiUrl}/agent/open_gen_ui` }),
   }),
 
   "langgraph-typescript": async () =>
