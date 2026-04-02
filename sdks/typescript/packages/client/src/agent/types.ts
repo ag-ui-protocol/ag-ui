@@ -1,12 +1,14 @@
 import { Message, RunAgentInput, State } from "@ag-ui/core";
 
 /** Normalized debug configuration for the AG-UI agent. */
-export interface ResolvedAgentDebugConfig {
-  enabled: boolean;
-  events: boolean;
-  lifecycle: boolean;
-  verbose: boolean;
-}
+export type ResolvedAgentDebugConfig =
+  | boolean
+  | {
+      enabled: boolean;
+      events: boolean;
+      lifecycle: boolean;
+      verbose: boolean;
+    };
 
 /** Debug input — boolean shorthand or granular config. */
 export type AgentDebugConfig =
