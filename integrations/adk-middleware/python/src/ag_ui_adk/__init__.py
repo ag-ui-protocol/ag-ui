@@ -31,7 +31,7 @@ __all__ = [
     'AGUIToolset',
 ]
 
-__version__ = "0.6.0"
+__version__ = "0.1.0"
 
 
 def _configure_logging_from_env() -> None:
