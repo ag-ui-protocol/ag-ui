@@ -1,7 +1,7 @@
 [project]
 name = "ag_ui_adk"
 description = "ADK Middleware for AG-UI Protocol"
-version = "0.5.2"
+version = "0.6.0"
 readme = "README.md"
 authors = [
     { name = "Mark Fogle", email = "mark@contextable.com" }
