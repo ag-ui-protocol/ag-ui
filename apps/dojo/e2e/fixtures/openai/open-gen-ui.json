@@ -1,0 +1,26 @@
+{
+  "fixtures": [
+    {
+      "match": { "userMessage": "build a red button" },
+      "response": {
+        "toolCalls": [
+          {
+            "name": "generateSandboxedUi",
+            "arguments": "{\"html\":\"<button style='background:red;color:white;border:none;padding:12px 24px;border-radius:8px;font-size:16px;cursor:pointer'>Hello</button>\",\"css\":\"\",\"initialHeight\":80}"
+          }
+        ]
+      }
+    },
+    {
+      "match": { "userMessage": "build a counter" },
+      "response": {
+        "toolCalls": [
+          {
+            "name": "generateSandboxedUi",
+            "arguments": "{\"html\":\"<div style='text-align:center;font-family:sans-serif;padding:20px'><span id='count' style='font-size:2em;margin:0 16px'>0</span><br><button id='dec' style='margin:8px;padding:8px 16px;font-size:1.2em'>-</button><button id='inc' style='margin:8px;padding:8px 16px;font-size:1.2em'>+</button></div>\",\"jsFunctions\":\"let c=0; document.getElementById('inc').onclick=()=>{c++;document.getElementById('count').textContent=c}; document.getElementById('dec').onclick=()=>{c--;document.getElementById('count').textContent=c};\",\"css\":\"\",\"initialHeight\":120}"
+          }
+        ]
+      }
+    }
+  ]
+}
