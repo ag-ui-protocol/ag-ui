@@ -540,14 +540,17 @@ export const defaultApplyEvents = (
             const { messages: newMessages } = event as MessagesSnapshotEvent;
 
             // Edit-based merge: update existing messages with snapshot data while
-            // preserving activity messages (which the backend doesn't know about).
+            // preserving client-only messages (activity and reasoning) which the
+            // backend doesn't include in the snapshot.
+            const isClientOnlyRole = (role: string) =>
+              role === "activity" || role === "reasoning";
             const snapshotMap = new Map(newMessages.map((m) => [m.id, m]));
 
-            // Step 1 + 2: Keep activity messages as-is, keep messages present in
-            // the snapshot (replaced with snapshot version), drop everything else.
+            // Step 1 + 2: Keep client-only messages as-is, keep messages present
+            // in the snapshot (replaced with snapshot version), drop everything else.
             messages = messages
-              .filter((m) => m.role === "activity" || snapshotMap.has(m.id))
-              .map((m) => (m.role === "activity" ? m : snapshotMap.get(m.id)!));
+              .filter((m) => isClientOnlyRole(m.role) || snapshotMap.has(m.id))
+              .map((m) => (isClientOnlyRole(m.role) ? m : snapshotMap.get(m.id)!));
 
             // Step 3: Append messages from the snapshot that we don't have yet.
             const existingIds = new Set(messages.map((m) => m.id));

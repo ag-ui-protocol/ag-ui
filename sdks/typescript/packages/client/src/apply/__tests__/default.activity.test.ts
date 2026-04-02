@@ -567,6 +567,99 @@ describe("MESSAGES_SNAPSHOT preserves activity messages", () => {
     expect(msgs.map((m) => m.id)).toEqual(["m1", "act-1", "m2", "m3"]);
   });
 
+  it("preserves reasoning messages after MESSAGES_SNAPSHOT", async () => {
+    const initial: Message[] = [
+      { id: "m1", role: "user", content: "hello" },
+      { id: "r1", role: "reasoning", content: "Let me think about this..." },
+      { id: "m2", role: "assistant", content: "hi there" },
+    ] as Message[];
+
+    const events$ = new Subject<BaseEvent>();
+    const agent = createAgent(initial);
+    const result$ = defaultApplyEvents(makeInput(initial), events$, agent, []);
+    const updatesPromise = firstValueFrom(result$.pipe(toArray()));
+
+    // Snapshot does NOT contain the reasoning message (backends don't include them)
+    events$.next({
+      type: EventType.MESSAGES_SNAPSHOT,
+      messages: [
+        { id: "m1", role: "user", content: "hello" },
+        { id: "m2", role: "assistant", content: "hi there" },
+      ],
+    } as MessagesSnapshotEvent);
+
+    events$.complete();
+    const updates = await updatesPromise;
+
+    const msgs = updates[0]?.messages!;
+    expect(msgs.length).toBe(3);
+    expect(msgs.map((m) => m.id)).toEqual(["m1", "r1", "m2"]);
+    expect(msgs[1].role).toBe("reasoning");
+    expect(msgs[1].content).toBe("Let me think about this...");
+  });
+
+  it("preserves both activity and reasoning messages after MESSAGES_SNAPSHOT", async () => {
+    const initial: Message[] = [
+      { id: "m1", role: "user", content: "explain this" },
+      { id: "act-1", role: "activity", activityType: "PLAN", content: { tasks: ["research"] } },
+      { id: "r1", role: "reasoning", content: "The user wants an explanation..." },
+      { id: "m2", role: "assistant", content: "Here is the explanation" },
+    ] as Message[];
+
+    const events$ = new Subject<BaseEvent>();
+    const agent = createAgent(initial);
+    const result$ = defaultApplyEvents(makeInput(initial), events$, agent, []);
+    const updatesPromise = firstValueFrom(result$.pipe(toArray()));
+
+    events$.next({
+      type: EventType.MESSAGES_SNAPSHOT,
+      messages: [
+        { id: "m1", role: "user", content: "explain this" },
+        { id: "m2", role: "assistant", content: "Here is the explanation" },
+      ],
+    } as MessagesSnapshotEvent);
+
+    events$.complete();
+    const updates = await updatesPromise;
+
+    const msgs = updates[0]?.messages!;
+    expect(msgs.length).toBe(4);
+    expect(msgs.map((m) => m.id)).toEqual(["m1", "act-1", "r1", "m2"]);
+    expect(msgs[1].role).toBe("activity");
+    expect(msgs[2].role).toBe("reasoning");
+  });
+
+  it("reasoning messages are not replaced by snapshot data", async () => {
+    // Reasoning messages should be kept as-is, never overwritten by snapshot
+    const initial: Message[] = [
+      { id: "m1", role: "user", content: "hello" },
+      { id: "r1", role: "reasoning", content: "original reasoning" },
+      { id: "m2", role: "assistant", content: "response" },
+    ] as Message[];
+
+    const events$ = new Subject<BaseEvent>();
+    const agent = createAgent(initial);
+    const result$ = defaultApplyEvents(makeInput(initial), events$, agent, []);
+    const updatesPromise = firstValueFrom(result$.pipe(toArray()));
+
+    // Even if snapshot somehow had the same ID, reasoning should be preserved as-is
+    events$.next({
+      type: EventType.MESSAGES_SNAPSHOT,
+      messages: [
+        { id: "m1", role: "user", content: "hello" },
+        { id: "m2", role: "assistant", content: "response" },
+      ],
+    } as MessagesSnapshotEvent);
+
+    events$.complete();
+    const updates = await updatesPromise;
+
+    const msgs = updates[0]?.messages!;
+    const reasoning = msgs.find((m) => m.id === "r1")!;
+    expect(reasoning.role).toBe("reasoning");
+    expect(reasoning.content).toBe("original reasoning");
+  });
+
   it("preserves activity position when a message ID changes in snapshot", async () => {
     // Simulates the real-world scenario: streaming creates a tool message with ID "tool-stream",
     // but MESSAGES_SNAPSHOT has the same tool message with a different canonical ID "tool-canon".
