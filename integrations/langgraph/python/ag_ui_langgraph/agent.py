@@ -121,7 +121,11 @@ class LangGraphAgent:
         if event.type == EventType.RAW:
             event.event = make_json_safe(event.event)
         elif event.raw_event:
-            event.raw_event = make_json_safe(event.raw_event)
+            emit_raw_data = self.active_run.get("emit_raw_event_data", True) if self.active_run else True
+            if not emit_raw_data:
+                event.raw_event = None
+            else:
+                event.raw_event = make_json_safe(event.raw_event)
 
         return event
 
@@ -201,9 +205,14 @@ class LangGraphAgent:
                     )
                     break
 
-                current_node_name = event.get("metadata", {}).get("langgraph_node")
+                event_metadata = (event.get("metadata") or {})
+                current_node_name = event_metadata.get("langgraph_node")
                 event_type = event.get("event")
                 self.active_run["id"] = event.get("run_id")
+                # Set emit_raw_event_data per-event (before any _dispatch_event
+                # call) so typed events in this iteration use the correct value.
+                raw_data_flag = event_metadata.get("emit-raw-event-data")
+                self.active_run["emit_raw_event_data"] = bool(raw_data_flag) if raw_data_flag is not None else True
                 exiting_node = False
 
                 if event_type == "on_chain_end" and isinstance(
@@ -249,7 +258,7 @@ class LangGraphAgent:
                             else getattr(first, "name", None)
                         )
                         if first_name:
-                            predict_state_meta = event.get("metadata", {}).get("predict_state", [])
+                            predict_state_meta = event_metadata.get("predict_state", [])
                             tool_used_to_predict_state = any(
                                 (p.get("tool") if isinstance(p, dict) else getattr(p, "tool", None)) == first_name
                                 for p in predict_state_meta
@@ -286,9 +295,13 @@ class LangGraphAgent:
                             )
                         )
 
-                yield self._dispatch_event(
-                    RawEvent(type=EventType.RAW, event=event)
-                )
+                raw_emit_flag = event_metadata.get("emit-raw-events")
+                should_emit_raw = bool(raw_emit_flag) if raw_emit_flag is not None else True
+
+                if should_emit_raw:
+                    yield self._dispatch_event(
+                        RawEvent(type=EventType.RAW, event=event)
+                    )
 
                 async for single_event in self._handle_single_event(event, state):
                     yield single_event

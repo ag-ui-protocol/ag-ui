@@ -52,6 +52,7 @@ RunMetadata = TypedDict("RunMetadata", {
     "has_function_streaming": NotRequired[bool],
     "model_made_tool_call": NotRequired[bool],
     "state_reliable": NotRequired[bool],
+    "emit_raw_event_data": NotRequired[bool],
 })
 
 MessagesInProgressRecord = Dict[str, Optional[MessageInProgress]]
