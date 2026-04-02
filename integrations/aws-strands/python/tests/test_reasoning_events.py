@@ -69,11 +69,7 @@ async def test_reasoning_events_emitted():
 
     event_types = [e.type for e in events]
 
-    assert EventType.THINKING_START in event_types
-    assert EventType.THINKING_TEXT_MESSAGE_START in event_types
-    assert EventType.THINKING_TEXT_MESSAGE_CONTENT in event_types
-    assert EventType.THINKING_TEXT_MESSAGE_END in event_types
-    assert EventType.THINKING_END in event_types
+    # Verify reasoning events are emitted (thinking events are deprecated)
     assert EventType.REASONING_START in event_types
     assert EventType.REASONING_MESSAGE_START in event_types
     assert EventType.REASONING_MESSAGE_CONTENT in event_types
@@ -98,14 +94,6 @@ async def test_reasoning_content_streamed():
 
     async for event in agent.run(input_data):
         events.append(event)
-
-    # Find thinking content events
-    thinking_content = [
-        e for e in events if e.type == EventType.THINKING_TEXT_MESSAGE_CONTENT
-    ]
-    assert len(thinking_content) == 2
-    assert thinking_content[0].delta == "Chunk 1"
-    assert thinking_content[1].delta == "Chunk 2"
 
     # Find reasoning content events
     reasoning_content = [
@@ -227,11 +215,11 @@ async def test_reasoning_closed_before_text():
     event_types = [e.type for e in events]
 
     # Find indices to verify ordering
-    thinking_end_idx = event_types.index(EventType.THINKING_END)
+    reasoning_end_idx = event_types.index(EventType.REASONING_END)
     text_start_idx = event_types.index(EventType.TEXT_MESSAGE_START)
 
-    # Thinking should end before text starts
-    assert thinking_end_idx < text_start_idx
+    # Reasoning should end before text starts
+    assert reasoning_end_idx < text_start_idx
 
 
 # =============================================================================
@@ -259,15 +247,11 @@ async def test_empty_reasoning_text_no_content_emitted():
     # Reasoning should NOT start because empty string is falsy after the check
     # The implementation checks `if reasoning_text:` before emitting content
     # But it also checks this AFTER starting reasoning, so we need to verify behavior
-    thinking_content = [
-        e for e in events if e.type == EventType.THINKING_TEXT_MESSAGE_CONTENT
-    ]
     reasoning_content = [
         e for e in events if e.type == EventType.REASONING_MESSAGE_CONTENT
     ]
 
     # Empty string should not emit content events
-    assert len(thinking_content) == 0
     assert len(reasoning_content) == 0
 
 
@@ -291,9 +275,7 @@ async def test_reasoning_flag_false_no_events():
     event_types = [e.type for e in events]
 
     # No reasoning events should be emitted
-    assert EventType.THINKING_START not in event_types
     assert EventType.REASONING_START not in event_types
-    assert EventType.THINKING_TEXT_MESSAGE_CONTENT not in event_types
     assert EventType.REASONING_MESSAGE_CONTENT not in event_types
 
     # But text should still work
@@ -320,7 +302,6 @@ async def test_missing_reasoning_flag_no_events():
     event_types = [e.type for e in events]
 
     # No reasoning events should be emitted
-    assert EventType.THINKING_START not in event_types
     assert EventType.REASONING_START not in event_types
 
     # Text should still work
@@ -378,19 +359,16 @@ async def test_multiple_reasoning_blocks():
         events.append(event)
 
     # Count reasoning start events - should have 2 separate reasoning phases
-    thinking_starts = [e for e in events if e.type == EventType.THINKING_START]
     reasoning_starts = [e for e in events if e.type == EventType.REASONING_START]
-
-    assert len(thinking_starts) == 2
     assert len(reasoning_starts) == 2
 
     # Verify content from both blocks
-    thinking_content = [
-        e for e in events if e.type == EventType.THINKING_TEXT_MESSAGE_CONTENT
+    reasoning_content = [
+        e for e in events if e.type == EventType.REASONING_MESSAGE_CONTENT
     ]
-    assert len(thinking_content) == 2
-    assert thinking_content[0].delta == "First thought"
-    assert thinking_content[1].delta == "Second thought"
+    assert len(reasoning_content) == 2
+    assert reasoning_content[0].delta == "First thought"
+    assert reasoning_content[1].delta == "Second thought"
 
 
 @pytest.mark.asyncio
@@ -409,10 +387,6 @@ async def test_reasoning_event_field_values():
 
     async for event in agent.run(input_data):
         events.append(event)
-
-    # Verify ThinkingStartEvent has title
-    thinking_start = next(e for e in events if e.type == EventType.THINKING_START)
-    assert thinking_start.title == "Thinking..."
 
     # Verify ReasoningMessageStartEvent has role
     reasoning_msg_start = next(
@@ -454,8 +428,6 @@ async def test_reasoning_only_no_text_response():
     event_types = [e.type for e in events]
 
     # Reasoning events should be present
-    assert EventType.THINKING_START in event_types
-    assert EventType.THINKING_END in event_types
     assert EventType.REASONING_START in event_types
     assert EventType.REASONING_END in event_types
 
@@ -483,7 +455,6 @@ async def test_text_only_no_reasoning():
     event_types = [e.type for e in events]
 
     # No reasoning events
-    assert EventType.THINKING_START not in event_types
     assert EventType.REASONING_START not in event_types
 
     # Text events should be present

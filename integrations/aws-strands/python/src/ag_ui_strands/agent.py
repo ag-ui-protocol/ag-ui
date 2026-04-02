@@ -31,11 +31,6 @@ from ag_ui.core import (
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
-    ThinkingEndEvent,
-    ThinkingStartEvent,
-    ThinkingTextMessageContentEvent,
-    ThinkingTextMessageEndEvent,
-    ThinkingTextMessageStartEvent,
     ToolCall,
     ToolCallArgsEvent,
     ToolCallEndEvent,
@@ -366,16 +361,7 @@ class StrandsAgent:
                         if not reasoning_started:
                             reasoning_message_id = str(uuid.uuid4())
 
-                            # Emit thinking phase events (for UIs that use THINKING_* events)
-                            yield ThinkingStartEvent(
-                                type=EventType.THINKING_START,
-                                title="Thinking..."
-                            )
-                            yield ThinkingTextMessageStartEvent(
-                                type=EventType.THINKING_TEXT_MESSAGE_START
-                            )
-
-                            # Emit reasoning events (for UIs that use REASONING_* events)
+                            # Emit reasoning events
                             yield ReasoningStartEvent(
                                 type=EventType.REASONING_START,
                                 message_id=reasoning_message_id
@@ -389,10 +375,6 @@ class StrandsAgent:
 
                         # Stream reasoning content
                         if reasoning_text:
-                            yield ThinkingTextMessageContentEvent(
-                                type=EventType.THINKING_TEXT_MESSAGE_CONTENT,
-                                delta=reasoning_text
-                            )
                             yield ReasoningMessageContentEvent(
                                 type=EventType.REASONING_MESSAGE_CONTENT,
                                 message_id=reasoning_message_id,
@@ -680,12 +662,6 @@ class StrandsAgent:
                         if "contentBlockStop" in inner_event:
                             # Close reasoning events if active
                             if reasoning_started:
-                                yield ThinkingTextMessageEndEvent(
-                                    type=EventType.THINKING_TEXT_MESSAGE_END
-                                )
-                                yield ThinkingEndEvent(
-                                    type=EventType.THINKING_END
-                                )
                                 yield ReasoningMessageEndEvent(
                                     type=EventType.REASONING_MESSAGE_END,
                                     message_id=reasoning_message_id
