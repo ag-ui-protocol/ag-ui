@@ -373,7 +373,7 @@ class TestDefaultRunConfigUnchanged:
 
         assert run_config is not None
         assert run_config.streaming_mode == StreamingMode.SSE
-        assert run_config.save_input_blobs_as_artifacts is True
+        assert run_config.save_input_blobs_as_artifacts is False
 
 
 class TestVersionDetection:
