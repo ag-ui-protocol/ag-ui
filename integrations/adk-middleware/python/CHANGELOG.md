@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING**: Migrate from deprecated `THINKING_*` events to `REASONING_*` events (#1406)
+  - `THINKING_START` / `THINKING_END` → `REASONING_START` / `REASONING_END`
+  - `THINKING_TEXT_MESSAGE_START` / `CONTENT` / `END` → `REASONING_MESSAGE_START` / `CONTENT` / `END`
+  - All reasoning events now carry a `message_id` for client-side correlation and `role="reasoning"` on message start
+  - Internal state variables renamed accordingly (`_is_thinking` → `_is_reasoning`, etc.)
+  - Aligns the ADK middleware with the Claude Agent SDK and LangGraph integrations, which already use `REASONING_*` events
+
+### Added
+
+- **NEW**: `REASONING_ENCRYPTED_VALUE` support for Gemini thought signatures (#1406)
+  - Extracts `thought_signature` (opaque bytes) from Google GenAI SDK `Part` objects when present
+  - Emits `REASONING_ENCRYPTED_VALUE` events with `subtype="message"` and base64-encoded signature
+  - Enables encrypted reasoning / zero-data-retention workflows with Gemini models
+
+- **NEW**: Reasoning chat example (`examples/server/api/agentic_chat_reasoning.py`)
+  - Demonstrates `REASONING_*` event emission using Gemini 2.5 Flash with `include_thoughts=True`
+  - Registered at `/adk-reasoning-chat` in the example server
+
+- **NEW**: Support for multimodal input types (`ImageInputContent`, `AudioInputContent`, `VideoInputContent`, `DocumentInputContent`) (#1405)
+  - Replaces reliance on the deprecated `BinaryInputContent` with the newer modality-specific types defined in the AG-UI protocol
+  - `InputContentDataSource` (inline base64) converts to `types.Part(inline_data=types.Blob(...))`, same as before
+  - `InputContentUrlSource` (HTTPS/GCS URLs) converts to `types.Part(file_data=types.FileData(file_uri=...))`, leveraging ADK's native URI support
+  - Legacy `BinaryInputContent` continues to work for backward compatibility
+  - Adds E2E tests gated on `GOOGLE_API_KEY` covering inline images, document URLs (RFC 2549 via IETF), multi-image messages, and mixed text+image content
+
+### Fixed
+
+- **FIX**: Disable `save_input_blobs_as_artifacts` so inline images reach the model (#1405)
+  - ADK's runner was converting `inline_data` parts to artifact references before the model could see them, replacing images with text like `"Uploaded file: artifact_xxx. It is saved into artifacts"`
+  - Setting `save_input_blobs_as_artifacts=False` in `RunConfig` preserves inline binary data so the model receives the actual image/audio/video/document content
+
+## [0.5.2] - 2026-03-26
+
+### Changed
+
+- **CHORE**: Cap `google-adk` dependency at `<2.0.0` to prevent breakage when ADK 2.0 ships
+  - ADK 2.0.0a1 introduces breaking changes to the agent API, event model, and session schema, and requires Python 3.11+
+  - The middleware remains compatible across the full `1.16.0–1.27.5` range — verified by running the full test suite (647 tests) against `1.22.1`, `1.24.1`, and `1.27.5`
+
 ### Added
 
 - **NEW**: `use_thread_id_as_session_id` option for `ADKAgent` and `SessionManager`
@@ -22,6 +63,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Covers session CRUD, scan-based recovery, multi-turn reuse, and `use_thread_id_as_session_id` error propagation
 
 ### Fixed
+
+- **FIX**: Handle parallel same-name LRO tool calls in ADK + Gemini (#1334)
+  - When Gemini emitted N parallel function calls for the same tool (e.g. 5× `create_item`), the middleware only emitted the first call and silently dropped the rest, due to a single-call guard in `translate_lro_function_calls()`
+  - The LRO ID remap (`lro_emitted_ids_by_name`) used a `Dict[str, str]` keyed by tool name, causing last-write-wins when multiple calls shared the same name — only 1 of N IDs could be remapped, producing a function call/response count mismatch that Gemini rejected with a 400 error
+  - `translate_lro_function_calls()` now processes all LRO function calls in a single event, not just the first
+  - `lro_emitted_ids_by_name` changed to `Dict[str, List[str]]` with positional (FIFO) matching in `_extract_lro_id_remap()` so every parallel call gets its own correct remap
+
+- **FIX**: Use Pydantic serialization for tool-call args to handle non-stdlib-serializable types (#1331)
+  - `json.dumps` on LRO function-call args (e.g. `adk_request_credential`) crashed with `TypeError: Object of type SecuritySchemeType is not JSON serializable` when args contained Pydantic models or Python Enums
+  - Introduces a shared `serialize_tool_args()` helper using Pydantic's `TypeAdapter`, applied to all 5 call sites that previously used `json.dumps` on tool args
+  - Thanks to **@joar** for this contribution!
+
+- **FIX**: Strip JSON Schema meta-fields (`$schema`, `$id`, `$ref`, etc.) from tool parameters before passing to `google.genai.types.Schema.model_validate()` (#1349)
+  - Frontend tools whose JSON Schema includes `$`-prefixed meta-fields (e.g. those generated by Zod/MCP) caused a Pydantic `ValidationError: Extra inputs are not permitted`, crashing the ADK runner silently
+  - Adds recursive `_strip_json_schema_meta()` helper to `client_proxy_tool.py` that removes `$`-prefixed keys at all nesting levels before schema validation
+
+- **FIX**: Key session lookup cache by `(thread_id, user_id)` to prevent cross-user collision (#1323)
+  - `_session_lookup_cache` and `_active_executions` are now keyed by a `(thread_id, user_id)` tuple instead of `thread_id` alone, preventing one user's session from being returned to another when both share the same thread ID
+  - All internal helpers (`_get_session_metadata`, `_get_backend_session_id`, `_remove_pending_tool_call`, `_get_pending_tool_call_ids`, `_has_pending_tool_calls`) now require `user_id` as a mandatory parameter — no silent `""` defaults that could mask cache misses
+  - Adds test coverage for two users sharing the same thread ID receiving separate sessions
+  - Thanks to **@themavik** for this contribution!
+
+- **FIX**: Remove double JSON encoding of `state` and `messages` in `/agents/state` endpoint (#1347)
+  - `AgentStateResponse` declared `state` and `messages` as `str`, and the handler wrapped them with `json.dumps()` before passing to `JSONResponse`, which serializes again
+  - Consumers received doubly-encoded strings (e.g. `"[{...}]"`) instead of native objects (`[{...}]`), breaking CopilotKit's message snapshot functionality
+  - Fixed by changing `AgentStateResponse` fields to `dict`/`list` and removing the redundant `json.dumps()` calls
 
 - **FIX**: Replace deep copy with shallow copy to support McpToolset (#1264)
   - `ADKAgent.model_copy(deep=True)` fails when the ADK agent tree contains tools with unpicklable attributes (e.g. `McpToolset.errlog = sys.stderr`)

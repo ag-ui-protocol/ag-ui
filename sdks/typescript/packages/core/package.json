@@ -1,7 +1,7 @@
 {
   "name": "@ag-ui/core",
   "author": "Markus Ecker <markus.ecker@gmail.com>",
-  "version": "0.0.47",
+  "version": "0.0.49",
   "private": false,
   "publishConfig": {
     "access": "public"
@@ -22,7 +22,6 @@
     "unlink:global": "pnpm unlink --global"
   },
   "dependencies": {
-    "rxjs": "7.8.1",
     "zod": "^3.22.4"
   },
   "devDependencies": {

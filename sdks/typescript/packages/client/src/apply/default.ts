@@ -48,13 +48,16 @@ import type { Observable } from "rxjs";
 import { concatMap, defaultIfEmpty, mergeAll, mergeMap } from "rxjs/operators";
 import untruncateJson from "untruncate-json";
 import { structuredClone_ } from "../utils";
+import { type DebugLoggerInput, resolveDebugLogger } from "@/debug-logger";
 
 export const defaultApplyEvents = (
   input: RunAgentInput,
   events$: Observable<BaseEvent>,
   agent: AbstractAgent,
   subscribers: AgentSubscriber[],
+  debugLogger?: DebugLoggerInput,
 ): Observable<AgentStateMutation> => {
+  const log = resolveDebugLogger(debugLogger);
   let messages = structuredClone_(agent.messages);
   let state = structuredClone_(input.state);
   let currentMutation: AgentStateMutation = {};
@@ -89,6 +92,18 @@ export const defaultApplyEvents = (
           subscriber.onEvent?.({ event, agent, input, messages, state }),
       );
       applyMutation(mutation);
+
+      if (mutation.stopPropagation === true) {
+        log?.event("APPLY", "Event dropped:", event, {
+          type: event.type,
+          reason: "stopPropagation by subscriber",
+        });
+      } else {
+        log?.event("APPLY", "Event applied:", event, {
+          type: event.type,
+          subscribers: subscribers.length,
+        });
+      }
 
       if (mutation.stopPropagation === true) {
         return emitUpdates();
