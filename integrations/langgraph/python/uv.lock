@@ -1,10 +1,10 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.10, <3.14"
 
 [[package]]
 name = "ag-ui-langgraph"
-version = "0.0.25"
+version = "0.0.28"
 source = { editable = "." }
 dependencies = [
     { name = "ag-ui-protocol" },
@@ -28,7 +28,7 @@ dev = [
 requires-dist = [
     { name = "ag-ui-protocol", specifier = ">=0.1.10" },
     { name = "fastapi", marker = "extra == 'fastapi'", specifier = ">=0.115.12" },
-    { name = "langchain", specifier = ">=0.3.0" },
+    { name = "langchain", specifier = ">=1.2.0" },
     { name = "langchain-core", specifier = ">=0.3.0" },
     { name = "langgraph", specifier = ">=0.3.25,<1.1.0" },
     { name = "pydantic", specifier = ">=2.0.0" },

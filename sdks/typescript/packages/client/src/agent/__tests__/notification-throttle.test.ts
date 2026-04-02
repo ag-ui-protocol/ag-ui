@@ -154,8 +154,8 @@ describe("AbstractAgent notification throttle", () => {
     await runPromise;
 
     // With 5s window, all events land within it → leading edge + finalize flush
-    // Much fewer notifications than the ~4 mutations produced
     expect(calls.length).toBeGreaterThanOrEqual(1);
+    expect(calls.length).toBeLessThanOrEqual(3);
     // Final notification must contain full content
     expect(calls[calls.length - 1]).toBe("hello world");
   });
@@ -238,6 +238,7 @@ describe("AbstractAgent notification throttle", () => {
 
     // Should have coalesced, but final state must be { count: 3 }
     expect(stateCalls.length).toBeGreaterThanOrEqual(1);
+    expect(stateCalls.length).toBeLessThanOrEqual(3);
     expect(stateCalls[stateCalls.length - 1]).toEqual({ count: 3 });
   });
 
@@ -335,7 +336,248 @@ describe("AbstractAgent notification throttle", () => {
     ).toThrow("non-negative finite number");
   });
 
-  it("accepts intervalMs: 0 without throwing", () => {
-    expect(() => new TestAgent({ notificationThrottle: { intervalMs: 0 } })).not.toThrow();
+  it("intervalMs: 0 with no minChunkSize skips throttle activation", () => {
+    const agent = new TestAgent({ notificationThrottle: { intervalMs: 0 } });
+    // Zero-zero is a no-op — treated as unthrottled
+    expect(agent.notificationThrottle).toBeUndefined();
+  });
+
+  it("intervalMs: 0 with minChunkSize > 0 still activates throttle", () => {
+    const agent = new TestAgent({ notificationThrottle: { intervalMs: 0, minChunkSize: 10 } });
+    expect(agent.notificationThrottle).toEqual({ intervalMs: 0, minChunkSize: 10 });
+  });
+
+  // ── Trailing timer fires mid-stream (Issue 6) ───────────────────────
+
+  it("trailing timer fires pending notification mid-stream", async () => {
+    vi.useFakeTimers();
+    try {
+      const agent = new TestAgent({ notificationThrottle: { intervalMs: 50 } });
+      const calls: string[] = [];
+
+      agent.subscribe({
+        onMessagesChanged: ({ messages }) => {
+          const msg = messages[0];
+          const content =
+            msg?.role === "assistant" && typeof msg.content === "string" ? msg.content : "";
+          calls.push(content);
+        },
+      });
+
+      const runPromise = agent.runAgent();
+      await vi.advanceTimersByTimeAsync(0);
+
+      agent.subject.next({ type: EventType.RUN_STARTED } as BaseEvent);
+      agent.subject.next({
+        type: EventType.TEXT_MESSAGE_CHUNK,
+        messageId: "m1",
+        delta: "A",
+      } as BaseEvent);
+      agent.subject.next({
+        type: EventType.TEXT_MESSAGE_CHUNK,
+        messageId: "m1",
+        delta: "B",
+      } as BaseEvent);
+
+      const callsBeforeTimer = calls.length;
+
+      // Advance past the throttle window — trailing timer should fire
+      await vi.advanceTimersByTimeAsync(60);
+
+      // Trailing timer should have fired, producing at least one more notification
+      expect(calls.length).toBeGreaterThan(callsBeforeTimer);
+      expect(calls[calls.length - 1]).toBe("AB");
+
+      agent.subject.next({ type: EventType.RUN_FINISHED } as BaseEvent);
+      agent.subject.complete();
+      await vi.advanceTimersByTimeAsync(0);
+      await runPromise;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // ── onStateChanged subscriber error (Issue 7) ──────────────────────
+
+  it("onStateChanged subscriber error is caught and does not crash", async () => {
+    const agent = new TestAgent({
+      notificationThrottle: { intervalMs: 50 },
+    });
+    const goodCalls: any[] = [];
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    agent.subscribe({
+      onStateChanged: () => {
+        throw new Error("state boom");
+      },
+    });
+    agent.subscribe({
+      onStateChanged: ({ state }) => {
+        goodCalls.push(structuredClone(state));
+      },
+    });
+
+    const runPromise = agent.runAgent();
+    await tick();
+
+    agent.subject.next({ type: EventType.RUN_STARTED } as BaseEvent);
+    agent.subject.next({
+      type: EventType.STATE_SNAPSHOT,
+      snapshot: { count: 1 },
+    } as BaseEvent);
+    agent.subject.next({ type: EventType.RUN_FINISHED } as BaseEvent);
+    agent.subject.complete();
+
+    await runPromise;
+
+    expect(goodCalls.length).toBeGreaterThanOrEqual(1);
+    expect(goodCalls[goodCalls.length - 1]).toEqual({ count: 1 });
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("AG-UI: Subscriber onStateChanged threw"),
+      expect.any(Error),
+    );
+
+    consoleErrorSpy.mockRestore();
+  });
+
+  // ── Interleaved message IDs with minChunkSize (Issue 8) ─────────────
+
+  it("minChunkSize resets tracking when message identity changes", async () => {
+    const agent = new TestAgent({
+      notificationThrottle: { intervalMs: 5000, minChunkSize: 5 },
+    });
+    const calls: number[] = [];
+
+    agent.subscribe({
+      onMessagesChanged: () => {
+        calls.push(calls.length);
+      },
+    });
+
+    const runPromise = agent.runAgent();
+    await tick();
+
+    agent.subject.next({ type: EventType.RUN_STARTED } as BaseEvent);
+
+    // Emit 4 chars on m1 (below minChunkSize=5)
+    for (let i = 0; i < 4; i++) {
+      agent.subject.next({
+        type: EventType.TEXT_MESSAGE_CHUNK,
+        messageId: "m1",
+        delta: String.fromCharCode(65 + i),
+      } as BaseEvent);
+    }
+
+    // Switch to m2 — 6 chars (above minChunkSize=5, should trigger notification)
+    for (let i = 0; i < 6; i++) {
+      agent.subject.next({
+        type: EventType.TEXT_MESSAGE_CHUNK,
+        messageId: "m2",
+        delta: String.fromCharCode(75 + i),
+      } as BaseEvent);
+    }
+
+    agent.subject.next({ type: EventType.RUN_FINISHED } as BaseEvent);
+    agent.subject.complete();
+
+    await runPromise;
+
+    // Leading edge on first m1 chunk. After identity change to m2, tracking resets.
+    // After 5+ chars on m2, chunk threshold fires. Then finalize flush.
+    // Should see 2-4 notifications, not 10+ (one per event).
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    expect(calls.length).toBeLessThanOrEqual(5);
+  });
+
+  // ── No flush on stream error (Issue 9) ──────────────────────────────
+
+  it("does not flush pending notifications on stream error", async () => {
+    const agent = new TestAgent({
+      notificationThrottle: { intervalMs: 5000 },
+    });
+    const calls: string[] = [];
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    agent.subscribe({
+      onMessagesChanged: ({ messages }) => {
+        const msg = messages[0];
+        const content =
+          msg?.role === "assistant" && typeof msg.content === "string" ? msg.content : "";
+        calls.push(content);
+      },
+    });
+
+    const runPromise = agent.runAgent();
+    await tick();
+
+    agent.subject.next({ type: EventType.RUN_STARTED } as BaseEvent);
+    agent.subject.next({
+      type: EventType.TEXT_MESSAGE_CHUNK,
+      messageId: "m1",
+      delta: "hello",
+    } as BaseEvent);
+    agent.subject.next({
+      type: EventType.TEXT_MESSAGE_CHUNK,
+      messageId: "m1",
+      delta: " world",
+    } as BaseEvent);
+
+    // Snapshot how many notifications fired before the error
+    const callsBeforeError = calls.length;
+
+    // Error the stream — pending notifications should NOT be flushed
+    agent.subject.error(new Error("stream error"));
+    await runPromise.catch(() => {});
+
+    // No additional notification was flushed after the error
+    expect(calls.length).toBe(callsBeforeError);
+
+    consoleErrorSpy.mockRestore();
+  });
+
+  // ── Non-throttled subscriber error resilience ───────────────────────
+
+  it("without throttle, a throwing subscriber does not crash the pipeline", async () => {
+    const agent = new TestAgent();
+    const calls: number[] = [];
+
+    // First subscriber throws
+    agent.subscribe({
+      onMessagesChanged: () => {
+        throw new Error("subscriber boom");
+      },
+    });
+
+    // Second subscriber should still receive notifications
+    agent.subscribe({
+      onMessagesChanged: ({ messages }) => {
+        calls.push(messages.length);
+      },
+    });
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const runPromise = agent.runAgent();
+    await tick();
+
+    agent.subject.next({ type: EventType.RUN_STARTED } as BaseEvent);
+    agent.subject.next({
+      type: EventType.TEXT_MESSAGE_CHUNK,
+      messageId: "m1",
+      delta: "hello",
+    } as BaseEvent);
+    agent.subject.next({ type: EventType.RUN_FINISHED } as BaseEvent);
+    agent.subject.complete();
+
+    await runPromise;
+
+    // Second subscriber was reached despite first throwing
+    expect(calls.length).toBeGreaterThanOrEqual(1);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("AG-UI: Subscriber"),
+      expect.any(Error),
+    );
+
+    errorSpy.mockRestore();
   });
 });

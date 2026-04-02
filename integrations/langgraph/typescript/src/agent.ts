@@ -176,6 +176,12 @@ export class LangGraphAgent extends AbstractAgent {
   }
 
   dispatchEvent(event: ProcessedEvents) {
+    if (event.type !== EventType.RAW && event.rawEvent !== undefined) {
+      const emitRawData = this.activeRun?.emitRawEventData ?? true;
+      if (!emitRawData) {
+        delete event.rawEvent;
+      }
+    }
     this.subscriber.next(event);
     return true;
   }
@@ -609,10 +615,18 @@ export class LangGraphAgent extends AbstractAgent {
           );
         }
 
-        this.dispatchEvent({
-          type: EventType.RAW,
-          event: chunkData,
-        });
+        const shouldEmitRaw = chunkData.metadata?.["emit-raw-events"] ?? true;
+        const emitRawEventData = chunkData.metadata?.["emit-raw-event-data"];
+        if (emitRawEventData !== undefined) {
+          this.activeRun!.emitRawEventData = emitRawEventData;
+        }
+
+        if (shouldEmitRaw) {
+          this.dispatchEvent({
+            type: EventType.RAW,
+            event: chunkData,
+          });
+        }
 
         this.handleSingleEvent(chunkData);
       }

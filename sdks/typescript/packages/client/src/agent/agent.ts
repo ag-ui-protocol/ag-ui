@@ -118,10 +118,13 @@ export abstract class AbstractAgent {
           `notificationThrottle.minChunkSize must be a non-negative finite number, got ${minChunkSize}`,
         );
       }
-      this.notificationThrottle = {
-        intervalMs,
-        minChunkSize: minChunkSize ?? 0,
-      };
+      // If both thresholds are zero, throttling is a no-op; skip activation
+      if (intervalMs > 0 || (minChunkSize ?? 0) > 0) {
+        this.notificationThrottle = {
+          intervalMs,
+          minChunkSize: minChunkSize ?? 0,
+        };
+      }
     }
 
     if (compareVersions(this.maxVersion, "0.0.39") <= 0) {
@@ -369,22 +372,36 @@ export abstract class AbstractAgent {
       tap((event) => {
         if (event.messages) {
           subscribers.forEach((subscriber) => {
-            subscriber.onMessagesChanged?.({
-              messages: this.messages,
-              state: this.state,
-              agent: this,
-              input,
-            });
+            try {
+              subscriber.onMessagesChanged?.({
+                messages: this.messages,
+                state: this.state,
+                agent: this,
+                input,
+              });
+            } catch (err) {
+              console.error("AG-UI: Subscriber onMessagesChanged threw:", err);
+              this._debugLogger?.lifecycle("LIFECYCLE", "Subscriber onMessagesChanged error:", {
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
           });
         }
         if (event.state) {
           subscribers.forEach((subscriber) => {
-            subscriber.onStateChanged?.({
-              state: this.state,
-              messages: this.messages,
-              agent: this,
-              input,
-            });
+            try {
+              subscriber.onStateChanged?.({
+                state: this.state,
+                messages: this.messages,
+                agent: this,
+                input,
+              });
+            } catch (err) {
+              console.error("AG-UI: Subscriber onStateChanged threw:", err);
+              this._debugLogger?.lifecycle("LIFECYCLE", "Subscriber onStateChanged error:", {
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
           });
         }
       }),
@@ -400,8 +417,9 @@ export abstract class AbstractAgent {
    *   - `minChunkSize` new characters have accumulated on the active assistant message
    *
    * A trailing timer ensures pending notifications are flushed after each
-   * window. On stream completion (or error), any remaining pending
-   * notification is always delivered.
+   * window. On normal stream completion, any remaining pending notification
+   * is delivered. On stream error, pending notifications are discarded to
+   * avoid delivering potentially inconsistent state.
    */
   private processThrottledNotifications(
     mutated$: Observable<AgentStateMutation>,
@@ -419,53 +437,81 @@ export abstract class AbstractAgent {
     let pendingState = false;
     let timerId: ReturnType<typeof setTimeout> | null = null;
     let disposed = false;
+    let streamErrored = false;
 
-    const notify = () => {
-      if (disposed) return;
-      if (timerId !== null) {
-        clearTimeout(timerId);
-        timerId = null;
-      }
-      lastNotifyTime = Date.now();
-      charsSinceLastNotify = 0;
-
-      // Snapshot the content length of the current trailing assistant message
-      if (this.messages.length > 0) {
-        const lastMsg = this.messages[this.messages.length - 1];
-        if (lastMsg.role === "assistant" && typeof lastMsg.content === "string") {
-          lastContentLength = lastMsg.content.length;
-          lastTrackedMessageId = lastMsg.id;
+    const notify = (force = false) => {
+      if (disposed && !force) return;
+      try {
+        if (timerId !== null) {
+          clearTimeout(timerId);
+          timerId = null;
         }
-      }
+        lastNotifyTime = Date.now();
+        charsSinceLastNotify = 0;
 
-      if (pendingMessages) {
-        pendingMessages = false;
-        subscribers.forEach((subscriber) => {
-          try {
-            subscriber.onMessagesChanged?.({
-              messages: this.messages,
-              state: this.state,
-              agent: this,
-              input,
-            });
-          } catch (err) {
-            console.error("AG-UI: Subscriber onMessagesChanged threw during throttled notification:", err);
+        // Snapshot the content length of the current trailing assistant message
+        if (this.messages.length > 0) {
+          const lastMsg = this.messages[this.messages.length - 1];
+          if (lastMsg.role === "assistant" && typeof lastMsg.content === "string") {
+            lastContentLength = lastMsg.content.length;
+            lastTrackedMessageId = lastMsg.id;
           }
-        });
-      }
-      if (pendingState) {
-        pendingState = false;
-        subscribers.forEach((subscriber) => {
-          try {
-            subscriber.onStateChanged?.({
-              state: this.state,
-              messages: this.messages,
-              agent: this,
-              input,
-            });
-          } catch (err) {
-            console.error("AG-UI: Subscriber onStateChanged threw during throttled notification:", err);
-          }
+        }
+
+        if (pendingMessages) {
+          pendingMessages = false;
+          subscribers.forEach((subscriber) => {
+            try {
+              subscriber.onMessagesChanged?.({
+                messages: this.messages,
+                state: this.state,
+                agent: this,
+                input,
+              });
+            } catch (err) {
+              console.error(
+                "AG-UI: Subscriber onMessagesChanged threw during throttled notification:",
+                err,
+              );
+              this._debugLogger?.lifecycle(
+                "LIFECYCLE",
+                "Subscriber onMessagesChanged error:",
+                {
+                  error: err instanceof Error ? err.message : String(err),
+                },
+              );
+            }
+          });
+        }
+        if (pendingState) {
+          pendingState = false;
+          subscribers.forEach((subscriber) => {
+            try {
+              subscriber.onStateChanged?.({
+                state: this.state,
+                messages: this.messages,
+                agent: this,
+                input,
+              });
+            } catch (err) {
+              console.error(
+                "AG-UI: Subscriber onStateChanged threw during throttled notification:",
+                err,
+              );
+              this._debugLogger?.lifecycle(
+                "LIFECYCLE",
+                "Subscriber onStateChanged error:",
+                {
+                  error: err instanceof Error ? err.message : String(err),
+                },
+              );
+            }
+          });
+        }
+      } catch (err) {
+        console.error("AG-UI: Unexpected error in throttled notify():", err);
+        this._debugLogger?.lifecycle("LIFECYCLE", "Throttled notify error:", {
+          error: err instanceof Error ? err.message : String(err),
         });
       }
     };
@@ -478,36 +524,46 @@ export abstract class AbstractAgent {
     };
 
     return mutated$.pipe(
-      tap((event) => {
-        if (event.messages) {
-          if (minChunkSize > 0 && this.messages.length > 0) {
-            const lastMsg = this.messages[this.messages.length - 1];
-            if (lastMsg.role === "assistant" && typeof lastMsg.content === "string") {
-              // Reset tracking when the message identity changes
-              if (lastMsg.id !== lastTrackedMessageId) {
-                lastTrackedMessageId = lastMsg.id;
-                lastContentLength = 0;
+      tap({
+        next: (event) => {
+          if (event.messages) {
+            if (minChunkSize > 0 && this.messages.length > 0) {
+              const lastMsg = this.messages[this.messages.length - 1];
+              if (lastMsg.role === "assistant" && typeof lastMsg.content === "string") {
+                // Reset tracking when the message identity changes
+                if (lastMsg.id !== lastTrackedMessageId) {
+                  lastTrackedMessageId = lastMsg.id;
+                  lastContentLength = 0;
+                }
+                charsSinceLastNotify = Math.max(
+                  0,
+                  lastMsg.content.length - lastContentLength,
+                );
               }
-              charsSinceLastNotify = Math.max(0, lastMsg.content.length - lastContentLength);
             }
+            pendingMessages = true;
           }
-          pendingMessages = true;
-        }
-        if (event.state) {
-          pendingState = true;
-        }
+          if (event.state) {
+            pendingState = true;
+          }
 
-        const now = Date.now();
-        // Sentinel: lastNotifyTime is 0 only before the very first notification
-        const isLeading = lastNotifyTime === 0;
-        const timeThresholdMet = throttleMs > 0 && (now - lastNotifyTime) >= throttleMs;
-        const chunkThresholdMet = minChunkSize > 0 && charsSinceLastNotify >= minChunkSize;
+          const now = Date.now();
+          // Sentinel: lastNotifyTime is 0 only before the very first notification
+          const isLeading = lastNotifyTime === 0;
+          const timeThresholdMet =
+            throttleMs > 0 && now - lastNotifyTime >= throttleMs;
+          const chunkThresholdMet =
+            minChunkSize > 0 && charsSinceLastNotify >= minChunkSize;
 
-        if (isLeading || timeThresholdMet || chunkThresholdMet) {
-          notify();
-        } else {
-          scheduleTrailing();
-        }
+          if (isLeading || timeThresholdMet || chunkThresholdMet) {
+            notify();
+          } else {
+            scheduleTrailing();
+          }
+        },
+        error: () => {
+          streamErrored = true;
+        },
       }),
       finalize(() => {
         disposed = true;
@@ -515,11 +571,10 @@ export abstract class AbstractAgent {
           clearTimeout(timerId);
           timerId = null;
         }
-        if (pendingMessages || pendingState) {
-          // Temporarily allow one final flush even though disposed
-          disposed = false;
-          notify();
-          disposed = true;
+        // Only flush on normal completion; skip on error to avoid
+        // delivering potentially inconsistent state to subscribers.
+        if (!streamErrored && (pendingMessages || pendingState)) {
+          notify(/* force */ true);
         }
       }),
     );

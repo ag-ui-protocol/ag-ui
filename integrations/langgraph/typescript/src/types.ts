@@ -71,6 +71,8 @@ export interface RunMetadata {
   serverRunIdKnown?: boolean;
   // True after a PredictState event is emitted; cleared on OnToolEnd
   hasPredictState?: boolean;
+  // When false, rawEvent is stripped from non-RAW dispatched events
+  emitRawEventData?: boolean;
 }
 
 export type MessagesInProgressRecord = Record<string, MessageInProgress | null>;

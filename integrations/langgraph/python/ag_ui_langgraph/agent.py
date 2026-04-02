@@ -286,9 +286,15 @@ class LangGraphAgent:
                             )
                         )
 
-                yield self._dispatch_event(
-                    RawEvent(type=EventType.RAW, event=event)
+                should_emit_raw = event.get("metadata", {}).get("emit-raw-events", True)
+                self.active_run["emit_raw_event_data"] = event.get("metadata", {}).get(
+                    "emit-raw-event-data", self.active_run.get("emit_raw_event_data", True)
                 )
+
+                if should_emit_raw:
+                    yield self._dispatch_event(
+                        RawEvent(type=EventType.RAW, event=event)
+                    )
 
                 async for single_event in self._handle_single_event(event, state):
                     yield single_event
