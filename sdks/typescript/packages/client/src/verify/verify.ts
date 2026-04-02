@@ -1,10 +1,12 @@
 import { BaseEvent, EventType, AGUIError } from "@ag-ui/core";
 import { Observable, throwError, of } from "rxjs";
 import { mergeMap } from "rxjs/operators";
+import { DebugLogger } from "@/debug-logger";
 
 export const verifyEvents =
-  (debug: boolean) =>
+  (debugLogger?: DebugLogger | false | null) =>
   (source$: Observable<BaseEvent>): Observable<BaseEvent> => {
+    const log = debugLogger || undefined;
     // Declare variables in closure to maintain state across events
     let activeMessages = new Map<string, boolean>(); // Map of message ID -> active status
     let activeToolCalls = new Map<string, boolean>(); // Map of tool call ID -> active status
@@ -35,9 +37,7 @@ export const verifyEvents =
       mergeMap((event) => {
         const eventType = event.type;
 
-        if (debug) {
-          console.debug("[VERIFY]:", JSON.stringify(event));
-        }
+        log?.event("VERIFY", "Event:", event, { type: event.type });
 
         // Check if run has errored
         if (runError) {
@@ -50,7 +50,11 @@ export const verifyEvents =
         }
 
         // Check if run has already finished (but allow new RUN_STARTED to start a new run)
-        if (runFinished && eventType !== EventType.RUN_ERROR && eventType !== EventType.RUN_STARTED) {
+        if (
+          runFinished &&
+          eventType !== EventType.RUN_ERROR &&
+          eventType !== EventType.RUN_STARTED
+        ) {
           return throwError(
             () =>
               new AGUIError(

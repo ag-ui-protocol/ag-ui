@@ -5,11 +5,16 @@ import { parseSSEStream } from "./sse";
 import { parseProtoStream } from "./proto";
 import * as proto from "@ag-ui/proto";
 import { EventType } from "@ag-ui/core";
+import { DebugLogger } from "@/debug-logger";
 
 /**
  * Transforms HTTP events into BaseEvents using the appropriate format parser based on content type.
  */
-export const transformHttpEventStream = (source$: Observable<HttpEvent>): Observable<BaseEvent> => {
+export const transformHttpEventStream = (
+  source$: Observable<HttpEvent>,
+  debugLogger?: DebugLogger | false | null,
+): Observable<BaseEvent> => {
+  const log = debugLogger || undefined;
   const eventSubject = new Subject<BaseEvent>();
 
   // Use ReplaySubject to buffer events until we decide on the parser
@@ -29,6 +34,11 @@ export const transformHttpEventStream = (source$: Observable<HttpEvent>): Observ
         parserInitialized = true;
         const contentType = event.headers.get("content-type");
 
+        log?.lifecycle("HTTP", "Stream format detected:", {
+          contentType,
+          parser: contentType === proto.AGUI_MEDIA_TYPE ? "protobuf" : "sse",
+        });
+
         // Choose parser based on content type
         if (contentType === proto.AGUI_MEDIA_TYPE) {
           // Use protocol buffer parser
@@ -39,12 +49,17 @@ export const transformHttpEventStream = (source$: Observable<HttpEvent>): Observ
           });
         } else {
           // Use SSE JSON parser for all other cases
-          parseSSEStream(bufferSubject).subscribe({
+          parseSSEStream(bufferSubject, log).subscribe({
             next: (json) => {
               try {
                 const parsedEvent = EventSchemas.parse(json);
+                log?.event("HTTP", "Event validated:", parsedEvent, {
+                  type: parsedEvent.type,
+                  valid: true,
+                });
                 eventSubject.next(parsedEvent as BaseEvent);
               } catch (err) {
+                log?.event("HTTP", "Event invalid:", { json, error: String(err) });
                 eventSubject.error(err);
               }
             },
@@ -59,7 +74,7 @@ export const transformHttpEventStream = (source$: Observable<HttpEvent>): Observ
                 eventSubject.complete();
                 return;
               }
-              return eventSubject.error(err)
+              return eventSubject.error(err);
             },
             complete: () => eventSubject.complete(),
           });
