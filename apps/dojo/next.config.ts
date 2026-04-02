@@ -34,9 +34,7 @@ const nextConfig: NextConfig = {
   /* config options here */
   // Configure pageExtensions to include md and mdx
   pageExtensions: ["ts", "tsx", "js", "jsx", "md", "mdx"],
-  ...(outputFileTracingRoot && {
-    experimental: { outputFileTracingRoot },
-  }),
+  ...(outputFileTracingRoot && { outputFileTracingRoot }),
   webpack: (config, { isServer }) => {
     // Ignore the demo files during build
     config.module.rules.push({
