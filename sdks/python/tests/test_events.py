@@ -424,14 +424,13 @@ class TestEvents(unittest.TestCase):
             self.assertEqual(event.type.value, data["type"])
             self.assertEqual(event.timestamp, data["timestamp"])
 
-    def test_validation_constraints(self):
-        """Test validation constraints for different event types"""
-        # TextMessageContentEvent delta cannot be empty
-        with self.assertRaises(ValueError):
-            TextMessageContentEvent(
-                message_id="msg_123",
-                delta=""  # Empty delta, should fail
-            )
+    def test_empty_delta_accepted(self):
+        """Models like GPT-5 legitimately send empty deltas during streaming"""
+        event = TextMessageContentEvent(
+            message_id="msg_123",
+            delta=""
+        )
+        self.assertEqual(event.delta, "")
 
     def test_serialization_round_trip(self):
         """Test serialization and deserialization for different event types"""

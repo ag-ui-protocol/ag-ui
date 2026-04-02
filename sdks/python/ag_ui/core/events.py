@@ -77,7 +77,7 @@ class TextMessageContentEvent(BaseEvent):
     """
     type: Literal[EventType.TEXT_MESSAGE_CONTENT] = EventType.TEXT_MESSAGE_CONTENT  # pyright: ignore[reportIncompatibleVariableOverride]
     message_id: str
-    delta: str = Field(min_length=1)
+    delta: str
 
 
 class TextMessageEndEvent(BaseEvent):
@@ -108,7 +108,7 @@ class ThinkingTextMessageContentEvent(BaseEvent):
     Event indicating a piece of a thinking text message.
     """
     type: Literal[EventType.THINKING_TEXT_MESSAGE_CONTENT] = EventType.THINKING_TEXT_MESSAGE_CONTENT  # pyright: ignore[reportIncompatibleVariableOverride]
-    delta: str = Field(min_length=1)
+    delta: str
 
 class ThinkingTextMessageEndEvent(BaseEvent):
     """
@@ -312,7 +312,7 @@ class ReasoningMessageContentEvent(BaseEvent):
     """
     type: Literal[EventType.REASONING_MESSAGE_CONTENT] = EventType.REASONING_MESSAGE_CONTENT  # pyright: ignore[reportIncompatibleVariableOverride]
     message_id: str
-    delta: str = Field(min_length=1)
+    delta: str
 
 
 class ReasoningMessageEndEvent(BaseEvent):
