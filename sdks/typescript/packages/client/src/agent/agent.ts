@@ -53,6 +53,8 @@ export abstract class AbstractAgent {
   public state: State;
   private _debug: ResolvedAgentDebugConfig;
   private _debugLogger: DebugLogger | undefined;
+  public notificationThrottleMs: number = 0;
+  public notificationMinChunkSize: number = 0;
   public subscribers: AgentSubscriber[] = [];
   public isRunning: boolean = false;
   private middlewares: Middleware[] = [];
@@ -94,6 +96,8 @@ export abstract class AbstractAgent {
     initialMessages,
     initialState,
     debug,
+    notificationThrottleMs,
+    notificationMinChunkSize,
   }: AgentConfig = {}) {
     this.agentId = agentId;
     this.description = description ?? "";
@@ -102,6 +106,8 @@ export abstract class AbstractAgent {
     this.state = structuredClone_(initialState ?? {});
     this._debug = resolveAgentDebugConfig(debug);
     this._debugLogger = createDebugLogger(this._debug);
+    this.notificationThrottleMs = notificationThrottleMs ?? 0;
+    this.notificationMinChunkSize = notificationMinChunkSize ?? 0;
 
     if (compareVersions(this.maxVersion, "0.0.39") <= 0) {
       this.middlewares.unshift(new BackwardCompatibility_0_0_39());
@@ -331,10 +337,22 @@ export abstract class AbstractAgent {
     events$: Observable<AgentStateMutation>,
     subscribers: AgentSubscriber[],
   ): Observable<AgentStateMutation> {
-    return events$.pipe(
+    // Step 1: Always apply mutations immediately (agent.messages/state stay current)
+    const mutated$ = events$.pipe(
+      tap((event) => {
+        if (event.messages) this.messages = event.messages;
+        if (event.state) this.state = event.state;
+      }),
+    );
+
+    // Step 2: Notify subscribers — throttled when configured, immediate otherwise
+    if (this.notificationThrottleMs > 0 || this.notificationMinChunkSize > 0) {
+      return this.processThrottledNotifications(mutated$, input, subscribers);
+    }
+
+    return mutated$.pipe(
       tap((event) => {
         if (event.messages) {
-          this.messages = event.messages;
           subscribers.forEach((subscriber) => {
             subscriber.onMessagesChanged?.({
               messages: this.messages,
@@ -345,7 +363,6 @@ export abstract class AbstractAgent {
           });
         }
         if (event.state) {
-          this.state = event.state;
           subscribers.forEach((subscriber) => {
             subscriber.onStateChanged?.({
               state: this.state,
@@ -354,6 +371,107 @@ export abstract class AbstractAgent {
               input,
             });
           });
+        }
+      }),
+    );
+  }
+
+  /**
+   * Throttled notification layer. Fires when EITHER threshold is hit first:
+   *   - notificationThrottleMs elapsed since last notification
+   *   - notificationMinChunkSize new characters accumulated
+   * Leading+trailing: first event fires immediately, last is never lost.
+   */
+  private processThrottledNotifications(
+    mutated$: Observable<AgentStateMutation>,
+    input: RunAgentInput,
+    subscribers: AgentSubscriber[],
+  ): Observable<AgentStateMutation> {
+    const throttleMs = this.notificationThrottleMs;
+    const minChunkSize = this.notificationMinChunkSize;
+
+    let lastNotifyTime = 0;
+    let charsSinceLastNotify = 0;
+    let lastContentLength = 0;
+    let pendingMessages = false;
+    let pendingState = false;
+    let timerId: ReturnType<typeof setTimeout> | null = null;
+
+    const notify = () => {
+      if (timerId !== null) {
+        clearTimeout(timerId);
+        timerId = null;
+      }
+      lastNotifyTime = Date.now();
+      charsSinceLastNotify = 0;
+      if (this.messages.length > 0) {
+        const content = (this.messages[this.messages.length - 1] as any)?.content ?? "";
+        lastContentLength = content.length;
+      }
+
+      if (pendingMessages) {
+        pendingMessages = false;
+        subscribers.forEach((subscriber) => {
+          subscriber.onMessagesChanged?.({
+            messages: this.messages,
+            state: this.state,
+            agent: this,
+            input,
+          });
+        });
+      }
+      if (pendingState) {
+        pendingState = false;
+        subscribers.forEach((subscriber) => {
+          subscriber.onStateChanged?.({
+            state: this.state,
+            messages: this.messages,
+            agent: this,
+            input,
+          });
+        });
+      }
+    };
+
+    const scheduleTrailing = () => {
+      if (timerId !== null) return;
+      if (throttleMs <= 0) return;
+      const elapsed = Date.now() - lastNotifyTime;
+      const remaining = Math.max(0, throttleMs - elapsed);
+      timerId = setTimeout(notify, remaining);
+    };
+
+    return mutated$.pipe(
+      tap((event) => {
+        if (event.messages) {
+          if (minChunkSize > 0 && this.messages.length > 0) {
+            const content = (this.messages[this.messages.length - 1] as any)?.content ?? "";
+            charsSinceLastNotify = Math.max(0, content.length - lastContentLength);
+          }
+          pendingMessages = true;
+        }
+        if (event.state) {
+          pendingState = true;
+        }
+
+        const now = Date.now();
+        const isLeading = lastNotifyTime === 0;
+        const timeThresholdMet = throttleMs > 0 && (now - lastNotifyTime) >= throttleMs;
+        const chunkThresholdMet = minChunkSize > 0 && charsSinceLastNotify >= minChunkSize;
+
+        if (isLeading || timeThresholdMet || chunkThresholdMet) {
+          notify();
+        } else {
+          scheduleTrailing();
+        }
+      }),
+      finalize(() => {
+        if (timerId !== null) {
+          clearTimeout(timerId);
+          timerId = null;
+        }
+        if (pendingMessages || pendingState) {
+          notify();
         }
       }),
     );
@@ -509,6 +627,8 @@ export abstract class AbstractAgent {
     cloned.state = structuredClone_(this.state);
     cloned._debug = this._debug;
     cloned._debugLogger = this._debugLogger;
+    cloned.notificationThrottleMs = this.notificationThrottleMs;
+    cloned.notificationMinChunkSize = this.notificationMinChunkSize;
     cloned.isRunning = this.isRunning;
     cloned.subscribers = [...this.subscribers];
     cloned.middlewares = [...this.middlewares];

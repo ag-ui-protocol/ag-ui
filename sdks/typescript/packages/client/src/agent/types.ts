@@ -37,6 +37,21 @@ export interface AgentConfig {
   initialMessages?: Message[];
   initialState?: State;
   debug?: AgentDebugConfig;
+  /**
+   * Throttle subscriber notifications by time (milliseconds).
+   * Uses leading+trailing: first notification fires immediately,
+   * subsequent ones within the window are coalesced.
+   * Default: 0 (no throttle).
+   */
+  notificationThrottleMs?: number;
+  /**
+   * Throttle subscriber notifications by accumulated content size.
+   * Holds notifications until at least this many new characters have
+   * been appended to the streaming message since the last notification.
+   * Requires `notificationThrottleMs` to provide the trailing timer.
+   * Default: 0 (no minimum).
+   */
+  notificationMinChunkSize?: number;
 }
 
 export interface HttpAgentConfig extends AgentConfig {
