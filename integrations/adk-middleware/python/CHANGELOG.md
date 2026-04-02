@@ -27,6 +27,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Demonstrates `REASONING_*` event emission using Gemini 2.5 Flash with `include_thoughts=True`
   - Registered at `/adk-reasoning-chat` in the example server
 
+- **NEW**: Support for multimodal input types (`ImageInputContent`, `AudioInputContent`, `VideoInputContent`, `DocumentInputContent`) (#1405)
+  - Replaces reliance on the deprecated `BinaryInputContent` with the newer modality-specific types defined in the AG-UI protocol
+  - `InputContentDataSource` (inline base64) converts to `types.Part(inline_data=types.Blob(...))`, same as before
+  - `InputContentUrlSource` (HTTPS/GCS URLs) converts to `types.Part(file_data=types.FileData(file_uri=...))`, leveraging ADK's native URI support
+  - Legacy `BinaryInputContent` continues to work for backward compatibility
+  - Adds E2E tests gated on `GOOGLE_API_KEY` covering inline images, document URLs (RFC 2549 via IETF), multi-image messages, and mixed text+image content
+
+### Fixed
+
+- **FIX**: Disable `save_input_blobs_as_artifacts` so inline images reach the model (#1405)
+  - ADK's runner was converting `inline_data` parts to artifact references before the model could see them, replacing images with text like `"Uploaded file: artifact_xxx. It is saved into artifacts"`
+  - Setting `save_input_blobs_as_artifacts=False` in `RunConfig` preserves inline binary data so the model receives the actual image/audio/video/document content
+
 ## [0.5.2] - 2026-03-26
 
 ### Changed
