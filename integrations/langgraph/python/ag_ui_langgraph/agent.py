@@ -635,7 +635,7 @@ class LangGraphAgent:
 
         return {
             **state,
-            "messages": new_messages,
+            "messages": existing_messages + new_messages,
             "tools": unique_tools,
             "ag-ui": {
                 "tools": unique_tools,
