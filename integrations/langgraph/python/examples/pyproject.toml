@@ -8,7 +8,7 @@ authors = [
 ]
 requires-python = ">=3.10,<3.14"
 dependencies = [
-    "copilotkit==0.1.76",
+    "copilotkit==0.1.84a1",
     "uvicorn>=0.34.0",
     "dotenv>=0.9.9",
     "langchain>=1.0.3",

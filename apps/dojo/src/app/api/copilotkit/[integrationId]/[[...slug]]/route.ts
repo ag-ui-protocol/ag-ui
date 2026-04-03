@@ -35,6 +35,9 @@ async function getHandler(integrationId: string) {
   const runtime = new CopilotRuntime({
     agents: agents as Record<string, AbstractAgent>,
     runner: new InMemoryAgentRunner(),
+    a2ui: {
+      agents: ["a2ui_fixed_schema", "a2ui_dynamic_schema", "a2ui_advanced"],
+    },
   });
 
   const app = createCopilotEndpointSingleRoute({

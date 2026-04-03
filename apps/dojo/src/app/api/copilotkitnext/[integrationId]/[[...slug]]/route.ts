@@ -9,7 +9,7 @@ import type { NextRequest } from "next/server";
 import type { AbstractAgent } from "@ag-ui/client";
 import { agentsIntegrations } from "@/agents";
 import type { IntegrationId } from "@/menu";
- 
+
 
 type RouteParams = {
   params: Promise<{
@@ -57,6 +57,9 @@ async function createHandler(integrationId: string): Promise<any> {
   const runtime = new CopilotRuntime({
     agents,
     runner: new InMemoryAgentRunner(),
+    openGenerativeUI: {
+      agents: ["open_gen_ui"],
+    },
   });
 
   const app = createCopilotEndpoint({
