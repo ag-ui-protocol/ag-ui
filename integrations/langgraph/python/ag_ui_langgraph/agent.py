@@ -144,6 +144,7 @@ class LangGraphAgent:
             "has_function_streaming": False,
             "model_made_tool_call": False,
             "state_reliable": True,
+            "streamed_messages": [],
         }
         self.active_run = INITIAL_ACTIVE_RUN
 
@@ -324,7 +325,13 @@ class LangGraphAgent:
                 StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=self.get_state_snapshot(state_values))
             )
 
-            snapshot_messages = self._filter_orphan_tool_messages(state_values.get("messages", []))
+            checkpoint_messages = state_values.get("messages", [])
+            streamed_messages = self.active_run.get("streamed_messages", [])
+            if streamed_messages:
+                checkpoint_ids = {getattr(m, "id", None) for m in checkpoint_messages}
+                extra = [m for m in streamed_messages if getattr(m, "id", None) not in checkpoint_ids]
+                checkpoint_messages = checkpoint_messages + extra
+            snapshot_messages = self._filter_orphan_tool_messages(checkpoint_messages)
             yield self._dispatch_event(
                 MessagesSnapshotEvent(
                     type=EventType.MESSAGES_SNAPSHOT,
@@ -824,6 +831,9 @@ class LangGraphAgent:
                 return
 
         elif event_type == LangGraphEventTypes.OnChatModelEnd:
+            output_msg = event.get("data", {}).get("output")
+            if output_msg is not None:
+                self.active_run.setdefault("streamed_messages", []).append(output_msg)
             if self.get_message_in_progress(self.active_run["id"]) and self.get_message_in_progress(self.active_run["id"]).get("tool_call_id"):
                 resolved = self._dispatch_event(
                     ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=self.get_message_in_progress(self.active_run["id"])["tool_call_id"], raw_event=event)
