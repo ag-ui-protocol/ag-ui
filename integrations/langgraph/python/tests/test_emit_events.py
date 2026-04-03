@@ -1,0 +1,134 @@
+"""Tests for custom emit event dispatch — fixes #1364.
+
+CopilotKit emits events named "copilotkit_manually_emit_message" etc.,
+but the handler checks CustomEventNames which may use a different string.
+"""
+import json
+import pytest
+from unittest.mock import MagicMock
+
+from ag_ui.core import EventType
+
+from ag_ui_langgraph.types import CustomEventNames, LangGraphEventTypes
+
+
+class TestCustomEventNamesMatchCopilotKit:
+    """Verify that CustomEventNames values match what CopilotKit actually emits.
+
+    CopilotKit's Python SDK dispatches custom events with the "copilotkit_" prefix.
+    The handler in _handle_single_event compares event["name"] against these constants.
+    If they don't match, the events are silently ignored (bug #1364).
+    """
+
+    def test_manually_emit_message_name(self):
+        assert CustomEventNames.ManuallyEmitMessage == "copilotkit_manually_emit_message", (
+            "ManuallyEmitMessage must match the event name CopilotKit emits (issue #1364)"
+        )
+
+    def test_manually_emit_tool_call_name(self):
+        assert CustomEventNames.ManuallyEmitToolCall == "copilotkit_manually_emit_tool_call", (
+            "ManuallyEmitToolCall must match the event name CopilotKit emits (issue #1364)"
+        )
+
+    def test_manually_emit_state_name(self):
+        assert CustomEventNames.ManuallyEmitState == "copilotkit_manually_emit_state", (
+            "ManuallyEmitState must match the event name CopilotKit emits (issue #1364)"
+        )
+
+    def test_exit_name(self):
+        assert CustomEventNames.Exit == "copilotkit_exit", (
+            "Exit must match the event name CopilotKit emits (issue #1364)"
+        )
+
+
+class TestHandleSingleEventCustomEvents:
+    """Test that _handle_single_event correctly processes custom emit events.
+
+    These tests use a minimal LangGraphAgent with mock graph, exercising
+    the OnCustomEvent branch of _handle_single_event.
+    """
+
+    def _make_agent(self):
+        from ag_ui_langgraph.agent import LangGraphAgent
+
+        mock_graph = MagicMock()
+        agent = LangGraphAgent(name="test", graph=mock_graph)
+        agent.active_run = {
+            "id": "run-1",
+            "thread_id": "t1",
+            "reasoning_process": None,
+            "node_name": "agent",
+            "has_function_streaming": False,
+            "model_made_tool_call": False,
+            "state_reliable": True,
+            "streamed_messages": [],
+            "manually_emitted_state": None,
+            "schema_keys": {"input": ["messages", "tools"], "output": ["messages", "tools"], "config": [], "context": []},
+        }
+        return agent
+
+    @pytest.mark.asyncio
+    async def test_manually_emit_message(self):
+        agent = self._make_agent()
+        event = {
+            "event": LangGraphEventTypes.OnCustomEvent.value,
+            "name": CustomEventNames.ManuallyEmitMessage.value,
+            "data": {"message_id": "msg-1", "message": "Hello from agent"},
+        }
+        events = []
+        async for ev in agent._handle_single_event(event, {}):
+            events.append(ev)
+
+        event_types = [e.type for e in events]
+        assert EventType.TEXT_MESSAGE_START in event_types
+        assert EventType.TEXT_MESSAGE_CONTENT in event_types
+        assert EventType.TEXT_MESSAGE_END in event_types
+
+    @pytest.mark.asyncio
+    async def test_manually_emit_tool_call(self):
+        agent = self._make_agent()
+        event = {
+            "event": LangGraphEventTypes.OnCustomEvent.value,
+            "name": CustomEventNames.ManuallyEmitToolCall.value,
+            "data": {"id": "tc-1", "name": "search", "args": {"q": "test"}},
+        }
+        events = []
+        async for ev in agent._handle_single_event(event, {}):
+            events.append(ev)
+
+        event_types = [e.type for e in events]
+        assert EventType.TOOL_CALL_START in event_types
+        assert EventType.TOOL_CALL_ARGS in event_types
+        assert EventType.TOOL_CALL_END in event_types
+
+    @pytest.mark.asyncio
+    async def test_manually_emit_state(self):
+        agent = self._make_agent()
+        event = {
+            "event": LangGraphEventTypes.OnCustomEvent.value,
+            "name": CustomEventNames.ManuallyEmitState.value,
+            "data": {"counter": 42},
+        }
+        events = []
+        async for ev in agent._handle_single_event(event, {}):
+            events.append(ev)
+
+        event_types = [e.type for e in events]
+        assert EventType.STATE_SNAPSHOT in event_types
+        assert agent.active_run["manually_emitted_state"] == {"counter": 42}
+
+    @pytest.mark.asyncio
+    async def test_exit_event_produces_custom(self):
+        """The exit event should at minimum produce a CUSTOM event."""
+        agent = self._make_agent()
+        event = {
+            "event": LangGraphEventTypes.OnCustomEvent.value,
+            "name": CustomEventNames.Exit.value,
+            "data": {},
+        }
+        events = []
+        async for ev in agent._handle_single_event(event, {}):
+            events.append(ev)
+
+        event_types = [e.type for e in events]
+        assert EventType.CUSTOM in event_types

@@ -299,6 +299,15 @@ export function resolveReasoningContent(eventData: any): LangGraphReasoning | nu
         index: block.summary[0].index ?? 0,
       }
     }
+
+    // Bedrock Converse API format: { type: "reasoning_content", reasoning_content: { type: "text", text: "..." } }
+    if (block.type === 'reasoning_content' && block.reasoning_content?.text) {
+      return {
+        type: 'text',
+        text: block.reasoning_content.text,
+        index: block.reasoning_content.index ?? 0,
+      }
+    }
   }
 
   // OpenAI legacy format via additional_kwargs

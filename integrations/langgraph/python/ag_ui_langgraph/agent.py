@@ -126,6 +126,10 @@ class LangGraphAgent:
         return event
 
     async def run(self, input: RunAgentInput) -> AsyncGenerator[str, None]:
+        # TODO(ran-review): suspected dead code — please verify before removing
+        # This camelCase→snake_case conversion of forwarded_props was added for
+        # CopilotKit's internal use. Now that CopilotKit treats this as an
+        # external library, it may no longer be needed.
         forwarded_props = {}
         if hasattr(input, "forwarded_props") and input.forwarded_props:
             forwarded_props = {
@@ -221,7 +225,7 @@ class LangGraphAgent:
 
                 should_exit = should_exit or (
                         event_type == "on_custom_event" and
-                        event["name"] == "exit"
+                        event["name"] == CustomEventNames.Exit
                     )
 
                 if current_node_name and current_node_name != self.active_run.get("node_name"):
@@ -297,7 +301,10 @@ class LangGraphAgent:
             state = await self.graph.aget_state(config)
 
             tasks = state.tasks if len(state.tasks) > 0 else None
-            interrupts = tasks[0].interrupts if tasks else []
+            interrupts = []
+            if tasks:
+                for task in tasks:
+                    interrupts.extend(task.interrupts)
 
             writes = state.metadata.get("writes", {}) or {}
             node_name = self.active_run["node_name"] if interrupts else next(iter(writes), None)
@@ -362,7 +369,10 @@ class LangGraphAgent:
         state = self.langgraph_default_merge_state(state_input, langchain_messages, input)
         self.active_run["current_graph_state"].update(state)
         config["configurable"]["thread_id"] = thread_id
-        interrupts = agent_state.tasks[0].interrupts if agent_state.tasks and len(agent_state.tasks) > 0 else []
+        interrupts = []
+        if agent_state.tasks and len(agent_state.tasks) > 0:
+            for task in agent_state.tasks:
+                interrupts.extend(task.interrupts)
         has_active_interrupts = len(interrupts) > 0
         resume_input = forwarded_props.get('command', {}).get('resume', None)
 
@@ -606,7 +616,8 @@ class LangGraphAgent:
                 else:
                     tools_as_dicts.append(tool)
 
-        all_tools = [*state.get("tools", []), *tools_as_dicts]
+        # Input tools first so they win over stale state tools on name collision
+        all_tools = [*tools_as_dicts, *state.get("tools", [])]
 
         # Remove duplicates based on tool name
         seen_names = set()

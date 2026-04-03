@@ -258,6 +258,16 @@ def resolve_reasoning_content(chunk: Any) -> LangGraphReasoning | None:
                         index=data.get("index", 0)
                     )
 
+        # Bedrock Converse API format: { type: "reasoning_content", reasoning_content: { type: "text", text: "..." } }
+        if block_type == "reasoning_content" and isinstance(block.get("reasoning_content"), dict):
+            inner = block["reasoning_content"]
+            if inner.get("text"):
+                return LangGraphReasoning(
+                    type="text",
+                    text=inner["text"],
+                    index=inner.get("index", 0)
+                )
+
     # OpenAI legacy format via additional_kwargs
     if hasattr(chunk, "additional_kwargs"):
         reasoning = chunk.additional_kwargs.get("reasoning", {})
@@ -361,6 +371,8 @@ def normalize_tool_content(content: Any) -> str:
     return json.dumps(content)
 
 
+# TODO(ran-review): suspected dead code — please verify before removing
+# Only used by forwarded_props camelCase conversion in agent.py run()
 def camel_to_snake(name):
     return re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower()
 
