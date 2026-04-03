@@ -981,16 +981,8 @@ export async function setupLLMock(): Promise<void> {
   mockServer.prependFixture({
     match: {
       predicate: (req) => {
-        // Check if there's a tool result anywhere after the last assistant message.
-        // CopilotKitMiddleware may append system messages (App Context) after
-        // the tool result, so checking only the very last message is unreliable.
-        for (let i = req.messages.length - 1; i >= 0; i--) {
-          const role = req.messages[i].role;
-          if (role === "tool") return true;
-          if (role === "assistant") return false;
-          // Skip system messages that may have been appended after the tool result
-        }
-        return false;
+        const last = req.messages[req.messages.length - 1];
+        return last?.role === "tool";
       },
     },
     response: { content: "Done! I've completed that for you." },
