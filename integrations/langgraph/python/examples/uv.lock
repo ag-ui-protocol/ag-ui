@@ -332,8 +332,8 @@ wheels = [
 
 [[package]]
 name = "copilotkit"
-version = "0.1.83"
-source = { git = "https://github.com/CopilotKit/CopilotKit.git?subdirectory=sdk-python&rev=mme%2Fa2ui-v0.9#73023c02506df8e93e10b81250632a923f34eeba" }
+version = "0.1.84a1"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ag-ui-langgraph", extra = ["fastapi"] },
     { name = "ag-ui-protocol" },
@@ -342,6 +342,10 @@ dependencies = [
     { name = "langgraph" },
     { name = "partialjson" },
     { name = "toml" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/88/25/8e3c4706f1d3830e51ee73687f6cd43edb1607c630312f29c99152ab28c0/copilotkit-0.1.84a1.tar.gz", hash = "sha256:eb15e92ddd8a15c9771fa892eb8d89999e93be338c5668fbffb9195192456bd0", size = 45071, upload-time = "2026-04-02T16:05:00.975Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fd/4d/c94966b839e8753381912e404506aaf8aa1f37400dee0294b28aaf11c8e3/copilotkit-0.1.84a1-py3-none-any.whl", hash = "sha256:1839bb90a12ff28d9000f65178154ee7a2b579dfe94b056c44147f7aeb781fee", size = 53346, upload-time = "2026-04-02T16:04:59.348Z" },
 ]
 
 [[package]]
@@ -1012,7 +1016,7 @@ dependencies = [
 requires-dist = [
     { name = "ag-ui-langgraph", directory = "../" },
     { name = "ag-ui-protocol", directory = "../../../../sdks/python" },
-    { name = "copilotkit", git = "https://github.com/CopilotKit/CopilotKit.git?subdirectory=sdk-python&rev=mme%2Fa2ui-v0.9" },
+    { name = "copilotkit", specifier = "==0.1.84a1" },
     { name = "dotenv", specifier = ">=0.9.9" },
     { name = "fastapi", specifier = ">=0.115.12" },
     { name = "langchain", specifier = ">=1.0.3" },
