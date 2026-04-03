@@ -3,6 +3,7 @@
 Simple adapter following the Agno pattern.
 """
 
+import base64
 import json
 import logging
 import uuid
@@ -383,7 +384,6 @@ class StrandsAgent:
 
                     # Handle encrypted/redacted reasoning content
                     elif "reasoningRedactedContent" in event and event.get("reasoning"):
-                        import base64
                         redacted_content = event["reasoningRedactedContent"]
 
                         if not reasoning_started:
@@ -843,6 +843,17 @@ class StrandsAgent:
                 except Exception as e:
                     # Log other errors but don't fail
                     logger.warning(f"Error closing agent stream: {e}")
+
+            # Close reasoning if still open
+            if reasoning_started:
+                yield ReasoningMessageEndEvent(
+                    type=EventType.REASONING_MESSAGE_END,
+                    message_id=reasoning_message_id
+                )
+                yield ReasoningEndEvent(
+                    type=EventType.REASONING_END,
+                    message_id=reasoning_message_id
+                )
 
             # End message if started
             if message_started:

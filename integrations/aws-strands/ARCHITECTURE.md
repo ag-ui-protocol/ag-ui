@@ -69,10 +69,9 @@ This document explains how the AWS Strands integration inside `integrations/aws-
     - Honors `stop_streaming_after_result` by closing any active text message and halting the Strands stream early.
 - **Frontend tool awareness**
   - `input_data.tools` supplies the frontend tool registry. Their names are used to (a) avoid double-invoking tool results that were literally produced by the UI, and (b) stop the Strands run after the LLM has issued a UI-only instruction.
-- **Reasoning/Thinking streaming**
-  - When Strands yields events with `reasoningText` and `reasoning=true`, the adapter emits both THINKING*\* and REASONING*\* event families for broad UI compatibility.
-  - Emits `ThinkingStartEvent`, `ThinkingTextMessageStartEvent`, content events, then `ThinkingTextMessageEndEvent` and `ThinkingEndEvent`.
-  - Simultaneously emits `ReasoningStartEvent`, `ReasoningMessageStartEvent`, content events, then `ReasoningMessageEndEvent` and `ReasoningEndEvent`.
+- **Reasoning streaming**
+  - When Strands yields events with `reasoningText` and `reasoning=true`, the adapter emits REASONING_* events.
+  - Emits `ReasoningStartEvent`, `ReasoningMessageStartEvent`, content events, then `ReasoningMessageEndEvent` and `ReasoningEndEvent`.
   - For encrypted/redacted reasoning content (`reasoningRedactedContent`), emits `ReasoningEncryptedValueEvent` with base64-encoded payload.
   - Reasoning events are automatically closed when a `contentBlockStop` event is received.
 - **Multi-agent step tracking**
@@ -150,7 +149,7 @@ These examples double as integration tests: they exercise every built-in hook so
 | Strands Signal                                                    | Adapter Reaction                                             | AG-UI Consumer Impact                                                                      |
 | ----------------------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
 | `stream_async` yields `{"data": ...}`                             | Emit text start/content/end                                  | Updates conversational transcript incrementally.                                           |
-| `stream_async` yields `{"reasoningText": ..., "reasoning": true}` | Emit THINKING*\* and REASONING*\* event pairs                | Displays model's reasoning/thinking process in UI.                                         |
+| `stream_async` yields `{"reasoningText": ..., "reasoning": true}` | Emit REASONING_* events                                      | Displays model's reasoning/thinking process in UI.                                         |
 | `stream_async` yields `{"reasoningRedactedContent": ...}`         | Emit `ReasoningEncryptedValueEvent` with base64 payload      | Handles encrypted reasoning content for models that redact thinking.                       |
 | `current_tool_use` announced                                      | Emit tool call events, optional PredictState/state snapshots | Shows tool invocation cards and, when configured, optimistic UI updates.                   |
 | `toolResult` packaged within `message.content[].toolResult`       | Publish timeline snapshot, tool result hooks, optional halt  | Renders backend tool outputs and state changes without additional frontend logic.          |

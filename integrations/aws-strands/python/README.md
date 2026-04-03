@@ -89,9 +89,9 @@ The integration supports the following AG-UI event families:
 
 - **Lifecycle**: `RUN_STARTED`, `RUN_FINISHED`, `RUN_ERROR`
 - **Text streaming**: `TEXT_MESSAGE_START`, `TEXT_MESSAGE_CONTENT`, `TEXT_MESSAGE_END`
-- **Reasoning/Thinking**: `THINKING_*` and `REASONING_*` events for models with extended thinking
+- **Reasoning**: `REASONING_*` events for models with extended thinking
 - **Tool calls**: `TOOL_CALL_START`, `TOOL_CALL_ARGS`, `TOOL_CALL_END`, `TOOL_CALL_RESULT`
-- **State management**: `STATE_SNAPSHOT`, `STATE_DELTA`, `MESSAGES_SNAPSHOT`
+- **State management**: `STATE_SNAPSHOT`
 - **Multi-agent**: `STEP_STARTED`, `STEP_FINISHED`, and `MultiAgentHandoff` custom events
 - **Generative UI**: `PredictState` custom events for optimistic UI updates
 

@@ -228,6 +228,35 @@ async def test_reasoning_closed_before_text():
 
 
 @pytest.mark.asyncio
+async def test_reasoning_closed_on_stream_end_without_content_block_stop():
+    """Test that reasoning events are properly closed even without contentBlockStop."""
+    mock_events = [
+        {"reasoningText": "Still thinking...", "reasoning": True},
+        {"complete": True},  # No contentBlockStop before complete
+    ]
+
+    agent = create_agent_with_mock_events(mock_events)
+
+    events = []
+    input_data = make_input_data()
+
+    async for event in agent.run(input_data):
+        events.append(event)
+
+    event_types = [e.type for e in events]
+
+    # Reasoning should be properly opened AND closed
+    assert EventType.REASONING_START in event_types
+    assert EventType.REASONING_MESSAGE_START in event_types
+    assert EventType.REASONING_MESSAGE_CONTENT in event_types
+    assert EventType.REASONING_MESSAGE_END in event_types
+    assert EventType.REASONING_END in event_types
+
+    # Run should still finish cleanly
+    assert EventType.RUN_FINISHED in event_types
+
+
+@pytest.mark.asyncio
 async def test_empty_reasoning_text_no_content_emitted():
     """Test that empty reasoning text starts reasoning but emits no content."""
     mock_events = [
@@ -244,9 +273,9 @@ async def test_empty_reasoning_text_no_content_emitted():
     async for event in agent.run(input_data):
         events.append(event)
 
-    # Reasoning should NOT start because empty string is falsy after the check
-    # The implementation checks `if reasoning_text:` before emitting content
-    # But it also checks this AFTER starting reasoning, so we need to verify behavior
+    # Reasoning start/end events are still emitted, but empty reasoning text
+    # should not produce REASONING_MESSAGE_CONTENT events because the
+    # implementation guards content emission with `if reasoning_text:`
     reasoning_content = [
         e for e in events if e.type == EventType.REASONING_MESSAGE_CONTENT
     ]
