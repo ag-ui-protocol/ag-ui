@@ -171,6 +171,15 @@ export class SubgraphsPage {
     await expect(this.page.getByText(message)).toBeVisible();
   }
 
+  async getAssistantMessageCount(): Promise<number> {
+    return this.agentMessage.count();
+  }
+
+  async assertMessagesNotLost(countBefore: number) {
+    const countAfter = await this.getAssistantMessageCount();
+    expect(countAfter).toBeGreaterThanOrEqual(countBefore);
+  }
+
   async waitForSupervisorCoordination() {
     await expect(
       this.page.getByText(/supervisor|coordinate|specialist|routing/i).first()
