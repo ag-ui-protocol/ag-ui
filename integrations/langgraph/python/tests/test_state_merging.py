@@ -48,6 +48,11 @@ def make_input(**kwargs):
     return RunAgentInput(**defaults)
 
 
+def tool_name(t):
+    """Extract name from a tool dict or object."""
+    return t.get("name") if isinstance(t, dict) else getattr(t, "name", None)
+
+
 class TestLanggraphDefaultMergeState:
 
     def test_basic_merge_messages_appended(self):
@@ -82,7 +87,7 @@ class TestLanggraphDefaultMergeState:
         state = {"messages": [], "tools": [state_tool]}
         input_tool = make_tool("search", description="new and improved")
         result = agent.langgraph_default_merge_state(state, [], make_input(tools=[input_tool]))
-        search_tools = [t for t in result["tools"] if (t.get("name") if isinstance(t, dict) else getattr(t, "name", None)) == "search"]
+        search_tools = [t for t in result["tools"] if tool_name(t) == "search"]
         assert len(search_tools) == 1
         # The input (newer) version should win
         tool = search_tools[0]
@@ -97,10 +102,7 @@ class TestLanggraphDefaultMergeState:
         state = {"messages": [], "tools": [tool_a, tool_b]}
         input_tool_a = make_tool("tool_a", description="A updated")
         result = agent.langgraph_default_merge_state(state, [], make_input(tools=[input_tool_a]))
-        tool_names = [
-            t.get("name") if isinstance(t, dict) else getattr(t, "name", None)
-            for t in result["tools"]
-        ]
+        tool_names = [tool_name(t) for t in result["tools"]]
         assert "tool_a" in tool_names, "tool_a should be present"
         assert "tool_b" in tool_names, "tool_b (orphaned) should be preserved (issue #1412)"
 
@@ -116,10 +118,7 @@ class TestLanggraphDefaultMergeState:
         state = {"messages": [], "tools": []}
         input_tool = make_tool("new_tool")
         result = agent.langgraph_default_merge_state(state, [], make_input(tools=[input_tool]))
-        tool_names = [
-            t.get("name") if isinstance(t, dict) else getattr(t, "name", None)
-            for t in result["tools"]
-        ]
+        tool_names = [tool_name(t) for t in result["tools"]]
         assert "new_tool" in tool_names
 
     def test_neither_has_tools(self):

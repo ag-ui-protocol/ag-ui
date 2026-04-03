@@ -2,31 +2,119 @@
  * Tests for langGraphDefaultMergeState.
  * Covers basic merging, tool deduplication, and the orphaned-tools fix for #1412.
  *
- * NOTE: The LangGraphAgent constructor requires a LangGraph Platform client,
- * so we test the merge function by instantiating the agent minimally and calling
- * the method directly. We skip tests that require network/platform access.
+ * NOTE: LangGraphAgent extends AbstractAgent from @ag-ui/client, which isn't
+ * buildable without protoc (network-dependent). So we can't instantiate the
+ * real agent in tests. Instead, we duplicate the merge logic inline here.
+ * This is a known drift risk — if agent.ts diverges, these tests won't catch it.
+ * A future improvement would be to extract the merge function from the agent
+ * class so it can be tested independently.
  */
 
 import { describe, it, expect } from "vitest";
 import { Message as LangGraphMessage } from "@langchain/langgraph-sdk";
-import { langGraphDefaultMergeState } from "./state-merging-helper";
 
-// We can't easily instantiate LangGraphAgent (it requires a real LG Platform client),
-// so we extract the merge logic into a standalone test helper that mirrors the agent method.
-// See state-merging-helper.ts for the extracted function.
+// ---- Inlined merge logic (mirrors agent.ts langGraphDefaultMergeState) ----
+// This MUST stay in sync with agent.ts. Any change to the agent's merge logic
+// must be reflected here, and vice versa.
+
+type LangGraphToolWithName = {
+  type: string;
+  name?: string;
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
+};
+
+interface MergeResult {
+  messages: LangGraphMessage[];
+  tools: LangGraphToolWithName[];
+  "ag-ui": { tools: LangGraphToolWithName[]; context: unknown };
+  copilotkit: { actions: LangGraphToolWithName[] };
+  [key: string]: unknown;
+}
+
+function langGraphDefaultMergeState(
+  state: Record<string, unknown>,
+  messages: LangGraphMessage[],
+  input: { tools?: unknown[]; context?: unknown[] },
+): MergeResult {
+  if (messages.length > 0 && "role" in messages[0] && messages[0].role === "system") {
+    messages = messages.slice(1);
+  }
+
+  const existingMessages = (state.messages ?? []) as LangGraphMessage[];
+  const existingMessageIds = new Set(existingMessages.map((m) => m.id));
+  const newMessages = messages.filter((m) => !existingMessageIds.has(m.id));
+
+  // Input tools first so they win over stale state tools on name collision
+  const allTools = [...((input.tools ?? []) as any[]), ...((state.tools ?? []) as any[])];
+  const langGraphTools: LangGraphToolWithName[] = allTools.reduce(
+    (acc: LangGraphToolWithName[], tool: any) => {
+      let mappedTool = tool;
+      if (!tool.type) {
+        mappedTool = {
+          type: "function",
+          name: tool.name,
+          function: {
+            name: tool.name,
+            description: tool.description,
+            parameters: tool.parameters,
+          },
+        };
+      }
+
+      if (
+        acc.find(
+          (t) => t.name === mappedTool.name || t.function.name === mappedTool.function?.name,
+        )
+      ) {
+        return acc;
+      }
+
+      return [...acc, mappedTool];
+    },
+    [],
+  );
+
+  return {
+    ...state,
+    messages: newMessages,
+    tools: langGraphTools,
+    "ag-ui": {
+      tools: langGraphTools,
+      context: input.context,
+    },
+    copilotkit: {
+      ...((state as any).copilotkit ?? {}),
+      actions: langGraphTools,
+    },
+  };
+}
+
+// ---- Helpers ----
 
 function makeTool(name: string, description = "desc") {
   return { name, description, parameters: { type: "object", properties: {} } };
 }
 
+function toolName(t: any): string | undefined {
+  return t.name ?? t.function?.name;
+}
+
+// ---- Tests ----
+
 describe("langGraphDefaultMergeState", () => {
   it("should append new messages to state", () => {
-    const state = { messages: [{ id: "m1", type: "human" as const, content: "Hi", role: "user" }] };
+    const state = {
+      messages: [{ id: "m1", type: "human" as const, content: "Hi", role: "user" }],
+    };
     const newMessages: LangGraphMessage[] = [
       { id: "m2", type: "ai" as const, content: "Hello", role: "assistant" },
     ];
     const result = langGraphDefaultMergeState(state, newMessages, { tools: [] });
-    expect(result.messages.some((m: any) => m.id === "m2")).toBe(true);
+    expect(result.messages.some((m) => m.id === "m2")).toBe(true);
   });
 
   it("should exclude duplicate messages by id", () => {
@@ -47,30 +135,46 @@ describe("langGraphDefaultMergeState", () => {
   });
 
   it("should deduplicate tools with input winning over state (issue #1412)", () => {
-    const stateTool = { type: "function", name: "search", function: { name: "search", description: "old", parameters: {} } };
+    const stateTool = {
+      type: "function",
+      name: "search",
+      function: { name: "search", description: "old", parameters: {} },
+    };
     const state = { messages: [], tools: [stateTool] };
     const inputTool = makeTool("search", "new and improved");
     const result = langGraphDefaultMergeState(state, [], { tools: [inputTool] });
-    const searchTools = result.tools.filter((t: any) => t.name === "search" || t.function?.name === "search");
+    const searchTools = result.tools.filter((t) => toolName(t) === "search");
     expect(searchTools).toHaveLength(1);
     // Input version should win
-    const desc = searchTools[0].description || searchTools[0].function?.description;
+    const desc = (searchTools[0] as any).description || searchTools[0].function?.description;
     expect(desc).toBe("new and improved");
   });
 
   it("should preserve orphaned tools from state (issue #1412)", () => {
-    const toolA = { type: "function", name: "tool_a", function: { name: "tool_a", description: "A", parameters: {} } };
-    const toolB = { type: "function", name: "tool_b", function: { name: "tool_b", description: "B", parameters: {} } };
+    const toolA = {
+      type: "function",
+      name: "tool_a",
+      function: { name: "tool_a", description: "A", parameters: {} },
+    };
+    const toolB = {
+      type: "function",
+      name: "tool_b",
+      function: { name: "tool_b", description: "B", parameters: {} },
+    };
     const state = { messages: [], tools: [toolA, toolB] };
     const inputToolA = makeTool("tool_a", "A updated");
     const result = langGraphDefaultMergeState(state, [], { tools: [inputToolA] });
-    const toolNames = result.tools.map((t: any) => t.name || t.function?.name);
-    expect(toolNames).toContain("tool_a");
-    expect(toolNames).toContain("tool_b");
+    const names = result.tools.map(toolName);
+    expect(names).toContain("tool_a");
+    expect(names).toContain("tool_b");
   });
 
   it("should preserve state tools when input has none", () => {
-    const toolA = { type: "function", name: "tool_a", function: { name: "tool_a", description: "A", parameters: {} } };
+    const toolA = {
+      type: "function",
+      name: "tool_a",
+      function: { name: "tool_a", description: "A", parameters: {} },
+    };
     const state = { messages: [], tools: [toolA] };
     const result = langGraphDefaultMergeState(state, [], { tools: [] });
     expect(result.tools).toHaveLength(1);
@@ -79,8 +183,7 @@ describe("langGraphDefaultMergeState", () => {
   it("should use input tools when state has none", () => {
     const state = { messages: [], tools: [] };
     const result = langGraphDefaultMergeState(state, [], { tools: [makeTool("new_tool")] });
-    const toolNames = result.tools.map((t: any) => t.name || t.function?.name);
-    expect(toolNames).toContain("new_tool");
+    expect(result.tools.map(toolName)).toContain("new_tool");
   });
 
   it("should handle neither having tools", () => {

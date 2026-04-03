@@ -53,6 +53,18 @@ class TestHandleSingleEventCustomEvents:
 
         mock_graph = MagicMock()
         agent = LangGraphAgent(name="test", graph=mock_graph)
+        # Minimal active_run state required by _handle_single_event.
+        # Each key is needed for a specific code path:
+        #   id              — used as key in messages_in_process dict
+        #   thread_id       — used in event metadata
+        #   reasoning_process — checked before emitting reasoning events
+        #   node_name       — used in step tracking
+        #   has_function_streaming — distinguishes streamed vs non-streamed tool calls
+        #   model_made_tool_call — controls state snapshot suppression
+        #   state_reliable  — controls state snapshot suppression
+        #   streamed_messages — accumulates completed messages during streaming
+        #   manually_emitted_state — set by ManuallyEmitState events
+        #   schema_keys     — used by get_state_snapshot to filter output keys
         agent.active_run = {
             "id": "run-1",
             "thread_id": "t1",
@@ -119,7 +131,8 @@ class TestHandleSingleEventCustomEvents:
 
     @pytest.mark.asyncio
     async def test_exit_event_produces_custom(self):
-        """The exit event should at minimum produce a CUSTOM event."""
+        """The exit event always produces a CUSTOM event (line 915 in agent.py
+        yields a CustomEvent unconditionally for all OnCustomEvent types)."""
         agent = self._make_agent()
         event = {
             "event": LangGraphEventTypes.OnCustomEvent.value,

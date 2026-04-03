@@ -300,11 +300,7 @@ class LangGraphAgent:
 
             state = await self.graph.aget_state(config)
 
-            tasks = state.tasks if len(state.tasks) > 0 else None
-            interrupts = []
-            if tasks:
-                for task in tasks:
-                    interrupts.extend(task.interrupts)
+            interrupts = self._collect_interrupts(state.tasks)
 
             writes = state.metadata.get("writes", {}) or {}
             node_name = self.active_run["node_name"] if interrupts else next(iter(writes), None)
@@ -369,10 +365,7 @@ class LangGraphAgent:
         state = self.langgraph_default_merge_state(state_input, langchain_messages, input)
         self.active_run["current_graph_state"].update(state)
         config["configurable"]["thread_id"] = thread_id
-        interrupts = []
-        if agent_state.tasks and len(agent_state.tasks) > 0:
-            for task in agent_state.tasks:
-                interrupts.extend(task.interrupts)
+        interrupts = self._collect_interrupts(agent_state.tasks)
         has_active_interrupts = len(interrupts) > 0
         resume_input = forwarded_props.get('command', {}).get('resume', None)
 
@@ -674,6 +667,20 @@ class LangGraphAgent:
             )
         ]
         return head + tail
+
+    @staticmethod
+    def _collect_interrupts(tasks) -> list:
+        """Collect interrupts from ALL tasks, not just tasks[0].
+
+        This fixes #1409 where parallel tool calls could have interrupts
+        on tasks other than the first one.
+        """
+        if not tasks or len(tasks) == 0:
+            return []
+        interrupts = []
+        for task in tasks:
+            interrupts.extend(task.interrupts)
+        return interrupts
 
     def get_state_snapshot(self, state: State) -> State:
         schema_keys = self.active_run["schema_keys"]

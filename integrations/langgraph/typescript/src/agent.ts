@@ -401,6 +401,8 @@ export class LangGraphAgent extends AbstractAgent {
     };
 
     // If there are still outstanding unresolved interrupts, we must force resolution of them before moving forward
+    // Collect interrupts from ALL tasks, not just tasks[0] (fixes #1409).
+    // The SDK doesn't export a Task type, so we use `any` here.
     const interrupts = (agentState.tasks ?? []).flatMap((t: any) => t.interrupts ?? []) as Interrupt[];
     if (interrupts?.length && !forwardedProps?.command?.resume) {
       this.dispatchEvent({
@@ -623,6 +625,7 @@ export class LangGraphAgent extends AbstractAgent {
 
       state = await this.client.threads.getState(threadId);
       const tasks = state.tasks;
+      // Collect interrupts from ALL tasks, not just tasks[0] (fixes #1409)
       const interrupts = (tasks ?? []).flatMap((t: any) => t.interrupts ?? []) as Interrupt[];
       const isEndNode = state.next.length === 0;
       const writes = state.metadata?.writes ?? {};
