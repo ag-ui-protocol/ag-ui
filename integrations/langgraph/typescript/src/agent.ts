@@ -648,11 +648,11 @@ export class LangGraphAgent extends AbstractAgent {
         type: EventType.STATE_SNAPSHOT,
         snapshot: this.getStateSnapshot(state),
       });
-      const checkpointMessages = (state.values as { messages: any[] }).messages ?? [];
+      const checkpointMessages: LangGraphMessage[] = state.values.messages ?? [];
       const streamedMessages = this.activeRun?.streamedMessages ?? [];
-      const checkpointIds = new Set(checkpointMessages.map((m: any) => m.id).filter(Boolean));
+      const checkpointIds = new Set(checkpointMessages.map((m) => m.id).filter(Boolean));
       const extra = streamedMessages.filter((m) => m.id && !checkpointIds.has(m.id));
-      const snapshotMessages = [...checkpointMessages, ...extra];
+      const snapshotMessages = [...checkpointMessages, ...(extra as unknown as LangGraphMessage[])];
       this.dispatchEvent({
         type: EventType.MESSAGES_SNAPSHOT,
         messages: langchainMessagesToAgui(snapshotMessages),
@@ -848,7 +848,7 @@ export class LangGraphAgent extends AbstractAgent {
         break;
       case LangGraphEventTypes.OnChatModelEnd: {
         const outputMsg = event.data?.output;
-        if (outputMsg) {
+        if (outputMsg && typeof outputMsg === "object" && outputMsg.id && outputMsg.type) {
           if (!this.activeRun!.streamedMessages) this.activeRun!.streamedMessages = [];
           this.activeRun!.streamedMessages.push(outputMsg);
         }

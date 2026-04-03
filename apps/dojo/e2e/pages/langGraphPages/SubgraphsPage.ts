@@ -176,8 +176,9 @@ export class SubgraphsPage {
   }
 
   async assertMessagesNotLost(countBefore: number) {
+    expect(countBefore, "No assistant messages were visible before the interrupt — test precondition failed").toBeGreaterThan(0);
     const countAfter = await this.getAssistantMessageCount();
-    expect(countAfter).toBeGreaterThanOrEqual(countBefore);
+    expect(countAfter, `Expected at least ${countBefore} assistant messages after interrupt resume, but found ${countAfter}`).toBeGreaterThanOrEqual(countBefore);
   }
 
   async waitForSupervisorCoordination() {
