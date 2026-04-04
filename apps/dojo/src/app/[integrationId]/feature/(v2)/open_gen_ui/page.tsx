@@ -20,7 +20,6 @@ const OpenGenUI: React.FC<OpenGenUIProps> = ({ params }) => {
     <CopilotKitProvider
       runtimeUrl={`/api/copilotkitnext/${integrationId}`}
       showDevConsole={false}
-      agent="open_gen_ui"
       openGenerativeUI={{}}
     >
       <Chat />
