@@ -57,9 +57,7 @@ async function createHandler(integrationId: string): Promise<any> {
   const runtime = new CopilotRuntime({
     agents,
     runner: new InMemoryAgentRunner(),
-    openGenerativeUI: {
-      agents: ["open_gen_ui"],
-    } as any,
+    ...({ openGenerativeUI: { agents: ["open_gen_ui"] } } as any),
   });
 
   const app = createCopilotEndpoint({
