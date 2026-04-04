@@ -19,7 +19,6 @@ const OpenGenUI: React.FC<OpenGenUIProps> = ({ params }) => {
   return (
     <CopilotKitProvider
       runtimeUrl={`/api/copilotkitnext/${integrationId}`}
-      showDevConsole={false}
     >
       <Chat />
     </CopilotKitProvider>
