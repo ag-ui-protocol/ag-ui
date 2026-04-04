@@ -59,7 +59,7 @@ async function createHandler(integrationId: string): Promise<any> {
     runner: new InMemoryAgentRunner(),
     openGenerativeUI: {
       agents: ["open_gen_ui"],
-    },
+    } as any,
   });
 
   const app = createCopilotEndpoint({
