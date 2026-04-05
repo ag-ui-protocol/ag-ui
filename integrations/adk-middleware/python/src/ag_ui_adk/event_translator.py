@@ -173,6 +173,7 @@ class EventTranslator:
         client_tool_names: Optional[set] = None,
         is_resumable: bool = False,
         streaming_function_call_arguments: bool = False,
+        output_schema_agent_names: Optional[set] = None,
     ):
         """Initialize the event translator.
 
@@ -189,7 +190,15 @@ class EventTranslator:
                 TOOL_CALL events for these tool names, since the proxy tool will
                 emit its own events during execution. This prevents duplicate
                 emissions when ADK assigns different IDs across LRO and confirmed events.
+            output_schema_agent_names: Optional set of agent names whose text output
+                should be suppressed from the chat UI. When an ADK event's author
+                matches one of these names, text content is not emitted as
+                TextMessageEvents. This prevents structured output from
+                output_schema agents (e.g. classifiers in Workflow pipelines)
+                from leaking into user-visible messages. (GitHub #1390)
         """
+        # Agent names with output_schema — suppress their text from the chat UI (GitHub #1390)
+        self._output_schema_agent_names: set[str] = output_schema_agent_names if output_schema_agent_names is not None else set()
         # Whether the agent uses ADK's native resumability (ResumabilityConfig).
         # When True, ClientProxyTool handles tool call emission and the translator
         # must skip client tool names to avoid duplicates.
@@ -512,6 +521,17 @@ class EventTranslator:
         if thought_parts:
             async for event in self._translate_reasoning_content(thought_parts, thought_signatures):
                 yield event
+
+        # Suppress user-visible text from agents with output_schema configured.
+        # Their text content is structured output intended for inter-agent data
+        # transfer (e.g. a classifier returning "CHAT"), not for the chat UI.
+        # Reasoning/thought parts above are still emitted. (GitHub #1390)
+        author = getattr(adk_event, 'author', None)
+        if author and author in self._output_schema_agent_names:
+            logger.debug(
+                "Suppressing text from output_schema agent %r", author
+            )
+            return
 
         # If no text AND it's not a final response, we can safely skip.
         # Otherwise, we must continue to process the final_response signal.
