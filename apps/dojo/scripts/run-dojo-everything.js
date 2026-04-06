@@ -94,7 +94,12 @@ const ALL_SERVICES = {
     command: `pnpx @langchain/langgraph-cli@${LANGGRAPH_CLI_VERSION} dev --no-browser --host 127.0.0.1 --port 8005`,
     name: 'LG Platform Py',
     cwd: path.join(integrationsRoot, 'langgraph/python/examples'),
-    env: { PORT: 8005 },
+    env: {
+      PORT: 8005,
+      // langgraph-api 0.7.97 requires DATABASE_URI at import time,
+      // breaking the in-memory dev server. Pin until upstream fixes it.
+      UV_CONSTRAINT: path.join(integrationsRoot, 'langgraph/python/examples/constraints.txt'),
+    },
   }],
   'langgraph-platform-typescript': [{
     command: `pnpx @langchain/langgraph-cli@${LANGGRAPH_CLI_VERSION} dev --no-browser --host 127.0.0.1 --port 8006`,

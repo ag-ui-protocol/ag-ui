@@ -1,0 +1,3 @@
+# Pin langgraph-api: 0.7.97 requires DATABASE_URI at import time,
+# breaking the in-memory dev server mode.
+langgraph-api<0.7.97
