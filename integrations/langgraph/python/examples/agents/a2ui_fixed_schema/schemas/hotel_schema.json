@@ -1,82 +1,20 @@
 [
   {
     "id": "root",
-    "component": "List",
+    "component": "Row",
     "children": {
       "componentId": "hotel-card",
       "path": "/hotels"
     },
-    "direction": "horizontal",
-    "align": "start"
+    "gap": 16
   },
   {
     "id": "hotel-card",
-    "component": "Card",
-    "child": "hotel-col"
-  },
-  {
-    "id": "hotel-col",
-    "component": "Column",
-    "children": [
-      "hotel-name",
-      "hotel-location",
-      "divider-1",
-      "hotel-rating",
-      "divider-2",
-      "hotel-price-row",
-      "book-hotel-btn"
-    ],
-    "align": "stretch"
-  },
-  {
-    "id": "hotel-name",
-    "component": "Text",
-    "text": { "path": "name" },
-    "variant": "h3"
-  },
-  {
-    "id": "hotel-location",
-    "component": "Text",
-    "text": { "path": "location" },
-    "variant": "caption"
-  },
-  { "id": "divider-1", "component": "Divider" },
-  {
-    "id": "hotel-rating",
-    "component": "StarRating",
-    "value": { "path": "rating" },
-    "maxStars": 5,
-    "label": "Guest Rating"
-  },
-  { "id": "divider-2", "component": "Divider" },
-  {
-    "id": "hotel-price-row",
-    "component": "Row",
-    "children": ["price-label", "hotel-price"],
-    "justify": "spaceBetween",
-    "align": "center"
-  },
-  {
-    "id": "price-label",
-    "component": "Text",
-    "text": "per night",
-    "variant": "caption"
-  },
-  {
-    "id": "hotel-price",
-    "component": "Text",
-    "text": { "path": "price" },
-    "variant": "h2"
-  },
-  {
-    "id": "book-hotel-btn-text",
-    "component": "Text",
-    "text": "Book"
-  },
-  {
-    "id": "book-hotel-btn",
-    "component": "Button",
-    "child": "book-hotel-btn-text",
+    "component": "HotelCard",
+    "name": { "path": "name" },
+    "location": { "path": "location" },
+    "rating": { "path": "rating" },
+    "price": { "path": "price" },
     "action": {
       "event": {
         "name": "book_hotel",
