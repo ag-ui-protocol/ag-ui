@@ -69,7 +69,47 @@ def _build_context_prompt(state: dict) -> str:
     return "\n".join(parts)
 
 
-CUSTOM_CATALOG_ID = "https://a2ui.org/demos/dojo/custom_catalog.json"
+CUSTOM_CATALOG_ID = "https://a2ui.org/demos/dojo/dynamic_catalog.json"
+
+# Local composition guide — tells the secondary LLM how to use our
+# pre-made domain components (HotelCard, ProductCard, TeamMemberCard).
+COMPOSITION_GUIDE = """
+## Available Pre-made Components
+
+You have 4 components. Use Row as the root with structural children to repeat a card per item.
+
+### Row
+Layout container. Use structural children to repeat a card template:
+  {"id":"root","component":"Row","children":{"componentId":"card","path":"/items"}}
+
+### HotelCard
+Props: name, location, rating (number 0-5), pricePerNight, amenities (optional), action
+Example:
+  {"id":"card","component":"HotelCard","name":{"path":"name"},"location":{"path":"location"},
+   "rating":{"path":"rating"},"pricePerNight":{"path":"pricePerNight"},
+   "action":{"event":{"name":"book","context":{"name":{"path":"name"}}}}}
+
+### ProductCard
+Props: name, price, rating (number 0-5), description (optional), badge (optional), action
+Example:
+  {"id":"card","component":"ProductCard","name":{"path":"name"},"price":{"path":"price"},
+   "rating":{"path":"rating"},"description":{"path":"description"},
+   "action":{"event":{"name":"select","context":{"name":{"path":"name"}}}}}
+
+### TeamMemberCard
+Props: name, role, department (optional), email (optional), avatarUrl (optional), action
+Example:
+  {"id":"card","component":"TeamMemberCard","name":{"path":"name"},"role":{"path":"role"},
+   "department":{"path":"department"},"email":{"path":"email"},
+   "action":{"event":{"name":"contact","context":{"name":{"path":"name"}}}}}
+
+## RULES
+- Root is ALWAYS a Row with structural children: {"componentId":"<card-id>","path":"/items"}
+- Inside templates, use RELATIVE paths (no leading slash): {"path":"name"} not {"path":"/name"}
+- Always provide data in the "data" argument as {"items":[...]}
+- Pick the card type that best matches the user's request
+- Generate 3-4 realistic items with diverse data
+"""
 
 
 @tool()
@@ -83,9 +123,8 @@ def generate_a2ui(runtime: ToolRuntime[Any]) -> str:
     # as it is not yet balanced with a tool call response.
     messages = runtime.state["messages"][:-1]
 
-    # Build prompt entirely from client-provided context (generation guidelines,
-    # design guidelines, component schema, etc.)
-    prompt = _build_context_prompt(runtime.state)
+    # Build prompt from client-provided context + local composition guide
+    prompt = _build_context_prompt(runtime.state) + "\n" + COMPOSITION_GUIDE
 
     model = ChatOpenAI(model="gpt-4.1")
     model_with_tool = model.bind_tools(

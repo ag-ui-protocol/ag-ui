@@ -7,7 +7,7 @@ import {
   useConfigureSuggestions,
 } from "@copilotkit/react-core/v2";
 import { CopilotKit } from "@copilotkit/react-core";
-import { customCatalog } from "../a2ui_fixed_schema/custom-catalog";
+import { dynamicCatalog } from "./catalog";
 
 export const dynamic = "force-dynamic";
 
@@ -21,17 +21,17 @@ function Chat() {
       {
         title: "Hotel comparison",
         message:
-          "Use the generate_a2ui tool to create a comparison of 3 hotels with name, location, price per night, and star rating using the StarRating component.",
+          "Compare 3 luxury hotels in different cities with ratings and prices.",
       },
       {
         title: "Product comparison",
         message:
-          "Use the generate_a2ui tool to create a product comparison of 3 headphones with name, price, rating, a short description, and a Select button on each card.",
+          "Compare 3 wireless headphones with prices, ratings, and descriptions.",
       },
       {
         title: "Team roster",
         message:
-          "Use the generate_a2ui tool to create a team roster with 4 people showing name, role, avatar, and email.",
+          "Show a team of 4 people with their roles, departments, and contact info.",
       },
     ],
     available: "always",
@@ -53,7 +53,7 @@ export default function Page({ params }: PageProps) {
       runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
       agent="a2ui_dynamic_schema"
-      a2ui={{ catalog: customCatalog }}
+      a2ui={{ catalog: dynamicCatalog }}
     >
       <div className="flex justify-center items-center h-full w-full">
         <div className="h-full w-full md:w-8/10 md:h-8/10 rounded-lg">
