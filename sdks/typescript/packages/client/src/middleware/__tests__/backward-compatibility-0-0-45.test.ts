@@ -199,6 +199,46 @@ describe("BackwardCompatibility_0_0_45", () => {
   });
 });
 
+describe("BackwardCompatibility_0_0_45 (browser environment)", () => {
+  it("warnAboutTransformation should not throw when process is undefined", async () => {
+    const originalProcess = globalThis.process;
+    try {
+      // Simulate a browser environment where `process` does not exist.
+      // @ts-expect-error - intentionally removing process to simulate browser
+      delete globalThis.process;
+
+      const middleware = new BackwardCompatibility_0_0_45();
+      const events: BaseEvent[] = [{ type: THINKING_START as EventType, title: "Processing..." }];
+      const agent = new MockAgent(events);
+
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation();
+      const result = await lastValueFrom(
+        middleware.run(
+          {
+            threadId: "thread-1",
+            runId: "run-1",
+            messages: [],
+            tools: [],
+            context: [],
+            forwardedProps: {},
+          },
+          agent,
+        ).pipe(toArray()),
+      );
+
+      // Should have transformed the event without throwing ReferenceError
+      expect(result).toHaveLength(1);
+      expect(result[0].type).toBe(EventType.REASONING_START);
+      // Warning should still be logged (suppression is off since process is gone)
+      expect(warnSpy).toHaveBeenCalled();
+
+      warnSpy.mockRestore();
+    } finally {
+      globalThis.process = originalProcess;
+    }
+  });
+});
+
 describe("BackwardCompatibility_0_0_45 (auto insertion)", () => {
   it("automatically transforms THINKING events when maxVersion <= 0.0.45", async () => {
     class LegacyThinkingAgent extends AbstractAgent {

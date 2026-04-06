@@ -1,4 +1,4 @@
-import { teardownLLMock } from "./llmock-setup";
+import { teardownLLMock } from "./aimock-setup";
 
 async function globalTeardown() {
   await teardownLLMock();
