@@ -3,6 +3,7 @@ import re
 import uuid
 import json
 from typing import Optional, List, Any, Union, AsyncGenerator, Generator, Literal, Dict
+from typing_extensions import Self
 import inspect
 
 from langgraph.graph.state import CompiledStateGraph
@@ -109,13 +110,25 @@ class LangGraphAgent:
         self.active_run: Optional[RunMetadata] = None
         self.constant_schema_keys = ['messages', 'tools']
 
-    def clone(self) -> "LangGraphAgent":
-        return LangGraphAgent(
-            name=self.name,
-            graph=self.graph,
-            description=self.description,
-            config=self.config,
-        )
+    def clone(self) -> Self:
+        """Create a fresh copy with clean per-request state.
+
+        Subclasses that add required __init__ parameters must override clone()
+        to pass those parameters through.
+        """
+        try:
+            return type(self)(
+                name=self.name,
+                graph=self.graph,
+                description=self.description,
+                config=dict(self.config) if self.config else None,
+            )
+        except TypeError as exc:
+            raise TypeError(
+                f"{type(self).__name__} must override clone() or ensure its "
+                f"__init__ accepts (name, graph, description, config) as "
+                f"keyword arguments: {exc}"
+            ) from exc
 
     def _dispatch_event(self, event: ProcessedEvents) -> str:
         if event.type == EventType.RAW:

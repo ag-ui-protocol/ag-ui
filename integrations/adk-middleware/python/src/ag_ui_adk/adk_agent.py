@@ -1548,6 +1548,25 @@ class ADKAgent:
                         del self._active_executions[exec_key]
     
     @staticmethod
+    def _collect_output_schema_agent_names(agent: Any, result: Optional[set] = None) -> set:
+        """Walk the agent tree and collect names of LlmAgents with output_schema.
+
+        These agents produce structured output (e.g. a classifier returning
+        "CHAT") that should not appear as user-visible text messages in the
+        chat UI.  The returned set is passed to EventTranslator so it can
+        suppress TextMessageEvents from these authors.  (GitHub #1390)
+        """
+        if result is None:
+            result = set()
+        if isinstance(agent, LlmAgent) and getattr(agent, 'output_schema', None):
+            result.add(agent.name)
+        sub_agents = getattr(agent, 'sub_agents', None)
+        if isinstance(sub_agents, (list, tuple)):
+            for sub in sub_agents:
+                ADKAgent._collect_output_schema_agent_names(sub, result)
+        return result
+
+    @staticmethod
     def _shallow_copy_agent_tree(agent: Any) -> Any:
         """Shallow-copy an agent and its sub-agent tree.
 
@@ -1983,12 +2002,14 @@ class ADKAgent:
                     client_tool_names.add(tool.name)
 
             # Create event translator with predictive state configuration
+            output_schema_names = self._collect_output_schema_agent_names(adk_agent)
             event_translator = EventTranslator(
                 predict_state=self._predict_state,
                 client_emitted_tool_call_ids=client_emitted_ids,
                 client_tool_names=client_tool_names,
                 is_resumable=self._is_adk_resumable(),
                 streaming_function_call_arguments=self._streaming_function_call_arguments,
+                output_schema_agent_names=output_schema_names,
             )
 
             # Share the translator's emitted IDs set with proxy toolsets so

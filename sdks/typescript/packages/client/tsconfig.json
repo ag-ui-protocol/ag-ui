@@ -17,6 +17,7 @@
     "paths": {
       "@/*": ["./src/*"]
     },
+    "types": ["node"],
     "stripInternal": true
   },
   "include": ["src/**/*"],
