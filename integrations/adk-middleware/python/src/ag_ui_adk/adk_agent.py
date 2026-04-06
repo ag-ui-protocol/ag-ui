@@ -98,6 +98,7 @@ class ADKAgent:
         max_sessions_per_user: Optional[int] = None,    # No limit by default
         delete_session_on_cleanup: bool = True,
         save_session_to_memory_on_cleanup: bool = True,
+        hitl_max_wait_seconds: Optional[int] = None,    # No limit by default
 
         # Predictive state configuration
         predict_state: Optional[Iterable[PredictStateMapping]] = None,
@@ -132,6 +133,10 @@ class ADKAgent:
             max_sessions_per_user: Maximum concurrent sessions per user (None = unlimited)
             delete_session_on_cleanup: Whether to delete sessions from the adk SessionService on session cache cleanup
             save_session_to_memory_on_cleanup: Whether to save sessions to the adk MemoryService on session cache cleanup
+            hitl_max_wait_seconds: Maximum time (in seconds) to preserve expired sessions
+                that have pending HITL tool calls before force-deleting them. None (default)
+                means no limit — sessions with pending tool calls are preserved indefinitely.
+                Set this to automatically clean up abandoned HITL sessions.
             predict_state: Configuration for predictive state updates. When provided,
                 the agent will emit PredictState CustomEvents for matching tool calls,
                 enabling the UI to show state changes in real-time as tool arguments
@@ -198,6 +203,7 @@ class ADKAgent:
             delete_session_on_cleanup=delete_session_on_cleanup,
             save_session_to_memory_on_cleanup=save_session_to_memory_on_cleanup,
             use_thread_id_as_session_id=use_thread_id_as_session_id,
+            hitl_max_wait_seconds=hitl_max_wait_seconds,
         )
         
         # Tool execution tracking — keyed by (thread_id, user_id) to avoid cross-user collisions
