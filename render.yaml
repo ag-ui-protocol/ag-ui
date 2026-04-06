@@ -449,6 +449,10 @@ projects:
         value: https://ag-ui-dojo-claude-agent-sdk-python.onrender.com
       - key: CLAUDE_AGENT_SDK_TYPESCRIPT_URL
         value: https://ag-ui-dojo-claude-agent-sdk-typescript.onrender.com
+      - key: NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN
+        sync: false
+      - key: NEXT_PUBLIC_POSTHOG_HOST
+        sync: false
       region: virginia
       buildCommand: cd ../.. && pnpm install && npx nx run demo-viewer:build
       startCommand: pnpm start

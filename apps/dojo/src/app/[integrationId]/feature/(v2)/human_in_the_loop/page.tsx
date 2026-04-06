@@ -419,8 +419,9 @@ const StepsFeedback = ({ args, respond, status }: { args: any; respond: any; sta
 
   const handleConfirm = () => {
     if (respond) {
+      const confirmedSteps = localSteps.filter((step) => step.status === "enabled");
       setAccepted(true);
-      respond({ accepted: true, steps: localSteps.filter((step) => step.status === "enabled") });
+      respond({ accepted: true, steps: confirmedSteps });
     }
   };
 

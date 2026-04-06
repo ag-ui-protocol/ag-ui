@@ -36,6 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **FIX**: Suppress `output_schema` agent text from chat UI (#1390)
+  - ADK sub-agents with `output_schema` (e.g. classifiers in SequentialAgent workflows) produce structured output intended for inter-agent data transfer, not user-visible chat messages
+  - `ADKAgent._collect_output_schema_agent_names()` recursively walks the agent tree to identify `LlmAgent` instances with `output_schema` set
+  - `EventTranslator` suppresses `TextMessageEvent` emission when the event author matches a collected name, while still emitting reasoning/thought events
+  - Prevents structured output (e.g. a classifier returning `"CHAT"`) from leaking into the chat UI
+
 - **FIX**: Disable `save_input_blobs_as_artifacts` so inline images reach the model (#1405)
   - ADK's runner was converting `inline_data` parts to artifact references before the model could see them, replacing images with text like `"Uploaded file: artifact_xxx. It is saved into artifacts"`
   - Setting `save_input_blobs_as_artifacts=False` in `RunConfig` preserves inline binary data so the model receives the actual image/audio/video/document content

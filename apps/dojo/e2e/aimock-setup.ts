@@ -1,4 +1,4 @@
-import { LLMock, type ChatMessage } from "@copilotkit/llmock";
+import { LLMock, type ChatMessage } from "@copilotkit/aimock";
 import * as path from "node:path";
 
 const MOCK_PORT = 5555;
@@ -7,7 +7,7 @@ const FIXTURES_DIR = path.join(import.meta.dirname, "fixtures", "openai");
 let mockServer: LLMock | null = null;
 
 export async function setupLLMock(): Promise<void> {
-  console.log("🔧 Starting LLMock server...");
+  console.log("🔧 Starting aimock server...");
 
   // Small per-chunk latency prevents crew-ai's asyncio event loop from
   // getting congested by zero-latency streaming (real OpenAI has natural
@@ -768,7 +768,7 @@ export async function setupLLMock(): Promise<void> {
           ? JSON.stringify(lastUser.content).slice(0, 120)
           : "N/A";
         console.error(
-          `[LLMock CATCH-ALL] model=${req.model} lastUser="${userText.slice(0, 80)}" tools=[${toolNames}] msgs=${req.messages.length} contentType=${contentType} content=${contentSample}`,
+          `[aimock CATCH-ALL] model=${req.model} lastUser="${userText.slice(0, 80)}" tools=[${toolNames}] msgs=${req.messages.length} contentType=${contentType} content=${contentSample}`,
         );
         return true;
       },
@@ -793,7 +793,7 @@ export async function setupLLMock(): Promise<void> {
   });
 
   const url = await mockServer.start();
-  console.log(`✅ LLMock server running at ${url}`);
+  console.log(`✅ aimock server running at ${url}`);
   console.log(`   Fixtures loaded from: ${FIXTURES_DIR}`);
 
   // Export the URL for child processes to use
@@ -802,10 +802,10 @@ export async function setupLLMock(): Promise<void> {
 
 export async function teardownLLMock(): Promise<void> {
   if (mockServer) {
-    console.log("🧹 Stopping LLMock server...");
+    console.log("🧹 Stopping aimock server...");
     await mockServer.stop();
     mockServer = null;
-    console.log("✅ LLMock server stopped");
+    console.log("✅ aimock server stopped");
   }
 }
 
