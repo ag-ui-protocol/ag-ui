@@ -9,6 +9,7 @@ import type { AbstractAgent } from "@ag-ui/client";
 
 import { agentsIntegrations } from "@/agents";
 import { IntegrationId } from "@/menu";
+import { getPostHogClient } from "@/lib/posthog-server";
 
 type RouteParams = {
   params: Promise<{
@@ -56,5 +57,14 @@ export async function POST(request: NextRequest, context: RouteParams) {
   if (!handler) {
     return new Response("Integration not found", { status: 404 });
   }
+  const distinctId = request.headers.get("x-posthog-distinct-id") || "anonymous";
+  const posthog = getPostHogClient();
+  posthog?.capture({
+    distinctId,
+    event: "agent_api_request",
+    properties: {
+      integration_id: integrationId,
+    },
+  });
   return handler(request);
 }

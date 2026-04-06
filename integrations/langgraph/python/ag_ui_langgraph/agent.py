@@ -3,6 +3,7 @@ import re
 import uuid
 import json
 from typing import Optional, List, Any, Union, AsyncGenerator, Generator, Literal, Dict
+from typing_extensions import Self
 import inspect
 
 from langgraph.graph.state import CompiledStateGraph
@@ -109,13 +110,25 @@ class LangGraphAgent:
         self.active_run: Optional[RunMetadata] = None
         self.constant_schema_keys = ['messages', 'tools']
 
-    def clone(self) -> "LangGraphAgent":
-        return LangGraphAgent(
-            name=self.name,
-            graph=self.graph,
-            description=self.description,
-            config=self.config,
-        )
+    def clone(self) -> Self:
+        """Create a fresh copy with clean per-request state.
+
+        Subclasses that add required __init__ parameters must override clone()
+        to pass those parameters through.
+        """
+        try:
+            return type(self)(
+                name=self.name,
+                graph=self.graph,
+                description=self.description,
+                config=dict(self.config) if self.config else None,
+            )
+        except TypeError as exc:
+            raise TypeError(
+                f"{type(self).__name__} must override clone() or ensure its "
+                f"__init__ accepts (name, graph, description, config) as "
+                f"keyword arguments: {exc}"
+            ) from exc
 
     def _dispatch_event(self, event: ProcessedEvents) -> str:
         if event.type == EventType.RAW:
@@ -144,6 +157,7 @@ class LangGraphAgent:
             "has_function_streaming": False,
             "model_made_tool_call": False,
             "state_reliable": True,
+            "streamed_messages": [],
         }
         self.active_run = INITIAL_ACTIVE_RUN
 
@@ -324,7 +338,13 @@ class LangGraphAgent:
                 StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=self.get_state_snapshot(state_values))
             )
 
-            snapshot_messages = self._filter_orphan_tool_messages(state_values.get("messages", []))
+            checkpoint_messages = state_values.get("messages", [])
+            streamed_messages = self.active_run.get("streamed_messages", [])
+            if streamed_messages:
+                checkpoint_ids = {getattr(m, "id", None) for m in checkpoint_messages} - {None}
+                extra = [m for m in streamed_messages if getattr(m, "id", None) and getattr(m, "id", None) not in checkpoint_ids]
+                checkpoint_messages = checkpoint_messages + extra
+            snapshot_messages = self._filter_orphan_tool_messages(checkpoint_messages)
             yield self._dispatch_event(
                 MessagesSnapshotEvent(
                     type=EventType.MESSAGES_SNAPSHOT,
@@ -338,8 +358,7 @@ class LangGraphAgent:
             yield self._dispatch_event(
                 RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=self.active_run["id"])
             )
-            # Reset active run to how it was before the stream started
-            self.active_run = INITIAL_ACTIVE_RUN
+            self.active_run = None
         except Exception:
             raise
 
@@ -844,6 +863,9 @@ class LangGraphAgent:
                 return
 
         elif event_type == LangGraphEventTypes.OnChatModelEnd:
+            output_msg = event.get("data", {}).get("output")
+            if isinstance(output_msg, BaseMessage):
+                self.active_run.setdefault("streamed_messages", []).append(output_msg)
             if self.get_message_in_progress(self.active_run["id"]) and self.get_message_in_progress(self.active_run["id"]).get("tool_call_id"):
                 resolved = self._dispatch_event(
                     ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=self.get_message_in_progress(self.active_run["id"])["tool_call_id"], raw_event=event)

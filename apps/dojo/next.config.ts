@@ -35,6 +35,19 @@ const nextConfig: NextConfig = {
   // Configure pageExtensions to include md and mdx
   pageExtensions: ["ts", "tsx", "js", "jsx", "md", "mdx"],
   ...(outputFileTracingRoot && { outputFileTracingRoot }),
+  async rewrites() {
+    return [
+      {
+        source: "/ingest/static/:path*",
+        destination: "https://eu-assets.i.posthog.com/static/:path*",
+      },
+      {
+        source: "/ingest/:path*",
+        destination: "https://eu.i.posthog.com/:path*",
+      },
+    ];
+  },
+  skipTrailingSlashRedirect: true,
   webpack: (config, { isServer }) => {
     // Ignore the demo files during build
     config.module.rules.push({
