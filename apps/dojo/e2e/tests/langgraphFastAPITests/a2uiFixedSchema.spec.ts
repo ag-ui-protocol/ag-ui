@@ -32,9 +32,9 @@ test("[LangGraph FastAPI] A2UI Fixed Schema renders hotel search with StarRating
     "Downtown Boutique Hotel",
   ]);
 
-  // Verify StarRating custom component rendered (star characters)
+  // Verify StarRating custom component rendered (numeric rating value)
   const surface = a2ui.surface("hotel-search-results");
-  await expect(surface.getByText("★").first()).toBeVisible();
+  await expect(surface.getByText("4.5").first()).toBeVisible();
 });
 
 test("[LangGraph FastAPI] A2UI Fixed Schema renders multiple surfaces in sequence", async ({

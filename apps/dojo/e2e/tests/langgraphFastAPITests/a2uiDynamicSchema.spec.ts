@@ -22,9 +22,9 @@ test("[LangGraph FastAPI] A2UI Dynamic Schema renders hotel comparison surface",
     "$320/night",
   ]);
 
-  // Verify StarRating rendered
+  // Verify star ratings rendered (HotelCard renders numeric rating values)
   const surface = a2ui.surface("hotel-comparison");
-  await expect(surface.getByText("★").first()).toBeVisible();
+  await expect(surface.getByText("4.8").first()).toBeVisible();
 });
 
 test("[LangGraph FastAPI] A2UI Dynamic Schema renders product comparison surface", async ({
