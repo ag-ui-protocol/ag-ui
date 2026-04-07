@@ -72,11 +72,11 @@ class TestClientProxyTool:
         assert declaration is not None
         assert declaration.name == "test_calculator"
         assert declaration.description == "Performs basic arithmetic operations"
-        assert declaration.parameters is not None
+        assert declaration.parameters_json_schema is not None
 
-        # Check that parameters schema was converted properly
-        params = declaration.parameters
-        assert hasattr(params, 'type')
+        # Check that parameters schema was passed properly as raw JSON schema
+        params = declaration.parameters_json_schema
+        assert params.get('type') == 'object'
 
     def test_get_declaration_with_invalid_parameters(self, mock_event_queue):
         """Test _get_declaration with invalid parameters."""
@@ -95,7 +95,7 @@ class TestClientProxyTool:
 
         # Should default to empty object schema
         assert declaration is not None
-        assert declaration.parameters is not None
+        assert declaration.parameters_json_schema is not None
 
     @pytest.mark.asyncio
     async def test_run_async_success(self, proxy_tool, mock_event_queue):
@@ -560,7 +560,7 @@ class TestGetDeclarationWithJsonSchemaMeta:
 
         assert declaration is not None
         assert declaration.name == "mcp_tool"
-        assert declaration.parameters is not None
+        assert declaration.parameters_json_schema is not None
 
     def test_get_declaration_with_multiple_meta_fields(self):
         """Test that multiple $-prefixed fields are all stripped."""
@@ -584,7 +584,7 @@ class TestGetDeclarationWithJsonSchemaMeta:
 
         assert declaration is not None
         assert declaration.name == "zod_tool"
-        assert declaration.parameters is not None
+        assert declaration.parameters_json_schema is not None
 
     def test_get_declaration_without_meta_fields_unchanged(self):
         """Test that schemas without $-prefixed keys still work correctly."""
@@ -607,4 +607,4 @@ class TestGetDeclarationWithJsonSchemaMeta:
 
         assert declaration is not None
         assert declaration.name == "normal_tool"
-        assert declaration.parameters is not None
+        assert declaration.parameters_json_schema is not None

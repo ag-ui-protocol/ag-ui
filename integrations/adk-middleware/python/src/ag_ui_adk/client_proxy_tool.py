@@ -29,9 +29,9 @@ def _strip_json_schema_meta(schema: Any) -> Any:
     """Recursively strip JSON Schema meta-fields (keys starting with ``$``).
 
     Fields such as ``$schema``, ``$id``, ``$ref``, ``$defs``, and ``$comment``
-    are valid in JSON Schema but not accepted by ``google.genai.types.Schema``,
-    which uses Pydantic's ``extra = "forbid"``.  Removing them prevents
-    ``ValidationError`` when calling ``Schema.model_validate()``.
+    are valid in JSON Schema but may not be accepted by the Google GenAI API.
+    We use ``parameters_json_schema`` to avoid Pydantic validation, but still
+    strip meta-fields as a precaution.
     """
     if isinstance(schema, dict):
         return {k: _strip_json_schema_meta(v) for k, v in schema.items() if not k.startswith("$")}
@@ -149,15 +149,17 @@ class ClientProxyTool(BaseTool):
             parameters = {"type": "object", "properties": {}}
             logger.warning(f"Tool {self.name} had non-dict parameters, using empty schema")
 
-        # Strip JSON Schema meta-fields (keys starting with $) that are not
-        # accepted by google.genai.types.Schema (e.g. $schema, $id, $ref, $defs).
+        # Use parameters_json_schema to pass raw JSON schema directly.
+        # This bypasses Pydantic validation in types.Schema which rejects
+        # JSON Schema 2020-12 keywords like prefixItems, unevaluatedProperties, etc.
+        # We still strip meta-fields ($schema, $id, etc.) as they may cause issues.
         parameters = _strip_json_schema_meta(parameters)
 
         # Create FunctionDeclaration
         function_declaration = types.FunctionDeclaration(
             name=self.name,
             description=self.description,
-            parameters=types.Schema.model_validate(parameters)
+            parameters_json_schema=parameters
         )
         logger.debug(f"Created FunctionDeclaration for {self.name}: {function_declaration}")
         return function_declaration
