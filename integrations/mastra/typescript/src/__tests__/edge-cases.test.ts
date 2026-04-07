@@ -1,4 +1,5 @@
 import { vi } from "vitest";
+import type { TextMessageChunkEvent, ToolCallStartEvent } from "@ag-ui/client";
 import { EventType } from "@ag-ui/client";
 import { MastraAgent } from "../mastra";
 import {
@@ -358,14 +359,69 @@ describe("event emission details (fake-only)", () => {
     const events = await collectEvents(agent, makeInput());
 
     const textChunks = events.filter(
-      (e) => e.type === EventType.TEXT_MESSAGE_CHUNK,
+      (e): e is TextMessageChunkEvent => e.type === EventType.TEXT_MESSAGE_CHUNK,
     );
     expect(textChunks).toHaveLength(2);
 
-    const messageId1 = (textChunks[0] as any).messageId;
-    const messageId2 = (textChunks[1] as any).messageId;
+    expect(textChunks[0].messageId).not.toBe(textChunks[1].messageId);
+  });
 
-    expect(messageId1).not.toBe(messageId2);
+  it("assigns new messageId after step-finish (multi-step tool flow)", async () => {
+    // Reproduces: text -> tool -> text -> tool across two LLM steps.
+    // Without the fix, all TEXT_MESSAGE_CHUNK events share the same
+    // messageId, causing the ag-ui client to merge them into one message.
+    const agent = makeLocalMastraAgent({
+      streamChunks: [
+        { type: "step-start", payload: {} },
+        { type: "text-delta", payload: { text: "I'll research..." } },
+        {
+          type: "tool-call",
+          payload: {
+            toolCallId: "tc-1",
+            toolName: "research_topic",
+            args: { topic: "quantum" },
+          },
+        },
+        {
+          type: "tool-result",
+          payload: { toolCallId: "tc-1", result: { findings: "data" } },
+        },
+        { type: "step-finish", payload: {} },
+        { type: "step-start", payload: {} },
+        { type: "text-delta", payload: { text: "Here are findings..." } },
+        {
+          type: "tool-call",
+          payload: {
+            toolCallId: "tc-2",
+            toolName: "show_findings",
+            args: { title: "Results" },
+          },
+        },
+        {
+          type: "tool-result",
+          payload: { toolCallId: "tc-2", result: "ok" },
+        },
+        { type: "step-finish", payload: {} },
+      ],
+    });
+
+    const events = await collectEvents(agent, makeInput());
+
+    const textChunks = events.filter(
+      (e): e is TextMessageChunkEvent => e.type === EventType.TEXT_MESSAGE_CHUNK,
+    );
+    expect(textChunks).toHaveLength(2);
+
+    // Each step's text must have a distinct messageId
+    expect(textChunks[0].messageId).not.toBe(textChunks[1].messageId);
+
+    // Tool calls should reference their step's messageId
+    const toolStarts = events.filter(
+      (e): e is ToolCallStartEvent => e.type === EventType.TOOL_CALL_START,
+    );
+    expect(toolStarts).toHaveLength(2);
+    expect(toolStarts[0].parentMessageId).toBe(textChunks[0].messageId);
+    expect(toolStarts[1].parentMessageId).toBe(textChunks[1].messageId);
   });
 
   it("tool call start references current messageId as parentMessageId", async () => {
@@ -441,6 +497,48 @@ describe("event emission details (fake-only)", () => {
     expect((toolEvents[3] as any).content).toBe(
       JSON.stringify({ temp: 72 }),
     );
+  });
+
+  it("tool-only step (no preceding text) still rotates messageId for next step", async () => {
+    // When a step contains only tool calls (no text), flush() is a no-op but
+    // onFinishMessagePart still fires and rotates the messageId. A subsequent
+    // step's text must get a fresh ID, not the one from before the tool-only step.
+    const agent = makeLocalMastraAgent({
+      streamChunks: [
+        { type: "step-start", payload: {} },
+        { type: "text-delta", payload: { text: "Step 1 text" } },
+        { type: "step-finish", payload: {} },
+        // Tool-only step — no text-delta
+        { type: "step-start", payload: {} },
+        {
+          type: "tool-call",
+          payload: {
+            toolCallId: "tc-1",
+            toolName: "lookup",
+            args: { key: "x" },
+          },
+        },
+        {
+          type: "tool-result",
+          payload: { toolCallId: "tc-1", result: "found" },
+        },
+        { type: "step-finish", payload: {} },
+        // Third step — text should have a fresh ID
+        { type: "step-start", payload: {} },
+        { type: "text-delta", payload: { text: "Step 3 text" } },
+        { type: "step-finish", payload: {} },
+      ],
+    });
+
+    const events = await collectEvents(agent, makeInput());
+
+    const textChunks = events.filter(
+      (e): e is TextMessageChunkEvent => e.type === EventType.TEXT_MESSAGE_CHUNK,
+    );
+    expect(textChunks).toHaveLength(2);
+
+    // Step 1 and Step 3 text must have distinct messageIds
+    expect(textChunks[0].messageId).not.toBe(textChunks[1].messageId);
   });
 
 });
