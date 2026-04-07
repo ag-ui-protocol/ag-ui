@@ -13,18 +13,28 @@ import {
 
 // ─── Shared helpers ──────────────────────────────────────────────────
 
+// Theme-aware colors using CSS variables with fallbacks
+const c = {
+  card: "hsl(var(--card, 0 0% 100%))",
+  cardFg: "hsl(var(--card-foreground, 222 47% 11%))",
+  border: "hsl(var(--border, 220 13% 91%))",
+  muted: "hsl(var(--muted-foreground, 215 16% 47%))",
+  bg: "hsl(var(--background, 0 0% 100%))",
+};
+
 const cardStyle: React.CSSProperties = {
-  border: "1px solid #e5e7eb",
+  border: `1px solid ${c.border}`,
   borderRadius: "16px",
   padding: "20px",
-  background: "#fff",
+  background: c.card,
+  color: c.cardFg,
   minWidth: 260,
   maxWidth: 340,
   flex: "1 1 260px",
   display: "flex",
   flexDirection: "column",
   gap: "12px",
-  boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+  boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
 };
 
 function ActionButton({ label, doneLabel, action }: { label: string; doneLabel: string; action: any }) {
@@ -36,9 +46,9 @@ function ActionButton({ label, doneLabel, action }: { label: string; doneLabel: 
         width: "100%",
         padding: "10px",
         borderRadius: "10px",
-        border: done ? "1px solid #d1fae5" : "1px solid #e5e7eb",
-        background: done ? "#ecfdf5" : "#fff",
-        color: done ? "#059669" : "#111",
+        border: done ? "1px solid #d1fae5" : `1px solid ${c.border}`,
+        background: done ? "hsl(var(--card, 0 0% 100%))" : c.card,
+        color: done ? "#059669" : c.cardFg,
         fontSize: "0.85rem",
         fontWeight: 500,
         cursor: done ? "default" : "pointer",
@@ -89,7 +99,7 @@ function Stars({ value, max = 5 }: { value: number; max?: number }) {
           </svg>
         );
       })}
-      <span style={{ fontSize: "0.8rem", fontWeight: 600, color: "#111", marginLeft: "4px" }}>
+      <span style={{ fontSize: "0.8rem", fontWeight: 600, color: c.cardFg, marginLeft: "4px" }}>
         {value.toFixed(1)}
       </span>
     </div>
@@ -144,38 +154,38 @@ export const FlightCard = createReactComponent(FlightCardApi, ({ props }) => {
           />
           <span style={{ fontWeight: 600, fontSize: "0.95rem" }}>{props.airline as string}</span>
         </div>
-        <span style={{ fontWeight: 700, fontSize: "1.15rem", color: "#111" }}>{props.price as string}</span>
+        <span style={{ fontWeight: 700, fontSize: "1.15rem", color: c.cardFg }}>{props.price as string}</span>
       </div>
 
       {/* Meta */}
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.8rem", color: "#6b7280" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.8rem", color: c.muted }}>
         <span>{props.flightNumber as string}</span>
         <span>{props.date as string}</span>
       </div>
 
-      <hr style={{ border: "none", borderTop: "1px solid #f3f4f6", margin: 0 }} />
+      <hr style={{ border: "none", borderTop: `1px solid ${c.border}`, margin: 0 }} />
 
       {/* Times */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <span style={{ fontWeight: 700, fontSize: "1.1rem" }}>{props.departureTime as string}</span>
-        <span style={{ fontSize: "0.75rem", color: "#9ca3af" }}>{props.duration as string}</span>
+        <span style={{ fontSize: "0.75rem", color: c.muted }}>{props.duration as string}</span>
         <span style={{ fontWeight: 700, fontSize: "1.1rem" }}>{props.arrivalTime as string}</span>
       </div>
 
       {/* Route */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.95rem", fontWeight: 600, color: "#374151" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.95rem", fontWeight: 600, color: c.cardFg }}>
         <span>{props.origin as string}</span>
-        <span style={{ color: "#9ca3af" }}>→</span>
+        <span style={{ color: c.muted }}>→</span>
         <span>{props.destination as string}</span>
       </div>
 
       <div style={{ marginTop: "auto", display: "flex", flexDirection: "column", gap: "12px" }}>
-        <hr style={{ border: "none", borderTop: "1px solid #f3f4f6", margin: 0 }} />
+        <hr style={{ border: "none", borderTop: `1px solid ${c.border}`, margin: 0 }} />
 
         {/* Status */}
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           <span style={{ width: 8, height: 8, borderRadius: "50%", background: dotColor, display: "inline-block" }} />
-          <span style={{ fontSize: "0.8rem", color: "#6b7280" }}>{props.status as string}</span>
+          <span style={{ fontSize: "0.8rem", color: c.muted }}>{props.status as string}</span>
         </div>
 
         <ActionButton label="Select" doneLabel="Selected" action={props.action} />
@@ -190,21 +200,21 @@ export const HotelCard = createReactComponent(HotelCardApi, ({ props }) => {
   const rating = typeof props.rating === "number" ? props.rating : 0;
   return (
     <div style={cardStyle}>
-      <span style={{ fontWeight: 700, fontSize: "1.05rem", color: "#111" }}>{props.name as string}</span>
-      <span style={{ fontSize: "0.8rem", color: "#6b7280" }}>{props.location as string}</span>
+      <span style={{ fontWeight: 700, fontSize: "1.05rem", color: c.cardFg }}>{props.name as string}</span>
+      <span style={{ fontSize: "0.8rem", color: c.muted }}>{props.location as string}</span>
 
       <Stars value={rating} />
 
       {props.amenities && (
-        <span style={{ fontSize: "0.75rem", color: "#9ca3af", lineHeight: 1.4 }}>{props.amenities as string}</span>
+        <span style={{ fontSize: "0.75rem", color: c.muted, lineHeight: 1.4 }}>{props.amenities as string}</span>
       )}
 
       <div style={{ marginTop: "auto", display: "flex", flexDirection: "column", gap: "12px" }}>
-        <hr style={{ border: "none", borderTop: "1px solid #f3f4f6", margin: 0 }} />
+        <hr style={{ border: "none", borderTop: `1px solid ${c.border}`, margin: 0 }} />
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span style={{ fontSize: "0.75rem", color: "#6b7280" }}>per night</span>
-          <span style={{ fontWeight: 700, fontSize: "1.15rem", color: "#111" }}>{props.pricePerNight as string}</span>
+          <span style={{ fontSize: "0.75rem", color: c.muted }}>per night</span>
+          <span style={{ fontWeight: 700, fontSize: "1.15rem", color: c.cardFg }}>{props.pricePerNight as string}</span>
         </div>
 
         <ActionButton label="Book" doneLabel="Booked" action={props.action} />
@@ -220,7 +230,7 @@ export const ProductCard = createReactComponent(ProductCardApi, ({ props }) => {
   return (
     <div style={cardStyle}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span style={{ fontWeight: 700, fontSize: "1rem", color: "#111" }}>{props.name as string}</span>
+        <span style={{ fontWeight: 700, fontSize: "1rem", color: c.cardFg }}>{props.name as string}</span>
         {props.badge && (
           <span style={{
             fontSize: "0.65rem", fontWeight: 500, background: "#dbeafe", color: "#1e40af",
@@ -234,13 +244,13 @@ export const ProductCard = createReactComponent(ProductCardApi, ({ props }) => {
       <Stars value={rating} />
 
       {props.description && (
-        <span style={{ fontSize: "0.8rem", color: "#6b7280", lineHeight: 1.4 }}>{props.description as string}</span>
+        <span style={{ fontSize: "0.8rem", color: c.muted, lineHeight: 1.4 }}>{props.description as string}</span>
       )}
 
       <div style={{ marginTop: "auto", display: "flex", flexDirection: "column", gap: "12px" }}>
-        <hr style={{ border: "none", borderTop: "1px solid #f3f4f6", margin: 0 }} />
+        <hr style={{ border: "none", borderTop: `1px solid ${c.border}`, margin: 0 }} />
 
-        <span style={{ fontWeight: 700, fontSize: "1.15rem", color: "#111" }}>{props.price as string}</span>
+        <span style={{ fontWeight: 700, fontSize: "1.15rem", color: c.cardFg }}>{props.price as string}</span>
 
         <ActionButton label="Select" doneLabel="Selected" action={props.action} />
       </div>
@@ -277,15 +287,15 @@ export const TeamMemberCard = createReactComponent(TeamMemberCardApi, ({ props }
           </div>
         )}
         <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-          <span style={{ fontWeight: 600, fontSize: "0.95rem", color: "#111" }}>{props.name as string}</span>
-          <span style={{ fontSize: "0.8rem", color: "#6b7280" }}>{props.role as string}</span>
+          <span style={{ fontWeight: 600, fontSize: "0.95rem", color: c.cardFg }}>{props.name as string}</span>
+          <span style={{ fontSize: "0.8rem", color: c.muted }}>{props.role as string}</span>
         </div>
       </div>
 
       {props.department && (
         <span style={{
           display: "inline-block", fontSize: "0.7rem", fontWeight: 500,
-          background: "#f3f4f6", color: "#374151", padding: "3px 10px",
+          background: "#f3f4f6", color: c.cardFg, padding: "3px 10px",
           borderRadius: "9999px", alignSelf: "flex-start",
         }}>
           {props.department as string}
@@ -293,7 +303,7 @@ export const TeamMemberCard = createReactComponent(TeamMemberCardApi, ({ props }
       )}
 
       {props.email && (
-        <span style={{ fontSize: "0.8rem", color: "#6b7280" }}>{props.email as string}</span>
+        <span style={{ fontSize: "0.8rem", color: c.muted }}>{props.email as string}</span>
       )}
 
       <div style={{ marginTop: "auto" }}>
@@ -312,7 +322,7 @@ export const StarRating = createReactComponent(StarRatingApi, ({ props }) => {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
       {props.label && (
-        <span style={{ fontSize: "0.7rem", fontWeight: 500, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+        <span style={{ fontSize: "0.7rem", fontWeight: 500, color: c.muted, textTransform: "uppercase", letterSpacing: "0.05em" }}>
           {props.label as string}
         </span>
       )}
