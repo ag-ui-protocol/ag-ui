@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import { createReactComponent } from "@copilotkit/a2ui-renderer";
 import {
   RowApi,
@@ -27,16 +27,43 @@ const cardStyle: React.CSSProperties = {
   boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
 };
 
-const btnStyle: React.CSSProperties = {
-  width: "100%",
-  padding: "10px",
-  borderRadius: "10px",
-  border: "1px solid #e5e7eb",
-  background: "#fff",
-  fontSize: "0.85rem",
-  fontWeight: 500,
-  cursor: "pointer",
-};
+function ActionButton({ label, doneLabel, action }: { label: string; doneLabel: string; action: any }) {
+  const [done, setDone] = useState(false);
+  return (
+    <button
+      disabled={done}
+      style={{
+        width: "100%",
+        padding: "10px",
+        borderRadius: "10px",
+        border: done ? "1px solid #d1fae5" : "1px solid #e5e7eb",
+        background: done ? "#ecfdf5" : "#fff",
+        color: done ? "#059669" : "#111",
+        fontSize: "0.85rem",
+        fontWeight: 500,
+        cursor: done ? "default" : "pointer",
+        transition: "all 0.2s ease",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: "6px",
+      }}
+      onClick={() => {
+        if (!done) {
+          action?.();
+          setDone(true);
+        }
+      }}
+    >
+      {done && (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#059669" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="20 6 9 17 4 12" />
+        </svg>
+      )}
+      {done ? doneLabel : label}
+    </button>
+  );
+}
 
 function Stars({ value, max = 5 }: { value: number; max?: number }) {
   return (
@@ -151,7 +178,7 @@ export const FlightCard = createReactComponent(FlightCardApi, ({ props }) => {
           <span style={{ fontSize: "0.8rem", color: "#6b7280" }}>{props.status as string}</span>
         </div>
 
-        <button style={btnStyle} onClick={props.action as any}>Select</button>
+        <ActionButton label="Select" doneLabel="Selected" action={props.action} />
       </div>
     </div>
   );
@@ -180,7 +207,7 @@ export const HotelCard = createReactComponent(HotelCardApi, ({ props }) => {
           <span style={{ fontWeight: 700, fontSize: "1.15rem", color: "#111" }}>{props.pricePerNight as string}</span>
         </div>
 
-        <button style={btnStyle} onClick={props.action as any}>Book</button>
+        <ActionButton label="Book" doneLabel="Booked" action={props.action} />
       </div>
     </div>
   );
@@ -215,7 +242,7 @@ export const ProductCard = createReactComponent(ProductCardApi, ({ props }) => {
 
         <span style={{ fontWeight: 700, fontSize: "1.15rem", color: "#111" }}>{props.price as string}</span>
 
-        <button style={btnStyle} onClick={props.action as any}>Select</button>
+        <ActionButton label="Select" doneLabel="Selected" action={props.action} />
       </div>
     </div>
   );
@@ -270,7 +297,7 @@ export const TeamMemberCard = createReactComponent(TeamMemberCardApi, ({ props }
       )}
 
       <div style={{ marginTop: "auto" }}>
-        <button style={btnStyle} onClick={props.action as any}>Contact</button>
+        <ActionButton label="Contact" doneLabel="Contacted" action={props.action} />
       </div>
     </div>
   );
