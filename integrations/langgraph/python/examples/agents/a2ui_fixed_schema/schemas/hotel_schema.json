@@ -14,7 +14,7 @@
     "name": { "path": "name" },
     "location": { "path": "location" },
     "rating": { "path": "rating" },
-    "price": { "path": "price" },
+    "pricePerNight": { "path": "price" },
     "action": {
       "event": {
         "name": "book_hotel",

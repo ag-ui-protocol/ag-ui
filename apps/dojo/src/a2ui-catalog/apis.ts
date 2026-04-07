@@ -1,5 +1,8 @@
 /**
- * Dynamic Catalog — Pre-made domain components + Row layout
+ * Shared A2UI Catalog — Component APIs
+ *
+ * All custom components used across dojo demos (fixed schema, dynamic schema, advanced).
+ * Components: Row, FlightCard, HotelCard, ProductCard, TeamMemberCard, StarRating
  */
 import { z } from "zod";
 import {
@@ -21,6 +24,25 @@ export const RowApi = {
     ...CommonProps,
     gap: z.number().optional(),
     children: ChildListSchema,
+  }),
+};
+
+export const FlightCardApi = {
+  name: "FlightCard" as const,
+  schema: z.object({
+    ...CommonProps,
+    airline: DynamicStringSchema,
+    airlineLogo: DynamicStringSchema,
+    flightNumber: DynamicStringSchema,
+    origin: DynamicStringSchema,
+    destination: DynamicStringSchema,
+    date: DynamicStringSchema,
+    departureTime: DynamicStringSchema,
+    arrivalTime: DynamicStringSchema,
+    duration: DynamicStringSchema,
+    status: DynamicStringSchema,
+    price: DynamicStringSchema,
+    action: ActionSchema,
   }),
 };
 
@@ -60,5 +82,15 @@ export const TeamMemberCardApi = {
     email: DynamicStringSchema.optional(),
     avatarUrl: DynamicStringSchema.optional(),
     action: ActionSchema,
+  }),
+};
+
+export const StarRatingApi = {
+  name: "StarRating" as const,
+  schema: z.object({
+    ...CommonProps,
+    value: DynamicNumberSchema.describe("Rating value from 0 to maxStars"),
+    maxStars: z.number().default(5).optional(),
+    label: DynamicStringSchema.optional(),
   }),
 };

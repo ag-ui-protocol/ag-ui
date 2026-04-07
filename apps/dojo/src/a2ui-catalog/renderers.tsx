@@ -2,34 +2,16 @@
 
 import React from "react";
 import { createReactComponent } from "@copilotkit/a2ui-renderer";
-import { RowApi, HotelCardApi, ProductCardApi, TeamMemberCardApi } from "./apis";
+import {
+  RowApi,
+  FlightCardApi,
+  HotelCardApi,
+  ProductCardApi,
+  TeamMemberCardApi,
+  StarRatingApi,
+} from "./apis";
 
-// ─── Row ─────────────────────────────────────────────────────────────
-
-export const Row = createReactComponent(RowApi, ({ props, buildChild }) => {
-  const items = Array.isArray(props.children) ? props.children : [];
-  return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "row",
-        gap: `${props.gap ?? 24}px`,
-        overflowX: "auto",
-        width: "100%",
-      }}
-    >
-      {items.map((item: any, i: number) => {
-        if (typeof item === "string")
-          return <div key={`${item}-${i}`} style={{ flexShrink: 0 }}>{buildChild(item)}</div>;
-        if (item && typeof item === "object" && "id" in item)
-          return <div key={`${item.id}-${i}`} style={{ flexShrink: 0 }}>{buildChild(item.id, item.basePath)}</div>;
-        return null;
-      })}
-    </div>
-  );
-});
-
-// ─── Shared styles ───────────────────────────────────────────────────
+// ─── Shared helpers ──────────────────────────────────────────────────
 
 const cardStyle: React.CSSProperties = {
   border: "1px solid #e5e7eb",
@@ -86,6 +68,94 @@ function Stars({ value, max = 5 }: { value: number; max?: number }) {
     </div>
   );
 }
+
+// ─── Row ─────────────────────────────────────────────────────────────
+
+export const Row = createReactComponent(RowApi, ({ props, buildChild }) => {
+  const items = Array.isArray(props.children) ? props.children : [];
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "row",
+        gap: `${props.gap ?? 24}px`,
+        alignItems: "stretch",
+        overflowX: "auto",
+        width: "100%",
+      }}
+    >
+      {items.map((item: any, i: number) => {
+        if (typeof item === "string")
+          return <div key={`${item}-${i}`} style={{ flexShrink: 0, display: "flex" }}>{buildChild(item)}</div>;
+        if (item && typeof item === "object" && "id" in item)
+          return <div key={`${item.id}-${i}`} style={{ flexShrink: 0, display: "flex" }}>{buildChild(item.id, item.basePath)}</div>;
+        return null;
+      })}
+    </div>
+  );
+});
+
+// ─── FlightCard ──────────────────────────────────────────────────────
+
+export const FlightCard = createReactComponent(FlightCardApi, ({ props }) => {
+  const statusColors: Record<string, string> = {
+    "On Time": "#22c55e",
+    Delayed: "#eab308",
+    Cancelled: "#ef4444",
+  };
+  const dotColor = statusColors[props.status as string] ?? "#22c55e";
+
+  return (
+    <div style={cardStyle}>
+      {/* Header: airline + price */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <img
+            src={props.airlineLogo as string}
+            alt={props.airline as string}
+            style={{ width: 28, height: 28, borderRadius: "50%", objectFit: "contain" }}
+          />
+          <span style={{ fontWeight: 600, fontSize: "0.95rem" }}>{props.airline as string}</span>
+        </div>
+        <span style={{ fontWeight: 700, fontSize: "1.15rem", color: "#111" }}>{props.price as string}</span>
+      </div>
+
+      {/* Meta */}
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.8rem", color: "#6b7280" }}>
+        <span>{props.flightNumber as string}</span>
+        <span>{props.date as string}</span>
+      </div>
+
+      <hr style={{ border: "none", borderTop: "1px solid #f3f4f6", margin: 0 }} />
+
+      {/* Times */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span style={{ fontWeight: 700, fontSize: "1.1rem" }}>{props.departureTime as string}</span>
+        <span style={{ fontSize: "0.75rem", color: "#9ca3af" }}>{props.duration as string}</span>
+        <span style={{ fontWeight: 700, fontSize: "1.1rem" }}>{props.arrivalTime as string}</span>
+      </div>
+
+      {/* Route */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.95rem", fontWeight: 600, color: "#374151" }}>
+        <span>{props.origin as string}</span>
+        <span style={{ color: "#9ca3af" }}>→</span>
+        <span>{props.destination as string}</span>
+      </div>
+
+      <div style={{ marginTop: "auto", display: "flex", flexDirection: "column", gap: "12px" }}>
+        <hr style={{ border: "none", borderTop: "1px solid #f3f4f6", margin: 0 }} />
+
+        {/* Status */}
+        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+          <span style={{ width: 8, height: 8, borderRadius: "50%", background: dotColor, display: "inline-block" }} />
+          <span style={{ fontSize: "0.8rem", color: "#6b7280" }}>{props.status as string}</span>
+        </div>
+
+        <button style={btnStyle} onClick={props.action as any}>Select</button>
+      </div>
+    </div>
+  );
+});
 
 // ─── HotelCard ───────────────────────────────────────────────────────
 
@@ -199,7 +269,27 @@ export const TeamMemberCard = createReactComponent(TeamMemberCardApi, ({ props }
         <span style={{ fontSize: "0.8rem", color: "#6b7280" }}>{props.email as string}</span>
       )}
 
-      <button style={btnStyle} onClick={props.action as any}>Contact</button>
+      <div style={{ marginTop: "auto" }}>
+        <button style={btnStyle} onClick={props.action as any}>Contact</button>
+      </div>
+    </div>
+  );
+});
+
+// ─── StarRating (standalone, used by fixed schema) ───────────────────
+
+export const StarRating = createReactComponent(StarRatingApi, ({ props }) => {
+  const value = typeof props.value === "number" ? props.value : 0;
+  const maxStars = props.maxStars ?? 5;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+      {props.label && (
+        <span style={{ fontSize: "0.7rem", fontWeight: 500, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+          {props.label as string}
+        </span>
+      )}
+      <Stars value={value} max={maxStars} />
     </div>
   );
 });

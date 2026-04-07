@@ -7,7 +7,7 @@ import {
   useConfigureSuggestions,
 } from "@copilotkit/react-core/v2";
 import { CopilotKit } from "@copilotkit/react-core";
-import { customCatalog } from "./custom-catalog";
+import { fixedSchemaCatalog } from "@/a2ui-catalog";
 
 export const dynamic = "force-dynamic";
 
@@ -46,7 +46,7 @@ export default function Page({ params }: PageProps) {
       runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
       agent="a2ui_fixed_schema"
-      a2ui={{ catalog: customCatalog }}
+      a2ui={{ catalog: fixedSchemaCatalog }}
     >
       <div className="flex justify-center items-center h-full w-full">
         <div className="h-full w-full md:w-8/10 md:h-8/10 rounded-lg">

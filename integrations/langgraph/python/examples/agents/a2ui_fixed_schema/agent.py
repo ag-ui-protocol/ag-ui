@@ -72,7 +72,7 @@ def search_flights(flights: list[Flight]) -> str:
 
 # --- Hotel search (custom catalog with StarRating) ---
 
-CUSTOM_CATALOG_ID = "https://a2ui.org/demos/dojo/custom_catalog.json"
+CUSTOM_CATALOG_ID = "https://a2ui.org/demos/dojo/fixed_catalog.json"
 HOTEL_SURFACE_ID = "hotel-search-results"
 HOTEL_SCHEMA = a2ui.load_schema(
     Path(__file__).parent / "schemas" / "hotel_schema.json"
