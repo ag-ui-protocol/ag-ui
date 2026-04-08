@@ -98,6 +98,7 @@ class ADKAgent:
         max_sessions_per_user: Optional[int] = None,    # No limit by default
         delete_session_on_cleanup: bool = True,
         save_session_to_memory_on_cleanup: bool = True,
+        hitl_max_wait_seconds: Optional[int] = None,    # No limit by default
 
         # Predictive state configuration
         predict_state: Optional[Iterable[PredictStateMapping]] = None,
@@ -132,6 +133,10 @@ class ADKAgent:
             max_sessions_per_user: Maximum concurrent sessions per user (None = unlimited)
             delete_session_on_cleanup: Whether to delete sessions from the adk SessionService on session cache cleanup
             save_session_to_memory_on_cleanup: Whether to save sessions to the adk MemoryService on session cache cleanup
+            hitl_max_wait_seconds: Maximum time (in seconds) to preserve expired sessions
+                that have pending HITL tool calls before force-deleting them. None (default)
+                means no limit — sessions with pending tool calls are preserved indefinitely.
+                Set this to automatically clean up abandoned HITL sessions.
             predict_state: Configuration for predictive state updates. When provided,
                 the agent will emit PredictState CustomEvents for matching tool calls,
                 enabling the UI to show state changes in real-time as tool arguments
@@ -198,6 +203,7 @@ class ADKAgent:
             delete_session_on_cleanup=delete_session_on_cleanup,
             save_session_to_memory_on_cleanup=save_session_to_memory_on_cleanup,
             use_thread_id_as_session_id=use_thread_id_as_session_id,
+            hitl_max_wait_seconds=hitl_max_wait_seconds,
         )
         
         # Tool execution tracking — keyed by (thread_id, user_id) to avoid cross-user collisions
@@ -257,27 +263,44 @@ class ADKAgent:
         return getattr(resumability_config, 'is_resumable', False)
 
     def _root_agent_needs_invocation_id(self) -> bool:
-        """Check if the root agent requires invocation_id for HITL resumption.
+        """Check if the agent topology requires invocation_id for HITL resumption.
 
         Composite orchestrators (SequentialAgent, LoopAgent) store internal
         state (e.g. current_sub_agent position) that can only be restored via
         populate_invocation_agent_states(), which requires invocation_id.
 
-        LlmAgents — including those with sub_agents as transfer targets — do
-        NOT need invocation_id. Passing it triggers _get_subagent_to_resume()
-        which raises ValueError for non-composite agents.
+        This returns True when:
+        - The root agent itself is a composite orchestrator, OR
+        - Any agent in the sub-agent tree is a composite orchestrator
+          (e.g. LlmAgent → LlmAgent → SequentialAgent).
+
+        Standalone LlmAgents (including those with only LlmAgent transfer
+        targets) do NOT need invocation_id. Passing it triggers
+        _get_subagent_to_resume() which raises ValueError.
 
         Returns:
-            True if the root agent is a composite orchestrator
+            True if the topology contains a composite orchestrator
         """
         from google.adk.agents import LoopAgent, SequentialAgent
+        composite_types = (SequentialAgent, LoopAgent)
 
         root = self._adk_agent
         if root is None and self._app is not None:
             root = getattr(self._app, 'root_agent', None)
         if root is None:
             return False
-        return isinstance(root, (SequentialAgent, LoopAgent))
+        if isinstance(root, composite_types):
+            return True
+
+        def _has_composite_descendant(agent):
+            for sub in getattr(agent, 'sub_agents', None) or []:
+                if isinstance(sub, composite_types):
+                    return True
+                if _has_composite_descendant(sub):
+                    return True
+            return False
+
+        return _has_composite_descendant(root)
 
     @classmethod
     def from_app(
@@ -2067,7 +2090,8 @@ class ADKAgent:
             }
 
             # Conditionally pass invocation_id based on root agent type and scenario.
-            # Composite agents (SequentialAgent, LoopAgent) need it so ADK calls
+            # Composite agents (SequentialAgent, LoopAgent) — whether as root or
+            # as sub-agents of an LlmAgent root — need it so ADK calls
             # populate_invocation_agent_states() to restore internal state.
             # For tool responses, we pass tool_only_invocation_id (input.run_id) to ensure
             # ADK uses the client's run_id instead of auto-generating an e-xxx ID.
