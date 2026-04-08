@@ -829,6 +829,10 @@ export async function setupLLMock(): Promise<void> {
   // The agent forces tool_choice="render_a2ui" on the secondary call.
   // Match by detecting render_a2ui in the tools list (the secondary call
   // has render_a2ui as the only tool, unlike the primary which has generate_a2ui).
+  //
+  // These fixtures use the dynamicSchemaCatalog domain components (HotelCard,
+  // ProductCard, TeamMemberCard) with the structural-children + data-binding
+  // pattern described in the agent's COMPOSITION_GUIDE.
   mockServer.addFixture({
     match: {
       predicate: (req) => {
@@ -850,25 +854,23 @@ export async function setupLLMock(): Promise<void> {
           name: "render_a2ui",
           arguments: JSON.stringify({
             surfaceId: "hotel-comparison",
-            catalogId: "https://a2ui.org/demos/dojo/custom_catalog.json",
+            catalogId: "https://a2ui.org/demos/dojo/dynamic_catalog.json",
             components: [
-              { id: "root", component: "Row", children: ["card-1", "card-2", "card-3"], gap: 16 },
-              { id: "card-1", component: "Card", child: "col-1" },
-              { id: "col-1", component: "Column", children: ["n1", "p1", "r1"] },
-              { id: "n1", component: "Text", text: "The Ritz" },
-              { id: "p1", component: "Text", text: "$450/night" },
-              { id: "r1", component: "StarRating", value: 4.8, label: "Rating" },
-              { id: "card-2", component: "Card", child: "col-2" },
-              { id: "col-2", component: "Column", children: ["n2", "p2", "r2"] },
-              { id: "n2", component: "Text", text: "Holiday Inn" },
-              { id: "p2", component: "Text", text: "$180/night" },
-              { id: "r2", component: "StarRating", value: 3.5, label: "Rating" },
-              { id: "card-3", component: "Card", child: "col-3" },
-              { id: "col-3", component: "Column", children: ["n3", "p3", "r3"] },
-              { id: "n3", component: "Text", text: "Boutique Loft" },
-              { id: "p3", component: "Text", text: "$320/night" },
-              { id: "r3", component: "StarRating", value: 4.2, label: "Rating" },
+              { id: "root", component: "Row", children: { componentId: "card", path: "/items" } },
+              {
+                id: "card", component: "HotelCard",
+                name: { path: "name" }, location: { path: "location" },
+                rating: { path: "rating" }, pricePerNight: { path: "pricePerNight" },
+                action: { event: { name: "book", context: { name: { path: "name" } } } },
+              },
             ],
+            data: {
+              items: [
+                { name: "The Ritz", location: "Paris", rating: 4.8, pricePerNight: "$450/night" },
+                { name: "Holiday Inn", location: "New York", rating: 3.5, pricePerNight: "$180/night" },
+                { name: "Boutique Loft", location: "London", rating: 4.2, pricePerNight: "$320/night" },
+              ],
+            },
           }),
         },
       ],
@@ -895,25 +897,23 @@ export async function setupLLMock(): Promise<void> {
           name: "render_a2ui",
           arguments: JSON.stringify({
             surfaceId: "product-comparison",
-            catalogId: "https://a2ui.org/demos/dojo/custom_catalog.json",
+            catalogId: "https://a2ui.org/demos/dojo/dynamic_catalog.json",
             components: [
-              { id: "root", component: "Row", children: ["card-1", "card-2", "card-3"], gap: 16 },
-              { id: "card-1", component: "Card", child: "col-1" },
-              { id: "col-1", component: "Column", children: ["n1", "p1", "d1"] },
-              { id: "n1", component: "Text", text: "Sony WH-1000XM5" },
-              { id: "p1", component: "Text", text: "$349" },
-              { id: "d1", component: "Text", text: "Industry-leading noise cancellation" },
-              { id: "card-2", component: "Card", child: "col-2" },
-              { id: "col-2", component: "Column", children: ["n2", "p2", "d2"] },
-              { id: "n2", component: "Text", text: "AirPods Max" },
-              { id: "p2", component: "Text", text: "$549" },
-              { id: "d2", component: "Text", text: "Premium Apple ecosystem integration" },
-              { id: "card-3", component: "Card", child: "col-3" },
-              { id: "col-3", component: "Column", children: ["n3", "p3", "d3"] },
-              { id: "n3", component: "Text", text: "Bose QC Ultra" },
-              { id: "p3", component: "Text", text: "$429" },
-              { id: "d3", component: "Text", text: "Comfortable with spatial audio" },
+              { id: "root", component: "Row", children: { componentId: "card", path: "/items" } },
+              {
+                id: "card", component: "ProductCard",
+                name: { path: "name" }, price: { path: "price" },
+                rating: { path: "rating" }, description: { path: "description" },
+                action: { event: { name: "select", context: { name: { path: "name" } } } },
+              },
             ],
+            data: {
+              items: [
+                { name: "Sony WH-1000XM5", price: "$349", rating: 4.7, description: "Industry-leading noise cancellation" },
+                { name: "AirPods Max", price: "$549", rating: 4.5, description: "Premium Apple ecosystem integration" },
+                { name: "Bose QC Ultra", price: "$429", rating: 4.6, description: "Comfortable with spatial audio" },
+              ],
+            },
           }),
         },
       ],
@@ -940,26 +940,24 @@ export async function setupLLMock(): Promise<void> {
           name: "render_a2ui",
           arguments: JSON.stringify({
             surfaceId: "team-roster",
-            catalogId: "https://a2ui.org/demos/dojo/custom_catalog.json",
+            catalogId: "https://a2ui.org/demos/dojo/dynamic_catalog.json",
             components: [
-              { id: "root", component: "Column", children: ["card-1", "card-2", "card-3", "card-4"] },
-              { id: "card-1", component: "Card", child: "col-1" },
-              { id: "col-1", component: "Column", children: ["n1", "r1"] },
-              { id: "n1", component: "Text", text: "Alice Chen" },
-              { id: "r1", component: "Text", text: "Engineering Lead" },
-              { id: "card-2", component: "Card", child: "col-2" },
-              { id: "col-2", component: "Column", children: ["n2", "r2"] },
-              { id: "n2", component: "Text", text: "Bob Martinez" },
-              { id: "r2", component: "Text", text: "Product Designer" },
-              { id: "card-3", component: "Card", child: "col-3" },
-              { id: "col-3", component: "Column", children: ["n3", "r3"] },
-              { id: "n3", component: "Text", text: "Carol Davis" },
-              { id: "r3", component: "Text", text: "Backend Engineer" },
-              { id: "card-4", component: "Card", child: "col-4" },
-              { id: "col-4", component: "Column", children: ["n4", "r4"] },
-              { id: "n4", component: "Text", text: "Dan Wilson" },
-              { id: "r4", component: "Text", text: "DevOps Engineer" },
+              { id: "root", component: "Row", children: { componentId: "card", path: "/items" } },
+              {
+                id: "card", component: "TeamMemberCard",
+                name: { path: "name" }, role: { path: "role" },
+                department: { path: "department" }, email: { path: "email" },
+                action: { event: { name: "contact", context: { name: { path: "name" } } } },
+              },
             ],
+            data: {
+              items: [
+                { name: "Alice Chen", role: "Engineering Lead", department: "Engineering", email: "alice@example.com" },
+                { name: "Bob Martinez", role: "Product Designer", department: "Design", email: "bob@example.com" },
+                { name: "Carol Davis", role: "Backend Engineer", department: "Engineering", email: "carol@example.com" },
+                { name: "Dan Wilson", role: "DevOps Engineer", department: "Infrastructure", email: "dan@example.com" },
+              ],
+            },
           }),
         },
       ],
