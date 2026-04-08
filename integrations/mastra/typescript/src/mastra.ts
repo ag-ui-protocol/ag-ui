@@ -508,7 +508,12 @@ export class MastraAgent extends AbstractAgent {
           });
           break;
         }
-        case "finish": {
+        // Both "finish" and "step-finish" flush any pending tool call and rotate
+        // the messageId so the next step's text gets a fresh ID. When a stream
+        // ends with step-finish followed by finish, onFinishMessagePart fires
+        // twice — the second rotation produces an unused messageId, which is harmless.
+        case "finish":
+        case "step-finish": {
           flush();
           callbacks.onFinishMessagePart?.();
           break;
@@ -516,7 +521,6 @@ export class MastraAgent extends AbstractAgent {
         // Known Mastra lifecycle events with no AG-UI mapping — skip silently
         case "start":
         case "step-start":
-        case "step-finish":
           break;
         default: {
           console.warn(

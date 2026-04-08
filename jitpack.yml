@@ -1,0 +1,2 @@
+install:
+  - cd sdks/community/java && mvn install -DskipTests
