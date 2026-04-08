@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - When a real `GOOGLE_API_KEY` is set, the mock is skipped and tests hit the live API as before
   - Tier 1: 4 test files (32 tests) now pass without credentials — `test_text_events`, `test_context_integration`, `test_multi_turn_conversation`, `test_from_app_integration`
   - Tier 2: 6 test files (50 tests) with tool-call fixtures for LRO, HITL, and skip_summarization — `test_lro_sse_persistence`, `test_lro_sse_id_remap`, `test_lro_tool_response_persistence`, `test_hitl_resumption_text_output`, `test_resumability_config`, `test_issue_437_skip_summarization_integration`
+  - Tier 3: `test_thought_to_thinking_integration` (7 tests) — reasoning/thinking event structure via `reasoning` fixture field producing `thought: true` Gemini parts
+  - Tier 4: `test_multimodal_e2e` (4 tests) — image and document handling via content-matched fixtures
+  - Remaining 4 skipped tests are Vertex AI session service live tests (require real Vertex AI infrastructure, not Gemini API)
 
 - **NEW**: Optional `hitl_max_wait_seconds` parameter for `ADKAgent` and `SessionManager` (#1441)
   - Expired sessions with pending HITL tool calls are preserved indefinitely by default (unchanged behavior)

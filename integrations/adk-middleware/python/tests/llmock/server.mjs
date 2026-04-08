@@ -106,6 +106,75 @@ addToolCallFixture("tool_without_skip", { query: "normal query" });
 addToolCallFixture("slow_skip_tool", { data: "test_value" });
 
 // ---------------------------------------------------------------------------
+// Thinking / reasoning fixtures: return responses with a `reasoning` field
+// so LLMock emits Gemini `thought: true` parts before content.
+// ---------------------------------------------------------------------------
+
+/** Extract system message text from a request. */
+const sysText = (req) => {
+  const sys = req.messages.find((m) => m.role === "system");
+  return typeof sys?.content === "string" ? sys.content : "";
+};
+
+// Thinking agent — system prompt contains "careful reasoning assistant"
+mock.addFixture({
+  match: {
+    predicate: (req) =>
+      sysText(req).includes("careful reasoning assistant") && lastIsUser(req),
+  },
+  response: {
+    reasoning:
+      "Let me think through this step by step. I need to read the problem carefully. " +
+      "The key phrase is 'all but 9 run away' which means 9 remain. " +
+      "This is a classic trick question that tests reading comprehension.",
+    content: "The farmer has 9 sheep left. The phrase 'all but 9 run away' means 9 sheep remain.",
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Multimodal fixtures: match on user message text to return responses that
+// satisfy the assertion checks (color names, document topics, etc.).
+// ---------------------------------------------------------------------------
+
+mock.addFixture({
+  match: {
+    predicate: (req) => {
+      const text = lastUserText(req);
+      return text.includes("Describe this image") && !text.includes("two");
+    },
+  },
+  response: { content: "The image shows a solid red square." },
+});
+
+mock.addFixture({
+  match: {
+    predicate: (req) => lastUserText(req).includes("Describe each of these two images"),
+  },
+  response: {
+    content:
+      "The first image is a solid red square. The second image is a solid blue square.",
+  },
+});
+
+mock.addFixture({
+  match: {
+    predicate: (req) => lastUserText(req).includes("What is this document about"),
+  },
+  response: {
+    content:
+      "This document describes IP over Avian Carriers with Quality of Service, " +
+      "a humorous network protocol using carrier pigeons.",
+  },
+});
+
+mock.addFixture({
+  match: {
+    predicate: (req) => lastUserText(req).includes("horizontal colour stripes"),
+  },
+  response: { content: "The stripes from top to bottom are: blue, white, red." },
+});
+
+// ---------------------------------------------------------------------------
 // Tool result catch-all: when the last message is a tool result,
 // return a generic text acknowledgment (same pattern as Dojo aimock-setup.ts)
 // ---------------------------------------------------------------------------
