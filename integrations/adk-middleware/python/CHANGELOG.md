@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **NEW**: LLMock test infrastructure to run integration tests without `GOOGLE_API_KEY`
+  - Uses `@copilotkit/aimock` (LLMock) to mock Gemini API responses via `GOOGLE_GEMINI_BASE_URL`
+  - Session-scoped pytest fixture auto-starts a Node.js LLMock server when no real API key is present
+  - When a real `GOOGLE_API_KEY` is set, the mock is skipped and tests hit the live API as before
+  - Tier 1: 4 test files (32 tests) now pass without credentials — `test_text_events`, `test_context_integration`, `test_multi_turn_conversation`, `test_from_app_integration`
+  - Tier 2 (in progress): tool-call fixtures for LRO, HITL, and skip_summarization test patterns
+
 - **NEW**: Optional `hitl_max_wait_seconds` parameter for `ADKAgent` and `SessionManager` (#1441)
   - Expired sessions with pending HITL tool calls are preserved indefinitely by default (unchanged behavior)
   - When set, abandoned HITL sessions are force-deleted after the specified duration, preventing unbounded memory growth
