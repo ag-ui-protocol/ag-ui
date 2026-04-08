@@ -69,6 +69,12 @@ export const featureConfig: FeatureConfig[] = [
     tags: ["Chat", "Tools", "Streaming", "Reasoning"],
   }),
   createFeatureConfig({
+    id: "agentic_chat_multimodal",
+    name: "Agentic Chat Multimodal",
+    description: "Chat with a Copilot using images and other media",
+    tags: ["Chat", "Multimodal", "Streaming"],
+  }),
+  createFeatureConfig({
     id: "subgraphs",
     name: "Subgraphs",
     description:

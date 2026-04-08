@@ -1,0 +1,16 @@
+# Agentic Chat Multimodal
+
+This example demonstrates multimodal input support in AG-UI. Users can upload images and other media alongside text messages, and the agent analyzes them.
+
+## How it works
+
+- The `CopilotChat` component is configured with `attachments={{ enabled: true }}` to allow file uploads
+- Uploaded images are sent as `ImageInputContent` with base64-encoded data through the AG-UI protocol
+- The backend agent uses a vision-capable model (GPT-5.2) to analyze the uploaded content
+- The AG-UI integration layer automatically converts between AG-UI's multimodal content types and the framework's native format
+
+## Try it
+
+1. Click the attachment icon in the chat input
+2. Upload an image
+3. Ask the agent to describe or analyze the image
