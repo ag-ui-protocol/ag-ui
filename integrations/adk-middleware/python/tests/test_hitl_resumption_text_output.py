@@ -98,6 +98,10 @@ class TestHITLResumptionTextOutput:
     """
 
     @pytest.fixture(autouse=True)
+    def setup_llmock(self, llmock_server):
+        """Ensure LLMock is running when no real API key is set."""
+
+    @pytest.fixture(autouse=True)
     def reset_session_manager(self):
         """Reset singleton SessionManager between tests."""
         SessionManager.reset_instance()

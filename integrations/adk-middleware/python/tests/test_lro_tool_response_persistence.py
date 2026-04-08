@@ -95,6 +95,10 @@ class TestLROToolResponseIntegration:
     """
 
     @pytest.fixture(autouse=True)
+    def setup_llmock(self, llmock_server):
+        """Ensure LLMock is running when no real API key is set."""
+
+    @pytest.fixture(autouse=True)
     def reset_session_manager(self):
         """Reset singleton SessionManager between tests."""
         SessionManager.reset_instance()
@@ -466,6 +470,10 @@ class TestLROToolResponseIntegration:
 
 class TestHITLResumptionIntegration:
     """Integration tests for HITL resumption with stored invocation_id."""
+
+    @pytest.fixture(autouse=True)
+    def setup_llmock(self, llmock_server):
+        """Ensure LLMock is running when no real API key is set."""
 
     @pytest.fixture(autouse=True)
     def reset_session_manager(self):

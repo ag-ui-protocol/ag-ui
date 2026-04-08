@@ -77,6 +77,7 @@ const addToolCallFixture = (toolName, args) => {
 // HITL / LRO tools
 addToolCallFixture("get_greeting", { name: "Alice" });
 addToolCallFixture("approve_action", { action: "task X" });
+addToolCallFixture("get_approval", { action: "proceed with the task" });
 addToolCallFixture("get_confirmation", {});
 addToolCallFixture("check_status", {});
 addToolCallFixture("plan_task", { steps: ["Step 1", "Step 2"] });

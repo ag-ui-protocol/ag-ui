@@ -50,11 +50,9 @@ from google.adk.agents import LlmAgent
 from google.adk.tools import ToolContext
 
 
-# Skip all tests if GOOGLE_API_KEY is not set
-pytestmark = pytest.mark.skipif(
-    not os.environ.get("GOOGLE_API_KEY"),
-    reason="GOOGLE_API_KEY environment variable not set"
-)
+@pytest.fixture(autouse=True)
+def setup_llmock(llmock_server):
+    """Ensure LLMock is running when no real API key is set."""
 
 
 def get_weather_with_skip_summarization(
