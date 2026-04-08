@@ -3,6 +3,7 @@ import { PinoLogger } from "@mastra/loggers";
 import { LibSQLStore } from "@mastra/libsql";
 
 import { agenticChatAgent } from "./agents/agentic-chat";
+import { agenticChatReasoningAgent } from "./agents/agentic-chat-reasoning";
 import { toolBasedGenerativeUIAgent } from "./agents/tool-based-generative-ui";
 import { backendToolRenderingAgent } from "./agents/backend-tool-rendering";
 import { humanInTheLoopAgent } from "./agents/human-in-the-loop";
@@ -14,6 +15,7 @@ export const mastra = new Mastra({
   },
   agents: {
     agentic_chat: agenticChatAgent,
+    agentic_chat_reasoning: agenticChatReasoningAgent,
     tool_based_generative_ui: toolBasedGenerativeUIAgent,
     backend_tool_rendering: backendToolRenderingAgent,
     human_in_the_loop: humanInTheLoopAgent,

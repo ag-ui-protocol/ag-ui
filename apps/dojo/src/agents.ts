@@ -93,7 +93,7 @@ export const agentsIntegrations = {
       // for dojo vs @ag-ui/mastra, causing nominal type mismatch on private fields
       mastraClient: mastraClient as any,
       resourceId: "mastra-agent-remote"
-    }) as Promise<Record<"agentic_chat" | "backend_tool_rendering" | "human_in_the_loop" | "tool_based_generative_ui", AbstractAgent>>;
+    }) as Promise<Record<"agentic_chat" | "agentic_chat_reasoning" | "backend_tool_rendering" | "human_in_the_loop" | "tool_based_generative_ui", AbstractAgent>>;
   },
 
   "mastra-agent-local": async () => {
