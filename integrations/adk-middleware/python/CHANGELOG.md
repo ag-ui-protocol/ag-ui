@@ -46,6 +46,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - ADK's runner was converting `inline_data` parts to artifact references before the model could see them, replacing images with text like `"Uploaded file: artifact_xxx. It is saved into artifacts"`
   - Setting `save_input_blobs_as_artifacts=False` in `RunConfig` preserves inline binary data so the model receives the actual image/audio/video/document content
 
+- **FIX**: HITL resumption for LlmAgent roots with composite sub-agents (#1444)
+  - `_root_agent_needs_invocation_id()` now recursively detects `SequentialAgent` / `LoopAgent` anywhere in the sub-agent tree, not just at the root level
+  - Previously, topologies like `LlmAgent → SequentialAgent` or `LlmAgent → LlmAgent → SequentialAgent` lost `invocation_id` across HITL turns, causing the SequentialAgent to lose its position state and ADK to bypass its orchestration on resume
+  - Standalone LlmAgents (including those with only LlmAgent transfer targets) are unaffected — the guard still prevents passing `invocation_id` which would trigger `_get_subagent_to_resume()` ValueError
+
 ## [0.5.2] - 2026-03-26
 
 ### Changed
