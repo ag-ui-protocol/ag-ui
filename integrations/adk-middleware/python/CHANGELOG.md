@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **NEW**: Optional `hitl_max_wait_seconds` parameter for `ADKAgent` and `SessionManager` (#1441)
+  - Expired sessions with pending HITL tool calls are preserved indefinitely by default (unchanged behavior)
+  - When set, abandoned HITL sessions are force-deleted after the specified duration, preventing unbounded memory growth
+  - Tracks preservation start time per session in `_hitl_preserved_since`; tracking is cleaned up automatically when sessions are untracked
+  - Opt-in via `hitl_max_wait_seconds=7200` (or any value in seconds) on `ADKAgent()` — defaults to `None` (no limit)
+
 - **NEW**: `REASONING_ENCRYPTED_VALUE` support for Gemini thought signatures (#1406)
   - Extracts `thought_signature` (opaque bytes) from Google GenAI SDK `Part` objects when present
   - Emits `REASONING_ENCRYPTED_VALUE` events with `subtype="message"` and base64-encoded signature
