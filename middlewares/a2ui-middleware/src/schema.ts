@@ -971,6 +971,31 @@ export function tryParseA2UIOperations(text: string): Array<Record<string, unkno
     return null;
   }
 
+  // Some backends wrap tool return values in a single-key envelope object
+  // (e.g. {"result": [...]}, {"response": [...]}, {"output": [...]}).
+  // If the object has exactly one key and its value is a valid A2UI array,
+  // unwrap it transparently. The A2UI content check is the sole guard —
+  // single-key objects whose inner value is not A2UI are left untouched.
+  if (
+    typeof parsed === "object" &&
+    parsed !== null &&
+    !Array.isArray(parsed) &&
+    Object.keys(parsed as object).length === 1
+  ) {
+    const inner = Object.values(parsed as object)[0];
+    if (Array.isArray(inner)) {
+      const innerHasA2UI = inner.some(
+        (item) =>
+          typeof item === "object" &&
+          item !== null &&
+          getOperationSurfaceId(item as Record<string, unknown>) !== undefined
+      );
+      if (innerHasA2UI) {
+        parsed = inner;
+      }
+    }
+  }
+
   if (Array.isArray(parsed)) {
     // Check if at least one item is a valid A2UI operation
     const hasA2UI = parsed.some(

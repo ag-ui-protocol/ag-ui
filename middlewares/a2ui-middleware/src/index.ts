@@ -165,6 +165,9 @@ export class A2UIMiddleware extends Middleware {
       let heldRunFinished: EventWithState | null = null;
       // Track tool call IDs belonging to send_a2ui_json_to_client so we skip them
       const a2uiToolCallIds = new Set<string>();
+      // Track accumulated args for each a2ui tool call (for frameworks like pydantic-ai
+      // that immediately emit TOOL_CALL_RESULT instead of leaving it pending)
+      const a2uiToolCallArgs = new Map<string, string>();
 
       const subscription = source.subscribe({
         next: (eventWithState) => {
@@ -175,6 +178,16 @@ export class A2UIMiddleware extends Middleware {
             const startEvent = event as ToolCallStartEvent;
             if (startEvent.toolCallName === SEND_A2UI_TOOL_NAME) {
               a2uiToolCallIds.add(startEvent.toolCallId);
+              a2uiToolCallArgs.set(startEvent.toolCallId, "");
+            }
+          }
+
+          // Accumulate args for tracked a2ui tool calls
+          if (event.type === EventType.TOOL_CALL_ARGS) {
+            const argsEvent = event as unknown as { toolCallId: string; delta: string };
+            if (a2uiToolCallIds.has(argsEvent.toolCallId)) {
+              const existing = a2uiToolCallArgs.get(argsEvent.toolCallId) ?? "";
+              a2uiToolCallArgs.set(argsEvent.toolCallId, existing + argsEvent.delta);
             }
           }
 
@@ -190,10 +203,23 @@ export class A2UIMiddleware extends Middleware {
           } else {
             subscriber.next(event);
 
-            // Auto-detect A2UI JSON in tool call results from other tools
             if (event.type === EventType.TOOL_CALL_RESULT) {
               const resultEvent = event as ToolCallResultEvent;
-              if (!a2uiToolCallIds.has(resultEvent.toolCallId)) {
+              if (a2uiToolCallIds.has(resultEvent.toolCallId)) {
+                // Framework (e.g. pydantic-ai) immediately emits TOOL_CALL_RESULT for
+                // send_a2ui_json_to_client — process the accumulated args now instead of
+                // waiting for RUN_FINISHED (where it would be filtered out as "resolved").
+                const accumulatedArgs = a2uiToolCallArgs.get(resultEvent.toolCallId) ?? "";
+                const events = this.processSendA2UIToolCall(resultEvent.toolCallId, accumulatedArgs);
+                // Emit activity events only (skip the duplicate TOOL_CALL_RESULT)
+                for (const actEvent of events) {
+                  if (actEvent.type !== EventType.TOOL_CALL_RESULT) {
+                    subscriber.next(actEvent);
+                  }
+                }
+                a2uiToolCallArgs.delete(resultEvent.toolCallId);
+              } else {
+                // Auto-detect A2UI JSON in tool call results from other tools
                 const operations = tryParseA2UIOperations(resultEvent.content);
                 if (operations) {
                   for (const activityEvent of this.createA2UIActivityEvents(operations)) {
