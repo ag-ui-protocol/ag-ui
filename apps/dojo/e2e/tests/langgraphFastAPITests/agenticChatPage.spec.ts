@@ -1,5 +1,6 @@
 import { test, expect } from "../../test-isolation-helper";
 import { AgenticChatPage } from "../../featurePages/AgenticChatPage";
+import { sendAndAwaitResponse } from "../../utils/copilot-actions";
 
 test("[LangGraph FastAPI] Agentic Chat sends and receives a message", async ({
   page,
@@ -36,14 +37,14 @@ test("[LangGraph FastAPI] Agentic Chat changes background on message and reset",
   const initialBackground = await getBackground();
 
   // 1. Send message to change background to blue
-  await chat.sendMessage("Hi change the background color to blue");
+  await sendAndAwaitResponse(page, "Hi change the background color to blue");
   await chat.assertUserMessageVisible("Hi change the background color to blue");
 
   await expect.poll(getBackground).not.toBe(initialBackground);
   const backgroundAfterBlue = await getBackground();
 
   // 2. Change to pink
-  await chat.sendMessage("Hi change the background color to pink");
+  await sendAndAwaitResponse(page, "Hi change the background color to pink");
   await chat.assertUserMessageVisible("Hi change the background color to pink");
 
   await expect.poll(getBackground).not.toBe(backgroundAfterBlue);
