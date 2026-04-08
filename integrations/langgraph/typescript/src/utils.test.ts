@@ -3,7 +3,16 @@
  */
 
 import { Message as LangGraphMessage } from "@langchain/langgraph-sdk";
-import { Message, UserMessage, TextInputContent, BinaryInputContent } from "@ag-ui/client";
+import {
+  Message,
+  UserMessage,
+  TextInputContent,
+  BinaryInputContent,
+  ImageInputContent,
+  AudioInputContent,
+  VideoInputContent,
+  DocumentInputContent,
+} from "@ag-ui/client";
 import { aguiMessagesToLangChain, langchainMessagesToAgui } from "./utils";
 
 describe("Multimodal Message Conversion", () => {
@@ -23,17 +32,19 @@ describe("Multimodal Message Conversion", () => {
       expect(lcMessages[0].id).toBe("test-1");
     });
 
-    it("should convert multimodal AG-UI message to LangChain", () => {
+    it("should convert ImageInputContent with URL source to LangChain", () => {
       const aguiMessage: UserMessage = {
-        id: "test-2",
+        id: "test-img-url",
         role: "user",
         content: [
           { type: "text", text: "What's in this image?" },
           {
-            type: "binary",
-            mimeType: "image/jpeg",
-            url: "https://example.com/photo.jpg",
-          },
+            type: "image",
+            source: {
+              type: "url",
+              value: "https://example.com/photo.jpg",
+            },
+          } as ImageInputContent,
         ],
       };
 
@@ -46,27 +57,27 @@ describe("Multimodal Message Conversion", () => {
       const content = lcMessages[0].content as Array<any>;
       expect(content).toHaveLength(2);
 
-      // Check text content
       expect(content[0].type).toBe("text");
       expect(content[0].text).toBe("What's in this image?");
 
-      // Check image content
       expect(content[1].type).toBe("image_url");
       expect(content[1].image_url.url).toBe("https://example.com/photo.jpg");
     });
 
-    it("should convert AG-UI message with base64 data to LangChain", () => {
+    it("should convert ImageInputContent with data source to LangChain", () => {
       const aguiMessage: UserMessage = {
-        id: "test-3",
+        id: "test-img-data",
         role: "user",
         content: [
           { type: "text", text: "Analyze this" },
           {
-            type: "binary",
-            mimeType: "image/png",
-            data: "iVBORw0KGgoAAAANSUhEUgAAAAUA",
-            filename: "test.png",
-          },
+            type: "image",
+            source: {
+              type: "data",
+              value: "iVBORw0KGgoAAAANSUhEUgAAAAUA",
+              mimeType: "image/png",
+            },
+          } as ImageInputContent,
         ],
       };
 
@@ -78,10 +89,132 @@ describe("Multimodal Message Conversion", () => {
       const content = lcMessages[0].content as Array<any>;
       expect(content).toHaveLength(2);
 
-      // Check that data URL is properly formatted
       const imageContent = content[1];
       expect(imageContent.type).toBe("image_url");
-      expect(imageContent.image_url.url).toContain("data:image/png;base64,");
+      expect(imageContent.image_url.url).toBe(
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA"
+      );
+    });
+
+    it("should convert AudioInputContent to LangChain", () => {
+      const aguiMessage: UserMessage = {
+        id: "test-audio",
+        role: "user",
+        content: [
+          { type: "text", text: "Transcribe this audio" },
+          {
+            type: "audio",
+            source: {
+              type: "url",
+              value: "https://example.com/audio.mp3",
+            },
+          } as AudioInputContent,
+        ],
+      };
+
+      const lcMessages = aguiMessagesToLangChain([aguiMessage]);
+
+      const content = lcMessages[0].content as Array<any>;
+      expect(content).toHaveLength(2);
+      expect(content[1].type).toBe("image_url");
+      expect(content[1].image_url.url).toBe("https://example.com/audio.mp3");
+    });
+
+    it("should convert VideoInputContent to LangChain", () => {
+      const aguiMessage: UserMessage = {
+        id: "test-video",
+        role: "user",
+        content: [
+          { type: "text", text: "Describe this video" },
+          {
+            type: "video",
+            source: {
+              type: "data",
+              value: "dmlkZW9kYXRh",
+              mimeType: "video/mp4",
+            },
+          } as VideoInputContent,
+        ],
+      };
+
+      const lcMessages = aguiMessagesToLangChain([aguiMessage]);
+
+      const content = lcMessages[0].content as Array<any>;
+      expect(content).toHaveLength(2);
+      expect(content[1].type).toBe("image_url");
+      expect(content[1].image_url.url).toBe(
+        "data:video/mp4;base64,dmlkZW9kYXRh"
+      );
+    });
+
+    it("should convert DocumentInputContent to LangChain", () => {
+      const aguiMessage: UserMessage = {
+        id: "test-doc",
+        role: "user",
+        content: [
+          { type: "text", text: "Summarize this document" },
+          {
+            type: "document",
+            source: {
+              type: "url",
+              value: "https://example.com/doc.pdf",
+            },
+          } as DocumentInputContent,
+        ],
+      };
+
+      const lcMessages = aguiMessagesToLangChain([aguiMessage]);
+
+      const content = lcMessages[0].content as Array<any>;
+      expect(content).toHaveLength(2);
+      expect(content[1].type).toBe("image_url");
+      expect(content[1].image_url.url).toBe("https://example.com/doc.pdf");
+    });
+
+    it("should handle BinaryInputContent for backwards compatibility", () => {
+      const aguiMessage: UserMessage = {
+        id: "test-binary-compat",
+        role: "user",
+        content: [
+          { type: "text", text: "What's in this image?" },
+          {
+            type: "binary",
+            mimeType: "image/jpeg",
+            url: "https://example.com/photo.jpg",
+          } as BinaryInputContent,
+        ],
+      };
+
+      const lcMessages = aguiMessagesToLangChain([aguiMessage]);
+
+      const content = lcMessages[0].content as Array<any>;
+      expect(content).toHaveLength(2);
+
+      expect(content[1].type).toBe("image_url");
+      expect(content[1].image_url.url).toBe("https://example.com/photo.jpg");
+    });
+
+    it("should handle BinaryInputContent with base64 data for backwards compat", () => {
+      const aguiMessage: UserMessage = {
+        id: "test-binary-data",
+        role: "user",
+        content: [
+          {
+            type: "binary",
+            mimeType: "image/png",
+            data: "iVBORw0KGgoAAAANSUhEUgAAAAUA",
+          } as BinaryInputContent,
+        ],
+      };
+
+      const lcMessages = aguiMessagesToLangChain([aguiMessage]);
+
+      const content = lcMessages[0].content as Array<any>;
+      expect(content).toHaveLength(1);
+      expect(content[0].type).toBe("image_url");
+      expect(content[0].image_url.url).toBe(
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA"
+      );
     });
   });
 
@@ -100,9 +233,9 @@ describe("Multimodal Message Conversion", () => {
       expect(aguiMessages[0].content).toBe("Hello from LangChain");
     });
 
-    it("should convert LangChain multimodal message to AG-UI", () => {
+    it("should convert LangChain image_url to ImageInputContent with URL source", () => {
       const lcMessage: LangGraphMessage = {
-        id: "test-5",
+        id: "test-lc-url",
         type: "human",
         content: [
           { type: "text", text: "What do you see?" },
@@ -119,22 +252,25 @@ describe("Multimodal Message Conversion", () => {
       expect(aguiMessages[0].role).toBe("user");
       expect(Array.isArray(aguiMessages[0].content)).toBe(true);
 
-      const content = aguiMessages[0].content as Array<TextInputContent | BinaryInputContent>;
+      const content = aguiMessages[0].content as Array<TextInputContent | ImageInputContent>;
       expect(content).toHaveLength(2);
 
       // Check text content
       expect(content[0].type).toBe("text");
       expect((content[0] as TextInputContent).text).toBe("What do you see?");
 
-      // Check binary content
-      expect(content[1].type).toBe("binary");
-      expect((content[1] as BinaryInputContent).mimeType).toBe("image/png");
-      expect((content[1] as BinaryInputContent).url).toBe("https://example.com/image.jpg");
+      // Check image content - should now be ImageInputContent with URL source
+      const imageContent = content[1] as ImageInputContent;
+      expect(imageContent.type).toBe("image");
+      expect(imageContent.source.type).toBe("url");
+      expect((imageContent.source as { type: "url"; value: string }).value).toBe(
+        "https://example.com/image.jpg"
+      );
     });
 
-    it("should convert LangChain data URL to AG-UI", () => {
+    it("should convert LangChain data URL to ImageInputContent with data source", () => {
       const lcMessage: LangGraphMessage = {
-        id: "test-6",
+        id: "test-lc-data",
         type: "human",
         content: [
           { type: "text", text: "Check this out" },
@@ -150,14 +286,17 @@ describe("Multimodal Message Conversion", () => {
       expect(aguiMessages).toHaveLength(1);
       expect(Array.isArray(aguiMessages[0].content)).toBe(true);
 
-      const content = aguiMessages[0].content as Array<TextInputContent | BinaryInputContent>;
+      const content = aguiMessages[0].content as Array<TextInputContent | ImageInputContent>;
       expect(content).toHaveLength(2);
 
-      // Check that data URL was parsed correctly
-      const binaryContent = content[1] as BinaryInputContent;
-      expect(binaryContent.type).toBe("binary");
-      expect(binaryContent.mimeType).toBe("image/png");
-      expect(binaryContent.data).toBe("iVBORw0KGgo");
+      // Check that data URL was parsed correctly into ImageInputContent
+      const imageContent = content[1] as ImageInputContent;
+      expect(imageContent.type).toBe("image");
+      expect(imageContent.source.type).toBe("data");
+
+      const dataSource = imageContent.source as { type: "data"; value: string; mimeType: string };
+      expect(dataSource.value).toBe("iVBORw0KGgo");
+      expect(dataSource.mimeType).toBe("image/png");
     });
   });
 
@@ -176,7 +315,7 @@ describe("Multimodal Message Conversion", () => {
       expect((lcMessages[0].content as Array<any>)).toHaveLength(0);
     });
 
-    it("should handle binary content with only id", () => {
+    it("should handle BinaryInputContent with only id for backwards compat", () => {
       const aguiMessage: UserMessage = {
         id: "test-8",
         role: "user",
@@ -185,7 +324,7 @@ describe("Multimodal Message Conversion", () => {
             type: "binary",
             mimeType: "image/jpeg",
             id: "img-123",
-          },
+          } as BinaryInputContent,
         ],
       };
 
@@ -196,6 +335,25 @@ describe("Multimodal Message Conversion", () => {
       expect(content).toHaveLength(1);
       expect(content[0].type).toBe("image_url");
       expect(content[0].image_url.url).toBe("img-123");
+    });
+
+    it("should skip media content with unknown source type", () => {
+      const aguiMessage: UserMessage = {
+        id: "test-unknown-source",
+        role: "user",
+        content: [
+          { type: "text", text: "Hello" },
+          {
+            type: "image",
+            source: { type: "unknown" as any, value: "foo" },
+          } as any,
+        ],
+      };
+      const lcMessages = aguiMessagesToLangChain([aguiMessage]);
+      const content = lcMessages[0].content as Array<any>;
+      // Only text should remain, image with unknown source should be dropped
+      expect(content).toHaveLength(1);
+      expect(content[0].type).toBe("text");
     });
 
     it("should skip binary content without any source", () => {
