@@ -13,7 +13,8 @@ export type Feature =
   | "a2a_chat"
   | "vnext_chat"
   | "v1_agentic_chat" 
-  | "a2ui_chat";
+  | "a2ui_chat"
+  | "gomoku";
 
 export interface MenuIntegrationConfig {
   id: string;
