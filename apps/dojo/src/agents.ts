@@ -27,6 +27,7 @@ import { A2AClient } from "@a2a-js/sdk/client";
 import { LangChainAgent } from "@ag-ui/langchain";
 import { Ag2Agent } from "@ag-ui/ag2";
 import { LangroidHttpAgent } from "@ag-ui/langroid";
+import { A2UIMiddleware } from "@ag-ui/a2ui-middleware";
 
 const envVars = getEnvVars();
 
@@ -117,6 +118,7 @@ export const agentsIntegrations = {
       },
       {
         agentic_chat: "agentic_chat",
+        agentic_chat_reasoning: "agentic_chat_reasoning",
         agentic_chat_multimodal: "agentic_chat_multimodal",
         backend_tool_rendering: "backend_tool_rendering",
         agentic_generative_ui: "agentic_generative_ui",
@@ -127,10 +129,12 @@ export const agentsIntegrations = {
         subgraphs: "subgraphs",
       }
     ),
-    // Uses LangGraphHttpAgent instead of LangGraphAgent
-    agentic_chat_reasoning: new LangGraphHttpAgent({
-      url: `${envVars.langgraphPythonUrl}/agent/agentic_chat_reasoning`,
-    }),
+    // A2UI Chat with middleware
+    a2ui_chat: (() => {
+      const agent = new LangGraphAgent({ deploymentUrl: envVars.langgraphPythonUrl, graphId: "a2ui_chat" });
+      agent.use(new A2UIMiddleware({ injectA2UITool: true }));
+      return agent;
+    })(),
   }),
 
   "langgraph-fastapi": async () => ({

@@ -45,7 +45,11 @@ async def chat_node(state: AgentState, config: Optional[RunnableConfig] = None):
     elif selected_model == "Gemini":
         model = ChatGoogleGenerativeAI(model="gemini-2.5-pro", thinking_budget=1024)
     else:
-        model = ChatOpenAI(model="o3")
+        model = ChatOpenAI(
+            model="o4-mini",
+            use_responses_api=True,
+            model_kwargs={"reasoning": {"effort": "high", "summary": "auto"}},
+        )
 
     # Define config for the model
     if config is None:

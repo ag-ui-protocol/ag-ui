@@ -730,9 +730,11 @@ class LangGraphAgent:
             if is_tool_call_start_event or is_tool_call_end_event or is_tool_call_args_event:
                 self.active_run["has_function_streaming"] = True
 
-            reasoning_data = resolve_reasoning_content(event["data"]["chunk"]) if event["data"]["chunk"] else None
-            encrypted_reasoning_data = resolve_encrypted_reasoning_content(event["data"]["chunk"]) if event["data"]["chunk"] else None
-            message_content = resolve_message_content(event["data"]["chunk"].content) if event["data"]["chunk"] and event["data"]["chunk"].content else None
+            chunk = event["data"]["chunk"]
+
+            reasoning_data = resolve_reasoning_content(chunk) if chunk else None
+            encrypted_reasoning_data = resolve_encrypted_reasoning_content(chunk) if chunk else None
+            message_content = resolve_message_content(chunk.content) if chunk and chunk.content else None
             is_message_content_event = tool_call_data is None and message_content
             is_message_end_event = has_current_stream and not current_stream.get("tool_call_id") and not is_message_content_event
 
@@ -1063,7 +1065,7 @@ class LangGraphAgent:
                 ReasoningMessageStartEvent(
                     type=EventType.REASONING_MESSAGE_START,
                     message_id=self.active_run["reasoning_process"]["message_id"],
-                    role="assistant",
+                    role="reasoning",
                 )
             )
             self.active_run["reasoning_process"]["type"] = reasoning_data["type"]

@@ -22,7 +22,7 @@ export const agenticChatReasoningAgent = new Agent({
   tools: { get_weather: weatherTool },
   defaultOptions: {
     providerOptions: {
-      openai: { reasoningEffort: "high", reasoningSummary: "detailed" },
+      openai: { reasoningEffort: "high", reasoningSummary: "auto" },
       anthropic: {
         thinking: { type: "enabled", budgetTokens: 2000 },
       },
