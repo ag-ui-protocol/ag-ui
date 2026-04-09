@@ -54,7 +54,7 @@ export class HttpAgent extends AbstractAgent {
     this.headers = structuredClone_(config.headers ?? {});
   }
 
-  async getCapabilities(): Promise<AgentCapabilities> {
+  async getCapabilities(signal?: AbortSignal): Promise<AgentCapabilities> {
     const baseUrl = this.url.replace(/\/+$/, "");
     const capabilitiesUrl = `${baseUrl}/capabilities`;
 
@@ -64,14 +64,12 @@ export class HttpAgent extends AbstractAgent {
         ...this.headers,
         Accept: "application/json",
       },
-      signal: this.abortController.signal,
+      signal,
     });
 
     if (!response.ok) {
       const text = await response.text();
-      const err: any = new Error(`Failed to fetch capabilities: HTTP ${response.status}: ${text}`);
-      err.status = response.status;
-      throw err;
+      throw new Error(`Failed to fetch capabilities: HTTP ${response.status}: ${text}`);
     }
 
     const data = await response.json();

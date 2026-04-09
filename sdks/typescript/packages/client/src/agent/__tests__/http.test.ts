@@ -273,10 +273,44 @@ describe("HttpAgent.getCapabilities", () => {
           Authorization: "Bearer test-token",
           Accept: "application/json",
         }),
-        signal: expect.any(AbortSignal),
       }),
     );
     expect(result).toEqual(mockCapabilities);
+  });
+
+  it("should use caller-provided AbortSignal", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({}),
+    });
+
+    const agent = new HttpAgent({
+      url: "https://api.example.com/v1/chat",
+      headers: {},
+    });
+
+    const controller = new AbortController();
+    await agent.getCapabilities(controller.signal);
+
+    const fetchCall = (globalThis.fetch as Mock).mock.calls[0];
+    expect(fetchCall[1].signal).toBe(controller.signal);
+  });
+
+  it("should not use the run AbortController signal", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({}),
+    });
+
+    const agent = new HttpAgent({
+      url: "https://api.example.com/v1/chat",
+      headers: {},
+    });
+
+    await agent.getCapabilities();
+
+    const fetchCall = (globalThis.fetch as Mock).mock.calls[0];
+    expect(fetchCall[1].signal).toBeUndefined();
   });
 
   it("should strip trailing slashes from url before appending /capabilities", async () => {
