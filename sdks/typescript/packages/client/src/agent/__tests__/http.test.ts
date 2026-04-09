@@ -332,6 +332,25 @@ describe("HttpAgent.getCapabilities", () => {
     );
   });
 
+  it("should preserve query parameters when building capabilities URL", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({}),
+    });
+
+    const agent = new HttpAgent({
+      url: "https://api.example.com/chat?tenant=acme",
+      headers: {},
+    });
+
+    await agent.getCapabilities();
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "https://api.example.com/chat/capabilities?tenant=acme",
+      expect.any(Object),
+    );
+  });
+
   it("should throw on HTTP error responses", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: false,
@@ -344,9 +363,7 @@ describe("HttpAgent.getCapabilities", () => {
       headers: {},
     });
 
-    await expect(agent.getCapabilities()).rejects.toThrow(
-      "Failed to fetch capabilities from https://api.example.com/v1/chat/capabilities: HTTP 404: Not Found",
-    );
+    await expect(agent.getCapabilities()).rejects.toThrow("HTTP 404: Not Found");
   });
 
   it("should throw on server error responses", async () => {

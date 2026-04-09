@@ -54,18 +54,34 @@ export class HttpAgent extends AbstractAgent {
     this.headers = structuredClone_(config.headers ?? {});
   }
 
-  async getCapabilities(signal?: AbortSignal): Promise<AgentCapabilities> {
-    const baseUrl = this.url.replace(/\/+$/, "");
-    const capabilitiesUrl = `${baseUrl}/capabilities`;
+  /**
+   * Builds the URL for the capabilities endpoint.
+   * Override this to customize the capabilities URL construction.
+   */
+  protected capabilitiesUrl(): string {
+    const parsed = new URL(this.url);
+    parsed.pathname = parsed.pathname.replace(/\/+$/, "") + "/capabilities";
+    return parsed.toString();
+  }
 
-    const response = await fetch(capabilitiesUrl, {
+  /**
+   * Returns the fetch config for capabilities requests.
+   * Override this to customize auth, headers, or credentials for capability discovery.
+   */
+  protected capabilitiesRequestInit(signal?: AbortSignal): RequestInit {
+    return {
       method: "GET",
       headers: {
         ...this.headers,
         Accept: "application/json",
       },
       signal,
-    });
+    };
+  }
+
+  async getCapabilities(signal?: AbortSignal): Promise<AgentCapabilities> {
+    const url = this.capabilitiesUrl();
+    const response = await fetch(url, this.capabilitiesRequestInit(signal));
 
     if (!response.ok) {
       let body: string;
@@ -74,7 +90,7 @@ export class HttpAgent extends AbstractAgent {
       } catch {
         body = response.statusText || "(unable to read response body)";
       }
-      throw new Error(`Failed to fetch capabilities from ${capabilitiesUrl}: HTTP ${response.status}: ${body}`);
+      throw new Error(`Failed to fetch capabilities from ${url}: HTTP ${response.status}: ${body}`);
     }
 
     let data: unknown;
@@ -82,14 +98,14 @@ export class HttpAgent extends AbstractAgent {
       data = await response.json();
     } catch (e) {
       throw new Error(
-        `Failed to parse capabilities response from ${capabilitiesUrl}: ${e instanceof Error ? e.message : String(e)}`,
+        `Failed to parse capabilities response from ${url}: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
 
     const result = AgentCapabilitiesSchema.safeParse(data);
     if (!result.success) {
       throw new Error(
-        `Invalid capabilities response from ${capabilitiesUrl}: ${result.error.message}`,
+        `Invalid capabilities response from ${url}: ${result.error.message}`,
       );
     }
     return result.data;
