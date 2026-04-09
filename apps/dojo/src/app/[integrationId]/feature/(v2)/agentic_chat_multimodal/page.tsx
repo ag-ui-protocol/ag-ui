@@ -1,13 +1,9 @@
 "use client";
 import React, { useState } from "react";
-import "@copilotkit/react-core/v2/styles.css";
-import {
-  useFrontendTool,
-  useConfigureSuggestions,
-  CopilotChat,
-} from "@copilotkit/react-core/v2";
+import "@copilotkit/react-ui/styles.css";
+import { CopilotChat } from "@copilotkit/react-ui";
+import { CopilotKit, useCopilotAction } from "@copilotkit/react-core";
 import { z } from "zod";
-import { CopilotKit } from "@copilotkit/react-core";
 
 interface AgenticChatMultimodalProps {
   params: Promise<{
@@ -32,34 +28,21 @@ const AgenticChatMultimodal: React.FC<AgenticChatMultimodalProps> = ({ params })
 const Chat = () => {
   const [background, setBackground] = useState<string>("--copilot-kit-background-color");
 
-  useFrontendTool({
+  useCopilotAction({
     name: "change_background",
     description:
       "Change the background color of the chat. Can be anything that the CSS background attribute accepts. Regular colors, linear or radial gradients etc.",
-    parameters: z.object({
-      background: z.string().describe("The background. Prefer gradients. Only use when asked."),
-    }),
-    handler: async ({ background }: { background: string }) => {
-      setBackground(background);
-      return {
-        status: "success",
-        message: `Background changed to ${background}`,
-      };
-    },
-  });
-
-  useConfigureSuggestions({
-    suggestions: [
+    parameters: [
       {
-        title: "Upload an image",
-        message: "Describe what you see in the image I upload.",
-      },
-      {
-        title: "Analyze a photo",
-        message: "What objects can you identify in this photo?",
+        name: "background",
+        type: "string",
+        description: "The background. Prefer gradients. Only use when asked.",
       },
     ],
-    available: "always",
+    handler: async ({ background }: { background: string }) => {
+      setBackground(background);
+      return "Background changed successfully";
+    },
   });
 
   return (
@@ -70,9 +53,9 @@ const Chat = () => {
     >
       <div className="h-full w-full md:w-8/10 md:h-8/10 rounded-lg">
         <CopilotChat
-          agentId="agentic_chat_multimodal"
           className="h-full rounded-2xl max-w-6xl mx-auto"
-          // TODO: Enable attachments={{ enabled: true }} once CopilotKit version with CPK-7213 is released
+          attachments={{ enabled: true }}
+          instructions="You are a helpful assistant that can analyze images, documents, and other media. When a user shares an image, describe what you see in detail."
         />
       </div>
     </div>
