@@ -1,0 +1,33 @@
+{
+  "fixtures": [
+    {
+      "match": { "userMessage": "what do you see" },
+      "response": {
+        "content": "I can see the image you've shared. It appears to contain visual content that I can analyze. Let me describe what I observe in detail for you."
+      }
+    },
+    {
+      "match": { "userMessage": "describe" },
+      "response": {
+        "content": "Based on the content provided, I can describe the following elements:\n\n1. The image contains visual information\n2. I can identify key features and patterns\n3. The overall composition suggests a specific subject matter\n\nWould you like me to focus on any particular aspect?"
+      }
+    },
+    {
+      "match": { "userMessage": "analyze" },
+      "response": {
+        "content": "Here's my analysis of the content:\n\n**Key Observations:**\n- The visual elements show clear structure and composition\n- Colors and patterns are consistent with the subject matter\n- The overall quality suggests the content is well-prepared\n\nLet me know if you'd like a more detailed breakdown of any specific element."
+      }
+    },
+    {
+      "match": { "userMessage": "background" },
+      "response": {
+        "toolCalls": [
+          {
+            "name": "change_background",
+            "arguments": "{\"background\":\"linear-gradient(135deg, #f093fb 0%, #f5576c 100%)\"}"
+          }
+        ]
+      }
+    }
+  ]
+}

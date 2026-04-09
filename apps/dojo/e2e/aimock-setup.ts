@@ -964,6 +964,11 @@ export async function setupLLMock(): Promise<void> {
     },
   });
 
+  // Load reasoning and multimodal chat fixtures before the directory sweep
+  // so they take priority over the generic agentic-chat.json matches.
+  mockServer.loadFixtureFile(path.join(FIXTURES_DIR, "agentic-chat-reasoning.json"));
+  mockServer.loadFixtureFile(path.join(FIXTURES_DIR, "agentic-chat-multimodal.json"));
+
   // Load all fixture JSON files from the fixtures directory
   // (HITL fixtures are duplicated but the earlier copies match first)
   mockServer.loadFixtureDir(FIXTURES_DIR);
