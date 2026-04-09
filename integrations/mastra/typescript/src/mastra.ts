@@ -508,7 +508,6 @@ export class MastraAgent extends AbstractAgent {
     };
 
     const handleChunk = (chunk: any): boolean => {
-      console.debug(`[MastraAgent] chunk: type=${chunk?.type}, keys=${chunk ? Object.keys(chunk).join(",") : "null"}, hasPayload=${!!chunk?.payload}`);
       if (!chunk || !chunk.payload) {
         callbacks.onError(
           new Error(

@@ -6,9 +6,7 @@ import { weatherTool } from "../tools/weather-tool";
 export const agenticChatReasoningAgent = new Agent({
   id: "agentic_chat_reasoning",
   name: "Agentic Chat Reasoning",
-  instructions: {
-    role: "system",
-    content: `
+  instructions: `
       You are a helpful assistant with reasoning capabilities.
 
       You have access to a weather tool. When responding:
@@ -19,16 +17,17 @@ export const agenticChatReasoningAgent = new Agent({
       - Think step by step when answering complex questions
 
       Use the get_weather tool to fetch current weather data.
-    `,
+  `,
+  model: "openai/o4-mini",
+  tools: { get_weather: weatherTool },
+  defaultOptions: {
     providerOptions: {
-      openai: { reasoningEffort: "high" },
+      openai: { reasoningEffort: "high", reasoningSummary: "detailed" },
       anthropic: {
         thinking: { type: "enabled", budgetTokens: 2000 },
       },
     },
   },
-  model: "openai/o3",
-  tools: { get_weather: weatherTool },
   memory: new Memory({
     storage: new LibSQLStore({
       id: "agentic-chat-reasoning-memory",
