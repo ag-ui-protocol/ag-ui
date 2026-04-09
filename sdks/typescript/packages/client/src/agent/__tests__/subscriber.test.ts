@@ -1475,6 +1475,92 @@ describe("AgentSubscriber", () => {
     });
   });
 
+  describe("process.env guard (issue #1191)", () => {
+    const runWith = (
+      subscribers: AgentSubscriber[],
+      messages: Message[] = [{ id: "orig", role: "user", content: "hi" }],
+      state: Record<string, any> = {},
+    ) =>
+      runSubscribersWithMutation(subscribers, messages, state, (subscriber, msgs, st) =>
+        subscriber.onEvent?.({
+          messages: msgs,
+          state: st,
+          agent: {} as any,
+          input: {} as any,
+          event: { type: EventType.RUN_STARTED } as any,
+        }),
+      );
+
+    it("should not throw when process is undefined (browser-like environment)", async () => {
+      // Simulate a browser runtime where `process` does not exist at all.
+      const originalProcess = globalThis.process;
+      // @ts-expect-error — intentionally removing process to simulate browser
+      delete globalThis.process;
+      try {
+        const subscriber: AgentSubscriber = {
+          onEvent: () => ({
+            messages: [{ id: "ok", role: "assistant", content: "ok" }],
+          }),
+        };
+
+        const result = await runWith([subscriber]);
+        expect(result.messages).toBeDefined();
+        expect(result.messages![0].id).toBe("ok");
+      } finally {
+        globalThis.process = originalProcess;
+      }
+    });
+
+    it("should preserve original error when subscriber throws in a browser-like env", async () => {
+      const originalProcess = globalThis.process;
+      // @ts-expect-error — intentionally removing process
+      delete globalThis.process;
+      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const originalError = new Error("subscriber boom");
+        const throwingSubscriber: AgentSubscriber = {
+          onEvent: () => {
+            throw originalError;
+          },
+        };
+        const passThroughSubscriber: AgentSubscriber = {
+          onEvent: () => ({
+            messages: [{ id: "after", role: "assistant", content: "after" }],
+          }),
+        };
+
+        // Should NOT throw — the error should be caught and logged, not masked.
+        const result = await runWith([throwingSubscriber, passThroughSubscriber]);
+        expect(result.messages).toBeDefined();
+        expect(result.messages![0].id).toBe("after");
+
+        // The original error must be logged, not a ReferenceError about process.
+        expect(consoleErrorSpy).toHaveBeenCalledWith("Subscriber error:", originalError);
+      } finally {
+        consoleErrorSpy.mockRestore();
+        globalThis.process = originalProcess;
+      }
+    });
+
+    it("should not throw when process.env is undefined", async () => {
+      const originalEnv = process.env;
+      // @ts-expect-error — intentionally removing env
+      delete process.env;
+      try {
+        const subscriber: AgentSubscriber = {
+          onEvent: () => ({
+            messages: [{ id: "ok", role: "assistant", content: "ok" }],
+          }),
+        };
+
+        const result = await runWith([subscriber]);
+        expect(result.messages).toBeDefined();
+      } finally {
+        process.env = originalEnv;
+      }
+    });
+  });
+
   describe("EmptyError Bug Reproduction", () => {
     test("should demonstrate EmptyError with STEP_STARTED/STEP_FINISHED events that cause no mutations", async () => {
       const emptyAgent = new TestAgent();

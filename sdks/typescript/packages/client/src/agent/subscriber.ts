@@ -220,6 +220,24 @@ function deepFreeze<T>(obj: T): T {
   return obj;
 }
 
+/**
+ * Safely read an environment variable without assuming `process` or `process.env`
+ * exists. Returns `undefined` in browser/edge runtimes where the Node.js `process`
+ * global is absent and no bundler polyfill has been configured.
+ */
+function getEnvVar(name: string): string | undefined {
+  try {
+    // Guard with `typeof` to avoid ReferenceError in runtimes where `process`
+    // is not defined at all (browsers, Cloudflare Workers, Deno, etc.).
+    if (typeof process !== "undefined" && process?.env) {
+      return process.env[name];
+    }
+  } catch {
+    // Swallow — some edge runtimes throw on property access even after typeof check.
+  }
+  return undefined;
+}
+
 export async function runSubscribersWithMutation(
   subscribers: AgentSubscriber[],
   initialMessages: Message[],
@@ -230,12 +248,13 @@ export async function runSubscribersWithMutation(
     state: Readonly<State>,
   ) => MaybePromise<AgentStateMutation | void>,
 ): Promise<AgentStateMutation> {
+  const nodeEnv = getEnvVar("NODE_ENV");
   const isTestEnvironment =
-    process.env.NODE_ENV === "test" || Boolean(process.env.VITEST_WORKER_ID);
+    nodeEnv === "test" || Boolean(getEnvVar("VITEST_WORKER_ID"));
   const isDev =
-    process.env.NODE_ENV === "development" ||
-    process.env.NODE_ENV === "test" ||
-    Boolean(process.env.VITEST_WORKER_ID);
+    nodeEnv === "development" ||
+    nodeEnv === "test" ||
+    Boolean(getEnvVar("VITEST_WORKER_ID"));
   const baselineMessages = structuredClone_(initialMessages);
   const baselineState = structuredClone_(initialState);
   let messages: Message[] = baselineMessages;
