@@ -13,7 +13,7 @@ from google.adk.agents import Agent
 from google.genai import types
 
 
-async def test_message_events():
+async def test_message_events(llmock_server=None):
     """Test that we get proper message events with correct START/CONTENT/END patterns."""
 
     if not os.getenv("GOOGLE_API_KEY"):
@@ -450,14 +450,14 @@ async def test_edge_cases():
 
 
 @pytest.mark.asyncio
-async def test_text_message_events():
+async def test_text_message_events(llmock_server):
     """Test that we get proper message events with correct START/CONTENT/END patterns."""
     result = await test_message_events()
     assert result, "Text message events test failed"
 
 
 @pytest.mark.asyncio
-async def test_text_message_events_from_before_agent_callback():
+async def test_text_message_events_from_before_agent_callback(llmock_server):
     """Test that we get proper message events with correct START/CONTENT/END patterns."""
     result = await test_message_events_from_before_agent_callback()
     assert result, "Text message events for before_agent_callback test failed"

@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **NEW**: LLMock test infrastructure to run integration tests without `GOOGLE_API_KEY`
+  - Uses `@copilotkit/aimock` (LLMock) to mock Gemini API responses via `GOOGLE_GEMINI_BASE_URL`
+  - Session-scoped pytest fixture auto-starts a Node.js LLMock server when no real API key is present
+  - When a real `GOOGLE_API_KEY` is set, the mock is skipped and tests hit the live API as before
+  - Tier 1: 4 test files (32 tests) now pass without credentials — `test_text_events`, `test_context_integration`, `test_multi_turn_conversation`, `test_from_app_integration`
+  - Tier 2: 6 test files (50 tests) with tool-call fixtures for LRO, HITL, and skip_summarization — `test_lro_sse_persistence`, `test_lro_sse_id_remap`, `test_lro_tool_response_persistence`, `test_hitl_resumption_text_output`, `test_resumability_config`, `test_issue_437_skip_summarization_integration`
+  - Tier 3: `test_thought_to_thinking_integration` (7 tests) — reasoning/thinking event structure via `reasoning` fixture field producing `thought: true` Gemini parts
+  - Tier 4: `test_multimodal_e2e` (4 tests) — image and document handling via content-matched fixtures
+  - Remaining 4 skipped tests are Vertex AI session service live tests (require real Vertex AI infrastructure, not Gemini API)
+
+- **NEW**: Optional `hitl_max_wait_seconds` parameter for `ADKAgent` and `SessionManager` (#1441)
+  - Expired sessions with pending HITL tool calls are preserved indefinitely by default (unchanged behavior)
+  - When set, abandoned HITL sessions are force-deleted after the specified duration, preventing unbounded memory growth
+  - Tracks preservation start time per session in `_hitl_preserved_since`; tracking is cleaned up automatically when sessions are untracked
+  - Opt-in via `hitl_max_wait_seconds=7200` (or any value in seconds) on `ADKAgent()` — defaults to `None` (no limit)
+
+### Fixed
+
+- **FIX**: HITL resumption for LlmAgent roots with composite sub-agents (#1444)
+  - `_root_agent_needs_invocation_id()` now recursively detects `SequentialAgent` / `LoopAgent` anywhere in the sub-agent tree, not just at the root level
+  - Previously, topologies like `LlmAgent → SequentialAgent` or `LlmAgent → LlmAgent → SequentialAgent` lost `invocation_id` across HITL turns, causing the SequentialAgent to lose its position state and ADK to bypass its orchestration on resume
+  - Standalone LlmAgents (including those with only LlmAgent transfer targets) are unaffected — the guard still prevents passing `invocation_id` which would trigger `_get_subagent_to_resume()` ValueError
+
+## [0.6.0] - 2026-04-06
+
 ### Changed
 
 - **BREAKING**: Migrate from deprecated `THINKING_*` events to `REASONING_*` events (#1406)
@@ -17,12 +44,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Aligns the ADK middleware with the Claude Agent SDK and LangGraph integrations, which already use `REASONING_*` events
 
 ### Added
-
-- **NEW**: Optional `hitl_max_wait_seconds` parameter for `ADKAgent` and `SessionManager` (#1441)
-  - Expired sessions with pending HITL tool calls are preserved indefinitely by default (unchanged behavior)
-  - When set, abandoned HITL sessions are force-deleted after the specified duration, preventing unbounded memory growth
-  - Tracks preservation start time per session in `_hitl_preserved_since`; tracking is cleaned up automatically when sessions are untracked
-  - Opt-in via `hitl_max_wait_seconds=7200` (or any value in seconds) on `ADKAgent()` — defaults to `None` (no limit)
 
 - **NEW**: `REASONING_ENCRYPTED_VALUE` support for Gemini thought signatures (#1406)
   - Extracts `thought_signature` (opaque bytes) from Google GenAI SDK `Part` objects when present

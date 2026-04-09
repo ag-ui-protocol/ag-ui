@@ -974,10 +974,15 @@ class TestLROSSEIdRemapIntegration:
     3. ADK processes the tool result successfully (the remap makes IDs match)
     """
 
-    pytestmark = pytest.mark.skipif(
-        not _has_google_auth(),
-        reason="No Google authentication available (set GOOGLE_API_KEY or configure Vertex AI)",
-    )
+    @pytest.fixture(autouse=True)
+    def setup_llmock(self, llmock_server):
+        """Ensure LLMock is running when no real API key is set."""
+
+    @pytest.fixture(autouse=True)
+    def skip_without_auth(self):
+        """Skip if no authentication is available."""
+        if not _has_google_auth():
+            pytest.skip("No Google authentication available")
 
     @pytest.fixture(autouse=True)
     def reset_session_manager(self):

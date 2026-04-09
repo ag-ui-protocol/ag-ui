@@ -12,10 +12,9 @@ from ag_ui_adk.session_manager import SessionManager
 from google.adk.apps import App
 from google.adk.agents import LlmAgent
 
-pytestmark = pytest.mark.skipif(
-    not os.environ.get("GOOGLE_API_KEY"),
-    reason="GOOGLE_API_KEY environment variable not set"
-)
+@pytest.fixture(autouse=True)
+def setup_llmock(llmock_server):
+    """Ensure LLMock is running when no real API key is set."""
 
 
 @pytest.fixture
