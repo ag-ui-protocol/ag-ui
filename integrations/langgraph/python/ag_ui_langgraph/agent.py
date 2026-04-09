@@ -310,7 +310,11 @@ class LangGraphAgent:
             state = await self.graph.aget_state(config)
 
             tasks = state.tasks if len(state.tasks) > 0 else None
-            interrupts = tasks[0].interrupts if tasks else []
+            interrupts = [
+                intr
+                for task in (tasks or [])
+                for intr in task.interrupts
+            ]
 
             writes = state.metadata.get("writes", {}) or {}
             node_name = self.active_run["node_name"] if interrupts else next(iter(writes), None)
@@ -375,7 +379,11 @@ class LangGraphAgent:
         state = self.langgraph_default_merge_state(state_input, langchain_messages, input)
         self.active_run["current_graph_state"].update(state)
         config["configurable"]["thread_id"] = thread_id
-        interrupts = agent_state.tasks[0].interrupts if agent_state.tasks and len(agent_state.tasks) > 0 else []
+        interrupts = [
+            intr
+            for task in (agent_state.tasks or [])
+            for intr in task.interrupts
+        ]
         has_active_interrupts = len(interrupts) > 0
         resume_input = forwarded_props.get('command', {}).get('resume', None)
 
