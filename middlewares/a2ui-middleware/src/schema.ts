@@ -10,13 +10,13 @@
  */
 
 /**
- * The A2UI JSON Schema for system prompts.
- * This is the complete schema including all message types and component definitions.
- * Include this in your agent's system prompt to enable A2UI rendering.
+ * @deprecated Do not use built-in schemas. Component schemas must be passed
+ * explicitly from application code via CopilotRuntime's `a2ui.schema` config.
+ * The middleware injects these as context for agents automatically.
  */
 export const A2UI_PROMPT = `---BEGIN A2UI JSON SCHEMA---
 
-## A2UI Protocol Instructions
+## A2UI v0.9 Protocol Instructions
 
 A2UI (Agent to UI) is a protocol for rendering rich UI surfaces from agent responses.
 When using the send_a2ui_json_to_client tool, you MUST follow these rules:
@@ -24,13 +24,15 @@ When using the send_a2ui_json_to_client tool, you MUST follow these rules:
 ### CRITICAL: Required Message Sequence
 
 To render a surface, you MUST send ALL messages in a SINGLE tool call, in this order:
-1. **surfaceUpdate** - Define all UI components (REQUIRED)
-2. **dataModelUpdate** - Set any data values (OPTIONAL)
-3. **beginRendering** - Signal the client to start rendering (REQUIRED)
+1. **createSurface** - Create the surface (REQUIRED, only for initial render)
+2. **updateComponents** - Define all UI components (REQUIRED)
+3. **updateDataModel** - Set any data values (OPTIONAL)
 
 **IMPORTANT**:
-- The \`beginRendering\` message is MANDATORY. Without it, the client will buffer your components but NEVER display them.
-- ALL messages (surfaceUpdate AND beginRendering) MUST be in the SAME a2ui_json array in ONE tool call. Do NOT make separate tool calls for surfaceUpdate and beginRendering - they will not work!
+- The \`createSurface\` message is MANDATORY for the first render. Without it, the client has no surface to render into.
+- ALL messages MUST be in the SAME a2ui_json array in ONE tool call.
+- Every message MUST include \`"version": "v0.9"\`.
+- The root component MUST have \`"id": "root"\`.
 
 ### Minimal Working Example
 
@@ -39,31 +41,29 @@ Here is the simplest possible A2UI surface - a button:
 \`\`\`json
 [
   {
-    "surfaceUpdate": {
+    "version": "v0.9",
+    "createSurface": {
+      "surfaceId": "my-surface",
+      "catalogId": "https://a2ui.org/specification/v0_9/basic_catalog.json"
+    }
+  },
+  {
+    "version": "v0.9",
+    "updateComponents": {
       "surfaceId": "my-surface",
       "components": [
         {
           "id": "root",
-          "component": {
-            "Button": {
-              "child": "btn-text",
-              "action": { "name": "button_clicked" }
-            }
-          }
+          "component": "Button",
+          "child": "btn-text",
+          "action": { "event": { "name": "button_clicked" } }
         },
         {
           "id": "btn-text",
-          "component": {
-            "Text": { "text": { "literalString": "Click Me" } }
-          }
+          "component": "Text",
+          "text": "Click Me"
         }
       ]
-    }
-  },
-  {
-    "beginRendering": {
-      "surfaceId": "my-surface",
-      "root": "root"
     }
   }
 ]
@@ -71,44 +71,48 @@ Here is the simplest possible A2UI surface - a button:
 
 ### Key Rules
 
-1. **Always include beginRendering** - This signals the client to render. Without it, nothing displays.
+1. **Always include createSurface** for new surfaces - This tells the client to create the surface.
 2. **Use unique surfaceId values** - Each surface must have a unique ID.
-3. **The root component** - The \`root\` in beginRendering must match a component ID from surfaceUpdate.
+3. **Root component must have id "root"** - The root component is always the one with \`"id": "root"\`.
 4. **Flat component structure** - Components reference children by ID, not by nesting.
-5. **Text is separate** - Buttons, Cards, etc. reference Text components by ID for their labels.
-6. **Production ready** - The UI you generate will be shown to real users. It must be complete, polished, and functional.
-7. **No placeholder images** - NEVER use fake or placeholder image URLs like \`https://example.com/image.jpg\` or \`https://placeholder.com/...\`. Only use real, valid image URLs that actually exist. If you don't have a real image URL, omit the image component entirely or use an Icon component instead.
-8. **Root must be a layout component** - The root component in \`beginRendering\` should be a layout container like Column, Row, Card, or similar. Do NOT use Modal, Button, Text, or other leaf/special components as the root. Wrap them in a Column or Card first.
-9. **Modal vs direct content** - The \`Modal\` component is for "click a button to open a popup" patterns. It shows only its \`entryPointChild\` (a trigger button) initially, and the \`contentChild\` is hidden until clicked. When users ask for an "alert dialog", "confirmation dialog", or similar, they usually want the content visible immediately - use a Card or Column with the content directly, NOT a Modal.
+5. **v0.9 flat format** - Component type is a string: \`"component": "Text"\`, not \`"component": { "Text": {...} }\`.
+6. **Properties are top-level** - Properties go directly on the component object: \`{ "id": "t", "component": "Text", "text": "Hello" }\`.
+7. **Children are arrays** - Use \`"children": ["child1", "child2"]\` not \`"children": { "explicitList": [...] }\`.
+8. **Plain data model** - Use \`"value"\` with plain JSON, not typed \`contents\` arrays.
+9. **Actions use event wrapper** - Button actions use \`{ "event": { "name": "...", "context": {...} } }\` with context as a plain object.
+10. **Production ready** - The UI you generate will be shown to real users. It must be complete, polished, and functional.
+11. **No placeholder images** - NEVER use fake or placeholder image URLs. Only use real, valid image URLs. If unavailable, use an Icon component instead.
+12. **Root must be a layout component** - The root should be Column, Row, Card, or similar. Do NOT use Modal, Button, Text as root.
+13. **Button uses child** - Use \`"child": "text-id"\` for the button's label component.
+14. **Button variant** - Use \`"variant": "primary"\` instead of \`"primary": true\`.
+15. **Layout uses justify/align** - Use \`"justify"\` (not \`"distribution"\`) and \`"align"\` (not \`"alignment"\`).
+16. **Text variant** - Use \`"variant"\` (not \`"usageHint"\`) for text style: h1, h2, h3, h4, h5, caption, body.
 
 ### Updating Surfaces After Initial Render
 
-Once a surface has been rendered (after \`beginRendering\`), you can update it in later turns WITHOUT sending another \`beginRendering\`. Just send updates directly:
+Once a surface has been created, you can update it in later turns WITHOUT sending another \`createSurface\`. Just send updates directly:
 
-**To update UI components** - Send a \`surfaceUpdate\` with the same surfaceId:
+**To update UI components** - Send an \`updateComponents\` with the same surfaceId:
 - To modify a component: send it with the same \`id\` - it replaces the old definition
 - To add new components: include them in the components array
-- The client will re-render automatically
 
-**To update data values** - Send a \`dataModelUpdate\`:
-- Components bound to data paths (using \`"path": "/some/value"\`) update automatically
-- Only send the data that changed
+**To update data values** - Send an \`updateDataModel\`:
+- Components bound to data paths (using \`{ "path": "/some/value" }\`) update automatically
+- Use \`"path"\` to target a specific location, and \`"value"\` for the plain JSON value
 
 **Example: Updating an existing surface**
-
-If you previously rendered a surface with \`surfaceId: "my-surface"\`, you can update it like this:
 
 \`\`\`json
 [
   {
-    "surfaceUpdate": {
+    "version": "v0.9",
+    "updateComponents": {
       "surfaceId": "my-surface",
       "components": [
         {
           "id": "status-text",
-          "component": {
-            "Text": { "text": { "literalString": "Updated status!" } }
-          }
+          "component": "Text",
+          "text": "Updated status!"
         }
       ]
     }
@@ -121,46 +125,47 @@ Or update data-bound values:
 \`\`\`json
 [
   {
-    "dataModelUpdate": {
+    "version": "v0.9",
+    "updateDataModel": {
       "surfaceId": "my-surface",
-      "contents": [
-        { "key": "status", "valueString": "Complete" }
-      ]
+      "path": "/status",
+      "value": "Complete"
     }
   }
 ]
 \`\`\`
 
-**IMPORTANT**: Do NOT send \`beginRendering\` again for updates to an existing surface. It's only needed for the initial render.
+**IMPORTANT**: Do NOT send \`createSurface\` again for updates to an existing surface.
 
 ### Working with Forms and Data Binding
 
-A2UI supports forms where user input is automatically stored in a data model and can be retrieved when buttons are clicked.
+A2UI supports forms where user input is stored in a data model and retrieved when buttons are clicked.
 
 **How it works:**
 1. **TextField binds to a path**: Use \`"text": { "path": "/form/fieldName" }\` to bind input to the data model
-2. **Initialize the data model**: Send a \`dataModelUpdate\` to set initial values
-3. **Button retrieves values**: Use \`action.context\` with path references to include form values when clicked
+2. **Initialize the data model**: Send an \`updateDataModel\` to set initial values
+3. **Button retrieves values**: Use \`action.event.context\` with path references to include form values when clicked
 4. **Agent receives resolved values**: The context in the action will contain the actual values the user entered
 
 **Form Example:**
 
 \`\`\`json
 [
+  { "version": "v0.9", "createSurface": { "surfaceId": "my-form", "catalogId": "https://a2ui.org/specification/v0_9/basic_catalog.json" } },
   {
-    "surfaceUpdate": {
+    "version": "v0.9",
+    "updateComponents": {
       "surfaceId": "my-form",
       "components": [
-        { "id": "root", "component": { "Card": { "child": "form-col" } } },
-        { "id": "form-col", "component": { "Column": { "children": { "explicitList": ["name-field", "submit-btn"] } } } },
-        { "id": "name-field", "component": { "TextField": { "label": { "literalString": "Name" }, "text": { "path": "/form/name" } } } },
-        { "id": "submit-btn", "component": { "Button": { "child": "btn-text", "action": { "name": "submit", "context": [{ "key": "userName", "value": { "path": "/form/name" } }] } } } },
-        { "id": "btn-text", "component": { "Text": { "text": { "literalString": "Submit" } } } }
+        { "id": "root", "component": "Card", "child": "form-col" },
+        { "id": "form-col", "component": "Column", "children": ["name-field", "submit-btn"] },
+        { "id": "name-field", "component": "TextField", "label": "Name", "text": { "path": "/form/name" } },
+        { "id": "submit-btn", "component": "Button", "child": "btn-text", "action": { "event": { "name": "submit", "context": { "userName": { "path": "/form/name" } } } } },
+        { "id": "btn-text", "component": "Text", "text": "Submit" }
       ]
     }
   },
-  { "dataModelUpdate": { "surfaceId": "my-form", "contents": [{ "key": "form", "valueMap": [{ "key": "name", "valueString": "" }] }] } },
-  { "beginRendering": { "surfaceId": "my-form", "root": "root" } }
+  { "version": "v0.9", "updateDataModel": { "surfaceId": "my-form", "value": { "form": { "name": "" } } } }
 ]
 \`\`\`
 
@@ -185,201 +190,67 @@ When the last messages are a \`log_a2ui_event\` tool call + result:
 5. Do NOT simply describe what buttons exist - respond to what they clicked!
 
 ## JSON Schema Reference
-{
-  "type": "array",
-  "items": {
-    "title": "A2UI Message Schema",
-    "description": "Describes a JSON payload for an A2UI (Agent to UI) message, which is used to dynamically construct and update user interfaces. A message MUST contain exactly ONE of the action properties: 'beginRendering', 'surfaceUpdate', 'dataModelUpdate', or 'deleteSurface'.",
-    "type": "object",
-  "properties": {
-    "beginRendering": {
-      "type": "object",
-      "description": "Signals the client to begin rendering a surface with a root component and specific styles.",
-      "properties": {
-        "surfaceId": {
-          "type": "string",
-          "description": "The unique identifier for the UI surface to be rendered."
-        },
-        "root": {
-          "type": "string",
-          "description": "The ID of the root component to render."
-        },
-        "styles": {
-          "type": "object",
-          "description": "Styling information for the UI.",
-          "properties": {
-            "font": {
-              "type": "string",
-              "description": "The primary font for the UI."
-            },
-            "primaryColor": {
-              "type": "string",
-              "description": "The primary UI color as a hexadecimal code (e.g., '#00BFFF').",
-              "pattern": "^#[0-9a-fA-F]{6}$"
-            }
-          }
-        }
-      },
-      "required": ["root", "surfaceId"]
-    },
-    "surfaceUpdate": {
-      "type": "object",
-      "description": "Updates a surface with a new set of components.",
-      "properties": {
-        "surfaceId": {
-          "type": "string",
-          "description": "The unique identifier for the UI surface to be updated. If you are adding a new surface this *must* be a new, unique identified that has never been used for any existing surfaces shown."
-        },
-        "components": {
-          "type": "array",
-          "description": "A list containing all UI components for the surface.",
-          "minItems": 1,
-          "items": {
-            "type": "object",
-            "description": "Represents a *single* component in a UI widget tree. This component could be one of many supported types.",
-            "properties": {
-              "id": {
-                "type": "string",
-                "description": "The unique identifier for this component."
-              },
-              "weight": {
-                "type": "number",
-                "description": "The relative weight of this component within a Row or Column. This corresponds to the CSS 'flex-grow' property. Note: this may ONLY be set when the component is a direct descendant of a Row or Column."
-              },
-              "component": {
-                "type": "object",
-                "description": "A wrapper object that MUST contain exactly one key, which is the name of the component type (e.g., 'Heading'). The value is an object containing the properties for that specific component.",
-                "properties": {
-                  "Text": {
-                    "type": "object",
-                    "properties": {
-                      "text": {
-                        "type": "object",
-                        "description": "The text content to display. This can be a literal string or a reference to a value in the data model ('path', e.g., '/doc/title'). While simple Markdown formatting is supported (i.e. without HTML, images, or links), utilizing dedicated UI components is generally preferred for a richer and more structured presentation.",
-                        "properties": {
-                          "literalString": {
-                            "type": "string"
-                          },
-                          "path": {
-                            "type": "string"
-                          }
-                        }
-                      },
-                      "usageHint": {
-                        "type": "string",
-                        "description": "A hint for the base text style. One of:\\n- \`h1\`: Largest heading.\\n- \`h2\`: Second largest heading.\\n- \`h3\`: Third largest heading.\\n- \`h4\`: Fourth largest heading.\\n- \`h5\`: Fifth largest heading.\\n- \`caption\`: Small text for captions.\\n- \`body\`: Standard body text.",
-                        "enum": [
-                          "h1",
-                          "h2",
-                          "h3",
-                          "h4",
-                          "h5",
-                          "caption",
-                          "body"
-                        ]
-                      }
-                    },
-                    "required": ["text"]
-                  },
-                  "Image": {
-                    "type": "object",
-                    "properties": {
-                      "url": {
-                        "type": "object",
-                        "description": "The URL of the image to display. This can be a literal string ('literal') or a reference to a value in the data model ('path', e.g. '/thumbnail/url').",
-                        "properties": {
-                          "literalString": {
-                            "type": "string"
-                          },
-                          "path": {
-                            "type": "string"
-                          }
-                        }
-                      },
-                      "fit": {
-                        "type": "string",
-                        "description": "Specifies how the image should be resized to fit its container. This corresponds to the CSS 'object-fit' property.",
-                        "enum": [
-                          "contain",
-                          "cover",
-                          "fill",
-                          "none",
-                          "scale-down"
-                        ]
-                      },
-                      "usageHint": {
-                        "type": "string",
-                        "description": "A hint for the image size and style. One of:\\n- \`icon\`: Small square icon.\\n- \`avatar\`: Circular avatar image.\\n- \`smallFeature\`: Small feature image.\\n- \`mediumFeature\`: Medium feature image.\\n- \`largeFeature\`: Large feature image.\\n- \`header\`: Full-width, full bleed, header image.",
-                        "enum": [
-                          "icon",
-                          "avatar",
-                          "smallFeature",
-                          "mediumFeature",
-                          "largeFeature",
-                          "header"
-                        ]
-                      }
-                    },
-                    "required": ["url"]
-                  },
-                  "Icon": {
-                    "type": "object",
-                    "properties": {
-                      "name": {
-                        "type": "object",
-                        "description": "The name of the icon to display. This can be a literal string or a reference to a value in the data model ('path', e.g. '/form/submit').",
-                        "properties": {
-                          "literalString": {
-                            "type": "string",
-                            "enum": [
-                              "accountCircle",
-                              "add",
-                              "arrowBack",
-                              "arrowForward",
-                              "attachFile",
-                              "calendarToday",
-                              "call",
-                              "camera",
-                              "check",
-                              "close",
-                              "delete",
-                              "download",
-                              "edit",
-                              "event",
-                              "error",
-                              "favorite",
-                              "favoriteOff",
-                              "folder",
-                              "help",
-                              "home",
-                              "info",
-                              "locationOn",
-                              "lock",
-                              "lockOpen",
-                              "mail",
-                              "menu",
-                              "moreVert",
-                              "moreHoriz",
-                              "notificationsOff",
-                              "notifications",
-                              "payment",
-                              "person",
-                              "phone",
-                              "photo",
-                              "print",
-                              "refresh",
-                              "search",
-                              "send",
-                              "settings",
-                              "share",
-                              "shoppingCart",
-                              "star",
-                              "starHalf",
-                              "starOff",
-                              "upload",
-                              "visibility",
-                              "visibilityOff",
-                              "warning"
+
+Each message is an object with \`"version": "v0.9"\` and exactly ONE operation key.
+
+### Message Types
+
+**createSurface** - Create a new surface:
+\`\`\`json
+{ "version": "v0.9", "createSurface": { "surfaceId": "my-surface", "catalogId": "https://a2ui.org/specification/v0_9/basic_catalog.json" } }
+\`\`\`
+
+**updateComponents** - Set/update components on a surface:
+\`\`\`json
+{ "version": "v0.9", "updateComponents": { "surfaceId": "my-surface", "components": [...] } }
+\`\`\`
+
+**updateDataModel** - Set/update data on a surface (plain JSON):
+\`\`\`json
+{ "version": "v0.9", "updateDataModel": { "surfaceId": "my-surface", "path": "/", "value": { "name": "Alice" } } }
+\`\`\`
+
+**deleteSurface** - Delete a surface:
+\`\`\`json
+{ "version": "v0.9", "deleteSurface": { "surfaceId": "my-surface" } }
+\`\`\`
+
+### Component Format (v0.9 flat)
+
+Each component is a flat object with \`id\`, \`component\` (type name as string), and properties at top level:
+\`\`\`json
+{ "id": "title", "component": "Text", "text": "Hello World", "variant": "h2" }
+\`\`\`
+
+### Component Reference
+
+**Content Components:**
+- **Text**: \`{ component: "Text", text: "string" | { path: "/data/key" }, variant?: "h1"|"h2"|"h3"|"h4"|"h5"|"caption"|"body" }\`
+- **Image**: \`{ component: "Image", url: "string" | { path }, fit?: "contain"|"cover"|"fill", variant?: "icon"|"avatar"|"smallFeature"|"mediumFeature"|"largeFeature"|"header" }\`
+- **Icon**: \`{ component: "Icon", name: "string" | { path } }\` — names: accountCircle, add, arrowBack, arrowForward, attachFile, calendarToday, call, camera, check, close, delete, download, edit, event, error, favorite, favoriteOff, folder, help, home, info, locationOn, lock, lockOpen, mail, menu, moreVert, moreHoriz, notificationsOff, notifications, payment, person, phone, photo, print, refresh, search, send, settings, share, shoppingCart, star, starHalf, starOff, upload, visibility, visibilityOff, warning
+- **Video**: \`{ component: "Video", url: "string" | { path } }\`
+- **AudioPlayer**: \`{ component: "AudioPlayer", url: "string" | { path }, description?: "string" | { path } }\`
+- **Divider**: \`{ component: "Divider", axis?: "horizontal"|"vertical" }\`
+
+**Layout Components:**
+- **Row**: \`{ component: "Row", children: ["id1", "id2"] | { componentId, path }, justify?: "start"|"center"|"end"|"spaceBetween"|"spaceAround"|"spaceEvenly", align?: "start"|"center"|"end"|"stretch" }\`
+- **Column**: \`{ component: "Column", children: ["id1", "id2"] | { componentId, path }, justify?: "start"|"center"|"end"|"spaceBetween"|"spaceAround"|"spaceEvenly", align?: "start"|"center"|"end"|"stretch" }\`
+- **List**: \`{ component: "List", children: ["id1"] | { componentId, path }, direction?: "vertical"|"horizontal", align?: "start"|"center"|"end"|"stretch" }\`
+- **Card**: \`{ component: "Card", child: "content-id" }\`
+- **Tabs**: \`{ component: "Tabs", tabItems: [{ title: "string" | { path }, child: "id" }] }\`
+- **Modal**: \`{ component: "Modal", entryPointChild: "trigger-id", contentChild: "content-id" }\`
+
+**Interactive Components:**
+- **Button**: \`{ component: "Button", child: "text-id", action: { event: { name: "action_name", context?: { key: value | { path } } } }, variant?: "primary"|"secondary"|"text" }\`
+- **TextField**: \`{ component: "TextField", label: "string" | { path }, text?: "string" | { path }, textFieldType?: "shortText"|"longText"|"number"|"date"|"obscured" }\`
+- **CheckBox**: \`{ component: "CheckBox", label: "string" | { path }, checked?: boolean | { path } }\`
+- **Slider**: \`{ component: "Slider", value: number | { path }, minValue?: number, maxValue?: number }\`
+- **DateTimeInput**: \`{ component: "DateTimeInput", value: "string" | { path }, enableDate?: boolean, enableTime?: boolean }\`
+- **ChoicePicker**: \`{ component: "ChoicePicker", selections: ["a"] | { path }, options: [{ label: "string" | { path }, value: "string" }], maxAllowedSelections?: number }\`
+---END A2UI JSON SCHEMA---`;
+
+/* v0.8 schema removed */
+const _REMOVED_V08_SCHEMA = `"accountCircle","warning"
                             ]
                           },
                           "path": {
@@ -952,40 +823,90 @@ When the last messages are a \`log_a2ui_event\` tool call + result:
           "description": "The unique identifier for the UI surface to be deleted."
         }
       },
-      "required": ["surfaceId"]
-    }
-  }
-  }
-}
----END A2UI JSON SCHEMA---`;
+---END_REMOVED---`;
 
 /**
- * Try to parse text as A2UI operations.
- * Returns the array of operations if the text contains valid A2UI JSON, or null otherwise.
+ * The container key used to wrap A2UI operations for explicit detection.
+ * Must match the key used by copilotkit.a2ui.render() (Python SDK)
+ * and A2UIMessageRenderer (React).
  */
-export function tryParseA2UIOperations(text: string): Array<Record<string, unknown>> | null {
+export const A2UI_OPERATIONS_KEY = "a2ui_operations";
+
+/**
+ * Parsed A2UI container result.
+ */
+export interface A2UIParseResult {
+  operations: Array<Record<string, unknown>>;
+}
+
+/**
+ * Try to parse text as an A2UI container.
+ * Returns operations if the text contains a valid { a2ui_operations: [...] }
+ * container, or null otherwise.
+ */
+export function tryParseA2UIOperations(text: string): A2UIParseResult | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
-  } catch {
+  } catch (e) {
+    // Try double-parse (in case the text is a JSON-encoded string)
+    try {
+      const inner = JSON.parse(JSON.parse(text));
+      if (
+        typeof inner === "object" &&
+        inner !== null &&
+        !Array.isArray(inner) &&
+        Array.isArray((inner as Record<string, unknown>)[A2UI_OPERATIONS_KEY])
+      ) {
+        const obj = inner as Record<string, unknown>;
+        const result: A2UIParseResult = {
+          operations: obj[A2UI_OPERATIONS_KEY] as Array<
+            Record<string, unknown>
+          >,
+        };
+
+        return result;
+      }
+    } catch {
+      // Not double-encoded either
+    }
     return null;
   }
 
-  if (Array.isArray(parsed)) {
-    // Check if at least one item is a valid A2UI operation
-    const hasA2UI = parsed.some(
-      (item) =>
-        typeof item === "object" &&
-        item !== null &&
-        getOperationSurfaceId(item as Record<string, unknown>) !== undefined
-    );
-    return hasA2UI ? (parsed as Array<Record<string, unknown>>) : null;
+  if (
+    typeof parsed === "object" &&
+    parsed !== null &&
+    !Array.isArray(parsed) &&
+    Array.isArray((parsed as Record<string, unknown>)[A2UI_OPERATIONS_KEY])
+  ) {
+    const obj = parsed as Record<string, unknown>;
+    const result: A2UIParseResult = {
+      operations: obj[A2UI_OPERATIONS_KEY] as Array<Record<string, unknown>>,
+    };
+
+    return result;
   }
 
-  if (typeof parsed === "object" && parsed !== null) {
-    // Single object — check if it's a valid A2UI operation
-    if (getOperationSurfaceId(parsed as Record<string, unknown>) !== undefined) {
-      return [parsed as Record<string, unknown>];
+  // Check if it's a string that needs another parse (double-serialized)
+  if (typeof parsed === "string") {
+    try {
+      const inner = JSON.parse(parsed);
+      if (
+        typeof inner === "object" &&
+        inner !== null &&
+        !Array.isArray(inner) &&
+        Array.isArray((inner as Record<string, unknown>)[A2UI_OPERATIONS_KEY])
+      ) {
+        const obj = inner as Record<string, unknown>;
+        const result: A2UIParseResult = {
+          operations: obj[A2UI_OPERATIONS_KEY] as Array<
+            Record<string, unknown>
+          >,
+        };
+        return result;
+      }
+    } catch {
+      // Not double-encoded either
     }
   }
 
@@ -993,19 +914,29 @@ export function tryParseA2UIOperations(text: string): Array<Record<string, unkno
 }
 
 /**
- * Extract surfaceId from a single A2UI operation
+ * Extract surfaceId from a single A2UI operation (v0.9 keys)
  */
-export function getOperationSurfaceId(operation: Record<string, unknown>): string | undefined {
-  // Check each message type for surfaceId
-  const beginRendering = operation.beginRendering as { surfaceId?: string } | undefined;
-  const surfaceUpdate = operation.surfaceUpdate as { surfaceId?: string } | undefined;
-  const dataModelUpdate = operation.dataModelUpdate as { surfaceId?: string } | undefined;
-  const deleteSurface = operation.deleteSurface as { surfaceId?: string } | undefined;
+export function getOperationSurfaceId(
+  operation: Record<string, unknown>,
+): string | undefined {
+  // v0.9 message types
+  const createSurface = operation.createSurface as
+    | { surfaceId?: string }
+    | undefined;
+  const updateComponents = operation.updateComponents as
+    | { surfaceId?: string }
+    | undefined;
+  const updateDataModel = operation.updateDataModel as
+    | { surfaceId?: string }
+    | undefined;
+  const deleteSurface = operation.deleteSurface as
+    | { surfaceId?: string }
+    | undefined;
 
   return (
-    beginRendering?.surfaceId ??
-    surfaceUpdate?.surfaceId ??
-    dataModelUpdate?.surfaceId ??
+    createSurface?.surfaceId ??
+    updateComponents?.surfaceId ??
+    updateDataModel?.surfaceId ??
     deleteSurface?.surfaceId
   );
 }
@@ -1014,7 +945,7 @@ export function getOperationSurfaceId(operation: Record<string, unknown>): strin
  * Extract surface IDs from A2UI messages
  */
 export function extractSurfaceIds(
-  messages: Array<{ [key: string]: unknown }>
+  messages: Array<{ [key: string]: unknown }>,
 ): string[] {
   const surfaceIds = new Set<string>();
   for (const msg of messages) {
@@ -1025,3 +956,11 @@ export function extractSurfaceIds(
   }
   return Array.from(surfaceIds);
 }
+
+export {
+  extractCompleteItems,
+  extractCompleteItemsWithStatus,
+  extractCompleteObject,
+  extractCompleteA2UIOperations,
+  extractStringField,
+} from "./json-extract";

@@ -88,10 +88,22 @@ export const featureConfig: FeatureConfig[] = [
     tags: ["Chat", "VNext", "Streaming"],
   }),
   createFeatureConfig({
-    id: "a2ui_chat",
-    name: "A2UI Chat",
-    description: "Chat with rich A2UI surface rendering using BuiltInAgent",
-    tags: ["Chat", "A2UI", "Generative UI", "Streaming"],
+    id: "a2ui_fixed_schema",
+    name: "A2UI Fixed Schema",
+    description: "Fixed-schema A2UI flight search with data-bound cards (no streaming)",
+    tags: ["A2UI", "Generative UI", "Fixed Schema"],
+  }),
+  createFeatureConfig({
+    id: "a2ui_dynamic_schema",
+    name: "A2UI Dynamic Schema",
+    description: "Dynamic LLM-generated A2UI surfaces from conversation context",
+    tags: ["A2UI", "Generative UI", "Dynamic Schema", "Streaming"],
+  }),
+  createFeatureConfig({
+    id: "a2ui_advanced",
+    name: "A2UI Advanced",
+    description: "Dynamic A2UI with custom progress renderer and frontend action handlers",
+    tags: ["A2UI", "Advanced", "Progress", "Action Handlers"],
   }),
 ];
 

@@ -21,7 +21,7 @@ export const menuIntegrations = [
       "backend_tool_rendering",
       "human_in_the_loop",
       "tool_based_generative_ui",
-      "a2ui_chat",
+
     ],
   },
   {
@@ -33,7 +33,7 @@ export const menuIntegrations = [
       "backend_tool_rendering",
       "human_in_the_loop",
       "tool_based_generative_ui",
-      "a2ui_chat",
+
     ],
   },
   {
@@ -49,7 +49,7 @@ export const menuIntegrations = [
       "shared_state",
       "tool_based_generative_ui",
       "subgraphs",
-      "a2ui_chat",
+
     ],
   },
   {
@@ -66,7 +66,9 @@ export const menuIntegrations = [
       "shared_state",
       "tool_based_generative_ui",
       "subgraphs",
-      "a2ui_chat",
+      "a2ui_fixed_schema",
+      "a2ui_dynamic_schema",
+      "a2ui_advanced",
     ],
   },
   {
@@ -238,11 +240,11 @@ export const menuIntegrations = [
     name: "A2A (Direct)",
     features: ["vnext_chat"],
   },
-  {
-    id: "builtin",
-    name: "Built-in Agent",
-    features: ["a2ui_chat"],
-  },
+  // {
+  //   id: "builtin",
+  //   name: "Built-in Agent",
+  //   features: [],
+  // },
   // Disabled until we can support Vercel AI SDK v5
   // {
   //   id: "vercel-ai-sdk",
