@@ -46,7 +46,9 @@ export interface MastraAgentConfig extends AgentConfig {
 
 interface MastraAgentStreamOptions {
   onTextPart?: (text: string) => void;
+  onReasoningStart?: () => void;
   onReasoningPart?: (text: string) => void;
+  onReasoningEnd?: () => void;
   onFinishMessagePart?: () => void;
   onToolCallPart?: (streamPart: {
     toolCallId: string;
@@ -387,26 +389,36 @@ export class MastraAgent extends AbstractAgent {
       }
     };
 
+    const openReasoning = () => {
+      if (!isReasoning) {
+        reasoningMessageId = randomUUID();
+        isReasoning = true;
+        subscriber.next({
+          type: EventType.REASONING_START,
+          messageId: reasoningMessageId,
+        } as ReasoningStartEvent);
+        subscriber.next({
+          type: EventType.REASONING_MESSAGE_START,
+          messageId: reasoningMessageId,
+          role: "reasoning",
+        } as ReasoningMessageStartEvent);
+      }
+    };
+
     return {
+      onReasoningStart: () => {
+        openReasoning();
+      },
       onReasoningPart: (text) => {
-        if (!isReasoning) {
-          reasoningMessageId = randomUUID();
-          isReasoning = true;
-          subscriber.next({
-            type: EventType.REASONING_START,
-            messageId: reasoningMessageId,
-          } as ReasoningStartEvent);
-          subscriber.next({
-            type: EventType.REASONING_MESSAGE_START,
-            messageId: reasoningMessageId,
-            role: "reasoning",
-          } as ReasoningMessageStartEvent);
-        }
+        openReasoning();
         subscriber.next({
           type: EventType.REASONING_MESSAGE_CONTENT,
           messageId: reasoningMessageId!,
           delta: text,
         } as ReasoningMessageContentEvent);
+      },
+      onReasoningEnd: () => {
+        closeReasoning();
       },
       onTextPart: (text) => {
         closeReasoning();
@@ -506,15 +518,18 @@ export class MastraAgent extends AbstractAgent {
         return true;
       }
       switch (chunk.type) {
+        case "reasoning-start": {
+          callbacks.onReasoningStart?.();
+          break;
+        }
         case "reasoning-delta": {
           callbacks.onReasoningPart?.(chunk.payload.text);
           break;
         }
-        // reasoning-start, reasoning-end, reasoning-signature, and
-        // redacted-reasoning are AI SDK lifecycle events handled implicitly
-        // by the onReasoningPart callback's open/close logic.
-        case "reasoning-start":
-        case "reasoning-end":
+        case "reasoning-end": {
+          callbacks.onReasoningEnd?.();
+          break;
+        }
         case "reasoning-signature":
         case "redacted-reasoning":
           break;
@@ -622,7 +637,9 @@ export class MastraAgent extends AbstractAgent {
     { threadId, runId, messages, tools, context: inputContext }: RunAgentInput,
     {
       onTextPart,
+      onReasoningStart,
       onReasoningPart,
+      onReasoningEnd,
       onFinishMessagePart,
       onToolCallPart,
       onToolResultPart,
@@ -663,7 +680,9 @@ export class MastraAgent extends AbstractAgent {
         if (response && typeof response === "object") {
           const hadError = await this.processFullStream(response.fullStream, {
             onTextPart,
+            onReasoningStart,
             onReasoningPart,
+            onReasoningEnd,
             onFinishMessagePart,
             onToolCallPart,
             onToolResultPart,
@@ -696,7 +715,9 @@ export class MastraAgent extends AbstractAgent {
         if (response && typeof response.processDataStream === "function") {
           const { handleChunk, flush } = this.createChunkProcessor({
             onTextPart,
+            onReasoningStart,
             onReasoningPart,
+            onReasoningEnd,
             onFinishMessagePart,
             onToolCallPart,
             onToolResultPart,

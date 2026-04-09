@@ -182,6 +182,36 @@ describe("Mastra reasoning support", () => {
       expect(msgStart).toBeDefined();
       expect(msgStart.role).toBe("reasoning");
     });
+
+    it("emits REASONING events for start/end without content (o3-style)", async () => {
+      const agent = makeLocalMastraAgent({
+        streamChunks: [
+          { type: "reasoning-start", payload: { id: "r-1" } },
+          { type: "reasoning-end", payload: { id: "r-1" } },
+          { type: "text-delta", payload: { text: "The answer is 42." } },
+          { type: "finish", payload: { finishReason: "stop" } },
+        ],
+      });
+
+      const events = await collectEvents(agent, makeInput());
+      const types = events.map((e) => e.type);
+
+      expect(types).toContain(EventType.REASONING_START);
+      expect(types).toContain(EventType.REASONING_MESSAGE_START);
+      expect(types).toContain(EventType.REASONING_MESSAGE_END);
+      expect(types).toContain(EventType.REASONING_END);
+
+      // No REASONING_MESSAGE_CONTENT since there were no reasoning-delta chunks
+      const contentEvents = events.filter(
+        (e) => e.type === EventType.REASONING_MESSAGE_CONTENT,
+      );
+      expect(contentEvents).toHaveLength(0);
+
+      // Reasoning should be closed before text
+      const reasoningEndIdx = types.indexOf(EventType.REASONING_END);
+      const textIdx = types.indexOf(EventType.TEXT_MESSAGE_CHUNK);
+      expect(reasoningEndIdx).toBeLessThan(textIdx);
+    });
   });
 
   describe("remote agent", () => {
