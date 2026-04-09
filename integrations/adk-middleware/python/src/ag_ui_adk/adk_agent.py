@@ -380,6 +380,8 @@ class ADKAgent:
                 call arguments from Gemini 3+ models. Requires google-adk >= 1.24.0.
             use_thread_id_as_session_id: When True, use the AG-UI thread_id directly
                 as the ADK session_id. See ADKAgent.__init__ for details.
+            capabilities: Optional dictionary of agent capabilities conforming to
+                the AG-UI AgentCapabilities schema. See ADKAgent.__init__ for details.
 
         Returns:
             ADKAgent instance configured to use the App

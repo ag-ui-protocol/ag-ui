@@ -68,12 +68,31 @@ export class HttpAgent extends AbstractAgent {
     });
 
     if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`Failed to fetch capabilities: HTTP ${response.status}: ${text}`);
+      let body: string;
+      try {
+        body = await response.text();
+      } catch {
+        body = response.statusText || "(unable to read response body)";
+      }
+      throw new Error(`Failed to fetch capabilities from ${capabilitiesUrl}: HTTP ${response.status}: ${body}`);
     }
 
-    const data = await response.json();
-    return AgentCapabilitiesSchema.parse(data);
+    let data: unknown;
+    try {
+      data = await response.json();
+    } catch (e) {
+      throw new Error(
+        `Failed to parse capabilities response from ${capabilitiesUrl}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+
+    const result = AgentCapabilitiesSchema.safeParse(data);
+    if (!result.success) {
+      throw new Error(
+        `Invalid capabilities response from ${capabilitiesUrl}: ${result.error.message}`,
+      );
+    }
+    return result.data;
   }
 
   run(input: RunAgentInput): Observable<BaseEvent> {

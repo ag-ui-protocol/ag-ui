@@ -196,10 +196,18 @@ def add_adk_fastapi_endpoint(
         before initiating a run (e.g., predictive chips, suggested questions).
         Returns an empty object when no capabilities are configured.
         """
-        caps = agent.get_capabilities()
-        if caps is None:
-            return JSONResponse(content={})
-        return JSONResponse(content=caps)
+        try:
+            caps = agent.get_capabilities()
+            if caps is None:
+                logger.debug("Capabilities endpoint called but no capabilities configured on agent")
+                return JSONResponse(content={})
+            return JSONResponse(content=caps)
+        except Exception as e:
+            logger.error(f"Error in capabilities endpoint: {e}", exc_info=True)
+            return JSONResponse(
+                status_code=500,
+                content={"error": f"Failed to retrieve capabilities: {str(e)}"}
+            )
 
     @app.post("/agents/state")
     async def agents_state_endpoint(request_data: AgentStateRequest):
