@@ -3,12 +3,14 @@
     {
       "match": { "userMessage": "best car to buy" },
       "response": {
+        "reasoning": "The user wants a car recommendation. I should consider reliability, value, fuel economy, and driving experience. Toyota Camry scores highest overall. Honda Civic is best for fuel economy. Mazda3 for driving feel.",
         "content": "Based on my analysis, here are the top recommendations:\n\n1. **Toyota Camry** - Best overall value with excellent reliability\n2. **Honda Civic** - Great fuel economy and low maintenance costs\n3. **Mazda3** - Best driving experience in its class\n\nThe Toyota Camry stands out for its combination of reliability, resale value, and comfort."
       }
     },
     {
       "match": { "userMessage": "explain step by step" },
       "response": {
+        "reasoning": "The user wants a structured explanation. I need to break down my reasoning process into clear numbered steps showing how I arrived at my conclusion.",
         "content": "Let me walk through this step by step:\n\n**Step 1:** First, I identified the key criteria - reliability, value, and practicality.\n\n**Step 2:** Then I compared models across these criteria.\n\n**Step 3:** Finally, I weighted the factors based on typical buyer priorities.\n\nThis systematic approach ensures a well-reasoned recommendation."
       }
     }
