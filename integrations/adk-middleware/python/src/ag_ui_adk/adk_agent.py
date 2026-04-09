@@ -1599,6 +1599,10 @@ class ADKAgent:
         reference, which avoids errors with non-deep-copyable tools (e.g.
         ADK ``McpToolset`` whose ``errlog`` field holds an unpicklable
         ``TextIOWrapper``).
+
+        ``AGUIToolset`` instances are replaced with fresh copies so that
+        ``bind()`` in ``_update_agent_tools_recursive`` does not mutate the
+        original agent tree.
         """
         try:
             copied = agent.model_copy(deep=False)
@@ -1609,7 +1613,13 @@ class ADKAgent:
 
         tools = getattr(copied, 'tools', None)
         if isinstance(tools, (list, tuple)):
-            copied.tools = list(tools)
+            copied.tools = [
+                AGUIToolset(
+                    tool_filter=t.tool_filter,
+                    tool_name_prefix=t.tool_name_prefix,
+                ) if isinstance(t, AGUIToolset) else t
+                for t in tools
+            ]
 
         sub_agents = getattr(copied, 'sub_agents', None)
         if isinstance(sub_agents, (list, tuple)):
@@ -1692,7 +1702,12 @@ class ADKAgent:
 
         def _update_agent_tools_recursive(agent: Any) -> None:
             """
-            Recursively replace AGUIToolset with ClientProxyToolset for an agent and its sub-agents.
+            Recursively bind ClientProxyToolset to AGUIToolset for an agent and its sub-agents.
+
+            Uses ``AGUIToolset.bind()`` so that the original object reference
+            (which may already be cached by the Runner in ADK ≥ 2.0) delegates
+            ``get_tools()`` to the concrete ``ClientProxyToolset``.
+
             Args:
                 agent: Agent instance to process
             """
@@ -1700,9 +1715,8 @@ class ADKAgent:
             logger.info(f"[TOOL_SETUP] Processing agent: {agent.name} (type: {type(agent).__name__})")
 
             if isinstance(agent, LlmAgent) and hasattr(agent, "tools"):
-                new_tools: list[ToolUnion] = []
                 original_tool_count = len(agent.tools) if agent.tools else 0
-                logger.info(f"[TOOL_SETUP] Agent {agent.name} has {original_tool_count} tools before replacement")
+                logger.info(f"[TOOL_SETUP] Agent {agent.name} has {original_tool_count} tools")
 
                 for tool in agent.tools:
                     if isinstance(tool, AGUIToolset):
@@ -1715,14 +1729,10 @@ class ADKAgent:
                             predict_state=self._predict_state,
                         )
                         client_proxy_toolsets.append(proxy_toolset)
-                        tool = proxy_toolset
+                        tool.bind(proxy_toolset)
                         logger.info(
-                            f"[TOOL_SETUP] Replaced AGUIToolset with ClientProxyToolset for agent {agent.name}"
+                            f"[TOOL_SETUP] Bound ClientProxyToolset to AGUIToolset for agent {agent.name}"
                         )
-                    new_tools.append(tool)
-
-                agent.tools = new_tools
-                logger.info(f"[TOOL_SETUP] Agent {agent.name} now has {len(new_tools)} tools after replacement")
 
             # Recursively process sub-agents if they exist
             # This handles SequentialAgent, LoopAgent, and other composite agents
