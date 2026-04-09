@@ -9,9 +9,9 @@ test.describe("LangGraph TypeScript - Agentic Chat Multimodal", () => {
 
     const chat = new AgenticChatPage(page);
     await chat.openChat();
-    await chat.sendMessage("Can you describe what you see in images?");
+    await chat.sendMessage("Tell me what do you see in this image");
     await chat.assertAgentReplyVisible(
-      /image|visual|describe|analyze/i,
+      /image|visual|content/i,
     );
   });
 });

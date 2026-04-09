@@ -11,17 +11,6 @@
       "response": {
         "content": "Let me walk through this step by step:\n\n**Step 1:** First, I identified the key criteria - reliability, value, and practicality.\n\n**Step 2:** Then I compared models across these criteria.\n\n**Step 3:** Finally, I weighted the factors based on typical buyer priorities.\n\nThis systematic approach ensures a well-reasoned recommendation."
       }
-    },
-    {
-      "match": { "userMessage": "background" },
-      "response": {
-        "toolCalls": [
-          {
-            "name": "change_background",
-            "arguments": "{\"background\":\"linear-gradient(135deg, #667eea 0%, #764ba2 100%)\"}"
-          }
-        ]
-      }
     }
   ]
 }
