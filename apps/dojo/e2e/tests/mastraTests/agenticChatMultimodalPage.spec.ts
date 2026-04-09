@@ -14,13 +14,9 @@ test.describe("[Integration] Mastra - Agentic Chat Multimodal", () => {
     await page.goto("/mastra/feature/agentic_chat_multimodal");
     await openChat(page);
 
-    // Upload a test image via the hidden file input
+    // Upload a test image — v2 CopilotChat attaches files silently
     const fileInput = page.locator('input[type="file"]');
     await fileInput.setInputFiles(TEST_IMAGE);
-
-    // Verify attachment preview appears
-    const attachmentPreview = page.locator(".copilotKitAttachmentQueue");
-    await expect(attachmentPreview).toBeVisible({ timeout: 5000 });
 
     // Send a message asking about the image
     await sendChatMessage(page, "Tell me what do you see in this image");
