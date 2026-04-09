@@ -177,7 +177,16 @@ class ADKAgent:
         
         if user_id and user_id_extractor:
             raise ValueError("Cannot specify both 'user_id' and 'user_id_extractor'")
-        
+
+        if capabilities is not None:
+            if not isinstance(capabilities, dict):
+                raise TypeError(f"capabilities must be a dict, got {type(capabilities).__name__}")
+            import json
+            try:
+                json.dumps(capabilities)
+            except (TypeError, ValueError) as e:
+                raise ValueError(f"capabilities must be JSON-serializable: {e}") from e
+
         self._adk_agent = adk_agent
         self._static_app_name = app_name
         self._app_name_extractor = app_name_extractor
