@@ -11,7 +11,7 @@ overrides = [{ name = "langgraph", specifier = ">=1.1.3,<2" }]
 
 [[package]]
 name = "ag-ui-langgraph"
-version = "0.0.29"
+version = "0.0.30"
 source = { directory = "../" }
 dependencies = [
     { name = "ag-ui-protocol" },
@@ -32,7 +32,7 @@ requires-dist = [
     { name = "fastapi", marker = "extra == 'fastapi'", specifier = ">=0.115.12" },
     { name = "langchain", specifier = ">=1.2.0" },
     { name = "langchain-core", specifier = ">=0.3.0" },
-    { name = "langgraph", specifier = ">=0.3.25,<1.1.0" },
+    { name = "langgraph", specifier = ">=0.3.25,<2" },
     { name = "pydantic", specifier = ">=2.0.0" },
 ]
 provides-extras = ["fastapi"]
@@ -359,19 +359,20 @@ wheels = [
 
 [[package]]
 name = "copilotkit"
-version = "0.1.76"
+version = "0.1.86"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ag-ui-langgraph", extra = ["fastapi"] },
+    { name = "ag-ui-protocol" },
     { name = "fastapi" },
     { name = "langchain" },
     { name = "langgraph" },
     { name = "partialjson" },
     { name = "toml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/dc/cd/afd4cafa17d9196fb805a5a84ea2eebcef88492cd7d4df0250434eeacdc2/copilotkit-0.1.76.tar.gz", hash = "sha256:03190bf289aceac073f2524681a3c1bafbabcdd97276c697ded0aa661dbcec84", size = 36845, upload-time = "2026-01-09T16:07:55.278Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/30/1b/6c3540e03238d5a6bdd1cfbd4b5a8500f13a005eb19f37e7ff31240925c8/copilotkit-0.1.86.tar.gz", hash = "sha256:ece51bb354e76840aa7194d12e96e2e7b7f5210bae42ad59437bffa8791e9f23", size = 45181, upload-time = "2026-04-08T17:56:21.289Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d4/28/57819cfe9a8a437e348ed04a3c958d4ec12fa455e52fdf35e8862323fd56/copilotkit-0.1.76-py3-none-any.whl", hash = "sha256:42d2e332afad47ce73760ce67ae6fae97df0def6d5446417150b075e1708d0ef", size = 46204, upload-time = "2026-01-09T16:07:53.855Z" },
+    { url = "https://files.pythonhosted.org/packages/48/7a/83dd622e9060089e0de55b39db7606a81f2514431b96aa621595e8c4c731/copilotkit-0.1.86-py3-none-any.whl", hash = "sha256:525d689ce0cb67f9c34822d10c3fa98c83c4ca7552c4a6bd5235a1bce2734671", size = 53437, upload-time = "2026-04-08T17:56:19.623Z" },
 ]
 
 [[package]]
@@ -1139,7 +1140,7 @@ dependencies = [
 requires-dist = [
     { name = "ag-ui-langgraph", directory = "../" },
     { name = "ag-ui-protocol", directory = "../../../../sdks/python" },
-    { name = "copilotkit", specifier = "==0.1.76" },
+    { name = "copilotkit", specifier = "==0.1.86" },
     { name = "dotenv", specifier = ">=0.9.9" },
     { name = "fastapi", specifier = ">=0.115.12" },
     { name = "langchain", specifier = ">=1.0.3" },
