@@ -1,17 +1,35 @@
 import { test, expect } from "../../test-isolation-helper";
-import { AgenticChatPage } from "../../featurePages/AgenticChatPage";
+import * as path from "path";
+import {
+  sendChatMessage,
+  awaitLLMResponseDone,
+  openChat,
+} from "../../utils/copilot-actions";
+import { CopilotSelectors } from "../../utils/copilot-selectors";
 
-test.describe("LangGraph FastAPI - Agentic Chat Multimodal", () => {
-  test("should load multimodal page and handle chat interaction", async ({
-    page,
-  }) => {
+const TEST_IMAGE = path.join(import.meta.dirname, "../../fixtures/test-image.png");
+
+test.describe("[Integration] LangGraph FastAPI - Agentic Chat Multimodal", () => {
+  test("should upload an image and receive a description", async ({ page }) => {
     await page.goto("/langgraph-fastapi/feature/agentic_chat_multimodal");
+    await openChat(page);
 
-    const chat = new AgenticChatPage(page);
-    await chat.openChat();
-    await chat.sendMessage("Tell me what do you see in this image");
-    await chat.assertAgentReplyVisible(
-      /image|visual|content/i,
-    );
+    // Upload a test image via the hidden file input
+    const fileInput = page.locator('input[type="file"]');
+    await fileInput.setInputFiles(TEST_IMAGE);
+
+    // Verify attachment preview appears
+    const attachmentPreview = page.locator(".copilotKitAttachmentQueue");
+    await expect(attachmentPreview).toBeVisible({ timeout: 5000 });
+
+    // Send a message asking about the image
+    await sendChatMessage(page, "Tell me what do you see in this image");
+    await awaitLLMResponseDone(page);
+
+    // Verify the agent responded about the image
+    const lastAssistant = CopilotSelectors.assistantMessages(page).last();
+    await expect(lastAssistant).toContainText(/image|visual|content/i, {
+      timeout: 10000,
+    });
   });
 });
