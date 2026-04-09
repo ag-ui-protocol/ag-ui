@@ -72,7 +72,7 @@ const Chat = () => {
         <CopilotChat
           agentId="agentic_chat_multimodal"
           className="h-full rounded-2xl max-w-6xl mx-auto"
-          // TODO: Enable attachments={{ enabled: true }} once CopilotKit version with CPK-7213 is released
+          attachments={{ enabled: true }}
         />
       </div>
     </div>
