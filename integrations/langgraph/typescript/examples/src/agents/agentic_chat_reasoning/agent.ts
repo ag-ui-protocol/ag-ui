@@ -2,7 +2,7 @@
  * A simple agentic chat flow using LangGraph with reasoning model support.
  *
  * This agent supports multiple model providers with reasoning/thinking capabilities:
- * - OpenAI (default): Uses o3 model
+ * - OpenAI (default): Uses gpt-5.4 model
  * - Anthropic: Uses claude-sonnet-4-20250514 with thinking enabled
  * - Gemini: Uses gemini-2.5-pro with thinking budget
  *
@@ -53,7 +53,7 @@ async function chatNode(state: AgentState, config?: RunnableConfig) {
     });
   } else {
     // Default: OpenAI
-    model = new ChatOpenAI({ model: "o3" });
+    model = new ChatOpenAI({ model: "gpt-5.4" });
   }
 
   // Define config for the model

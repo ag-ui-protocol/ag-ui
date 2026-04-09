@@ -36,7 +36,7 @@ async def chat_node(state: AgentState, config: Optional[RunnableConfig] = None):
 
 
     # 1. Define the model
-    model = ChatOpenAI(model="o3")
+    model = ChatOpenAI(model="gpt-5.4")
     if state["model"] == "Anthropic":
         model = ChatAnthropic(
             model="claude-sonnet-4-20250514",

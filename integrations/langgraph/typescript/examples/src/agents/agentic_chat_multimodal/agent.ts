@@ -71,7 +71,7 @@ async function visionChatNode(state: AgentState, config?: RunnableConfig) {
    */
 
   // Use a vision-capable model
-  const model = new ChatOpenAI({ model: "gpt-5.2" });
+  const model = new ChatOpenAI({ model: "gpt-5.4" });
 
   // Define config for the model
   if (!config) {

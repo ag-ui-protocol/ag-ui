@@ -14,7 +14,7 @@ export const agenticChatMultimodalAgent = new Agent({
 
       Be descriptive and helpful when analyzing visual content.
   `,
-  model: "openai/gpt-5.2",
+  model: "openai/gpt-5.4",
   memory: new Memory({
     storage: new LibSQLStore({
       id: "agentic-chat-multimodal-memory",

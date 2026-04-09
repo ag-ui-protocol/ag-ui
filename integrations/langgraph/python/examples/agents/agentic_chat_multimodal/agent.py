@@ -28,7 +28,7 @@ async def chat_node(state: AgentState, config: Optional[RunnableConfig] = None):
     to LangChain's multimodal format by the AG-UI integration layer.
     """
 
-    model = ChatOpenAI(model="gpt-5.2")
+    model = ChatOpenAI(model="gpt-5.4")
 
     if config is None:
         config = RunnableConfig(recursion_limit=25)
