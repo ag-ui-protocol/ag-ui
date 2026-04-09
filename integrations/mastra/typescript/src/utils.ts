@@ -63,38 +63,45 @@ const toMastraContent = (content: Message["content"]): string | any[] => {
   }
 
   // Structured content array with mixed types
-  return content.map((part) => {
+  const parts: any[] = [];
+  for (const part of content) {
     switch (part.type) {
       case "text":
-        return { type: "text", text: part.text };
+        parts.push({ type: "text", text: part.text });
+        break;
       case "image":
-        return { type: "image", image: mediaSourceToUrl(part.source) };
+        parts.push({ type: "image", image: mediaSourceToUrl(part.source) });
+        break;
       case "audio":
       case "video":
       case "document":
-        return {
+        parts.push({
           type: "file",
           data: mediaSourceToUrl(part.source),
-          mimeType: part.source.mimeType,
-        };
+          mimeType: part.source.mimeType ?? "application/octet-stream",
+        });
+        break;
       case "binary": {
         // Deprecated BinaryInputContent
         const binaryPart = part as Extract<InputContent, { type: "binary" }>;
         if (binaryPart.url) {
-          return { type: "image", image: binaryPart.url };
-        }
-        if (binaryPart.data) {
-          return {
+          parts.push({ type: "image", image: binaryPart.url });
+        } else if (binaryPart.data && binaryPart.mimeType) {
+          parts.push({
             type: "image",
             image: `data:${binaryPart.mimeType};base64,${binaryPart.data}`,
-          };
+          });
+        } else {
+          console.warn("[toMastraContent] Dropping BinaryInputContent: no url or data provided");
         }
-        return { type: "image", image: "" };
+        break;
       }
       default:
-        return { type: "text", text: "" };
+        console.warn(`[toMastraContent] Unknown content type "${part.type}"; skipping`);
+        break;
     }
-  });
+  }
+  return parts;
 };
 
 export function convertAGUIMessagesToMastra(messages: Message[]): CoreMessage[] {

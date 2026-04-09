@@ -136,6 +136,8 @@ function convertAguiMultimodalToLangchain(
           type: "image_url",
           image_url: { url },
         });
+      } else {
+        console.warn(`[convertAguiMultimodalToLangchain] Dropping ${item.type} content: source could not be converted to URL`);
       }
     } else if (item.type === "binary") {
       // Legacy BinaryInputContent — backwards compatibility
@@ -151,7 +153,8 @@ function convertAguiMultimodalToLangchain(
         // Use id as a reference
         url = item.id;
       } else {
-        continue; // Skip if no source is provided
+        console.warn("[convertAguiMultimodalToLangchain] Dropping BinaryInputContent: no url, data, or id provided");
+        continue;
       }
 
       langchainContent.push({

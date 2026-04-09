@@ -206,6 +206,8 @@ def convert_agui_multimodal_to_langchain(content: List[AGUIContentItem]) -> List
                     "type": "image_url",
                     "image_url": {"url": url}
                 })
+            else:
+                logger.warning("Dropping %s content: source could not be converted to URL", type(item).__name__)
         elif isinstance(item, BinaryInputContent):
             # Legacy BinaryInputContent — backwards compatibility
             content_dict: Dict[str, Any] = {"type": "image_url"}
