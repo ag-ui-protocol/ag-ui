@@ -582,6 +582,7 @@ class LangGraphAgent:
             if isinstance(m, ToolMessage) and hasattr(m, 'tool_call_id')
         }
         replaced_tool_call_ids = set()
+        repaired_messages: List[LangGraphPlatformMessage] = []
         if agui_tool_content:
             last_human_idx = -1
             for i in range(len(existing_messages) - 1, -1, -1):
@@ -600,12 +601,18 @@ class LangGraphAgent:
                     ):
                         msg.content = agui_tool_content[msg.tool_call_id]
                         replaced_tool_call_ids.add(msg.tool_call_id)
+                        repaired_messages.append(msg)
 
         existing_message_ids = {msg.id for msg in existing_messages}
 
         new_messages = [
             msg for msg in messages
             if msg.id not in existing_message_ids
+            and not (
+                isinstance(msg, ToolMessage)
+                and hasattr(msg, 'tool_call_id')
+                and msg.tool_call_id in replaced_tool_call_ids
+            )
         ]
 
         tools = input.tools or []
@@ -635,7 +642,7 @@ class LangGraphAgent:
 
         return {
             **state,
-            "messages": new_messages,
+            "messages": [*repaired_messages, *new_messages],
             "tools": unique_tools,
             "ag-ui": {
                 "tools": unique_tools,
