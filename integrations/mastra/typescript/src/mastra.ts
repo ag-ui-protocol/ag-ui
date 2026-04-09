@@ -505,10 +505,18 @@ export class MastraAgent extends AbstractAgent {
         return true;
       }
       switch (chunk.type) {
-        case "reasoning": {
+        case "reasoning-delta": {
           callbacks.onReasoningPart?.(chunk.payload.text);
           break;
         }
+        // reasoning-start, reasoning-end, reasoning-signature, and
+        // redacted-reasoning are AI SDK lifecycle events handled implicitly
+        // by the onReasoningPart callback's open/close logic.
+        case "reasoning-start":
+        case "reasoning-end":
+        case "reasoning-signature":
+        case "redacted-reasoning":
+          break;
         case "text-delta": {
           flush();
           callbacks.onTextPart?.(chunk.payload.text);

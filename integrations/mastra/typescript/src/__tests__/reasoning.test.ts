@@ -12,8 +12,8 @@ import {
 
 describe("Mastra reasoning support", () => {
   const reasoningChunks = [
-    { type: "reasoning", payload: { text: "Let me think" } },
-    { type: "reasoning", payload: { text: " about this" } },
+    { type: "reasoning-delta", payload: { text: "Let me think" } },
+    { type: "reasoning-delta", payload: { text: " about this" } },
     { type: "text-delta", payload: { text: "Here is my answer" } },
     { type: "finish", payload: { finishReason: "stop" } },
   ];
@@ -95,7 +95,7 @@ describe("Mastra reasoning support", () => {
     it("closes reasoning block when tool-call arrives", async () => {
       const agent = makeLocalMastraAgent({
         streamChunks: [
-          { type: "reasoning", payload: { text: "I should use a tool" } },
+          { type: "reasoning-delta", payload: { text: "I should use a tool" } },
           {
             type: "tool-call",
             payload: { toolCallId: "tc-1", toolName: "get_data", args: {} },
@@ -122,7 +122,7 @@ describe("Mastra reasoning support", () => {
     it("closes reasoning block on finish when no text follows", async () => {
       const agent = makeLocalMastraAgent({
         streamChunks: [
-          { type: "reasoning", payload: { text: "thinking..." } },
+          { type: "reasoning-delta", payload: { text: "thinking..." } },
           { type: "finish", payload: { finishReason: "stop" } },
         ],
       });
@@ -141,9 +141,9 @@ describe("Mastra reasoning support", () => {
     it("handles multiple reasoning blocks with distinct messageIds", async () => {
       const agent = makeLocalMastraAgent({
         streamChunks: [
-          { type: "reasoning", payload: { text: "Step 1 thinking" } },
+          { type: "reasoning-delta", payload: { text: "Step 1 thinking" } },
           { type: "text-delta", payload: { text: "Partial answer." } },
-          { type: "reasoning", payload: { text: "Step 2 thinking" } },
+          { type: "reasoning-delta", payload: { text: "Step 2 thinking" } },
           { type: "text-delta", payload: { text: "Final answer." } },
           { type: "finish", payload: { finishReason: "stop" } },
         ],
@@ -261,7 +261,7 @@ describe("Mastra reasoning support", () => {
     it("closes reasoning block when tool-call arrives", async () => {
       const agent = makeRemoteMastraAgent({
         streamChunks: [
-          { type: "reasoning", payload: { text: "I should use a tool" } },
+          { type: "reasoning-delta", payload: { text: "I should use a tool" } },
           {
             type: "tool-call",
             payload: { toolCallId: "tc-1", toolName: "get_data", args: {} },
@@ -286,7 +286,7 @@ describe("Mastra reasoning support", () => {
     it("closes reasoning block on finish when no text follows", async () => {
       const agent = makeRemoteMastraAgent({
         streamChunks: [
-          { type: "reasoning", payload: { text: "thinking..." } },
+          { type: "reasoning-delta", payload: { text: "thinking..." } },
           { type: "finish", payload: { finishReason: "stop" } },
         ],
       });
