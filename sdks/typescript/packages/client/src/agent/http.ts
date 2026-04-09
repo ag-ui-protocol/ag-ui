@@ -1,7 +1,7 @@
 import { AbstractAgent, RunAgentResult } from "./agent";
 import { runHttpRequest } from "@/run/http-request";
 import { HttpAgentConfig, RunAgentParameters } from "./types";
-import { RunAgentInput, BaseEvent } from "@ag-ui/core";
+import { RunAgentInput, BaseEvent, AgentCapabilities, AgentCapabilitiesSchema } from "@ag-ui/core";
 import { structuredClone_ } from "@/utils";
 import { transformHttpEventStream } from "@/transform/http";
 import { Observable } from "rxjs";
@@ -52,6 +52,30 @@ export class HttpAgent extends AbstractAgent {
     super(config);
     this.url = config.url;
     this.headers = structuredClone_(config.headers ?? {});
+  }
+
+  async getCapabilities(): Promise<AgentCapabilities> {
+    const baseUrl = this.url.replace(/\/+$/, "");
+    const capabilitiesUrl = `${baseUrl}/capabilities`;
+
+    const response = await fetch(capabilitiesUrl, {
+      method: "GET",
+      headers: {
+        ...this.headers,
+        Accept: "application/json",
+      },
+      signal: this.abortController.signal,
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      const err: any = new Error(`Failed to fetch capabilities: HTTP ${response.status}: ${text}`);
+      err.status = response.status;
+      throw err;
+    }
+
+    const data = await response.json();
+    return AgentCapabilitiesSchema.parse(data);
   }
 
   run(input: RunAgentInput): Observable<BaseEvent> {

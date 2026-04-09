@@ -111,6 +111,9 @@ class ADKAgent:
 
         # Session identity
         use_thread_id_as_session_id: bool = False,
+
+        # Agent capabilities (for GET /capabilities endpoint)
+        capabilities: Optional[Dict[str, Any]] = None,
     ):
         """Initialize the ADKAgent.
 
@@ -158,6 +161,12 @@ class ADKAgent:
                 as the ADK session_id instead of letting the backend generate one.
                 Eliminates the O(n) list_sessions scan for session recovery after
                 middleware restarts. Defaults to False for backward compatibility.
+            capabilities: Optional dictionary of agent capabilities conforming to
+                the AG-UI AgentCapabilities schema. When provided, the capabilities
+                are returned from the GET /capabilities endpoint, enabling frontend
+                clients to discover agent features before initiating a run. Use the
+                "custom" key for application-specific feature flags (e.g.,
+                {"custom": {"predictiveChips": True, "suggestedQuestions": True}}).
 
             Note:
             If delete_session_on_cleanup=False but save_session_to_memory_on_cleanup=True, sessions will accumulate in SessionService but still be saved to memory on cleanup.
@@ -221,6 +230,8 @@ class ADKAgent:
         self._predict_state = predict_state
         # Message snapshot configuration
         self._emit_messages_snapshot = emit_messages_snapshot
+        # Agent capabilities for discovery endpoint
+        self._capabilities = capabilities
 
         # Streaming function call arguments (Gemini 3+ via Vertex AI)
         if streaming_function_call_arguments and not self._adk_supports_streaming_fc_args():
@@ -334,6 +345,8 @@ class ADKAgent:
         streaming_function_call_arguments: bool = False,
         # Session identity
         use_thread_id_as_session_id: bool = False,
+        # Agent capabilities
+        capabilities: Optional[Dict[str, Any]] = None,
     ) -> "ADKAgent":
         """Create ADKAgent from an ADK App instance.
 
@@ -413,11 +426,20 @@ class ADKAgent:
             emit_messages_snapshot=emit_messages_snapshot,
             streaming_function_call_arguments=streaming_function_call_arguments,
             use_thread_id_as_session_id=use_thread_id_as_session_id,
+            capabilities=capabilities,
         )
         # Store App for per-request App creation with modified agents
         instance._app = app
         instance._plugin_close_timeout = plugin_close_timeout
         return instance
+
+    def get_capabilities(self) -> Optional[Dict[str, Any]]:
+        """Return the agent's declared capabilities, or None if not configured.
+
+        These capabilities conform to the AG-UI AgentCapabilities schema and are
+        served by the GET /capabilities endpoint when using add_adk_fastapi_endpoint().
+        """
+        return self._capabilities
 
     def _get_session_metadata(self, thread_id: str, user_id: str) -> Optional[Tuple[str, str, str]]:
         """Get session metadata for a (thread_id, user_id) pair efficiently.

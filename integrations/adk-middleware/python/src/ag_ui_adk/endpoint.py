@@ -186,6 +186,21 @@ def add_adk_fastapi_endpoint(
         
         return StreamingResponse(event_generator(), media_type=encoder.get_content_type())
 
+    capabilities_path = f"{path.rstrip('/')}/capabilities" if path != "/" else "/capabilities"
+
+    @app.get(capabilities_path)
+    async def capabilities_endpoint():
+        """Return the agent's declared capabilities.
+
+        Allows frontend clients to discover what features the agent supports
+        before initiating a run (e.g., predictive chips, suggested questions).
+        Returns an empty object when no capabilities are configured.
+        """
+        caps = agent.get_capabilities()
+        if caps is None:
+            return JSONResponse(content={})
+        return JSONResponse(content=caps)
+
     @app.post("/agents/state")
     async def agents_state_endpoint(request_data: AgentStateRequest):
         """EXPERIMENTAL: Retrieve thread state and message history.
