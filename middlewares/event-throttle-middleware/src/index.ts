@@ -237,6 +237,7 @@ export class EventThrottleMiddleware extends Middleware {
             } catch (err) {
               buffer = [];
               subscriber.error(err);
+              return;
             }
           } else {
             scheduleTrailing();

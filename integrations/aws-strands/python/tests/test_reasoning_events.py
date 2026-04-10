@@ -124,6 +124,12 @@ async def test_encrypted_reasoning_events():
     event_types = [e.type for e in events]
     assert EventType.REASONING_ENCRYPTED_VALUE in event_types
 
+    # Verify full reasoning envelope (symmetric START/MESSAGE_START ... MESSAGE_END/END)
+    assert EventType.REASONING_START in event_types
+    assert EventType.REASONING_MESSAGE_START in event_types
+    assert EventType.REASONING_MESSAGE_END in event_types
+    assert EventType.REASONING_END in event_types
+
     # Verify encrypted value event has proper structure
     encrypted_event = next(
         e for e in events if e.type == EventType.REASONING_ENCRYPTED_VALUE
@@ -132,6 +138,12 @@ async def test_encrypted_reasoning_events():
     assert encrypted_event.entity_id is not None
     # base64 encoded "encrypted_content" = "ZW5jcnlwdGVkX2NvbnRlbnQ="
     assert encrypted_event.encrypted_value == "ZW5jcnlwdGVkX2NvbnRlbnQ="
+
+    # Verify message_id consistency across all reasoning events
+    reasoning_start = next(e for e in events if e.type == EventType.REASONING_START)
+    reasoning_msg_start = next(e for e in events if e.type == EventType.REASONING_MESSAGE_START)
+    assert reasoning_start.message_id == reasoning_msg_start.message_id
+    assert reasoning_start.message_id == encrypted_event.entity_id
 
 
 @pytest.mark.asyncio
@@ -339,7 +351,7 @@ async def test_missing_reasoning_flag_no_events():
 
 @pytest.mark.asyncio
 async def test_non_bytes_encrypted_content_fallback():
-    """Test that non-bytes encrypted content uses str() fallback."""
+    """Test that string encrypted content is passed through as-is."""
     mock_events = [
         {"reasoningRedactedContent": "string_content_not_bytes", "reasoning": True},
         {"event": {"contentBlockStop": {}}},
@@ -360,8 +372,35 @@ async def test_non_bytes_encrypted_content_fallback():
     encrypted_event = next(
         e for e in events if e.type == EventType.REASONING_ENCRYPTED_VALUE
     )
-    # String content should be passed through as-is via str()
+    # String content should be passed through as-is
     assert encrypted_event.encrypted_value == "string_content_not_bytes"
+
+
+@pytest.mark.asyncio
+async def test_none_encrypted_content_skipped():
+    """Test that None encrypted content is skipped without emitting events."""
+    mock_events = [
+        {"reasoningRedactedContent": None, "reasoning": True},
+        {"data": "Normal response"},
+        {"complete": True},
+    ]
+
+    agent = create_agent_with_mock_events(mock_events)
+
+    events = []
+    input_data = make_input_data()
+
+    async for event in agent.run(input_data):
+        events.append(event)
+
+    event_types = [e.type for e in events]
+
+    # None content should not emit any reasoning events
+    assert EventType.REASONING_ENCRYPTED_VALUE not in event_types
+    assert EventType.REASONING_START not in event_types
+
+    # Text should still work
+    assert EventType.TEXT_MESSAGE_CONTENT in event_types
 
 
 @pytest.mark.asyncio

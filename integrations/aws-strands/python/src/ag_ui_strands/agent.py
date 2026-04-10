@@ -1,6 +1,6 @@
-"""AWS Strands Agent implementation for AG-UI.
+"""AWS Strands Agent adapter for AG-UI.
 
-Simple adapter following the Agno pattern.
+Translates Strands streaming events into the AG-UI event protocol.
 """
 
 import base64
@@ -386,20 +386,32 @@ class StrandsAgent:
                     elif "reasoningRedactedContent" in event and event.get("reasoning"):
                         redacted_content = event["reasoningRedactedContent"]
 
+                        if redacted_content is None:
+                            logger.debug(f"Ignoring reasoning event with None redacted content (thread_id={input_data.thread_id})")
+                            continue
+
                         if not reasoning_started:
                             reasoning_message_id = str(uuid.uuid4())
                             yield ReasoningStartEvent(
                                 type=EventType.REASONING_START,
                                 message_id=reasoning_message_id
                             )
+                            yield ReasoningMessageStartEvent(
+                                type=EventType.REASONING_MESSAGE_START,
+                                message_id=reasoning_message_id,
+                                role="reasoning"
+                            )
                             reasoning_started = True
 
                         # Encode bytes to base64 string for transport
-                        encrypted_value = (
-                            base64.b64encode(redacted_content).decode()
-                            if isinstance(redacted_content, bytes)
-                            else str(redacted_content)
-                        )
+                        if isinstance(redacted_content, bytes):
+                            encrypted_value = base64.b64encode(redacted_content).decode()
+                        elif isinstance(redacted_content, str):
+                            encrypted_value = redacted_content
+                        else:
+                            logger.warning(f"Unexpected type for reasoningRedactedContent: {type(redacted_content)}, converting to str")
+                            encrypted_value = str(redacted_content)
+
                         yield ReasoningEncryptedValueEvent(
                             type=EventType.REASONING_ENCRYPTED_VALUE,
                             subtype="message",
@@ -409,7 +421,8 @@ class StrandsAgent:
 
                     # Handle reasoning signature (verification token) - typically not exposed to UI
                     elif "reasoning_signature" in event and event.get("reasoning"):
-                        logger.debug(f"Received reasoning signature: {event['reasoning_signature'][:20]}...")
+                        sig = event.get("reasoning_signature", "")
+                        logger.debug(f"Received reasoning signature: {str(sig)[:20]}...")
 
                     # Handle multi-agent node start (maps to STEP_STARTED)
                     elif isinstance(event, dict) and event.get("type") == "multiagent_node_start":
