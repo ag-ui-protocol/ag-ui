@@ -78,6 +78,14 @@ This document explains how the AWS Strands integration inside `integrations/aws-
   - Maps Strands `multiagent_node_start` events to `StepStartedEvent` with `step_name` formatted as `{node_type}:{node_id}`.
   - Maps Strands `multiagent_node_stop` events to `StepFinishedEvent`.
   - Emits `CustomEvent(name="MultiAgentHandoff")` for `multiagent_handoff` events, including `from_nodes`, `to_nodes`, and `message` in the value.
+- **Multimodal content**
+  - When `UserMessage.content` is a `List[InputContent]` containing media (image, document, video), the adapter converts it to Strands `ContentBlock` format.
+  - `ImageInputContent` -> `ContentBlock(image=ImageContent(...))` with base64-decoded bytes.
+  - `DocumentInputContent` -> `ContentBlock(document=DocumentContent(...))`.
+  - `VideoInputContent` -> `ContentBlock(video=VideoContent(...))`.
+  - `AudioInputContent` is logged and skipped (Strands SDK has no audio support).
+  - Text-only content lists are flattened to a plain string for backward compatibility.
+  - Conversion logic lives in `src/ag_ui_strands/utils.py`.
 
 ### Configuration Layer (`src/ag_ui_strands/config.py`)
 
@@ -131,7 +139,7 @@ This mirrors other AG-UI integrations (Agno, LangGraph, etc.), so documentation 
 
 ## Example Entry Points (`python/examples/server/api/*.py`)
 
-The repository includes six runnable FastAPI apps that showcase different features. Each example builds a Strands SDK agent, wraps it with `StrandsAgent`, and exposes it via `create_strands_app`:
+The repository includes seven runnable FastAPI apps that showcase different features. Each example builds a Strands SDK agent, wraps it with `StrandsAgent`, and exposes it via `create_strands_app`:
 
 | Module                        | Focus                                                                   | Relevant Configuration                                                                                                               |
 | ----------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
@@ -140,6 +148,7 @@ The repository includes six runnable FastAPI apps that showcase different featur
 | `backend_tool_rendering.py`   | Backend-executed tools (`render_chart`, `get_weather`).                 | Shows how tool results become `ToolCallResultEvent`s and can be rendered directly in the UI.                                         |
 | `shared_state.py`             | Collaborative recipe editor that streams server-side state.             | Uses `state_context_builder`, `state_from_args`, and `state_from_result` to keep the UI’s recipe object synchronized.                |
 | `agentic_generative_ui.py`    | Predictive and reactive state updates for generative UI surfaces.       | Demonstrates `PredictStateMapping`, `custom_result_handler` emitting `StateDeltaEvent`s, and the `stop_streaming_after_result` flag. |
+| `agentic_chat_multimodal.py`  | Multimodal image/document analysis with vision-capable model.           | No custom config; demonstrates automatic multimodal content conversion.                                                              |
 | `human_in_the_loop.py`        | Human-in-the-loop confirmation flow with frontend tools.                | Demonstrates frontend tool invocation and confirmation actions.                                                                      |
 
 These examples double as integration tests: they exercise every built-in hook so regressions surface quickly during manual QA.

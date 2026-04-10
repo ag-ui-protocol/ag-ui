@@ -94,6 +94,7 @@ The integration supports the following AG-UI event families:
 - **State management**: `STATE_SNAPSHOT`
 - **Multi-agent**: `STEP_STARTED`, `STEP_FINISHED`, and `MultiAgentHandoff` custom events
 - **Generative UI**: `PredictState` custom events for optimistic UI updates
+- **Multimodal**: Image, document, and video content in user messages (converted to Strands ContentBlock format)
 
 ## Next Steps
 
