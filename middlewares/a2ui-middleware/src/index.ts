@@ -23,7 +23,7 @@ import {
   A2UIForwardedProps,
   A2UIUserAction,
 } from "./types";
-import { RENDER_A2UI_TOOL, RENDER_A2UI_TOOL_NAME, LOG_A2UI_EVENT_TOOL_NAME } from "./tools";
+import { RENDER_A2UI_TOOL, RENDER_A2UI_TOOL_NAME, RENDER_A2UI_TOOL_GUIDELINES, LOG_A2UI_EVENT_TOOL_NAME } from "./tools";
 import { getOperationSurfaceId, tryParseA2UIOperations, A2UI_OPERATIONS_KEY, extractCompleteItemsWithStatus, extractCompleteObject, extractStringField } from "./schema";
 
 // Re-exports
@@ -85,9 +85,9 @@ export class A2UIMiddleware extends Middleware {
     // Inject A2UI component schema as context so agents know what components are available
     const withSchema = this.injectSchemaContext(enhancedInput);
 
-    // Conditionally inject the render_a2ui tool
+    // Conditionally inject the render_a2ui tool and its usage guidelines
     const finalInput = this.config.injectA2UITool
-      ? this.injectTool(withSchema)
+      ? this.injectToolGuidelines(this.injectTool(withSchema))
       : withSchema;
 
     // Process the event stream using runNextWithState for automatic message tracking
@@ -209,6 +209,33 @@ export class A2UIMiddleware extends Middleware {
     return {
       ...input,
       tools: [...filteredTools, tool],
+    };
+  }
+
+  /**
+   * Inject usage guidelines for the render_a2ui tool as a context entry.
+   * Provides the LLM with protocol instructions and a minimal example so it
+   * can produce valid A2UI without agent-specific prompting.
+   */
+  private injectToolGuidelines(input: RunAgentInput): RunAgentInput {
+    const toolName = typeof this.config.injectA2UITool === "string"
+      ? this.config.injectA2UITool
+      : RENDER_A2UI_TOOL_NAME;
+
+    const guidelinesDescription =
+      `A2UI render tool usage guide — how to call ${toolName} with valid arguments.`;
+
+    // Remove any existing guidelines entry to avoid duplication
+    const filtered = (input.context || []).filter(
+      (c) => c.description !== guidelinesDescription,
+    );
+
+    return {
+      ...input,
+      context: [...filtered, {
+        description: guidelinesDescription,
+        value: RENDER_A2UI_TOOL_GUIDELINES(toolName),
+      }],
     };
   }
 
