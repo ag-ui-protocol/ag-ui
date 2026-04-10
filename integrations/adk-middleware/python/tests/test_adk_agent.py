@@ -1347,3 +1347,49 @@ class TestThreadIdSessionIdMapping:
         assert len(ensure_session_calls) == 1
         assert ensure_session_calls[0]["initial_state"] == {}
 
+
+
+    @pytest.mark.asyncio
+    async def test_hydrates_session_cache_from_db_simple(self, adk_agent):
+        """Minimal test: run() should hydrate `_session_lookup_cache` from DB."""
+        class DummySession:
+            def __init__(self, id_):
+                self.id = id_
+
+        class DummySessionManager:
+            async def _find_session_by_thread_id(self, app_name, user_id, thread_id):
+                return DummySession("session-1")
+
+        # Replace the session manager with our dummy
+        adk_agent._session_manager = DummySessionManager()
+
+        # Make _get_unseen_messages return empty so run() short-circuits into _start_new_execution
+        async def fake_get_unseen(input):
+            return []
+
+        # Provide a no-op async generator for _start_new_execution
+        async def fake_start_new_execution(input, message_batch=None, tool_results=None):
+            if False:
+                yield None
+
+        class Input:
+            def __init__(self, thread_id):
+                self.thread_id = thread_id
+                self.run_id = "run1"
+                self.messages = []
+
+        inp = Input("thread-123")
+
+        with patch.object(adk_agent, "_get_unseen_messages", new=fake_get_unseen), \
+             patch.object(adk_agent, "_start_new_execution", new=fake_start_new_execution):
+            # Consume the run generator (will yield nothing) to trigger hydration logic
+            _ = [e async for e in adk_agent.run(inp)]
+
+        user_id = adk_agent._get_user_id(inp)
+        cache_key = (inp.thread_id, user_id)
+
+        assert cache_key in adk_agent._session_lookup_cache
+        session_id, app_name, uid = adk_agent._session_lookup_cache[cache_key]
+        assert session_id == "session-1"
+        assert uid == user_id
+
