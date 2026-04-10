@@ -204,7 +204,7 @@ class LangGraphAgent:
 
         try:
             async for event in stream:
-                subgraphs_stream_enabled = input.forwarded_props.get('stream_subgraphs') if input.forwarded_props else False
+                subgraphs_stream_enabled = input.forwarded_props.get('stream_subgraphs', True) if input.forwarded_props else True
                 is_subgraph_stream = (subgraphs_stream_enabled and (
                     event.get("event", "").startswith("events") or
                     event.get("event", "").startswith("values")
@@ -460,7 +460,7 @@ class LangGraphAgent:
             stream_input = {**forwarded_props, **payload_input} if payload_input else None
 
 
-        subgraphs_stream_enabled = input.forwarded_props.get('stream_subgraphs') if input.forwarded_props else False
+        subgraphs_stream_enabled = input.forwarded_props.get('stream_subgraphs', True) if input.forwarded_props else True
 
         kwargs = self.get_stream_kwargs(
             input=stream_input,
@@ -497,7 +497,7 @@ class LangGraphAgent:
         )
 
         stream_input = self.langgraph_default_merge_state(time_travel_checkpoint.values, [message_checkpoint], input)
-        subgraphs_stream_enabled = input.forwarded_props.get('stream_subgraphs') if input.forwarded_props else False
+        subgraphs_stream_enabled = input.forwarded_props.get('stream_subgraphs', True) if input.forwarded_props else True
 
         kwargs = self.get_stream_kwargs(
             input=stream_input,
