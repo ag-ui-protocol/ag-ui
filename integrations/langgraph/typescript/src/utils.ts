@@ -312,6 +312,16 @@ export function resolveReasoningContent(eventData: any): LangGraphReasoning | nu
     }
   }
 
+  // DeepSeek-style format: additional_kwargs.reasoning_content (plain string)
+  const reasoningContent = eventData.chunk?.additional_kwargs?.reasoning_content
+  if (reasoningContent && typeof reasoningContent === 'string') {
+    return {
+      type: 'text',
+      text: reasoningContent,
+      index: 0,
+    }
+  }
+
   return null
 }
 
