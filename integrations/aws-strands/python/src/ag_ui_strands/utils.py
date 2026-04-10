@@ -74,6 +74,7 @@ def _resolve_source_bytes(source: Any) -> Optional[bytes]:
             return None
     if isinstance(source, InputContentUrlSource):
         return _fetch_url_bytes(source.value)
+    logger.warning(f"Unknown content source type: {type(source).__name__}, cannot resolve bytes")
     return None
 
 

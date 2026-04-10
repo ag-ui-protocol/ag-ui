@@ -288,6 +288,10 @@ class StrandsAgent:
                             )
                             if has_media:
                                 user_message = convert_agui_content_to_strands(msg.content)
+                                if not user_message:
+                                    # All content blocks failed conversion — fall back to text
+                                    user_message = flatten_content_to_text(msg.content) or "Hello"
+                                    logger.warning("All media content blocks failed conversion, falling back to text")
                             else:
                                 user_message = flatten_content_to_text(msg.content)
                         else:
@@ -303,6 +307,8 @@ class StrandsAgent:
                     )
                     if not isinstance(user_message, list):
                         user_message = builder_result
+                    else:
+                        logger.debug("state_context_builder result not applied to multimodal message — multimodal content preserved")
                     # If state_context_builder modifies the message, update the last user message
                     if not isinstance(user_message, list) and strands_messages and strands_messages[-1]["role"] == "user":
                         strands_messages[-1]["content"] = [{"text": user_message}]
