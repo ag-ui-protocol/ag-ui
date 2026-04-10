@@ -371,8 +371,6 @@ def normalize_tool_content(content: Any) -> str:
     return json.dumps(content)
 
 
-# TODO(ran-review): suspected dead code — please verify before removing
-# Only used by forwarded_props camelCase conversion in agent.py run()
 def camel_to_snake(name):
     return re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower()
 

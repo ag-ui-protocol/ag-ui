@@ -132,11 +132,6 @@ export class LangGraphAgent extends AbstractAgent {
   // Stop control flags
   private cancelRequested: boolean = false;
   private cancelSent: boolean = false;
-  // TODO(ran-review): suspected dead code — please verify before removing
-  // messages-tuple fallback: tracks whether "events" mode is producing data.
-  // This was added as a legacy LangGraph Platform streaming mode fallback.
-  // If all consumers now use events-mode streaming, this can be removed along
-  // with handleMessagesTupleEvent() and related isMessagesTupleEvent checks.
   private eventsStreamActive: boolean = false;
   // @ts-expect-error no need to initialize subscriber right now
   subscriber: Subscriber<ProcessedEvents>;
@@ -1021,8 +1016,6 @@ export class LangGraphAgent extends AbstractAgent {
    * and convert them into AG-UI text message and tool call events.
    * Uses the same messagesInProcess tracking as events-mode streaming.
    *
-   * TODO(ran-review): suspected dead code — please verify before removing.
-   * This is part of the legacy messages-tuple fallback. See eventsStreamActive.
    */
   private handleMessagesTupleEvent(data: any[]) {
     const chunk = data[0];

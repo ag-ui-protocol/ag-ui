@@ -139,10 +139,6 @@ class LangGraphAgent:
         return event
 
     async def run(self, input: RunAgentInput) -> AsyncGenerator[str, None]:
-        # TODO(ran-review): suspected dead code — please verify before removing
-        # This camelCase→snake_case conversion of forwarded_props was added for
-        # CopilotKit's internal use. Now that CopilotKit treats this as an
-        # external library, it may no longer be needed.
         forwarded_props = {}
         if hasattr(input, "forwarded_props") and input.forwarded_props:
             forwarded_props = {
