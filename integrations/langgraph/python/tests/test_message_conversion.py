@@ -280,3 +280,43 @@ class TestNormalizeToolContent:
     def test_none_serialized(self):
         result = normalize_tool_content(None)
         assert result == "null"
+
+
+class TestEdgeCases:
+    """Edge cases for conversion functions."""
+
+    def test_empty_message_list(self):
+        """Empty input → empty output, no exception."""
+        assert agui_messages_to_langchain([]) == []
+        assert langchain_messages_to_agui([]) == []
+
+    def test_ai_message_with_list_content(self):
+        """AI message with list content (text blocks) → text is extracted."""
+        msg = AIMessage(id="a1", content=[{"type": "text", "text": "extracted"}])
+        result = langchain_messages_to_agui([msg])
+        assert result[0].content == "extracted"
+
+    def test_ai_message_with_empty_content_string(self):
+        """AI message with empty string content → empty string preserved."""
+        msg = AIMessage(id="a2", content="")
+        result = langchain_messages_to_agui([msg])
+        assert result[0].content == ""
+
+    def test_tool_message_with_list_content(self):
+        """Tool message with list content → normalize_tool_content applied."""
+        msg = ToolMessage(id="t1", content=[{"type": "text", "text": "ok"}], tool_call_id="tc1")
+        result = langchain_messages_to_agui([msg])
+        assert result[0].content == "ok"
+
+    def test_human_message_name_preserved(self):
+        """HumanMessage name field should be preserved in the AG-UI message."""
+        msg = HumanMessage(id="h1", content="hi", name="alice")
+        result = langchain_messages_to_agui([msg])
+        assert result[0].name == "alice"
+
+    def test_agui_assistant_message_no_tool_calls_converts(self):
+        """AG-UI assistant message without tool_calls should produce an AIMessage with empty tool_calls."""
+        msg = AGUIAssistantMessage(id="a3", role="assistant", content="plain text")
+        result = agui_messages_to_langchain([msg])
+        assert isinstance(result[0], AIMessage)
+        assert result[0].tool_calls == []

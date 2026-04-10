@@ -127,6 +127,48 @@ class TestLanggraphDefaultMergeState:
         result = agent.langgraph_default_merge_state(state, [], make_input())
         assert result["tools"] == []
 
+    def test_input_tools_appear_before_state_orphan_tools(self):
+        """Tools from input should appear before orphaned state tools in result (stable ordering)."""
+        agent = make_agent()
+        orphan = {"name": "orphan", "description": "orphaned", "parameters": {}}
+        state = {"messages": [], "tools": [orphan]}
+        input_tool = make_tool("input_tool")
+        result = agent.langgraph_default_merge_state(state, [], make_input(tools=[input_tool]))
+        names = [tool_name(t) for t in result["tools"]]
+        assert names.index("input_tool") < names.index("orphan"), \
+            "Input tool should come before orphaned state tool"
+
+    def test_same_tool_name_different_parameters_input_wins(self):
+        """When the same tool name appears in both, input's parameters schema should win."""
+        agent = make_agent()
+        state_tool = {
+            "name": "my_tool",
+            "description": "old",
+            "parameters": {"type": "object", "properties": {"old_field": {"type": "string"}}},
+        }
+        state = {"messages": [], "tools": [state_tool]}
+        new_params = {"type": "object", "properties": {"new_field": {"type": "integer"}}}
+        input_tool = Tool(
+            name="my_tool",
+            description="new",
+            parameters=new_params,
+        )
+        result = agent.langgraph_default_merge_state(state, [], make_input(tools=[input_tool]))
+        my_tools = [t for t in result["tools"] if tool_name(t) == "my_tool"]
+        assert len(my_tools) == 1
+        tool = my_tools[0]
+        params = tool.get("parameters") if isinstance(tool, dict) else getattr(tool, "parameters", None)
+        assert params == new_params, "Input tool's parameters should win over state tool's"
+
+    def test_state_tools_key_none_treated_as_empty(self):
+        """State with tools=None should not crash and should use input tools."""
+        agent = make_agent()
+        state = {"messages": [], "tools": None}
+        input_tool = make_tool("only_input_tool")
+        result = agent.langgraph_default_merge_state(state, [], make_input(tools=[input_tool]))
+        tool_names_in_result = [tool_name(t) for t in result["tools"]]
+        assert "only_input_tool" in tool_names_in_result
+
     def test_ag_ui_and_copilotkit_keys_set(self):
         agent = make_agent()
         state = {"messages": []}

@@ -124,6 +124,48 @@ class TestResolveReasoningContent:
         chunk = FakeChunk(content=[{"type": "reasoning", "reasoning": ""}])
         assert resolve_reasoning_content(chunk) is None
 
+    def test_reasoning_content_inner_not_dict_returns_none(self):
+        """Bedrock block present but inner value is not a dict — should not crash."""
+        chunk = FakeChunk(content=[{
+            "type": "reasoning_content",
+            "reasoning_content": "not-a-dict",
+        }])
+        assert resolve_reasoning_content(chunk) is None
+
+    def test_reasoning_content_inner_missing_text_returns_none(self):
+        """Bedrock inner dict present but no text key — should return None."""
+        chunk = FakeChunk(content=[{
+            "type": "reasoning_content",
+            "reasoning_content": {"type": "text"},
+        }])
+        assert resolve_reasoning_content(chunk) is None
+
+    def test_thinking_block_missing_thinking_key_returns_none(self):
+        """Thinking block with type but no thinking key — should return None."""
+        chunk = FakeChunk(content=[{"type": "thinking"}])
+        assert resolve_reasoning_content(chunk) is None
+
+    def test_openai_summary_empty_list_returns_none(self):
+        """OpenAI Responses API format with empty summary list should return None."""
+        chunk = FakeChunk(content=[{"type": "reasoning", "summary": []}])
+        assert resolve_reasoning_content(chunk) is None
+
+    def test_additional_kwargs_empty_summary_returns_none(self):
+        """OpenAI legacy format with empty summary list should return None."""
+        chunk = FakeChunk(
+            content=[],
+            additional_kwargs={"reasoning": {"summary": []}},
+        )
+        assert resolve_reasoning_content(chunk) is None
+
+    def test_additional_kwargs_summary_entry_without_text_returns_none(self):
+        """OpenAI legacy summary entry with no text key should return None."""
+        chunk = FakeChunk(
+            content=[],
+            additional_kwargs={"reasoning": {"summary": [{"index": 0}]}},
+        )
+        assert resolve_reasoning_content(chunk) is None
+
 
 # ---------------------------------------------------------------------------
 # resolve_encrypted_reasoning_content

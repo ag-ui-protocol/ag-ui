@@ -630,7 +630,7 @@ class LangGraphAgent:
                     tools_as_dicts.append(tool)
 
         # Input tools first so they win over stale state tools on name collision
-        all_tools = [*tools_as_dicts, *state.get("tools", [])]
+        all_tools = [*tools_as_dicts, *(state.get("tools") or [])]
 
         # Remove duplicates based on tool name
         seen_names = set()
@@ -719,7 +719,8 @@ class LangGraphAgent:
             return []
         interrupts = []
         for task in tasks:
-            interrupts.extend(task.interrupts)
+            task_interrupts = getattr(task, "interrupts", None) or []
+            interrupts.extend(task_interrupts)
         return interrupts
 
     def get_state_snapshot(self, state: State) -> State:

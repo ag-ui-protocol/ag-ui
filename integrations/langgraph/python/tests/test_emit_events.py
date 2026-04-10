@@ -132,3 +132,54 @@ class TestHandleSingleEventCustomEvents:
 
         event_types = [e.type for e in events]
         assert EventType.CUSTOM in event_types
+
+    @pytest.mark.asyncio
+    async def test_unknown_event_name_produces_custom_with_data(self):
+        """Unknown custom event names should produce a CUSTOM event that carries the original data."""
+        agent = self._make_agent()
+        payload = {"key": "value", "count": 42}
+        event = {
+            "event": LangGraphEventTypes.OnCustomEvent.value,
+            "name": "some_unknown_event",
+            "data": payload,
+        }
+        events = []
+        async for ev in agent._handle_single_event(event, {}):
+            events.append(ev)
+
+        custom_events = [e for e in events if e.type == EventType.CUSTOM]
+        assert len(custom_events) == 1
+        assert custom_events[0].name == "some_unknown_event"
+        assert custom_events[0].value == payload
+
+    @pytest.mark.asyncio
+    async def test_manually_emit_state_with_nested_data(self):
+        """ManuallyEmitState should handle nested/complex data without crashing."""
+        agent = self._make_agent()
+        nested_state = {"level1": {"level2": [1, 2, 3]}, "count": 5}
+        event = {
+            "event": LangGraphEventTypes.OnCustomEvent.value,
+            "name": CustomEventNames.ManuallyEmitState.value,
+            "data": nested_state,
+        }
+        events = []
+        async for ev in agent._handle_single_event(event, {}):
+            events.append(ev)
+
+        assert agent.active_run["manually_emitted_state"] == nested_state
+        assert any(e.type == EventType.STATE_SNAPSHOT for e in events)
+
+    @pytest.mark.asyncio
+    async def test_manually_emit_state_with_empty_payload(self):
+        """ManuallyEmitState with empty dict should not crash."""
+        agent = self._make_agent()
+        event = {
+            "event": LangGraphEventTypes.OnCustomEvent.value,
+            "name": CustomEventNames.ManuallyEmitState.value,
+            "data": {},
+        }
+        events = []
+        async for ev in agent._handle_single_event(event, {}):
+            events.append(ev)
+
+        assert any(e.type == EventType.STATE_SNAPSHOT for e in events)

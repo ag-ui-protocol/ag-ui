@@ -192,6 +192,41 @@ describe("langGraphDefaultMergeState", () => {
     expect(result.tools).toHaveLength(0);
   });
 
+  it("should place input tools before orphaned state tools (stable ordering)", () => {
+    const orphan = {
+      type: "function",
+      name: "orphan_tool",
+      function: { name: "orphan_tool", description: "orphaned", parameters: {} },
+    };
+    const state = { messages: [], tools: [orphan] };
+    const result = langGraphDefaultMergeState(state, [], { tools: [makeTool("input_tool")] });
+    const names = result.tools.map(toolName);
+    expect(names.indexOf("input_tool")).toBeLessThan(names.indexOf("orphan_tool"));
+  });
+
+  it("should use input tool's parameters when same name exists in state", () => {
+    const stateTool = {
+      type: "function",
+      name: "my_tool",
+      function: { name: "my_tool", description: "old", parameters: { properties: { old: {} } } },
+    };
+    const state = { messages: [], tools: [stateTool] };
+    const newParams = { type: "object", properties: { new_field: { type: "integer" } } };
+    const inputTool = { name: "my_tool", description: "new", parameters: newParams };
+    const result = langGraphDefaultMergeState(state, [], { tools: [inputTool] });
+    const myTools = result.tools.filter((t) => toolName(t) === "my_tool");
+    expect(myTools).toHaveLength(1);
+    // Input tool came in as plain object — check its description was used
+    const desc = (myTools[0] as any).description || myTools[0].function?.description;
+    expect(desc).toBe("new");
+  });
+
+  it("should handle state with tools as null without crashing", () => {
+    const state = { messages: [], tools: null as any };
+    const result = langGraphDefaultMergeState(state, [], { tools: [makeTool("input_tool")] });
+    expect(result.tools.map(toolName)).toContain("input_tool");
+  });
+
   it("should set ag-ui and copilotkit keys", () => {
     const state = { messages: [] };
     const result = langGraphDefaultMergeState(state, [], {

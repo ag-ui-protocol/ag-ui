@@ -97,3 +97,37 @@ class TestCollectInterrupts:
         tasks = [FakeTask(interrupts=[]), FakeTask(interrupts=[])]
         interrupts = agent._collect_interrupts(tasks)
         assert len(interrupts) == 0
+
+    def test_task_with_none_interrupts(self):
+        """A task whose interrupts field is None should be safely skipped."""
+        @dataclass
+        class TaskWithNoneInterrupts:
+            interrupts: Any = None
+
+        agent = make_agent()
+        tasks = [TaskWithNoneInterrupts(), FakeTask(interrupts=[FakeInterrupt(value="ok")])]
+        interrupts = agent._collect_interrupts(tasks)
+        assert len(interrupts) == 1
+        assert interrupts[0].value == "ok"
+
+    def test_task_missing_interrupts_attribute(self):
+        """A task object with no interrupts attribute at all should be safely skipped."""
+        class BareTask:
+            pass
+
+        agent = make_agent()
+        tasks = [BareTask(), FakeTask(interrupts=[FakeInterrupt(value="found")])]
+        interrupts = agent._collect_interrupts(tasks)
+        assert len(interrupts) == 1
+        assert interrupts[0].value == "found"
+
+    def test_malformed_tasks_mixed_with_valid(self):
+        """Non-task objects mixed in should not raise — only valid interrupts collected."""
+        agent = make_agent()
+        valid_task = FakeTask(interrupts=[FakeInterrupt(value="valid")])
+        # A plain dict without 'interrupts' key
+        malformed = {}
+        tasks = [valid_task, malformed]
+        # getattr on a dict returns the default, so this should not raise
+        interrupts = agent._collect_interrupts(tasks)
+        assert len(interrupts) == 1

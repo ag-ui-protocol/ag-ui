@@ -89,4 +89,32 @@ describe("Interrupt Detection (issue #1409)", () => {
     const tasks = [{ interrupts: [] }, { interrupts: [] }];
     expect(collectInterrupts(tasks)).toHaveLength(0);
   });
+
+  it("should handle task with interrupts key missing entirely", () => {
+    // A task object with no interrupts key — the ?? [] guard makes it safe
+    const tasks = [{} as FakeTask, { interrupts: [{ value: "found" }] }];
+    const interrupts = collectInterrupts(tasks);
+    expect(interrupts).toHaveLength(1);
+    expect(interrupts[0].value).toBe("found");
+  });
+
+  it("should handle task with interrupts as null", () => {
+    const tasks = [{ interrupts: null as any }, { interrupts: [{ value: "ok" }] }];
+    const interrupts = collectInterrupts(tasks);
+    expect(interrupts).toHaveLength(1);
+    expect(interrupts[0].value).toBe("ok");
+  });
+
+  it("should collect from mixed batch of valid and missing-interrupt tasks", () => {
+    const tasks = [
+      {},
+      { interrupts: [{ value: "A" }] },
+      {},
+      { interrupts: [{ value: "B" }] },
+    ] as FakeTask[];
+    const interrupts = collectInterrupts(tasks);
+    expect(interrupts).toHaveLength(2);
+    expect(interrupts.map((i) => i.value)).toContain("A");
+    expect(interrupts.map((i) => i.value)).toContain("B");
+  });
 });

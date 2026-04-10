@@ -133,6 +133,50 @@ describe("resolveReasoningContent", () => {
       resolveReasoningContent({ chunk: { content: [{ type: "reasoning", reasoning: "" }] } }),
     ).toBeNull();
   });
+
+  it("should return null when reasoning_content inner value is not an object", () => {
+    expect(
+      resolveReasoningContent({
+        chunk: { content: [{ type: "reasoning_content", reasoning_content: "not-an-object" }] },
+      }),
+    ).toBeNull();
+  });
+
+  it("should return null when reasoning_content inner dict has no text key", () => {
+    expect(
+      resolveReasoningContent({
+        chunk: { content: [{ type: "reasoning_content", reasoning_content: { type: "text" } }] },
+      }),
+    ).toBeNull();
+  });
+
+  it("should return null when thinking block has no thinking key", () => {
+    expect(
+      resolveReasoningContent({ chunk: { content: [{ type: "thinking" }] } }),
+    ).toBeNull();
+  });
+
+  it("should return null for OpenAI Responses API with empty summary list", () => {
+    expect(
+      resolveReasoningContent({ chunk: { content: [{ type: "reasoning", summary: [] }] } }),
+    ).toBeNull();
+  });
+
+  it("should return null for additional_kwargs with empty summary list", () => {
+    expect(
+      resolveReasoningContent({
+        chunk: { content: [], additional_kwargs: { reasoning: { summary: [] } } },
+      }),
+    ).toBeNull();
+  });
+
+  it("should return null for additional_kwargs summary entry without text key", () => {
+    expect(
+      resolveReasoningContent({
+        chunk: { content: [], additional_kwargs: { reasoning: { summary: [{ index: 0 }] } } },
+      }),
+    ).toBeNull();
+  });
 });
 
 describe("resolveEncryptedReasoningContent", () => {

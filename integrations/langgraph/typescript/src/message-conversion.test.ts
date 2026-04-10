@@ -4,7 +4,7 @@
  */
 
 import { Message as LangGraphMessage } from "@langchain/langgraph-sdk";
-import { Message, UserMessage, TextInputContent, BinaryInputContent } from "@ag-ui/client";
+import { Message } from "@ag-ui/client";
 import { aguiMessagesToLangChain, langchainMessagesToAgui } from "./utils";
 
 describe("Message Conversion - All Types", () => {
@@ -39,10 +39,10 @@ describe("Message Conversion - All Types", () => {
           },
         ],
       };
-      const result = aguiMessagesToLangChain([msg]);
+      const result: any[] = aguiMessagesToLangChain([msg]);
       expect(result[0].tool_calls).toHaveLength(1);
-      expect(result[0].tool_calls![0].name).toBe("search");
-      expect(result[0].tool_calls![0].args).toEqual({ query: "weather" });
+      expect(result[0].tool_calls[0].name).toBe("search");
+      expect(result[0].tool_calls[0].args).toEqual({ query: "weather" });
     });
 
     it("should convert system message", () => {
@@ -54,7 +54,7 @@ describe("Message Conversion - All Types", () => {
 
     it("should convert tool message", () => {
       const msg: Message = { id: "t1", role: "tool", content: "42", toolCallId: "tc1" };
-      const result = aguiMessagesToLangChain([msg]);
+      const result: any[] = aguiMessagesToLangChain([msg]);
       expect(result[0].type).toBe("tool");
       expect(result[0].content).toBe("42");
       expect(result[0].tool_call_id).toBe("tc1");
@@ -81,7 +81,8 @@ describe("Message Conversion - All Types", () => {
 
   describe("langchainMessagesToAgui", () => {
     it("should convert human message", () => {
-      const msg: LangGraphMessage = { id: "h1", type: "human", content: "Hello", role: "user" };
+      // Cast to any to bypass strict LangGraph SDK type checks — runtime shape is valid
+      const msg = { id: "h1", type: "human", content: "Hello" } as any as LangGraphMessage;
       const result = langchainMessagesToAgui([msg]);
       expect(result[0].role).toBe("user");
       expect(result[0].content).toBe("Hello");
@@ -89,29 +90,28 @@ describe("Message Conversion - All Types", () => {
     });
 
     it("should convert ai message with tool calls", () => {
-      const msg: LangGraphMessage = {
+      const msg = {
         id: "a2",
         type: "ai",
         content: "",
-        role: "assistant",
         tool_calls: [{ id: "tc1", name: "search", args: { q: "hello" } }],
-      };
-      const result = langchainMessagesToAgui([msg]);
+      } as any as LangGraphMessage;
+      const result: any[] = langchainMessagesToAgui([msg]);
       expect(result[0].role).toBe("assistant");
       expect(result[0].toolCalls).toHaveLength(1);
-      expect(result[0].toolCalls![0].function.name).toBe("search");
-      expect(JSON.parse(result[0].toolCalls![0].function.arguments)).toEqual({ q: "hello" });
+      expect(result[0].toolCalls[0].function.name).toBe("search");
+      expect(JSON.parse(result[0].toolCalls[0].function.arguments)).toEqual({ q: "hello" });
     });
 
     it("should convert system message", () => {
-      const msg: LangGraphMessage = { id: "s1", type: "system", content: "Sys prompt", role: "system" };
+      const msg = { id: "s1", type: "system", content: "Sys prompt" } as any as LangGraphMessage;
       const result = langchainMessagesToAgui([msg]);
       expect(result[0].role).toBe("system");
     });
 
     it("should convert tool message", () => {
-      const msg: LangGraphMessage = { id: "t1", type: "tool", content: "result", role: "tool", tool_call_id: "tc1" };
-      const result = langchainMessagesToAgui([msg]);
+      const msg = { id: "t1", type: "tool", content: "result", tool_call_id: "tc1" } as any as LangGraphMessage;
+      const result: any[] = langchainMessagesToAgui([msg]);
       expect(result[0].role).toBe("tool");
       expect(result[0].toolCallId).toBe("tc1");
     });
@@ -122,15 +122,14 @@ describe("Message Conversion - All Types", () => {
     });
 
     it("should handle multimodal human message", () => {
-      const msg: LangGraphMessage = {
+      const msg = {
         id: "m1",
         type: "human",
         content: [
           { type: "text", text: "Look at this" },
           { type: "image_url", image_url: { url: "https://example.com/img.png" } },
-        ] as any,
-        role: "user",
-      };
+        ],
+      } as any as LangGraphMessage;
       const result = langchainMessagesToAgui([msg]);
       const content = result[0].content as any[];
       expect(content).toHaveLength(2);
@@ -140,19 +139,57 @@ describe("Message Conversion - All Types", () => {
     });
 
     it("should parse data URLs in multimodal content", () => {
-      const msg: LangGraphMessage = {
+      const msg = {
         id: "m2",
         type: "human",
         content: [
           { type: "image_url", image_url: { url: "data:image/jpeg;base64,abc123" } },
-        ] as any,
-        role: "user",
-      };
+        ],
+      } as any as LangGraphMessage;
       const result = langchainMessagesToAgui([msg]);
       const content = result[0].content as any[];
       expect(content[0].type).toBe("binary");
       expect(content[0].mimeType).toBe("image/jpeg");
       expect(content[0].data).toBe("abc123");
+    });
+  });
+
+  describe("Edge cases - langchainMessagesToAgui", () => {
+    it("should return empty array for empty input", () => {
+      expect(langchainMessagesToAgui([])).toHaveLength(0);
+    });
+
+    it("should handle ai message with list content (text blocks)", () => {
+      const msg = {
+        id: "a1",
+        type: "ai",
+        content: [{ type: "text", text: "extracted" }],
+      } as any as LangGraphMessage;
+      const result = langchainMessagesToAgui([msg]);
+      expect(result[0].content).toBe("extracted");
+    });
+
+    it("should handle ai message with empty string content", () => {
+      const msg = {
+        id: "a2",
+        type: "ai",
+        content: "",
+      } as any as LangGraphMessage;
+      const result = langchainMessagesToAgui([msg]);
+      expect(result[0].content).toBe("");
+    });
+  });
+
+  describe("Edge cases - aguiMessagesToLangChain", () => {
+    it("should return empty array for empty input", () => {
+      expect(aguiMessagesToLangChain([])).toHaveLength(0);
+    });
+
+    it("should handle assistant message with no tool_calls", () => {
+      const msg: Message = { id: "a3", role: "assistant", content: "plain text" };
+      const result: any[] = aguiMessagesToLangChain([msg]);
+      expect(result[0].type).toBe("ai");
+      expect(result[0].tool_calls).toHaveLength(0);
     });
   });
 
@@ -176,15 +213,15 @@ describe("Message Conversion - All Types", () => {
         ],
       };
       const lc = aguiMessagesToLangChain([original]);
-      const back = langchainMessagesToAgui(lc);
+      const back: any[] = langchainMessagesToAgui(lc);
       expect(back[0].toolCalls).toHaveLength(1);
-      expect(back[0].toolCalls![0].function.name).toBe("calc");
+      expect(back[0].toolCalls[0].function.name).toBe("calc");
     });
 
     it("should round-trip tool message", () => {
       const original: Message = { id: "rt3", role: "tool", content: "done", toolCallId: "tc1" };
       const lc = aguiMessagesToLangChain([original]);
-      const back = langchainMessagesToAgui(lc);
+      const back: any[] = langchainMessagesToAgui(lc);
       expect(back[0].role).toBe("tool");
       expect(back[0].content).toBe("done");
       expect(back[0].toolCallId).toBe("tc1");
