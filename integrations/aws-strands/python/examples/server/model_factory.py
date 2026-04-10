@@ -17,14 +17,14 @@ def create_model():
     provider = os.getenv("MODEL_PROVIDER", "openai").lower()
 
     if provider == "openai":
-        from strands.models.openai import OpenAIModel
-        return OpenAIModel(
+        from strands.models.openai_responses import OpenAIResponsesModel
+        return OpenAIResponsesModel(
             client_args={
                 "api_key": os.getenv("OPENAI_API_KEY"),
             },
             model_id=os.getenv("MODEL_ID", "gpt-5.4"),
             params={
-                "reasoning_effort": "medium",
+                "reasoning": {"effort": "medium"},
             }
         )
     elif provider == "anthropic":
