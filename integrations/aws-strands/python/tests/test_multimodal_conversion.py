@@ -276,3 +276,132 @@ class TestMimeToFormat:
         result = _mime_to_format(None, {"png", "jpeg", "gif", "webp"})
         # Falls back to first sorted allowed format
         assert result == "gif"
+
+
+# ---------------------------------------------------------------------------
+# Agent-level multimodal integration tests
+# ---------------------------------------------------------------------------
+
+
+class MockStrandsAgentForMultimodal:
+    """Mock Strands agent that records the prompt passed to stream_async."""
+
+    def __init__(self):
+        self.last_prompt = None
+        self.model = MagicMock()
+        self.system_prompt = "test"
+        self.tool_registry = MagicMock()
+        self.tool_registry.registry = {}
+        self.record_direct_tool_call = True
+
+    async def stream_async(self, prompt):
+        self.last_prompt = prompt
+        yield {"data": "response"}
+        yield {"complete": True}
+
+
+def _make_input(messages):
+    """Create a minimal mock RunAgentInput."""
+    input_data = MagicMock()
+    input_data.thread_id = "test-thread"
+    input_data.run_id = "test-run"
+    input_data.state = {}
+    input_data.tools = []
+    input_data.messages = messages
+    return input_data
+
+
+class TestAgentMultimodalIntegration:
+    """Integration tests verifying multimodal content flows through agent.run()."""
+
+    @pytest.mark.asyncio
+    async def test_multimodal_user_message_converted(self):
+        """When user message has image content, stream_async receives a list."""
+        from ag_ui_strands.agent import StrandsAgent
+
+        # Build a mock base agent to satisfy the StrandsAgent constructor
+        mock_base = MockStrandsAgentForMultimodal()
+        agent = StrandsAgent(mock_base, name="test", description="test")
+
+        # Inject a recording mock agent for the thread
+        mock_strands = MockStrandsAgentForMultimodal()
+        agent._agents_by_thread["test-thread"] = mock_strands
+
+        # Build a user message with mixed text + image content
+        b64_data = base64.b64encode(b"fake-image").decode()
+        mock_msg = MagicMock()
+        mock_msg.role = "user"
+        mock_msg.content = [
+            TextInputContent(type="text", text="What is this?"),
+            ImageInputContent(
+                type="image",
+                source=InputContentDataSource(
+                    type="data", value=b64_data, mime_type="image/png"
+                ),
+            ),
+        ]
+
+        input_data = _make_input([mock_msg])
+
+        events = []
+        async for event in agent.run(input_data):
+            events.append(event)
+
+        # The prompt passed to stream_async should be a list (Strands ContentBlock list)
+        assert isinstance(mock_strands.last_prompt, list), (
+            f"Expected list for multimodal prompt, got {type(mock_strands.last_prompt)}"
+        )
+        # Should contain a text block and an image block
+        assert any("text" in block for block in mock_strands.last_prompt)
+        assert any("image" in block for block in mock_strands.last_prompt)
+
+    @pytest.mark.asyncio
+    async def test_text_only_list_flattened_to_string(self):
+        """When user message content is a list of text-only items, it's flattened to a string."""
+        from ag_ui_strands.agent import StrandsAgent
+
+        mock_base = MockStrandsAgentForMultimodal()
+        agent = StrandsAgent(mock_base, name="test", description="test")
+
+        mock_strands = MockStrandsAgentForMultimodal()
+        agent._agents_by_thread["test-thread"] = mock_strands
+
+        mock_msg = MagicMock()
+        mock_msg.role = "user"
+        mock_msg.content = [TextInputContent(type="text", text="Hello world")]
+
+        input_data = _make_input([mock_msg])
+
+        events = []
+        async for event in agent.run(input_data):
+            events.append(event)
+
+        # Should be flattened to a plain string
+        assert isinstance(mock_strands.last_prompt, str), (
+            f"Expected str for text-only list, got {type(mock_strands.last_prompt)}"
+        )
+        assert mock_strands.last_prompt == "Hello world"
+
+    @pytest.mark.asyncio
+    async def test_plain_string_message_unchanged(self):
+        """When content is a plain string, it passes through unchanged."""
+        from ag_ui_strands.agent import StrandsAgent
+
+        mock_base = MockStrandsAgentForMultimodal()
+        agent = StrandsAgent(mock_base, name="test", description="test")
+
+        mock_strands = MockStrandsAgentForMultimodal()
+        agent._agents_by_thread["test-thread"] = mock_strands
+
+        mock_msg = MagicMock()
+        mock_msg.role = "user"
+        mock_msg.content = "Just a plain string"
+
+        input_data = _make_input([mock_msg])
+
+        events = []
+        async for event in agent.run(input_data):
+            events.append(event)
+
+        assert isinstance(mock_strands.last_prompt, str)
+        assert mock_strands.last_prompt == "Just a plain string"

@@ -48,6 +48,7 @@ from .config import (
     maybe_await,
     normalize_predict_state,
 )
+from .utils import convert_agui_content_to_strands, flatten_content_to_text
 
 
 class StrandsAgent:
@@ -280,17 +281,30 @@ class StrandsAgent:
             elif input_data.messages:
                 for msg in reversed(input_data.messages):
                     if (msg.role == "user" or msg.role == "tool") and msg.content:
-                        user_message = msg.content
+                        if isinstance(msg.content, list):
+                            has_media = any(
+                                getattr(item, "type", None) in ("image", "audio", "video", "document")
+                                for item in msg.content
+                            )
+                            if has_media:
+                                user_message = convert_agui_content_to_strands(msg.content)
+                            else:
+                                user_message = flatten_content_to_text(msg.content)
+                        else:
+                            user_message = msg.content
                         break
 
             # Optionally allow configuration to adjust the outgoing user message
             if self.config.state_context_builder:
                 try:
-                    user_message = self.config.state_context_builder(
-                        input_data, user_message
+                    text_for_builder = flatten_content_to_text(user_message) if isinstance(user_message, list) else user_message
+                    builder_result = self.config.state_context_builder(
+                        input_data, text_for_builder
                     )
+                    if not isinstance(user_message, list):
+                        user_message = builder_result
                     # If state_context_builder modifies the message, update the last user message
-                    if strands_messages and strands_messages[-1]["role"] == "user":
+                    if not isinstance(user_message, list) and strands_messages and strands_messages[-1]["role"] == "user":
                         strands_messages[-1]["content"] = [{"text": user_message}]
                 except Exception as e:
                     # If the builder fails, keep the original message

@@ -15,10 +15,6 @@ from ag_ui.core import (
 )
 from ag_ui.core.types import InputContentDataSource, InputContentUrlSource
 
-from fastapi import FastAPI
-from .agent import StrandsAgent
-from .endpoint import add_strands_fastapi_endpoint, add_ping
-
 logger = logging.getLogger(__name__)
 
 # Allowed formats per media type for Strands ContentBlock
@@ -192,19 +188,22 @@ def flatten_content_to_text(content: Any) -> str:
 
 
 def create_strands_app(
-    agent: StrandsAgent, 
-    path: str = "/", 
-    ping_path: str | None = "/ping"
-) -> FastAPI:
+    agent: "Any",
+    path: str = "/",
+    ping_path: str | None = "/ping",
+) -> "Any":
     """Create a FastAPI app with a single Strands agent endpoint and optional ping endpoint.
-    
+
     Args:
         agent: The StrandsAgent instance
         path: Path for the agent endpoint (default: "/")
         ping_path: Path for the ping endpoint (default: "/ping"). Pass None to disable.
     """
+    from fastapi import FastAPI
+    from .endpoint import add_strands_fastapi_endpoint, add_ping
+
     app = FastAPI(title=f"AWS Strands - {agent.name}")
-    
+
     # Add CORS middleware
     from fastapi.middleware.cors import CORSMiddleware
     app.add_middleware(
@@ -214,12 +213,12 @@ def create_strands_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    
+
     # Add the agent endpoint
     add_strands_fastapi_endpoint(app, agent, path)
-    
+
     # Add ping endpoint if path is provided
     if ping_path is not None:
         add_ping(app, ping_path)
-    
+
     return app
