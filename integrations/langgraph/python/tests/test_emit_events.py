@@ -1,9 +1,9 @@
-"""Tests for custom emit event dispatch — fixes #1364.
+"""Tests for custom emit event dispatch.
 
-CopilotKit emits events named "copilotkit_manually_emit_message" etc.,
-but the handler checks CustomEventNames which may use a different string.
+AG-UI LangGraph uses un-prefixed event names ("manually_emit_message" etc.).
+Framework integrations like CopilotKit add their own prefix via
+CustomEventNames overrides in their subclass.
 """
-import json
 import pytest
 from unittest.mock import MagicMock
 
@@ -12,33 +12,20 @@ from ag_ui.core import EventType
 from ag_ui_langgraph.types import CustomEventNames, LangGraphEventTypes
 
 
-class TestCustomEventNamesMatchCopilotKit:
-    """Verify that CustomEventNames values match what CopilotKit actually emits.
-
-    CopilotKit's Python SDK dispatches custom events with the "copilotkit_" prefix.
-    The handler in _handle_single_event compares event["name"] against these constants.
-    If they don't match, the events are silently ignored (bug #1364).
-    """
+class TestCustomEventNamesValues:
+    """Verify CustomEventNames enum values match what the ag-ui LangGraph handler emits."""
 
     def test_manually_emit_message_name(self):
-        assert CustomEventNames.ManuallyEmitMessage == "copilotkit_manually_emit_message", (
-            "ManuallyEmitMessage must match the event name CopilotKit emits (issue #1364)"
-        )
+        assert CustomEventNames.ManuallyEmitMessage == "manually_emit_message"
 
     def test_manually_emit_tool_call_name(self):
-        assert CustomEventNames.ManuallyEmitToolCall == "copilotkit_manually_emit_tool_call", (
-            "ManuallyEmitToolCall must match the event name CopilotKit emits (issue #1364)"
-        )
+        assert CustomEventNames.ManuallyEmitToolCall == "manually_emit_tool_call"
 
     def test_manually_emit_state_name(self):
-        assert CustomEventNames.ManuallyEmitState == "copilotkit_manually_emit_state", (
-            "ManuallyEmitState must match the event name CopilotKit emits (issue #1364)"
-        )
+        assert CustomEventNames.ManuallyEmitState == "manually_emit_state"
 
     def test_exit_name(self):
-        assert CustomEventNames.Exit == "copilotkit_exit", (
-            "Exit must match the event name CopilotKit emits (issue #1364)"
-        )
+        assert CustomEventNames.Exit == "exit"
 
 
 class TestHandleSingleEventCustomEvents:

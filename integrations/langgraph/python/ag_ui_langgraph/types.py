@@ -15,10 +15,10 @@ class LangGraphEventTypes(str, Enum):
     OnInterrupt = "on_interrupt"
 
 class CustomEventNames(str, Enum):
-    ManuallyEmitMessage = "copilotkit_manually_emit_message"
-    ManuallyEmitToolCall = "copilotkit_manually_emit_tool_call"
-    ManuallyEmitState = "copilotkit_manually_emit_state"
-    Exit = "copilotkit_exit"
+    ManuallyEmitMessage = "manually_emit_message"
+    ManuallyEmitToolCall = "manually_emit_tool_call"
+    ManuallyEmitState = "manually_emit_state"
+    Exit = "exit"
 
 State = Dict[str, Any]
 

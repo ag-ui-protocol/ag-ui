@@ -115,10 +115,10 @@ export type LangGraphPlatformMessage =
   | BaseLangGraphPlatformMessage;
 
 export enum CustomEventNames {
-  ManuallyEmitMessage = "copilotkit_manually_emit_message",
-  ManuallyEmitToolCall = "copilotkit_manually_emit_tool_call",
-  ManuallyEmitState = "copilotkit_manually_emit_state",
-  Exit = "copilotkit_exit",
+  ManuallyEmitMessage = "manually_emit_message",
+  ManuallyEmitToolCall = "manually_emit_tool_call",
+  ManuallyEmitState = "manually_emit_state",
+  Exit = "exit",
 }
 
 export interface PredictStateTool {
