@@ -3143,6 +3143,26 @@
       "type": "file"
     }
   ],
+  "aws-strands::agentic_chat_multimodal": [
+    {
+      "name": "page.tsx",
+      "content": "\"use client\";\nimport React, { useState } from \"react\";\nimport \"@copilotkit/react-core/v2/styles.css\";\nimport {\n  useFrontendTool,\n  useConfigureSuggestions,\n  CopilotChat,\n} from \"@copilotkit/react-core/v2\";\nimport { z } from \"zod\";\nimport { CopilotKit } from \"@copilotkit/react-core\";\n\ninterface AgenticChatMultimodalProps {\n  params: Promise<{\n    integrationId: string;\n  }>;\n}\n\nconst AgenticChatMultimodal: React.FC<AgenticChatMultimodalProps> = ({ params }) => {\n  const { integrationId } = React.use(params);\n\n  return (\n    <CopilotKit\n      runtimeUrl={`/api/copilotkit/${integrationId}`}\n      showDevConsole={false}\n      agent=\"agentic_chat_multimodal\"\n    >\n      <Chat />\n    </CopilotKit>\n  );\n};\n\nconst Chat = () => {\n  const [background, setBackground] = useState<string>(\"--copilot-kit-background-color\");\n\n  useFrontendTool({\n    name: \"change_background\",\n    description:\n      \"Change the background color of the chat. Can be anything that the CSS background attribute accepts. Regular colors, linear or radial gradients etc.\",\n    parameters: z.object({\n      background: z.string().describe(\"The background. Prefer gradients. Only use when asked.\"),\n    }),\n    handler: async ({ background }: { background: string }) => {\n      setBackground(background);\n      return {\n        status: \"success\",\n        message: `Background changed to ${background}`,\n      };\n    },\n  });\n\n  useConfigureSuggestions({\n    suggestions: [\n      {\n        title: \"Upload an image\",\n        message: \"Describe what you see in the image I upload.\",\n      },\n      {\n        title: \"Analyze a photo\",\n        message: \"What objects can you identify in this photo?\",\n      },\n    ],\n    available: \"always\",\n  });\n\n  return (\n    <div\n      className=\"flex justify-center items-center h-full w-full\"\n      data-testid=\"background-container\"\n      style={{ background }}\n    >\n      <div className=\"h-full w-full md:w-8/10 md:h-8/10 rounded-lg\">\n        <CopilotChat\n          agentId=\"agentic_chat_multimodal\"\n          className=\"h-full rounded-2xl max-w-6xl mx-auto\"\n          attachments={{ enabled: true }}\n        />\n      </div>\n    </div>\n  );\n};\n\nexport default AgenticChatMultimodal;\n",
+      "language": "typescript",
+      "type": "file"
+    },
+    {
+      "name": "README.mdx",
+      "content": "# Agentic Chat Multimodal\n\nThis example demonstrates multimodal input support in AG-UI with AWS Strands. Users can upload images and other media alongside text messages, and the agent analyzes them.\n\n## How it works\n\n- The `CopilotChat` component is configured with `attachments={{ enabled: true }}` to allow file uploads\n- Uploaded images are sent as `ImageInputContent` with base64-encoded data through the AG-UI protocol\n- The backend agent uses a vision-capable model (Gemini 2.5 Flash) to analyze the uploaded content\n- The AG-UI Strands adapter automatically converts between AG-UI's multimodal content types and Strands ContentBlock format\n\n## Try it\n\n1. Click the attachment icon in the chat input\n2. Upload an image\n3. Ask the agent to describe or analyze the image\n",
+      "language": "markdown",
+      "type": "file"
+    },
+    {
+      "name": "agentic_chat_multimodal.py",
+      "content": "\"\"\"Agentic Chat with Multimodal support for AWS Strands.\n\nDemonstrates multimodal message handling. When the user uploads an image,\nthe adapter converts AG-UI InputContent to Strands ContentBlock format\nand passes it to the vision-capable model.\n\"\"\"\nimport os\nfrom pathlib import Path\nfrom dotenv import load_dotenv\n\n# Suppress OpenTelemetry context warnings\nos.environ[\"OTEL_SDK_DISABLED\"] = \"true\"\nos.environ[\"OTEL_PYTHON_DISABLED_INSTRUMENTATIONS\"] = \"all\"\n\nfrom strands import Agent\nfrom strands.models.gemini import GeminiModel\nfrom ag_ui_strands import StrandsAgent, create_strands_app\n\n# Load environment variables from .env file\nenv_path = Path(__file__).parent.parent.parent / '.env'\n\nload_dotenv(dotenv_path=env_path)\n\n# Use Gemini model\nmodel = GeminiModel(\n    client_args={\n        \"api_key\": os.getenv(\"GOOGLE_API_KEY\", \"your-api-key-here\"),\n    },\n    model_id=\"gemini-2.5-flash\",\n    params={\n        \"temperature\": 0.7,\n        \"max_output_tokens\": 2048,\n        \"top_p\": 0.9,\n        \"top_k\": 40\n    }\n)\n\nstrands_agent = Agent(\n    model=model,\n    system_prompt=\"\"\"\n    You are a helpful assistant that can analyze images and documents.\n    When the user shares an image, describe what you see in detail.\n    When the user shares a document, summarize its contents.\n    Always be descriptive and specific about visual content.\n    \"\"\",\n)\n\nagui_agent = StrandsAgent(\n    agent=strands_agent,\n    name=\"agentic_chat_multimodal\",\n    description=\"Conversational Strands agent with multimodal content support\",\n)\n\napp = create_strands_app(agui_agent, \"/\")\n",
+      "language": "python",
+      "type": "file"
+    }
+  ],
   "aws-strands::v1_agentic_chat": [
     {
       "name": "page.tsx",

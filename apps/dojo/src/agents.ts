@@ -350,6 +350,7 @@ export const agentsIntegrations = {
       {
         agentic_chat: "agentic-chat",
         agentic_chat_reasoning: "agentic-chat-reasoning",
+        agentic_chat_multimodal: "agentic-chat-multimodal",
         backend_tool_rendering: "backend-tool-rendering",
         agentic_generative_ui: "agentic-generative-ui",
         shared_state: "shared-state",

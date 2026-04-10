@@ -1,0 +1,54 @@
+"""Agentic Chat with Multimodal support for AWS Strands.
+
+Demonstrates multimodal message handling. When the user uploads an image,
+the adapter converts AG-UI InputContent to Strands ContentBlock format
+and passes it to the vision-capable model.
+"""
+import os
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Suppress OpenTelemetry context warnings
+os.environ["OTEL_SDK_DISABLED"] = "true"
+os.environ["OTEL_PYTHON_DISABLED_INSTRUMENTATIONS"] = "all"
+
+from strands import Agent
+from strands.models.gemini import GeminiModel
+from ag_ui_strands import StrandsAgent, create_strands_app
+
+# Load environment variables from .env file
+env_path = Path(__file__).parent.parent.parent / '.env'
+
+load_dotenv(dotenv_path=env_path)
+
+# Use Gemini model
+model = GeminiModel(
+    client_args={
+        "api_key": os.getenv("GOOGLE_API_KEY", "your-api-key-here"),
+    },
+    model_id="gemini-2.5-flash",
+    params={
+        "temperature": 0.7,
+        "max_output_tokens": 2048,
+        "top_p": 0.9,
+        "top_k": 40
+    }
+)
+
+strands_agent = Agent(
+    model=model,
+    system_prompt="""
+    You are a helpful assistant that can analyze images and documents.
+    When the user shares an image, describe what you see in detail.
+    When the user shares a document, summarize its contents.
+    Always be descriptive and specific about visual content.
+    """,
+)
+
+agui_agent = StrandsAgent(
+    agent=strands_agent,
+    name="agentic_chat_multimodal",
+    description="Conversational Strands agent with multimodal content support",
+)
+
+app = create_strands_app(agui_agent, "/")
