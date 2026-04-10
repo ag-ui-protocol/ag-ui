@@ -100,6 +100,8 @@ ProcessedEvents = Union[
 
 logger = logging.getLogger(__name__)
 
+ROOT_SUBGRAPH_NAME = "root"
+
 class LangGraphAgent:
     def __init__(self, *, name: str, graph: CompiledStateGraph, description: Optional[str] = None, config:  Union[Optional[RunnableConfig], dict] = None):
         self.name = name
@@ -109,6 +111,12 @@ class LangGraphAgent:
         self.messages_in_process: MessagesInProgressRecord = {}
         self.active_run: Optional[RunMetadata] = None
         self.constant_schema_keys = ['messages', 'tools']
+        # Names of nodes that are compiled subgraphs — used for subgraph event detection
+        self.subgraphs: set = {
+            name for name, node in self.graph.nodes.items()
+            if isinstance(getattr(node, 'bound', None), CompiledStateGraph)
+        }
+        self.current_subgraph = ROOT_SUBGRAPH_NAME
 
     def clone(self) -> Self:
         """Create a fresh copy with clean per-request state.
@@ -204,11 +212,31 @@ class LangGraphAgent:
 
         try:
             async for event in stream:
-                subgraphs_stream_enabled = input.forwarded_props.get('stream_subgraphs') if input.forwarded_props else False
+                subgraphs_stream_enabled = input.forwarded_props.get('stream_subgraphs', True) if input.forwarded_props else True
+                ns = event.get("metadata", {}).get("langgraph_checkpoint_ns", "")
+                # Derive which subgraph (if any) owns this event.
+                # ns format: "" | "node:uuid" | "node:uuid|inner:uuid"
+                # The first segment before "|" and ":" gives the outermost node name.
+                ns_root = ns.split("|")[0].split(":")[0] if ns else ""
+                current_subgraph = ns_root if ns_root in self.subgraphs else None
+
+                # Legacy detection (LangGraph < 0.6): subgraph events use stream mode names as event types
                 is_subgraph_stream = (subgraphs_stream_enabled and (
                     event.get("event", "").startswith("events") or
                     event.get("event", "").startswith("values")
                 ))
+                # Modern detection (LangGraph >= 0.6): subgraph if inside one (|) or at its boundary
+                if not is_subgraph_stream and ("|" in ns or current_subgraph is not None):
+                    is_subgraph_stream = True
+
+                graph_context = current_subgraph if current_subgraph else ROOT_SUBGRAPH_NAME
+
+                if is_subgraph_stream and current_subgraph != self.current_subgraph:
+                    self.current_subgraph = current_subgraph
+                    # Every time a subgraph changes, we need to update the state and messages snapshots
+                    async for ev in self.get_state_and_messages_snapshots(config):
+                        yield ev
+
                 if event["event"] == "error":
                     yield self._dispatch_event(
                         RunErrorEvent(type=EventType.RUN_ERROR, message=event["data"]["message"], raw_event=event)
@@ -332,24 +360,8 @@ class LangGraphAgent:
                 for ev in self.handle_node_change(node_name):
                     yield ev
 
-            state_values = state.values if state.values else state
-            yield self._dispatch_event(
-                StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=self.get_state_snapshot(state_values))
-            )
-
-            checkpoint_messages = state_values.get("messages", [])
-            streamed_messages = self.active_run.get("streamed_messages", [])
-            if streamed_messages:
-                checkpoint_ids = {getattr(m, "id", None) for m in checkpoint_messages} - {None}
-                extra = [m for m in streamed_messages if getattr(m, "id", None) and getattr(m, "id", None) not in checkpoint_ids]
-                checkpoint_messages = checkpoint_messages + extra
-            snapshot_messages = self._filter_orphan_tool_messages(checkpoint_messages)
-            yield self._dispatch_event(
-                MessagesSnapshotEvent(
-                    type=EventType.MESSAGES_SNAPSHOT,
-                    messages=langchain_messages_to_agui(snapshot_messages),
-                )
-            )
+            async for ev in self.get_state_and_messages_snapshots(config):
+                yield ev
 
             for ev in self.handle_node_change(None):
                 yield ev
@@ -360,7 +372,6 @@ class LangGraphAgent:
             self.active_run = None
         except Exception:
             raise
-
 
     async def prepare_stream(self, input: RunAgentInput, agent_state: State, config: RunnableConfig):
         state_input = input.state or {}
@@ -459,7 +470,7 @@ class LangGraphAgent:
             stream_input = {**forwarded_props, **payload_input} if payload_input else None
 
 
-        subgraphs_stream_enabled = input.forwarded_props.get('stream_subgraphs') if input.forwarded_props else False
+        subgraphs_stream_enabled = input.forwarded_props.get('stream_subgraphs', True) if input.forwarded_props else True
 
         kwargs = self.get_stream_kwargs(
             input=stream_input,
@@ -496,7 +507,7 @@ class LangGraphAgent:
         )
 
         stream_input = self.langgraph_default_merge_state(time_travel_checkpoint.values, [message_checkpoint], input)
-        subgraphs_stream_enabled = input.forwarded_props.get('stream_subgraphs') if input.forwarded_props else False
+        subgraphs_stream_enabled = input.forwarded_props.get('stream_subgraphs', True) if input.forwarded_props else True
 
         kwargs = self.get_stream_kwargs(
             input=stream_input,
@@ -744,9 +755,11 @@ class LangGraphAgent:
             if is_tool_call_start_event or is_tool_call_end_event or is_tool_call_args_event:
                 self.active_run["has_function_streaming"] = True
 
-            reasoning_data = resolve_reasoning_content(event["data"]["chunk"]) if event["data"]["chunk"] else None
-            encrypted_reasoning_data = resolve_encrypted_reasoning_content(event["data"]["chunk"]) if event["data"]["chunk"] else None
-            message_content = resolve_message_content(event["data"]["chunk"].content) if event["data"]["chunk"] and event["data"]["chunk"].content else None
+            chunk = event["data"]["chunk"]
+
+            reasoning_data = resolve_reasoning_content(chunk) if chunk else None
+            encrypted_reasoning_data = resolve_encrypted_reasoning_content(chunk) if chunk else None
+            message_content = resolve_message_content(chunk.content) if chunk and chunk.content else None
             is_message_content_event = tool_call_data is None and message_content
             is_message_end_event = has_current_stream and not current_stream.get("tool_call_id") and not is_message_content_event
 
@@ -1077,7 +1090,7 @@ class LangGraphAgent:
                 ReasoningMessageStartEvent(
                     type=EventType.REASONING_MESSAGE_START,
                     message_id=self.active_run["reasoning_process"]["message_id"],
-                    role="assistant",
+                    role="reasoning",
                 )
             )
             self.active_run["reasoning_process"]["type"] = reasoning_data["type"]
@@ -1200,6 +1213,27 @@ class LangGraphAgent:
             kwargs.update(fork)
 
         return kwargs
+
+    async def get_state_and_messages_snapshots(self, config):
+        state = await self.graph.aget_state(config)
+        state_values = state.values if state.values is not None else state
+        yield self._dispatch_event(
+            StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=self.get_state_snapshot(state_values))
+        )
+
+        checkpoint_messages = state_values.get("messages", [])
+        streamed_messages = self.active_run.get("streamed_messages", [])
+        if streamed_messages:
+            checkpoint_ids = {getattr(m, "id", None) for m in checkpoint_messages} - {None}
+            extra = [m for m in streamed_messages if getattr(m, "id", None) and getattr(m, "id", None) not in checkpoint_ids]
+            checkpoint_messages = checkpoint_messages + extra
+        snapshot_messages = self._filter_orphan_tool_messages(checkpoint_messages)
+        yield self._dispatch_event(
+            MessagesSnapshotEvent(
+                type=EventType.MESSAGES_SNAPSHOT,
+                messages=langchain_messages_to_agui(snapshot_messages),
+            )
+        )
 
 
 def dump_json_safe(value):

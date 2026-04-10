@@ -13,6 +13,7 @@ from copilotkit import LangGraphAGUIAgent
 
 from .agentic_chat.agent import graph as agentic_chat_graph
 from .agentic_chat_reasoning.agent import graph as agentic_chat_reasoning_graph
+from .agentic_chat_multimodal.agent import graph as agentic_chat_multimodal_graph
 from .agentic_generative_ui.agent import graph as agentic_generative_ui_graph
 from .backend_tool_rendering.agent import graph as backend_tool_rendering_graph
 from .human_in_the_loop.agent import graph as human_in_the_loop_graph
@@ -66,6 +67,11 @@ agents = {
         name="agentic_chat_reasoning",
         description="An example for a reasoning chat.",
         graph=agentic_chat_reasoning_graph,
+    ),
+    "agentic_chat_multimodal": LangGraphAgent(
+        name="agentic_chat_multimodal",
+        description="A multimodal agentic chat that can analyze images and other media.",
+        graph=agentic_chat_multimodal_graph,
     ),
     "subgraphs": LangGraphAgent(
         name="subgraphs",
@@ -123,6 +129,12 @@ add_langgraph_fastapi_endpoint(
     app=app,
     agent=agents["agentic_chat_reasoning"],
     path="/agent/agentic_chat_reasoning",
+)
+
+add_langgraph_fastapi_endpoint(
+    app=app,
+    agent=agents["agentic_chat_multimodal"],
+    path="/agent/agentic_chat_multimodal",
 )
 
 add_langgraph_fastapi_endpoint(

@@ -1,6 +1,18 @@
 import { Message as LangGraphMessage } from "@langchain/langgraph-sdk";
 import { State, SchemaKeys, LangGraphReasoning } from "./types";
-import { Message, ToolCall, TextInputContent, BinaryInputContent, InputContent , UserMessage} from "@ag-ui/client";
+import {
+  Message,
+  ToolCall,
+  TextInputContent,
+  ImageInputContent,
+  AudioInputContent,
+  VideoInputContent,
+  DocumentInputContent,
+  InputContentDataSource,
+  InputContentUrlSource,
+  InputContent,
+  UserMessage,
+} from "@ag-ui/client";
 
 export const DEFAULT_SCHEMA_KEYS = ["messages", "tools"];
 
@@ -26,8 +38,23 @@ export function getStreamPayloadInput({
   return input;
 }
 
+const MEDIA_CONTENT_TYPES = new Set(["image", "audio", "video", "document"]);
+
+function mediaSourceToUrl(source: InputContentDataSource | InputContentUrlSource): string | null {
+  if (source.type === "data") {
+    return `data:${source.mimeType};base64,${source.value}`;
+  } else if (source.type === "url") {
+    return source.value;
+  }
+  return null;
+}
+
 /**
- * Convert LangChain's multimodal content to AG-UI format
+ * Convert LangChain's multimodal content to AG-UI format.
+ *
+ * LangChain only supports `text` and `image_url` content blocks.
+ * `image_url` blocks are converted to `ImageInputContent` with the
+ * appropriate source type (data or URL).
  */
 function convertLangchainMultimodalToAgui(
   content: Array<{ type: string; text?: string; image_url?: any }>
@@ -41,6 +68,8 @@ function convertLangchainMultimodalToAgui(
         text: item.text,
       });
     } else if (item.type === "image_url") {
+      // LangChain only uses `image_url` blocks for all media, so we always
+      // produce ImageInputContent here. The true media type is not recoverable.
       const imageUrl = typeof item.image_url === "string"
         ? item.image_url
         : item.image_url?.url;
@@ -56,16 +85,21 @@ function convertLangchainMultimodalToAgui(
           : "image/png";
 
         aguiContent.push({
-          type: "binary",
-          mimeType,
-          data: data || "",
+          type: "image",
+          source: {
+            type: "data",
+            value: data || "",
+            mimeType,
+          },
         });
       } else {
-        // Regular URL or ID
+        // Regular URL
         aguiContent.push({
-          type: "binary",
-          mimeType: "image/png", // Default MIME type
-          url: imageUrl,
+          type: "image",
+          source: {
+            type: "url",
+            value: imageUrl,
+          },
         });
       }
     }
@@ -75,7 +109,12 @@ function convertLangchainMultimodalToAgui(
 }
 
 /**
- * Convert AG-UI multimodal content to LangChain's format
+ * Convert AG-UI multimodal content to LangChain's format.
+ *
+ * Handles the new typed content classes (ImageInputContent, AudioInputContent,
+ * VideoInputContent, DocumentInputContent) as well as legacy BinaryInputContent
+ * for backwards compatibility. All media types are routed through LangChain's
+ * `image_url` format since that is the only media block type LangChain supports.
  */
 function convertAguiMultimodalToLangchain(
   content: InputContent[]
@@ -88,8 +127,20 @@ function convertAguiMultimodalToLangchain(
         type: "text",
         text: item.text,
       });
+    } else if (MEDIA_CONTENT_TYPES.has(item.type)) {
+      // ImageInputContent, AudioInputContent, VideoInputContent, DocumentInputContent
+      const mediaItem = item as ImageInputContent | AudioInputContent | VideoInputContent | DocumentInputContent;
+      const url = mediaSourceToUrl(mediaItem.source);
+      if (url) {
+        langchainContent.push({
+          type: "image_url",
+          image_url: { url },
+        });
+      } else {
+        console.warn(`[convertAguiMultimodalToLangchain] Dropping ${item.type} content: source could not be converted to URL`);
+      }
     } else if (item.type === "binary") {
-      // LangChain uses image_url format (OpenAI-style)
+      // Legacy BinaryInputContent — backwards compatibility
       let url: string;
 
       // Prioritize url, then data, then id
@@ -102,7 +153,8 @@ function convertAguiMultimodalToLangchain(
         // Use id as a reference
         url = item.id;
       } else {
-        continue; // Skip if no source is provided
+        console.warn("[convertAguiMultimodalToLangchain] Dropping BinaryInputContent: no url, data, or id provided");
+        continue;
       }
 
       langchainContent.push({
@@ -224,42 +276,6 @@ export function aguiMessagesToLangChain(messages: Message[]): LangGraphMessage[]
 function stringifyIfNeeded(item: any) {
   if (typeof item === "string") return item;
   return JSON.stringify(item);
-}
-
-/**
- * Flatten multimodal content into plain text.
- * Used for backwards compatibility or when multimodal is not supported.
- */
-function flattenUserContent(content: Message["content"]): string {
-  if (typeof content === "string") {
-    return content;
-  }
-
-  if (!Array.isArray(content)) {
-    return "";
-  }
-
-  const parts: string[] = [];
-
-  for (const item of content) {
-    if (item.type === "text" && "text" in item) {
-      if (item.text) {
-        parts.push(item.text);
-      }
-    } else if (item.type === "binary" && "mimeType" in item) {
-      // Add descriptive placeholder for binary content
-      const binaryItem = item as BinaryInputContent;
-      if (binaryItem.filename) {
-        parts.push(`[Binary content: ${binaryItem.filename}]`);
-      } else if (binaryItem.url) {
-        parts.push(`[Binary content: ${binaryItem.url}]`);
-      } else {
-        parts.push(`[Binary content: ${binaryItem.mimeType}]`);
-      }
-    }
-  }
-
-  return parts.join("\n");
 }
 
 export function resolveReasoningContent(eventData: any): LangGraphReasoning | null {

@@ -119,6 +119,8 @@ export interface LangGraphAgentConfig extends AgentConfig {
   graphId: string;
 }
 
+const ROOT_SUBGRAPH_NAME = "root";
+
 export class LangGraphAgent extends AbstractAgent {
   client: LangGraphClient;
   assistantConfig?: LangGraphConfig;
@@ -129,6 +131,9 @@ export class LangGraphAgent extends AbstractAgent {
   emittedToolCallStartIds: Set<string> = new Set();
   reasoningProcess: null | ReasoningInProgress;
   activeRun?: RunMetadata;
+  // Subgraph node names discovered dynamically from langgraph_checkpoint_ns
+  private subgraphs: Set<string> = new Set();
+  private currentSubgraph: string = ROOT_SUBGRAPH_NAME;
   // Stop control flags
   private cancelRequested: boolean = false;
   private cancelSent: boolean = false;
@@ -172,6 +177,8 @@ export class LangGraphAgent extends AbstractAgent {
       activeRun: this.activeRun ? structuredClone(this.activeRun) : undefined,
       cancelRequested: this.cancelRequested,
       cancelSent: this.cancelSent,
+      subgraphs: this.subgraphs ? new Set(this.subgraphs) : new Set(),
+      currentSubgraph: ROOT_SUBGRAPH_NAME,
     });
   }
 
@@ -476,7 +483,7 @@ export class LangGraphAgent extends AbstractAgent {
           break;
         }
 
-        const subgraphsStreamEnabled = input.forwardedProps?.streamSubgraphs;
+        const subgraphsStreamEnabled = input.forwardedProps?.streamSubgraphs ?? true;
         const isSubgraphStream =
           subgraphsStreamEnabled &&
           (streamResponseChunk.event.startsWith("events") ||
@@ -531,6 +538,18 @@ export class LangGraphAgent extends AbstractAgent {
         const metadata = chunkData.metadata ?? {};
         const currentNodeName = metadata.langgraph_node;
         const eventType = chunkData.event;
+
+        // Subgraph detection via langgraph_checkpoint_ns
+        // ns format: "" | "node:uuid" | "node:uuid|inner:uuid"
+        const ns: string = metadata.langgraph_checkpoint_ns ?? "";
+        const nsRoot = ns.split("|")[0].split(":")[0];
+        if (ns.includes("|") && nsRoot) this.subgraphs.add(nsRoot);
+        const currentSubgraph = (nsRoot && this.subgraphs.has(nsRoot)) ? nsRoot : ROOT_SUBGRAPH_NAME;
+
+        if (currentSubgraph !== this.currentSubgraph) {
+          this.currentSubgraph = currentSubgraph;
+          await this.getStateAndMessagesSnapshots(threadId);
+        }
 
         // Set server-assigned run id as soon as available
         if (metadata.run_id) {
@@ -630,19 +649,7 @@ export class LangGraphAgent extends AbstractAgent {
       // Immediately turn off new step
       this.handleNodeChange(undefined);
 
-      this.dispatchEvent({
-        type: EventType.STATE_SNAPSHOT,
-        snapshot: this.getStateSnapshot(state),
-      });
-      const checkpointMessages: LangGraphMessage[] = state.values.messages ?? [];
-      const streamedMessages = this.activeRun?.streamedMessages ?? [];
-      const checkpointIds = new Set(checkpointMessages.map((m) => m.id).filter(Boolean));
-      const extra = streamedMessages.filter((m) => m.id && !checkpointIds.has(m.id));
-      const snapshotMessages = [...checkpointMessages, ...(extra as unknown as LangGraphMessage[])];
-      this.dispatchEvent({
-        type: EventType.MESSAGES_SNAPSHOT,
-        messages: langchainMessagesToAgui(snapshotMessages),
-      });
+      await this.getStateAndMessagesSnapshots(threadId);
 
       this.dispatchEvent({
         type: EventType.RUN_FINISHED,
@@ -657,6 +664,23 @@ export class LangGraphAgent extends AbstractAgent {
     } catch (e) {
       return subscriber.error(e);
     }
+  }
+
+  private async getStateAndMessagesSnapshots(threadId: string): Promise<void> {
+    const state: ThreadState<State> = await this.client.threads.getState(threadId);
+    this.dispatchEvent({
+      type: EventType.STATE_SNAPSHOT,
+      snapshot: this.getStateSnapshot(state),
+    });
+    const checkpointMessages: LangGraphMessage[] = (state.values as State).messages ?? [];
+    const streamedMessages = this.activeRun?.streamedMessages ?? [];
+    const checkpointIds = new Set(checkpointMessages.map((m) => m.id).filter(Boolean));
+    const extra = streamedMessages.filter((m) => m.id && !checkpointIds.has(m.id));
+    const snapshotMessages = [...checkpointMessages, ...(extra as unknown as LangGraphMessage[])];
+    this.dispatchEvent({
+      type: EventType.MESSAGES_SNAPSHOT,
+      messages: langchainMessagesToAgui(snapshotMessages),
+    });
   }
 
   handleSingleEvent(event: any): void {

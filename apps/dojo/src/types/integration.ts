@@ -9,6 +9,7 @@ export type Feature =
   | "tool_based_generative_ui"
   | "backend_tool_rendering"
   | "agentic_chat_reasoning"
+  | "agentic_chat_multimodal"
   | "subgraphs"
   | "a2a_chat"
   | "vnext_chat"

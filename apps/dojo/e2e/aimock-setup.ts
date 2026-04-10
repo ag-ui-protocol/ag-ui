@@ -964,8 +964,8 @@ export async function setupLLMock(): Promise<void> {
     },
   });
 
-  // Load all fixture JSON files from the fixtures directory
-  // (HITL fixtures are duplicated but the earlier copies match first)
+  // Load all fixture JSON files from the fixtures directory.
+  // HITL fixtures loaded above take priority (first-match-wins).
   mockServer.loadFixtureDir(FIXTURES_DIR);
 
   // Programmatic catch-all: when the last message is a tool result,
