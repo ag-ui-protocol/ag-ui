@@ -24,7 +24,7 @@ def create_model():
             },
             model_id=os.getenv("MODEL_ID", "gpt-5.4"),
             params={
-                "reasoning": {"effort": "medium"},
+                "reasoning": {"effort": "medium", "summary": "auto"},
             }
         )
     elif provider == "anthropic":
