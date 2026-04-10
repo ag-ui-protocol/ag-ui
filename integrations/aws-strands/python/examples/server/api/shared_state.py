@@ -6,8 +6,8 @@ from typing import Dict, Any, List
 from enum import Enum
 from pydantic import BaseModel, Field
 from strands import Agent, tool
-from strands.models.openai import OpenAIModel
 from ag_ui_strands import StrandsAgent, create_strands_app, StrandsAgentConfig, ToolBehavior
+from server.model_factory import create_model
 
 
 class SkillLevel(str, Enum):
@@ -133,13 +133,8 @@ shared_state_config = StrandsAgentConfig(
 )
 
 
-# Create the Strands agent
-model = OpenAIModel(
-    client_args={
-        "api_key": os.getenv("OPENAI_API_KEY", "your-api-key-here"),
-    },
-    model_id="gpt-5.4",
-)
+# Create model from MODEL_PROVIDER env var (default: openai)
+model = create_model()
 
 system_prompt = """You are a helpful recipe assistant. When asked to improve or modify a recipe:
 

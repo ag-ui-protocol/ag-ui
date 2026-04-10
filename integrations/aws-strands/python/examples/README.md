@@ -1,14 +1,15 @@
 # AWS Strands Example Server
 
-Demo FastAPI server that wires the Strands Agents SDK (OpenAI models) into the
-AG-UI protocol. Each route mounts a ready-made agent that showcases different UI
-patterns (vanilla chat, backend tool rendering, shared state, and generative UI).
+Demo FastAPI server that wires the Strands Agents SDK into the AG-UI protocol
+with support for multiple model providers (OpenAI, Anthropic, Gemini). Each route
+mounts a ready-made agent that showcases different UI patterns (vanilla chat,
+backend tool rendering, shared state, and generative UI).
 
 ## Requirements
 
 - Python 3.12 or 3.13 (the project is pinned to `<3.14`)
 - Poetry 1.8+ (ships with the repo via `curl -sSL https://install.python-poetry.org | python3 -`)
-- OpenAI API key (set as `OPENAI_API_KEY`)
+- An API key for your chosen model provider (see Environment Variables below)
 - (Optional) AG-UI repo running locally so you can point the Dojo at these routes
 
 ## Quick start
@@ -26,13 +27,21 @@ Create a `.env` file in this folder (same dir as `pyproject.toml`) so every
 example can load credentials automatically:
 
 ```bash
+# Choose your provider: openai (default), anthropic, or gemini
+MODEL_PROVIDER=openai
+
+# Provider API keys (only the one for your chosen provider is required)
 OPENAI_API_KEY=your-openai-key
+ANTHROPIC_API_KEY=your-anthropic-key
+GOOGLE_API_KEY=your-google-key
+
 # Optional overrides
+MODEL_ID=                 # Override default model for your provider
 PORT=8000                 # FastAPI listen port
 ```
 
-> The sample agents default to `gpt-5.4` (for all examples including reasoning
-> and multimodal examples); override only if you need a different tier.
+> Default models per provider: `gpt-5.4` (OpenAI), `claude-sonnet-4-6`
+> (Anthropic), `gemini-2.5-flash` (Gemini). Set `MODEL_ID` to override.
 
 ## Running the demo server
 
@@ -56,12 +65,16 @@ The root route lists the available demos:
 Point the AG-UI Dojo (or any AG-UI client) at these SSE endpoints to see the
 Strands wrapper translate OpenAI events into protocol-native messages.
 
-## Environment reference
+## Environment Variables
 
-| Variable         | Required | Purpose                                                       |
-| ---------------- | -------- | ------------------------------------------------------------- |
-| `OPENAI_API_KEY` | Yes      | Auth for the OpenAI SDK (`strands.models.openai.OpenAIModel`) |
-| `PORT`           | No       | Overrides the default `8000` uvicorn port                     |
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `MODEL_PROVIDER` | No | Model provider: `openai` (default), `anthropic`, or `gemini` |
+| `MODEL_ID` | No | Override the default model ID for the chosen provider |
+| `OPENAI_API_KEY` | If using OpenAI | OpenAI API key |
+| `ANTHROPIC_API_KEY` | If using Anthropic | Anthropic API key |
+| `GOOGLE_API_KEY` | If using Gemini | Google Gemini API key |
+| `PORT` | No | Override default port 8000 |
 
 All OpenTelemetry exporters are disabled by default in code (`OTEL_SDK_DISABLED`
 and `OTEL_PYTHON_DISABLED_INSTRUMENTATIONS`), so you do not need to set those
@@ -75,5 +88,6 @@ manually.
   exposes the `main()` entrypoint that `poetry run dev` calls.
 - The project depends on `ag_ui_strands` via a path dependency (`..`) so you can
   develop the integration and server side-by-side without publishing a wheel.
-- Want a different OpenAI model? Update the `model_id` argument in the agent
-  definitions inside `server/api/*.py`.
+- `server/model_factory.py` centralises model construction. Set `MODEL_PROVIDER`
+  and optionally `MODEL_ID` to switch between OpenAI, Anthropic, and Gemini
+  without editing any example file.
