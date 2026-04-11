@@ -3,6 +3,7 @@
 """Main ADKAgent implementation for bridging AG-UI Protocol with Google ADK."""
 from ag_ui_adk.agui_toolset import AGUIToolset
 
+import copy
 from typing import Optional, Dict, Callable, Any, AsyncGenerator, List, Iterable, TYPE_CHECKING, Tuple, Union
 
 if TYPE_CHECKING:
@@ -181,7 +182,6 @@ class ADKAgent:
         if capabilities is not None:
             if not isinstance(capabilities, dict):
                 raise TypeError(f"capabilities must be a dict, got {type(capabilities).__name__}")
-            import json
             try:
                 json.dumps(capabilities)
             except (TypeError, ValueError) as e:
@@ -450,7 +450,7 @@ class ADKAgent:
         """
         if self._capabilities is None:
             return None
-        return dict(self._capabilities)
+        return copy.deepcopy(self._capabilities)
 
     def _get_session_metadata(self, thread_id: str, user_id: str) -> Optional[Tuple[str, str, str]]:
         """Get session metadata for a (thread_id, user_id) pair efficiently.

@@ -14,6 +14,9 @@
     "dev": "tsdown --watch",
     "clean": "git clean -fdX --exclude=\"!.env\"",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:watch": "vitest",
     "test:exports": "publint --strict && attw --pack",
     "link:global": "pnpm link --global",
     "unlink:global": "pnpm unlink --global"
@@ -30,12 +33,13 @@
     "publint": "^0.3.12",
     "@arethetypeswrong/cli": "^0.17.4",
     "tsdown": "^0.20.1",
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "vitest": "^4.0.18"
   },
   "exports": {
     ".": {
-      "import": "./dist/index.mjs",
-      "require": "./dist/index.js"
+      "require": "./dist/index.js",
+      "import": "./dist/index.mjs"
     },
     "./package.json": "./package.json"
   }
