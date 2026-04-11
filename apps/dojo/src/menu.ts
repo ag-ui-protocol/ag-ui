@@ -21,7 +21,6 @@ export const menuIntegrations = [
       "backend_tool_rendering",
       "human_in_the_loop",
       "tool_based_generative_ui",
-
     ],
   },
   {
@@ -33,7 +32,6 @@ export const menuIntegrations = [
       "backend_tool_rendering",
       "human_in_the_loop",
       "tool_based_generative_ui",
-
     ],
   },
   {
@@ -41,6 +39,8 @@ export const menuIntegrations = [
     name: "LangGraph (Python)",
     features: [
       "agentic_chat",
+      "agentic_chat_reasoning",
+      "agentic_chat_multimodal",
       "v1_agentic_chat",
       "backend_tool_rendering",
       "human_in_the_loop",
@@ -49,7 +49,6 @@ export const menuIntegrations = [
       "shared_state",
       "tool_based_generative_ui",
       "subgraphs",
-
     ],
   },
   {
@@ -57,6 +56,8 @@ export const menuIntegrations = [
     name: "LangGraph (FastAPI)",
     features: [
       "agentic_chat",
+      "agentic_chat_reasoning",
+      "agentic_chat_multimodal",
       "v1_agentic_chat",
       "backend_tool_rendering",
       "human_in_the_loop",
@@ -76,6 +77,8 @@ export const menuIntegrations = [
     name: "LangGraph (Typescript)",
     features: [
       "agentic_chat",
+      "agentic_chat_reasoning",
+      "agentic_chat_multimodal",
       "v1_agentic_chat",
       // "backend_tool_rendering",
       "human_in_the_loop",
@@ -99,6 +102,8 @@ export const menuIntegrations = [
     name: "Mastra",
     features: [
       "agentic_chat",
+      "agentic_chat_reasoning",
+      "agentic_chat_multimodal",
       "v1_agentic_chat",
       "backend_tool_rendering",
       "human_in_the_loop",
@@ -233,6 +238,8 @@ export const menuIntegrations = [
       "predictive_state_updates",
       "shared_state",
       "tool_based_generative_ui",
+      "crew_chat",
+      "error_flow",
     ],
   },
   {

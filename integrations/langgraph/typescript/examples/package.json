@@ -11,6 +11,8 @@
   "dependencies": {
     "@copilotkit/sdk-js": "0.0.0-mme-ag-ui-0-0-46-20260227141603",
     "@langchain/core": "^1.1.7",
+    "@langchain/anthropic": "^0.3.0",
+    "@langchain/google-genai": "^0.2.0",
     "@langchain/openai": "^1.2.0",
     "@langchain/langgraph": "^1.0.7",
     "dotenv": "^16.4.5",

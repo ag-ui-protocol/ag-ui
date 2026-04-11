@@ -55,7 +55,7 @@
             "group": "Draft Proposals",
             "pages": [
               "drafts/overview",
-              "drafts/multimodal-messages",
+
               "drafts/interrupts",
               "drafts/generative-ui",
               "drafts/meta-events"

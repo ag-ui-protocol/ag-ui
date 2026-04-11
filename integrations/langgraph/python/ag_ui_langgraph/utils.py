@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 from enum import Enum
 
@@ -19,8 +20,26 @@ from ag_ui.core import (
     FunctionCall as AGUIFunctionCall,
     TextInputContent,
     BinaryInputContent,
+    ImageInputContent,
+    AudioInputContent,
+    VideoInputContent,
+    DocumentInputContent,
+    InputContentDataSource,
+    InputContentUrlSource,
 )
 from .types import State, SchemaKeys, LangGraphReasoning
+
+logger = logging.getLogger(__name__)
+
+# Type alias for the AG-UI multimodal content union
+AGUIContentItem = Union[
+    TextInputContent,
+    ImageInputContent,
+    AudioInputContent,
+    VideoInputContent,
+    DocumentInputContent,
+    BinaryInputContent,
+]
 
 DEFAULT_SCHEMA_KEYS = ["tools"]
 
@@ -47,9 +66,14 @@ def stringify_if_needed(item: Any) -> str:
         return item
     return json.dumps(item)
 
-def convert_langchain_multimodal_to_agui(content: List[Dict[str, Any]]) -> List[Union[TextInputContent, BinaryInputContent]]:
-    """Convert LangChain's multimodal content to AG-UI format."""
-    agui_content = []
+def convert_langchain_multimodal_to_agui(content: List[Dict[str, Any]]) -> List[Union[TextInputContent, ImageInputContent]]:
+    """Convert LangChain's multimodal content to AG-UI format.
+
+    LangChain only supports ``text`` and ``image_url`` content blocks.
+    ``image_url`` blocks are converted to ``ImageInputContent`` with the
+    appropriate source type (data or URL).
+    """
+    agui_content: List[Union[TextInputContent, ImageInputContent]] = []
     for item in content:
         if isinstance(item, dict):
             if item.get("type") == "text":
@@ -69,17 +93,22 @@ def convert_langchain_multimodal_to_agui(content: List[Dict[str, Any]]) -> List[
                     data = parts[1] if len(parts) > 1 else ""
                     mime_type = header.split(":")[1].split(";")[0] if ":" in header else "image/png"
 
-                    agui_content.append(BinaryInputContent(
-                        type="binary",
-                        mime_type=mime_type,
-                        data=data
+                    agui_content.append(ImageInputContent(
+                        type="image",
+                        source=InputContentDataSource(
+                            type="data",
+                            value=data,
+                            mime_type=mime_type,
+                        ),
                     ))
                 else:
-                    # Regular URL or ID
-                    agui_content.append(BinaryInputContent(
-                        type="binary",
-                        mime_type="image/png",  # Default MIME type
-                        url=url
+                    # Regular URL
+                    agui_content.append(ImageInputContent(
+                        type="image",
+                        source=InputContentUrlSource(
+                            type="url",
+                            value=url,
+                        ),
                     ))
     return agui_content
 
@@ -139,18 +168,49 @@ def langchain_messages_to_agui(messages: List[BaseMessage]) -> List[AGUIMessage]
             raise TypeError(f"Unsupported message type: {type(message)}")
     return agui_messages
 
-def convert_agui_multimodal_to_langchain(content: List[Union[TextInputContent, BinaryInputContent]]) -> List[Dict[str, Any]]:
-    """Convert AG-UI multimodal content to LangChain's multimodal format."""
-    langchain_content = []
+_MEDIA_CONTENT_TYPES = (ImageInputContent, AudioInputContent, VideoInputContent, DocumentInputContent)
+
+
+def _media_source_to_url(source: Union[InputContentDataSource, InputContentUrlSource]) -> str | None:
+    """Convert an InputContentDataSource or InputContentUrlSource to a URL string.
+
+    For data sources, constructs a ``data:<mime>;base64,<value>`` URL.
+    For URL sources, returns the URL directly.
+    """
+    if isinstance(source, InputContentDataSource):
+        return f"data:{source.mime_type};base64,{source.value}"
+    if isinstance(source, InputContentUrlSource):
+        return source.value
+    return None
+
+
+def convert_agui_multimodal_to_langchain(content: List[AGUIContentItem]) -> List[Dict[str, Any]]:
+    """Convert AG-UI multimodal content to LangChain's multimodal format.
+
+    Handles the new typed content classes (ImageInputContent, AudioInputContent,
+    VideoInputContent, DocumentInputContent) as well as legacy BinaryInputContent
+    for backwards compatibility. All media types are routed through LangChain's
+    ``image_url`` format since that is the only media block type LangChain supports.
+    """
+    langchain_content: List[Dict[str, Any]] = []
     for item in content:
         if isinstance(item, TextInputContent):
             langchain_content.append({
                 "type": "text",
                 "text": item.text
             })
+        elif isinstance(item, _MEDIA_CONTENT_TYPES):
+            url = _media_source_to_url(item.source)
+            if url:
+                langchain_content.append({
+                    "type": "image_url",
+                    "image_url": {"url": url}
+                })
+            else:
+                logger.warning("Dropping %s content: source could not be converted to URL", type(item).__name__)
         elif isinstance(item, BinaryInputContent):
-            # LangChain uses image_url format (OpenAI-style)
-            content_dict = {"type": "image_url"}
+            # Legacy BinaryInputContent — backwards compatibility
+            content_dict: Dict[str, Any] = {"type": "image_url"}
 
             # Prioritize url, then data, then id
             if item.url:
@@ -161,6 +221,11 @@ def convert_agui_multimodal_to_langchain(content: List[Union[TextInputContent, B
             elif item.id:
                 # Use id as a reference (some providers may support this)
                 content_dict["image_url"] = {"url": item.id}
+            else:
+                logger.warning(
+                    "Dropping BinaryInputContent item: no url, data, or id provided"
+                )
+                continue
 
             langchain_content.append(content_dict)
 
@@ -305,6 +370,24 @@ def resolve_message_content(content: Any) -> str | None:
     return None
 
 
+def _flatten_media_content(item: Union[ImageInputContent, AudioInputContent, VideoInputContent, DocumentInputContent], label: str) -> str:
+    """Return a placeholder string for a typed media content item."""
+    source = item.source
+    if isinstance(source, InputContentUrlSource):
+        return f"[{label}: {source.value}]"
+    if isinstance(source, InputContentDataSource):
+        return f"[{label}: {source.mime_type}]"
+    return f"[{label}]"
+
+
+_MEDIA_LABEL_MAP = {
+    ImageInputContent: "Image",
+    AudioInputContent: "Audio",
+    VideoInputContent: "Video",
+    DocumentInputContent: "Document",
+}
+
+
 def flatten_user_content(content: Any) -> str:
     """
     Flatten multimodal content into plain text.
@@ -322,8 +405,11 @@ def flatten_user_content(content: Any) -> str:
             if isinstance(item, TextInputContent):
                 if item.text:
                     parts.append(item.text)
+            elif isinstance(item, _MEDIA_CONTENT_TYPES):
+                label = _MEDIA_LABEL_MAP.get(type(item), "Media")
+                parts.append(_flatten_media_content(item, label))
             elif isinstance(item, BinaryInputContent):
-                # Add descriptive placeholder for binary content
+                # Legacy BinaryInputContent — backwards compatibility
                 if item.filename:
                     parts.append(f"[Binary content: {item.filename}]")
                 elif item.url:

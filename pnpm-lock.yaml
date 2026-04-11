@@ -310,8 +310,8 @@ importers:
         version: 3.25.76
     devDependencies:
       '@copilotkit/aimock':
-        specifier: ^1.7.0
-        version: 1.7.0
+        specifier: ^1.9.0
+        version: 1.9.0
       '@shadcn/ui':
         specifier: ^0.0.4
         version: 0.0.4
@@ -2088,8 +2088,8 @@ packages:
       react: ^18 || ^19 || ^19.0.0-rc
       react-dom: ^18 || ^19 || ^19.0.0-rc
 
-  '@copilotkit/aimock@1.7.0':
-    resolution: {integrity: sha512-X6B2z0MgGTg8N/geRg6zRVVgEp3krP+gYapwXCt2w3JU7BSf2q0laa4iHC+BZqPXf29iVDVwDM7BxB5LqhjcAg==}
+  '@copilotkit/aimock@1.9.0':
+    resolution: {integrity: sha512-tUnt0747SOs5PNuYWLqcVsv56XlMDUd8DEpZJTw1Ya/xJ7McZ1U9U6BUJDDEDEjBGbaKGxGt5+W73JieT+2XYw==}
     engines: {node: '>=20.15.0'}
     hasBin: true
 
@@ -13296,7 +13296,7 @@ snapshots:
       zod: 3.25.76
       zod-to-json-schema: 3.25.2(zod@3.25.76)
 
-  '@copilotkit/aimock@1.7.0': {}
+  '@copilotkit/aimock@1.9.0': {}
 
   '@copilotkit/core@1.55.1(@ag-ui/core@0.0.52)(zod@3.25.76)':
     dependencies:
