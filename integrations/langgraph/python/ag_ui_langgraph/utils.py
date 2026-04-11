@@ -457,6 +457,10 @@ def normalize_tool_content(content: Any) -> str:
     return json.dumps(content)
 
 
+# Used by run() to normalize forwarded_props keys from camelCase (JS frontend convention)
+# to snake_case (Python convention). Appears isolated but is called from agent.py and
+# removing it would silently break all streaming options forwarded from the frontend
+# (stream_subgraphs, node_name, command.resume, etc.).
 def camel_to_snake(name):
     return re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower()
 

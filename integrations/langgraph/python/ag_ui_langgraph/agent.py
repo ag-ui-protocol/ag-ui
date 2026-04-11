@@ -147,6 +147,10 @@ class LangGraphAgent:
         return event
 
     async def run(self, input: RunAgentInput) -> AsyncGenerator[str, None]:
+        # Normalize camelCase keys from the frontend to snake_case before forwarding.
+        # Required for all downstream forwarded_props consumers (node_name, stream_subgraphs,
+        # command.resume). Removing this conversion would silently break streaming options
+        # forwarded from JavaScript callers without raising an obvious error.
         forwarded_props = {}
         if hasattr(input, "forwarded_props") and input.forwarded_props:
             forwarded_props = {

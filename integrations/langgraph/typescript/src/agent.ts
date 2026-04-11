@@ -137,6 +137,11 @@ export class LangGraphAgent extends AbstractAgent {
   // Stop control flags
   private cancelRequested: boolean = false;
   private cancelSent: boolean = false;
+  // Guards against double-streaming in the messages-tuple fallback path.
+  // Set to true when events-mode (on_chat_model_stream) begins; thereafter
+  // handleMessagesTupleEvent is skipped. Appears unused because it is only
+  // read inside the fallback branch — removing it would cause duplicate messages
+  // on LangGraph Platform deployments that emit both stream modes simultaneously.
   private eventsStreamActive: boolean = false;
   // @ts-expect-error no need to initialize subscriber right now
   subscriber: Subscriber<ProcessedEvents>;
@@ -1040,6 +1045,10 @@ export class LangGraphAgent extends AbstractAgent {
    * and convert them into AG-UI text message and tool call events.
    * Uses the same messagesInProcess tracking as events-mode streaming.
    *
+   * This is a legacy fallback for LangGraph Platform deployments that do not emit
+   * on_chat_model_stream events (older streaming modes). It is only called when
+   * eventsStreamActive is false — i.e. no events-mode streaming has been seen yet.
+   * Do not remove: required for backward compatibility with older LangGraph Platform.
    */
   private handleMessagesTupleEvent(data: any[]) {
     const chunk = data[0];

@@ -134,8 +134,9 @@ describe("Message Conversion - All Types", () => {
       const content = result[0].content as any[];
       expect(content).toHaveLength(2);
       expect(content[0].type).toBe("text");
-      expect(content[1].type).toBe("binary");
-      expect(content[1].url).toBe("https://example.com/img.png");
+      expect(content[1].type).toBe("image");
+      expect(content[1].source.type).toBe("url");
+      expect(content[1].source.value).toBe("https://example.com/img.png");
     });
 
     it("should parse data URLs in multimodal content", () => {
@@ -148,9 +149,10 @@ describe("Message Conversion - All Types", () => {
       } as any as LangGraphMessage;
       const result = langchainMessagesToAgui([msg]);
       const content = result[0].content as any[];
-      expect(content[0].type).toBe("binary");
-      expect(content[0].mimeType).toBe("image/jpeg");
-      expect(content[0].data).toBe("abc123");
+      expect(content[0].type).toBe("image");
+      expect(content[0].source.type).toBe("data");
+      expect(content[0].source.mimeType).toBe("image/jpeg");
+      expect(content[0].source.value).toBe("abc123");
     });
   });
 

@@ -193,8 +193,9 @@ class TestLangchainMessagesToAgui:
         assert isinstance(content, list)
         assert content[0].type == "text"
         assert content[0].text == "Look at this"
-        assert content[1].type == "binary"
-        assert content[1].url == "https://example.com/img.png"
+        assert content[1].type == "image"
+        assert content[1].source.type == "url"
+        assert content[1].source.value == "https://example.com/img.png"
 
     def test_multimodal_data_url_parsed(self):
         msg = HumanMessage(
@@ -206,9 +207,10 @@ class TestLangchainMessagesToAgui:
         result = langchain_messages_to_agui([msg])
         content = result[0].content
         assert isinstance(content, list)
-        assert content[0].type == "binary"
-        assert content[0].mime_type == "image/jpeg"
-        assert content[0].data == "abc123"
+        assert content[0].type == "image"
+        assert content[0].source.type == "data"
+        assert content[0].source.mime_type == "image/jpeg"
+        assert content[0].source.value == "abc123"
 
 
 class TestRoundTrip:
