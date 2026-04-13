@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from ag_ui.core import Tool as AGUITool, EventType
 from ag_ui.core import ToolCallStartEvent, ToolCallArgsEvent, ToolCallEndEvent, CustomEvent
 
-from ag_ui_adk.client_proxy_tool import ClientProxyTool, _strip_json_schema_meta
+from ag_ui_adk.client_proxy_tool import ClientProxyTool, _clean_schema_for_genai
 from ag_ui_adk.config import PredictStateMapping
 
 
@@ -431,25 +431,57 @@ class TestClientProxyToolPredictState:
         assert first_event.name == "PredictState"
 
 
-class TestStripJsonSchemaMeta:
-    """Test cases for _strip_json_schema_meta helper."""
+class TestCleanSchemaForGenai:
+    """Test cases for _clean_schema_for_genai helper."""
 
-    def test_strips_top_level_schema_field(self):
-        """Test stripping $schema from top-level parameters."""
+    # --- Positive tests: valid fields are preserved ---
+
+    def test_preserves_valid_genai_fields(self):
+        """Valid genai.types.Schema fields pass through unchanged."""
         schema = {
-            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "title": "MyTool",
+            "description": "A tool",
+            "default": {"key": "value"},
+            "properties": {
+                "amount": {"type": "number", "minimum": 0, "maximum": 100}
+            },
+            "required": ["amount"],
+            "additionalProperties": False,
+            "minProperties": 1,
+            "maxProperties": 10,
+        }
+        result = _clean_schema_for_genai(schema)
+        assert result["title"] == "MyTool"
+        assert result["default"] == {"key": "value"}
+        assert result["additionalProperties"] is False
+        assert result["minProperties"] == 1
+        assert result["maxProperties"] == 10
+        assert result["properties"]["amount"]["minimum"] == 0
+
+    def test_preserves_nested_valid_fields(self):
+        """Valid fields inside nested properties are preserved."""
+        schema = {
             "type": "object",
             "properties": {
-                "name": {"type": "string"}
+                "address": {
+                    "type": "object",
+                    "title": "Address",
+                    "description": "Mailing address",
+                    "properties": {
+                        "street": {"type": "string", "minLength": 1}
+                    }
+                }
             }
         }
-        result = _strip_json_schema_meta(schema)
-        assert "$schema" not in result
-        assert result["type"] == "object"
-        assert "name" in result["properties"]
+        result = _clean_schema_for_genai(schema)
+        assert result["properties"]["address"]["title"] == "Address"
+        assert result["properties"]["address"]["properties"]["street"]["minLength"] == 1
 
-    def test_strips_multiple_dollar_prefixed_keys(self):
-        """Test stripping multiple $-prefixed keys ($schema, $id, $comment)."""
+    # --- Negative tests: invalid fields are stripped ---
+
+    def test_strips_dollar_prefixed_keys(self):
+        """$schema, $id, $comment, $defs, $ref are always stripped."""
         schema = {
             "$schema": "http://json-schema.org/draft-07/schema#",
             "$id": "https://example.com/tool.schema.json",
@@ -458,15 +490,37 @@ class TestStripJsonSchemaMeta:
             "properties": {"x": {"type": "number"}},
             "required": ["x"]
         }
-        result = _strip_json_schema_meta(schema)
+        result = _clean_schema_for_genai(schema)
         assert "$schema" not in result
         assert "$id" not in result
         assert "$comment" not in result
         assert result["type"] == "object"
         assert result["required"] == ["x"]
 
-    def test_strips_nested_dollar_prefixed_keys(self):
-        """Test recursive stripping inside nested property schemas."""
+    def test_strips_unknown_json_schema_fields(self):
+        """Fields not in genai.types.Schema are stripped."""
+        schema = {
+            "type": "object",
+            "readOnly": True,
+            "writeOnly": False,
+            "deprecated": True,
+            "contentMediaType": "application/json",
+            "contentEncoding": "base64",
+            "dependentRequired": {"a": ["b"]},
+            "properties": {"x": {"type": "string"}}
+        }
+        result = _clean_schema_for_genai(schema)
+        assert "readOnly" not in result
+        assert "writeOnly" not in result
+        assert "deprecated" not in result
+        assert "contentMediaType" not in result
+        assert "contentEncoding" not in result
+        assert "dependentRequired" not in result
+        assert result["type"] == "object"
+        assert "x" in result["properties"]
+
+    def test_strips_nested_dollar_keys(self):
+        """$-prefixed keys inside nested properties are stripped recursively."""
         schema = {
             "type": "object",
             "properties": {
@@ -482,13 +536,13 @@ class TestStripJsonSchemaMeta:
                 "Address": {"type": "object"}
             }
         }
-        result = _strip_json_schema_meta(schema)
+        result = _clean_schema_for_genai(schema)
         assert "$defs" not in result
         assert "$ref" not in result["properties"]["address"]
         assert result["properties"]["address"]["type"] == "object"
 
     def test_strips_inside_lists(self):
-        """Test recursive stripping inside arrays (e.g. anyOf, oneOf)."""
+        """Invalid keys inside arrays (anyOf, etc.) are stripped."""
         schema = {
             "type": "object",
             "properties": {
@@ -500,40 +554,52 @@ class TestStripJsonSchemaMeta:
                 }
             }
         }
-        result = _strip_json_schema_meta(schema)
+        result = _clean_schema_for_genai(schema)
         any_of = result["properties"]["value"]["anyOf"]
         assert len(any_of) == 2
         assert "$comment" not in any_of[0]
         assert any_of[0]["type"] == "string"
-        assert "$comment" not in any_of[1]
-        assert any_of[1]["type"] == "number"
 
-    def test_preserves_non_dollar_keys(self):
-        """Test that regular keys are not affected."""
+    # --- Mapping tests: examples -> example, const -> enum ---
+
+    def test_maps_examples_to_example(self):
+        """examples array is mapped to example (first element only)."""
         schema = {
-            "type": "object",
-            "properties": {
-                "amount": {"type": "number", "description": "Dollar amount"}
-            },
-            "required": ["amount"]
+            "type": "string",
+            "examples": ["foo", "bar", "baz"]
         }
-        result = _strip_json_schema_meta(schema)
-        assert result == schema
+        result = _clean_schema_for_genai(schema)
+        assert "examples" not in result
+        assert result["example"] == "foo"
+
+    def test_maps_examples_empty_array_no_example(self):
+        """Empty examples array is stripped (no example to extract)."""
+        schema = {"type": "string", "examples": []}
+        result = _clean_schema_for_genai(schema)
+        assert "examples" not in result
+        assert "example" not in result
+
+    def test_maps_const_to_enum(self):
+        """const is mapped to a single-value enum list."""
+        schema = {"type": "string", "const": "fixed_value"}
+        result = _clean_schema_for_genai(schema)
+        assert "const" not in result
+        assert result["enum"] == ["fixed_value"]
+
+    # --- Edge cases ---
 
     def test_handles_non_dict_input(self):
-        """Test passthrough for non-dict/non-list values."""
-        assert _strip_json_schema_meta("string_value") == "string_value"
-        assert _strip_json_schema_meta(42) == 42
-        assert _strip_json_schema_meta(None) is None
-        assert _strip_json_schema_meta(True) is True
+        """Non-dict/non-list values pass through unchanged."""
+        assert _clean_schema_for_genai("string_value") == "string_value"
+        assert _clean_schema_for_genai(42) == 42
+        assert _clean_schema_for_genai(None) is None
+        assert _clean_schema_for_genai(True) is True
 
     def test_handles_empty_dict(self):
-        """Test with empty dict input."""
-        assert _strip_json_schema_meta({}) == {}
+        assert _clean_schema_for_genai({}) == {}
 
     def test_handles_empty_list(self):
-        """Test with empty list input."""
-        assert _strip_json_schema_meta([]) == []
+        assert _clean_schema_for_genai([]) == []
 
 
 class TestGetDeclarationWithJsonSchemaMeta:
