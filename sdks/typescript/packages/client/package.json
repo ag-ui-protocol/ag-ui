@@ -27,7 +27,6 @@
     "unlink:global": "pnpm unlink --global"
   },
   "dependencies": {
-    "@ag-ui/core": "workspace:*",
     "@ag-ui/encoder": "workspace:*",
     "@ag-ui/proto": "workspace:*",
     "@types/uuid": "^10.0.0",
@@ -53,5 +52,8 @@
       "import": "./dist/index.mjs"
     },
     "./package.json": "./package.json"
+  },
+  "peerDependencies": {
+    "@ag-ui/core": "workspace:*"
   }
 }
