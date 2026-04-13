@@ -35,7 +35,7 @@ try:
         set(types.Schema.model_fields.keys())
         | {alias_generators.to_camel(f) for f in types.Schema.model_fields}
     )
-except Exception:
+except (ImportError, AttributeError):
     # Fallback if genai internals change — use a static allowlist
     _ALLOWED_SCHEMA_KEYS = frozenset({
         "type", "format", "description", "nullable", "enum", "example",
@@ -63,13 +63,13 @@ def _clean_schema_for_genai(schema: Any) -> Any:
             # Always strip $-prefixed keys
             if k.startswith("$"):
                 continue
-            # Map examples -> example (preserve first element)
+            # Map examples -> example (preserve first element as opaque data)
             if k == "examples" and isinstance(v, list) and v:
-                result["example"] = _clean_schema_for_genai(v[0])
+                result["example"] = v[0]
                 continue
-            # Map const -> enum (single-value list)
+            # Map const -> enum (single-value list, stringified for genai)
             if k == "const":
-                result["enum"] = [v]
+                result["enum"] = [str(v)]
                 continue
             # Only keep keys that genai.types.Schema accepts
             if k not in _ALLOWED_SCHEMA_KEYS:

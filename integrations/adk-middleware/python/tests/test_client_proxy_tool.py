@@ -580,11 +580,17 @@ class TestCleanSchemaForGenai:
         assert "example" not in result
 
     def test_maps_const_to_enum(self):
-        """const is mapped to a single-value enum list."""
+        """const is mapped to a single-value enum list (stringified)."""
         schema = {"type": "string", "const": "fixed_value"}
         result = _clean_schema_for_genai(schema)
         assert "const" not in result
         assert result["enum"] == ["fixed_value"]
+
+    def test_maps_const_int_to_enum_string(self):
+        """const with non-string value is stringified for genai enum compatibility."""
+        schema = {"type": "integer", "const": 42}
+        result = _clean_schema_for_genai(schema)
+        assert result["enum"] == ["42"]
 
     # --- Edge cases ---
 
@@ -674,3 +680,289 @@ class TestGetDeclarationWithJsonSchemaMeta:
         assert declaration is not None
         assert declaration.name == "normal_tool"
         assert declaration.parameters is not None
+
+
+class TestEndToEndSchemaValidation:
+    """End-to-end tests: _get_declaration() produces schemas that pass
+    types.Schema.model_validate() — validates the actual issue #1003 use case."""
+
+    def test_e2e_schema_with_title_default_examples(self):
+        """Schema with title, default, and examples passes model_validate."""
+        tool = AGUITool(
+            name="search_tool",
+            description="Search with rich schema",
+            parameters={
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "title": "SearchParams",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "title": "Search Query",
+                        "description": "The search term",
+                        "default": "hello world",
+                        "examples": ["machine learning", "deep learning", "NLP"],
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "title": "Result Limit",
+                        "default": 10,
+                        "minimum": 1,
+                        "maximum": 100,
+                    }
+                },
+                "required": ["query"]
+            }
+        )
+        mock_queue = AsyncMock()
+        proxy = ClientProxyTool(ag_ui_tool=tool, event_queue=mock_queue)
+        declaration = proxy._get_declaration()
+
+        assert declaration is not None
+        assert declaration.parameters is not None
+        # Verify title preserved
+        assert declaration.parameters.title == "SearchParams"
+        # Verify example mapped from examples[0]
+        query_prop = declaration.parameters.properties["query"]
+        assert query_prop.example == "machine learning"
+        assert query_prop.default == "hello world"
+
+    def test_e2e_schema_with_additional_properties(self):
+        """Schema with additionalProperties passes model_validate (Google docs example)."""
+        tool = AGUITool(
+            name="recipe_tool",
+            description="Recipe schema per Google docs",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "recipe_name": {"type": "string"},
+                    "ingredients": {
+                        "type": "array",
+                        "items": {"type": "string"}
+                    }
+                },
+                "required": ["recipe_name"],
+                "additionalProperties": False,
+            }
+        )
+        mock_queue = AsyncMock()
+        proxy = ClientProxyTool(ag_ui_tool=tool, event_queue=mock_queue)
+        declaration = proxy._get_declaration()
+
+        assert declaration is not None
+        assert declaration.parameters is not None
+        assert declaration.parameters.additional_properties is False
+
+    def test_e2e_schema_with_const_mapped_to_enum(self):
+        """Schema with const is mapped to enum and passes model_validate."""
+        tool = AGUITool(
+            name="fixed_tool",
+            description="Tool with const field",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "const": "submit"},
+                    "value": {"type": "number"}
+                }
+            }
+        )
+        mock_queue = AsyncMock()
+        proxy = ClientProxyTool(ag_ui_tool=tool, event_queue=mock_queue)
+        declaration = proxy._get_declaration()
+
+        assert declaration is not None
+        action_prop = declaration.parameters.properties["action"]
+        assert action_prop.enum == ["submit"]  # already a string, str() is no-op
+
+    def test_e2e_schema_with_min_max_properties(self):
+        """Schema with minProperties/maxProperties passes model_validate."""
+        tool = AGUITool(
+            name="bounded_tool",
+            description="Tool with property count constraints",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "data": {"type": "string"}
+                },
+                "minProperties": 1,
+                "maxProperties": 5,
+            }
+        )
+        mock_queue = AsyncMock()
+        proxy = ClientProxyTool(ag_ui_tool=tool, event_queue=mock_queue)
+        declaration = proxy._get_declaration()
+
+        assert declaration is not None
+        assert declaration.parameters.min_properties == 1
+        assert declaration.parameters.max_properties == 5
+
+    def test_e2e_schema_with_unknown_fields_stripped(self):
+        """Schema with readOnly/writeOnly/deprecated stripped, still validates."""
+        tool = AGUITool(
+            name="annotated_tool",
+            description="Tool with JSON Schema annotations",
+            parameters={
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "$comment": "Generated by openapi-generator",
+                "type": "object",
+                "readOnly": True,
+                "deprecated": True,
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "readOnly": True,
+                        "writeOnly": False,
+                        "contentMediaType": "text/plain",
+                    }
+                }
+            }
+        )
+        mock_queue = AsyncMock()
+        proxy = ClientProxyTool(ag_ui_tool=tool, event_queue=mock_queue)
+        declaration = proxy._get_declaration()
+
+        assert declaration is not None
+        assert declaration.parameters is not None
+        # readOnly, deprecated etc should not cause ValidationError
+
+    def test_e2e_schema_with_nested_anyof_and_meta(self):
+        """Complex schema with anyOf, nested $ref/$defs, and meta fields."""
+        tool = AGUITool(
+            name="complex_tool",
+            description="Complex schema",
+            parameters={
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "$defs": {
+                    "Color": {"type": "string", "enum": ["red", "green", "blue"]}
+                },
+                "type": "object",
+                "properties": {
+                    "value": {
+                        "anyOf": [
+                            {"type": "string", "$comment": "branch A"},
+                            {"type": "number", "title": "Numeric"},
+                        ]
+                    },
+                    "color": {
+                        "$ref": "#/$defs/Color",
+                        "type": "string",
+                        "title": "Favorite Color",
+                        "examples": ["red"],
+                    }
+                }
+            }
+        )
+        mock_queue = AsyncMock()
+        proxy = ClientProxyTool(ag_ui_tool=tool, event_queue=mock_queue)
+        declaration = proxy._get_declaration()
+
+        assert declaration is not None
+        assert declaration.parameters is not None
+        # anyOf should have 2 branches, $comment stripped
+        value_prop = declaration.parameters.properties["value"]
+        assert len(value_prop.any_of) == 2
+        assert value_prop.any_of[1].title == "Numeric"
+        # color should have example mapped from examples[0], $ref stripped
+        color_prop = declaration.parameters.properties["color"]
+        assert color_prop.example == "red"
+        assert color_prop.title == "Favorite Color"
+
+    def test_e2e_kitchen_sink_issue_1003(self):
+        """Reproduces the exact scenario from issue #1003 — a real MCP tool
+        schema with every problematic field type that caused ValidationError."""
+        tool = AGUITool(
+            name="mcp_database_query",
+            description="Query a database via MCP",
+            parameters={
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "$id": "https://mcp.example.com/db-query.schema.json",
+                "$comment": "Generated by Zod-to-JSON-Schema",
+                "type": "object",
+                "title": "DatabaseQuery",
+                "description": "Execute a database query",
+                "properties": {
+                    "sql": {
+                        "type": "string",
+                        "title": "SQL Statement",
+                        "description": "The SQL query to execute",
+                        "examples": ["SELECT * FROM users", "SELECT count(*) FROM orders"],
+                        "minLength": 1,
+                        "maxLength": 10000,
+                    },
+                    "database": {
+                        "type": "string",
+                        "title": "Database Name",
+                        "default": "production",
+                        "enum": ["production", "staging", "test"],
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "title": "Timeout (seconds)",
+                        "default": 30,
+                        "minimum": 1,
+                        "maximum": 300,
+                        "const": 30,
+                    },
+                    "format": {
+                        "type": "string",
+                        "title": "Output Format",
+                        "enum": ["json", "csv", "table"],
+                        "default": "json",
+                        "readOnly": False,
+                        "deprecated": False,
+                    },
+                    "options": {
+                        "type": "object",
+                        "title": "Query Options",
+                        "additionalProperties": True,
+                        "default": {},
+                        "properties": {
+                            "explain": {"type": "boolean", "default": False}
+                        }
+                    }
+                },
+                "required": ["sql"],
+                "additionalProperties": False,
+                "minProperties": 1,
+                "maxProperties": 10,
+                "readOnly": False,
+                "writeOnly": False,
+                "deprecated": False,
+                "contentMediaType": "application/json",
+                "dependentRequired": {"timeout": ["database"]},
+            }
+        )
+        mock_queue = AsyncMock()
+        proxy = ClientProxyTool(ag_ui_tool=tool, event_queue=mock_queue)
+        declaration = proxy._get_declaration()
+
+        # This is the core assertion — model_validate must not throw
+        assert declaration is not None
+        assert declaration.parameters is not None
+
+        params = declaration.parameters
+        # Valid fields preserved
+        assert params.title == "DatabaseQuery"
+        assert params.additional_properties is False
+        assert params.min_properties == 1
+        assert params.max_properties == 10
+        # sql: examples[0] mapped to example, minLength/maxLength preserved
+        sql_prop = params.properties["sql"]
+        assert sql_prop.example == "SELECT * FROM users"
+        assert sql_prop.min_length == 1
+        assert sql_prop.max_length == 10000
+        # database: default and enum preserved
+        db_prop = params.properties["database"]
+        assert db_prop.default == "production"
+        assert db_prop.enum == ["json", "csv", "table"] or db_prop.enum == ["production", "staging", "test"]
+        # timeout: const mapped to enum (stringified)
+        timeout_prop = params.properties["timeout"]
+        assert timeout_prop.enum == ["30"]
+        # format: readOnly/deprecated stripped, valid fields kept
+        format_prop = params.properties["format"]
+        assert format_prop.title == "Output Format"
+        # options: nested additionalProperties preserved
+        options_prop = params.properties["options"]
+        assert options_prop.additional_properties is True
+        # Invalid fields stripped at root level
+        # (readOnly, writeOnly, deprecated, contentMediaType, dependentRequired)
