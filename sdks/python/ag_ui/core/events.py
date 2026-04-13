@@ -272,6 +272,7 @@ class StepStartedEvent(BaseEvent):
     """
     type: Literal[EventType.STEP_STARTED] = EventType.STEP_STARTED  # pyright: ignore[reportIncompatibleVariableOverride]
     step_name: str
+    description: Optional[str] = None
 
 
 class StepFinishedEvent(BaseEvent):
@@ -280,6 +281,7 @@ class StepFinishedEvent(BaseEvent):
     """
     type: Literal[EventType.STEP_FINISHED] = EventType.STEP_FINISHED  # pyright: ignore[reportIncompatibleVariableOverride]
     step_name: str
+    description: Optional[str] = None
 
 
 # Text message role for reasoning messages (aligned with ReasoningMessage.role)

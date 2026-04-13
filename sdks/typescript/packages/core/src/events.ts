@@ -233,11 +233,13 @@ export const RunErrorEventSchema = BaseEventSchema.extend({
 export const StepStartedEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.STEP_STARTED),
   stepName: z.string(),
+  description: z.string().optional(),
 });
 
 export const StepFinishedEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.STEP_FINISHED),
   stepName: z.string(),
+  description: z.string().optional(),
 });
 
 // Schema for the encrypted signature subtype
