@@ -895,7 +895,12 @@ class LangGraphAgent:
                 yield resolved
 
         elif event_type == LangGraphEventTypes.OnCustomEvent:
-            if event["name"] == CustomEventNames.ManuallyEmitMessage:
+            # Normalize event name: CopilotKit SDK may prefix with "copilotkit_"
+            _event_name = event["name"]
+            if _event_name.startswith("copilotkit_"):
+                _event_name = _event_name[len("copilotkit_"):]
+
+            if _event_name == CustomEventNames.ManuallyEmitMessage:
                 yield self._dispatch_event(
                     TextMessageStartEvent(type=EventType.TEXT_MESSAGE_START, role="assistant", message_id=event["data"]["message_id"], raw_event=event)
                 )
@@ -911,7 +916,7 @@ class LangGraphAgent:
                     TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=event["data"]["message_id"], raw_event=event)
                 )
 
-            elif event["name"] == CustomEventNames.ManuallyEmitToolCall:
+            elif _event_name == CustomEventNames.ManuallyEmitToolCall:
                 yield self._dispatch_event(
                     ToolCallStartEvent(
                         type=EventType.TOOL_CALL_START,
@@ -934,7 +939,7 @@ class LangGraphAgent:
                     ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=event["data"]["id"], raw_event=event)
                 )
 
-            elif event["name"] == CustomEventNames.ManuallyEmitState:
+            elif _event_name == CustomEventNames.ManuallyEmitState:
                 self.active_run["manually_emitted_state"] = event["data"]
                 yield self._dispatch_event(
                     StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=self.get_state_snapshot(self.active_run["manually_emitted_state"]), raw_event=event)
