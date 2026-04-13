@@ -2,6 +2,7 @@
   "name": "copilotkit-e2e",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "description": "Scheduled Playwright smoke tests for CopilotKit demo apps",
   "scripts": {
     "postinstall": "playwright install --with-deps",

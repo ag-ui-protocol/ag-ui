@@ -69,6 +69,10 @@ export interface RunMetadata {
   hasFunctionStreaming?: boolean;
   // True once the platform-assigned run id is known (set from stream metadata)
   serverRunIdKnown?: boolean;
+  // True after a PredictState event is emitted; cleared on OnToolEnd
+  hasPredictState?: boolean;
+  // Messages completed during streaming that may not be committed to the checkpoint
+  streamedMessages?: LangGraphPlatformMessage[];
 }
 
 export type MessagesInProgressRecord = Record<string, MessageInProgress | null>;

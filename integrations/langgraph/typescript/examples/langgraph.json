@@ -7,7 +7,9 @@
     "predictive_state_updates": "./src/agents/predictive_state_updates/agent.ts:predictiveStateUpdatesGraph",
     "shared_state": "./src/agents/shared_state/agent.ts:sharedStateGraph",
     "tool_based_generative_ui": "./src/agents/tool_based_generative_ui/agent.ts:toolBasedGenerativeUiGraph",
-    "subgraphs": "./src/agents/subgraphs/agent.ts:subGraphsAgentGraph"
+    "subgraphs": "./src/agents/subgraphs/agent.ts:subGraphsAgentGraph",
+    "agentic_chat_multimodal": "./src/agents/agentic_chat_multimodal/agent.ts:agenticChatMultimodalGraph",
+    "agentic_chat_reasoning": "./src/agents/agentic_chat_reasoning/agent.ts:agenticChatReasoningGraph"
   },
   "env": ".env"
 }

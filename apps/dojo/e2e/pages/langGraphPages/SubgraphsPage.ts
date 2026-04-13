@@ -1,6 +1,7 @@
 import { Page, Locator, expect } from '@playwright/test';
 import { CopilotSelectors } from '../../utils/copilot-selectors';
 import { sendChatMessage, awaitLLMResponseDone } from '../../utils/copilot-actions';
+import { DEFAULT_WELCOME_MESSAGE } from '../../lib/constants';
 
 export class SubgraphsPage {
   readonly page: Page;
@@ -38,7 +39,7 @@ export class SubgraphsPage {
 
   constructor(page: Page) {
     this.page = page;
-    this.agentGreeting = page.getByText(/Ready to plan an amazing trip/i);
+    this.agentGreeting = page.getByText(DEFAULT_WELCOME_MESSAGE);
     this.chatInput = CopilotSelectors.chatTextarea(page);
     this.sendButton = CopilotSelectors.sendButton(page);
     this.agentMessage = CopilotSelectors.assistantMessages(page);
@@ -168,6 +169,16 @@ export class SubgraphsPage {
 
   async assertUserMessageVisible(message: string) {
     await expect(this.page.getByText(message)).toBeVisible();
+  }
+
+  async getAssistantMessageCount(): Promise<number> {
+    return this.agentMessage.count();
+  }
+
+  async assertMessagesNotLost(countBefore: number) {
+    expect(countBefore, "No assistant messages were visible before the interrupt — test precondition failed").toBeGreaterThan(0);
+    const countAfter = await this.getAssistantMessageCount();
+    expect(countAfter, `Expected at least ${countBefore} assistant messages after interrupt resume, but found ${countAfter}`).toBeGreaterThanOrEqual(countBefore);
   }
 
   async waitForSupervisorCoordination() {

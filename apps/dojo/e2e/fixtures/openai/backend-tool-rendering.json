@@ -1,0 +1,37 @@
+{
+  "fixtures": [
+    {
+      "match": { "userMessage": "Weather in San Francisco" },
+      "response": {
+        "toolCalls": [
+          {
+            "name": "get_weather",
+            "arguments": "{\"location\":\"San Francisco\"}"
+          }
+        ]
+      }
+    },
+    {
+      "match": { "userMessage": "Weather in New York" },
+      "response": {
+        "toolCalls": [
+          {
+            "name": "get_weather",
+            "arguments": "{\"location\":\"New York\"}"
+          }
+        ]
+      }
+    },
+    {
+      "match": { "userMessage": "weather" },
+      "response": {
+        "toolCalls": [
+          {
+            "name": "get_weather",
+            "arguments": "{\"location\":\"San Francisco\"}"
+          }
+        ]
+      }
+    }
+  ]
+}

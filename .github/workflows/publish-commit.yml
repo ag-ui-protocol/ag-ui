@@ -26,4 +26,7 @@ jobs:
       - name: Build
         run: pnpm run build
 
-      - run: npx pkg-pr-new publish --pnpm --packageManager pnpm ./sdks/typescript/packages/* ./middlewares/* ./integrations/*/typescript
+      - name: Publish via pkg-pr-new
+        run: |
+          npx pkg-pr-new publish --pnpm --packageManager pnpm ./sdks/typescript/packages/* ./middlewares/* ./integrations/*/typescript || \
+          (sleep 10 && npx pkg-pr-new publish --pnpm --packageManager pnpm ./sdks/typescript/packages/* ./middlewares/* ./integrations/*/typescript)

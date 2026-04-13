@@ -5,6 +5,138 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **NEW**: LLMock test infrastructure to run integration tests without `GOOGLE_API_KEY`
+  - Uses `@copilotkit/aimock` (LLMock) to mock Gemini API responses via `GOOGLE_GEMINI_BASE_URL`
+  - Session-scoped pytest fixture auto-starts a Node.js LLMock server when no real API key is present
+  - When a real `GOOGLE_API_KEY` is set, the mock is skipped and tests hit the live API as before
+  - Tier 1: 4 test files (32 tests) now pass without credentials — `test_text_events`, `test_context_integration`, `test_multi_turn_conversation`, `test_from_app_integration`
+  - Tier 2: 6 test files (50 tests) with tool-call fixtures for LRO, HITL, and skip_summarization — `test_lro_sse_persistence`, `test_lro_sse_id_remap`, `test_lro_tool_response_persistence`, `test_hitl_resumption_text_output`, `test_resumability_config`, `test_issue_437_skip_summarization_integration`
+  - Tier 3: `test_thought_to_thinking_integration` (7 tests) — reasoning/thinking event structure via `reasoning` fixture field producing `thought: true` Gemini parts
+  - Tier 4: `test_multimodal_e2e` (4 tests) — image and document handling via content-matched fixtures
+  - Remaining 4 skipped tests are Vertex AI session service live tests (require real Vertex AI infrastructure, not Gemini API)
+
+- **NEW**: Optional `hitl_max_wait_seconds` parameter for `ADKAgent` and `SessionManager` (#1441)
+  - Expired sessions with pending HITL tool calls are preserved indefinitely by default (unchanged behavior)
+  - When set, abandoned HITL sessions are force-deleted after the specified duration, preventing unbounded memory growth
+  - Tracks preservation start time per session in `_hitl_preserved_since`; tracking is cleaned up automatically when sessions are untracked
+  - Opt-in via `hitl_max_wait_seconds=7200` (or any value in seconds) on `ADKAgent()` — defaults to `None` (no limit)
+
+### Fixed
+
+- **FIX**: HITL resumption for LlmAgent roots with composite sub-agents (#1444)
+  - `_root_agent_needs_invocation_id()` now recursively detects `SequentialAgent` / `LoopAgent` anywhere in the sub-agent tree, not just at the root level
+  - Previously, topologies like `LlmAgent → SequentialAgent` or `LlmAgent → LlmAgent → SequentialAgent` lost `invocation_id` across HITL turns, causing the SequentialAgent to lose its position state and ADK to bypass its orchestration on resume
+  - Standalone LlmAgents (including those with only LlmAgent transfer targets) are unaffected — the guard still prevents passing `invocation_id` which would trigger `_get_subagent_to_resume()` ValueError
+
+## [0.6.0] - 2026-04-06
+
+### Changed
+
+- **BREAKING**: Migrate from deprecated `THINKING_*` events to `REASONING_*` events (#1406)
+  - `THINKING_START` / `THINKING_END` → `REASONING_START` / `REASONING_END`
+  - `THINKING_TEXT_MESSAGE_START` / `CONTENT` / `END` → `REASONING_MESSAGE_START` / `CONTENT` / `END`
+  - All reasoning events now carry a `message_id` for client-side correlation and `role="reasoning"` on message start
+  - Internal state variables renamed accordingly (`_is_thinking` → `_is_reasoning`, etc.)
+  - Aligns the ADK middleware with the Claude Agent SDK and LangGraph integrations, which already use `REASONING_*` events
+
+### Added
+
+- **NEW**: `REASONING_ENCRYPTED_VALUE` support for Gemini thought signatures (#1406)
+  - Extracts `thought_signature` (opaque bytes) from Google GenAI SDK `Part` objects when present
+  - Emits `REASONING_ENCRYPTED_VALUE` events with `subtype="message"` and base64-encoded signature
+  - Enables encrypted reasoning / zero-data-retention workflows with Gemini models
+
+- **NEW**: Reasoning chat example (`examples/server/api/agentic_chat_reasoning.py`)
+  - Demonstrates `REASONING_*` event emission using Gemini 2.5 Flash with `include_thoughts=True`
+  - Registered at `/adk-reasoning-chat` in the example server
+
+- **NEW**: Support for multimodal input types (`ImageInputContent`, `AudioInputContent`, `VideoInputContent`, `DocumentInputContent`) (#1405)
+  - Replaces reliance on the deprecated `BinaryInputContent` with the newer modality-specific types defined in the AG-UI protocol
+  - `InputContentDataSource` (inline base64) converts to `types.Part(inline_data=types.Blob(...))`, same as before
+  - `InputContentUrlSource` (HTTPS/GCS URLs) converts to `types.Part(file_data=types.FileData(file_uri=...))`, leveraging ADK's native URI support
+  - Legacy `BinaryInputContent` continues to work for backward compatibility
+  - Adds E2E tests gated on `GOOGLE_API_KEY` covering inline images, document URLs (RFC 2549 via IETF), multi-image messages, and mixed text+image content
+
+### Fixed
+
+- **FIX**: Suppress `output_schema` agent text from chat UI (#1390)
+  - ADK sub-agents with `output_schema` (e.g. classifiers in SequentialAgent workflows) produce structured output intended for inter-agent data transfer, not user-visible chat messages
+  - `ADKAgent._collect_output_schema_agent_names()` recursively walks the agent tree to identify `LlmAgent` instances with `output_schema` set
+  - `EventTranslator` suppresses `TextMessageEvent` emission when the event author matches a collected name, while still emitting reasoning/thought events
+  - Prevents structured output (e.g. a classifier returning `"CHAT"`) from leaking into the chat UI
+
+- **FIX**: Disable `save_input_blobs_as_artifacts` so inline images reach the model (#1405)
+  - ADK's runner was converting `inline_data` parts to artifact references before the model could see them, replacing images with text like `"Uploaded file: artifact_xxx. It is saved into artifacts"`
+  - Setting `save_input_blobs_as_artifacts=False` in `RunConfig` preserves inline binary data so the model receives the actual image/audio/video/document content
+
+## [0.5.2] - 2026-03-26
+
+### Changed
+
+- **CHORE**: Cap `google-adk` dependency at `<2.0.0` to prevent breakage when ADK 2.0 ships
+  - ADK 2.0.0a1 introduces breaking changes to the agent API, event model, and session schema, and requires Python 3.11+
+  - The middleware remains compatible across the full `1.16.0–1.27.5` range — verified by running the full test suite (647 tests) against `1.22.1`, `1.24.1`, and `1.27.5`
+
+### Added
+
+- **NEW**: `use_thread_id_as_session_id` option for `ADKAgent` and `SessionManager`
+  - When enabled, uses the AG-UI `thread_id` directly as the ADK `session_id` instead of letting the backend generate one
+  - Eliminates the O(n) `list_sessions` scan needed to recover thread-to-session mappings after middleware restarts, replacing it with a direct O(1) `get_session` lookup
+  - Opt-in via `use_thread_id_as_session_id=True` on `ADKAgent()` or `ADKAgent.from_app()` — defaults to `False` for backward compatibility
+  - Refactors `SessionManager.get_or_create_session` into two clear paths: `_get_or_create_by_thread_id` (direct lookup with race-condition handling) and `_get_or_create_by_scan` (original scan path)
+  - Note: Not compatible with `VertexAiSessionService` which rejects caller-provided session IDs
+
+- **NEW**: Vertex AI session service test coverage (`test_vertex_session_service.py`)
+  - 10 mock-based tests using `MockVertexAiSessionService` that faithfully replicates Vertex behaviour (generates numeric IDs, rejects custom `session_id`)
+  - 4 live integration tests against a real Vertex AI Agent Engine (skipped unless `VERTEX_REASONING_ENGINE_ID` is set)
+  - Covers session CRUD, scan-based recovery, multi-turn reuse, and `use_thread_id_as_session_id` error propagation
+
+### Fixed
+
+- **FIX**: Handle parallel same-name LRO tool calls in ADK + Gemini (#1334)
+  - When Gemini emitted N parallel function calls for the same tool (e.g. 5× `create_item`), the middleware only emitted the first call and silently dropped the rest, due to a single-call guard in `translate_lro_function_calls()`
+  - The LRO ID remap (`lro_emitted_ids_by_name`) used a `Dict[str, str]` keyed by tool name, causing last-write-wins when multiple calls shared the same name — only 1 of N IDs could be remapped, producing a function call/response count mismatch that Gemini rejected with a 400 error
+  - `translate_lro_function_calls()` now processes all LRO function calls in a single event, not just the first
+  - `lro_emitted_ids_by_name` changed to `Dict[str, List[str]]` with positional (FIFO) matching in `_extract_lro_id_remap()` so every parallel call gets its own correct remap
+
+- **FIX**: Use Pydantic serialization for tool-call args to handle non-stdlib-serializable types (#1331)
+  - `json.dumps` on LRO function-call args (e.g. `adk_request_credential`) crashed with `TypeError: Object of type SecuritySchemeType is not JSON serializable` when args contained Pydantic models or Python Enums
+  - Introduces a shared `serialize_tool_args()` helper using Pydantic's `TypeAdapter`, applied to all 5 call sites that previously used `json.dumps` on tool args
+  - Thanks to **@joar** for this contribution!
+
+- **FIX**: Strip JSON Schema meta-fields (`$schema`, `$id`, `$ref`, etc.) from tool parameters before passing to `google.genai.types.Schema.model_validate()` (#1349)
+  - Frontend tools whose JSON Schema includes `$`-prefixed meta-fields (e.g. those generated by Zod/MCP) caused a Pydantic `ValidationError: Extra inputs are not permitted`, crashing the ADK runner silently
+  - Adds recursive `_strip_json_schema_meta()` helper to `client_proxy_tool.py` that removes `$`-prefixed keys at all nesting levels before schema validation
+
+- **FIX**: Key session lookup cache by `(thread_id, user_id)` to prevent cross-user collision (#1323)
+  - `_session_lookup_cache` and `_active_executions` are now keyed by a `(thread_id, user_id)` tuple instead of `thread_id` alone, preventing one user's session from being returned to another when both share the same thread ID
+  - All internal helpers (`_get_session_metadata`, `_get_backend_session_id`, `_remove_pending_tool_call`, `_get_pending_tool_call_ids`, `_has_pending_tool_calls`) now require `user_id` as a mandatory parameter — no silent `""` defaults that could mask cache misses
+  - Adds test coverage for two users sharing the same thread ID receiving separate sessions
+  - Thanks to **@themavik** for this contribution!
+
+- **FIX**: Remove double JSON encoding of `state` and `messages` in `/agents/state` endpoint (#1347)
+  - `AgentStateResponse` declared `state` and `messages` as `str`, and the handler wrapped them with `json.dumps()` before passing to `JSONResponse`, which serializes again
+  - Consumers received doubly-encoded strings (e.g. `"[{...}]"`) instead of native objects (`[{...}]`), breaking CopilotKit's message snapshot functionality
+  - Fixed by changing `AgentStateResponse` fields to `dict`/`list` and removing the redundant `json.dumps()` calls
+
+- **FIX**: Replace deep copy with shallow copy to support McpToolset (#1264)
+  - `ADKAgent.model_copy(deep=True)` fails when the ADK agent tree contains tools with unpicklable attributes (e.g. `McpToolset.errlog = sys.stderr`)
+  - Replaced with a recursive shallow copy (`_shallow_copy_agent_tree`) that isolates only the fields modified per-execution (`instruction`, `tools`, `sub_agents`) while sharing tool objects by reference
+  - Adds regression test with a mock `UnpicklableToolset` to prevent future breakage
+
+- **FIX**: Update PyPI metadata and lockfile for adk-middleware package (#1263)
+  - Added `description` field to `pyproject.toml` for proper PyPI display
+  - Added `license = "MIT"` designation
+  - Added `project.urls` section with Homepage and Issues links
+  - Expanded `uv_build` version constraint from `<0.9` to `<0.11`
+  - Added `pytest-xdist` as a dev dependency for faster parallel test execution
+  - Regenerated `uv.lock` with updated Python version bounds
+  - Thanks to **@rcleveng** for this contribution!
+
 ## [0.5.1] - 2026-03-05
 
 ### Fixed

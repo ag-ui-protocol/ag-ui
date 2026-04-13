@@ -13,6 +13,8 @@ import {
   ActivityDeltaEvent,
   ToolCallResultEvent,
   ToolCallStartEvent,
+  ToolCallArgsEvent,
+  Tool,
 } from "@ag-ui/client";
 import { Observable } from "rxjs";
 
@@ -21,8 +23,8 @@ import {
   A2UIForwardedProps,
   A2UIUserAction,
 } from "./types";
-import { SEND_A2UI_JSON_TOOL, SEND_A2UI_TOOL_NAME, LOG_A2UI_EVENT_TOOL_NAME } from "./tools";
-import { getOperationSurfaceId, tryParseA2UIOperations } from "./schema";
+import { RENDER_A2UI_TOOL, RENDER_A2UI_TOOL_NAME, RENDER_A2UI_TOOL_GUIDELINES, LOG_A2UI_EVENT_TOOL_NAME } from "./tools";
+import { getOperationSurfaceId, tryParseA2UIOperations, A2UI_OPERATIONS_KEY, extractCompleteItemsWithStatus, extractCompleteObject, extractStringField } from "./schema";
 
 // Re-exports
 export * from "./types";
@@ -35,11 +37,31 @@ export * from "./schema";
 export const A2UIActivityType = "a2ui-surface";
 
 /**
+ * Context description used to identify the A2UI component schema in RunAgentInput.context.
+ * The LangGraph connector uses this to extract the schema from context and inject it
+ * into the agent's key/value state instead of the system prompt.
+ */
+export const A2UI_SCHEMA_CONTEXT_DESCRIPTION = "A2UI Component Schema — available components for generating UI surfaces. Use these component names and props when creating A2UI operations.";
+
+/**
  * Extract EventWithState type from Middleware.runNextWithState return type
  */
 type ExtractObservableType<T> = T extends Observable<infer U> ? U : never;
 type RunNextWithStateReturn = ReturnType<Middleware["runNextWithState"]>;
 type EventWithState = ExtractObservableType<RunNextWithStateReturn>;
+
+/**
+ * Group operations by surfaceId.
+ */
+function groupBySurface(ops: Array<Record<string, unknown>>): Map<string, Array<Record<string, unknown>>> {
+  const groups = new Map<string, Array<Record<string, unknown>>>();
+  for (const op of ops) {
+    const sid = getOperationSurfaceId(op) ?? "default";
+    if (!groups.has(sid)) groups.set(sid, []);
+    groups.get(sid)!.push(op);
+  }
+  return groups;
+}
 
 /**
  * A2UI Middleware - Enables AG-UI agents to render A2UI surfaces
@@ -60,13 +82,45 @@ export class A2UIMiddleware extends Middleware {
     // Process user action from forwardedProps (append synthetic messages)
     const enhancedInput = this.processUserAction(input);
 
-    // Conditionally inject the send_a2ui_json_to_client tool
+    // Inject A2UI component schema as context so agents know what components are available
+    const withSchema = this.injectSchemaContext(enhancedInput);
+
+    // Conditionally inject the render_a2ui tool and its usage guidelines
     const finalInput = this.config.injectA2UITool
-      ? this.injectTool(enhancedInput)
-      : enhancedInput;
+      ? this.injectToolGuidelines(this.injectTool(withSchema))
+      : withSchema;
 
     // Process the event stream using runNextWithState for automatic message tracking
     return this.processStream(this.runNextWithState(finalInput, next));
+  }
+
+  /**
+   * Inject the A2UI component schema into RunAgentInput.context.
+   * This makes the schema available to agents as a context entry,
+   * similar to how useAgentContext propagates application context.
+   *
+   * If the frontend already provided a schema context entry (via includeSchema),
+   * the server-side schema replaces it.
+   */
+  private injectSchemaContext(input: RunAgentInput): RunAgentInput {
+    if (!this.config.schema || this.config.schema.length === 0) {
+      return input;
+    }
+
+    const schemaContext = {
+      description: A2UI_SCHEMA_CONTEXT_DESCRIPTION,
+      value: JSON.stringify(this.config.schema),
+    };
+
+    // Replace any existing entry with the same description (e.g. from the frontend)
+    const filtered = (input.context || []).filter(
+      (c) => c.description !== A2UI_SCHEMA_CONTEXT_DESCRIPTION,
+    );
+
+    return {
+      ...input,
+      context: [...filtered, schemaContext],
+    };
   }
 
   /**
@@ -142,17 +196,46 @@ export class A2UIMiddleware extends Middleware {
   }
 
   /**
-   * Inject the send_a2ui_json_to_client tool into the input.
-   * Always replaces the tool schema if it already exists, because frontend-registered
-   * tools may have a broken schema (e.g., Zod v4 schemas fail zod-to-json-schema v3 conversion,
-   * producing an empty { type: "object", properties: {} } with no a2ui_json property).
+   * Inject the A2UI rendering tool into the input.
+   * Uses the configured name from `injectA2UITool` (string) or defaults to "render_a2ui".
+   * Always replaces the tool if it already exists to ensure the correct parameter schema.
    */
   private injectTool(input: RunAgentInput): RunAgentInput {
-    // Replace existing tool with our well-defined schema, or add if not present
-    const filteredTools = input.tools.filter((t) => t.name !== SEND_A2UI_TOOL_NAME);
+    const toolName = typeof this.config.injectA2UITool === "string"
+      ? this.config.injectA2UITool
+      : RENDER_A2UI_TOOL_NAME;
+    const tool: Tool = { ...RENDER_A2UI_TOOL, name: toolName };
+    const filteredTools = input.tools.filter((t) => t.name !== toolName);
     return {
       ...input,
-      tools: [...filteredTools, SEND_A2UI_JSON_TOOL],
+      tools: [...filteredTools, tool],
+    };
+  }
+
+  /**
+   * Inject usage guidelines for the render_a2ui tool as a context entry.
+   * Provides the LLM with protocol instructions and a minimal example so it
+   * can produce valid A2UI without agent-specific prompting.
+   */
+  private injectToolGuidelines(input: RunAgentInput): RunAgentInput {
+    const toolName = typeof this.config.injectA2UITool === "string"
+      ? this.config.injectA2UITool
+      : RENDER_A2UI_TOOL_NAME;
+
+    const guidelinesDescription =
+      `A2UI render tool usage guide — how to call ${toolName} with valid arguments.`;
+
+    // Remove any existing guidelines entry to avoid duplication
+    const filtered = (input.context || []).filter(
+      (c) => c.description !== guidelinesDescription,
+    );
+
+    return {
+      ...input,
+      context: [...filtered, {
+        description: guidelinesDescription,
+        value: RENDER_A2UI_TOOL_GUIDELINES(toolName),
+      }],
     };
   }
 
@@ -161,21 +244,140 @@ export class A2UIMiddleware extends Middleware {
    * Uses runNextWithState for automatic message tracking.
    */
   private processStream(source: Observable<EventWithState>): Observable<BaseEvent> {
+    // Tool names recognized as A2UI rendering tools
+    const a2uiToolNames = new Set(this.config.a2uiToolNames ?? [RENDER_A2UI_TOOL_NAME]);
+
     return new Observable<BaseEvent>((subscriber) => {
       let heldRunFinished: EventWithState | null = null;
-      // Track tool call IDs belonging to send_a2ui_json_to_client so we skip them
-      const a2uiToolCallIds = new Set<string>();
+
+      // Streaming tracker for dynamic render_a2ui tool calls.
+      // Schema is extracted from streaming args when updateComponents completes.
+      const streamingToolCalls = new Map<string, {
+        schema: { surfaceId: string; catalogId: string; components: Array<Record<string, unknown>> } | null;
+        args: string;
+        emittedCount: number;
+        schemaEmitted: boolean;  // whether schema has been sent to the renderer
+        dataEmitted: boolean;    // whether data model has been sent
+      }>();
 
       const subscription = source.subscribe({
         next: (eventWithState) => {
           const event = eventWithState.event;
 
-          // Track send_a2ui_json_to_client tool call IDs from TOOL_CALL_START events
           if (event.type === EventType.TOOL_CALL_START) {
             const startEvent = event as ToolCallStartEvent;
-            if (startEvent.toolCallName === SEND_A2UI_TOOL_NAME) {
-              a2uiToolCallIds.add(startEvent.toolCallId);
+
+            // render_a2ui: dynamic streaming. Track streaming args to
+            // extract schema (components) first, then data.
+            // If streaming extraction fails, auto-detect on the outer
+            // tool's TOOL_CALL_RESULT still works as a fallback.
+            if (a2uiToolNames.has(startEvent.toolCallName)) {
+              streamingToolCalls.set(startEvent.toolCallId, {
+                schema: null, args: "", emittedCount: 0,
+                schemaEmitted: false, dataEmitted: false,
+              });
             }
+          }
+
+          // Stream data updates as tool args come in
+          if (event.type === EventType.TOOL_CALL_ARGS) {
+            const argsEvent = event as ToolCallArgsEvent;
+
+            // ── Streaming handler for render_a2ui ──
+            const streaming = streamingToolCalls.get(argsEvent.toolCallId);
+            if (streaming) {
+              streaming.args += argsEvent.delta;
+
+              // Performance: only attempt extraction when the delta contains
+              // characters that could complete a JSON structure. Most deltas
+              // are mid-string/mid-number and can't change parse results.
+              const deltaHasClosingBrace = argsEvent.delta.includes("}");
+              const deltaHasClosingBracket = argsEvent.delta.includes("]");
+              const deltaHasStructuralChar = deltaHasClosingBrace || deltaHasClosingBracket;
+
+              // For dynamic (render_a2ui): extract schema from the structured args.
+              // We wait for the components array to be fully closed before setting
+              // the schema, because partial components (e.g., only the root Column
+              // without its children) cause the Lit processor to fail validation.
+              if (deltaHasStructuralChar) {
+                const result = extractCompleteItemsWithStatus(streaming.args, "components");
+                const surfaceId = extractStringField(streaming.args, "surfaceId");
+                const rawCatalogId = extractStringField(streaming.args, "catalogId") ?? "basic";
+                const catalogId = rawCatalogId === "basic"
+                  ? "https://a2ui.org/specification/v0_9/basic_catalog.json"
+                  : rawCatalogId;
+
+                if (result && result.items.length > 0 && surfaceId) {
+                  // Progressive component streaming: emit activity snapshots
+                  // as components arrive, not just when the full array closes.
+                  const newComponents = result.items.length > streaming.emittedCount;
+
+                  if (newComponents) {
+                    if (!streaming.schema) {
+                      // First emission — create the schema object
+                      streaming.schema = { surfaceId, catalogId, components: result.items as any[] };
+                    } else {
+                      // Update components in existing schema
+                      streaming.schema.components = result.items as any[];
+                    }
+
+                    streaming.schemaEmitted = true;
+                    streaming.emittedCount = result.items.length;
+
+                    // Always include createSurface in every replace:true snapshot.
+                    // If React batches renders and only processes a later snapshot,
+                    // the surface must still be created. The frontend filters out
+                    // duplicate createSurface when the surface already exists.
+                    const ops: Array<Record<string, unknown>> = [];
+                    ops.push({ version: "v0.9", createSurface: { surfaceId, catalogId } });
+                    ops.push({ version: "v0.9", updateComponents: { surfaceId, components: result.items } });
+
+                    // Try to include data model if "data" object is available
+                    const data = extractCompleteObject(streaming.args, "data");
+                    if (data) {
+                      streaming.dataEmitted = true;
+                      ops.push({ version: "v0.9", updateDataModel: { surfaceId, path: "/", value: data } });
+                    }
+
+                    const content: Record<string, unknown> = { [A2UI_OPERATIONS_KEY]: ops };
+                    const snapshotEvent: ActivitySnapshotEvent = {
+                      type: EventType.ACTIVITY_SNAPSHOT,
+                      messageId: `a2ui-surface-${surfaceId}-${argsEvent.toolCallId}`,
+                      activityType: A2UIActivityType,
+                      content,
+                      replace: true,
+                    };
+                    subscriber.next(snapshotEvent);
+                  }
+                }
+              }
+
+              // Handle late-arriving data: if components were already emitted but
+              // data wasn't ready yet (streams after components), emit a new snapshot
+              // with the data once it becomes extractable.
+              if (deltaHasStructuralChar && streaming.schemaEmitted && !streaming.dataEmitted && streaming.schema) {
+                const data = extractCompleteObject(streaming.args, "data");
+                if (data) {
+                  streaming.dataEmitted = true;
+                  const { surfaceId, catalogId } = streaming.schema;
+                  const ops: Array<Record<string, unknown>> = [
+                    { version: "v0.9", createSurface: { surfaceId, catalogId } },
+                    { version: "v0.9", updateComponents: { surfaceId, components: streaming.schema.components } },
+                    { version: "v0.9", updateDataModel: { surfaceId, path: "/", value: data } },
+                  ];
+                  const content: Record<string, unknown> = { [A2UI_OPERATIONS_KEY]: ops };
+                  const snapshotEvent: ActivitySnapshotEvent = {
+                    type: EventType.ACTIVITY_SNAPSHOT,
+                    messageId: `a2ui-surface-${surfaceId}-${argsEvent.toolCallId}`,
+                    activityType: A2UIActivityType,
+                    content,
+                    replace: true,
+                  };
+                  subscriber.next(snapshotEvent);
+                }
+              }
+            }
+
           }
 
           // If we have a held RUN_FINISHED and a new event comes, flush it first
@@ -193,10 +395,41 @@ export class A2UIMiddleware extends Middleware {
             // Auto-detect A2UI JSON in tool call results from other tools
             if (event.type === EventType.TOOL_CALL_RESULT) {
               const resultEvent = event as ToolCallResultEvent;
-              if (!a2uiToolCallIds.has(resultEvent.toolCallId)) {
-                const operations = tryParseA2UIOperations(resultEvent.content);
-                if (operations) {
-                  for (const activityEvent of this.createA2UIActivityEvents(operations)) {
+              const isStreaming = streamingToolCalls.has(resultEvent.toolCallId);
+
+              // Fallback: if a streaming tool call never emitted its schema (e.g. args
+              // didn't parse), fall through to auto-detection on the final result.
+              const streamingEntry = streamingToolCalls.get(resultEvent.toolCallId);
+              const streamingHandled = isStreaming && streamingEntry?.schemaEmitted;
+
+              // Also check if ANY streaming entry already handled a surface.
+              // This covers the case where render_a2ui (inner tool) streamed the
+              // surface, but the TOOL_CALL_RESULT belongs to generate_a2ui (outer
+              // tool) — different toolCallId, but same surface already rendered.
+              let anyStreamingHandled = streamingHandled;
+              if (!anyStreamingHandled) {
+                for (const entry of streamingToolCalls.values()) {
+                  if (entry.schemaEmitted) {
+                    anyStreamingHandled = true;
+                    break;
+                  }
+                }
+              }
+
+              // Skip if any streaming entry already rendered a surface (e.g.,
+              // render_a2ui streamed the surface, and now generate_a2ui's result
+              // would duplicate it).
+              if (!anyStreamingHandled) {
+                const parsed = tryParseA2UIOperations(resultEvent.content);
+                if (parsed) {
+                  // Emit all operations at once. Unlike the streaming path
+                  // (render_a2ui), explicit a2ui_operations arrive complete —
+                  // splitting schema and data would cause the renderer to
+                  // crash on unresolved path bindings before data exists.
+                  for (const activityEvent of this.createA2UIActivityEvents(
+                    parsed.operations,
+                    resultEvent.toolCallId,
+                  )) {
                     subscriber.next(activityEvent);
                   }
                 }
@@ -213,28 +446,23 @@ export class A2UIMiddleware extends Middleware {
           subscriber.error(err);
         },
         complete: () => {
-          // Stream ended - process pending A2UI tool calls if we have a held RUN_FINISHED
           if (heldRunFinished) {
-            // Find tool calls that don't have a corresponding result message
+            // Emit synthetic TOOL_CALL_RESULT for pending render_a2ui calls.
+            // The streaming handler already emitted activity events during
+            // TOOL_CALL_ARGS, so we just need to close the tool call.
             const pendingToolCalls = this.findPendingToolCalls(heldRunFinished.messages);
-
-            // Filter for A2UI tool calls
-            const pendingA2UIToolCalls = pendingToolCalls.filter(
-              (tc) => tc.function.name === SEND_A2UI_TOOL_NAME
+            const pendingRenderCalls = pendingToolCalls.filter(
+              (tc) => a2uiToolNames.has(tc.function.name)
             );
-
-            // Process each pending A2UI tool call
-            for (const toolCall of pendingA2UIToolCalls) {
-              const events = this.processSendA2UIToolCall(
-                toolCall.id,
-                toolCall.function.arguments
-              );
-              for (const event of events) {
-                subscriber.next(event);
-              }
+            for (const toolCall of pendingRenderCalls) {
+              const resultEvent: ToolCallResultEvent = {
+                type: EventType.TOOL_CALL_RESULT,
+                messageId: randomUUID(),
+                toolCallId: toolCall.id,
+                content: JSON.stringify({ status: "rendered" }),
+              };
+              subscriber.next(resultEvent);
             }
-
-            // Emit the held RUN_FINISHED
             subscriber.next(heldRunFinished.event);
             heldRunFinished = null;
           }
@@ -275,83 +503,14 @@ export class A2UIMiddleware extends Middleware {
   }
 
   /**
-   * Process a completed send_a2ui_json_to_client tool call.
-   * Returns an array of events: ACTIVITY_DELTA + ACTIVITY_SNAPSHOT per surface + a tool result.
+   * Create ACTIVITY_SNAPSHOT events from A2UI operations, grouped by surfaceId.
    *
-   * Always emits both events for each surface:
-   * 1. ACTIVITY_DELTA first - appends if message exists, no-op if not
-   * 2. ACTIVITY_SNAPSHOT with replace: false - creates if message doesn't exist, ignored if it does
-   */
-  private processSendA2UIToolCall(
-    toolCallId: string,
-    argsInput: string | Record<string, unknown>
-  ): BaseEvent[] {
-    const events: BaseEvent[] = [];
-
-    // Parse the tool arguments - argsInput can be string or object (CopilotKit gives object)
-    let args: { a2ui_json?: string | Array<Record<string, unknown>> | Record<string, unknown> } = {};
-    if (typeof argsInput === "string") {
-      try {
-        args = JSON.parse(argsInput || "{}");
-      } catch (e) {
-        console.warn("[A2UIMiddleware] Failed to parse tool call arguments:", e);
-      }
-    } else if (typeof argsInput === "object" && argsInput !== null) {
-      args = argsInput as { a2ui_json?: string };
-    }
-
-    // a2ui_json can be either:
-    // 1. A string containing JSON array of A2UI messages (needs parsing)
-    // 2. An array of A2UI messages directly (no parsing needed - structured output)
-    // 3. A single operation object
-    const a2uiJsonValue = args.a2ui_json;
-
-    // Parse A2UI operations (messages)
-    let operations: Array<Record<string, unknown>> = [];
-
-    if (typeof a2uiJsonValue === "string") {
-      // Case 1: String that needs parsing
-      try {
-        const parsed = JSON.parse(a2uiJsonValue);
-        if (Array.isArray(parsed)) {
-          operations = parsed as Array<Record<string, unknown>>;
-        } else if (typeof parsed === "object" && parsed !== null) {
-          operations = [parsed as Record<string, unknown>];
-        }
-      } catch (e) {
-        console.warn("[A2UIMiddleware] Failed to parse A2UI JSON string:", e);
-      }
-    } else if (Array.isArray(a2uiJsonValue)) {
-      // Case 2: Already an array of operations (structured output)
-      operations = a2uiJsonValue as Array<Record<string, unknown>>;
-    } else if (typeof a2uiJsonValue === "object" && a2uiJsonValue !== null) {
-      // Case 3: A single operation object
-      operations = [a2uiJsonValue as Record<string, unknown>];
-    } else {
-      console.warn("[A2UIMiddleware] a2ui_json has unexpected type:", typeof a2uiJsonValue);
-    }
-
-    // Create activity events from the parsed operations
-    events.push(...this.createA2UIActivityEvents(operations));
-
-    // Create TOOL_CALL_RESULT event
-    const resultEvent: ToolCallResultEvent = {
-      type: EventType.TOOL_CALL_RESULT,
-      messageId: randomUUID(),
-      toolCallId,
-      content: JSON.stringify(operations),
-    };
-    events.push(resultEvent);
-
-    return events;
-  }
-
-  /**
-   * Create ACTIVITY_DELTA + ACTIVITY_SNAPSHOT events from A2UI operations,
-   * grouped by surfaceId.
+   * @param operations - A2UI operations to emit
+   * @param toolCallId - Unique tool call ID to isolate surfaces between invocations
    */
   private createA2UIActivityEvents(
-    operations: Array<Record<string, unknown>>
+    operations: Array<Record<string, unknown>>,
+    toolCallId?: string,
   ): BaseEvent[] {
     const events: BaseEvent[] = [];
 
@@ -365,30 +524,25 @@ export class A2UIMiddleware extends Middleware {
       operationsBySurface.get(surfaceId)!.push(op);
     }
 
-    // Emit events per surface: always emit delta first, then snapshot
+    // Emit a single ACTIVITY_SNAPSHOT per surface with replace: true.
+    // Using replace: true ensures all operations (createSurface + updateComponents
+    // + updateDataModel) are delivered atomically, preventing intermediate renders
+    // with partial operations that can break data binding resolution.
     for (const [surfaceId, surfaceOps] of operationsBySurface) {
-      const messageId = `a2ui-surface-${surfaceId}`;
+      // Include toolCallId in messageId to ensure each tool invocation
+      // creates a distinct activity message, even for the same surfaceId
+      const messageId = toolCallId
+        ? `a2ui-surface-${surfaceId}-${toolCallId}`
+        : `a2ui-surface-${surfaceId}`;
 
-      // 1. ACTIVITY_DELTA - appends operations if message exists, no-op if not
-      const deltaEvent: ActivityDeltaEvent = {
-        type: EventType.ACTIVITY_DELTA,
-        messageId,
-        activityType: A2UIActivityType,
-        patch: surfaceOps.map((op) => ({
-          op: "add" as const,
-          path: "/operations/-",
-          value: op,
-        })),
-      };
-      events.push(deltaEvent);
+      const content: Record<string, unknown> = { [A2UI_OPERATIONS_KEY]: surfaceOps };
 
-      // 2. ACTIVITY_SNAPSHOT with replace: false - creates if doesn't exist, ignored if exists
       const snapshotEvent: ActivitySnapshotEvent = {
         type: EventType.ACTIVITY_SNAPSHOT,
         messageId,
         activityType: A2UIActivityType,
-        content: { operations: surfaceOps },
-        replace: false,
+        content,
+        replace: true,
       };
       events.push(snapshotEvent);
     }

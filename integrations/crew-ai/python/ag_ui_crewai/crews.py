@@ -11,7 +11,7 @@ from crewai.cli.crew_chat import (
   build_system_message as crew_chat_build_system_message,
   create_tool_function as crew_chat_create_tool_function
 )
-from litellm import completion
+from litellm import acompletion
 from .sdk import (
   copilotkit_stream,
   copilotkit_exit,
@@ -65,8 +65,6 @@ class ChatWithCrewFlow(Flow):
         self.crew_tool_schema = crew_chat_generate_crew_tool_schema(self.crew_chat_inputs)
         self.system_message = crew_chat_build_system_message(self.crew_chat_inputs)
 
-        super().__init__()
-
     @start()
     async def chat(self):
         """Chat with the crew"""
@@ -90,7 +88,7 @@ class ChatWithCrewFlow(Flow):
         tools += [self.crew_tool_schema, CREW_EXIT_TOOL]
 
         response = await copilotkit_stream(
-            completion(
+            await acompletion(
                 model=self.crew.chat_llm,
                 messages=messages,
                 tools=tools,
@@ -127,12 +125,12 @@ class ChatWithCrewFlow(Flow):
                 await copilotkit_exit()
                 self.state["messages"].append({
                     "role": "tool",
-                    "content": "Crew exited",
+                    "content": "Crew exited",  # E2E: aimock-setup.ts matches this exact string
                     "tool_call_id": message["tool_calls"][0]["id"]
                 })
 
                 response = await copilotkit_stream(
-                    completion( # pylint: disable=too-many-arguments
+                    await acompletion( # pylint: disable=too-many-arguments
                         model=self.crew.chat_llm,
                         messages = [
                             {

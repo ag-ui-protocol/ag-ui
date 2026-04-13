@@ -16,13 +16,15 @@ from ag_ui.core import (
     ToolCallResultEvent, StateSnapshotEvent, StateDeltaEvent,
     CustomEvent, Message, UserMessage, AssistantMessage, ToolMessage, ReasoningMessage,
     ToolCall, FunctionCall,
-    ThinkingStartEvent, ThinkingEndEvent,
-    ThinkingTextMessageStartEvent, ThinkingTextMessageContentEvent, ThinkingTextMessageEndEvent,
+    ReasoningStartEvent, ReasoningEndEvent,
+    ReasoningMessageStartEvent, ReasoningMessageContentEvent, ReasoningMessageEndEvent,
+    ReasoningEncryptedValueEvent,
 )
 import json
 from google.adk.events import Event as ADKEvent
 
 from .config import PredictStateMapping, normalize_predict_state
+from .serialization import serialize_tool_args
 
 import logging
 logger = logging.getLogger(__name__)
@@ -50,7 +52,7 @@ def _check_thought_support() -> bool:
                 _HAS_THOUGHT_SUPPORT = hasattr(types.Part, 'thought')
 
             if _HAS_THOUGHT_SUPPORT:
-                logger.info("Thought support detected in google-genai SDK; thoughts will be emitted as THINKING events")
+                logger.info("Thought support detected in google-genai SDK; thoughts will be emitted as REASONING events")
             else:
                 logger.info("Thought support not available in google-genai SDK; thoughts will be treated as regular text")
         except Exception as e:
@@ -171,6 +173,7 @@ class EventTranslator:
         client_tool_names: Optional[set] = None,
         is_resumable: bool = False,
         streaming_function_call_arguments: bool = False,
+        output_schema_agent_names: Optional[set] = None,
     ):
         """Initialize the event translator.
 
@@ -187,7 +190,15 @@ class EventTranslator:
                 TOOL_CALL events for these tool names, since the proxy tool will
                 emit its own events during execution. This prevents duplicate
                 emissions when ADK assigns different IDs across LRO and confirmed events.
+            output_schema_agent_names: Optional set of agent names whose text output
+                should be suppressed from the chat UI. When an ADK event's author
+                matches one of these names, text content is not emitted as
+                TextMessageEvents. This prevents structured output from
+                output_schema agents (e.g. classifiers in Workflow pipelines)
+                from leaking into user-visible messages. (GitHub #1390)
         """
+        # Agent names with output_schema — suppress their text from the chat UI (GitHub #1390)
+        self._output_schema_agent_names: set[str] = output_schema_agent_names if output_schema_agent_names is not None else set()
         # Whether the agent uses ADK's native resumability (ResumabilityConfig).
         # When True, ClientProxyTool handles tool call emission and the translator
         # must skip client tool names to avoid duplicates.
@@ -208,15 +219,18 @@ class EventTranslator:
         self._last_streamed_text: Optional[str] = None  # Snapshot of most recently streamed text
         self._last_streamed_run_id: Optional[str] = None  # Run identifier for the last streamed text
         self.long_running_tool_ids: List[str] = []  # Track the long running tool IDs
-        # Maps LRO function call name → the ID we emitted to the client.
+        # Maps LRO function call name → list of IDs we emitted to the client.
         # Used to build a remap when the final (non-partial) event arrives
         # with a different ID for the same logical function call.
-        self.lro_emitted_ids_by_name: Dict[str, str] = {}
+        # A list is used because the same tool can be called multiple times
+        # in parallel (e.g. 5 concurrent create_item calls).
+        self.lro_emitted_ids_by_name: Dict[str, List[str]] = {}
 
-        # Track thinking message streaming state (for thought parts)
-        self._is_thinking: bool = False  # Whether we're currently in a thinking block
-        self._is_streaming_thinking: bool = False  # Whether we're streaming thinking content
-        self._current_thinking_text: str = ""  # Accumulates thinking text for the active stream
+        # Track reasoning message streaming state (for thought parts)
+        self._is_reasoning: bool = False  # Whether we're currently in a reasoning block
+        self._is_streaming_reasoning: bool = False  # Whether we're streaming reasoning content
+        self._current_reasoning_text: str = ""  # Accumulates reasoning text for the active stream
+        self._current_reasoning_message_id: Optional[str] = None  # Current reasoning message ID
 
         # Predictive state configuration
         self._predict_state_mappings = normalize_predict_state(predict_state)
@@ -479,6 +493,7 @@ class EventTranslator:
         # Extract text from all parts, separating thought parts from regular text
         text_parts = []
         thought_parts = []
+        thought_signatures: List[Optional[bytes]] = []
         has_thought_support = _check_thought_support()
 
         # The check for adk_event.content.parts happens in the main translate method
@@ -496,18 +511,32 @@ class EventTranslator:
 
             if is_thought:
                 thought_parts.append(part.text)
+                # Capture thought_signature if available (opaque bytes for encrypted reasoning)
+                sig = getattr(part, 'thought_signature', None)
+                thought_signatures.append(sig)
             else:
                 text_parts.append(part.text)
 
-        # Handle thought parts first (emit THINKING events)
+        # Handle thought parts first (emit REASONING events)
         if thought_parts:
-            async for event in self._translate_thinking_content(thought_parts):
+            async for event in self._translate_reasoning_content(thought_parts, thought_signatures):
                 yield event
+
+        # Suppress user-visible text from agents with output_schema configured.
+        # Their text content is structured output intended for inter-agent data
+        # transfer (e.g. a classifier returning "CHAT"), not for the chat UI.
+        # Reasoning/thought parts above are still emitted. (GitHub #1390)
+        author = getattr(adk_event, 'author', None)
+        if author and author in self._output_schema_agent_names:
+            logger.debug(
+                "Suppressing text from output_schema agent %r", author
+            )
+            return
 
         # If no text AND it's not a final response, we can safely skip.
         # Otherwise, we must continue to process the final_response signal.
         if not text_parts and not is_final_response:
-            # If we only had thought parts and this is not final, close any active thinking
+            # If we only had thought parts and this is not final, close any active reasoning
             # but don't return yet if we need to handle final response
             return
 
@@ -520,7 +549,7 @@ class EventTranslator:
             # This is the final, complete message event.
 
             # Close any active thinking stream first
-            async for event in self._close_thinking_stream():
+            async for event in self._close_reasoning_stream():
                 yield event
 
             # Case 1: A text stream is actively running. We must close it.
@@ -603,7 +632,7 @@ class EventTranslator:
         if not self._is_streaming:
             # Close any active thinking stream before starting regular text
             # (transition from thinking to response)
-            async for event in self._close_thinking_stream():
+            async for event in self._close_reasoning_stream():
                 yield event
 
             # Start of new message - emit START event
@@ -657,20 +686,25 @@ class EventTranslator:
             self._is_streaming = False
             logger.info("🏁 Streaming completed, state reset")
 
-    async def _translate_thinking_content(
+    async def _translate_reasoning_content(
         self,
-        thought_parts: List[str]
+        thought_parts: List[str],
+        thought_signatures: Optional[List[Optional[bytes]]] = None,
     ) -> AsyncGenerator[BaseEvent, None]:
-        """Translate thought parts to AG-UI THINKING events.
+        """Translate thought parts to AG-UI REASONING events.
 
-        This method emits THINKING_START, THINKING_TEXT_MESSAGE_START/CONTENT/END,
-        and tracks thinking state for proper stream management.
+        This method emits REASONING_START, REASONING_MESSAGE_START/CONTENT/END,
+        and tracks reasoning state for proper stream management. When thought_signatures
+        are present, emits REASONING_ENCRYPTED_VALUE events for each signature.
 
         Args:
             thought_parts: List of thought text strings to emit
+            thought_signatures: Optional list of opaque signatures (bytes) for each
+                thought part, used for encrypted reasoning (e.g., Gemini thought signatures).
 
         Yields:
-            Thinking events (THINKING_START, THINKING_TEXT_MESSAGE_START/CONTENT/END)
+            Reasoning events (REASONING_START, REASONING_MESSAGE_START/CONTENT/END,
+            REASONING_ENCRYPTED_VALUE)
         """
         if not thought_parts:
             return
@@ -679,55 +713,78 @@ class EventTranslator:
         if not combined_thought:
             return
 
-        # Start thinking block if not already in one
-        if not self._is_thinking:
-            self._is_thinking = True
-            yield ThinkingStartEvent(
-                type=EventType.THINKING_START,
-                title="Model Thinking"
+        # Start reasoning block if not already in one
+        if not self._is_reasoning:
+            self._is_reasoning = True
+            self._current_reasoning_message_id = str(uuid.uuid4())
+            yield ReasoningStartEvent(
+                type=EventType.REASONING_START,
+                message_id=self._current_reasoning_message_id,
             )
-            logger.debug("🧠 Started thinking block")
+            logger.debug("🧠 Started reasoning block")
 
-        # Start thinking text message if not already streaming
-        if not self._is_streaming_thinking:
-            self._is_streaming_thinking = True
-            self._current_thinking_text = ""
-            yield ThinkingTextMessageStartEvent(
-                type=EventType.THINKING_TEXT_MESSAGE_START
+        # Start reasoning message if not already streaming
+        if not self._is_streaming_reasoning:
+            self._is_streaming_reasoning = True
+            self._current_reasoning_text = ""
+            if not self._current_reasoning_message_id:
+                self._current_reasoning_message_id = str(uuid.uuid4())
+            yield ReasoningMessageStartEvent(
+                type=EventType.REASONING_MESSAGE_START,
+                message_id=self._current_reasoning_message_id,
+                role="reasoning",
             )
-            logger.debug("🧠 Started thinking text message")
+            logger.debug("🧠 Started reasoning message")
 
-        # Emit thinking content
-        self._current_thinking_text += combined_thought
-        yield ThinkingTextMessageContentEvent(
-            type=EventType.THINKING_TEXT_MESSAGE_CONTENT,
-            delta=combined_thought
+        # Emit reasoning content
+        self._current_reasoning_text += combined_thought
+        yield ReasoningMessageContentEvent(
+            type=EventType.REASONING_MESSAGE_CONTENT,
+            message_id=self._current_reasoning_message_id,
+            delta=combined_thought,
         )
-        logger.debug(f"🧠 Emitted thinking content: {len(combined_thought)} chars")
+        logger.debug(f"🧠 Emitted reasoning content: {len(combined_thought)} chars")
 
-    async def _close_thinking_stream(self) -> AsyncGenerator[BaseEvent, None]:
-        """Close any active thinking stream.
+        # Emit encrypted value events for thought signatures
+        if thought_signatures and self._current_reasoning_message_id:
+            import base64
+            for sig in thought_signatures:
+                if sig is not None:
+                    encrypted_value = base64.b64encode(sig).decode("ascii") if isinstance(sig, (bytes, bytearray)) else str(sig)
+                    yield ReasoningEncryptedValueEvent(
+                        type=EventType.REASONING_ENCRYPTED_VALUE,
+                        subtype="message",
+                        entity_id=self._current_reasoning_message_id,
+                        encrypted_value=encrypted_value,
+                    )
+                    logger.debug("🧠 Emitted reasoning encrypted value (thought signature)")
 
-        This should be called when transitioning from thinking to regular output,
+    async def _close_reasoning_stream(self) -> AsyncGenerator[BaseEvent, None]:
+        """Close any active reasoning stream.
+
+        This should be called when transitioning from reasoning to regular output,
         or when the response is finalized.
 
         Yields:
-            THINKING_TEXT_MESSAGE_END and THINKING_END events if needed
+            REASONING_MESSAGE_END and REASONING_END events if needed
         """
-        if self._is_streaming_thinking:
-            yield ThinkingTextMessageEndEvent(
-                type=EventType.THINKING_TEXT_MESSAGE_END
+        if self._is_streaming_reasoning:
+            yield ReasoningMessageEndEvent(
+                type=EventType.REASONING_MESSAGE_END,
+                message_id=self._current_reasoning_message_id or "",
             )
-            self._is_streaming_thinking = False
-            self._current_thinking_text = ""
-            logger.debug("🧠 Closed thinking text message")
+            self._is_streaming_reasoning = False
+            self._current_reasoning_text = ""
+            logger.debug("🧠 Closed reasoning message")
 
-        if self._is_thinking:
-            yield ThinkingEndEvent(
-                type=EventType.THINKING_END
+        if self._is_reasoning:
+            yield ReasoningEndEvent(
+                type=EventType.REASONING_END,
+                message_id=self._current_reasoning_message_id or "",
             )
-            self._is_thinking = False
-            logger.debug("🧠 Closed thinking block")
+            self._is_reasoning = False
+            self._current_reasoning_message_id = None
+            logger.debug("🧠 Closed reasoning block")
 
     async def translate_lro_function_calls(self,adk_event: ADKEvent)-> AsyncGenerator[BaseEvent, None]:
         """Translate long running function calls from ADK event to AG-UI tool call events.
@@ -739,45 +796,44 @@ class EventTranslator:
             Tool call events (START, ARGS, END)
         """
 
-        long_running_function_call = None
         if adk_event.content and adk_event.content.parts:
+            lro_ids = set(adk_event.long_running_tool_ids or [])
             for i, part in enumerate(adk_event.content.parts):
                 if part.function_call:
-                    if not long_running_function_call and part.function_call.id in (
-                        adk_event.long_running_tool_ids or []
-                    ) and part.function_call.id not in self._client_emitted_tool_call_ids \
+                    fc = part.function_call
+                    if fc.id in lro_ids \
+                      and fc.id not in self._client_emitted_tool_call_ids \
                       and (not self._is_resumable
-                           or getattr(part.function_call, 'name', None) not in self._client_tool_names):
-                        long_running_function_call = part.function_call
-                        self.long_running_tool_ids.append(long_running_function_call.id)
-                        self.lro_emitted_ids_by_name[long_running_function_call.name] = long_running_function_call.id
+                           or getattr(fc, 'name', None) not in self._client_tool_names):
+                        self.long_running_tool_ids.append(fc.id)
+                        if fc.name not in self.lro_emitted_ids_by_name:
+                            self.lro_emitted_ids_by_name[fc.name] = []
+                        self.lro_emitted_ids_by_name[fc.name].append(fc.id)
                         yield ToolCallStartEvent(
                             type=EventType.TOOL_CALL_START,
-                            tool_call_id=long_running_function_call.id,
-                            tool_call_name=long_running_function_call.name,
+                            tool_call_id=fc.id,
+                            tool_call_name=fc.name,
                             parent_message_id=None
                         )
-                        if hasattr(long_running_function_call, 'args') and long_running_function_call.args:
-                            # Convert args to string (JSON format)
-                            import json
-                            args_str = json.dumps(long_running_function_call.args) if isinstance(long_running_function_call.args, dict) else str(long_running_function_call.args)
+                        if hasattr(fc, 'args') and fc.args:
+                            args_str = serialize_tool_args(fc.args)
                             yield ToolCallArgsEvent(
                                 type=EventType.TOOL_CALL_ARGS,
-                                tool_call_id=long_running_function_call.id,
+                                tool_call_id=fc.id,
                                 delta=args_str
                             )
-                        
+
                         # Emit TOOL_CALL_END
                         yield ToolCallEndEvent(
                             type=EventType.TOOL_CALL_END,
-                            tool_call_id=long_running_function_call.id
+                            tool_call_id=fc.id
                         )
 
                         # Record so ClientProxyTool can skip duplicate emission
-                        self.emitted_tool_call_ids.add(long_running_function_call.id)
+                        self.emitted_tool_call_ids.add(fc.id)
 
                         # Clean up tracking
-                        self._active_tool_calls.pop(long_running_function_call.id, None)
+                        self._active_tool_calls.pop(fc.id, None)
     
     async def _translate_function_calls(
         self,
@@ -836,8 +892,7 @@ class EventTranslator:
 
             # Emit TOOL_CALL_ARGS if we have arguments
             if hasattr(func_call, 'args') and func_call.args:
-                # Convert args to string (JSON format)
-                args_str = json.dumps(func_call.args) if isinstance(func_call.args, dict) else str(func_call.args)
+                args_str = serialize_tool_args(func_call.args)
 
                 yield ToolCallArgsEvent(
                     type=EventType.TOOL_CALL_ARGS,
@@ -1163,10 +1218,11 @@ class EventTranslator:
         self._emitted_confirm_for_tools.clear()
         self._predictive_state_tool_call_ids.clear()
         self._deferred_confirm_events.clear()
-        # Reset thinking state
-        self._is_thinking = False
-        self._is_streaming_thinking = False
-        self._current_thinking_text = ""
+        # Reset reasoning state
+        self._is_reasoning = False
+        self._is_streaming_reasoning = False
+        self._current_reasoning_text = ""
+        self._current_reasoning_message_id = None
         # Reset streaming FC args state
         self._active_streaming_fc_id = None
         self._active_streaming_fc_name = None
@@ -1195,7 +1251,7 @@ def _translate_function_calls_to_tool_calls(function_calls: List[Any]) -> List[T
             type="function",
             function=FunctionCall(
                 name=fc.name,
-                arguments=json.dumps(fc.args) if hasattr(fc, 'args') and fc.args else "{}"
+                arguments=serialize_tool_args(fc.args) if hasattr(fc, 'args') and fc.args else "{}"
             )
         )
         tool_calls.append(tool_call)

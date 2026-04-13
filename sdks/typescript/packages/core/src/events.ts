@@ -72,12 +72,13 @@ export const TextMessageStartEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.TEXT_MESSAGE_START),
   messageId: z.string(),
   role: TextMessageRoleSchema.default("assistant"),
+  name: z.string().optional(),
 });
 
 export const TextMessageContentEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.TEXT_MESSAGE_CONTENT),
   messageId: z.string(),
-  delta: z.string().refine((s) => s.length > 0, "Delta must not be an empty string"),
+  delta: z.string(),
 });
 
 export const TextMessageEndEventSchema = BaseEventSchema.extend({
@@ -90,6 +91,7 @@ export const TextMessageChunkEventSchema = BaseEventSchema.extend({
   messageId: z.string().optional(),
   role: TextMessageRoleSchema.optional(),
   delta: z.string().optional(),
+  name: z.string().optional(),
 });
 
 /**
@@ -258,7 +260,7 @@ export const ReasoningMessageStartEventSchema = BaseEventSchema.extend({
 export const ReasoningMessageContentEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.REASONING_MESSAGE_CONTENT),
   messageId: z.string(),
-  delta: z.string().refine((s) => s.length > 0, "Delta must not be an empty string"),
+  delta: z.string(),
 });
 
 export const ReasoningMessageEndEventSchema = BaseEventSchema.extend({

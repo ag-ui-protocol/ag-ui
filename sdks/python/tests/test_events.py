@@ -10,6 +10,7 @@ from ag_ui.core.events import (
     TextMessageStartEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
+    TextMessageChunkEvent,
     ToolCallStartEvent,
     ToolCallArgsEvent,
     ToolCallEndEvent,
@@ -25,6 +26,7 @@ from ag_ui.core.events import (
     RunErrorEvent,
     StepStartedEvent,
     StepFinishedEvent,
+    ReasoningMessageStartEvent,
     Event
 )
 
@@ -422,14 +424,13 @@ class TestEvents(unittest.TestCase):
             self.assertEqual(event.type.value, data["type"])
             self.assertEqual(event.timestamp, data["timestamp"])
 
-    def test_validation_constraints(self):
-        """Test validation constraints for different event types"""
-        # TextMessageContentEvent delta cannot be empty
-        with self.assertRaises(ValueError):
-            TextMessageContentEvent(
-                message_id="msg_123",
-                delta=""  # Empty delta, should fail
-            )
+    def test_empty_delta_accepted(self):
+        """Models like GPT-5 legitimately send empty deltas during streaming"""
+        event = TextMessageContentEvent(
+            message_id="msg_123",
+            delta=""
+        )
+        self.assertEqual(event.delta, "")
 
     def test_serialization_round_trip(self):
         """Test serialization and deserialization for different event types"""
@@ -574,6 +575,46 @@ class TestEvents(unittest.TestCase):
         )
         self.assertEqual(deserialized.snapshot["settings"]["timezone"], "UTC-5")
 
+    def test_text_message_start_with_name(self):
+        """Test TextMessageStartEvent with name"""
+        event = TextMessageStartEvent(
+            message_id="msg_123",
+            name="research-agent",
+        )
+        self.assertEqual(event.name, "research-agent")
+        self.assertEqual(event.role, "assistant")
+
+        serialized = event.model_dump(by_alias=True)
+        self.assertEqual(serialized["name"], "research-agent")
+        self.assertEqual(serialized["messageId"], "msg_123")
+
+    def test_text_message_start_without_name(self):
+        """Test TextMessageStartEvent without name defaults to None"""
+        event = TextMessageStartEvent(
+            message_id="msg_123",
+        )
+        self.assertIsNone(event.name)
+
+    def test_text_message_chunk_with_name(self):
+        """Test TextMessageChunkEvent with name"""
+        event = TextMessageChunkEvent(
+            message_id="msg_123",
+            delta="Hello",
+            name="research-agent",
+        )
+        self.assertEqual(event.name, "research-agent")
+
+        serialized = event.model_dump(by_alias=True)
+        self.assertEqual(serialized["name"], "research-agent")
+
+    def test_text_message_chunk_without_name(self):
+        """Test TextMessageChunkEvent without name defaults to None"""
+        event = TextMessageChunkEvent(
+            message_id="msg_123",
+            delta="Hello",
+        )
+        self.assertIsNone(event.name)
+
     def test_event_with_unicode_and_special_chars(self):
         """Test events with Unicode and special characters"""
         # Text with Unicode and special characters
@@ -595,6 +636,52 @@ class TestEvents(unittest.TestCase):
         
         # Verify Unicode and special characters are preserved
         self.assertEqual(deserialized.delta, text)
+
+
+    def test_reasoning_message_start_event_role_is_reasoning(self):
+        """Test that ReasoningMessageStartEvent uses role='reasoning' to match TypeScript SDK.
+
+        Regression test for GitHub issue #1169: the Python SDK previously used
+        role='assistant' while the TypeScript SDK used role='reasoning', causing
+        wire-incompatibility between the two SDKs.
+        """
+        # Creating with role="reasoning" should succeed
+        event = ReasoningMessageStartEvent(
+            message_id="msg_reasoning_1",
+            role="reasoning",
+            timestamp=1648214400000,
+        )
+        self.assertEqual(event.role, "reasoning")
+        self.assertEqual(event.message_id, "msg_reasoning_1")
+
+        # Test serialization produces role="reasoning"
+        serialized = event.model_dump(by_alias=True)
+        self.assertEqual(serialized["role"], "reasoning")
+        self.assertEqual(serialized["type"], "REASONING_MESSAGE_START")
+
+        # Test deserialization from JSON (simulating TypeScript SDK wire format)
+        event_adapter = TypeAdapter(Event)
+        json_data = json.dumps({
+            "type": "REASONING_MESSAGE_START",
+            "messageId": "msg_reasoning_2",
+            "role": "reasoning",
+            "timestamp": 1648214400000,
+        })
+        deserialized = event_adapter.validate_json(json_data)
+        self.assertIsInstance(deserialized, ReasoningMessageStartEvent)
+        self.assertEqual(deserialized.role, "reasoning")
+
+    def test_reasoning_message_start_event_rejects_assistant_role(self):
+        """Test that ReasoningMessageStartEvent rejects role='assistant'.
+
+        After fixing issue #1169, role='assistant' should no longer be accepted.
+        """
+        with self.assertRaises(ValidationError):
+            ReasoningMessageStartEvent(
+                message_id="msg_bad",
+                role="assistant",
+                timestamp=1648214400000,
+            )
 
 
 if __name__ == "__main__":

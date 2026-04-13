@@ -288,9 +288,7 @@ describe("verifyEvents multiple runs", () => {
       next: (event) => events.push(event),
       error: (err) => {
         expect(err).toBeInstanceOf(AGUIError);
-        expect(err.message).toContain(
-          "Cannot send 'RUN_STARTED' while a run is still active",
-        );
+        expect(err.message).toContain("Cannot send 'RUN_STARTED' while a run is still active");
         subscription.unsubscribe();
       },
     });
@@ -380,9 +378,7 @@ describe("verifyEvents multiple runs", () => {
       next: (event) => events.push(event),
       error: (err) => {
         expect(err).toBeInstanceOf(AGUIError);
-        expect(err.message).toContain(
-          "The run has already errored with 'RUN_ERROR'",
-        );
+        expect(err.message).toContain("The run has already errored with 'RUN_ERROR'");
         subscription.unsubscribe();
       },
     });

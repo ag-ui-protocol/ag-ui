@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "aws-strands-server"
 version = "0.1.0"
-description = "Strands integration server for AG-UI using OpenAI models"
+description = "Strands integration server for AG-UI using Gemini models"
 authors = ["AG-UI Contributors"]
 readme = "README.md"
 packages = [{ include = "server" }]

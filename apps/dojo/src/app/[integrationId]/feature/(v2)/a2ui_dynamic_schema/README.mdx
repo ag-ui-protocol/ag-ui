@@ -1,0 +1,10 @@
+# A2UI Dynamic Schema
+
+## What This Demo Shows
+
+Dynamic A2UI where a secondary LLM generates the entire UI schema and data from the conversation context.
+
+1. **LLM-generated UI**: A secondary GPT-4.1 call produces the `render_a2ui` tool call with components and data
+2. **No pre-defined schema**: The UI layout is created on-the-fly based on what the user asks for
+3. **Progressive streaming**: Components and data stream as the secondary LLM generates them
+4. **Built-in progress indicator**: Shows generation progress while the schema is being created

@@ -1,6 +1,6 @@
 {
   "name": "@ag-ui/mastra",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "license": "Apache-2.0",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
@@ -16,12 +16,12 @@
   ],
   "exports": {
     ".": {
-      "require": "./dist/index.js",
-      "import": "./dist/index.mjs"
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
     },
     "./copilotkit": {
-      "require": "./dist/copilotkit.js",
-      "import": "./dist/copilotkit.mjs"
+      "import": "./dist/copilotkit.mjs",
+      "require": "./dist/copilotkit.js"
     },
     "./package.json": "./package.json"
   },
@@ -59,7 +59,7 @@
     "@ag-ui/core": "workspace:*",
     "@ag-ui/client": "workspace:*",
     "@copilotkit/runtime": "0.0.0-mme-ag-ui-0-0-46-20260227141603",
-    "@copilotkitnext/shared": "0.0.0-mme-ag-ui-0-0-46-20260227141603",
+    "@copilotkit/shared": "0.0.0-mme-ag-ui-0-0-46-20260227141603",
     "@mastra/client-js": "^1.0.1",
     "@mastra/core": "^1.0.4",
     "@types/node": "^20.11.19",

@@ -1,5 +1,6 @@
 import { Observable, Subject } from "rxjs";
 import { HttpEvent, HttpEventType } from "../run/http-request";
+import { type DebugLoggerInput, resolveDebugLogger } from "@/debug-logger";
 
 /**
  * Parses a stream of HTTP events into a stream of JSON objects using Server-Sent Events (SSE) format.
@@ -9,7 +10,11 @@ import { HttpEvent, HttpEventType } from "../run/http-request";
  * - Multi-line data events are supported and joined
  * - Non-data fields (event, id, retry) are ignored
  */
-export const parseSSEStream = (source$: Observable<HttpEvent>): Observable<any> => {
+export const parseSSEStream = (
+  source$: Observable<HttpEvent>,
+  debugLogger?: DebugLoggerInput,
+): Observable<any> => {
+  const log = resolveDebugLogger(debugLogger);
   const jsonSubject = new Subject<any>();
   // Create TextDecoder with stream option set to true to handle split UTF-8 characters
   const decoder = new TextDecoder("utf-8", { fatal: false });
@@ -52,10 +57,10 @@ export const parseSSEStream = (source$: Observable<HttpEvent>): Observable<any> 
   /**
    * Helper function to process an SSE event.
    * Extracts and joins data lines, then parses the result as JSON.
-   * 
+   *
    * Follows the SSE spec by processing lines starting with 'data:',
    * ignoring a single space if it is present after the colon.
-   * 
+   *
    * @param eventText The raw event text to process
    */
   function processSSEEvent(eventText: string) {
@@ -75,6 +80,7 @@ export const parseSSEStream = (source$: Observable<HttpEvent>): Observable<any> 
         // Join multi-line data and parse JSON
         const jsonStr = dataLines.join("\n");
         const json = JSON.parse(jsonStr);
+        log?.event("SSE", "Event received:", json, { type: json.type });
         jsonSubject.next(json);
       } catch (err) {
         jsonSubject.error(err);

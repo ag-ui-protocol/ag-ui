@@ -79,7 +79,7 @@ jobs:
           - suite: a2a-middleware
             test_path: tests/a2aMiddlewareTests
             services: ["dojo", "a2a-middleware"]
-            wait_on: http://localhost:9999,tcp:localhost:8011,tcp:localhost:8012,tcp:localhost:8013,tcp:localhost:8014
+            wait_on: http://localhost:9999,http-get://localhost:8011/.well-known/agent.json,http-get://localhost:8012/.well-known/agent.json,http-get://localhost:8013/.well-known/agent.json,http-get://localhost:8014/openapi.json
           - suite: adk-middleware
             test_path: tests/adkMiddlewareTests
             services: ["dojo", "adk-middleware"]
@@ -92,6 +92,10 @@ jobs:
             test_path: tests/crewAITests
             services: ["dojo", "crew-ai"]
             wait_on: http://localhost:9999,tcp:localhost:8003
+          - suite: langroid
+            test_path: tests/langroidTests
+            services: ["dojo", "langroid"]
+            wait_on: http://localhost:9999,tcp:localhost:8021
           - suite: langgraph-python
             test_path: tests/langgraphPythonTests
             services: ["dojo", "langgraph-platform-python"]
@@ -136,6 +140,26 @@ jobs:
             test_path: tests/awsStrandsTests
             services: ["dojo", "aws-strands"]
             wait_on: http://localhost:9999,tcp:localhost:8017
+          - suite: claude-agent-sdk-python
+            test_path: tests/claudeAgentSdkPythonTests
+            services: ["dojo", "claude-agent-sdk-python"]
+            wait_on: http://localhost:9999,tcp:localhost:8019
+          - suite: claude-agent-sdk-typescript
+            test_path: tests/claudeAgentSdkTypescriptTests
+            services: ["dojo", "claude-agent-sdk-typescript"]
+            wait_on: http://localhost:9999,tcp:localhost:8020
+          - suite: ag2
+            test_path: tests/ag2Tests
+            services: ["dojo", "ag2"]
+            wait_on: http://localhost:9999,tcp:localhost:8018
+          - suite: microsoft-agent-framework-python
+            test_path: tests/microsoftAgentFrameworkPythonTests
+            services: ["dojo", "microsoft-agent-framework-python"]
+            wait_on: http://localhost:9999,tcp:localhost:8015
+          - suite: microsoft-agent-framework-dotnet
+            test_path: tests/microsoftAgentFrameworkDotnetTests
+            services: ["dojo", "microsoft-agent-framework-dotnet"]
+            wait_on: http://localhost:9999,tcp:localhost:8016
           # - suite: vercel-ai-sdk
           #   test_path: tests/vercelAISdkTests
           #   services: ["dojo"]
@@ -183,8 +207,6 @@ jobs:
             ${{ runner.os }}-pydeps-${{ matrix.suite }}-
             ${{ runner.os }}-pydeps-
 
-
-
       - name: Cache Next.js build
         uses: actions/cache@v4
         with:
@@ -202,6 +224,12 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v6
+
+      - name: Set up .NET SDK
+        if: ${{ contains(join(matrix.services, ','), 'microsoft-agent-framework-dotnet') }}
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -233,24 +261,25 @@ jobs:
         if: steps.cache-playwright.outputs.cache-hit == 'true'
         run: pnpm exec playwright install-deps chromium
 
-      - name: write langgraph env files
-        working-directory: integrations/langgraph
+      - name: Create langgraph stub .env files
+        if: ${{ contains(join(matrix.services, ','), 'langgraph-platform-python') || contains(join(matrix.services, ','), 'langgraph-platform-typescript') }}
+        run: |
+          # langgraph.json declares "env": ".env" — the CLI requires this file
+          # to exist on disk. Values don't matter since run-dojo-everything.js
+          # injects LLMock env vars into the process environment.
+          touch integrations/langgraph/python/examples/.env
+          touch integrations/langgraph/typescript/examples/.env
+
+      - name: write langroid env files
+        working-directory: integrations/langroid/python/examples
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
-        if: ${{ contains(join(matrix.services, ','), 'langgraph-fastapi') || contains(join(matrix.services, ','), 'langgraph-platform-python') || contains(join(matrix.services, ','), 'langgraph-platform-typescript') }}
+        if: ${{ contains(join(matrix.services, ','), 'langroid') }}
         run: |
-          echo "OPENAI_API_KEY=${OPENAI_API_KEY}" > python/examples/.env
-          echo "LANGSMITH_API_KEY=${LANGSMITH_API_KEY}" >> python/examples/.env
-          echo "OPENAI_API_KEY=${OPENAI_API_KEY}" > typescript/examples/.env
-          echo "LANGSMITH_API_KEY=${LANGSMITH_API_KEY}" >> typescript/examples/.env
+          echo "OPENAI_API_KEY=${OPENAI_API_KEY}" > .env
 
       - name: Run dojo+agents
         uses: JarvusInnovations/background-action@v1
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
         if: ${{ join(matrix.services, ',') != '' && contains(join(matrix.services, ','), 'dojo') }}
         with:
           run: |

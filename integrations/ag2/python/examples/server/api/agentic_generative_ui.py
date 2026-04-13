@@ -97,6 +97,7 @@ agent = ConversableAgent(
     Always say you actually did the steps, not merely generated them.
     """),
     llm_config=LLMConfig({"model": "gpt-4o-mini", "stream": True}),
+    human_input_mode="NEVER",
     functions=[create_plan, update_plan_step],
 )
 
