@@ -81,7 +81,9 @@ class TestConfigSchemaDeprecation(unittest.TestCase):
             "get_input_jsonschema",
             "get_output_jsonschema",
             "get_config_jsonschema",
+            "nodes",
         ])
+        mock_graph.nodes = {}
         mock_graph.get_input_jsonschema.return_value = {
             "properties": {"messages": {}, "input_key": {}}
         }
@@ -192,7 +194,9 @@ class TestConfigSchemaDeprecation(unittest.TestCase):
             "get_input_jsonschema",
             "get_output_jsonschema",
             "get_config_jsonschema",
+            "nodes",
         ])
+        mock_graph.nodes = {}
         mock_graph.get_input_jsonschema.return_value = {
             "properties": {"messages": {}}
         }
@@ -225,7 +229,9 @@ class TestConfigSchemaDeprecation(unittest.TestCase):
             "get_input_jsonschema",
             "get_output_jsonschema",
             "config_schema",
+            "nodes",
         ])
+        mock_graph.nodes = {}
         mock_graph.get_input_jsonschema.return_value = {
             "properties": {"messages": {}}
         }
@@ -260,7 +266,9 @@ class TestConfigSchemaDeprecation(unittest.TestCase):
             "get_output_jsonschema",
             "get_config_jsonschema",
             "context_schema",
+            "nodes",
         ])
+        mock_graph.nodes = {}
         mock_graph.get_input_jsonschema.return_value = {
             "properties": {"messages": {}}
         }
