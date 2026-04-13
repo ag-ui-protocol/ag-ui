@@ -16,7 +16,9 @@ export type Feature =
   | "v1_agentic_chat"
   | "a2ui_fixed_schema"
   | "a2ui_dynamic_schema"
-  | "a2ui_advanced";
+  | "a2ui_advanced"
+  | "crew_chat"
+  | "error_flow";
 
 export interface MenuIntegrationConfig {
   id: string;
@@ -29,7 +31,7 @@ export interface MenuIntegrationConfig {
  */
 type IntegrationFeature<
   T extends readonly MenuIntegrationConfig[],
-  Id extends string
+  Id extends string,
 > = Extract<T[number], { id: Id }>["features"][number];
 
 /** Type representing all valid integration IDs */

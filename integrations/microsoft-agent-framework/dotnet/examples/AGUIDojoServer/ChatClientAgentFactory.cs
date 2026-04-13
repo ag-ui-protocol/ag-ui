@@ -4,8 +4,6 @@ using AGUIDojoServer.AgenticUI;
 using AGUIDojoServer.BackendToolRendering;
 using AGUIDojoServer.PredictiveStateUpdates;
 using AGUIDojoServer.SharedState;
-using Azure.AI.OpenAI;
-using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using OpenAI;
@@ -15,35 +13,42 @@ namespace AGUIDojoServer;
 
 internal static class ChatClientAgentFactory
 {
-    private static AzureOpenAIClient? s_azureOpenAIClient;
-    private static string? s_deploymentName;
+    private static OpenAIClient? s_openAIClient;
+    private static string? s_modelName;
 
     public static void Initialize(IConfiguration configuration)
     {
-        string endpoint = configuration["AZURE_OPENAI_ENDPOINT"] ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-        s_deploymentName = configuration["AZURE_OPENAI_DEPLOYMENT_NAME"] ?? throw new InvalidOperationException("AZURE_OPENAI_DEPLOYMENT_NAME is not set.");
+        s_modelName = configuration["OPENAI_CHAT_MODEL_ID"] ?? "gpt-4o";
+        string? apiKey = configuration["OPENAI_API_KEY"];
+        string? baseUrl = configuration["OPENAI_BASE_URL"];
 
-        s_azureOpenAIClient = new AzureOpenAIClient(
-            new Uri(endpoint),
-            new DefaultAzureCredential());
+        var options = new OpenAIClientOptions();
+        if (!string.IsNullOrEmpty(baseUrl))
+        {
+            options.Endpoint = new Uri(baseUrl);
+        }
+
+        s_openAIClient = new OpenAIClient(
+            new System.ClientModel.ApiKeyCredential(apiKey ?? ""),
+            options);
     }
 
     public static ChatClientAgent CreateAgenticChat()
     {
-        ChatClient chatClient = s_azureOpenAIClient!.GetChatClient(s_deploymentName!);
+        ChatClient chatClient = s_openAIClient!.GetChatClient(s_modelName!);
 
         return chatClient.AsIChatClient().CreateAIAgent(
             name: "AgenticChat",
-            description: "A simple chat agent using Azure OpenAI");
+            description: "A simple chat agent using OpenAI");
     }
 
     public static ChatClientAgent CreateBackendToolRendering()
     {
-        ChatClient chatClient = s_azureOpenAIClient!.GetChatClient(s_deploymentName!);
+        ChatClient chatClient = s_openAIClient!.GetChatClient(s_modelName!);
 
         return chatClient.AsIChatClient().CreateAIAgent(
             name: "BackendToolRenderer",
-            description: "An agent that can render backend tools using Azure OpenAI",
+            description: "An agent that can render backend tools using OpenAI",
             tools: [AIFunctionFactory.Create(
                 GetWeather,
                 name: "get_weather",
@@ -53,29 +58,29 @@ internal static class ChatClientAgentFactory
 
     public static ChatClientAgent CreateHumanInTheLoop()
     {
-        ChatClient chatClient = s_azureOpenAIClient!.GetChatClient(s_deploymentName!);
+        ChatClient chatClient = s_openAIClient!.GetChatClient(s_modelName!);
 
         return chatClient.AsIChatClient().CreateAIAgent(
             name: "HumanInTheLoopAgent",
-            description: "An agent that involves human feedback in its decision-making process using Azure OpenAI");
+            description: "An agent that involves human feedback in its decision-making process using OpenAI");
     }
 
     public static ChatClientAgent CreateToolBasedGenerativeUI()
     {
-        ChatClient chatClient = s_azureOpenAIClient!.GetChatClient(s_deploymentName!);
+        ChatClient chatClient = s_openAIClient!.GetChatClient(s_modelName!);
 
         return chatClient.AsIChatClient().CreateAIAgent(
             name: "ToolBasedGenerativeUIAgent",
-            description: "An agent that uses tools to generate user interfaces using Azure OpenAI");
+            description: "An agent that uses tools to generate user interfaces using OpenAI");
     }
 
     public static AIAgent CreateAgenticUI(JsonSerializerOptions options)
     {
-        ChatClient chatClient = s_azureOpenAIClient!.GetChatClient(s_deploymentName!);
+        ChatClient chatClient = s_openAIClient!.GetChatClient(s_modelName!);
         var baseAgent = chatClient.AsIChatClient().CreateAIAgent(new ChatClientAgentOptions
         {
             Name = "AgenticUIAgent",
-            Description = "An agent that generates agentic user interfaces using Azure OpenAI",
+            Description = "An agent that generates agentic user interfaces using OpenAI",
             Instructions = """
                 When planning use tools only, without any other messages.
                 IMPORTANT:
@@ -113,23 +118,23 @@ internal static class ChatClientAgentFactory
 
     public static AIAgent CreateSharedState(JsonSerializerOptions options)
     {
-        ChatClient chatClient = s_azureOpenAIClient!.GetChatClient(s_deploymentName!);
+        ChatClient chatClient = s_openAIClient!.GetChatClient(s_modelName!);
 
         var baseAgent = chatClient.AsIChatClient().CreateAIAgent(
             name: "SharedStateAgent",
-            description: "An agent that demonstrates shared state patterns using Azure OpenAI");
+            description: "An agent that demonstrates shared state patterns using OpenAI");
 
         return new SharedStateAgent(baseAgent, options);
     }
 
     public static AIAgent CreatePredictiveStateUpdates(JsonSerializerOptions options)
     {
-        ChatClient chatClient = s_azureOpenAIClient!.GetChatClient(s_deploymentName!);
+        ChatClient chatClient = s_openAIClient!.GetChatClient(s_modelName!);
 
         var baseAgent = chatClient.AsIChatClient().CreateAIAgent(new ChatClientAgentOptions
         {
             Name = "PredictiveStateUpdatesAgent",
-            Description = "An agent that demonstrates predictive state updates using Azure OpenAI",
+            Description = "An agent that demonstrates predictive state updates using OpenAI",
             Instructions = """
                 You are a document editor assistant. When asked to write or edit content:
                 

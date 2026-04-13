@@ -21,7 +21,6 @@ export const menuIntegrations = [
       "backend_tool_rendering",
       "human_in_the_loop",
       "tool_based_generative_ui",
-
     ],
   },
   {
@@ -33,7 +32,6 @@ export const menuIntegrations = [
       "backend_tool_rendering",
       "human_in_the_loop",
       "tool_based_generative_ui",
-
     ],
   },
   {
@@ -51,7 +49,6 @@ export const menuIntegrations = [
       "shared_state",
       "tool_based_generative_ui",
       "subgraphs",
-
     ],
   },
   {
@@ -241,6 +238,8 @@ export const menuIntegrations = [
       "predictive_state_updates",
       "shared_state",
       "tool_based_generative_ui",
+      "crew_chat",
+      "error_flow",
     ],
   },
   {
