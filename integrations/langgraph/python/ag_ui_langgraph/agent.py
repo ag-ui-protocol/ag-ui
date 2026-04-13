@@ -617,6 +617,11 @@ class LangGraphAgent:
         new_messages = [
             msg for msg in messages
             if msg.id not in existing_message_ids
+            and not (
+                isinstance(msg, ToolMessage)
+                and hasattr(msg, 'tool_call_id')
+                and msg.tool_call_id in replaced_tool_call_ids
+            )
         ]
 
         tools = input.tools or []
