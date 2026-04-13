@@ -1,0 +1,161 @@
+# SwiftLint Configuration for AGUISwift
+# https://github.com/realm/SwiftLint
+
+# Paths to include
+included:
+  - Sources
+  - Tests
+
+# Paths to exclude
+excluded:
+  - .build
+  - Package.swift
+
+# Enabled rules beyond defaults
+opt_in_rules:
+  - array_init
+  - closure_end_indentation
+  - closure_spacing
+  - collection_alignment
+  - contains_over_filter_count
+  - contains_over_filter_is_empty
+  - contains_over_first_not_nil
+  - empty_collection_literal
+  - empty_count
+  - empty_string
+  - explicit_init
+  - extension_access_modifier
+  - fallthrough
+  - fatal_error_message
+  - file_header
+  - first_where
+  - flatmap_over_map_reduce
+  - identical_operands
+  - implicit_return
+  - joined_default_parameter
+  - last_where
+  - literal_expression_end_indentation
+  - lower_acl_than_parent
+  - modifier_order
+  - multiline_arguments
+  - multiline_parameters
+  - operator_usage_whitespace
+  - overridden_super_call
+  - prefer_self_in_static_references
+  - prefer_self_type_over_type_of_self
+  - redundant_nil_coalescing
+  - redundant_type_annotation
+  - sorted_first_last
+  - toggle_bool
+  - trailing_closure
+  - unneeded_parentheses_in_closure_argument
+  - vertical_parameter_alignment_on_call
+  - yoda_condition
+
+# Disabled rules
+disabled_rules:
+  - trailing_comma  # Project uses no trailing commas
+  - todo  # Allow TODO comments during development
+  - opening_brace  # SwiftFormat handles this
+  - extension_access_modifier  # Existing code doesn't use this pattern
+  - prefer_self_in_static_references  # Would require extensive refactoring
+  - trailing_closure  # Conflicts with existing code style
+  - trailing_whitespace  # SwiftFormat will handle this - temporarily disabled
+  - static_over_final_class  # URLProtocol subclasses require class methods for overrides
+
+# Rule configurations
+line_length:
+  warning: 120
+  error: 150
+  ignores_comments: true
+  ignores_urls: true
+  ignores_function_declarations: true
+
+file_length:
+  warning: 600
+  error: 1000
+  ignore_comment_only_lines: true
+
+type_body_length:
+  warning: 500
+  error: 700
+
+function_body_length:
+  warning: 80
+  error: 150
+
+function_parameter_count:
+  warning: 6
+  error: 8
+
+type_name:
+  min_length: 2
+  max_length: 50
+  validates_start_with_lowercase: false
+
+identifier_name:
+  min_length:
+    warning: 2
+    error: 1
+  max_length:
+    warning: 50
+    error: 60
+  excluded:
+    - id
+    - i
+    - j
+    - x
+    - y
+    - z
+    - v
+    - n
+
+nesting:
+  type_level: 2
+  function_level: 3
+
+cyclomatic_complexity:
+  warning: 20
+  error: 30
+
+large_tuple:
+  warning: 3
+  error: 4
+
+# Force cast and force try (warnings only, not errors)
+# Disable in tests since we're testing known types
+force_cast:
+  severity: warning
+force_try: warning
+
+# File header format (MIT License)
+file_header:
+  required_pattern: |
+    \/\*\s*\n \* MIT License\s*\n \*\s*\n \* Copyright \(c\) 2025 Perfect Aduh
+
+# Modifier order (Swift 6 conventions - matches SwiftFormat)
+# Valid groups: override, isolation, acl, setterACL, dynamic, mutators, lazy, final, required, convenience, typeMethods, owned
+modifier_order:
+  preferred_modifier_order:
+    - override
+    - isolation
+    - acl
+    - setterACL
+    - dynamic
+    - mutators
+    - lazy
+    - final
+    - required
+    - convenience
+    - typeMethods
+    - owned
+
+# Custom rules
+custom_rules:
+  no_print_in_production:
+    name: "No print statements"
+    regex: '^\s*print\s*\('
+    message: "Avoid print() in production code. Use proper logging instead."
+    severity: warning
+    match_kinds:
+      - identifier
