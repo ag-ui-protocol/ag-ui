@@ -33,11 +33,9 @@ from google.adk.planners import BuiltInPlanner
 from google.genai import types
 
 
-# Skip all tests if GOOGLE_API_KEY is not set
-pytestmark = pytest.mark.skipif(
-    not os.environ.get("GOOGLE_API_KEY"),
-    reason="GOOGLE_API_KEY environment variable not set"
-)
+@pytest.fixture(autouse=True)
+def setup_llmock(llmock_server):
+    """Ensure LLMock is running when no real API key is set."""
 
 
 class TestThoughtToReasoningIntegration:

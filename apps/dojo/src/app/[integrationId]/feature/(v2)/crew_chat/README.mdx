@@ -1,0 +1,23 @@
+# 🧑‍🤝‍🧑 Crew Chat (Dict State Path)
+
+## What This Demo Shows
+
+This demo exercises the `add_crewai_crew_fastapi_endpoint()` code path where
+a raw CrewAI Crew object is wrapped in `ChatWithCrewFlow`, which uses **plain
+dict state** instead of a Pydantic model.
+
+## How to Interact
+
+Chat naturally with the crew assistant:
+
+- "Hello from crew test"
+- "What is 2 plus 2"
+- "goodbye crew" (triggers crew_exit flow)
+
+## Technical Details
+
+- Uses `ChatWithCrewFlow` which extends `Flow` (no type parameter) — state is `{}`
+- The `MethodExecutionFinishedEvent` handler must use `getattr`/`isinstance`
+  checks to handle dict state vs Pydantic model state
+- The `crew_exit` tool call path exercises `copilotkit_exit()` and a follow-up
+  farewell message generation

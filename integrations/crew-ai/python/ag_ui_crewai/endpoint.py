@@ -118,7 +118,10 @@ class FastAPICrewFlowEventListener(BaseEventListener):
         def _(source, event):
             queue = get_queue(source)
             if queue is not None:
-                messages = litellm_messages_to_ag_ui_messages(source.state.messages)
+                # source.state may be a Pydantic model (with .messages attr) or a plain dict
+                state = source.state
+                raw_messages = getattr(state, "messages", None) or (state.get("messages") if isinstance(state, dict) else None) or []
+                messages = litellm_messages_to_ag_ui_messages(raw_messages)
 
                 queue.put_nowait(
                     MessagesSnapshotEvent(
@@ -129,7 +132,7 @@ class FastAPICrewFlowEventListener(BaseEventListener):
                 queue.put_nowait(
                     StateSnapshotEvent(
                         type=EventType.STATE_SNAPSHOT,
-                        snapshot=source.state
+                        snapshot=state if isinstance(state, dict) else state.model_dump() if hasattr(state, "model_dump") else {}
                     )
                 )
                 queue.put_nowait(
@@ -246,8 +249,71 @@ def add_crewai_flow_fastapi_endpoint(app: FastAPI, flow: Flow, path: str = "/"):
         return StreamingResponse(event_generator(), media_type=encoder.get_content_type())
 
 def add_crewai_crew_fastapi_endpoint(app: FastAPI, crew: Crew, path: str = "/"):
-    """Adds a CrewAI crew endpoint to the FastAPI app."""
-    add_crewai_flow_fastapi_endpoint(app, ChatWithCrewFlow(crew=crew), path)
+    """Adds a CrewAI crew endpoint to the FastAPI app.
+
+    ChatWithCrewFlow construction is deferred to first request because the
+    constructor calls crew_chat_generate_crew_chat_inputs which makes an LLM
+    call. At import time the LLM mock server may not be running yet.
+    """
+    global GLOBAL_EVENT_LISTENER # pylint: disable=global-statement
+    if GLOBAL_EVENT_LISTENER is None:
+        GLOBAL_EVENT_LISTENER = FastAPICrewFlowEventListener()
+
+    _cached_flow = None
+
+    def _get_flow():
+        nonlocal _cached_flow
+        if _cached_flow is None:
+            _cached_flow = ChatWithCrewFlow(crew=crew)
+        return _cached_flow
+
+    @app.post(path)
+    async def crew_endpoint(input_data: RunAgentInput, request: Request):
+        """Crew chat endpoint with deferred initialization."""
+        flow = _get_flow()
+        flow_copy = copy.deepcopy(flow)
+
+        accept_header = request.headers.get("accept")
+        encoder = EventEncoder(accept=accept_header)
+
+        inputs = crewai_prepare_inputs(
+            state=input_data.state,
+            messages=input_data.messages,
+            tools=input_data.tools,
+        )
+        inputs["id"] = input_data.thread_id
+
+        async def event_generator():
+            queue = await create_queue(flow_copy)
+            token = flow_context.set(flow_copy)
+            try:
+                asyncio.create_task(flow_copy.kickoff_async(inputs=inputs))
+
+                while True:
+                    item = await queue.get()
+                    if item is None:
+                        break
+
+                    if item.type == EventType.RUN_STARTED or item.type == EventType.RUN_FINISHED:
+                        item.thread_id = input_data.thread_id
+                        item.run_id = input_data.run_id
+
+                    yield encoder.encode(item)
+
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                yield encoder.encode(
+                    RunErrorEvent(
+                        type=EventType.RUN_ERROR,
+                        thread_id=input_data.thread_id,
+                        run_id=input_data.run_id,
+                        error=str(e),
+                    )
+                )
+            finally:
+                await delete_queue(flow_copy)
+                flow_context.reset(token)
+
+        return StreamingResponse(event_generator(), media_type=encoder.get_content_type())
 
 
 def crewai_prepare_inputs(  # pylint: disable=unused-argument, too-many-arguments

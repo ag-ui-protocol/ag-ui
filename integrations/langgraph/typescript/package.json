@@ -1,6 +1,6 @@
 {
   "name": "@ag-ui/langgraph",
-  "version": "0.0.25",
+  "version": "0.0.28",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
@@ -49,12 +49,12 @@
   },
   "exports": {
     ".": {
-      "require": "./dist/index.js",
-      "import": "./dist/index.mjs"
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
     },
     "./middlewares": {
-      "require": "./dist/middlewares/index.js",
-      "import": "./dist/middlewares/index.mjs"
+      "import": "./dist/middlewares/index.mjs",
+      "require": "./dist/middlewares/index.js"
     },
     "./package.json": "./package.json"
   }

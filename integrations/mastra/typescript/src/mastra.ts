@@ -2,6 +2,11 @@ import type {
   AgentConfig,
   BaseEvent,
   CustomEvent,
+  ReasoningStartEvent,
+  ReasoningMessageStartEvent,
+  ReasoningMessageContentEvent,
+  ReasoningMessageEndEvent,
+  ReasoningEndEvent,
   RunAgentInput,
   RunFinishedEvent,
   RunStartedEvent,
@@ -41,6 +46,9 @@ export interface MastraAgentConfig extends AgentConfig {
 
 interface MastraAgentStreamOptions {
   onTextPart?: (text: string) => void;
+  onReasoningStart?: () => void;
+  onReasoningPart?: (text: string) => void;
+  onReasoningEnd?: () => void;
   onFinishMessagePart?: () => void;
   onToolCallPart?: (streamPart: {
     toolCallId: string;
@@ -363,8 +371,57 @@ export class MastraAgent extends AbstractAgent {
     setMessageId: (id: string) => void,
     runId: string,
   ): Omit<MastraAgentStreamOptions, "onError" | "onRunFinished"> {
+    let reasoningMessageId: string | null = null;
+    let isReasoning = false;
+
+    const closeReasoning = () => {
+      if (isReasoning && reasoningMessageId) {
+        subscriber.next({
+          type: EventType.REASONING_MESSAGE_END,
+          messageId: reasoningMessageId,
+        } as ReasoningMessageEndEvent);
+        subscriber.next({
+          type: EventType.REASONING_END,
+          messageId: reasoningMessageId,
+        } as ReasoningEndEvent);
+        isReasoning = false;
+        reasoningMessageId = null;
+      }
+    };
+
+    const openReasoning = () => {
+      if (!isReasoning) {
+        reasoningMessageId = randomUUID();
+        isReasoning = true;
+        subscriber.next({
+          type: EventType.REASONING_START,
+          messageId: reasoningMessageId,
+        } as ReasoningStartEvent);
+        subscriber.next({
+          type: EventType.REASONING_MESSAGE_START,
+          messageId: reasoningMessageId,
+          role: "reasoning",
+        } as ReasoningMessageStartEvent);
+      }
+    };
+
     return {
+      onReasoningStart: () => {
+        openReasoning();
+      },
+      onReasoningPart: (text) => {
+        openReasoning();
+        subscriber.next({
+          type: EventType.REASONING_MESSAGE_CONTENT,
+          messageId: reasoningMessageId!,
+          delta: text,
+        } as ReasoningMessageContentEvent);
+      },
+      onReasoningEnd: () => {
+        closeReasoning();
+      },
       onTextPart: (text) => {
+        closeReasoning();
         subscriber.next({
           type: EventType.TEXT_MESSAGE_CHUNK,
           role: "assistant",
@@ -373,6 +430,7 @@ export class MastraAgent extends AbstractAgent {
         } as TextMessageChunkEvent);
       },
       onToolCallPart: (streamPart) => {
+        closeReasoning();
         subscriber.next({
           type: EventType.TOOL_CALL_START,
           parentMessageId: getMessageId(),
@@ -414,6 +472,7 @@ export class MastraAgent extends AbstractAgent {
         } as CustomEvent);
       },
       onFinishMessagePart: () => {
+        closeReasoning();
         setMessageId(randomUUID());
       },
     };
@@ -458,6 +517,21 @@ export class MastraAgent extends AbstractAgent {
         return true;
       }
       switch (chunk.type) {
+        case "reasoning-start": {
+          callbacks.onReasoningStart?.();
+          break;
+        }
+        case "reasoning-delta": {
+          callbacks.onReasoningPart?.(chunk.payload.text);
+          break;
+        }
+        case "reasoning-end": {
+          callbacks.onReasoningEnd?.();
+          break;
+        }
+        case "reasoning-signature":
+        case "redacted-reasoning":
+          break;
         case "text-delta": {
           flush();
           callbacks.onTextPart?.(chunk.payload.text);
@@ -508,7 +582,12 @@ export class MastraAgent extends AbstractAgent {
           });
           break;
         }
-        case "finish": {
+        // Both "finish" and "step-finish" flush any pending tool call and rotate
+        // the messageId so the next step's text gets a fresh ID. When a stream
+        // ends with step-finish followed by finish, onFinishMessagePart fires
+        // twice — the second rotation produces an unused messageId, which is harmless.
+        case "finish":
+        case "step-finish": {
           flush();
           callbacks.onFinishMessagePart?.();
           break;
@@ -516,7 +595,6 @@ export class MastraAgent extends AbstractAgent {
         // Known Mastra lifecycle events with no AG-UI mapping — skip silently
         case "start":
         case "step-start":
-        case "step-finish":
           break;
         default: {
           console.warn(
@@ -558,6 +636,9 @@ export class MastraAgent extends AbstractAgent {
     { threadId, runId, messages, tools, context: inputContext }: RunAgentInput,
     {
       onTextPart,
+      onReasoningStart,
+      onReasoningPart,
+      onReasoningEnd,
       onFinishMessagePart,
       onToolCallPart,
       onToolResultPart,
@@ -598,6 +679,9 @@ export class MastraAgent extends AbstractAgent {
         if (response && typeof response === "object") {
           const hadError = await this.processFullStream(response.fullStream, {
             onTextPart,
+            onReasoningStart,
+            onReasoningPart,
+            onReasoningEnd,
             onFinishMessagePart,
             onToolCallPart,
             onToolResultPart,
@@ -630,6 +714,9 @@ export class MastraAgent extends AbstractAgent {
         if (response && typeof response.processDataStream === "function") {
           const { handleChunk, flush } = this.createChunkProcessor({
             onTextPart,
+            onReasoningStart,
+            onReasoningPart,
+            onReasoningEnd,
             onFinishMessagePart,
             onToolCallPart,
             onToolResultPart,

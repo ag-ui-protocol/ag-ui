@@ -8,8 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Azure.AI.OpenAI" Version="2.5.0-beta.1" />
-    <PackageReference Include="Azure.Identity" Version="1.11.4" />
+    <PackageReference Include="OpenAI" Version="2.6.0" />
     <PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.0.0-preview.251110.1" />
     <PackageReference Include="Microsoft.Agents.AI.Hosting.AGUI.AspNetCore" Version="1.0.0-preview.251110.1" />
     <PackageReference Include="System.Net.ServerSentEvents" Version="10.0.0-rc.2.25502.107" />

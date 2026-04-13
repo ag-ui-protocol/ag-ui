@@ -65,8 +65,6 @@ class ChatWithCrewFlow(Flow):
         self.crew_tool_schema = crew_chat_generate_crew_tool_schema(self.crew_chat_inputs)
         self.system_message = crew_chat_build_system_message(self.crew_chat_inputs)
 
-        super().__init__()
-
     @start()
     async def chat(self):
         """Chat with the crew"""
@@ -127,7 +125,7 @@ class ChatWithCrewFlow(Flow):
                 await copilotkit_exit()
                 self.state["messages"].append({
                     "role": "tool",
-                    "content": "Crew exited",
+                    "content": "Crew exited",  # E2E: aimock-setup.ts matches this exact string
                     "tool_call_id": message["tool_calls"][0]["id"]
                 })
 

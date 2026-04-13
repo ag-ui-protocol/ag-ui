@@ -223,10 +223,15 @@ class TestLROIntegration:
     These tests require GOOGLE_API_KEY to be set.
     """
 
-    pytestmark = pytest.mark.skipif(
-        not os.environ.get("GOOGLE_API_KEY"),
-        reason="GOOGLE_API_KEY environment variable not set"
-    )
+    @pytest.fixture(autouse=True)
+    def setup_llmock(self, llmock_server):
+        """Ensure LLMock is running when no real API key is set."""
+
+    @pytest.fixture(autouse=True)
+    def skip_without_api_key(self):
+        """Skip if no GOOGLE_API_KEY is available."""
+        if not os.environ.get("GOOGLE_API_KEY"):
+            pytest.skip("GOOGLE_API_KEY environment variable not set")
 
     @pytest.fixture(autouse=True)
     def reset_session_manager(self):
@@ -458,10 +463,15 @@ class TestNestedAgentsWithResumability:
     AGUIToolset instances at different agent levels.
     """
 
-    pytestmark = pytest.mark.skipif(
-        not os.environ.get("GOOGLE_API_KEY"),
-        reason="GOOGLE_API_KEY environment variable not set"
-    )
+    @pytest.fixture(autouse=True)
+    def setup_llmock(self, llmock_server):
+        """Ensure LLMock is running when no real API key is set."""
+
+    @pytest.fixture(autouse=True)
+    def skip_without_api_key(self):
+        """Skip if no GOOGLE_API_KEY is available."""
+        if not os.environ.get("GOOGLE_API_KEY"):
+            pytest.skip("GOOGLE_API_KEY environment variable not set")
 
     @pytest.fixture(autouse=True)
     def reset_session_manager(self):

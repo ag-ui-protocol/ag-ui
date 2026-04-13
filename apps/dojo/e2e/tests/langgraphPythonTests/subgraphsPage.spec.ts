@@ -36,9 +36,8 @@ test.describe("Subgraphs Travel Agent Feature", () => {
 
     await subgraphsPage.verifyStaticFlightData();
 
-    // FEATURE TEST: Test interrupt pause behavior - flow shouldn't auto-proceed
-
-    // await expect(page.getByText(/hotel.*options|accommodation|Zephyr|Ritz-Carlton|Hotel Zoe/i)).not.toBeVisible();
+    // REGRESSION: record message count before interrupt — messages must not disappear after selection
+    const msgCountBeforeFlight = await subgraphsPage.getAssistantMessageCount();
 
     // Select KLM flight through interrupt
     await subgraphsPage.selectFlight("KLM");
@@ -60,9 +59,13 @@ test.describe("Subgraphs Travel Agent Feature", () => {
         );
       });
 
+    // REGRESSION: messages from before the flight interrupt must still be visible
+    await subgraphsPage.assertMessagesNotLost(msgCountBeforeFlight);
+
     await subgraphsPage.verifyStaticHotelData();
 
-    // FEATURE TEST: Test interrupt pause behavior again
+    // REGRESSION: record message count before hotel interrupt
+    const msgCountBeforeHotel = await subgraphsPage.getAssistantMessageCount();
 
     // Select Hotel Zoe through interrupt
     await subgraphsPage.selectHotel("Zoe");
@@ -78,6 +81,9 @@ test.describe("Subgraphs Travel Agent Feature", () => {
 
     // FEATURE TEST: Experiences Agent - verify agent indicator becomes active
     await subgraphsPage.waitForExperiencesAgent();
+
+    // REGRESSION: messages from before the hotel interrupt must still be visible
+    await subgraphsPage.assertMessagesNotLost(msgCountBeforeHotel);
     await expect(subgraphsPage.experiencesAgentIndicator)
       .toBeVisible({ timeout: 10000 })
       .catch(() => {
@@ -124,6 +130,9 @@ test.describe("Subgraphs Travel Agent Feature", () => {
 
     await subgraphsPage.verifyStaticFlightData();
 
+    // REGRESSION: record message count before interrupt
+    const msgCountBeforeFlight = await subgraphsPage.getAssistantMessageCount();
+
     // FEATURE TEST: Test different selection - United instead of KLM
     await subgraphsPage.selectFlight("United");
 
@@ -144,6 +153,14 @@ test.describe("Subgraphs Travel Agent Feature", () => {
         );
       });
 
+    // REGRESSION: messages from before the flight interrupt must still be visible
+    await subgraphsPage.assertMessagesNotLost(msgCountBeforeFlight);
+
+    await subgraphsPage.verifyStaticHotelData();
+
+    // REGRESSION: record message count before hotel interrupt
+    const msgCountBeforeHotel = await subgraphsPage.getAssistantMessageCount();
+
     // FEATURE TEST: Test different hotel selection - Ritz-Carlton
     await subgraphsPage.selectHotel("Ritz-Carlton");
 
@@ -158,6 +175,9 @@ test.describe("Subgraphs Travel Agent Feature", () => {
 
     // FEATURE TEST: Experiences Agent - verify agent indicator becomes active
     await subgraphsPage.waitForExperiencesAgent();
+
+    // REGRESSION: messages from before the hotel interrupt must still be visible
+    await subgraphsPage.assertMessagesNotLost(msgCountBeforeHotel);
     await expect(subgraphsPage.experiencesAgentIndicator)
       .toBeVisible({ timeout: 10000 })
       .catch(() => {

@@ -458,8 +458,21 @@ export abstract class AbstractAgent {
         }
 
         if (mutation.stopPropagation !== true) {
-          console.error("Agent execution failed:", error);
-          throw error;
+          // Silently ignore abort errors (e.g. from navigation during active requests).
+          // AbortController.abort(reason) can produce:
+          //   - A DOMException with name "AbortError"
+          //   - The reason value itself as a plain string (e.g. "component unmounted")
+          const errStr = String(error);
+          const isAbort =
+            error.name === "AbortError" ||
+            error.message === "Fetch is aborted" ||
+            error.message === "signal is aborted without reason" ||
+            error.message === "component unmounted" ||
+            errStr === "component unmounted";
+          if (!isAbort) {
+            console.error("Agent execution failed:", error);
+            throw error;
+          }
         }
 
         // Return an empty mutation instead of null to prevent EmptyError
