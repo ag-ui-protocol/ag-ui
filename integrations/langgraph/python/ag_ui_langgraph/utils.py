@@ -311,6 +311,19 @@ def resolve_reasoning_content(chunk: Any) -> LangGraphReasoning | None:
                 index=block.get("index", 0)
             )
 
+        # Bedrock Converse API format: { type: "reasoning_content", reasoning_content: { text: "...", signature: "..." } }
+        if block_type == "reasoning_content" and isinstance(block.get("reasoning_content"), dict):
+            inner = block["reasoning_content"]
+            if inner.get("text"):
+                result = LangGraphReasoning(
+                    text=inner["text"],
+                    type="text",
+                    index=block.get("index", 0)
+                )
+                if inner.get("signature"):
+                    result["signature"] = inner["signature"]
+                return result
+
         # OpenAI Responses API v1 format: { type: "reasoning", summary: [{ text: "..." }] }
         if block_type == "reasoning" and block.get("summary"):
             summaries = block["summary"]
