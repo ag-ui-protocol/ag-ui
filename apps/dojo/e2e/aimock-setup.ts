@@ -98,8 +98,8 @@ export async function setupLLMock(): Promise<void> {
     match: {
       predicate: (req) => {
         const lastUser = req.messages.filter((m) => m.role === "user").pop();
-        const hasClaudeSdkTool = req.tools?.some(
-          (t) => t.function.name.endsWith("__generate_task_steps"),
+        const hasClaudeSdkTool = req.tools?.some((t) =>
+          t.function.name.endsWith("__generate_task_steps"),
         );
         return (
           !!hasClaudeSdkTool &&
@@ -126,8 +126,8 @@ export async function setupLLMock(): Promise<void> {
     match: {
       predicate: (req) => {
         const lastUser = req.messages.filter((m) => m.role === "user").pop();
-        const hasClaudeSdkTool = req.tools?.some(
-          (t) => t.function.name.endsWith("__generate_task_steps"),
+        const hasClaudeSdkTool = req.tools?.some((t) =>
+          t.function.name.endsWith("__generate_task_steps"),
         );
         return (
           !!hasClaudeSdkTool &&
@@ -182,8 +182,7 @@ export async function setupLLMock(): Promise<void> {
   // Supervisor: no flights yet → route to flights_agent
   mockServer.addFixture({
     match: {
-      predicate: (req) =>
-        sysIncludes(req.messages, "Flights found: false"),
+      predicate: (req) => sysIncludes(req.messages, "Flights found: false"),
     },
     ...supervisorRoute("flights_agent", "Let me find flights for you!"),
   });
@@ -314,6 +313,152 @@ export async function setupLLMock(): Promise<void> {
           }),
         },
       ],
+    },
+  });
+
+  // CrewAI agentic gen UI: the CrewAI flow registers `generate_task_steps`
+  // (not `generate_task_steps_generative_ui` like other frameworks). The JSON
+  // fixture returns the wrong name for CrewAI. These predicate fixtures detect
+  // the CrewAI-specific tool name and return the correct one.
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => {
+        const lastUser = req.messages.filter((m) => m.role === "user").pop();
+        const hasCrewAITool = req.tools?.some(
+          (t) => t.function.name === "generate_task_steps",
+        );
+        const noStrandsTool = !req.tools?.some(
+          (t) => t.function.name === "plan_task_steps",
+        );
+        return (
+          !!hasCrewAITool &&
+          noStrandsTool &&
+          textOf(lastUser?.content).includes("plan to make brownies")
+        );
+      },
+    },
+    response: {
+      toolCalls: [
+        {
+          name: "generate_task_steps",
+          arguments: JSON.stringify({
+            steps: [
+              { description: "Gather ingredients", status: "pending" },
+              {
+                description: "Melt butter and mix with cocoa",
+                status: "pending",
+              },
+              { description: "Add eggs and flour", status: "pending" },
+              { description: "Bake at 350F for 25 min", status: "pending" },
+            ],
+          }),
+        },
+      ],
+    },
+  });
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => {
+        const lastUser = req.messages.filter((m) => m.role === "user").pop();
+        const hasCrewAITool = req.tools?.some(
+          (t) => t.function.name === "generate_task_steps",
+        );
+        const noStrandsTool = !req.tools?.some(
+          (t) => t.function.name === "plan_task_steps",
+        );
+        return (
+          !!hasCrewAITool &&
+          noStrandsTool &&
+          textOf(lastUser?.content).includes("Go to Mars")
+        );
+      },
+    },
+    response: {
+      toolCalls: [
+        {
+          name: "generate_task_steps",
+          arguments: JSON.stringify({
+            steps: [
+              { description: "Design spacecraft", status: "pending" },
+              { description: "Assemble crew", status: "pending" },
+              { description: "Launch from Earth", status: "pending" },
+              { description: "Land on Mars", status: "pending" },
+            ],
+          }),
+        },
+      ],
+    },
+  });
+  // CrewAI agentic gen UI: after simulate_task completes, the flow re-enters
+  // chat(). Detect by "Steps executed." tool result in history.
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => {
+        const hasCrewAITool = req.tools?.some(
+          (t) => t.function.name === "generate_task_steps",
+        );
+        const noStrandsTool = !req.tools?.some(
+          (t) => t.function.name === "plan_task_steps",
+        );
+        const hasToolResult = req.messages.some(
+          (m) =>
+            m.role === "tool" && textOf(m.content).includes("Steps executed"),
+        );
+        return !!hasCrewAITool && noStrandsTool && hasToolResult;
+      },
+    },
+    response: {
+      content: "All steps completed successfully! Your brownies are ready. 🎉",
+    },
+  });
+
+  // CrewAI crew_exit: when user says "goodbye crew", return the crew_exit tool
+  // call. ChatWithCrewFlow handles this by calling copilotkit_exit() and making
+  // a follow-up acompletion with tool_choice="none".
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => {
+        const lastUser = req.messages.filter((m) => m.role === "user").pop();
+        const hasCrewExitTool = req.tools?.some(
+          (t) => t.function.name === "crew_exit",
+        );
+        const hasCrewExitedResult = req.messages.some(
+          (m) => m.role === "tool" && textOf(m.content) === "Crew exited",
+        );
+        return (
+          !!hasCrewExitTool &&
+          !hasCrewExitedResult &&
+          textOf(lastUser?.content).includes("goodbye crew")
+        );
+      },
+    },
+    response: {
+      toolCalls: [
+        {
+          name: "crew_exit",
+          arguments: "{}",
+        },
+      ],
+    },
+  });
+
+  // CrewAI crew_exit follow-up: after crew_exit is processed, the flow calls
+  // acompletion again with tool_choice="none" to generate a farewell message.
+  // Detect by "Crew exited" tool result in message history.
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => {
+        const hasCrewExitedResult = req.messages.some(
+          (m) => m.role === "tool" && textOf(m.content) === "Crew exited",
+        );
+        const hasCrewExitTool = req.tools?.some(
+          (t) => t.function.name === "crew_exit",
+        );
+        return !!hasCrewExitTool && hasCrewExitedResult;
+      },
+    },
+    response: {
+      content: "Goodbye! The crew has been shut down. Have a great day!",
     },
   });
 
@@ -602,7 +747,6 @@ export async function setupLLMock(): Promise<void> {
     },
   });
 
-
   // LlamaIndex agentic gen UI: the agent registers run_task (a backend tool),
   // not generate_task_steps_generative_ui. The run_task tool takes a Task
   // model with steps: list[Step], where each Step has a description string.
@@ -730,8 +874,355 @@ export async function setupLLMock(): Promise<void> {
     },
   });
 
-  // Load all fixture JSON files from the fixtures directory
-  // (HITL fixtures are duplicated but the earlier copies match first)
+  // A2UI fixed schema: the agent registers search_flights and search_hotels.
+  // These are backend tools — the LLM calls them, the agent executes them
+  // server-side, and returns A2UI operations in the tool result. The middleware
+  // detects the a2ui_operations JSON in the result and streams it to the frontend.
+  // We return a tool call that the agent's tool handler will process.
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => {
+        const lastUser = req.messages.filter((m) => m.role === "user").pop();
+        const hasFlightTool = req.tools?.some(
+          (t) => t.function.name === "search_flights",
+        );
+        return (
+          !!hasFlightTool &&
+          textOf(lastUser?.content).toLowerCase().includes("flights")
+        );
+      },
+    },
+    response: {
+      toolCalls: [
+        {
+          name: "search_flights",
+          arguments: JSON.stringify({
+            flights: [
+              {
+                id: "1",
+                airline: "United Airlines",
+                airlineLogo:
+                  "https://www.google.com/s2/favicons?domain=united.com&sz=128",
+                flightNumber: "UA 123",
+                origin: "SFO",
+                destination: "JFK",
+                date: "Tue, Apr 8",
+                departureTime: "8:00 AM",
+                arrivalTime: "4:30 PM",
+                duration: "5h 30m",
+                status: "On Time",
+                statusIcon: "https://placehold.co/12/22c55e/22c55e.png",
+                price: "$289",
+              },
+              {
+                id: "2",
+                airline: "Delta",
+                airlineLogo:
+                  "https://www.google.com/s2/favicons?domain=delta.com&sz=128",
+                flightNumber: "DL 456",
+                origin: "SFO",
+                destination: "JFK",
+                date: "Tue, Apr 8",
+                departureTime: "10:00 AM",
+                arrivalTime: "6:45 PM",
+                duration: "5h 45m",
+                status: "On Time",
+                statusIcon: "https://placehold.co/12/22c55e/22c55e.png",
+                price: "$315",
+              },
+            ],
+          }),
+        },
+      ],
+    },
+  });
+
+  // A2UI fixed schema: hotel search
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => {
+        const lastUser = req.messages.filter((m) => m.role === "user").pop();
+        const hasHotelTool = req.tools?.some(
+          (t) => t.function.name === "search_hotels",
+        );
+        return (
+          !!hasHotelTool &&
+          textOf(lastUser?.content).toLowerCase().includes("hotels")
+        );
+      },
+    },
+    response: {
+      toolCalls: [
+        {
+          name: "search_hotels",
+          arguments: JSON.stringify({
+            hotels: [
+              {
+                id: "1",
+                name: "The Manhattan Grand",
+                location: "Downtown Manhattan",
+                rating: 4.5,
+                price: "$350",
+              },
+              {
+                id: "2",
+                name: "Downtown Boutique Hotel",
+                location: "SoHo",
+                rating: 4.0,
+                price: "$280",
+              },
+            ],
+          }),
+        },
+      ],
+    },
+  });
+
+  // A2UI dynamic schema: primary LLM decides to call generate_a2ui.
+  // Matches when the request has generate_a2ui in the tools list.
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => {
+        const hasGenerateTool = req.tools?.some(
+          (t) => t.function.name === "generate_a2ui",
+        );
+        return !!hasGenerateTool;
+      },
+    },
+    response: {
+      toolCalls: [
+        {
+          name: "generate_a2ui",
+          arguments: "{}",
+        },
+      ],
+    },
+  });
+
+  // A2UI dynamic schema: secondary LLM inside generate_a2ui calls render_a2ui.
+  // The agent forces tool_choice="render_a2ui" on the secondary call.
+  // Match by detecting render_a2ui in the tools list (the secondary call
+  // has render_a2ui as the only tool, unlike the primary which has generate_a2ui).
+  //
+  // These fixtures use the dynamicSchemaCatalog domain components (HotelCard,
+  // ProductCard, TeamMemberCard) with the structural-children + data-binding
+  // pattern described in the agent's COMPOSITION_GUIDE.
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => {
+        const hasRenderTool = req.tools?.some(
+          (t) => t.function.name === "render_a2ui",
+        );
+        const hasGenerateTool = req.tools?.some(
+          (t) => t.function.name === "generate_a2ui",
+        );
+        // Secondary call: has render_a2ui but NOT generate_a2ui
+        if (!hasRenderTool || hasGenerateTool) return false;
+        const lastUser = req.messages.filter((m) => m.role === "user").pop();
+        return textOf(lastUser?.content).toLowerCase().includes("hotel");
+      },
+    },
+    response: {
+      toolCalls: [
+        {
+          name: "render_a2ui",
+          arguments: JSON.stringify({
+            surfaceId: "hotel-comparison",
+            catalogId: "https://a2ui.org/demos/dojo/dynamic_catalog.json",
+            components: [
+              {
+                id: "root",
+                component: "Row",
+                children: { componentId: "card", path: "/items" },
+              },
+              {
+                id: "card",
+                component: "HotelCard",
+                name: { path: "name" },
+                location: { path: "location" },
+                rating: { path: "rating" },
+                pricePerNight: { path: "pricePerNight" },
+                action: {
+                  event: { name: "book", context: { name: { path: "name" } } },
+                },
+              },
+            ],
+            data: {
+              items: [
+                {
+                  name: "The Ritz",
+                  location: "Paris",
+                  rating: 4.8,
+                  pricePerNight: "$450/night",
+                },
+                {
+                  name: "Holiday Inn",
+                  location: "New York",
+                  rating: 3.5,
+                  pricePerNight: "$180/night",
+                },
+                {
+                  name: "Boutique Loft",
+                  location: "London",
+                  rating: 4.2,
+                  pricePerNight: "$320/night",
+                },
+              ],
+            },
+          }),
+        },
+      ],
+    },
+  });
+
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => {
+        const hasRenderTool = req.tools?.some(
+          (t) => t.function.name === "render_a2ui",
+        );
+        const hasGenerateTool = req.tools?.some(
+          (t) => t.function.name === "generate_a2ui",
+        );
+        if (!hasRenderTool || hasGenerateTool) return false;
+        const lastUser = req.messages.filter((m) => m.role === "user").pop();
+        return textOf(lastUser?.content).toLowerCase().includes("product");
+      },
+    },
+    response: {
+      toolCalls: [
+        {
+          name: "render_a2ui",
+          arguments: JSON.stringify({
+            surfaceId: "product-comparison",
+            catalogId: "https://a2ui.org/demos/dojo/dynamic_catalog.json",
+            components: [
+              {
+                id: "root",
+                component: "Row",
+                children: { componentId: "card", path: "/items" },
+              },
+              {
+                id: "card",
+                component: "ProductCard",
+                name: { path: "name" },
+                price: { path: "price" },
+                rating: { path: "rating" },
+                description: { path: "description" },
+                action: {
+                  event: {
+                    name: "select",
+                    context: { name: { path: "name" } },
+                  },
+                },
+              },
+            ],
+            data: {
+              items: [
+                {
+                  name: "Sony WH-1000XM5",
+                  price: "$349",
+                  rating: 4.7,
+                  description: "Industry-leading noise cancellation",
+                },
+                {
+                  name: "AirPods Max",
+                  price: "$549",
+                  rating: 4.5,
+                  description: "Premium Apple ecosystem integration",
+                },
+                {
+                  name: "Bose QC Ultra",
+                  price: "$429",
+                  rating: 4.6,
+                  description: "Comfortable with spatial audio",
+                },
+              ],
+            },
+          }),
+        },
+      ],
+    },
+  });
+
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => {
+        const hasRenderTool = req.tools?.some(
+          (t) => t.function.name === "render_a2ui",
+        );
+        const hasGenerateTool = req.tools?.some(
+          (t) => t.function.name === "generate_a2ui",
+        );
+        if (!hasRenderTool || hasGenerateTool) return false;
+        const lastUser = req.messages.filter((m) => m.role === "user").pop();
+        return textOf(lastUser?.content).toLowerCase().includes("team");
+      },
+    },
+    response: {
+      toolCalls: [
+        {
+          name: "render_a2ui",
+          arguments: JSON.stringify({
+            surfaceId: "team-roster",
+            catalogId: "https://a2ui.org/demos/dojo/dynamic_catalog.json",
+            components: [
+              {
+                id: "root",
+                component: "Row",
+                children: { componentId: "card", path: "/items" },
+              },
+              {
+                id: "card",
+                component: "TeamMemberCard",
+                name: { path: "name" },
+                role: { path: "role" },
+                department: { path: "department" },
+                email: { path: "email" },
+                action: {
+                  event: {
+                    name: "contact",
+                    context: { name: { path: "name" } },
+                  },
+                },
+              },
+            ],
+            data: {
+              items: [
+                {
+                  name: "Alice Chen",
+                  role: "Engineering Lead",
+                  department: "Engineering",
+                  email: "alice@example.com",
+                },
+                {
+                  name: "Bob Martinez",
+                  role: "Product Designer",
+                  department: "Design",
+                  email: "bob@example.com",
+                },
+                {
+                  name: "Carol Davis",
+                  role: "Backend Engineer",
+                  department: "Engineering",
+                  email: "carol@example.com",
+                },
+                {
+                  name: "Dan Wilson",
+                  role: "DevOps Engineer",
+                  department: "Infrastructure",
+                  email: "dan@example.com",
+                },
+              ],
+            },
+          }),
+        },
+      ],
+    },
+  });
+
+  // Load all fixture JSON files from the fixtures directory.
+  // HITL fixtures loaded above take priority (first-match-wins).
   mockServer.loadFixtureDir(FIXTURES_DIR);
 
   // Programmatic catch-all: when the last message is a tool result,
@@ -746,7 +1237,14 @@ export async function setupLLMock(): Promise<void> {
     match: {
       predicate: (req) => {
         const last = req.messages[req.messages.length - 1];
-        return last?.role === "tool";
+        if (last?.role !== "tool") return false;
+        // Don't match CrewAI crew_exit follow-up — it has a dedicated fixture
+        const hasCrewExitTool = req.tools?.some(
+          (t) => t.function.name === "crew_exit",
+        );
+        if (hasCrewExitTool && textOf(last.content) === "Crew exited")
+          return false;
+        return true;
       },
     },
     response: { content: "Done! I've completed that for you." },
@@ -761,8 +1259,7 @@ export async function setupLLMock(): Promise<void> {
         const lastUser = req.messages.filter((m) => m.role === "user").pop();
         const userText = lastUser ? textOf(lastUser.content) : "(no user msg)";
         const toolNames =
-          req.tools?.map((t) => t.function.name).join(",") ||
-          "(no tools)";
+          req.tools?.map((t) => t.function.name).join(",") || "(no tools)";
         const contentType = lastUser ? typeof lastUser.content : "N/A";
         const contentSample = lastUser
           ? JSON.stringify(lastUser.content).slice(0, 120)

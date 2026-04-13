@@ -70,7 +70,9 @@ class StrandsAgent:
         if hasattr(agent, "agent_id") and agent.agent_id:
             self._agent_kwargs["agent_id"] = agent.agent_id
         if hasattr(agent, "state") and agent.state is not None:
-            self._agent_kwargs["state"] = agent.state._state
+            self._agent_kwargs["state"] = agent.state.get()
+        if hasattr(agent, "conversation_manager") and agent.conversation_manager is not None:
+            self._agent_kwargs["conversation_manager"] = agent.conversation_manager
 
         self.name = name
         self.description = description

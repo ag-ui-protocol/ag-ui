@@ -99,7 +99,7 @@ public class SpringAIAgent extends LocalAgent {
      */
     protected SpringAIAgent(
             Builder builder
-    ) throws AGUIException {
+    ) {
         super(
                 builder.agentId,
                 builder.state,
@@ -587,7 +587,7 @@ public class SpringAIAgent extends LocalAgent {
          * @return a new SpringAIAgent instance
          * @throws AGUIException if the configuration is invalid or required parameters are missing
          */
-        public SpringAIAgent build() throws AGUIException {
+        public SpringAIAgent build() {
             return new SpringAIAgent(this);
         }
     }

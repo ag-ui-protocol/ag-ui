@@ -143,6 +143,7 @@ agent = ConversableAgent(
         detail or send it as a message to the user.
     """),
     llm_config=LLMConfig({"model": "gpt-4o-mini", "stream": True}),
+    human_input_mode="NEVER",
     functions=[get_current_recipe, display_recipe],
 )
 
