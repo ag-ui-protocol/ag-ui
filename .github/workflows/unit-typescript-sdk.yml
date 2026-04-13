@@ -6,6 +6,7 @@ on:
     paths:
       - "sdks/typescript/**"
       - "typescript-sdk/**"
+      - "integrations/**"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
       - "package.json"
@@ -16,6 +17,7 @@ on:
     paths:
       - "sdks/typescript/**"
       - "typescript-sdk/**"
+      - "integrations/**"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
       - "package.json"

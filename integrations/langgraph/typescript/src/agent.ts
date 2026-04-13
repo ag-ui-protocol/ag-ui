@@ -119,6 +119,8 @@ export interface LangGraphAgentConfig extends AgentConfig {
   graphId: string;
 }
 
+const ROOT_SUBGRAPH_NAME = "root";
+
 export class LangGraphAgent extends AbstractAgent {
   client: LangGraphClient;
   assistantConfig?: LangGraphConfig;
@@ -126,11 +128,17 @@ export class LangGraphAgent extends AbstractAgent {
   graphId: string;
   assistant?: Assistant;
   messagesInProcess: MessagesInProgressRecord;
+  emittedToolCallStartIds: Set<string> = new Set();
   reasoningProcess: null | ReasoningInProgress;
   activeRun?: RunMetadata;
+  // Subgraph node names discovered dynamically from langgraph_checkpoint_ns
+  private subgraphs: Set<string> = new Set();
+  private currentSubgraph: string = ROOT_SUBGRAPH_NAME;
   // Stop control flags
   private cancelRequested: boolean = false;
   private cancelSent: boolean = false;
+  // messages-tuple fallback: tracks whether "events" mode is producing data
+  private eventsStreamActive: boolean = false;
   // @ts-expect-error no need to initialize subscriber right now
   subscriber: Subscriber<ProcessedEvents>;
   constantSchemaKeys: string[] = DEFAULT_SCHEMA_KEYS;
@@ -170,6 +178,8 @@ export class LangGraphAgent extends AbstractAgent {
       activeRun: this.activeRun ? structuredClone(this.activeRun) : undefined,
       cancelRequested: this.cancelRequested,
       cancelSent: this.cancelSent,
+      subgraphs: this.subgraphs ? new Set(this.subgraphs) : new Set(),
+      currentSubgraph: ROOT_SUBGRAPH_NAME,
     });
   }
 
@@ -180,7 +190,12 @@ export class LangGraphAgent extends AbstractAgent {
 
   run(input: RunAgentInput) {
     return new Observable<ProcessedEvents>((subscriber) => {
-      this.runAgentStream(input, subscriber);
+      this.runAgentStream(input, subscriber).catch((err) => {
+        console.error(`[LangGraph] runAgentStream error:`, err);
+        if (!subscriber.closed) {
+          subscriber.error(err);
+        }
+      });
       return () => {};
     });
   }
@@ -191,16 +206,17 @@ export class LangGraphAgent extends AbstractAgent {
       threadId: input.threadId,
       hasFunctionStreaming: false,
     };
-    // Reset cancel flags for this run
+    // Reset per-run flags
     this.cancelRequested = false;
     this.cancelSent = false;
+    this.eventsStreamActive = false;
     this.subscriber = subscriber;
     if (!this.assistant) {
       this.assistant = await this.getAssistant();
     }
     const threadId = input.threadId ?? randomUUID();
     const streamMode =
-      input.forwardedProps?.streamMode ?? (["events", "values", "updates"] satisfies StreamMode[]);
+      input.forwardedProps?.streamMode ?? (["events", "values", "updates", "messages-tuple"] satisfies StreamMode[]);
     const preparedStream = await this.prepareStream({ ...input, threadId }, streamMode);
 
     if (!preparedStream) {
@@ -293,9 +309,14 @@ export class LangGraphAgent extends AbstractAgent {
     let stateValues = threadState.values;
     this.activeRun!.schemaKeys = await this.getSchemaKeys();
 
-    if (
-      (agentState.values.messages ?? []).length > messages.filter((m) => m.role !== "system").length
-    ) {
+    // Compare non-system message counts to detect regeneration.
+    // Both sides must filter system messages for an accurate comparison,
+    // since the LangGraph state may contain system messages injected by
+    // the connector (e.g. CopilotKit context) that the frontend doesn't track.
+    const stateNonSystemCount = agentStateMessages.filter((m: LangGraphPlatformMessage) => m.type !== "system").length;
+    const inputNonSystemCount = messages.filter((m) => m.role !== "system").length;
+
+    if (stateNonSystemCount > inputNonSystemCount) {
       let lastUserMessage: LangGraphMessage | null = null;
       // Find the first user message by working backwards from the last message
       for (let i = messages.length - 1; i >= 0; i--) {
@@ -421,6 +442,8 @@ export class LangGraphAgent extends AbstractAgent {
     this.subscriber = subscriber;
     let shouldExit = false;
     if (!stream) return;
+    // Reset per-run tracking of emitted tool call IDs
+    this.emittedToolCallStartIds = new Set<string>();
 
     let { streamResponse, state } = stream;
 
@@ -459,14 +482,20 @@ export class LangGraphAgent extends AbstractAgent {
           break;
         }
 
-        const subgraphsStreamEnabled = input.forwardedProps?.streamSubgraphs;
+        const subgraphsStreamEnabled = input.forwardedProps?.streamSubgraphs ?? true;
         const isSubgraphStream =
           subgraphsStreamEnabled &&
           (streamResponseChunk.event.startsWith("events") ||
             streamResponseChunk.event.startsWith("values"));
 
+        // "messages-tuple" stream mode produces SSE events with type "messages",
+        // so we need to check for that mapping in addition to the direct mode name.
+        const isMessagesTupleEvent =
+          streamResponseChunk.event === "messages" &&
+          (Array.isArray(streamModes) ? streamModes : [streamModes]).includes("messages-tuple" as StreamMode);
+
         // @ts-ignore
-        if (!streamModes.includes(streamResponseChunk.event as StreamMode) && !isSubgraphStream && streamResponseChunk.event !== 'error') {
+        if (!streamModes.includes(streamResponseChunk.event as StreamMode) && !isSubgraphStream && !isMessagesTupleEvent && streamResponseChunk.event !== 'error') {
           continue;
         }
 
@@ -508,6 +537,18 @@ export class LangGraphAgent extends AbstractAgent {
         const metadata = chunkData.metadata ?? {};
         const currentNodeName = metadata.langgraph_node;
         const eventType = chunkData.event;
+
+        // Subgraph detection via langgraph_checkpoint_ns
+        // ns format: "" | "node:uuid" | "node:uuid|inner:uuid"
+        const ns: string = metadata.langgraph_checkpoint_ns ?? "";
+        const nsRoot = ns.split("|")[0].split(":")[0];
+        if (ns.includes("|") && nsRoot) this.subgraphs.add(nsRoot);
+        const currentSubgraph = (nsRoot && this.subgraphs.has(nsRoot)) ? nsRoot : ROOT_SUBGRAPH_NAME;
+
+        if (currentSubgraph !== this.currentSubgraph) {
+          this.currentSubgraph = currentSubgraph;
+          await this.getStateAndMessagesSnapshots(threadId);
+        }
 
         // Set server-assigned run id as soon as available
         if (metadata.run_id) {
@@ -606,14 +647,7 @@ export class LangGraphAgent extends AbstractAgent {
       // Immediately turn off new step
       this.handleNodeChange(undefined);
 
-      this.dispatchEvent({
-        type: EventType.STATE_SNAPSHOT,
-        snapshot: this.getStateSnapshot(state),
-      });
-      this.dispatchEvent({
-        type: EventType.MESSAGES_SNAPSHOT,
-        messages: langchainMessagesToAgui((state.values as { messages: any[] }).messages ?? []),
-      });
+      await this.getStateAndMessagesSnapshots(threadId);
 
       this.dispatchEvent({
         type: EventType.RUN_FINISHED,
@@ -630,7 +664,39 @@ export class LangGraphAgent extends AbstractAgent {
     }
   }
 
+  private async getStateAndMessagesSnapshots(threadId: string): Promise<void> {
+    const state: ThreadState<State> = await this.client.threads.getState(threadId);
+    this.dispatchEvent({
+      type: EventType.STATE_SNAPSHOT,
+      snapshot: this.getStateSnapshot(state),
+    });
+    const checkpointMessages: LangGraphMessage[] = (state.values as State).messages ?? [];
+    const streamedMessages = this.activeRun?.streamedMessages ?? [];
+    const checkpointIds = new Set(checkpointMessages.map((m) => m.id).filter(Boolean));
+    const extra = streamedMessages.filter((m) => m.id && !checkpointIds.has(m.id));
+    const snapshotMessages = [...checkpointMessages, ...(extra as unknown as LangGraphMessage[])];
+    this.dispatchEvent({
+      type: EventType.MESSAGES_SNAPSHOT,
+      messages: langchainMessagesToAgui(snapshotMessages),
+    });
+  }
+
   handleSingleEvent(event: any): void {
+    // messages-tuple data arrives as [AIMessageChunk, metadata] arrays,
+    // not objects with an .event property like events-mode data.
+    if (Array.isArray(event)) {
+      if (!this.eventsStreamActive) {
+        this.handleMessagesTupleEvent(event);
+      }
+      return;
+    }
+
+    // Track if events-mode streaming is producing data — when it does,
+    // messages-tuple events are skipped to avoid duplicate streaming.
+    if (event.event === LangGraphEventTypes.OnChatModelStream) {
+      this.eventsStreamActive = true;
+    }
+
     switch (event.event) {
       case LangGraphEventTypes.OnChatModelStream:
         let shouldEmitMessages = event.metadata["emit-messages"] ?? true;
@@ -739,6 +805,7 @@ export class LangGraphAgent extends AbstractAgent {
             rawEvent: event,
           });
           if (resolved) {
+            this.emittedToolCallStartIds.add(toolCallData.id);
             this.setMessageInProgress(this.activeRun!.id, {
               id: event.data.chunk.id,
               toolCallId: toolCallData.id,
@@ -787,7 +854,12 @@ export class LangGraphAgent extends AbstractAgent {
         }
 
         break;
-      case LangGraphEventTypes.OnChatModelEnd:
+      case LangGraphEventTypes.OnChatModelEnd: {
+        const outputMsg = event.data?.output;
+        if (outputMsg && typeof outputMsg === "object" && outputMsg.id && outputMsg.type) {
+          if (!this.activeRun!.streamedMessages) this.activeRun!.streamedMessages = [];
+          this.activeRun!.streamedMessages.push(outputMsg);
+        }
         if (this.getMessageInProgress(this.activeRun!.id)?.toolCallId) {
           const resolved = this.dispatchEvent({
             type: EventType.TOOL_CALL_END,
@@ -811,6 +883,7 @@ export class LangGraphAgent extends AbstractAgent {
           break;
         }
         break;
+      }
       case LangGraphEventTypes.OnCustomEvent:
         if (event.name === CustomEventNames.ManuallyEmitMessage) {
           this.dispatchEvent({
@@ -913,7 +986,11 @@ export class LangGraphAgent extends AbstractAgent {
           break;
         }
 
-        if (!this.activeRun!.hasFunctionStreaming) {
+        // Emit TOOL_CALL_START + ARGS + END for tool calls that were not
+        // already handled by the streaming path. Uses emittedToolCallStartIds
+        // to avoid duplicates from parallel tool calls.
+        if (!this.emittedToolCallStartIds.has(toolCallOutput.tool_call_id)) {
+          this.emittedToolCallStartIds.add(toolCallOutput.tool_call_id);
           this.dispatchEvent({
             type: EventType.TOOL_CALL_START,
             toolCallId: toolCallOutput.tool_call_id,
@@ -953,6 +1030,104 @@ export class LangGraphAgent extends AbstractAgent {
           rawEvent: event,
         })
         break;
+    }
+  }
+
+  /**
+   * Process [AIMessageChunk, metadata] tuples from messages-tuple stream mode
+   * and convert them into AG-UI text message and tool call events.
+   * Uses the same messagesInProcess tracking as events-mode streaming.
+   */
+  private handleMessagesTupleEvent(data: any[]) {
+    const chunk = data[0];
+
+    // Skip non-AI chunks (e.g., tool result messages, human messages)
+    if (chunk.type && chunk.type !== "AIMessageChunk") return;
+
+    const content =
+      typeof chunk.content === "string"
+        ? chunk.content
+        : Array.isArray(chunk.content)
+          ? chunk.content.find((c: any) => c.type === "text")?.text
+          : null;
+    const toolCallChunks = chunk.tool_call_chunks;
+    const isFinished = chunk.response_metadata?.finish_reason === "stop";
+    const currentStream = this.getMessageInProgress(this.activeRun!.id);
+
+    // Handle tool call chunks
+    if (toolCallChunks?.length > 0) {
+      const tc = toolCallChunks[0];
+      if (tc.name) {
+        // End any text message in progress
+        if (currentStream?.id && !currentStream?.toolCallId) {
+          this.dispatchEvent({
+            type: EventType.TEXT_MESSAGE_END,
+            messageId: currentStream.id,
+          });
+          this.messagesInProcess[this.activeRun!.id] = null;
+        }
+        // Start new tool call
+        this.dispatchEvent({
+          type: EventType.TOOL_CALL_START,
+          toolCallId: tc.id || chunk.id,
+          toolCallName: tc.name,
+          parentMessageId: chunk.id,
+        });
+        this.setMessageInProgress(this.activeRun!.id, {
+          id: chunk.id,
+          toolCallId: tc.id || chunk.id,
+          toolCallName: tc.name,
+        });
+        this.activeRun!.hasFunctionStreaming = true;
+      } else if (tc.args && currentStream?.toolCallId) {
+        this.dispatchEvent({
+          type: EventType.TOOL_CALL_ARGS,
+          toolCallId: currentStream.toolCallId,
+          delta: tc.args,
+        });
+      }
+      return;
+    }
+
+    // Handle finish
+    if (isFinished) {
+      if (currentStream?.toolCallId) {
+        this.dispatchEvent({
+          type: EventType.TOOL_CALL_END,
+          toolCallId: currentStream.toolCallId,
+        });
+      } else if (currentStream?.id) {
+        this.dispatchEvent({
+          type: EventType.TEXT_MESSAGE_END,
+          messageId: currentStream.id,
+        });
+      }
+      this.messagesInProcess[this.activeRun!.id] = null;
+      return;
+    }
+
+    // Skip empty initialization chunks
+    if (!content && !toolCallChunks?.length) return;
+
+    // Handle text content streaming
+    if (content) {
+      if (!currentStream) {
+        this.dispatchEvent({
+          type: EventType.TEXT_MESSAGE_START,
+          role: "assistant",
+          messageId: chunk.id,
+        });
+        this.setMessageInProgress(this.activeRun!.id, {
+          id: chunk.id,
+          toolCallId: null,
+          toolCallName: null,
+        });
+      }
+      this.dispatchEvent({
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: (this.getMessageInProgress(this.activeRun!.id) ?? { id: chunk.id }).id,
+        delta: content,
+      });
     }
   }
 
@@ -1134,7 +1309,7 @@ export class LangGraphAgent extends AbstractAgent {
 
   async getAssistant(): Promise<Assistant> {
     try {
-      const assistants = await this.client.assistants.search();
+      const assistants = await this.client.assistants.search({ graphId: this.graphId, limit: 1 });
       const retrievedAssistant = assistants.find(
         (searchResult) => searchResult.graph_id === this.graphId,
       );

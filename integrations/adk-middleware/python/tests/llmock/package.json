@@ -1,0 +1,8 @@
+{
+  "name": "adk-middleware-llmock",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@copilotkit/aimock": "^1.7.0"
+  }
+}

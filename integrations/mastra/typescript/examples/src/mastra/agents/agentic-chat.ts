@@ -18,7 +18,7 @@ export const agenticChatAgent = new Agent({
 
       Use the weatherTool to fetch current weather data.
 `,
-  model: "openai/gpt-4o-mini",
+  model: "openai/gpt-4.1-mini",
   tools: { get_weather: weatherTool },
   memory: new Memory({
     storage: new LibSQLStore({

@@ -33,7 +33,22 @@ from google.adk.auth.credential_service.in_memory_credential_service import InMe
 from google.genai import types
 
 from .event_translator import EventTranslator, adk_events_to_messages
-from .session_manager import SessionManager, CONTEXT_STATE_KEY, INVOCATION_ID_STATE_KEY
+from .session_manager import (
+    SessionManager, CONTEXT_STATE_KEY, INVOCATION_ID_STATE_KEY,
+    THREAD_ID_STATE_KEY, APP_NAME_STATE_KEY, USER_ID_STATE_KEY,
+)
+
+# Session-state keys managed exclusively by the backend.  These must never be
+# overwritten by stale ``input.state`` values sent back from the frontend,
+# otherwise internal metadata (e.g. LRO ID remaps) is lost between requests.
+_INTERNAL_STATE_KEYS = frozenset({
+    "lro_tool_call_id_remap",
+    CONTEXT_STATE_KEY,
+    THREAD_ID_STATE_KEY,
+    APP_NAME_STATE_KEY,
+    USER_ID_STATE_KEY,
+    INVOCATION_ID_STATE_KEY,
+})
 from .execution_state import ExecutionState
 from .client_proxy_toolset import ClientProxyToolset
 from .config import PredictStateMapping
@@ -83,6 +98,7 @@ class ADKAgent:
         max_sessions_per_user: Optional[int] = None,    # No limit by default
         delete_session_on_cleanup: bool = True,
         save_session_to_memory_on_cleanup: bool = True,
+        hitl_max_wait_seconds: Optional[int] = None,    # No limit by default
 
         # Predictive state configuration
         predict_state: Optional[Iterable[PredictStateMapping]] = None,
@@ -92,6 +108,9 @@ class ADKAgent:
 
         # Streaming function call arguments (Gemini 3+ via Vertex AI)
         streaming_function_call_arguments: bool = False,
+
+        # Session identity
+        use_thread_id_as_session_id: bool = False,
     ):
         """Initialize the ADKAgent.
 
@@ -114,6 +133,10 @@ class ADKAgent:
             max_sessions_per_user: Maximum concurrent sessions per user (None = unlimited)
             delete_session_on_cleanup: Whether to delete sessions from the adk SessionService on session cache cleanup
             save_session_to_memory_on_cleanup: Whether to save sessions to the adk MemoryService on session cache cleanup
+            hitl_max_wait_seconds: Maximum time (in seconds) to preserve expired sessions
+                that have pending HITL tool calls before force-deleting them. None (default)
+                means no limit — sessions with pending tool calls are preserved indefinitely.
+                Set this to automatically clean up abandoned HITL sessions.
             predict_state: Configuration for predictive state updates. When provided,
                 the agent will emit PredictState CustomEvents for matching tool calls,
                 enabling the UI to show state changes in real-time as tool arguments
@@ -131,6 +154,10 @@ class ADKAgent:
                 partial arguments, allowing the UI to show progressive updates.
                 Requires google-adk >= 1.24.0 and stream_function_call_arguments=True
                 in the model's GenerateContentConfig. Defaults to False.
+            use_thread_id_as_session_id: When True, use the AG-UI thread_id directly
+                as the ADK session_id instead of letting the backend generate one.
+                Eliminates the O(n) list_sessions scan for session recovery after
+                middleware restarts. Defaults to False for backward compatibility.
 
             Note:
             If delete_session_on_cleanup=False but save_session_to_memory_on_cleanup=True, sessions will accumulate in SessionService but still be saved to memory on cleanup.
@@ -174,19 +201,21 @@ class ADKAgent:
             cleanup_interval_seconds=cleanup_interval_seconds,
             max_sessions_per_user=max_sessions_per_user,
             delete_session_on_cleanup=delete_session_on_cleanup,
-            save_session_to_memory_on_cleanup=save_session_to_memory_on_cleanup
+            save_session_to_memory_on_cleanup=save_session_to_memory_on_cleanup,
+            use_thread_id_as_session_id=use_thread_id_as_session_id,
+            hitl_max_wait_seconds=hitl_max_wait_seconds,
         )
         
-        # Tool execution tracking
-        self._active_executions: Dict[str, ExecutionState] = {}
+        # Tool execution tracking — keyed by (thread_id, user_id) to avoid cross-user collisions
+        self._active_executions: Dict[Tuple[str, str], ExecutionState] = {}
         self._execution_timeout = execution_timeout_seconds
         self._tool_timeout = tool_timeout_seconds
         self._max_concurrent = max_concurrent_executions
         self._execution_lock = asyncio.Lock()
 
-        # Session lookup cache for efficient thread_id to session metadata mapping
-        # Maps thread_id -> (session_id, app_name, user_id)
-        self._session_lookup_cache: Dict[str, Tuple[str, str, str]] = {}
+        # Session lookup cache for efficient (thread_id, user_id) to session metadata mapping
+        # Maps (thread_id, user_id) -> (session_id, app_name, user_id)
+        self._session_lookup_cache: Dict[Tuple[str, str], Tuple[str, str, str]] = {}
 
         # Predictive state configuration for real-time state updates
         self._predict_state = predict_state
@@ -234,27 +263,44 @@ class ADKAgent:
         return getattr(resumability_config, 'is_resumable', False)
 
     def _root_agent_needs_invocation_id(self) -> bool:
-        """Check if the root agent requires invocation_id for HITL resumption.
+        """Check if the agent topology requires invocation_id for HITL resumption.
 
         Composite orchestrators (SequentialAgent, LoopAgent) store internal
         state (e.g. current_sub_agent position) that can only be restored via
         populate_invocation_agent_states(), which requires invocation_id.
 
-        LlmAgents — including those with sub_agents as transfer targets — do
-        NOT need invocation_id. Passing it triggers _get_subagent_to_resume()
-        which raises ValueError for non-composite agents.
+        This returns True when:
+        - The root agent itself is a composite orchestrator, OR
+        - Any agent in the sub-agent tree is a composite orchestrator
+          (e.g. LlmAgent → LlmAgent → SequentialAgent).
+
+        Standalone LlmAgents (including those with only LlmAgent transfer
+        targets) do NOT need invocation_id. Passing it triggers
+        _get_subagent_to_resume() which raises ValueError.
 
         Returns:
-            True if the root agent is a composite orchestrator
+            True if the topology contains a composite orchestrator
         """
         from google.adk.agents import LoopAgent, SequentialAgent
+        composite_types = (SequentialAgent, LoopAgent)
 
         root = self._adk_agent
         if root is None and self._app is not None:
             root = getattr(self._app, 'root_agent', None)
         if root is None:
             return False
-        return isinstance(root, (SequentialAgent, LoopAgent))
+        if isinstance(root, composite_types):
+            return True
+
+        def _has_composite_descendant(agent):
+            for sub in getattr(agent, 'sub_agents', None) or []:
+                if isinstance(sub, composite_types):
+                    return True
+                if _has_composite_descendant(sub):
+                    return True
+            return False
+
+        return _has_composite_descendant(root)
 
     @classmethod
     def from_app(
@@ -286,6 +332,8 @@ class ADKAgent:
         predict_state: Optional[Iterable[PredictStateMapping]] = None,
         emit_messages_snapshot: bool = False,
         streaming_function_call_arguments: bool = False,
+        # Session identity
+        use_thread_id_as_session_id: bool = False,
     ) -> "ADKAgent":
         """Create ADKAgent from an ADK App instance.
 
@@ -319,6 +367,8 @@ class ADKAgent:
             emit_messages_snapshot: Whether to emit MessagesSnapshotEvent at end of runs
             streaming_function_call_arguments: Whether to enable streaming of function
                 call arguments from Gemini 3+ models. Requires google-adk >= 1.24.0.
+            use_thread_id_as_session_id: When True, use the AG-UI thread_id directly
+                as the ADK session_id. See ADKAgent.__init__ for details.
 
         Returns:
             ADKAgent instance configured to use the App
@@ -362,33 +412,36 @@ class ADKAgent:
             predict_state=predict_state,
             emit_messages_snapshot=emit_messages_snapshot,
             streaming_function_call_arguments=streaming_function_call_arguments,
+            use_thread_id_as_session_id=use_thread_id_as_session_id,
         )
         # Store App for per-request App creation with modified agents
         instance._app = app
         instance._plugin_close_timeout = plugin_close_timeout
         return instance
 
-    def _get_session_metadata(self, thread_id: str) -> Optional[Tuple[str, str, str]]:
-        """Get session metadata for a thread_id efficiently.
+    def _get_session_metadata(self, thread_id: str, user_id: str) -> Optional[Tuple[str, str, str]]:
+        """Get session metadata for a (thread_id, user_id) pair efficiently.
 
         Args:
             thread_id: The AG-UI thread_id to lookup
+            user_id: The user identifier to scope the lookup (use "" only when explicitly anonymous)
 
         Returns:
             Tuple of (session_id, app_name, user_id) or None if not found
         """
-        return self._session_lookup_cache.get(thread_id)
+        return self._session_lookup_cache.get((thread_id, user_id))
 
-    def _get_backend_session_id(self, thread_id: str) -> Optional[str]:
-        """Get the backend session_id for a thread_id.
+    def _get_backend_session_id(self, thread_id: str, user_id: str) -> Optional[str]:
+        """Get the backend session_id for a (thread_id, user_id) pair.
 
         Args:
             thread_id: The AG-UI thread_id to lookup
+            user_id: The user identifier to scope the lookup (use "" only when explicitly anonymous)
 
         Returns:
             The backend session_id or None if not found
         """
-        metadata = self._session_lookup_cache.get(thread_id)
+        metadata = self._session_lookup_cache.get((thread_id, user_id))
         return metadata[0] if metadata else None
     
     def _get_app_name(self, input: RunAgentInput) -> str:
@@ -433,7 +486,7 @@ class ADKAgent:
             user_id: User ID (for session lookup)
         """
         # Get the backend session_id from cache
-        metadata = self._get_session_metadata(thread_id)
+        metadata = self._get_session_metadata(thread_id, user_id)
         if not metadata:
             logger.warning(f"No session metadata for thread {thread_id}, cannot add pending tool call")
             return
@@ -468,16 +521,17 @@ class ADKAgent:
         except Exception as e:
             logger.error(f"Failed to add pending tool call {tool_call_id} to thread {thread_id}: {e}")
 
-    async def _remove_pending_tool_call(self, thread_id: str, tool_call_id: str):
+    async def _remove_pending_tool_call(self, thread_id: str, tool_call_id: str, user_id: str):
         """Remove a tool call from the session's pending list.
 
         Args:
             thread_id: The AG-UI thread_id
             tool_call_id: The tool call ID to remove
+            user_id: The user identifier to scope the lookup (use "" only when explicitly anonymous)
         """
         try:
             # Use efficient session metadata lookup
-            metadata = self._get_session_metadata(thread_id)
+            metadata = self._get_session_metadata(thread_id, user_id)
 
             if metadata:
                 session_id, app_name, user_id = metadata
@@ -509,10 +563,10 @@ class ADKAgent:
         except Exception as e:
             logger.error(f"Failed to remove pending tool call {tool_call_id} from thread {thread_id}: {e}")
     
-    async def _get_pending_tool_call_ids(self, thread_id: str) -> Optional[List[str]]:
+    async def _get_pending_tool_call_ids(self, thread_id: str, user_id: str) -> Optional[List[str]]:
         """Fetch the pending tool call identifiers tracked for a thread."""
         try:
-            metadata = self._get_session_metadata(thread_id)
+            metadata = self._get_session_metadata(thread_id, user_id)
 
             if metadata:
                 session_id, app_name, user_id = metadata
@@ -533,16 +587,17 @@ class ADKAgent:
 
         return None
 
-    async def _has_pending_tool_calls(self, thread_id: str) -> bool:
+    async def _has_pending_tool_calls(self, thread_id: str, user_id: str) -> bool:
         """Check if thread has pending tool calls (HITL scenario).
 
         Args:
             thread_id: The AG-UI thread_id
+            user_id: The user identifier to scope the lookup (use "" only when explicitly anonymous)
 
         Returns:
             True if thread has pending tool calls
         """
-        pending_calls = await self._get_pending_tool_call_ids(thread_id)
+        pending_calls = await self._get_pending_tool_call_ids(thread_id, user_id)
         if pending_calls is None:
             return False
 
@@ -568,6 +623,10 @@ class ADKAgent:
         if not adk_event.content or not hasattr(adk_event.content, 'parts'):
             return remap
 
+        # Track consumption index per tool name so that parallel calls to the
+        # same tool (e.g. 5 × create_item) are matched by position (FIFO).
+        consumed: Dict[str, int] = {}
+
         for part in (adk_event.content.parts or []):
             fc = getattr(part, 'function_call', None)
             if not fc:
@@ -577,13 +636,17 @@ class ADKAgent:
             if not final_id or not fc_name:
                 continue
 
-            emitted_id = event_translator.lro_emitted_ids_by_name.get(fc_name)
-            if emitted_id and emitted_id != final_id:
-                remap[emitted_id] = final_id
-                logger.info(
-                    f"LRO ID remap: client_id={emitted_id} -> persisted_id={final_id} "
-                    f"(tool={fc_name})"
-                )
+            emitted_ids = event_translator.lro_emitted_ids_by_name.get(fc_name, [])
+            idx = consumed.get(fc_name, 0)
+            if idx < len(emitted_ids):
+                emitted_id = emitted_ids[idx]
+                consumed[fc_name] = idx + 1
+                if emitted_id != final_id:
+                    remap[emitted_id] = final_id
+                    logger.info(
+                        f"LRO ID remap: client_id={emitted_id} -> persisted_id={final_id} "
+                        f"(tool={fc_name})"
+                    )
 
         return remap
 
@@ -685,7 +748,7 @@ class ADKAgent:
         """
         config_kwargs = {
             'streaming_mode': StreamingMode.SSE,
-            'save_input_blobs_as_artifacts': True,
+            'save_input_blobs_as_artifacts': False,
         }
 
         # For ADK 1.22.0+, also include context in custom_metadata
@@ -808,13 +871,14 @@ class ADKAgent:
         skip_tool_message_batch = False
 
         # Check if there are pending tool calls AND tool results in unseen messages
-        has_pending_tools = await self._has_pending_tool_calls(input.thread_id)
+        user_id = self._get_user_id(input)
+        has_pending_tools = await self._has_pending_tool_calls(input.thread_id, user_id)
         has_tool_results_in_unseen = any(getattr(msg, "role", None) == "tool" for msg in unseen_messages)
 
         if has_pending_tools and has_tool_results_in_unseen:
             # HITL/Frontend tool scenario: skip to the tool results first
             # Get backend session_id (should exist since we have pending tools)
-            backend_session_id = self._get_backend_session_id(input.thread_id)
+            backend_session_id = self._get_backend_session_id(input.thread_id, user_id)
             for i, msg in enumerate(unseen_messages):
                 if getattr(msg, "role", None) == "tool":
                     # Mark all messages before the tool result as processed (they're already in the ADK session)
@@ -845,7 +909,7 @@ class ADKAgent:
                     for message in tool_batch
                     if getattr(message, "tool_call_id", None)
                 ]
-                pending_tool_call_ids = await self._get_pending_tool_call_ids(input.thread_id)
+                pending_tool_call_ids = await self._get_pending_tool_call_ids(input.thread_id, user_id)
 
                 should_process_tool_batch = True
                 if pending_tool_call_ids is not None:
@@ -958,7 +1022,7 @@ class ADKAgent:
                         peek_idx += 1
 
                     if upcoming_tool_call_ids:
-                        pending_ids = await self._get_pending_tool_call_ids(input.thread_id)
+                        pending_ids = await self._get_pending_tool_call_ids(input.thread_id, user_id)
                         if pending_ids is not None:
                             pending_set = set(pending_ids)
                             # If NONE of the upcoming tool results match pending, they're historical
@@ -990,14 +1054,15 @@ class ADKAgent:
         Returns:
             Tuple of (session, backend_session_id)
         """
-        # Check cache first
-        cached = self._session_lookup_cache.get(thread_id)
+        # Check cache first using composite key (thread_id, user_id)
+        cache_key = (thread_id, user_id)
+        cached = self._session_lookup_cache.get(cache_key)
         if cached:
             session_id, cached_app_name, cached_user_id = cached
             # Verify session still exists
             session = await self._session_manager.get_session(session_id, cached_app_name, cached_user_id)
             if session:
-                logger.debug(f"Session cache hit for thread {thread_id}: {session_id}")
+                logger.debug(f"Session cache hit for thread {thread_id}, user {user_id}: {session_id}")
                 return session, session_id
 
         # Cache miss or stale - resolve via SessionManager
@@ -1010,7 +1075,7 @@ class ADKAgent:
             )
 
             # Cache the mapping as tuple: (session_id, app_name, user_id)
-            self._session_lookup_cache[thread_id] = (backend_session_id, app_name, user_id)
+            self._session_lookup_cache[cache_key] = (backend_session_id, app_name, user_id)
 
             # Clear stale pending_tool_calls on session resumption.
             # Cache miss + existing session = middleware restart.
@@ -1212,13 +1277,14 @@ class ADKAgent:
         try:
             # Remove tool calls from pending list and track which ones we processed
             processed_tool_ids = []
+            user_id = self._get_user_id(input)
             for tool_result in tool_results:
                 tool_call_id = tool_result['message'].tool_call_id
-                has_pending = await self._has_pending_tool_calls(thread_id)
+                has_pending = await self._has_pending_tool_calls(thread_id, user_id)
 
                 if has_pending:
                     # Remove from pending tool calls now that we're processing it
-                    await self._remove_pending_tool_call(thread_id, tool_call_id)
+                    await self._remove_pending_tool_call(thread_id, tool_call_id, user_id)
                     processed_tool_ids.append(tool_call_id)
 
             # Since all tools are long-running, all tool results are standalone
@@ -1395,6 +1461,9 @@ class ADKAgent:
         exec_type = "HITL_RESUME" if tool_results else "NEW_RUN"
         logger.info(f"[EXEC] {exec_type} - thread={input.thread_id}, run={input.run_id}, tool_results={tool_result_ids}, message_batch_len={message_batch_len}")
 
+        user_id = self._get_user_id(input)
+        exec_key = (input.thread_id, user_id)
+
         try:
             # Emit RUN_STARTED
             logger.debug(f"Emitting RUN_STARTED for thread {input.thread_id}, run {input.run_id}")
@@ -1415,8 +1484,8 @@ class ADKAgent:
                             f"Maximum concurrent executions ({self._max_concurrent}) reached"
                         )
                 
-                # Check if there's an existing execution for this thread and wait for it
-                existing_execution = self._active_executions.get(input.thread_id)
+                # Check if there's an existing execution for this thread+user and wait for it
+                existing_execution = self._active_executions.get(exec_key)
 
             # If there was an existing execution, wait for it to complete
             if existing_execution and not existing_execution.is_complete:
@@ -1435,7 +1504,7 @@ class ADKAgent:
             
             # Store execution (replacing any previous one)
             async with self._execution_lock:
-                self._active_executions[input.thread_id] = execution
+                self._active_executions[exec_key] = execution
             
             # Stream events and track tool calls
             logger.debug(f"Starting to stream events for execution {execution.thread_id}")
@@ -1468,13 +1537,12 @@ class ADKAgent:
             # If we found tool calls, add them to session state BEFORE cleanup
             if has_tool_calls:
                 app_name = self._get_app_name(input)
-                user_id = self._get_user_id(input)
                 for tool_call_id in tool_call_ids:
                     await self._add_pending_tool_call_with_context(
                         execution.thread_id, tool_call_id, app_name, user_id
                     )
             logger.debug(f"Finished streaming events for execution {execution.thread_id}")
-            
+
             # Emit RUN_FINISHED
             logger.debug(f"Emitting RUN_FINISHED for thread {input.thread_id}, run {input.run_id}")
             yield RunFinishedEvent(
@@ -1493,15 +1561,62 @@ class ADKAgent:
         finally:
             # Clean up execution if complete and no pending tool calls (HITL scenarios)
             async with self._execution_lock:
-                if input.thread_id in self._active_executions:
-                    execution = self._active_executions[input.thread_id]
+                if exec_key in self._active_executions:
+                    execution = self._active_executions[exec_key]
                     execution.is_complete = True
 
                     # Check if session has pending tool calls before cleanup
-                    has_pending = await self._has_pending_tool_calls(input.thread_id)
+                    has_pending = await self._has_pending_tool_calls(input.thread_id, user_id)
                     if not has_pending:
-                        del self._active_executions[input.thread_id]
+                        del self._active_executions[exec_key]
     
+    @staticmethod
+    def _collect_output_schema_agent_names(agent: Any, result: Optional[set] = None) -> set:
+        """Walk the agent tree and collect names of LlmAgents with output_schema.
+
+        These agents produce structured output (e.g. a classifier returning
+        "CHAT") that should not appear as user-visible text messages in the
+        chat UI.  The returned set is passed to EventTranslator so it can
+        suppress TextMessageEvents from these authors.  (GitHub #1390)
+        """
+        if result is None:
+            result = set()
+        if isinstance(agent, LlmAgent) and getattr(agent, 'output_schema', None):
+            result.add(agent.name)
+        sub_agents = getattr(agent, 'sub_agents', None)
+        if isinstance(sub_agents, (list, tuple)):
+            for sub in sub_agents:
+                ADKAgent._collect_output_schema_agent_names(sub, result)
+        return result
+
+    @staticmethod
+    def _shallow_copy_agent_tree(agent: Any) -> Any:
+        """Shallow-copy an agent and its sub-agent tree.
+
+        Creates new model instances so that fields like ``instruction``,
+        ``tools``, and ``sub_agents`` can be reassigned per-execution without
+        mutating the originals.  Tool objects themselves are shared by
+        reference, which avoids errors with non-deep-copyable tools (e.g.
+        ADK ``McpToolset`` whose ``errlog`` field holds an unpicklable
+        ``TextIOWrapper``).
+        """
+        try:
+            copied = agent.model_copy(deep=False)
+        except AttributeError:
+            # Agent is not a Pydantic model (e.g. a Mock in tests);
+            # return as-is since it cannot be shallow-copied.
+            return agent
+
+        tools = getattr(copied, 'tools', None)
+        if isinstance(tools, (list, tuple)):
+            copied.tools = list(tools)
+
+        sub_agents = getattr(copied, 'sub_agents', None)
+        if isinstance(sub_agents, (list, tuple)):
+            copied.sub_agents = [ADKAgent._shallow_copy_agent_tree(sa) for sa in sub_agents]
+
+        return copied
+
     async def _start_background_execution(
         self,
         input: RunAgentInput,
@@ -1522,9 +1637,12 @@ class ADKAgent:
         # Extract necessary information
         user_id = self._get_user_id(input)
         app_name = self._get_app_name(input)
-        
-        # Use a deep copy of the ADK agent so we can modify it per-execution
-        adk_agent = self._adk_agent.model_copy(deep=True)
+
+        # Shallow-copy the agent tree so we can modify instruction/tools
+        # per-execution without mutating the original.  Tool objects are
+        # shared by reference (not deep-copied) to avoid errors with
+        # non-picklable tools such as ADK McpToolset.
+        adk_agent = self._shallow_copy_agent_tree(self._adk_agent)
 
         # Handle SystemMessage if it's the first message - append to agent instructions
         if input.messages and isinstance(input.messages[0], SystemMessage):
@@ -1683,6 +1801,11 @@ class ADKAgent:
             # Context from RunAgentInput is stored under _ag_ui_context key,
             # making it accessible via tool_context.state['_ag_ui_context']
             state_with_context = dict(input.state) if input.state else {}
+            # Strip backend-managed keys so stale frontend state cannot
+            # overwrite internal metadata (e.g. lro_tool_call_id_remap).
+            # See: https://github.com/ag-ui-protocol/ag-ui/issues/1168
+            for key in _INTERNAL_STATE_KEYS:
+                state_with_context.pop(key, None)
             if input.context:
                 state_with_context[CONTEXT_STATE_KEY] = [
                     {"description": ctx.description, "value": ctx.value}
@@ -1902,12 +2025,14 @@ class ADKAgent:
                     client_tool_names.add(tool.name)
 
             # Create event translator with predictive state configuration
+            output_schema_names = self._collect_output_schema_agent_names(adk_agent)
             event_translator = EventTranslator(
                 predict_state=self._predict_state,
                 client_emitted_tool_call_ids=client_emitted_ids,
                 client_tool_names=client_tool_names,
                 is_resumable=self._is_adk_resumable(),
                 streaming_function_call_arguments=self._streaming_function_call_arguments,
+                output_schema_agent_names=output_schema_names,
             )
 
             # Share the translator's emitted IDs set with proxy toolsets so
@@ -1965,7 +2090,8 @@ class ADKAgent:
             }
 
             # Conditionally pass invocation_id based on root agent type and scenario.
-            # Composite agents (SequentialAgent, LoopAgent) need it so ADK calls
+            # Composite agents (SequentialAgent, LoopAgent) — whether as root or
+            # as sub-agents of an LlmAgent root — need it so ADK calls
             # populate_invocation_agent_states() to restore internal state.
             # For tool responses, we pass tool_only_invocation_id (input.run_id) to ensure
             # ADK uses the client's run_id instead of auto-generating an e-xxx ID.
@@ -2241,12 +2367,26 @@ class ADKAgent:
                 except Exception as snapshot_error:
                     logger.warning(f"Failed to emit MESSAGES_SNAPSHOT for thread {input.thread_id}: {snapshot_error}")
 
-            # Emit any deferred confirm_changes events LAST, right before completion
-            # This ensures the frontend sees confirm_changes as the last tool call event,
-            # keeping the confirmation dialog in "executing" status with buttons enabled
-            for deferred_event in event_translator.get_and_clear_deferred_confirm_events():
+            # Emit any deferred confirm_changes events, followed by a state
+            # snapshot.  The extra StateSnapshotEvent creates a processing gap
+            # between the confirm_changes TOOL_CALL_END and RUN_FINISHED, giving
+            # the CopilotKit frontend time to render the HITL dialog in
+            # "executing" status before the run completes.  (This mirrors what
+            # LangGraph does — it also emits StateSnapshot + MessagesSnapshot
+            # between the last TOOL_CALL_END and RUN_FINISHED.)
+            deferred_events = event_translator.get_and_clear_deferred_confirm_events()
+            for deferred_event in deferred_events:
                 logger.debug(f"Emitting deferred confirm_changes event: {type(deferred_event).__name__}")
                 await event_queue.put(deferred_event)
+
+            if deferred_events:
+                # Re-emit state snapshot after confirm_changes events for timing
+                if final_state or accumulated_predict_state:
+                    state_for_snapshot = {**(final_state or {}), **accumulated_predict_state}
+                    await event_queue.put(
+                        event_translator._create_state_snapshot_event(state_for_snapshot)
+                    )
+                    logger.debug("Emitted post-confirm StateSnapshotEvent for timing separation")
 
             # Signal completion - ADK execution is done
             logger.debug(f"Background task sending completion signal for thread {input.thread_id}")
@@ -2283,15 +2423,16 @@ class ADKAgent:
     
     async def _cleanup_stale_executions(self):
         """Clean up stale executions."""
-        stale_threads = []
-        
-        for thread_id, execution in self._active_executions.items():
+        stale_keys: List[Tuple[str, str]] = []
+
+        for exec_key, execution in self._active_executions.items():
             if execution.is_stale(self._execution_timeout):
-                stale_threads.append(thread_id)
-        
-        for thread_id in stale_threads:
-            execution = self._active_executions.pop(thread_id)
+                stale_keys.append(exec_key)
+
+        for exec_key in stale_keys:
+            execution = self._active_executions.pop(exec_key)
             await execution.cancel()
+            thread_id, _uid = exec_key
             logger.info(f"Cleaned up stale execution for thread {thread_id}")
 
     async def close(self):

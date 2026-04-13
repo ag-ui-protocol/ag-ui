@@ -122,7 +122,7 @@ class TestHITLToolTracking:
             assert any(isinstance(e, ToolCallEndEvent) for e in events)
 
             # Check if tool call was tracked
-            has_pending = await adk_middleware._has_pending_tool_calls("test_thread")
+            has_pending = await adk_middleware._has_pending_tool_calls("test_thread", "test_user")
             assert has_pending, "Tool call should be tracked as pending"
 
             # Verify session state contains the tool call (use backend_session_id)
@@ -179,8 +179,8 @@ class TestHITLToolTracking:
                 events.append(event)
 
             # Execution should NOT be cleaned up due to pending tool call
-            assert "test_thread" in adk_middleware._active_executions
-            execution = adk_middleware._active_executions["test_thread"]
+            assert ("test_thread", "test_user") in adk_middleware._active_executions
+            execution = adk_middleware._active_executions[("test_thread", "test_user")]
             assert execution.is_complete
 
     @pytest.mark.asyncio
@@ -234,8 +234,8 @@ class TestHITLToolTracking:
                 events.append(event)
 
             # Execution should NOT be cleaned up due to pending tool call
-            assert "test_thread" in adk_middleware._active_executions
-            execution = adk_middleware._active_executions["test_thread"]
+            assert ("test_thread", "test_user") in adk_middleware._active_executions
+            execution = adk_middleware._active_executions[("test_thread", "test_user")]
             assert execution.is_complete
 
         await adk_middleware._session_manager._cleanup_expired_sessions()
@@ -288,7 +288,7 @@ class TestHITLToolTracking:
                 events.append(event)
 
             # Execution should be cleaned up due to NO pending tool call
-            assert "test_thread" not in adk_middleware._active_executions
+            assert ("test_thread", "test_user") not in adk_middleware._active_executions
 
         await adk_middleware._session_manager._cleanup_expired_sessions()
         # Session should not exist due cleanup
@@ -358,7 +358,7 @@ class TestHITLToolTracking:
         assert pending_after == [], "Stale pending_tool_calls should be cleared"
 
         # Verify has_pending_tool_calls returns False
-        has_pending = await adk_middleware._has_pending_tool_calls(thread_id)
+        has_pending = await adk_middleware._has_pending_tool_calls(thread_id, user_id)
         assert not has_pending, "Should have no pending tool calls"
 
     @pytest.mark.asyncio
@@ -384,4 +384,110 @@ class TestHITLToolTracking:
         assert pending == [], "New session should have no pending_tool_calls"
 
         # Verify cache was populated
-        assert thread_id in adk_middleware._session_lookup_cache
+        assert (thread_id, user_id) in adk_middleware._session_lookup_cache
+
+    @pytest.mark.asyncio
+    async def test_session_with_pending_tools_force_deleted_after_hitl_max_wait(self, mock_adk_agent, sample_tool):
+        """Test that sessions with pending tool calls are force-deleted after hitl_max_wait_seconds."""
+        input_data = RunAgentInput(
+            thread_id="test_thread",
+            run_id="run_1",
+            messages=[UserMessage(id="1", role="user", content="Test")],
+            tools=[sample_tool],
+            context=[],
+            state={},
+            forwarded_props={}
+        )
+
+        adk_middleware = ADKAgent(
+            adk_agent=mock_adk_agent,
+            app_name="test_app",
+            user_id="test_user",
+            delete_session_on_cleanup=True,
+            session_timeout_seconds=0,  # all sessions expire immediately
+            hitl_max_wait_seconds=10,   # force-delete after 10 seconds
+        )
+
+        session, backend_session_id = await adk_middleware._ensure_session_exists(
+            app_name="test_app",
+            user_id="test_user",
+            thread_id="test_thread",
+            initial_state={}
+        )
+
+        # Simulate pending tool call via background execution
+        async def mock_run_adk_in_background(*args, **kwargs):
+            event_queue = kwargs['event_queue']
+            await event_queue.put(ToolCallEndEvent(
+                type=EventType.TOOL_CALL_END,
+                tool_call_id="pending_tool_123"
+            ))
+            await event_queue.put(None)
+
+        with patch.object(adk_middleware, '_run_adk_in_background', side_effect=mock_run_adk_in_background):
+            events = []
+            async for event in adk_middleware._start_new_execution(input_data):
+                events.append(event)
+
+        sm = adk_middleware._session_manager
+
+        # First cleanup: session preserved (within hitl_max_wait)
+        await sm._cleanup_expired_sessions()
+        assert sm.get_session_count() == 1
+
+        # Simulate time passing beyond hitl_max_wait_seconds
+        session_key = list(sm._hitl_preserved_since.keys())[0]
+        sm._hitl_preserved_since[session_key] -= 15  # pretend preserved 15s ago
+
+        # Second cleanup: session should now be force-deleted
+        await sm._cleanup_expired_sessions()
+        assert sm.get_session_count() == 0
+
+    @pytest.mark.asyncio
+    async def test_session_with_pending_tools_preserved_indefinitely_without_hitl_max_wait(self, mock_adk_agent, sample_tool):
+        """Test that sessions with pending tool calls are preserved indefinitely when hitl_max_wait_seconds is None (default)."""
+        input_data = RunAgentInput(
+            thread_id="test_thread",
+            run_id="run_1",
+            messages=[UserMessage(id="1", role="user", content="Test")],
+            tools=[sample_tool],
+            context=[],
+            state={},
+            forwarded_props={}
+        )
+
+        adk_middleware = ADKAgent(
+            adk_agent=mock_adk_agent,
+            app_name="test_app",
+            user_id="test_user",
+            delete_session_on_cleanup=True,
+            session_timeout_seconds=0,  # all sessions expire immediately
+            # hitl_max_wait_seconds defaults to None (no limit)
+        )
+
+        session, backend_session_id = await adk_middleware._ensure_session_exists(
+            app_name="test_app",
+            user_id="test_user",
+            thread_id="test_thread",
+            initial_state={}
+        )
+
+        async def mock_run_adk_in_background(*args, **kwargs):
+            event_queue = kwargs['event_queue']
+            await event_queue.put(ToolCallEndEvent(
+                type=EventType.TOOL_CALL_END,
+                tool_call_id="pending_tool_456"
+            ))
+            await event_queue.put(None)
+
+        with patch.object(adk_middleware, '_run_adk_in_background', side_effect=mock_run_adk_in_background):
+            events = []
+            async for event in adk_middleware._start_new_execution(input_data):
+                events.append(event)
+
+        sm = adk_middleware._session_manager
+
+        # Run cleanup multiple times - session should always be preserved
+        for _ in range(5):
+            await sm._cleanup_expired_sessions()
+            assert sm.get_session_count() == 1

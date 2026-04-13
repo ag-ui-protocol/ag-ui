@@ -1,0 +1,44 @@
+output:
+  - meta
+  - summary
+  - success
+  - failure
+  - execution
+  - execution_out
+  - execution_info
+  - skips
+
+pre-commit:
+  parallel: true
+  commands:
+    sync-lockfile:
+      tags: lockfile
+      glob: "**/package.json"
+      run: pnpm i --lockfile-only
+      stage_fixed: true
+    generate-dojo-content:
+      tags: dojo
+      glob: "apps/dojo/**"
+      run: pnpm --filter demo-viewer run generate-content-json
+      stage_fixed: true
+    lint-fix:
+      tags: lint
+      run: pnpm run lint --fix && pnpm run format
+      stage_fixed: true
+    test-and-check-packages:
+      tags: test-packages
+      env:
+        NX_TUI: "false"
+      run: pnpm run test && pnpm run test:exports
+
+pre-push:
+  commands:
+    check-binaries:
+      tags: binaries
+      run: |
+        BINARY_FILES=$(git diff --name-only --diff-filter=ACM HEAD@{push}.. 2>/dev/null | grep -iE '\.(exe|dll|so|dylib|o|obj|a|lib|wasm|dSYM)$|/build/|\.dSYM/' || true)
+        if [ -n "$BINARY_FILES" ]; then
+          echo "Error: binary or build artifacts detected in push:"
+          echo "$BINARY_FILES"
+          exit 1
+        fi

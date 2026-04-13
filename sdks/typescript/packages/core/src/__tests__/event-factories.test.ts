@@ -43,10 +43,10 @@ describe("event factories", () => {
     expect(event.role).toBe("user");
   });
 
-  it("rejects empty deltas in TEXT_MESSAGE_CONTENT", () => {
-    expect(() => createTextMessageContentEvent({ messageId: "msg-3", delta: "" })).toThrow(
-      /Delta must not be an empty string/,
-    );
+  it("accepts empty deltas in TEXT_MESSAGE_CONTENT", () => {
+    const event = createTextMessageContentEvent({ messageId: "msg-3", delta: "" });
+    expect(event.type).toBe(EventType.TEXT_MESSAGE_CONTENT);
+    expect(event.delta).toBe("");
   });
 
   it("creates TEXT_MESSAGE_CONTENT when delta provided", () => {
@@ -61,6 +61,42 @@ describe("event factories", () => {
 
     expect(event.type).toBe(EventType.TEXT_MESSAGE_END);
     expect(event.messageId).toBe("msg-5");
+  });
+
+  it("creates TEXT_MESSAGE_START with name", () => {
+    const event = createTextMessageStartEvent({
+      messageId: "msg-1",
+      name: "research-agent",
+    });
+    expect(event.type).toBe(EventType.TEXT_MESSAGE_START);
+    expect(event.messageId).toBe("msg-1");
+    expect(event.role).toBe("assistant");
+    expect(event.name).toBe("research-agent");
+  });
+
+  it("creates TEXT_MESSAGE_START without name", () => {
+    const event = createTextMessageStartEvent({
+      messageId: "msg-1",
+    });
+    expect(event.name).toBeUndefined();
+  });
+
+  it("creates TEXT_MESSAGE_CHUNK with name", () => {
+    const event = createTextMessageChunkEvent({
+      messageId: "msg-1",
+      delta: "Hello",
+      name: "research-agent",
+    });
+    expect(event.type).toBe(EventType.TEXT_MESSAGE_CHUNK);
+    expect(event.name).toBe("research-agent");
+  });
+
+  it("creates TEXT_MESSAGE_CHUNK without name", () => {
+    const event = createTextMessageChunkEvent({
+      messageId: "msg-1",
+      delta: "Hello",
+    });
+    expect(event.name).toBeUndefined();
   });
 
   it("creates TEXT_MESSAGE_CHUNK with optional fields", () => {

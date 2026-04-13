@@ -2,9 +2,10 @@
 import React, { useState, useEffect } from "react";
 import "@copilotkit/react-core/v2/styles.css";
 import "./style.css";
-import { 
+import {
   useAgent,
   UseAgentUpdate,
+  useConfigureSuggestions,
   CopilotSidebar,
   CopilotChatConfigurationProvider,
 } from "@copilotkit/react-core/v2";
@@ -172,7 +173,6 @@ export default function Subgraphs({ params }: SubgraphsProps) {
 
   const chatTitle = 'Travel Planning Assistant';
   const chatDescription = 'Plan your perfect trip with AI specialists';
-  const initialLabel = 'Hi! ✈️ Ready to plan an amazing trip? Try saying "Plan a trip to Paris" or "Find me flights to Tokyo"';
 
   return (
     <CopilotKit
@@ -253,7 +253,6 @@ export default function Subgraphs({ params }: SubgraphsProps) {
                   defaultOpen={chatDefaultOpen}
                   labels={{
                     modalHeaderTitle: chatTitle,
-                    welcomeMessageText: initialLabel,
                   }}
                 />
               </div>
@@ -273,7 +272,6 @@ export default function Subgraphs({ params }: SubgraphsProps) {
             defaultOpen={chatDefaultOpen}
             labels={{
               modalHeaderTitle: chatTitle,
-              welcomeMessageText: initialLabel,
             }}
           />
         )}
@@ -291,6 +289,24 @@ function TravelPlanner() {
   });
 
   const agentState = agent.state as TravelAgentState | undefined;
+
+  useConfigureSuggestions({
+    suggestions: [
+      {
+        title: "Plan a trip",
+        message: "Plan a trip to Paris for 5 days.",
+      },
+      {
+        title: "Find flights",
+        message: "Find me flights to Tokyo.",
+      },
+      {
+        title: "Explore experiences",
+        message: "What are the best experiences in Barcelona?",
+      },
+    ],
+    available: "always",
+  });
 
   // Set initial state on mount
   useEffect(() => {

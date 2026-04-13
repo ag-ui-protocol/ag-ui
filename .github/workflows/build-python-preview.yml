@@ -1,0 +1,91 @@
+name: Build Python Preview
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: ${{ github.repository }}-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: ">=0.8.0"
+
+      - name: Compute preview version
+        id: version
+        run: |
+          TIMESTAMP=$(git log -1 --format=%ct HEAD)
+          VERSION="0.0.0.dev${TIMESTAMP}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Preview version: ${VERSION}"
+
+      - name: Rewrite pyproject.toml versions
+        run: uv run python scripts/rewrite-python-preview-versions.py ${{ steps.version.outputs.version }}
+
+      - name: Build ag-ui-protocol
+        working-directory: sdks/python
+        run: uv build
+
+      - name: Build ag-ui-langgraph
+        working-directory: integrations/langgraph/python
+        run: uv build
+
+      - name: Build ag-ui-crewai
+        working-directory: integrations/crew-ai/python
+        run: uv build
+
+      - name: Build ag-ui-agent-spec
+        working-directory: integrations/agent-spec/python
+        run: uv build
+
+      - name: Build ag_ui_adk
+        working-directory: integrations/adk-middleware/python
+        run: uv build
+
+      - name: Build ag_ui_strands
+        working-directory: integrations/aws-strands/python
+        run: uv build
+
+      - name: Collect dist artifacts
+        run: |
+          mkdir -p dist-preview
+          cp sdks/python/dist/*                        dist-preview/
+          cp integrations/langgraph/python/dist/*      dist-preview/
+          cp integrations/crew-ai/python/dist/*        dist-preview/
+          cp integrations/agent-spec/python/dist/*     dist-preview/
+          cp integrations/adk-middleware/python/dist/*  dist-preview/
+          cp integrations/aws-strands/python/dist/*    dist-preview/
+          echo "Artifacts to publish:"
+          ls -1 dist-preview/
+
+      # Save metadata so the publish workflow can find the PR and version.
+      - name: Save PR metadata
+        run: |
+          mkdir -p pr-metadata
+          echo "${{ github.event.pull_request.number }}" > pr-metadata/pr-number
+          echo "${{ steps.version.outputs.version }}" > pr-metadata/version
+          echo "${{ github.sha }}" > pr-metadata/sha
+
+      - name: Upload dist artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-preview-dist
+          path: dist-preview/
+
+      - name: Upload PR metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-preview-metadata
+          path: pr-metadata/

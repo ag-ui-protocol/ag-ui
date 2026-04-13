@@ -10,18 +10,18 @@ if (!fs.existsSync(cpkPath)) {
   process.exit(1);
 }
 
-// Detect whether we got a packages root (has v1/ and v2/ subdirs) or a direct V1 path.
+// Detect whether the CopilotKit repo uses the old v1/v2 split or the new flat structure.
 const hasV1Subdir = fs.existsSync(path.join(cpkPath, "v1"));
 const hasV2Subdir = fs.existsSync(path.join(cpkPath, "v2"));
-const isPackagesRoot = hasV1Subdir && hasV2Subdir;
+const isOldStructure = hasV1Subdir && hasV2Subdir;
 
-// Build namespace → directory mapping
 const namespaceDirs = {};
-if (isPackagesRoot) {
+if (isOldStructure) {
+  // Old CopilotKit structure: v1/ and v2/ subdirs
   namespaceDirs["@copilotkit/"] = path.join(cpkPath, "v1");
   namespaceDirs["@copilotkitnext/"] = path.join(cpkPath, "v2");
 } else {
-  // Backward compat: single path = V1 only (original behavior)
+  // New flat structure (CopilotKit PR #3409): all packages under @copilotkit/
   namespaceDirs["@copilotkit/"] = cpkPath;
 }
 

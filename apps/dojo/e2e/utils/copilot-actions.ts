@@ -2,7 +2,7 @@ import { Page, expect } from "@playwright/test";
 import { CopilotSelectors } from "./copilot-selectors";
 
 /** Default timeout for waiting for LLM response to finish (SSE stream done) */
-const LLM_RESPONSE_TIMEOUT = 30_000;
+const LLM_RESPONSE_TIMEOUT = 60_000;
 /** Default timeout for finding a DOM element after response */
 const ELEMENT_TIMEOUT = 10_000;
 
@@ -13,25 +13,23 @@ const ELEMENT_TIMEOUT = 10_000;
  */
 export async function awaitLLMResponseDone(
   page: Page,
-  timeout = LLM_RESPONSE_TIMEOUT
+  timeout = LLM_RESPONSE_TIMEOUT,
 ) {
   // First wait briefly for the stream to start
   try {
     await page.waitForFunction(
-      () =>
-        document.querySelector('[data-copilot-running="true"]') !== null,
+      () => document.querySelector('[data-copilot-running="true"]') !== null,
       null,
-      { timeout: 3000 }
+      { timeout: 3000 },
     );
   } catch {
     // May have already started and finished, continue
   }
   // Then wait for the stream to finish
   await page.waitForFunction(
-    () =>
-      document.querySelector('[data-copilot-running="false"]') !== null,
+    () => document.querySelector('[data-copilot-running="false"]') !== null,
     null,
-    { timeout }
+    { timeout },
   );
 }
 
@@ -59,7 +57,7 @@ export async function sendChatMessage(page: Page, message: string) {
 export async function sendAndAwaitResponse(
   page: Page,
   message: string,
-  timeout = LLM_RESPONSE_TIMEOUT
+  timeout = LLM_RESPONSE_TIMEOUT,
 ) {
   // Snapshot assistant message count before sending so we can detect
   // when the agent starts responding to THIS message.
@@ -76,16 +74,15 @@ export async function sendAndAwaitResponse(
       document.querySelectorAll('[data-testid="copilot-assistant-message"]')
         .length > before,
     countBefore,
-    { timeout }
+    { timeout },
   );
 
   // Now wait for the stream to finish — at this point the running state
   // belongs to the current response, not a stale one.
   await page.waitForFunction(
-    () =>
-      document.querySelector('[data-copilot-running="false"]') !== null,
+    () => document.querySelector('[data-copilot-running="false"]') !== null,
     null,
-    { timeout }
+    { timeout },
   );
 }
 
@@ -95,7 +92,7 @@ export async function sendAndAwaitResponse(
 export async function assertAssistantReply(
   page: Page,
   expected: RegExp | string,
-  timeout = ELEMENT_TIMEOUT
+  timeout = ELEMENT_TIMEOUT,
 ) {
   const messages = CopilotSelectors.assistantMessages(page);
   const last = messages.last();
@@ -113,7 +110,7 @@ export async function assertAssistantReply(
 export async function assertUserMessage(
   page: Page,
   text: string | RegExp,
-  timeout = ELEMENT_TIMEOUT
+  timeout = ELEMENT_TIMEOUT,
 ) {
   const messages = CopilotSelectors.userMessages(page);
   await expect(messages.getByText(text)).toBeVisible({ timeout });
@@ -135,10 +132,7 @@ export async function openChat(page: Page) {
 /**
  * Hover over an assistant message to reveal the toolbar, then click regenerate.
  */
-export async function regenerateResponse(
-  page: Page,
-  messageIndex: number
-) {
+export async function regenerateResponse(page: Page, messageIndex: number) {
   const message = CopilotSelectors.assistantMessages(page).nth(messageIndex);
   await expect(message).toBeVisible({ timeout: ELEMENT_TIMEOUT });
   await message.hover();

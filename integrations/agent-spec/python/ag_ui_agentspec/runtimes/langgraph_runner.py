@@ -1,5 +1,6 @@
-from typing import Any, Dict, List
+import logging
 import traceback
+from typing import Any, Dict, List
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
@@ -7,6 +8,7 @@ from langgraph.graph.state import CompiledStateGraph
 from ag_ui.core import RunAgentInput
 from ag_ui_agentspec.agentspec_tracing_exporter import EVENT_QUEUE
 
+logger = logging.getLogger("ag_ui_agentspec.tracing")
 
 async def run_langgraph_agent(agent: CompiledStateGraph, input_data: RunAgentInput) -> None:
     input_messages = prepare_langgraph_agent_inputs(input_data)
@@ -18,7 +20,11 @@ async def run_langgraph_agent(agent: CompiledStateGraph, input_data: RunAgentInp
         async for _ in agent.astream({"messages": input_messages}, stream_mode="messages", config=config):
             pass
     except Exception as e:
-        print(f"{repr(e)}{traceback.format_exc()}")
+        logger.exception(
+            "LangGraph agent crashed with error: %s%s",
+            repr(e),
+            traceback.format_exc(),
+        )
         raise RuntimeError(f"LangGraph agent crashed with error: {repr(e)}\n\nTraceback: {traceback.format_exc()}")
     finally:
         EVENT_QUEUE.reset(token)
@@ -41,7 +47,9 @@ def prepare_langgraph_agent_inputs(input_data: RunAgentInput) -> List[Dict[str, 
     return messages_to_return
 
 
-async def filter_only_new_messages(agent, thread_id: str, input_messages: list[dict]) -> list[dict]:
+async def filter_only_new_messages(
+    agent: CompiledStateGraph, thread_id: str, input_messages: list[dict]
+) -> list[dict]:
     config = RunnableConfig({"configurable": {"thread_id": thread_id}})
     state_snapshot = await agent.aget_state(config)
     existing_messages = state_snapshot.values.get("messages", []) or []
