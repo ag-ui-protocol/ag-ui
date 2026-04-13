@@ -175,7 +175,30 @@ class LangGraphAgent:
         self.active_run["manually_emitted_state"] = None
 
         config = ensure_config(self.config.copy() if self.config else {})
-        config["configurable"] = {**(config.get('configurable', {})), "thread_id": thread_id}
+        base_conf = dict(config.get("configurable") or {})
+        forwarded_cfg = (
+            forwarded_props.get("config")
+            if isinstance(forwarded_props, dict)
+            else None
+        )
+        if isinstance(forwarded_cfg, dict):
+            forwarded_conf = forwarded_cfg.get("configurable")
+            if isinstance(forwarded_conf, dict):
+                base_conf.update(forwarded_conf)
+            # Apply any other RunnableConfig keys from forwardedProps.config (not hardcoded per key).
+            for key, value in forwarded_cfg.items():
+                if key == "configurable" or value is None:
+                    continue
+                if key == "metadata" and isinstance(value, dict):
+                    existing = config.get("metadata")
+                    if isinstance(existing, dict):
+                        config["metadata"] = {**existing, **value}
+                    else:
+                        config["metadata"] = dict(value)
+                else:
+                    config[key] = value
+        base_conf["thread_id"] = thread_id
+        config["configurable"] = base_conf
 
         agent_state = await self.graph.aget_state(config)
         resume_input = forwarded_props.get('command', {}).get('resume', None)
