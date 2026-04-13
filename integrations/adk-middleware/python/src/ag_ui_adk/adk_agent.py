@@ -858,15 +858,9 @@ class ADKAgent:
             AG-UI protocol events
         """
 
-        """Override upstream run() with multi-instance cache hydration."""
-
-        # --- Multi-instance fix: hydrate session cache from DB —-----------
-        # _session_lookup_cache is purely in-memory. When multiple instances
-        # share a database-backed SessionService (e.g., Kubernetes pods behind
-        # a load balancer), the cache is empty on instance switch. Without this,
-        # _get_session_metadata() returns None -> _get_pending_tool_call_ids()
-        # returns None -> _has_pending_tool_calls() returns False -> user message
-        # dispatched before tool results -> LLM rejects the request.
+        # Multi-instance: hydrate in-memory session cache from DB on startup/switch.
+        # Ensures pending tool calls are detected across load-balanced instances
+        # so user messages are not dispatched before tool results (prevents LLM errors).
         user_id = self._get_user_id(input)
         cache_key = (input.thread_id, user_id)
         if cache_key not in self._session_lookup_cache:
