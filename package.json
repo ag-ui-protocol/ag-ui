@@ -65,7 +65,7 @@
       "diff": ">=8.0.3",
       "qs": ">=6.14.2",
       "markdown-it": ">=14.1.1",
-      "mdast-util-to-hast": ">=13.2.1",
+      "mdast-util-to-hast@>=13.0.0 <13.2.1": ">=13.2.1",
       "validator": ">=13.15.20",
       "@smithy/config-resolver": ">=4.4.0",
       "lodash-es": ">=4.18.1",
