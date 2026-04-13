@@ -245,7 +245,6 @@ class LangGraphAgent:
 
                 current_node_name = event.get("metadata", {}).get("langgraph_node")
                 event_type = event.get("event")
-                self.active_run["id"] = event.get("run_id")
                 exiting_node = False
 
                 if event_type == "on_chain_end" and isinstance(
