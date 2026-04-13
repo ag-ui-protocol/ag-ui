@@ -311,6 +311,19 @@ def resolve_reasoning_content(chunk: Any) -> LangGraphReasoning | None:
                 index=block.get("index", 0)
             )
 
+        # AWS Bedrock Converse format: { type: "reasoning_content", reasoning_content: { text: "...", signature: "..." } }
+        if block_type == "reasoning_content" and isinstance(block.get("reasoning_content"), dict):
+            rc = block["reasoning_content"]
+            if rc.get("text"):
+                result = LangGraphReasoning(
+                    text=rc["text"],
+                    type="text",
+                    index=block.get("index", 0),
+                )
+                if rc.get("signature"):
+                    result["signature"] = rc["signature"]
+                return result
+
         # OpenAI Responses API v1 format: { type: "reasoning", summary: [{ text: "..." }] }
         if block_type == "reasoning" and block.get("summary"):
             summaries = block["summary"]
@@ -335,6 +348,15 @@ def resolve_reasoning_content(chunk: Any) -> LangGraphReasoning | None:
                 type="text",
                 text=data["text"],
                 index=data.get("index", 0)
+            )
+
+        # DeepSeek / Qwen / xAI format: additional_kwargs.reasoning_content is a string
+        reasoning_content = chunk.additional_kwargs.get("reasoning_content")
+        if reasoning_content and isinstance(reasoning_content, str):
+            return LangGraphReasoning(
+                type="text",
+                text=reasoning_content,
+                index=0,
             )
 
     return None
