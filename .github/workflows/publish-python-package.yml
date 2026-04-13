@@ -64,14 +64,6 @@ jobs:
           ")
           uv run $TEST_CMD
 
-      - name: Fix source permissions for wheel
-        working-directory: ${{ inputs.package }}
-        run: |
-          # Ensure all source files are readable so the wheel inherits
-          # correct permissions (fixes broken wheels from restrictive umask)
-          find . -type f -exec chmod a+r {} +
-          find . -type d -exec chmod a+rx {} +
-
       - name: Build package
         working-directory: ${{ inputs.package }}
         run: uv build
