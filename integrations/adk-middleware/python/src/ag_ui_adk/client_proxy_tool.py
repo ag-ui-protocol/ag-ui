@@ -25,16 +25,31 @@ from .serialization import serialize_tool_args
 logger = logging.getLogger(__name__)
 
 
-def _strip_json_schema_meta(schema: Any) -> Any:
-    """Recursively strip JSON Schema meta-fields (keys starting with ``$``).
+# JSON Schema meta-fields that are valid in JSON Schema but rejected by
+# google.genai.types.Schema (which uses Pydantic extra="forbid").
+_JSON_SCHEMA_META_KEYS = frozenset({
+    "title", "default", "examples", "readOnly", "writeOnly",
+    "deprecated", "const", "contentMediaType", "contentEncoding",
+    "contentSchema", "additionalProperties", "patternProperties",
+    "unevaluatedProperties", "unevaluatedItems", "minProperties",
+    "maxProperties", "dependentRequired", "dependentSchemas",
+})
 
-    Fields such as ``$schema``, ``$id``, ``$ref``, ``$defs``, and ``$comment``
-    are valid in JSON Schema but not accepted by ``google.genai.types.Schema``,
-    which uses Pydantic's ``extra = "forbid"``.  Removing them prevents
-    ``ValidationError`` when calling ``Schema.model_validate()``.
+
+def _strip_json_schema_meta(schema: Any) -> Any:
+    """Recursively strip JSON Schema meta-fields not accepted by genai.types.Schema.
+
+    Removes both ``$``-prefixed keys (``$schema``, ``$id``, ``$ref``, ``$defs``,
+    ``$comment``) and non-``$``-prefixed meta-fields (``title``, ``default``,
+    ``examples``, ``readOnly``, etc.) that are valid in JSON Schema but cause
+    ``ValidationError`` when passed to ``Schema.model_validate()``.
     """
     if isinstance(schema, dict):
-        return {k: _strip_json_schema_meta(v) for k, v in schema.items() if not k.startswith("$")}
+        return {
+            k: _strip_json_schema_meta(v)
+            for k, v in schema.items()
+            if not k.startswith("$") and k not in _JSON_SCHEMA_META_KEYS
+        }
     if isinstance(schema, list):
         return [_strip_json_schema_meta(item) for item in schema]
     return schema
