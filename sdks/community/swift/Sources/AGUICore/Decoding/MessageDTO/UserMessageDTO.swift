@@ -1,0 +1,154 @@
+/*
+ * MIT License
+ *
+ * Copyright (c) 2025 Perfect Aduh
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
+import Foundation
+
+/// Data Transfer Object for UserMessage decoding.
+struct UserMessageDTO {
+    let id: String
+    let content: String
+    let name: String?
+    let contentParts: [any InputContent]?
+
+    static func decode(from data: Data, decoder: JSONDecoder = JSONDecoder()) throws -> UserMessageDTO {
+        guard let jsonObject = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(codingPath: [], debugDescription: "Expected JSON object at root")
+            )
+        }
+
+        // Validate role
+        let role = try MessageDecodingHelpers.extractRole(from: jsonObject)
+        try MessageDecodingHelpers.validateRole(role, expected: .user)
+
+        // Extract required fields
+        let id = try MessageDecodingHelpers.extractRequiredString(from: jsonObject, key: "id")
+
+        // Extract optional name
+        let name = MessageDecodingHelpers.extractOptionalString(from: jsonObject, key: "name")
+
+        // Handle polymorphic content (String or Array of InputContent)
+        guard let contentValue = jsonObject["content"] else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.content,
+                DecodingError.Context(codingPath: [], debugDescription: "Missing content field")
+            )
+        }
+
+        let content: String
+        let contentParts: [any InputContent]?
+
+        if let contentString = contentValue as? String {
+            // Text-only message
+            content = contentString
+            contentParts = nil
+        } else if let contentArray = contentValue as? [[String: Any]] {
+            // Multimodal message
+            content = ""
+            contentParts = try decodeInputContentArray(contentArray, decoder: decoder)
+        } else {
+            throw DecodingError.typeMismatch(
+                String.self,
+                DecodingError.Context(
+                    codingPath: [CodingKeys.content],
+                    debugDescription: "Expected String or Array for content"
+                )
+            )
+        }
+
+        return UserMessageDTO(id: id, content: content, name: name, contentParts: contentParts)
+    }
+
+    /// Decodes an array of InputContent from JSON dictionaries using DTOs.
+    private static func decodeInputContentArray(
+        _ array: [[String: Any]],
+        decoder: JSONDecoder
+    ) throws -> [any InputContent] {
+        var result: [any InputContent] = []
+
+        for (index, item) in array.enumerated() {
+            guard let type = item["type"] as? String else {
+                throw DecodingError.keyNotFound(
+                    CodingKeys.type,
+                    DecodingError.Context(
+                        codingPath: [ArrayIndex(index: index)],
+                        debugDescription: "Missing type field in content array item"
+                    )
+                )
+            }
+
+            let itemData = try JSONSerialization.data(withJSONObject: item)
+
+            switch type {
+            case "text":
+                let dto = try TextInputContentDTO.decode(from: itemData, decoder: decoder)
+                result.append(dto.toDomain())
+            case "binary":
+                let dto = try BinaryInputContentDTO.decode(from: itemData, decoder: decoder)
+                result.append(try dto.toDomain())
+            default:
+                throw DecodingError.dataCorrupted(
+                    DecodingError.Context(
+                        codingPath: [ArrayIndex(index: index), CodingKeys.type],
+                        debugDescription: "Unknown InputContent type: \(type)"
+                    )
+                )
+            }
+        }
+
+        return result
+    }
+
+    func toDomain() -> UserMessage {
+        if let parts = contentParts {
+            return UserMessage.multimodal(id: id, parts: parts, name: name)
+        } else {
+            return UserMessage(id: id, content: content, name: name)
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case content
+        case type
+    }
+
+    private struct ArrayIndex: CodingKey {
+        var intValue: Int?
+        var stringValue: String
+
+        init(index: Int) {
+            self.intValue = index
+            self.stringValue = "Index \(index)"
+        }
+
+        init?(intValue: Int) {
+            self.intValue = intValue
+            self.stringValue = "Index \(intValue)"
+        }
+
+        init?(stringValue: String) {
+            nil
+        }
+    }
+}
