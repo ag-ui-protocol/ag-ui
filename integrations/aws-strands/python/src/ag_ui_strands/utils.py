@@ -23,23 +23,27 @@ _DOCUMENT_FORMATS: Set[str] = {"pdf", "csv", "doc", "docx", "xls", "xlsx", "html
 _VIDEO_FORMATS: Set[str] = {"flv", "mkv", "mov", "mpeg", "mpg", "mp4", "three_gp", "webm", "wmv"}
 
 
-def _mime_to_format(mime_type: Optional[str], allowed: Set[str]) -> str:
+def _mime_to_format(mime_type: Optional[str], allowed: Set[str]) -> Optional[str]:
     """Parse a MIME type into a short format string.
 
     For example ``"image/png"`` -> ``"png"``, ``"application/pdf"`` -> ``"pdf"``.
-    If the parsed format is not in *allowed*, fall back to the first item from the
-    sorted allowed set.
+    Returns ``None`` if *mime_type* is absent or the parsed format is not in
+    *allowed* — callers should skip the content block rather than guess.
     """
-    if mime_type:
-        # Take the part after the last '/'
-        fmt = mime_type.rsplit("/", 1)[-1].lower()
-        if fmt in allowed:
-            return fmt
-    # Fallback: first sorted allowed format
-    default = min(allowed)
-    if mime_type:
-        logger.warning(f"Unrecognized MIME type '{mime_type}', falling back to '{default}'")
-    return default
+    if not mime_type:
+        logger.warning("No MIME type provided, cannot determine format")
+        return None
+    # Take the part after the last '/'
+    fmt = mime_type.rsplit("/", 1)[-1].lower()
+    if fmt in allowed:
+        return fmt
+    logger.warning(
+        "Unsupported MIME type '%s' (parsed format '%s' not in %s)",
+        mime_type,
+        fmt,
+        sorted(allowed),
+    )
+    return None
 
 
 def _fetch_url_bytes(url: str) -> Optional[bytes]:
@@ -101,6 +105,8 @@ def convert_agui_content_to_strands(content: List[Any]) -> List[Dict[str, Any]]:
             if raw is None:
                 continue
             fmt = _mime_to_format(_get_mime_type(item.source), _IMAGE_FORMATS)
+            if fmt is None:
+                continue
             blocks.append({
                 "image": {
                     "format": fmt,
@@ -113,6 +119,8 @@ def convert_agui_content_to_strands(content: List[Any]) -> List[Dict[str, Any]]:
             if raw is None:
                 continue
             fmt = _mime_to_format(_get_mime_type(item.source), _DOCUMENT_FORMATS)
+            if fmt is None:
+                continue
             blocks.append({
                 "document": {
                     "format": fmt,
@@ -126,6 +134,8 @@ def convert_agui_content_to_strands(content: List[Any]) -> List[Dict[str, Any]]:
             if raw is None:
                 continue
             fmt = _mime_to_format(_get_mime_type(item.source), _VIDEO_FORMATS)
+            if fmt is None:
+                continue
             blocks.append({
                 "video": {
                     "format": fmt,
@@ -153,6 +163,9 @@ def convert_agui_content_to_strands(content: List[Any]) -> List[Dict[str, Any]]:
                 logger.warning("Skipping binary content: could not resolve bytes")
                 continue
             fmt = _mime_to_format(item.mime_type, _IMAGE_FORMATS)
+            if fmt is None:
+                logger.warning("Skipping binary content: unsupported MIME type '%s'", item.mime_type)
+                continue
             blocks.append({
                 "image": {
                     "format": fmt,

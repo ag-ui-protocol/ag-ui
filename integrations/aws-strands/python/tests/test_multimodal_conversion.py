@@ -267,15 +267,33 @@ class TestMimeToFormat:
         )
         assert result == "pdf"
 
-    def test_unknown_mime_fallback(self):
+    def test_unknown_mime_returns_none(self):
         result = _mime_to_format("application/octet-stream", {"png", "jpeg", "gif", "webp"})
-        # Falls back to first sorted allowed format
-        assert result == "gif"
+        assert result is None
 
-    def test_none_mime_fallback(self):
+    def test_none_mime_returns_none(self):
         result = _mime_to_format(None, {"png", "jpeg", "gif", "webp"})
-        # Falls back to first sorted allowed format
-        assert result == "gif"
+        assert result is None
+
+    def test_unsupported_mime_skips_image_block(self):
+        """An image with an unsupported MIME type should be skipped entirely."""
+        raw_bytes = b"fake-tiff-data"
+        b64_value = base64.b64encode(raw_bytes).decode()
+        source = InputContentDataSource(value=b64_value, mime_type="image/tiff")
+        content = [ImageInputContent(source=source)]
+
+        result = convert_agui_content_to_strands(content)
+        assert result == []
+
+    def test_missing_mime_skips_image_block(self):
+        """An image with no MIME type should be skipped entirely."""
+        raw_bytes = b"fake-image-data"
+        b64_value = base64.b64encode(raw_bytes).decode()
+        source = InputContentDataSource(value=b64_value)
+        content = [ImageInputContent(source=source)]
+
+        result = convert_agui_content_to_strands(content)
+        assert result == []
 
 
 # ---------------------------------------------------------------------------
