@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **FIX**: Multi-instance session cache hydration in `ADKAgent.run()` (#1484, thanks @deb538)
+  - Hydrates the in-memory `_session_lookup_cache` from the database-backed `SessionService` on cache miss, before pending-tool-call detection runs
+  - Prevents HITL breakage in load-balanced deployments where requests land on an instance that did not create the session: without hydration, `_has_pending_tool_calls()` returned `False` and user messages were dispatched ahead of pending tool results, causing the LLM to reject the turn
+
 - **FIX**: JSON Schema cleaning for `google.genai.types.Schema` compatibility (#1495, fixes #1003)
   - Replaces `_strip_json_schema_meta` with `_clean_schema_for_genai`: strips `$`-prefixed keys, filters remaining keys via an allowlist derived from `types.Schema.model_fields` (with camelCase aliases), and maps `examples` → `example` (first element) and `const` → `enum` (JSON-serialized single-value list)
   - Preserves valid genai fields (`title`, `default`, `additionalProperties`, `minProperties`, etc.) that were previously stripped, while correctly removing unsupported fields (`readOnly`, `deprecated`, `contentMediaType`, etc.) that caused `ValidationError`
