@@ -1,8 +1,8 @@
-"""Agentic Chat example for AWS Strands.
+"""Agentic Chat with Multimodal support for AWS Strands.
 
-Simple conversational agent. Frontend tools like change_background are
-forwarded from the client at runtime via RunAgentInput.tools and
-dynamically registered as proxy tools — no server-side @tool definition needed.
+Demonstrates multimodal message handling. When the user uploads an image,
+the adapter converts AG-UI InputContent to Strands ContentBlock format
+and passes it to the vision-capable model.
 """
 import os
 from pathlib import Path
@@ -27,16 +27,17 @@ model = create_model()
 strands_agent = Agent(
     model=model,
     system_prompt="""
-    You are a helpful assistant.
-    When the user greets you, always greet them back. Your greeting should always start with "Hello".
-    Your greeting should also always ask (exact wording) "how can I assist you?"
+    You are a helpful assistant that can analyze images and documents.
+    When the user shares an image, describe what you see in detail.
+    When the user shares a document, summarize its contents.
+    Always be descriptive and specific about visual content.
     """,
 )
 
 agui_agent = StrandsAgent(
     agent=strands_agent,
-    name="agentic_chat",
-    description="Conversational Strands agent with AG-UI streaming",
+    name="agentic_chat_multimodal",
+    description="Conversational Strands agent with multimodal content support",
 )
 
 app = create_strands_app(agui_agent, "/")
