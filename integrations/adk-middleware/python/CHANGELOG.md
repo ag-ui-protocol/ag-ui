@@ -31,6 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Hydrates the in-memory `_session_lookup_cache` from the database-backed `SessionService` on cache miss, before pending-tool-call detection runs
   - Prevents HITL breakage in load-balanced deployments where requests land on an instance that did not create the session: without hydration, `_has_pending_tool_calls()` returned `False` and user messages were dispatched ahead of pending tool results, causing the LLM to reject the turn
 
+- **FIX**: Redundant `list_sessions` scan on new thread creation (#1514)
+  - Tracks hydration DB misses in `_cache_checked_keys` and passes `skip_find=True` to `get_or_create_session`, eliminating a duplicate `_find_session_by_thread_id` call for new threads
+
+- **FIX**: Stale pending-tool-call cleanup after cache hydration (#1515)
+  - Replaces the cache-miss heuristic in `_ensure_session_exists` with `_verify_pending_tool_calls()`, which runs once per instance per session and only clears pending calls when no active execution exists to fulfill them
+  - Correctly distinguishes multi-instance cache misses (valid calls) from middleware restarts (stale calls)
+
 - **FIX**: JSON Schema cleaning for `google.genai.types.Schema` compatibility (#1495, fixes #1003)
   - Replaces `_strip_json_schema_meta` with `_clean_schema_for_genai`: strips `$`-prefixed keys, filters remaining keys via an allowlist derived from `types.Schema.model_fields` (with camelCase aliases), and maps `examples` → `example` (first element) and `const` → `enum` (JSON-serialized single-value list)
   - Preserves valid genai fields (`title`, `default`, `additionalProperties`, `minProperties`, etc.) that were previously stripped, while correctly removing unsupported fields (`readOnly`, `deprecated`, `contentMediaType`, etc.) that caused `ValidationError`

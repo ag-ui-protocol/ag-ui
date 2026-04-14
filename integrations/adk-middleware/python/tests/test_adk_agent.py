@@ -1393,3 +1393,152 @@ class TestThreadIdSessionIdMapping:
         assert session_id == "session-1"
         assert uid == user_id
 
+    @pytest.mark.asyncio
+    async def test_hydration_miss_records_cache_checked_key(self, adk_agent):
+        """When hydration finds no session, _cache_checked_keys is populated
+        so _ensure_session_exists skips the redundant _find_session_by_thread_id."""
+        class DummySessionManager:
+            async def _find_session_by_thread_id(self, app_name, user_id, thread_id):
+                return None  # no existing session
+
+        adk_agent._session_manager = DummySessionManager()
+
+        async def fake_get_unseen(input):
+            return []
+
+        async def fake_start_new_execution(input, message_batch=None, tool_results=None):
+            if False:
+                yield None
+
+        class Input:
+            def __init__(self):
+                self.thread_id = "new-thread"
+                self.run_id = "run1"
+                self.messages = []
+
+        inp = Input()
+
+        with patch.object(adk_agent, "_get_unseen_messages", new=fake_get_unseen), \
+             patch.object(adk_agent, "_start_new_execution", new=fake_start_new_execution):
+            _ = [e async for e in adk_agent.run(inp)]
+
+        user_id = adk_agent._get_user_id(inp)
+        cache_key = (inp.thread_id, user_id)
+        assert cache_key in adk_agent._cache_checked_keys
+
+    @pytest.mark.asyncio
+    async def test_stale_pending_calls_cleared_on_first_access(self, adk_agent):
+        """_verify_pending_tool_calls clears stale calls when no active execution."""
+        # Pre-populate cache to simulate hydrated session
+        cache_key = ("thread-1", "test_user")
+        adk_agent._session_lookup_cache[cache_key] = ("session-1", "test_app", "test_user")
+
+        # Set up session manager to return pending calls
+        get_state_calls = []
+        set_state_calls = []
+
+        async def mock_get_state(session_id, app_name, user_id, key, default=None):
+            get_state_calls.append(key)
+            if key == "pending_tool_calls":
+                return ["stale-tool-1", "stale-tool-2"]
+            return default
+
+        async def mock_set_state(session_id, app_name, user_id, key, value):
+            set_state_calls.append((key, value))
+            return True
+
+        adk_agent._session_manager.get_state_value = mock_get_state
+        adk_agent._session_manager.set_state_value = mock_set_state
+
+        # No active execution for this thread
+        assert cache_key not in adk_agent._active_executions
+
+        await adk_agent._verify_pending_tool_calls(cache_key, "session-1", "test_app", "test_user")
+
+        # Should have cleared the stale calls
+        assert ("pending_tool_calls", []) in set_state_calls
+        # Should be marked as verified
+        assert cache_key in adk_agent._sessions_verified_locally
+
+    @pytest.mark.asyncio
+    async def test_pending_calls_preserved_with_active_execution(self, adk_agent):
+        """_verify_pending_tool_calls does NOT clear calls when execution is active."""
+        cache_key = ("thread-1", "test_user")
+        adk_agent._session_lookup_cache[cache_key] = ("session-1", "test_app", "test_user")
+
+        set_state_calls = []
+
+        async def mock_get_state(session_id, app_name, user_id, key, default=None):
+            if key == "pending_tool_calls":
+                return ["active-tool-1"]
+            return default
+
+        async def mock_set_state(session_id, app_name, user_id, key, value):
+            set_state_calls.append((key, value))
+            return True
+
+        adk_agent._session_manager.get_state_value = mock_get_state
+        adk_agent._session_manager.set_state_value = mock_set_state
+
+        # Simulate active execution
+        mock_execution = Mock()
+        mock_execution.is_complete = False
+        adk_agent._active_executions[cache_key] = mock_execution
+
+        await adk_agent._verify_pending_tool_calls(cache_key, "session-1", "test_app", "test_user")
+
+        # Should NOT have cleared anything
+        assert len(set_state_calls) == 0
+        # Should still be marked as verified
+        assert cache_key in adk_agent._sessions_verified_locally
+
+    @pytest.mark.asyncio
+    async def test_verify_pending_calls_runs_only_once(self, adk_agent):
+        """_verify_pending_tool_calls is a no-op on subsequent calls for same key."""
+        cache_key = ("thread-1", "test_user")
+        get_state_calls = []
+
+        async def mock_get_state(session_id, app_name, user_id, key, default=None):
+            get_state_calls.append(key)
+            return default
+
+        adk_agent._session_manager.get_state_value = mock_get_state
+
+        # First call — should check state
+        await adk_agent._verify_pending_tool_calls(cache_key, "session-1", "test_app", "test_user")
+        assert len(get_state_calls) == 1
+
+        # Second call — should be a no-op
+        await adk_agent._verify_pending_tool_calls(cache_key, "session-1", "test_app", "test_user")
+        assert len(get_state_calls) == 1  # no additional call
+
+    @pytest.mark.asyncio
+    async def test_ensure_session_passes_skip_find_after_hydration_miss(self, adk_agent):
+        """_ensure_session_exists passes skip_find=True when _cache_checked_keys has the key."""
+        cache_key = ("new-thread", "test_user")
+        adk_agent._cache_checked_keys.add(cache_key)
+
+        class FakeSession:
+            id = "created-session"
+
+        get_or_create_calls = []
+        original_get_or_create = adk_agent._session_manager.get_or_create_session
+
+        async def tracking_get_or_create(**kwargs):
+            get_or_create_calls.append(kwargs)
+            return FakeSession(), "created-session"
+
+        adk_agent._session_manager.get_or_create_session = tracking_get_or_create
+
+        # Mock _verify_pending_tool_calls to avoid side effects
+        async def noop_verify(*args):
+            pass
+        adk_agent._verify_pending_tool_calls = noop_verify
+
+        await adk_agent._ensure_session_exists("test_app", "test_user", "new-thread", {})
+
+        assert len(get_or_create_calls) == 1
+        assert get_or_create_calls[0]["skip_find"] is True
+        # Key should be consumed
+        assert cache_key not in adk_agent._cache_checked_keys
+

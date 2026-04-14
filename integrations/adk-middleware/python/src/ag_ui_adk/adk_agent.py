@@ -216,6 +216,10 @@ class ADKAgent:
         # Session lookup cache for efficient (thread_id, user_id) to session metadata mapping
         # Maps (thread_id, user_id) -> (session_id, app_name, user_id)
         self._session_lookup_cache: Dict[Tuple[str, str], Tuple[str, str, str]] = {}
+        # Keys where hydration already scanned DB and found nothing (avoids redundant scan)
+        self._cache_checked_keys: set = set()
+        # Keys where _ensure_session_exists has verified pending tool calls on this instance
+        self._sessions_verified_locally: set = set()
 
         # Predictive state configuration for real-time state updates
         self._predict_state = predict_state
@@ -876,7 +880,11 @@ class ADKAgent:
                     "Hydrated session cache from DB for thread %s (session %s)",
                     input.thread_id, session.id,
                 )
-            
+            else:
+                # Record that we already checked DB — _ensure_session_exists
+                # can skip the redundant _find_session_by_thread_id scan.
+                self._cache_checked_keys.add(cache_key)
+
         unseen_messages = await self._get_unseen_messages(input)
 
         if not unseen_messages:
@@ -1074,7 +1082,6 @@ class ADKAgent:
         Returns:
             Tuple of (session, backend_session_id)
         """
-        # Check cache first using composite key (thread_id, user_id)
         cache_key = (thread_id, user_id)
         cached = self._session_lookup_cache.get(cache_key)
         if cached:
@@ -1083,47 +1090,77 @@ class ADKAgent:
             session = await self._session_manager.get_session(session_id, cached_app_name, cached_user_id)
             if session:
                 logger.debug(f"Session cache hit for thread {thread_id}, user {user_id}: {session_id}")
+                await self._verify_pending_tool_calls(cache_key, session_id, cached_app_name, cached_user_id)
                 return session, session_id
 
-        # Cache miss or stale - resolve via SessionManager
+        # Cache miss or stale — resolve via SessionManager.
+        # If run() already scanned DB for this key and found nothing,
+        # pass skip_find to avoid a redundant list_sessions call.
+        already_scanned = cache_key in self._cache_checked_keys
+        self._cache_checked_keys.discard(cache_key)
+
         try:
             session, backend_session_id = await self._session_manager.get_or_create_session(
                 thread_id=thread_id,
                 app_name=app_name,
                 user_id=user_id,
-                initial_state=initial_state
+                initial_state=initial_state,
+                skip_find=already_scanned,
             )
 
-            # Cache the mapping as tuple: (session_id, app_name, user_id)
             self._session_lookup_cache[cache_key] = (backend_session_id, app_name, user_id)
-
-            # Clear stale pending_tool_calls on session resumption.
-            # Cache miss + existing session = middleware restart.
-            existing_pending = await self._session_manager.get_state_value(
-                session_id=backend_session_id,
-                app_name=app_name,
-                user_id=user_id,
-                key="pending_tool_calls",
-                default=[],
-            )
-            if existing_pending:
-                logger.info(
-                    f"Cleared {len(existing_pending)} stale pending tool calls "
-                    f"for thread {thread_id} (session {backend_session_id})"
-                )
-                await self._session_manager.set_state_value(
-                    session_id=backend_session_id,
-                    app_name=app_name,
-                    user_id=user_id,
-                    key="pending_tool_calls",
-                    value=[],
-                )
+            await self._verify_pending_tool_calls(cache_key, backend_session_id, app_name, user_id)
 
             logger.debug(f"Session ready for thread {thread_id}: {backend_session_id}")
             return session, backend_session_id
         except Exception as e:
             logger.error(f"Failed to ensure session for thread {thread_id}: {e}")
             raise
+
+    async def _verify_pending_tool_calls(
+        self, cache_key: Tuple[str, str],
+        session_id: str, app_name: str, user_id: str,
+    ) -> None:
+        """On first local access of a session, clear stale pending tool calls.
+
+        Runs once per instance per session. Pending calls are stale when no
+        active execution exists to fulfill them (e.g. after a middleware restart).
+        In multi-instance deployments where another instance has an active
+        execution, pending calls are preserved because the incoming run() will
+        carry tool result messages that satisfy them.
+        """
+        if cache_key in self._sessions_verified_locally:
+            return
+        self._sessions_verified_locally.add(cache_key)
+
+        existing_pending = await self._session_manager.get_state_value(
+            session_id=session_id,
+            app_name=app_name,
+            user_id=user_id,
+            key="pending_tool_calls",
+            default=[],
+        )
+        if not existing_pending:
+            return
+
+        # If there's an active execution on this instance waiting for tool
+        # results, these calls aren't stale.
+        execution = self._active_executions.get(cache_key)
+        if execution and not execution.is_complete:
+            return
+
+        logger.info(
+            "Clearing %d stale pending tool calls for thread %s "
+            "(session %s, no active execution on this instance)",
+            len(existing_pending), cache_key[0], session_id,
+        )
+        await self._session_manager.set_state_value(
+            session_id=session_id,
+            app_name=app_name,
+            user_id=user_id,
+            key="pending_tool_calls",
+            value=[],
+        )
 
     async def _convert_latest_message(
         self,
@@ -2463,8 +2500,10 @@ class ADKAgent:
                 await execution.cancel()
             self._active_executions.clear()
 
-        # Clear session lookup cache
+        # Clear session lookup cache and related tracking sets
         self._session_lookup_cache.clear()
+        self._cache_checked_keys.clear()
+        self._sessions_verified_locally.clear()
 
         # Stop session manager cleanup task
         await self._session_manager.stop_cleanup_task()
