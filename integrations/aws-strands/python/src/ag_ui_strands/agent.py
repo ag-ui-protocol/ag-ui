@@ -1,8 +1,9 @@
-"""AWS Strands Agent implementation for AG-UI.
+"""AWS Strands Agent adapter for AG-UI.
 
-Simple adapter following the Agno pattern.
+Translates Strands streaming events into the AG-UI event protocol.
 """
 
+import base64
 import json
 import logging
 import uuid
@@ -15,12 +16,19 @@ from ag_ui.core import (
     AssistantMessage,
     CustomEvent,
     EventType,
-    MessagesSnapshotEvent,
+    ReasoningEncryptedValueEvent,
+    ReasoningEndEvent,
+    ReasoningMessageContentEvent,
+    ReasoningMessageEndEvent,
+    ReasoningMessageStartEvent,
+    ReasoningStartEvent,
     RunAgentInput,
     RunErrorEvent,
     RunFinishedEvent,
     RunStartedEvent,
     StateSnapshotEvent,
+    StepFinishedEvent,
+    StepStartedEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
@@ -40,6 +48,7 @@ from .config import (
     maybe_await,
     normalize_predict_state,
 )
+from .utils import convert_agui_content_to_strands, flatten_content_to_text
 
 
 class StrandsAgent:
@@ -71,6 +80,8 @@ class StrandsAgent:
             self._agent_kwargs["agent_id"] = agent.agent_id
         if hasattr(agent, "state") and agent.state is not None:
             self._agent_kwargs["state"] = agent.state.get()
+        if hasattr(agent, "conversation_manager") and agent.conversation_manager is not None:
+            self._agent_kwargs["conversation_manager"] = agent.conversation_manager
 
         self.name = name
         self.description = description
@@ -272,17 +283,36 @@ class StrandsAgent:
             elif input_data.messages:
                 for msg in reversed(input_data.messages):
                     if (msg.role == "user" or msg.role == "tool") and msg.content:
-                        user_message = msg.content
+                        if isinstance(msg.content, list):
+                            has_media = any(
+                                getattr(item, "type", None) in ("image", "audio", "video", "document")
+                                for item in msg.content
+                            )
+                            if has_media:
+                                user_message = convert_agui_content_to_strands(msg.content)
+                                if not user_message:
+                                    # All content blocks failed conversion — fall back to text
+                                    user_message = flatten_content_to_text(msg.content) or "Hello"
+                                    logger.warning("All media content blocks failed conversion, falling back to text")
+                            else:
+                                user_message = flatten_content_to_text(msg.content)
+                        else:
+                            user_message = msg.content
                         break
 
             # Optionally allow configuration to adjust the outgoing user message
             if self.config.state_context_builder:
                 try:
-                    user_message = self.config.state_context_builder(
-                        input_data, user_message
+                    text_for_builder = flatten_content_to_text(user_message) if isinstance(user_message, list) else user_message
+                    builder_result = self.config.state_context_builder(
+                        input_data, text_for_builder
                     )
+                    if not isinstance(user_message, list):
+                        user_message = builder_result
+                    else:
+                        logger.debug("state_context_builder result not applied to multimodal message — multimodal content preserved")
                     # If state_context_builder modifies the message, update the last user message
-                    if strands_messages and strands_messages[-1]["role"] == "user":
+                    if not isinstance(user_message, list) and strands_messages and strands_messages[-1]["role"] == "user":
                         strands_messages[-1]["content"] = [{"text": user_message}]
                 except Exception as e:
                     # If the builder fails, keep the original message
@@ -296,6 +326,10 @@ class StrandsAgent:
             stop_text_streaming = False
             halt_event_stream = False
             pending_halt = False
+
+            # Reasoning/thinking state tracking
+            reasoning_started = False
+            reasoning_message_id = None
 
             logger.debug(
                 f"Starting agent run: thread_id={input_data.thread_id}, run_id={input_data.run_id}, pending_tool_result_ids={pending_tool_result_ids}, message_count={len(input_data.messages)}, strands_message_count={len(strands_messages)}"
@@ -341,6 +375,105 @@ class StrandsAgent:
                             type=EventType.TEXT_MESSAGE_CONTENT,
                             message_id=message_id,
                             delta=text_chunk,
+                        )
+
+                    # Handle reasoning/thinking text streaming
+                    elif "reasoningText" in event and event.get("reasoning"):
+                        reasoning_text = event["reasoningText"]
+
+                        if not reasoning_started:
+                            reasoning_message_id = str(uuid.uuid4())
+
+                            # Emit reasoning events
+                            yield ReasoningStartEvent(
+                                type=EventType.REASONING_START,
+                                message_id=reasoning_message_id
+                            )
+                            yield ReasoningMessageStartEvent(
+                                type=EventType.REASONING_MESSAGE_START,
+                                message_id=reasoning_message_id,
+                                role="reasoning"
+                            )
+                            reasoning_started = True
+
+                        # Stream reasoning content
+                        if reasoning_text:
+                            yield ReasoningMessageContentEvent(
+                                type=EventType.REASONING_MESSAGE_CONTENT,
+                                message_id=reasoning_message_id,
+                                delta=reasoning_text
+                            )
+
+                    # Handle encrypted/redacted reasoning content
+                    elif "reasoningRedactedContent" in event and event.get("reasoning"):
+                        redacted_content = event["reasoningRedactedContent"]
+
+                        if redacted_content is None:
+                            logger.debug(f"Ignoring reasoning event with None redacted content (thread_id={input_data.thread_id})")
+                            continue
+
+                        if not reasoning_started:
+                            reasoning_message_id = str(uuid.uuid4())
+                            yield ReasoningStartEvent(
+                                type=EventType.REASONING_START,
+                                message_id=reasoning_message_id
+                            )
+                            yield ReasoningMessageStartEvent(
+                                type=EventType.REASONING_MESSAGE_START,
+                                message_id=reasoning_message_id,
+                                role="reasoning"
+                            )
+                            reasoning_started = True
+
+                        # Encode bytes to base64 string for transport
+                        if isinstance(redacted_content, bytes):
+                            encrypted_value = base64.b64encode(redacted_content).decode()
+                        elif isinstance(redacted_content, str):
+                            encrypted_value = redacted_content
+                        else:
+                            logger.warning(f"Unexpected type for reasoningRedactedContent: {type(redacted_content)}, converting to str")
+                            encrypted_value = str(redacted_content)
+
+                        yield ReasoningEncryptedValueEvent(
+                            type=EventType.REASONING_ENCRYPTED_VALUE,
+                            subtype="message",
+                            entity_id=reasoning_message_id,
+                            encrypted_value=encrypted_value
+                        )
+
+                    # Handle reasoning signature (verification token) - typically not exposed to UI
+                    elif "reasoning_signature" in event and event.get("reasoning"):
+                        sig = event.get("reasoning_signature", "")
+                        logger.debug(f"Received reasoning signature: {str(sig)[:20]}...")
+
+                    # Handle multi-agent node start (maps to STEP_STARTED)
+                    elif isinstance(event, dict) and event.get("type") == "multiagent_node_start":
+                        node_id = event.get("node_id", "unknown")
+                        node_type = event.get("node_type", "agent")
+                        yield StepStartedEvent(
+                            type=EventType.STEP_STARTED,
+                            step_name=f"{node_type}:{node_id}"
+                        )
+
+                    # Handle multi-agent node stop (maps to STEP_FINISHED)
+                    elif isinstance(event, dict) and event.get("type") == "multiagent_node_stop":
+                        node_id = event.get("node_id", "unknown")
+                        node_type = event.get("node_type", "agent")
+                        yield StepFinishedEvent(
+                            type=EventType.STEP_FINISHED,
+                            step_name=f"{node_type}:{node_id}"
+                        )
+
+                    # Handle multi-agent handoff (emit as CUSTOM event)
+                    elif isinstance(event, dict) and event.get("type") == "multiagent_handoff":
+                        yield CustomEvent(
+                            type=EventType.CUSTOM,
+                            name="MultiAgentHandoff",
+                            value={
+                                "from_nodes": event.get("from_node_ids", []),
+                                "to_nodes": event.get("to_node_ids", []),
+                                "message": event.get("message")
+                            }
                         )
 
                     # Handle tool streaming events for real-time state updates
@@ -562,6 +695,19 @@ class StrandsAgent:
                     elif "event" in event and isinstance(event.get("event"), dict):
                         inner_event = event["event"]
                         if "contentBlockStop" in inner_event:
+                            # Close reasoning events if active
+                            if reasoning_started:
+                                yield ReasoningMessageEndEvent(
+                                    type=EventType.REASONING_MESSAGE_END,
+                                    message_id=reasoning_message_id
+                                )
+                                yield ReasoningEndEvent(
+                                    type=EventType.REASONING_END,
+                                    message_id=reasoning_message_id
+                                )
+                                reasoning_started = False
+                                reasoning_message_id = None
+
                             # Find the most recent tool call that hasn't been emitted yet
                             tool_name = None
                             tool_input = None
@@ -732,6 +878,17 @@ class StrandsAgent:
                 except Exception as e:
                     # Log other errors but don't fail
                     logger.warning(f"Error closing agent stream: {e}")
+
+            # Close reasoning if still open
+            if reasoning_started:
+                yield ReasoningMessageEndEvent(
+                    type=EventType.REASONING_MESSAGE_END,
+                    message_id=reasoning_message_id
+                )
+                yield ReasoningEndEvent(
+                    type=EventType.REASONING_END,
+                    message_id=reasoning_message_id
+                )
 
             # End message if started
             if message_started:

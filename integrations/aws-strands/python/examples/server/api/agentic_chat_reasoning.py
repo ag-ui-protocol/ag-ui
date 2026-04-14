@@ -1,8 +1,8 @@
-"""Agentic Chat example for AWS Strands.
+"""Agentic Chat with Reasoning example for AWS Strands.
 
-Simple conversational agent. Frontend tools like change_background are
-forwarded from the client at runtime via RunAgentInput.tools and
-dynamically registered as proxy tools — no server-side @tool definition needed.
+Demonstrates reasoning/thinking event streaming. When the underlying model
+supports extended thinking, the adapter emits REASONING_* events that the
+frontend can display as a "thinking" indicator.
 """
 import os
 from pathlib import Path
@@ -27,16 +27,17 @@ model = create_model()
 strands_agent = Agent(
     model=model,
     system_prompt="""
-    You are a helpful assistant.
+    You are a helpful assistant that thinks through problems step by step.
     When the user greets you, always greet them back. Your greeting should always start with "Hello".
     Your greeting should also always ask (exact wording) "how can I assist you?"
+    When reasoning about a problem, break it down into clear steps before answering.
     """,
 )
 
 agui_agent = StrandsAgent(
     agent=strands_agent,
-    name="agentic_chat",
-    description="Conversational Strands agent with AG-UI streaming",
+    name="agentic_chat_reasoning",
+    description="Conversational Strands agent with reasoning/thinking event streaming",
 )
 
 app = create_strands_app(agui_agent, "/")
