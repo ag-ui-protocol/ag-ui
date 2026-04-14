@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Upgrade Ktor from 3.1.3 to 3.2.4 (latest compatible with Kotlin 2.1.x)
 
+### Fixed
+- Repair chatapp-swiftui XCFramework build: remove stale composite-build substitution for deleted kotlin-a2ui module, add missing a2ui-4k catalog entry, and align kotlinx-datetime on the 0.7.1-0.6.x-compat artifact for iOS compatibility
+
 ### Examples
 - Update a2ui-4k dependency from 0.8.0 to 0.8.1 in chatapp examples
 - Remove unnecessary core library desugaring from chatapp-shared (minSdk is 26)
