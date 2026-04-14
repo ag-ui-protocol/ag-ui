@@ -38,6 +38,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Replaces the cache-miss heuristic in `_ensure_session_exists` with `_verify_pending_tool_calls()`, which runs once per instance per session and only clears pending calls when no active execution exists to fulfill them
   - Correctly distinguishes multi-instance cache misses (valid calls) from middleware restarts (stale calls)
 
+### Security
+
+- **SEC**: Bump transitive dependencies to fix 1 critical and 7 high Dependabot alerts
+  - `authlib` → 1.6.10 (critical: JWS signature bypass; high: OIDC hash binding, Bleichenbacher oracle, `alg:none` bypass)
+  - `pyasn1` → 0.6.3 (high: DoS via unbounded recursion)
+  - `pyopenssl` → 26.0.0 (high: DTLS cookie callback buffer overflow)
+  - `PyJWT` → 2.12.1 (high: unknown `crit` header extensions)
+  - `black` → 26.3.1 (high: arbitrary file writes from cache file name)
+  - `cryptography` → 46.0.7 (high: subgroup attack on SECT curves)
+  - `protobuf` → 6.33.5+ (high: JSON recursion depth bypass)
+  - `python-multipart` → 0.0.22+ (high: arbitrary file write via non-default config)
+
 - **FIX**: JSON Schema cleaning for `google.genai.types.Schema` compatibility (#1495, fixes #1003)
   - Replaces `_strip_json_schema_meta` with `_clean_schema_for_genai`: strips `$`-prefixed keys, filters remaining keys via an allowlist derived from `types.Schema.model_fields` (with camelCase aliases), and maps `examples` → `example` (first element) and `const` → `enum` (JSON-serialized single-value list)
   - Preserves valid genai fields (`title`, `default`, `additionalProperties`, `minProperties`, etc.) that were previously stripped, while correctly removing unsupported fields (`readOnly`, `deprecated`, `contentMediaType`, etc.) that caused `ValidationError`
