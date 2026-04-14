@@ -69,7 +69,7 @@ def _clean_schema_for_genai(schema: Any) -> Any:
                 continue
             # Map const -> enum (single-value list, stringified for genai)
             if k == "const":
-                result["enum"] = [str(v)]
+                result["enum"] = [v if isinstance(v, str) else json.dumps(v)]
                 continue
             # Only keep keys that genai.types.Schema accepts
             if k not in _ALLOWED_SCHEMA_KEYS:

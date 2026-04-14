@@ -587,10 +587,16 @@ class TestCleanSchemaForGenai:
         assert result["enum"] == ["fixed_value"]
 
     def test_maps_const_int_to_enum_string(self):
-        """const with non-string value is stringified for genai enum compatibility."""
+        """const with non-string value is JSON-serialized for genai enum compatibility."""
         schema = {"type": "integer", "const": 42}
         result = _clean_schema_for_genai(schema)
         assert result["enum"] == ["42"]
+
+    def test_maps_const_structured_to_enum_json(self):
+        """const with a dict/list value is JSON-serialized, not Python repr'd."""
+        schema = {"type": "object", "const": {"foo": 1}}
+        result = _clean_schema_for_genai(schema)
+        assert result["enum"] == ['{"foo": 1}']
 
     # --- Edge cases ---
 
@@ -954,13 +960,15 @@ class TestEndToEndSchemaValidation:
         # database: default and enum preserved
         db_prop = params.properties["database"]
         assert db_prop.default == "production"
-        assert db_prop.enum == ["json", "csv", "table"] or db_prop.enum == ["production", "staging", "test"]
+        assert db_prop.enum == ["production", "staging", "test"]
         # timeout: const mapped to enum (stringified)
         timeout_prop = params.properties["timeout"]
         assert timeout_prop.enum == ["30"]
         # format: readOnly/deprecated stripped, valid fields kept
         format_prop = params.properties["format"]
         assert format_prop.title == "Output Format"
+        assert format_prop.enum == ["json", "csv", "table"]
+        assert format_prop.default == "json"
         # options: nested additionalProperties preserved
         options_prop = params.properties["options"]
         assert options_prop.additional_properties is True
