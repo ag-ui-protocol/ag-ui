@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Upgrade Ktor from 3.1.3 to 3.2.4 (latest compatible with Kotlin 2.1.x)
+
 ### Examples
 - Update a2ui-4k dependency from 0.8.0 to 0.8.1 in chatapp examples
 - Remove unnecessary core library desugaring from chatapp-shared (minSdk is 26)
