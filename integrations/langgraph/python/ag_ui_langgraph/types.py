@@ -62,6 +62,9 @@ RunMetadata = TypedDict("RunMetadata", {
     "manually_emitted_state": NotRequired[Optional[State]],
     # Reasoning / thinking
     "reasoning_process": NotRequired[Optional[ThinkingProcess]],
+    # Stable message IDs for pause/resume flows
+    "stable_message_id": NotRequired[Optional[str]],
+    "paused_text_message_id": NotRequired[Optional[str]],
 })
 
 MessagesInProgressRecord = Dict[str, Optional[MessageInProgress]]

@@ -206,6 +206,8 @@ export class LangGraphAgent extends AbstractAgent {
       threadId: input.threadId,
       hasFunctionStreaming: false,
       modelMadeToolCall: false,
+      pausedTextMessageId: null,
+      stableMessageId: null,
     };
     // Reset per-run flags
     this.cancelRequested = false;
@@ -683,6 +685,26 @@ export class LangGraphAgent extends AbstractAgent {
       this.activeRun = undefined;
       return subscriber.complete();
     } catch (e) {
+      // Clean up any open text message before propagating error
+      const mip = this.getMessageInProgress(this.activeRun?.id ?? "");
+      if (mip?.id && !mip.toolCallId) {
+        this.dispatchEvent({
+          type: EventType.TEXT_MESSAGE_END,
+          messageId: mip.id,
+          rawEvent: {},
+        });
+        this.messagesInProcess[this.activeRun!.id] = null;
+      } else {
+        const pausedId = this.activeRun?.pausedTextMessageId;
+        if (pausedId) {
+          this.dispatchEvent({
+            type: EventType.TEXT_MESSAGE_END,
+            messageId: pausedId,
+            rawEvent: {},
+          });
+          this.activeRun!.pausedTextMessageId = null;
+        }
+      }
       return subscriber.error(e);
     }
   }
@@ -729,7 +751,7 @@ export class LangGraphAgent extends AbstractAgent {
           (predictStateTool: PredictStateTool) => predictStateTool.tool === toolCallData?.name,
         );
 
-        const isToolCallStartEvent = !hasCurrentStream && toolCallData?.name;
+        let isToolCallStartEvent = !hasCurrentStream && toolCallData?.name;
         const isToolCallArgsEvent =
           hasCurrentStream && currentStream?.toolCallId && toolCallData?.args;
         const isToolCallEndEvent = hasCurrentStream && currentStream?.toolCallId && !toolCallData;
@@ -743,8 +765,18 @@ export class LangGraphAgent extends AbstractAgent {
         const messageContent = resolveMessageContent(event.data.chunk.content);
         const isMessageContentEvent = Boolean(!toolCallData && messageContent);
 
+        // Empty chunk with no tool call data — defer end to OnChatModelEnd
         const isMessageEndEvent =
-          hasCurrentStream && !currentStream?.toolCallId && !isMessageContentEvent;
+          hasCurrentStream &&
+          !currentStream?.toolCallId &&
+          !isMessageContentEvent &&
+          !toolCallData;
+        // Text message pauses when tool calls start while text is in progress
+        const isMessagePauseEvent =
+          hasCurrentStream &&
+          !currentStream?.toolCallId &&
+          !isMessageContentEvent &&
+          !!toolCallData;
 
         if (reasoningData) {
           this.handleReasoningEvent(reasoningData);
@@ -804,15 +836,24 @@ export class LangGraphAgent extends AbstractAgent {
           break;
         }
 
-        if (isMessageEndEvent) {
-          const resolved = this.dispatchEvent({
-            type: EventType.TEXT_MESSAGE_END,
-            messageId: currentStream!.id,
-            rawEvent: event,
-          });
-          if (resolved) {
-            this.messagesInProcess[this.activeRun!.id] = null;
+        if (isMessagePauseEvent) {
+          // Tool calls starting while text in progress — pause without ending
+          this.activeRun!.pausedTextMessageId = currentStream?.id ?? null;
+          this.messagesInProcess[this.activeRun!.id] = null;
+          // Re-derive: messagesInProcess cleared, tool call start can now proceed
+          isToolCallStartEvent = !!toolCallData?.name;
+          if (isToolCallStartEvent) {
+            this.activeRun!.hasFunctionStreaming = true;
           }
+          // Don't break — fall through to tool call start handler
+        }
+
+        if (isMessageEndEvent) {
+          // Defer TextMessageEnd to OnChatModelEnd — an empty chunk during
+          // streaming doesn't guarantee the run is complete (tool calls may
+          // follow). Pause the message so OnChatModelEnd can close it.
+          this.activeRun!.pausedTextMessageId = currentStream?.id ?? null;
+          this.messagesInProcess[this.activeRun!.id] = null;
           break;
         }
 
@@ -850,17 +891,35 @@ export class LangGraphAgent extends AbstractAgent {
         if (isMessageContentEvent && shouldEmitMessages) {
           // No existing message yet, also init the message
           if (!currentStream) {
-            this.dispatchEvent({
-              type: EventType.TEXT_MESSAGE_START,
-              role: "assistant",
-              messageId: event.data.chunk.id,
-              rawEvent: event,
-            });
-            this.setMessageInProgress(this.activeRun!.id, {
-              id: event.data.chunk.id,
-              toolCallId: null,
-              toolCallName: null,
-            });
+            const pausedId = this.activeRun?.pausedTextMessageId;
+            if (pausedId) {
+              // Resuming text after tool calls — reuse the paused message_id
+              // Don't emit TextMessageStart (message is still active in client)
+              this.activeRun!.pausedTextMessageId = null;
+              this.setMessageInProgress(this.activeRun!.id, {
+                id: pausedId,
+                toolCallId: null,
+                toolCallName: null,
+              });
+            } else {
+              // Cache the first chunk's message ID and reuse it for stability
+              if (!this.activeRun!.stableMessageId) {
+                this.activeRun!.stableMessageId = event.data.chunk.id;
+              }
+              const messageId = this.activeRun!.stableMessageId!;
+              // First text in the run — emit TextMessageStart
+              this.dispatchEvent({
+                type: EventType.TEXT_MESSAGE_START,
+                role: "assistant",
+                messageId,
+                rawEvent: event,
+              });
+              this.setMessageInProgress(this.activeRun!.id, {
+                id: messageId,
+                toolCallId: null,
+                toolCallName: null,
+              });
+            }
             currentStream = this.getMessageInProgress(this.activeRun!.id);
           }
 
@@ -894,8 +953,20 @@ export class LangGraphAgent extends AbstractAgent {
           });
           if (resolved) {
             this.messagesInProcess[this.activeRun!.id] = null;
+            this.activeRun!.stableMessageId = null;
           }
           break;
+        }
+        // Handle paused text messages that were never resumed
+        const pausedId = this.activeRun?.pausedTextMessageId;
+        if (pausedId) {
+          this.dispatchEvent({
+            type: EventType.TEXT_MESSAGE_END,
+            messageId: pausedId,
+            rawEvent: event,
+          });
+          this.activeRun!.pausedTextMessageId = null;
+          this.activeRun!.stableMessageId = null;
         }
         break;
       case LangGraphEventTypes.OnCustomEvent:
@@ -1085,6 +1156,10 @@ export class LangGraphAgent extends AbstractAgent {
     if (toolCallChunks?.length > 0) {
       const tc = toolCallChunks[0];
       if (tc.name) {
+        // NOTE: messages-tuple mode still uses end-not-pause when tool calls start
+        // during text streaming. The pause/resume pattern is only implemented in
+        // the events-mode path (handleSingleEvent). This is acceptable because
+        // messages-tuple is a fallback used only when eventsStreamActive is false.
         // End any text message in progress
         if (currentStream?.id && !currentStream?.toolCallId) {
           this.dispatchEvent({

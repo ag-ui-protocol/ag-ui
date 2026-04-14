@@ -183,6 +183,8 @@ class LangGraphAgent:
             "has_function_streaming": False,
             "model_made_tool_call": False,
             "state_reliable": True,
+            "stable_message_id": None,
+            "paused_text_message_id": None,
         }
         self.active_run = INITIAL_ACTIVE_RUN
         try:
@@ -429,6 +431,30 @@ class LangGraphAgent:
             yield self._dispatch_event(
                 RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=self.active_run["id"])
             )
+        except Exception:
+            # Clean up any open text message before propagating the error
+            if self.active_run:
+                mip = self.get_message_in_progress(self.active_run["id"])
+                if mip and mip.get("id") and not mip.get("tool_call_id"):
+                    yield self._dispatch_event(
+                        TextMessageEndEvent(
+                            type=EventType.TEXT_MESSAGE_END,
+                            message_id=mip["id"],
+                            raw_event={},
+                        )
+                    )
+                    self.messages_in_process[self.active_run["id"]] = None
+                elif self.active_run.get("paused_text_message_id"):
+                    paused_id = self.active_run["paused_text_message_id"]
+                    yield self._dispatch_event(
+                        TextMessageEndEvent(
+                            type=EventType.TEXT_MESSAGE_END,
+                            message_id=paused_id,
+                            raw_event={},
+                        )
+                    )
+                    self.active_run["paused_text_message_id"] = None
+            raise
         finally:
             self.active_run = None
 
@@ -931,7 +957,18 @@ class LangGraphAgent:
             # during tool-call / structured-output transitions, and the
             # truthy check would misclassify it as an end-event.
             is_message_content_event = tool_call_data is None and message_content is not None
-            is_message_end_event = has_current_stream and not current_stream.get("tool_call_id") and not is_message_content_event
+            is_message_end_event = (
+                has_current_stream
+                and not current_stream.get("tool_call_id")
+                and not is_message_content_event
+                and tool_call_data is None
+            )
+            is_message_pause_event = (
+                has_current_stream
+                and not current_stream.get("tool_call_id")
+                and not is_message_content_event
+                and tool_call_data is not None
+            )
 
             if reasoning_data:
                 for event_str in self.handle_reasoning_event(reasoning_data):
@@ -995,10 +1032,21 @@ class LangGraphAgent:
                 return
 
 
+            if is_message_pause_event:
+                # Tool calls starting while text in progress — pause without ending
+                self.active_run["paused_text_message_id"] = current_stream.get("id")
+                self.messages_in_process[self.active_run["id"]] = None
+                # Re-derive: message_in_progress is now cleared, so tool call start can proceed
+                is_tool_call_start_event = bool(tool_call_data and tool_call_data.get("name"))
+                if is_tool_call_start_event:
+                    self.active_run["has_function_streaming"] = True
+
             if is_message_end_event:
-                yield self._dispatch_event(
-                    TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=current_stream["id"], raw_event=event)
-                )
+                # Defer TextMessageEnd to on_chat_model_end — an empty chunk
+                # during streaming doesn't guarantee the run is complete (tool
+                # calls may follow). Pause the message so on_chat_model_end
+                # can close it.
+                self.active_run["paused_text_message_id"] = current_stream.get("id")
                 self.messages_in_process[self.active_run["id"]] = None
                 return
 
@@ -1041,22 +1089,42 @@ class LangGraphAgent:
                     return
 
                 if bool(current_stream and current_stream.get("id")) == False:
-                    yield self._dispatch_event(
-                        TextMessageStartEvent(
-                            type=EventType.TEXT_MESSAGE_START,
-                            role="assistant",
-                            message_id=chunk_id,
-                            raw_event=event,
+                    paused_id = self.active_run.get("paused_text_message_id")
+                    if paused_id:
+                        # Resuming text after tool calls — reuse paused message.
+                        # Don't emit TextMessageStart (message was never ended, so client still considers it active).
+                        msg_id = paused_id
+                        self.active_run["paused_text_message_id"] = None
+                        self.set_message_in_progress(
+                            self.active_run["id"],
+                            MessageInProgress(
+                                id=msg_id,
+                                tool_call_id=None,
+                                tool_call_name=None
+                            )
                         )
-                    )
-                    self.set_message_in_progress(
-                        self.active_run["id"],
-                        MessageInProgress(
-                            id=chunk_id,
-                            tool_call_id=None,
-                            tool_call_name=None
+                    else:
+                        # First text in the run — emit TextMessageStart.
+                        # Cache the id on active_run so subsequent chunks reuse it.
+                        if not self.active_run.get("stable_message_id"):
+                            self.active_run["stable_message_id"] = chunk_id
+                        msg_id = self.active_run["stable_message_id"]
+                        yield self._dispatch_event(
+                            TextMessageStartEvent(
+                                type=EventType.TEXT_MESSAGE_START,
+                                role="assistant",
+                                message_id=msg_id,
+                                raw_event=event,
+                            )
                         )
-                    )
+                        self.set_message_in_progress(
+                            self.active_run["id"],
+                            MessageInProgress(
+                                id=msg_id,
+                                tool_call_id=None,
+                                tool_call_name=None
+                            )
+                        )
                     current_stream = self.get_message_in_progress(self.active_run["id"])
 
                 yield self._dispatch_event(
@@ -1083,7 +1151,21 @@ class LangGraphAgent:
                 )
                 if resolved:
                     self.messages_in_process[self.active_run["id"]] = None
+                    self.active_run["stable_message_id"] = None
                 yield resolved
+            else:
+                # Handle paused text messages that were never resumed
+                paused_id = self.active_run.get("paused_text_message_id")
+                if paused_id:
+                    yield self._dispatch_event(
+                        TextMessageEndEvent(
+                            type=EventType.TEXT_MESSAGE_END,
+                            message_id=paused_id,
+                            raw_event=event,
+                        )
+                    )
+                    self.active_run["paused_text_message_id"] = None
+                    self.active_run["stable_message_id"] = None
 
         elif event_type == LangGraphEventTypes.OnCustomEvent:
             if event["name"] == CustomEventNames.ManuallyEmitMessage:
