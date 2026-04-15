@@ -27,7 +27,7 @@
     "unlink:global": "pnpm unlink --global"
   },
   "dependencies": {
-    "@langchain/core": "^0.3.80",
+    "@langchain/core": "^1.1.40",
     "rxjs": "7.8.1"
   },
   "peerDependencies": {
