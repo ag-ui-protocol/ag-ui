@@ -4,12 +4,44 @@ Translates Strands streaming events into the AG-UI event protocol.
 """
 
 import base64
+import inspect
 import json
 import logging
 import uuid
 from typing import Any, AsyncIterator, Dict, List
 
 from strands import Agent as StrandsAgentCore
+
+# Params handled explicitly by StrandsAgent — excluded from auto-forwarding.
+# "messages" is excluded: per-thread agents start with no history;
+# AG-UI injects messages at runtime via RunAgentInput.
+# "hooks" is excluded: Agent stores hooks as a HookRegistry after init, not
+# the original list the constructor expects — forwarding it causes a TypeError.
+_AGUI_EXPLICIT_PARAMS = {"self", "model", "system_prompt", "tools", "messages", "hooks"}
+
+
+def _extract_agent_kwargs(agent: StrandsAgentCore) -> dict:
+    """Build kwargs for StrandsAgentCore by introspecting its constructor signature.
+
+    Forward-compatible: new Strands parameters are picked up automatically
+    without changes here, as long as they are stored as same-named instance
+    attributes (the same assumption the manual approach made).
+    """
+    kwargs = {}
+    for name in inspect.signature(StrandsAgentCore.__init__).parameters:
+        if name in _AGUI_EXPLICIT_PARAMS:
+            continue
+        if not hasattr(agent, name):
+            continue
+        value = getattr(agent, name)
+        if value is None:
+            continue
+        # state is an AgentState container; extract the underlying plain dict
+        if name == "state" and hasattr(value, "get"):
+            value = value.get()
+        kwargs[name] = value
+    return kwargs
+
 
 logger = logging.getLogger(__name__)
 from ag_ui.core import (
@@ -69,19 +101,7 @@ class StrandsAgent:
             if hasattr(agent, "tool_registry")
             else []
         )
-        self._agent_kwargs = {
-            "record_direct_tool_call": agent.record_direct_tool_call
-            if hasattr(agent, "record_direct_tool_call")
-            else True,
-        }
-        if hasattr(agent, "trace_attributes") and agent.trace_attributes:
-            self._agent_kwargs["trace_attributes"] = agent.trace_attributes
-        if hasattr(agent, "agent_id") and agent.agent_id:
-            self._agent_kwargs["agent_id"] = agent.agent_id
-        if hasattr(agent, "state") and agent.state is not None:
-            self._agent_kwargs["state"] = agent.state.get()
-        if hasattr(agent, "conversation_manager") and agent.conversation_manager is not None:
-            self._agent_kwargs["conversation_manager"] = agent.conversation_manager
+        self._agent_kwargs = _extract_agent_kwargs(agent)
 
         self.name = name
         self.description = description
