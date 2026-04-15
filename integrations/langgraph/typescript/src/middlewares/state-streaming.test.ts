@@ -16,7 +16,12 @@ vi.mock("langchain", () => ({
 }));
 
 import { stateStreamingMiddleware, stateItem } from "./state-streaming";
-import { BaseMessage, HumanMessage, SystemMessage, ToolMessage } from "@langchain/core/messages";
+import {
+  BaseMessage,
+  HumanMessage,
+  SystemMessage,
+  ToolMessage,
+} from "@langchain/core/messages";
 import { ModelRequest } from "langchain";
 
 /** Minimal mock of request.model — only withConfig is exercised. */
@@ -47,7 +52,13 @@ function makeRequest(messages: BaseMessage[]) {
 }
 
 describe("stateStreamingMiddleware", () => {
-  const items = [stateItem({ stateKey: "recipe", tool: "write_recipe", toolArgument: "draft" })];
+  const items = [
+    stateItem({
+      stateKey: "recipe",
+      tool: "write_recipe",
+      toolArgument: "draft",
+    }),
+  ];
 
   describe("wrapModelCall — isPreToolCall logic", () => {
     it("injects predict_state metadata when messages array is empty", async () => {
@@ -60,11 +71,21 @@ describe("stateStreamingMiddleware", () => {
       expect(model.withConfig).toHaveBeenCalledOnce();
       expect(model.withConfig).toHaveBeenCalledWith({
         metadata: {
-          predict_state: [{ state_key: "recipe", tool: "write_recipe", tool_argument: "draft" }],
+          predict_state: [
+            {
+              state_key: "recipe",
+              tool: "write_recipe",
+              tool_argument: "draft",
+            },
+          ],
         },
       });
       // handler receives a request with the enriched model
-      expect(handler).toHaveBeenCalledWith(expect.objectContaining({ model: expect.objectContaining({ _isModelWithConfig: true }) }));
+      expect(handler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: expect.objectContaining({ _isModelWithConfig: true }),
+        }),
+      );
     });
 
     it("injects predict_state metadata when last message is not a ToolMessage", async () => {
@@ -77,25 +98,60 @@ describe("stateStreamingMiddleware", () => {
       expect(model.withConfig).toHaveBeenCalledOnce();
     });
 
-    it("passes through without injecting when last message is a ToolMessage", async () => {
+    it("suppresses injection when last message is a ToolMessage for a tracked tool", async () => {
       const middleware = stateStreamingMiddleware(...items);
-      const toolMsg = new ToolMessage({ content: "result", tool_call_id: "tc1" });
-      const { request, model } = makeRequest([new HumanMessage("call it"), toolMsg]);
+      const toolMsg = new ToolMessage({
+        content: "result",
+        tool_call_id: "tc1",
+        name: "write_recipe",
+      });
+      const { request, model } = makeRequest([
+        new HumanMessage("call it"),
+        toolMsg,
+      ]);
       const handler = vi.fn().mockResolvedValue({ content: "ok" });
 
       await middleware.wrapModelCall!(request, handler);
 
-      // model.withConfig must NOT have been called — request passes through unchanged
+      // model.withConfig must NOT have been called — tracked tool suppresses
       expect(model.withConfig).not.toHaveBeenCalled();
       expect(handler).toHaveBeenCalledWith(request);
+    });
+
+    it("injects when last message is a ToolMessage for an untracked tool", async () => {
+      const middleware = stateStreamingMiddleware(...items);
+      // open_canvas is not in the tracked items list
+      const toolMsg = new ToolMessage({
+        content: "Canvas is now open.",
+        tool_call_id: "tc2",
+        name: "open_canvas",
+      });
+      const { request, model } = makeRequest([
+        new HumanMessage("call it"),
+        toolMsg,
+      ]);
+      const handler = vi.fn().mockResolvedValue({ content: "ok" });
+
+      await middleware.wrapModelCall!(request, handler);
+
+      // untracked tool — predict_state should be injected so manage_todos can stream
+      expect(model.withConfig).toHaveBeenCalledOnce();
     });
   });
 
   describe("predict_state payload shape", () => {
     it("maps StateItem camelCase fields to snake_case in predict_state", async () => {
       const middleware = stateStreamingMiddleware(
-        stateItem({ stateKey: "myState", tool: "my_tool", toolArgument: "my_arg" }),
-        stateItem({ stateKey: "otherState", tool: "other_tool", toolArgument: "other_arg" }),
+        stateItem({
+          stateKey: "myState",
+          tool: "my_tool",
+          toolArgument: "my_arg",
+        }),
+        stateItem({
+          stateKey: "otherState",
+          tool: "other_tool",
+          toolArgument: "other_arg",
+        }),
       );
       const { request, model } = makeRequest([new HumanMessage("go")]);
       const handler = vi.fn().mockResolvedValue({ content: "ok" });
@@ -106,7 +162,11 @@ describe("stateStreamingMiddleware", () => {
         metadata: {
           predict_state: [
             { state_key: "myState", tool: "my_tool", tool_argument: "my_arg" },
-            { state_key: "otherState", tool: "other_tool", tool_argument: "other_arg" },
+            {
+              state_key: "otherState",
+              tool: "other_tool",
+              tool_argument: "other_arg",
+            },
           ],
         },
       });
@@ -188,10 +248,10 @@ describe("stateStreamingMiddleware", () => {
       const shouldEmit = (exitingNode: boolean, hasPredictState: boolean) =>
         !(exitingNode && hasPredictState);
 
-      expect(shouldEmit(true, true)).toBe(false);   // suppressed ✓
-      expect(shouldEmit(true, false)).toBe(true);   // not suppressed
-      expect(shouldEmit(false, true)).toBe(true);   // not suppressed
-      expect(shouldEmit(false, false)).toBe(true);  // not suppressed
+      expect(shouldEmit(true, true)).toBe(false); // suppressed ✓
+      expect(shouldEmit(true, false)).toBe(true); // not suppressed
+      expect(shouldEmit(false, true)).toBe(true); // not suppressed
+      expect(shouldEmit(false, false)).toBe(true); // not suppressed
     });
   });
 });

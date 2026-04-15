@@ -37,7 +37,13 @@ class StateStreamingMiddleware(AgentMiddleware):
         producing a duplicate stream.
         """
         msgs = request.messages
-        return not (msgs and isinstance(msgs[-1], ToolMessage))
+        if not (msgs and isinstance(msgs[-1], ToolMessage)):
+            return True
+        # Only suppress if the last tool is one we're actually tracking
+        # (prevents duplicate stream if the same tool is called again)
+        last_tool_name = getattr(msgs[-1], 'name', None)
+        tracked_tools = {item["tool"] for item in self._emit_intermediate_state}
+        return last_tool_name not in tracked_tools
 
     def wrap_model_call(
         self,
