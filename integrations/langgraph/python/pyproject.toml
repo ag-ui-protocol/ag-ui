@@ -1,6 +1,6 @@
 [project]
 name = "ag-ui-langgraph"
-version = "0.0.32"
+version = "0.0.33"
 description = "Implementation of the AG-UI protocol for LangGraph."
 authors = [
     { name = "Ran Shem Tov", email = "ran@copilotkit.ai" }
