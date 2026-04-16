@@ -1200,6 +1200,33 @@ class LangGraphAgent:
 
         return kwargs
 
+    @staticmethod
+    def _is_structured_output_message(message):
+        """Identify AIMessages produced by internal LLM calls that never commit
+        to the state reducer's `messages` channel — most commonly
+        `.with_structured_output(Schema)` and router/classifier chains.
+
+        These messages share a signature: empty/absent textual content plus a
+        tool_calls payload whose "name" is a Pydantic schema rather than a
+        registered agent tool. The LangChain callback system does not expose
+        the `ls_structured_output_format` invocation marker on
+        `on_chat_model_end` events (it only lives on `on_chat_model_start`
+        `invocation_params`), so shape-based detection at the snapshot-merge
+        site is the reliable signal.
+
+        Real conversational subgraph outputs (the case PR #1426 protects)
+        always carry non-empty textual content, so they pass through. Real
+        agentic tool-call AIMessages with empty content commit to the
+        reducer's `messages` channel and therefore arrive via the checkpoint
+        path, not `streamed_messages`, so they are unaffected by this filter.
+        """
+        if not isinstance(message, AIMessage):
+            return False
+        content = getattr(message, "content", None)
+        content_is_empty = content is None or content == "" or content == []
+        tool_calls = getattr(message, "tool_calls", None) or []
+        return content_is_empty and len(tool_calls) > 0
+
     async def get_state_and_messages_snapshots(self, config):
         state = await self.graph.aget_state(config)
         state_values = state.values if state.values is not None else state
@@ -1211,7 +1238,12 @@ class LangGraphAgent:
         streamed_messages = self.active_run.get("streamed_messages", [])
         if streamed_messages:
             checkpoint_ids = {getattr(m, "id", None) for m in checkpoint_messages} - {None}
-            extra = [m for m in streamed_messages if getattr(m, "id", None) and getattr(m, "id", None) not in checkpoint_ids]
+            extra = [
+                m for m in streamed_messages
+                if getattr(m, "id", None)
+                and getattr(m, "id", None) not in checkpoint_ids
+                and not self._is_structured_output_message(m)
+            ]
             checkpoint_messages = checkpoint_messages + extra
         snapshot_messages = self._filter_orphan_tool_messages(checkpoint_messages)
         yield self._dispatch_event(
