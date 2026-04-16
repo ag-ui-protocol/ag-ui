@@ -51,12 +51,32 @@ def prepare_wayflow_flow_input(input_data: RunAgentInput) -> Dict[str, Any]:
     messages = input_data.messages
     return {"user_input": messages[-1].content}
 
+def _inject_frontend_tools(agent: "WayflowAgent", input_data: RunAgentInput) -> None:
+    """Add client-registered tools from RunAgentInput.tools into the WayFlow agent."""
+    if not input_data.tools:
+        return
+    from wayflowcore.tools.clienttools import ClientTool
+    existing_names = {t.name for t in agent.tools}
+    for tool in input_data.tools:
+        if tool.name in existing_names:
+            continue
+        params = {}
+        if tool.parameters and "properties" in tool.parameters:
+            params = tool.parameters["properties"]
+        agent.tools.append(
+            ClientTool(
+                name=tool.name,
+                description=tool.description or "",
+                parameters=params,
+            )
+        )
 
 async def run_wayflow(agent: Any, input_data: RunAgentInput) -> None:
     current_queue = EVENT_QUEUE.get()
 
     if isinstance(agent, WayflowAgent):
         agent._add_talk_to_user_tool = False
+        _inject_frontend_tools(agent, input_data)
         agent._update_internal_state()
         agent_input = prepare_wayflow_agent_input(input_data)
 
