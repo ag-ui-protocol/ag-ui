@@ -166,6 +166,7 @@ class LangGraphAgent:
             "model_made_tool_call": False,
             "state_reliable": True,
             "streamed_messages": [],
+            "registered_tool_names": self._extract_registered_tool_names(input),
         }
         self.active_run = INITIAL_ACTIVE_RUN
 
@@ -1201,31 +1202,85 @@ class LangGraphAgent:
         return kwargs
 
     @staticmethod
-    def _is_structured_output_message(message):
-        """Identify AIMessages produced by internal LLM calls that never commit
-        to the state reducer's `messages` channel — most commonly
-        `.with_structured_output(Schema)` and router/classifier chains.
+    def _extract_registered_tool_names(input: RunAgentInput) -> set:
+        """Collect the names of tools the caller registered for this run.
 
-        These messages share a signature: empty/absent textual content plus a
-        tool_calls payload whose "name" is a Pydantic schema rather than a
-        registered agent tool. The LangChain callback system does not expose
-        the `ls_structured_output_format` invocation marker on
-        `on_chat_model_end` events (it only lives on `on_chat_model_start`
-        `invocation_params`), so shape-based detection at the snapshot-merge
-        site is the reliable signal.
+        These are the agent-level tools declared on ``RunAgentInput.tools``:
+        the ones whose calls should surface to the user. Any tool_call
+        naming something outside this set is, by construction, an
+        LLM-internal invocation (e.g. a Pydantic schema passed to
+        ``.with_structured_output``) that the caller never declared as a
+        user-visible tool."""
+        names: set = set()
+        tools = getattr(input, "tools", None) or []
+        for tool in tools:
+            name = None
+            if isinstance(tool, dict):
+                name = tool.get("name")
+            else:
+                name = getattr(tool, "name", None)
+            if isinstance(name, str) and name:
+                names.add(name)
+        return names
 
-        Real conversational subgraph outputs (the case PR #1426 protects)
-        always carry non-empty textual content, so they pass through. Real
-        agentic tool-call AIMessages with empty content commit to the
-        reducer's `messages` channel and therefore arrive via the checkpoint
-        path, not `streamed_messages`, so they are unaffected by this filter.
+    @staticmethod
+    def _ai_message_content_is_empty(content: Any) -> bool:
+        """Treat an ``AIMessage.content`` as empty when it carries no
+        user-visible text. Scalar ``None``/``""`` are trivially empty; a
+        list is empty when every block is a dict lacking a non-empty
+        ``text`` field with ``type == "text"`` (tool_use, thinking, and
+        other non-textual blocks count as "no text")."""
+        if content is None or content == "":
+            return True
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict):
+                    if block.get("type") == "text" and block.get("text"):
+                        return False
+                elif isinstance(block, str):
+                    if block:
+                        return False
+                else:
+                    return False
+            return True
+        return False
+
+    @classmethod
+    def _is_structured_output_message(
+        cls, message: BaseMessage, registered_tool_names: set
+    ) -> bool:
+        """Classify an ``AIMessage`` as an LLM-internal call that must
+        never reach ``MESSAGES_SNAPSHOT``.
+
+        Returns True iff the message is an ``AIMessage`` whose textual
+        content is empty, carries tool_calls, and none of those
+        tool_calls name a tool registered for the current run. The
+        registry check is the load-bearing signal: any tool_call whose
+        name matches a caller-registered tool is user-facing by
+        definition and is preserved, even on an empty-content turn.
+
+        Args:
+            message: The candidate message to classify.
+            registered_tool_names: The set of tool names declared on
+                this run's input.
+
+        Returns:
+            True when the message is a structured-output / internal LLM
+            call and should be dropped from the snapshot payload; False
+            otherwise.
         """
         if not isinstance(message, AIMessage):
             return False
-        content = getattr(message, "content", None)
-        content_is_empty = content is None or content == "" or content == []
-        tool_calls = getattr(message, "tool_calls", None) or []
-        return content_is_empty and len(tool_calls) > 0
+        if not cls._ai_message_content_is_empty(message.content):
+            return False
+        tool_calls = message.tool_calls or []
+        if not tool_calls:
+            return False
+        for tc in tool_calls:
+            name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
+            if name and name in registered_tool_names:
+                return False
+        return True
 
     async def get_state_and_messages_snapshots(self, config):
         state = await self.graph.aget_state(config)
@@ -1237,13 +1292,24 @@ class LangGraphAgent:
         checkpoint_messages = state_values.get("messages", [])
         streamed_messages = self.active_run.get("streamed_messages", [])
         if streamed_messages:
+            registered_tool_names = self.active_run.get("registered_tool_names") or set()
             checkpoint_ids = {getattr(m, "id", None) for m in checkpoint_messages} - {None}
-            extra = [
-                m for m in streamed_messages
-                if getattr(m, "id", None)
-                and getattr(m, "id", None) not in checkpoint_ids
-                and not self._is_structured_output_message(m)
-            ]
+            extra = []
+            for m in streamed_messages:
+                mid = getattr(m, "id", None)
+                if not mid or mid in checkpoint_ids:
+                    continue
+                if self._is_structured_output_message(m, registered_tool_names):
+                    tool_call_names = [
+                        tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
+                        for tc in (getattr(m, "tool_calls", None) or [])
+                    ]
+                    logger.debug(
+                        "Dropping structured-output AIMessage from MESSAGES_SNAPSHOT (id=%s, tool_calls=%s)",
+                        mid, tool_call_names,
+                    )
+                    continue
+                extra.append(m)
             checkpoint_messages = checkpoint_messages + extra
         snapshot_messages = self._filter_orphan_tool_messages(checkpoint_messages)
         yield self._dispatch_event(
