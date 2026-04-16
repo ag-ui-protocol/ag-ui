@@ -27,6 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **FIX**: HITL resumption on google-adk >= 1.28 (`_resolve_invocation_id` override) (#1534)
+  - ADK's `Runner._resolve_invocation_id()` (present since ~1.28, behavior visible from 1.30 onward) inspects `new_message`, and when it contains a `FunctionResponse`, forcibly substitutes the caller-supplied `invocation_id` with the one from the matching `FunctionCall` event and routes the run through the resumed-invocation code path.  For standalone `LlmAgent` roots (whose `function_call` events were emitted with `end_of_agent=True`), that path early-returned in `run_async()` — the LLM was never invoked and HITL tool-result submissions produced zero content events.
+  - Feature-detected via `hasattr(Runner, '_resolve_invocation_id')` so the middleware keeps working across the full supported range (`>=1.16,<2.0`).
+  - When the override is present, tool-only submissions now pre-append the `FunctionResponse` as its own session event (tagged with the originating `FunctionCall`'s `invocation_id` for DatabaseSessionService compatibility, #957) and pass a minimal text-only placeholder as `new_message` so `_resolve_invocation_id` short-circuits on the "no function_responses" branch.  Composite-agent HITL resumption continues to pass the stored `invocation_id` via `run_kwargs`.
+  - `test_function_response_has_correct_invocation_id` is now version-aware: it asserts the persisted `invocation_id` matches the originating `FunctionCall` event on ADK >=1.28 and continues to assert the AG-UI `run_id` on older ADK.
+  - New regression suite `tests/test_adk_130_invocation_id_override.py` pins the tool-only HITL flow end-to-end and verifies pre-append doesn't duplicate the persisted `FunctionResponse`.
+
 - **FIX**: Multi-instance session cache hydration in `ADKAgent.run()` (#1484, thanks @deb538)
   - Hydrates the in-memory `_session_lookup_cache` from the database-backed `SessionService` on cache miss, before pending-tool-call detection runs
   - Prevents HITL breakage in load-balanced deployments where requests land on an instance that did not create the session: without hydration, `_has_pending_tool_calls()` returned `False` and user messages were dispatched ahead of pending tool results, causing the LLM to reject the turn
