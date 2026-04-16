@@ -570,6 +570,50 @@ async def test_shared_set_mutation_visible_to_translator():
         f"Late-added ID should still suppress, got: {event_types}"
 
 
+async def test_lro_path_does_not_double_emit_on_repeated_event():
+    """Regression: SSE streams an LRO event twice (partial=True then
+    partial=False). The translator must emit TOOL_CALL_* exactly once per
+    fc.id, not once per event. Without the self-dedupe against
+    emitted_tool_call_ids, the second call would duplicate the trio,
+    breaking frontends that treat TOOL_CALL_START for an already-open id as
+    an error (observed as an empty assistant bubble in the adk-middleware
+    dojo HITL flow on ADK 1.23+).
+    """
+    translator = EventTranslator(
+        client_tool_names={"generate_task_steps"},
+        is_resumable=True,
+    )
+
+    lro_id = "fc-repeated"
+    lro_call = MagicMock()
+    lro_call.id = lro_id
+    lro_call.name = "generate_task_steps"
+    lro_call.args = {"steps": []}
+
+    lro_part = MagicMock()
+    lro_part.function_call = lro_call
+
+    adk_event = MagicMock()
+    adk_event.content = MagicMock()
+    adk_event.content.parts = [lro_part]
+    adk_event.long_running_tool_ids = [lro_id]
+
+    first = []
+    async for e in translator.translate_lro_function_calls(adk_event):
+        first.append(e)
+    assert [e.type for e in first] == [
+        EventType.TOOL_CALL_START,
+        EventType.TOOL_CALL_ARGS,
+        EventType.TOOL_CALL_END,
+    ]
+
+    second = []
+    async for e in translator.translate_lro_function_calls(adk_event):
+        second.append(e)
+    assert second == [], \
+        f"Repeated LRO event must not re-emit; got {[e.type for e in second]}"
+
+
 async def test_lro_path_emits_for_resumable_client_tool():
     """LRO translate path emits for client tools in resumable mode.
 

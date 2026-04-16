@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `EventTranslator.translate_lro_function_calls` previously suppressed emission for client-tool names in resumable mode, relying on `ClientProxyTool` as the sole emitter
   - On `google-adk` 1.16/1.17 the runner's resumable flow returns before invoking LRO tools on the first turn (`base_llm_flow.py` pause-early-return), so the proxy never ran and the trio was never emitted — the first HITL turn produced no `TOOL_CALL_START/ARGS/END`
   - Translator is now the primary LRO emitter across all supported ADK versions; `ClientProxyTool`'s existing `_translator_emitted_tool_call_ids` dedupe guard keeps emissions idempotent when ADK 1.18+ does invoke the proxy
+  - Added a self-dedupe against `emitted_tool_call_ids` so the same LRO event seen twice under SSE streaming (partial=True then partial=False on ADK 1.23+) emits the trio exactly once
   - `test_hitl_tool_result_submission_with_resumability` now passes on the full `>=1.16,<2.0` pin range
 
 - **FIX**: Multi-instance session cache hydration in `ADKAgent.run()` (#1484, thanks @deb538)
