@@ -17,7 +17,7 @@ from ag_ui_adk.event_translator import EventTranslator
 from ag_ui.core import (
     RunAgentInput, EventType, UserMessage, Context,
     RunStartedEvent, RunFinishedEvent, TextMessageChunkEvent, SystemMessage,
-    TextMessageContentEvent, ToolCallResultEvent
+    TextMessageContentEvent, ToolCallResultEvent, Tool
 )
 from google.adk.agents import Agent
 
@@ -1076,6 +1076,74 @@ class TestADKAgent:
         assert all(isinstance(t, AGUIToolset) for t in root_agent.tools)
         assert root_agent.sub_agents[0].tools == original_child_tools
         assert all(isinstance(t, AGUIToolset) for t in root_agent.sub_agents[0].tools)
+
+    @pytest.mark.asyncio
+    async def test_client_proxy_toolset_auto_injected_without_agui_toolset(self):
+        """Frontend tools must work without AGUIToolset() in the agent's tools list.
+
+        Regression test: before the fix, frontend tools registered via useFrontendTool /
+        useCopilotAction were silently ignored unless the user explicitly added AGUIToolset()
+        to their agent. The auto-injection path in _start_background_execution should inject
+        a ClientProxyToolset whenever input.tools is non-empty and no AGUIToolset placeholder
+        exists anywhere in the agent tree.
+        """
+        root_agent = Agent(
+            name="root_agent",
+            instruction="A simple agent with no AGUIToolset",
+            tools=[],  # Deliberately no AGUIToolset — this is the regression condition
+        )
+
+        with patch.object(ADKAgent, "_run_adk_in_background") as submethod_mocked:
+
+            async def empty_async_generator() -> AsyncGenerator[BaseEvent, None]:
+                if False:
+                    yield
+                return
+
+            adk_agent = ADKAgent(
+                adk_agent=root_agent,
+                app_name="test_app",
+                user_id="test_user",
+                use_in_memory_services=True,
+            )
+            input = RunAgentInput(
+                thread_id="test_thread",
+                run_id="test_run",
+                messages=[
+                    UserMessage(id="msg_1", role="user", content="Set the theme to dark")
+                ],
+                context=[],
+                state={},
+                tools=[
+                    Tool(
+                        name="setThemeColor",
+                        description="Set the UI theme color",
+                        parameters={
+                            "type": "object",
+                            "properties": {"color": {"type": "string"}},
+                            "required": ["color"],
+                        },
+                    )
+                ],
+                forwarded_props={},
+            )
+            async for e in adk_agent.run(input):
+                if not isinstance(e, RunStartedEvent):
+                    break
+
+            submethod_mocked.assert_called_once()
+            agent_under_test = submethod_mocked.call_args.kwargs["adk_agent"]
+
+            # The root agent must have received a ClientProxyToolset even though
+            # no AGUIToolset() was present — the auto-injection path added it.
+            proxy_tools = [
+                t for t in agent_under_test.tools if isinstance(t, ClientProxyToolset)
+            ]
+            assert len(proxy_tools) == 1, (
+                "Expected exactly one auto-injected ClientProxyToolset when frontend tools "
+                "are present and no AGUIToolset() is in the agent tree. "
+                f"Got tools: {agent_under_test.tools}"
+            )
 
 
 class TestThreadIdSessionIdMapping:
