@@ -27,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **FIX**: First-turn HITL `TOOL_CALL_*` emission on `google-adk` <1.18 (#1536)
+  - `EventTranslator.translate_lro_function_calls` previously suppressed emission for client-tool names in resumable mode, relying on `ClientProxyTool` as the sole emitter
+  - On `google-adk` 1.16/1.17 the runner's resumable flow returns before invoking LRO tools on the first turn (`base_llm_flow.py` pause-early-return), so the proxy never ran and the trio was never emitted — the first HITL turn produced no `TOOL_CALL_START/ARGS/END`
+  - Translator is now the primary LRO emitter across all supported ADK versions; `ClientProxyTool`'s existing `_translator_emitted_tool_call_ids` dedupe guard keeps emissions idempotent when ADK 1.18+ does invoke the proxy
+  - `test_hitl_tool_result_submission_with_resumability` now passes on the full `>=1.16,<2.0` pin range
+
 - **FIX**: Multi-instance session cache hydration in `ADKAgent.run()` (#1484, thanks @deb538)
   - Hydrates the in-memory `_session_lookup_cache` from the database-backed `SessionService` on cache miss, before pending-tool-call detection runs
   - Prevents HITL breakage in load-balanced deployments where requests land on an instance that did not create the session: without hydration, `_has_pending_tool_calls()` returned `False` and user messages were dispatched ahead of pending tool results, causing the LLM to reject the turn
