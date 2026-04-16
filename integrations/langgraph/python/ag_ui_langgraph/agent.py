@@ -309,10 +309,6 @@ class LangGraphAgent:
                     state_reliable = self.active_run.get("state_reliable", True)
                     suppressed = exiting_node and (mmtc or not state_reliable)
                     if suppressed:
-                        logger.debug(
-                            "Suppressing STATE_SNAPSHOT on node exit (node=%s, model_made_tool_call=%s, state_reliable=%s)",
-                            self.active_run.get("node_name"), mmtc, state_reliable,
-                        )
                         self.active_run["model_made_tool_call"] = False
                         if mmtc:
                             # A predict_state tool call was detected — the tool has

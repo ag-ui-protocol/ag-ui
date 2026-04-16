@@ -71,6 +71,9 @@ export interface RunMetadata {
   serverRunIdKnown?: boolean;
   // True after a PredictState event is emitted; cleared on OnToolEnd
   hasPredictState?: boolean;
+  // True while a tracked tool call is streaming args (predict_state active).
+  // STATE_SNAPSHOT is suppressed until tool completes and this resets to false.
+  modelMadeToolCall?: boolean;
   // Messages completed during streaming that may not be committed to the checkpoint
   streamedMessages?: LangGraphPlatformMessage[];
 }

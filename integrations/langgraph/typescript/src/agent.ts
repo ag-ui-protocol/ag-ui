@@ -205,6 +205,7 @@ export class LangGraphAgent extends AbstractAgent {
       id: input.runId,
       threadId: input.threadId,
       hasFunctionStreaming: false,
+      modelMadeToolCall: false,
     };
     // Reset per-run flags
     this.cancelRequested = false;
@@ -255,7 +256,7 @@ export class LangGraphAgent extends AbstractAgent {
       payloadConfig = await this.mergeConfigs({
         configs: configsToMerge,
         assistant: this.assistant,
-        schemaKeys: this.activeRun!.schemaKeys,
+        schemaKeys: this.activeRun!.schemaKeys!,
       });
     }
 
@@ -608,8 +609,16 @@ export class LangGraphAgent extends AbstractAgent {
         }
 
         const hasStateDiff = JSON.stringify(updatedState) !== JSON.stringify(state);
-        // We should not update snapshot while a message is in progress.
+        // We should not update snapshot while a message is in progress,
+        // or while a predict_state tool call is being streamed (modelMadeToolCall).
+        // Mirrors Python agent's suppression: emitting a snapshot before the
+        // tracked tool has run would overwrite optimistic UI state pushed to the client.
+        // Suppress STATE_SNAPSHOT while modelMadeToolCall is true — the tracked
+        // tool is still streaming args and the graph state does not yet reflect
+        // the forthcoming update. Flag is cleared in the OnToolEnd handler once
+        // the tool has actually run and real state is available.
         if (
+          !this.activeRun!.modelMadeToolCall &&
           (hasStateDiff ||
             this.activeRun!.prevNodeName != this.activeRun!.nodeName ||
             this.activeRun!.exitingNode) &&
@@ -778,6 +787,7 @@ export class LangGraphAgent extends AbstractAgent {
         }
 
         if (toolCallUsedToPredictState) {
+          this.activeRun!.modelMadeToolCall = true;
           this.dispatchEvent({
             type: EventType.CUSTOM,
             name: "PredictState",
@@ -996,6 +1006,9 @@ export class LangGraphAgent extends AbstractAgent {
             })
           })
 
+          // Tool has completed — reset so the next snapshot reflects real state.
+          this.activeRun!.modelMadeToolCall = false;
+          this.activeRun!.hasFunctionStreaming = false;
           break;
         }
 
@@ -1041,7 +1054,10 @@ export class LangGraphAgent extends AbstractAgent {
           messageId: randomUUID(),
           role: "tool",
           rawEvent: event,
-        })
+        });
+        // Tool has completed — reset so the next snapshot reflects real state.
+        this.activeRun!.modelMadeToolCall = false;
+        this.activeRun!.hasFunctionStreaming = false;
         break;
     }
   }
