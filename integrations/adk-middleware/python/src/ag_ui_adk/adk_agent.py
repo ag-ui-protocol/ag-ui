@@ -23,6 +23,24 @@ from ag_ui.core import (
 
 from google.adk import Runner
 from google.adk.agents import BaseAgent, LlmAgent, RunConfig as ADKRunConfig
+
+# Feature detect ADK's invocation_id override.
+#
+# Runner._resolve_invocation_id() was added somewhere between google-adk 1.24
+# and 1.28 and is present on every version since (including 1.30.0, the release
+# whose failing tests motivated ag-ui-protocol/ag-ui#1534). It inspects
+# new_message and — if it contains a FunctionResponse — forcibly substitutes
+# the caller-supplied invocation_id with the one on the matching FunctionCall
+# event, then routes the run through the resumed-invocation path. For
+# standalone LlmAgent roots that previously emitted end_of_agent=True on the
+# function_call event, that path early-returns without calling the LLM, so
+# HITL resumption silently produces zero content events.
+#
+# When this override is present we reshape the tool-result submission so that
+# new_message does NOT contain a FunctionResponse: the FunctionResponse is
+# pre-appended to the session as its own event, and new_message becomes a
+# minimal placeholder that short-circuits _resolve_invocation_id.
+_ADK_OVERRIDES_INVOCATION_ID = hasattr(Runner, "_resolve_invocation_id")
 from google.adk.agents.run_config import StreamingMode
 from google.adk.agents.llm_agent import InstructionProvider, ToolUnion
 from google.adk.sessions import BaseSessionService, InMemorySessionService
@@ -323,6 +341,30 @@ class ADKAgent:
             return False
 
         return _has_composite_descendant(root)
+
+    @staticmethod
+    def _find_function_call_invocation_id(session, tool_call_id: str) -> Optional[str]:
+        """Find the invocation_id of the event that authored a FunctionCall.
+
+        ADK 1.30+ derives the effective invocation_id for tool-result submissions
+        by looking up the matching FunctionCall event in session history. We read
+        the same attribute here so that any FunctionResponse we pre-append carries
+        a consistent invocation_id with the upstream FunctionCall.
+
+        Returns None if no matching FunctionCall event is found.
+        """
+        events = getattr(session, "events", None) or []
+        for event in events:
+            content = getattr(event, "content", None)
+            parts = getattr(content, "parts", None) if content else None
+            if not parts:
+                continue
+            for part in parts:
+                fc = getattr(part, "function_call", None)
+                fc_id = getattr(fc, "id", None) if fc else None
+                if fc_id and fc_id == tool_call_id:
+                    return getattr(event, "invocation_id", None)
+        return None
 
     @classmethod
     def from_app(
@@ -2103,18 +2145,73 @@ class ADKAgent:
                     )
                     function_response_parts.append(updated_function_response_part)
 
-                # Create function_response_content but DON'T pre-persist to avoid duplicates.
-                # Instead, pass as new_message with explicit invocation_id to control the ID ADK uses.
                 function_response_content = types.Content(parts=function_response_parts, role='user')
-                # Use input.run_id (not stored_invocation_id) as the invocation_id for this tool response
-                # This ensures DatabaseSessionService compatibility
-                tool_response_invocation_id = input.run_id
 
-                # Pass both new_message AND invocation_id to ADK.
-                # This tells ADK: "process this message, but use THIS specific invocation_id"
-                # (rather than auto-generating an e-xxx ID)
-                new_message = function_response_content
-                tool_only_invocation_id = tool_response_invocation_id
+                if _ADK_OVERRIDES_INVOCATION_ID and self._is_adk_resumable():
+                    # ADK with _resolve_invocation_id (~1.28+) routing:
+                    #
+                    # When new_message contains a FunctionResponse, Runner._resolve_invocation_id()
+                    # looks up the matching FunctionCall event in session history and forces the
+                    # invocation_id to that event's invocation_id, sending the run down the
+                    # _setup_context_for_resumed_invocation() path. For standalone LlmAgent roots
+                    # (whose function_call events were emitted with end_of_agent=True), that path
+                    # then early-returns in run_async() because populate_invocation_agent_states()
+                    # sets end_of_agents[agent] = True — so the LLM is never invoked and the run
+                    # emits zero content events (see ag-ui #1534).
+                    #
+                    # To avoid that, we pre-append the FunctionResponse as its own session event
+                    # (mirroring the "tool_results + user_message" branch above) and pass a
+                    # minimal placeholder as new_message that carries NO FunctionResponse. That
+                    # makes _resolve_invocation_id short-circuit on the "no function_responses"
+                    # branch and preserves whatever invocation_id handling run_kwargs already
+                    # encodes (new-invocation path for standalone LlmAgent; resume path with
+                    # stored_invocation_id for composite orchestrators).
+                    first_tool_call_id = active_tool_results[0]['message'].tool_call_id
+                    first_tool_call_id = lro_id_remap.get(first_tool_call_id, first_tool_call_id)
+                    fc_event_invocation_id = self._find_function_call_invocation_id(
+                        session, first_tool_call_id
+                    )
+                    # Prefer the matching FunctionCall event's invocation_id so ADK's own
+                    # persistence/lookup contract stays consistent; fall back through
+                    # stored_invocation_id and input.run_id so DatabaseSessionService still
+                    # receives a non-null value (GitHub #957).
+                    resume_invocation_id = (
+                        fc_event_invocation_id or stored_invocation_id or input.run_id
+                    )
+                    function_response_event = Event(
+                        timestamp=time.time(),
+                        author='user',
+                        content=function_response_content,
+                        invocation_id=resume_invocation_id,
+                    )
+                    logger.debug(
+                        "Pre-appending FunctionResponse for _resolve_invocation_id-capable ADK "
+                        f"tool-only submission with invocation_id={resume_invocation_id}"
+                    )
+                    await self._session_manager._session_service.append_event(
+                        session, function_response_event
+                    )
+
+                    # Placeholder trigger: a single empty text part. _append_new_message_to_session
+                    # requires at least one part, and _get_function_responses_from_content returns
+                    # [] for a text-only Content — which is exactly what we need.
+                    new_message = types.Content(
+                        role='user',
+                        parts=[types.Part(text='')],
+                    )
+                    # Don't force a caller-supplied invocation_id from here. Composite-agent
+                    # resumption still gets stored_invocation_id via the run_kwargs logic below;
+                    # standalone LlmAgents correctly take the new-invocation path.
+                    tool_only_invocation_id = None
+                else:
+                    # ADK without _resolve_invocation_id (<1.28) or non-resumable apps:
+                    # Pass the FunctionResponse as new_message with the AG-UI run_id as the
+                    # invocation_id. Older ADK honors the caller-supplied invocation_id and
+                    # treats every tool submission as a fresh invocation, so the LLM is invoked
+                    # on the updated history. This preserves the #1074 fix (no duplicate
+                    # FunctionResponse events) by avoiding the pre-append.
+                    new_message = function_response_content
+                    tool_only_invocation_id = input.run_id
             else:
                 # No tool results, just use the user message
                 # If user_message is None (e.g., unseen_messages was empty because all were
@@ -2205,13 +2302,18 @@ class ADKAgent:
             # Composite agents (SequentialAgent, LoopAgent) — whether as root or
             # as sub-agents of an LlmAgent root — need it so ADK calls
             # populate_invocation_agent_states() to restore internal state.
-            # For tool responses, we pass tool_only_invocation_id (input.run_id) to ensure
-            # ADK uses the client's run_id instead of auto-generating an e-xxx ID.
+            # For tool responses on ADK < 1.30, we pass tool_only_invocation_id
+            # (input.run_id) so ADK uses the client's run_id instead of
+            # auto-generating an e-xxx ID. On ADK 1.30+, the tool-only branch
+            # above leaves tool_only_invocation_id unset because the runner
+            # forcibly overrides caller-supplied invocation_ids when a
+            # FunctionResponse is present — we work around that by pre-appending
+            # the FunctionResponse and passing a text-only placeholder instead.
             if stored_invocation_id and self._is_adk_resumable() and self._root_agent_needs_invocation_id():
                 run_kwargs["invocation_id"] = stored_invocation_id
                 logger.debug(f"HITL resumption with invocation_id: {stored_invocation_id}")
             elif tool_only_invocation_id and self._is_adk_resumable():
-                # Tool response case: use client's run_id as invocation_id
+                # Tool response case (ADK < 1.30): use client's run_id as invocation_id
                 run_kwargs["invocation_id"] = tool_only_invocation_id
                 logger.debug(f"Tool response with explicit invocation_id: {tool_only_invocation_id}")
 
