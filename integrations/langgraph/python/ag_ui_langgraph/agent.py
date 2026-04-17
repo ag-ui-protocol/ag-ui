@@ -444,7 +444,8 @@ class LangGraphAgent:
     async def prepare_stream(self, input: RunAgentInput, agent_state: State, config: RunnableConfig) -> PreparedStream:
         # Invariant: prepare_stream is only called from _handle_stream_events
         # after self.active_run has been initialized for the current run.
-        assert self.active_run is not None, "prepare_stream called outside an active run"
+        if self.active_run is None:
+            raise RuntimeError("prepare_stream called outside an active run")
         state_input = input.state or {}
         messages = input.messages or []
         forwarded_props = input.forwarded_props or {}
@@ -851,7 +852,8 @@ class LangGraphAgent:
 
     def get_state_snapshot(self, state: State) -> State:
         # Invariant: callers always operate within an active run.
-        assert self.active_run is not None, "get_state_snapshot called outside an active run"
+        if self.active_run is None:
+            raise RuntimeError("get_state_snapshot called outside an active run")
         schema_keys = self.active_run.get("schema_keys")
         output_keys = schema_keys["output"] if schema_keys else None
         if output_keys:
@@ -862,7 +864,8 @@ class LangGraphAgent:
         # Invariant: _handle_single_event is only invoked from the event
         # loop inside _handle_stream_events, where active_run has been
         # initialized for the current run.
-        assert self.active_run is not None, "_handle_single_event called outside an active run"
+        if self.active_run is None:
+            raise RuntimeError("_handle_single_event called outside an active run")
         event_type = event.get("event")
         if event_type == LangGraphEventTypes.OnChatModelStream:
             should_emit_messages = (event.get("metadata") or {}).get("emit-messages", True)
@@ -1256,7 +1259,8 @@ class LangGraphAgent:
     def handle_reasoning_event(self, reasoning_data: LangGraphReasoning) -> Generator[ProcessedEvents, Any, str | None]:
         # Invariant: reasoning events are dispatched from _handle_single_event,
         # which itself runs inside an active run.
-        assert self.active_run is not None, "handle_reasoning_event called outside an active run"
+        if self.active_run is None:
+            raise RuntimeError("handle_reasoning_event called outside an active run")
         if not reasoning_data or "type" not in reasoning_data or "text" not in reasoning_data:
             return ""
 
@@ -1388,7 +1392,8 @@ class LangGraphAgent:
         Automatically manages step start/end events based on node name changes.
         """
         # Invariant: node-change handling only happens mid-run.
-        assert self.active_run is not None, "handle_node_change called outside an active run"
+        if self.active_run is None:
+            raise RuntimeError("handle_node_change called outside an active run")
 
         if node_name == "__end__":
             node_name = None
@@ -1417,7 +1422,8 @@ class LangGraphAgent:
     def end_step(self) -> ProcessedEvents:
         """Emit STEP_FINISHED for the active step; node_name bookkeeping is done by handle_node_change."""
         # Invariant: end_step is only called mid-run, from handle_node_change.
-        assert self.active_run is not None, "end_step called outside an active run"
+        if self.active_run is None:
+            raise RuntimeError("end_step called outside an active run")
         node_name = self.active_run.get("node_name")
         if not node_name:
             raise ValueError("No active step to end")
@@ -1491,7 +1497,8 @@ class LangGraphAgent:
         empty assistant bubbles.
         """
         # Invariant: snapshot emission only happens mid-run.
-        assert self.active_run is not None, "get_state_and_messages_snapshots called outside an active run"
+        if self.active_run is None:
+            raise RuntimeError("get_state_and_messages_snapshots called outside an active run")
         state = await self.graph.aget_state(config)
         # Fallback to an empty dict when state.values is missing: using the
         # StateSnapshot itself as a fallback crashed downstream .get()
