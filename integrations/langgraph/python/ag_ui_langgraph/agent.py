@@ -1278,7 +1278,7 @@ class LangGraphAgent:
         reasoning_step_index = reasoning_data["index"]
 
         if (self.active_run.get("reasoning_process") and
-                self.active_run["reasoning_process"].get("index") and
+                self.active_run["reasoning_process"].get("index") is not None and
                 self.active_run["reasoning_process"]["index"] != reasoning_step_index):
 
             reasoning_message_id = self.active_run["reasoning_process"]["message_id"]
