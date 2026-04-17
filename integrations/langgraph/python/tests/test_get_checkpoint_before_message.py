@@ -18,15 +18,12 @@ from ag_ui_langgraph.agent import LangGraphAgent
 from tests._helpers import make_agent
 
 
-def _async_iter(items):
-    """Helper: build an async generator yielding *items* for mocking
-    ``aget_state_history`` which the adapter iterates via ``async for``."""
-
-    async def _gen():
-        for item in items:
-            yield item
-
-    return _gen
+async def _async_iter(items):
+    """Async generator yielding *items* for mocking ``aget_state_history``
+    which the adapter iterates via ``async for``. Call directly — the
+    returned object is the iterable, no zero-arg invocation required."""
+    for item in items:
+        yield item
 
 
 class TestGetCheckpointBeforeMessage(unittest.IsolatedAsyncioTestCase):
@@ -46,7 +43,7 @@ class TestGetCheckpointBeforeMessage(unittest.IsolatedAsyncioTestCase):
 
         def _capture(history_config):
             captured["config"] = history_config
-            return _async_iter([])()
+            return _async_iter([])
 
         agent.graph.aget_state_history = _capture
 
@@ -67,7 +64,7 @@ class TestGetCheckpointBeforeMessage(unittest.IsolatedAsyncioTestCase):
 
         def _capture(history_config):
             captured["config"] = history_config
-            return _async_iter([])()
+            return _async_iter([])
 
         agent.graph.aget_state_history = _capture
 
@@ -109,7 +106,7 @@ class TestGetCheckpointBeforeMessage(unittest.IsolatedAsyncioTestCase):
         # internally to walk chronologically.
         agent.graph.aget_state_history = lambda _cfg: _async_iter(
             [target_snapshot, prev_snapshot]
-        )()
+        )
 
         result = await agent.get_checkpoint_before_message(
             "target-msg", "thread-xyz"
