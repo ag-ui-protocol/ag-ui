@@ -20,7 +20,6 @@ from langgraph.types import Command
 
 from .types import (
     State,
-    LangGraphPlatformMessage,
     MessagesInProgressRecord,
     SchemaKeys,
     MessageInProgress,
@@ -643,7 +642,11 @@ class LangGraphAgent:
         if messages and isinstance(messages[0], SystemMessage):
             messages = messages[1:]
 
-        existing_messages: List[LangGraphPlatformMessage] = state.get("messages", [])
+        # At runtime ``state["messages"]`` holds LangChain BaseMessage subclasses
+        # (HumanMessage / AIMessage / ToolMessage / SystemMessage) — not the
+        # TypedDict LangGraphPlatformMessage wire-shape. Annotate accordingly
+        # so downstream attribute access (``.tool_calls``, ``.content``) type-checks.
+        existing_messages: List[BaseMessage] = state.get("messages", [])
 
         # Fix tool_call args that are strings instead of dicts.
         # This happens when CopilotKit's after_agent restores frontend tool_calls
