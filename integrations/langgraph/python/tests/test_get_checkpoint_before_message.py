@@ -212,5 +212,42 @@ class TestPrepareRegenerateStreamValidation(unittest.IsolatedAsyncioTestCase):
             )
 
 
+class TestGetStateSnapshotSchemaKeysSafety(unittest.TestCase):
+    """``get_state_snapshot`` runs against ``active_run["schema_keys"]``
+    via ``.get("schema_keys")``. The fallback path in ``get_schema_keys``
+    can race with a caller that reads the snapshot before schema
+    introspection has populated it, and legitimate callers (tests,
+    custom wrappers) may never set it at all. In both cases the helper
+    must not blow up; it returns the state unfiltered."""
+
+    def _make_agent_with_active_run(self, active_run):
+        agent = make_agent()
+        agent.active_run = active_run
+        return agent
+
+    def test_schema_keys_missing_returns_state_unfiltered(self):
+        """active_run has no ``schema_keys`` entry at all."""
+        agent = self._make_agent_with_active_run({"id": "run-1"})
+        state = {"messages": ["m"], "custom_key": "keep"}
+        result = agent.get_state_snapshot(state)
+        self.assertEqual(result, state)
+
+    def test_schema_keys_none_returns_state_unfiltered(self):
+        """active_run explicitly sets ``schema_keys`` to ``None``."""
+        agent = self._make_agent_with_active_run({"id": "run-1", "schema_keys": None})
+        state = {"messages": ["m"], "custom_key": "keep"}
+        result = agent.get_state_snapshot(state)
+        self.assertEqual(result, state)
+
+    def test_schema_keys_present_but_output_none_returns_state_unfiltered(self):
+        """``schema_keys`` dict is present but ``output`` is None."""
+        agent = self._make_agent_with_active_run(
+            {"id": "run-1", "schema_keys": {"output": None}}
+        )
+        state = {"messages": ["m"], "custom_key": "keep"}
+        result = agent.get_state_snapshot(state)
+        self.assertEqual(result, state)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
