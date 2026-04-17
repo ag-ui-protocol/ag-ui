@@ -111,6 +111,8 @@ class StrandsAgent:
         self._agents_by_thread: Dict[str, StrandsAgentCore] = {}
         # Track proxy tool names registered per thread
         self._proxy_tool_names_by_thread: Dict[str, set] = {}
+        # Track tool names per thread to detect tools_provider changes
+        self._tool_names_by_thread: Dict[str, frozenset] = {}
 
     async def run(self, input_data: RunAgentInput) -> AsyncIterator[Any]:
         """Run the Strands agent and yield AG-UI events."""
@@ -118,13 +120,38 @@ class StrandsAgent:
         # Get or create agent instance for this thread
         # Each thread (user session) maintains its own conversation state
         thread_id = input_data.thread_id or "default"
-        if thread_id not in self._agents_by_thread:
+
+        # Resolve tools for this request
+        request_tools = self._tools
+        if self.config.tools_provider:
+            try:
+                provided_tools = self.config.tools_provider(input_data)
+                if provided_tools is not None:
+                    request_tools = provided_tools
+            except Exception as e:
+                logger.warning(f"tools_provider failed, using default tools: {e}")
+
+        # Determine whether the agent needs to be (re)created
+        need_new_agent = thread_id not in self._agents_by_thread
+        if not need_new_agent and self.config.tools_provider:
+            tool_names = frozenset(
+                t.__name__ if hasattr(t, "__name__") else str(t) for t in request_tools
+            )
+            if self._tool_names_by_thread.get(thread_id) != tool_names:
+                logger.info(f"Tools changed for thread {thread_id}, recreating agent")
+                need_new_agent = True
+
+        if need_new_agent:
             self._agents_by_thread[thread_id] = StrandsAgentCore(
                 model=self._model,
                 system_prompt=self._system_prompt,
-                tools=self._tools,
+                tools=request_tools,
                 **self._agent_kwargs,
             )
+            if self.config.tools_provider:
+                self._tool_names_by_thread[thread_id] = frozenset(
+                    t.__name__ if hasattr(t, "__name__") else str(t) for t in request_tools
+                )
         strands_agent = self._agents_by_thread[thread_id]
 
         # Sync proxy tools from client-defined tools
