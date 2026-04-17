@@ -900,16 +900,17 @@ class LangGraphAgent:
             should_emit_tool_calls = (event.get("metadata") or {}).get("emit-tool-calls", True)
 
             # Chunks are normally LangChain BaseMessage instances (attribute
-            # access), but some upstream paths deliver raw dicts — mirror the
-            # dual-path accessors used by the outer loop (~line 305) so either
-            # shape works instead of AttributeError-crashing here.
+            # access), but some upstream paths deliver raw dicts — use dual-path
+            # accessors (see _chunk_get helper below) so either shape works
+            # instead of AttributeError-crashing here.
             chunk_raw = event.get("data", {}).get("chunk") or {}
-            if isinstance(chunk_raw, dict):
-                response_metadata = chunk_raw.get("response_metadata") or {}
-                tool_call_chunks_list = chunk_raw.get("tool_call_chunks") or []
-            else:
-                response_metadata = getattr(chunk_raw, "response_metadata", None) or {}
-                tool_call_chunks_list = getattr(chunk_raw, "tool_call_chunks", None) or []
+            def _chunk_get(c: Any, key: str, default: Any = None) -> Any:
+                if isinstance(c, dict):
+                    return c.get(key, default)
+                return getattr(c, key, default)
+
+            response_metadata = _chunk_get(chunk_raw, "response_metadata", None) or {}
+            tool_call_chunks_list = _chunk_get(chunk_raw, "tool_call_chunks", None) or []
 
             if response_metadata.get('finish_reason', None):
                 return
@@ -933,6 +934,8 @@ class LangGraphAgent:
                 self.active_run["has_function_streaming"] = True
 
             chunk = event["data"]["chunk"]
+            chunk_content = _chunk_get(chunk, "content", None) if chunk else None
+            chunk_id = _chunk_get(chunk, "id", None) if chunk else None
 
             reasoning_data = resolve_reasoning_content(chunk) if chunk else None
             encrypted_reasoning_data = resolve_encrypted_reasoning_content(chunk) if chunk else None
@@ -943,8 +946,8 @@ class LangGraphAgent:
             # that some providers emit during tool-call / structured-output
             # transitions.
             message_content = (
-                resolve_message_content(chunk.content)
-                if chunk is not None and getattr(chunk, "content", None) is not None
+                resolve_message_content(chunk_content)
+                if chunk is not None and chunk_content is not None
                 else None
             )
             is_message_content_event = tool_call_data is None and message_content
@@ -1025,13 +1028,13 @@ class LangGraphAgent:
                         type=EventType.TOOL_CALL_START,
                         tool_call_id=tool_call_data["id"],
                         tool_call_name=tool_call_data["name"],
-                        parent_message_id=event["data"]["chunk"].id,
+                        parent_message_id=chunk_id,
                         raw_event=event,
                     )
                 )
                 self.set_message_in_progress(
                     self.active_run["id"],
-                    MessageInProgress(id=event["data"]["chunk"].id, tool_call_id=tool_call_data["id"], tool_call_name=tool_call_data["name"])
+                    MessageInProgress(id=chunk_id, tool_call_id=tool_call_data["id"], tool_call_name=tool_call_data["name"])
                 )
                 return
 
@@ -1052,14 +1055,14 @@ class LangGraphAgent:
                         TextMessageStartEvent(
                             type=EventType.TEXT_MESSAGE_START,
                             role="assistant",
-                            message_id=event["data"]["chunk"].id,
+                            message_id=chunk_id,
                             raw_event=event,
                         )
                     )
                     self.set_message_in_progress(
                         self.active_run["id"],
                         MessageInProgress(
-                            id=event["data"]["chunk"].id,
+                            id=chunk_id,
                             tool_call_id=None,
                             tool_call_name=None
                         )
