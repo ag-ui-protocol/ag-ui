@@ -3,6 +3,7 @@
 Translates Strands streaming events into the AG-UI event protocol.
 """
 
+import asyncio
 import base64
 import inspect
 import json
@@ -11,29 +12,45 @@ import uuid
 from typing import Any, AsyncIterator, Dict, List
 
 from strands import Agent as StrandsAgentCore
+from strands.session import SessionManager
 
 # Params handled explicitly by StrandsAgent — excluded from auto-forwarding.
 # "messages" is excluded: per-thread agents start with no history;
 # AG-UI injects messages at runtime via RunAgentInput.
 # "hooks" is excluded: Agent stores hooks as a HookRegistry after init, not
 # the original list the constructor expects — forwarding it causes a TypeError.
-_AGUI_EXPLICIT_PARAMS = {"self", "model", "system_prompt", "tools", "messages", "hooks"}
+# "session_manager" is excluded: it is supplied per-thread via
+# StrandsAgentConfig.session_manager_provider (see run()). Forwarding a
+# template-level session_manager would make every thread share one session_id.
+_AGUI_EXPLICIT_PARAMS = {
+    "self",
+    "model",
+    "system_prompt",
+    "tools",
+    "messages",
+    "hooks",
+    "session_manager",
+}
 
 
 def _extract_agent_kwargs(agent: StrandsAgentCore) -> dict:
     """Build kwargs for StrandsAgentCore by introspecting its constructor signature.
 
-    Forward-compatible: new Strands parameters are picked up automatically
-    without changes here, as long as they are stored as same-named instance
-    attributes (the same assumption the manual approach made).
+    Tries ``self.<name>`` first, falls back to ``self._<name>`` — Strands stores
+    some init params with an underscore prefix (e.g. ``retry_strategy`` lives at
+    ``self._retry_strategy``). This keeps the adapter forward-compatible with
+    any future param that follows either naming convention.
     """
     kwargs = {}
     for name in inspect.signature(StrandsAgentCore.__init__).parameters:
         if name in _AGUI_EXPLICIT_PARAMS:
             continue
-        if not hasattr(agent, name):
+        if hasattr(agent, name):
+            value = getattr(agent, name)
+        elif hasattr(agent, f"_{name}"):
+            value = getattr(agent, f"_{name}")
+        else:
             continue
-        value = getattr(agent, name)
         if value is None:
             continue
         # state is an AgentState container; extract the underlying plain dict
@@ -107,24 +124,109 @@ class StrandsAgent:
         self.description = description
         self.config = config or StrandsAgentConfig()
 
+        # Detect the common footgun: session_manager set on the template Agent
+        # (stored as `_session_manager` by Strands) with no per-thread provider.
+        # Forwarding it would make every AG-UI thread share one session_id.
+        template_session_manager = getattr(agent, "_session_manager", None)
+        if (
+            template_session_manager is not None
+            and self.config.session_manager_provider is None
+        ):
+            logger.warning(
+                "session_manager was set on the template Agent but will be ignored: "
+                "forwarding it would cause every AG-UI thread to share the same "
+                "session_id. Construct per-thread session managers via "
+                "StrandsAgentConfig.session_manager_provider instead."
+            )
+
         # Dictionary to store agent instances per thread
         self._agents_by_thread: Dict[str, StrandsAgentCore] = {}
         # Track proxy tool names registered per thread
         self._proxy_tool_names_by_thread: Dict[str, set] = {}
+        # Guards first-time thread initialization. The session_manager_provider
+        # call introduces an async yield point between the "is this thread
+        # new?" check and the dict assignment, so concurrent requests for the
+        # same new thread_id could otherwise both create an agent and one
+        # would clobber the other.
+        self._thread_init_lock = asyncio.Lock()
 
     async def run(self, input_data: RunAgentInput) -> AsyncIterator[Any]:
         """Run the Strands agent and yield AG-UI events."""
 
-        # Get or create agent instance for this thread
-        # Each thread (user session) maintains its own conversation state
+        # Get or create agent instance for this thread. When a
+        # session_manager_provider is configured, the SessionManager handles
+        # conversation persistence; otherwise state is held in-memory per thread.
         thread_id = input_data.thread_id or "default"
         if thread_id not in self._agents_by_thread:
-            self._agents_by_thread[thread_id] = StrandsAgentCore(
-                model=self._model,
-                system_prompt=self._system_prompt,
-                tools=self._tools,
-                **self._agent_kwargs,
-            )
+            async with self._thread_init_lock:
+                # Double-check inside the lock: another coroutine may have
+                # completed initialization while we were waiting.
+                if thread_id not in self._agents_by_thread:
+                    session_manager = None
+                    if self.config.session_manager_provider:
+                        try:
+                            session_manager = await maybe_await(
+                                self.config.session_manager_provider(input_data)
+                            )
+                        except Exception as e:
+                            # ERROR (not WARNING): the run is being aborted.
+                            # exc_info=True preserves the full traceback so
+                            # programming errors (TypeError, NameError, ...)
+                            # in the provider surface clearly rather than
+                            # looking like an infrastructure problem.
+                            logger.error(
+                                f"session_manager_provider failed: {e}",
+                                exc_info=True,
+                            )
+                            yield RunStartedEvent(
+                                type=EventType.RUN_STARTED,
+                                thread_id=input_data.thread_id,
+                                run_id=input_data.run_id,
+                            )
+                            yield RunErrorEvent(
+                                type=EventType.RUN_ERROR,
+                                message=f"Failed to initialize session manager: {e}",
+                                code="SESSION_MANAGER_ERROR",
+                            )
+                            return
+                        # Validate the provider return type at the boundary —
+                        # otherwise a forgotten call or wrong type surfaces
+                        # deep inside Strands with a confusing traceback.
+                        if session_manager is not None and not isinstance(
+                            session_manager, SessionManager
+                        ):
+                            actual = type(session_manager).__name__
+                            logger.error(
+                                "session_manager_provider returned %s; "
+                                "expected a SessionManager instance.",
+                                actual,
+                            )
+                            yield RunStartedEvent(
+                                type=EventType.RUN_STARTED,
+                                thread_id=input_data.thread_id,
+                                run_id=input_data.run_id,
+                            )
+                            yield RunErrorEvent(
+                                type=EventType.RUN_ERROR,
+                                message=(
+                                    f"session_manager_provider returned {actual}; "
+                                    "expected a SessionManager instance"
+                                ),
+                                code="SESSION_MANAGER_INVALID_TYPE",
+                            )
+                            return
+                    if session_manager is None and self.config.session_manager_provider:
+                        logger.warning(
+                            f"session_manager_provider returned None for thread_id={thread_id}; "
+                            "agent will run without session persistence"
+                        )
+                    self._agents_by_thread[thread_id] = StrandsAgentCore(
+                        model=self._model,
+                        system_prompt=self._system_prompt,
+                        tools=self._tools,
+                        session_manager=session_manager,
+                        **self._agent_kwargs,
+                    )
         strands_agent = self._agents_by_thread[thread_id]
 
         # Sync proxy tools from client-defined tools
