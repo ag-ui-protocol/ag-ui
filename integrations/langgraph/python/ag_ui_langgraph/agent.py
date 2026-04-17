@@ -772,7 +772,7 @@ class LangGraphAgent:
         # Invariant: callers always operate within an active run.
         assert self.active_run is not None, "get_state_snapshot called outside an active run"
         schema_keys = self.active_run.get("schema_keys")
-        output_keys = schema_keys.get("output") if schema_keys else None
+        output_keys = schema_keys["output"] if schema_keys else None
         if output_keys:
             state = filter_object_by_schema_keys(state, [*DEFAULT_SCHEMA_KEYS, *output_keys])
         return state

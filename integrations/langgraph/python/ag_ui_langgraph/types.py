@@ -24,10 +24,10 @@ class CustomEventNames(str, Enum):
 State = Dict[str, Any]
 
 SchemaKeys = TypedDict("SchemaKeys", {
-    "input": NotRequired[Optional[List[str]]],
-    "output": NotRequired[Optional[List[str]]],
-    "config": NotRequired[Optional[List[str]]],
-    "context": NotRequired[Optional[List[str]]]
+    "input": List[str],
+    "output": List[str],
+    "config": List[str],
+    "context": List[str],
 })
 
 ThinkingProcess = TypedDict("ThinkingProcess", {
