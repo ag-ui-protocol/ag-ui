@@ -397,7 +397,10 @@ class LangGraphAgent:
 
             state = await self.graph.aget_state(config)
 
-            tasks = state.tasks if len(state.tasks) > 0 else None
+            # state.tasks can be None on some checkpointers; the previous
+            # len() call crashed in that case. A plain truthiness check
+            # handles both "None" and "empty tuple/list" uniformly.
+            tasks = state.tasks if state.tasks else None
             interrupts = tasks[0].interrupts if tasks else []
 
             # state.metadata can be None on freshly-initialised / empty checkpoints,
