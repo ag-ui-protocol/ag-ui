@@ -669,14 +669,16 @@ class LangGraphAgent:
             # context_schema introspection is best-effort and independent of the
             # input/output/config triple above — if it raises, keep the keys we
             # already computed rather than falling back all four to defaults.
-            # (NOTE: the exception tuple is intentionally kept in sync with the
-            # outer except below; core sibling is widening that tuple separately.)
+            # NOTE: the exception tuple is intentionally kept in sync with the
+            # outer except below so a ValueError / NotImplementedError raised
+            # from context_schema does not escape and trigger the outer fallback
+            # (which would discard input/output/config keys that did compute).
             context_schema_keys: List[str] = []
             if hasattr(self.graph, "context_schema") and self.graph.context_schema is not None:
                 try:
                     context_schema = self.graph.context_schema().schema()
                     context_schema_keys = list(context_schema["properties"].keys()) if "properties" in context_schema else []
-                except (AttributeError, TypeError, KeyError) as ctx_exc:
+                except (AttributeError, TypeError, KeyError, ValueError, NotImplementedError) as ctx_exc:
                     logger.warning(
                         "get_schema_keys: context_schema introspection failed (%s: %s); "
                         "falling back to empty context keys while keeping input/output/config",
