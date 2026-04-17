@@ -509,7 +509,11 @@ class LangGraphAgent:
                 try:
                     resume_input = json.loads(resume_input)
                 except json.JSONDecodeError:
-                    pass  # Keep as string if not valid JSON
+                    # Keep as string if not valid JSON — callers may legitimately
+                    # pass raw string resume payloads.
+                    logger.debug(
+                        "failed to parse resume_input as JSON, treating as string"
+                    )
             stream_input = Command(resume=resume_input)
         else:
             payload_input = get_stream_payload_input(
