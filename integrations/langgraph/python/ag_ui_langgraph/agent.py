@@ -442,14 +442,15 @@ class LangGraphAgent:
             is_continuation = bool(incoming_non_tool_ids) and incoming_non_tool_ids.issubset(checkpoint_ids)
 
             if not is_continuation:
-                last_user_message = None
+                last_user_message: Optional[HumanMessage] = None
                 for i in range(len(langchain_messages) - 1, -1, -1):
-                    if isinstance(langchain_messages[i], HumanMessage):
-                        last_user_message = langchain_messages[i]
+                    candidate = langchain_messages[i]
+                    if isinstance(candidate, HumanMessage):
+                        last_user_message = candidate
                         break
 
                 if last_user_message:
-                    last_user_id = getattr(last_user_message, "id", None)
+                    last_user_id = last_user_message.id
                     if last_user_id and last_user_id in checkpoint_ids:
                         return await self.prepare_regenerate_stream(
                             input=input,
@@ -528,7 +529,22 @@ class LangGraphAgent:
         tools = input.tools or []
         thread_id = input.thread_id
 
-        time_travel_checkpoint = await self.get_checkpoint_before_message(message_checkpoint.id, thread_id, config)
+        # ``HumanMessage.id`` is Optional at the type level; narrow here so
+        # downstream typed parameters (``get_checkpoint_before_message``'s
+        # ``message_id: str``) hold. Callers reach this method only after
+        # verifying the id against a checkpoint, so a missing id represents
+        # a programming error rather than a recoverable state.
+        message_id = message_checkpoint.id
+        if not message_id:
+            raise ValueError(
+                "prepare_regenerate_stream requires a message_checkpoint with an id"
+            )
+        if not thread_id:
+            raise ValueError(
+                "prepare_regenerate_stream requires input.thread_id to locate the fork point"
+            )
+
+        time_travel_checkpoint = await self.get_checkpoint_before_message(message_id, thread_id, config)
         if time_travel_checkpoint is None:
             return None
 
