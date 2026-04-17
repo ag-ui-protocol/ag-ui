@@ -708,9 +708,17 @@ class LangGraphAgent:
             if isinstance(msg, AIMessage) and getattr(msg, 'tool_calls', None):
                 for tc in msg.tool_calls:
                     if isinstance(tc.get('args'), str):
+                        raw_args = tc['args']
                         try:
-                            tc['args'] = json.loads(tc['args'])
-                        except (json.JSONDecodeError, TypeError):
+                            tc['args'] = json.loads(raw_args)
+                        except (json.JSONDecodeError, TypeError) as exc:
+                            logger.warning(
+                                "Resetting tool_call args after JSON decode failure "
+                                "(tool_call_id=%r, error=%s): %r",
+                                tc.get('id'),
+                                exc,
+                                raw_args,
+                            )
                             tc['args'] = {}
 
         # Fix orphan ToolMessages injected by patch_orphan_tool_calls:
