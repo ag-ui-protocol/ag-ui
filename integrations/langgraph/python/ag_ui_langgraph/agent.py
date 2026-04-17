@@ -1076,9 +1076,28 @@ class LangGraphAgent:
             tool_call_output = event["data"]["output"]
 
             if isinstance(tool_call_output, Command):
-                # Extract ToolMessages from Command.update
-                messages = tool_call_output.update.get('messages', [])
-                tool_messages = [m for m in messages if isinstance(m, ToolMessage)]
+                # Extract ToolMessages from Command.update. ``.update`` is
+                # typed as Optional[Any] upstream — it can be None, a dict,
+                # or a list of tuples. Guard for the non-dict shapes instead
+                # of crashing with AttributeError on ``.get``.
+                update = tool_call_output.update
+                if isinstance(update, dict):
+                    messages = update.get('messages', []) or []
+                else:
+                    messages = []
+
+                # Filter explicitly so non-ToolMessage entries (e.g. plain
+                # BaseMessage / AIMessage items sometimes attached to Command
+                # updates) are logged and dropped rather than silently sliced.
+                tool_messages: List[ToolMessage] = []
+                for m in messages:
+                    if isinstance(m, ToolMessage):
+                        tool_messages.append(m)
+                    else:
+                        logger.debug(
+                            "dropping non-ToolMessage entry from Command.update messages: %r",
+                            type(m).__name__,
+                        )
 
                 # Process each tool message
                 for tool_msg in tool_messages:
