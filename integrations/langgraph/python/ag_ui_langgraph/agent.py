@@ -1288,7 +1288,14 @@ class LangGraphAgent:
         if self.active_run is None:
             raise RuntimeError("handle_reasoning_event called outside an active run")
         if not reasoning_data or "type" not in reasoning_data or "text" not in reasoning_data:
-            return ""
+            # Return None rather than "" so the generator's declared return
+            # type (Optional[str]) matches reality. Log the malformed event
+            # so upstream shape drift is diagnosable.
+            logger.debug(
+                "handle_reasoning_event: malformed reasoning_data dropped: %r",
+                reasoning_data,
+            )
+            return None
 
         reasoning_step_index = reasoning_data["index"]
 
