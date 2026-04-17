@@ -1491,4 +1491,8 @@ class LangGraphAgent:
 
 
 def dump_json_safe(value):
+    # Sharp edge: when ``value`` is already a ``str`` it is returned verbatim
+    # (not re-encoded with json.dumps). Callers passing pre-serialized JSON
+    # strings get them back as-is; callers passing a raw non-JSON string get
+    # that raw string back — no quoting is applied.
     return json.dumps(value, default=json_safe_stringify) if not isinstance(value, str) else value
