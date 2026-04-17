@@ -1312,7 +1312,10 @@ class LangGraphAgent:
 
                 return checkpoint
 
-        raise ValueError("Message ID not found in history")
+        raise ValueError(
+            f"Message ID {message_id!r} not found in history "
+            f"(thread_id={thread_id!r}, snapshots_scanned={len(history_list)})"
+        )
 
     def handle_node_change(self, node_name: Optional[str]) -> Generator[ProcessedEvents, None, None]:
         """
