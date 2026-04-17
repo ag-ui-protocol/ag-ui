@@ -750,7 +750,10 @@ class LangGraphAgent:
                 seen_names.add(tool_name)
                 unique_tools.append(tool)
             elif not tool_name:
-                # Keep tools without names (shouldn't happen, but just in case)
+                # Keep tools without names (shouldn't happen in well-formed
+                # input, but we don't want to silently drop them); warn so
+                # broken upstream tool registrations are visible.
+                logger.warning("tool registered without a name: %r", tool)
                 unique_tools.append(tool)
 
         # Separate A2UI schema context from regular context.
