@@ -50,7 +50,7 @@ def main():
         print("Error: ANTHROPIC_API_KEY required")
         return 1
 
-    port = int(os.getenv("PORT", "8888"))
+    port = int(os.getenv("PORT", "8019"))
     print(f"Starting server on port {port}")
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
 

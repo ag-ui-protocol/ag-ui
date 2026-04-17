@@ -109,7 +109,7 @@ function main() {
     process.exit(1);
   }
 
-  const port = parseInt(process.env.PORT ?? "8889", 10);
+  const port = parseInt(process.env.PORT ?? "8020", 10);
   const server = http.createServer(handleRequest);
 
   server.listen(port, "0.0.0.0", () => {
