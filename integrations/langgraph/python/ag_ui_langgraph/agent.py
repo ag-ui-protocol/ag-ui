@@ -166,6 +166,7 @@ class LangGraphAgent:
             "model_made_tool_call": False,
             "state_reliable": True,
             "streamed_messages": [],
+            "any_mid_stream_merge_fired": False,
         }
         self.active_run = INITIAL_ACTIVE_RUN
 
@@ -233,7 +234,12 @@ class LangGraphAgent:
 
                 if is_subgraph_stream and current_subgraph != self.current_subgraph:
                     self.current_subgraph = current_subgraph
-                    # Every time a subgraph changes, we need to update the state and messages snapshots
+                    # Every time a subgraph changes, we need to update the state and messages snapshots.
+                    # Record that a mid-stream merge fired: the post-run
+                    # snapshot must preserve these streamed_messages
+                    # (delivered to the client here) rather than wiping
+                    # them with a checkpoint-only final snapshot.
+                    self.active_run["any_mid_stream_merge_fired"] = True
                     async for ev in self.get_state_and_messages_snapshots(config):
                         yield ev
 
@@ -361,7 +367,30 @@ class LangGraphAgent:
                 for ev in self.handle_node_change(node_name):
                     yield ev
 
-            async for ev in self.get_state_and_messages_snapshots(config):
+            # Post-run MESSAGES_SNAPSHOT semantics:
+            #
+            # - Non-subgraph runs (supervisor flow never fired a
+            #   mid-stream boundary snapshot): the checkpoint is the
+            #   authoritative final state. Do NOT merge in
+            #   ``streamed_messages`` — they include transient LLM
+            #   outputs (``.with_structured_output()`` / router /
+            #   classifier calls) that never committed, and their
+            #   presence here shows up as duplicate / empty assistant
+            #   bubbles in the final snapshot.
+            #
+            # - Subgraph runs (at least one subgraph-boundary snapshot
+            #   already fired): keep the ``streamed_messages`` merge.
+            #   Subgraph messages are delivered to the client via the
+            #   mid-stream snapshots and must remain visible in the
+            #   final snapshot; the parent graph often returns
+            #   ``Command(goto=...)`` without folding them into state,
+            #   so the checkpoint alone is incomplete.
+            any_mid_stream_merge_fired = self.active_run.get(
+                "any_mid_stream_merge_fired", False
+            )
+            async for ev in self.get_state_and_messages_snapshots(
+                config, merge_streamed_messages=any_mid_stream_merge_fired
+            ):
                 yield ev
 
             for ev in self.handle_node_change(None):
@@ -1200,7 +1229,28 @@ class LangGraphAgent:
 
         return kwargs
 
-    async def get_state_and_messages_snapshots(self, config):
+    async def get_state_and_messages_snapshots(self, config, merge_streamed_messages: bool = True):
+        """Emit STATE_SNAPSHOT + MESSAGES_SNAPSHOT for the current checkpoint.
+
+        ``merge_streamed_messages`` controls whether uncommitted messages
+        accumulated in ``active_run["streamed_messages"]`` are appended to
+        the checkpoint's message list before emitting MESSAGES_SNAPSHOT.
+
+        Mid-stream callers (subgraph-boundary transitions) pass ``True``
+        (the default) so in-flight subgraph messages surface before their
+        parent commits — this is the PR #1426 subgraph-lag fix.
+
+        The post-run caller passes ``True`` only when at least one
+        mid-stream merge already fired (``any_mid_stream_merge_fired``),
+        i.e. a subgraph handoff delivered ``streamed_messages`` to the
+        client that the parent graph never committed to state; the final
+        snapshot must preserve them. Otherwise the post-run caller
+        passes ``False`` so the final snapshot is emitted from the
+        checkpoint alone — dropping transient/intermediate LLM outputs
+        (e.g. ``.with_structured_output()`` / router / classifier calls)
+        that never committed and would otherwise appear as duplicate /
+        empty assistant bubbles.
+        """
         state = await self.graph.aget_state(config)
         state_values = state.values if state.values is not None else state
         yield self._dispatch_event(
@@ -1208,11 +1258,12 @@ class LangGraphAgent:
         )
 
         checkpoint_messages = state_values.get("messages", [])
-        streamed_messages = self.active_run.get("streamed_messages", [])
-        if streamed_messages:
-            checkpoint_ids = {getattr(m, "id", None) for m in checkpoint_messages} - {None}
-            extra = [m for m in streamed_messages if getattr(m, "id", None) and getattr(m, "id", None) not in checkpoint_ids]
-            checkpoint_messages = checkpoint_messages + extra
+        if merge_streamed_messages:
+            streamed_messages = self.active_run.get("streamed_messages", [])
+            if streamed_messages:
+                checkpoint_ids = {getattr(m, "id", None) for m in checkpoint_messages} - {None}
+                extra = [m for m in streamed_messages if getattr(m, "id", None) and getattr(m, "id", None) not in checkpoint_ids]
+                checkpoint_messages = checkpoint_messages + extra
         snapshot_messages = self._filter_orphan_tool_messages(checkpoint_messages)
         yield self._dispatch_event(
             MessagesSnapshotEvent(
