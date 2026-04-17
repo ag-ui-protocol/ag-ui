@@ -1141,6 +1141,17 @@ class LangGraphAgent:
                 self.active_run["has_function_streaming"] = False
                 return
 
+            # The non-Command branch below assumes tool_call_output is a
+            # ToolMessage (reads .tool_call_id, .name, .id, .content). If an
+            # integration delivers something else, log and skip rather than
+            # AttributeError-crashing the whole stream.
+            if not isinstance(tool_call_output, ToolMessage):
+                logger.debug(
+                    "OnToolEnd received non-ToolMessage output (%r); skipping dispatch",
+                    type(tool_call_output).__name__,
+                )
+                return
+
             if not self.active_run["has_function_streaming"]:
                 yield self._dispatch_event(
                     ToolCallStartEvent(
