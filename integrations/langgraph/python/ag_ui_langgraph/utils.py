@@ -379,7 +379,11 @@ def resolve_encrypted_reasoning_content(chunk: Any) -> str | None:
     return None
 
 def resolve_message_content(content: Any) -> str | None:
-    if not content:
+    # Distinguish None (absent) from "" (explicit empty delta): some
+    # providers emit zero-length content during tool-call / structured-
+    # output transitions, and the caller in _handle_single_event relies on
+    # preserving the empty string so the delta still flows through.
+    if content is None:
         return None
 
     if isinstance(content, str):
