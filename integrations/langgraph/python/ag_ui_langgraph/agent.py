@@ -1541,7 +1541,13 @@ class LangGraphAgent:
         # StateSnapshot itself as a fallback crashed downstream .get()
         # access and made empty-checkpoint paths fail loudly instead of
         # emitting a plausible empty snapshot.
-        state_values = state.values if state.values is not None else {}
+        if state.values is None:
+            logger.debug(
+                "StateSnapshot.values is None; treating as empty state for snapshot emission",
+            )
+            state_values = {}
+        else:
+            state_values = state.values
         yield self._dispatch_event(
             StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=self.get_state_snapshot(state_values))
         )
