@@ -585,9 +585,10 @@ class LangGraphAgent:
                 "prepare_regenerate_stream requires input.thread_id to locate the fork point"
             )
 
+        # ``get_checkpoint_before_message`` raises ``ValueError`` when the
+        # message id is missing from history; it never returns ``None``, so
+        # no None-guard is needed here.
         time_travel_checkpoint = await self.get_checkpoint_before_message(message_id, thread_id, config)
-        if time_travel_checkpoint is None:
-            return None
 
         # Time-travel regeneration forks at a single ``as_node`` target. When the
         # checkpoint's ``next`` tuple has more than one entry (a parallel/fan-out
