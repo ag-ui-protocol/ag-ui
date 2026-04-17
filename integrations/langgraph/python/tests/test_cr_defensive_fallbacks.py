@@ -323,5 +323,94 @@ class TestContextSchemaIsolation(unittest.TestCase):
         self.assertNotIn("falling back to default schema keys", joined)
 
 
+class TestChunkReasoningHelpersDictShape(unittest.IsolatedAsyncioTestCase):
+    """C.7 — resolve_reasoning_content / resolve_encrypted_reasoning_content
+    and the on_chat_model_stream path must tolerate chunks delivered as raw
+    dicts (not just BaseMessage attribute-bearing objects).
+
+    Regression for PR 1544 reviewer repro: an ``on_chat_model_stream``
+    event whose ``event["data"]["chunk"]`` is a dict like
+    ``{"response_metadata": {}, "tool_call_chunks": [], "content": "",
+    "id": "msg-1"}`` previously raised ``AttributeError`` because the
+    helpers did ``chunk.content`` / ``chunk.additional_kwargs`` directly.
+    """
+
+    def test_resolve_reasoning_content_accepts_dict_chunk(self):
+        from ag_ui_langgraph.utils import resolve_reasoning_content
+
+        # Must not raise AttributeError on dict-shaped chunks.
+        result = resolve_reasoning_content(
+            {
+                "response_metadata": {},
+                "tool_call_chunks": [],
+                "content": "",
+                "id": "msg-1",
+            }
+        )
+        self.assertIsNone(result)
+
+    def test_resolve_reasoning_content_dict_additional_kwargs(self):
+        from ag_ui_langgraph.utils import resolve_reasoning_content
+
+        # additional_kwargs path (DeepSeek / Qwen / xAI) on a dict chunk.
+        result = resolve_reasoning_content(
+            {
+                "content": "",
+                "additional_kwargs": {"reasoning_content": "deep thought"},
+            }
+        )
+        self.assertIsNotNone(result)
+        self.assertEqual(result["text"], "deep thought")
+
+    def test_resolve_encrypted_reasoning_content_accepts_dict_chunk(self):
+        from ag_ui_langgraph.utils import resolve_encrypted_reasoning_content
+
+        result = resolve_encrypted_reasoning_content(
+            {"content": [{"type": "redacted_thinking", "data": "opaque"}]}
+        )
+        self.assertEqual(result, "opaque")
+
+        # dict-shaped empty chunk must be handled without AttributeError.
+        self.assertIsNone(
+            resolve_encrypted_reasoning_content(
+                {
+                    "response_metadata": {},
+                    "tool_call_chunks": [],
+                    "content": "",
+                    "id": "msg-1",
+                }
+            )
+        )
+
+    async def test_handle_single_event_dict_chunk_does_not_raise(self):
+        agent = make_agent()
+        agent.active_run = {
+            "id": "run-1",
+            "node_name": "n",
+            "has_function_streaming": False,
+        }
+        _record_dispatch(agent)
+
+        event = {
+            "event": "on_chat_model_stream",
+            "data": {
+                "chunk": {
+                    "response_metadata": {},
+                    "tool_call_chunks": [],
+                    "content": "",
+                    "id": "msg-1",
+                }
+            },
+            "metadata": {},
+        }
+
+        # Previously raised AttributeError('dict' object has no attribute
+        # 'content') inside resolve_reasoning_content. Must now drain
+        # cleanly.
+        collected = []
+        async for ev in agent._handle_single_event(event, {"messages": []}):
+            collected.append(ev)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
