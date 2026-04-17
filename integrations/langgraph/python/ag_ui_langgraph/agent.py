@@ -271,7 +271,17 @@ class LangGraphAgent:
 
                 current_node_name = (event.get("metadata") or {}).get("langgraph_node")
                 event_type = event.get("event")
-                self.active_run["id"] = event.get("run_id")
+                event_run_id = event.get("run_id")
+                if isinstance(event_run_id, str) and event_run_id:
+                    self.active_run["id"] = event_run_id
+                elif event_run_id is not None:
+                    # Shape mismatch: some upstream emitted a non-string run_id.
+                    # Keep the existing id rather than corrupting it.
+                    logger.warning(
+                        "Ignoring non-string run_id on event (type=%r, run_id=%r)",
+                        event_type,
+                        event_run_id,
+                    )
                 exiting_node = False
 
                 if event_type == "on_chain_end" and isinstance(
