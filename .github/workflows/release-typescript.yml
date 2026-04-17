@@ -121,8 +121,28 @@ jobs:
           while read -r pkg; do
             NAME=$(echo "$pkg" | jq -r '.name')
             VERSION=$(echo "$pkg" | jq -r '.version')
-            # npm view returns the version string if present, empty otherwise.
-            PUBLISHED=$(npm view "$NAME@$VERSION" version 2>/dev/null || true)
+            # npm view returns the version string if present, E404 if the
+            # specific version does not exist. Anything else (auth failure,
+            # network error, registry 5xx) must surface instead of being
+            # silently treated as "not published" -- otherwise a transient
+            # error would cause us to re-publish an already-published version
+            # and fail downstream with a confusing "cannot publish over
+            # previously published version" error.
+            VIEW_LOG=$(mktemp)
+            if PUBLISHED=$(npm view "$NAME@$VERSION" version 2>"$VIEW_LOG"); then
+              :
+            else
+              VIEW_RC=$?
+              if grep -qiE "E404|code E404|is not in the npm registry|no such package available" "$VIEW_LOG"; then
+                PUBLISHED=""
+              else
+                echo "ERROR: npm view $NAME@$VERSION failed (exit $VIEW_RC):" >&2
+                cat "$VIEW_LOG" >&2
+                rm -f "$VIEW_LOG"
+                exit 1
+              fi
+            fi
+            rm -f "$VIEW_LOG"
             if [ -n "$PUBLISHED" ]; then
               echo "SKIP: $NAME@$VERSION already published on npm"
               echo "SKIP: $NAME@$VERSION already published on npm" >> "$GITHUB_STEP_SUMMARY"
