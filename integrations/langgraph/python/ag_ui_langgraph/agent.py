@@ -138,7 +138,7 @@ class LangGraphAgent:
                 f"keyword arguments: {exc}"
             ) from exc
 
-    def _dispatch_event(self, event: ProcessedEvents) -> str:
+    def _dispatch_event(self, event: ProcessedEvents) -> ProcessedEvents:
         if event.type == EventType.RAW:
             event.event = make_json_safe(event.event)
         elif event.raw_event:
@@ -1073,7 +1073,7 @@ class LangGraphAgent:
             self.active_run["state_reliable"] = True
             self.active_run["has_function_streaming"] = False
 
-    def handle_reasoning_event(self, reasoning_data: LangGraphReasoning) -> Generator[str, Any, str | None]:
+    def handle_reasoning_event(self, reasoning_data: LangGraphReasoning) -> Generator[ProcessedEvents, Any, str | None]:
         if not reasoning_data or "type" not in reasoning_data or "text" not in reasoning_data:
             return ""
 
