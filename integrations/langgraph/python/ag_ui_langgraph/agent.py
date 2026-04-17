@@ -163,7 +163,7 @@ class LangGraphAgent:
 
         return event
 
-    async def run(self, input: RunAgentInput) -> AsyncGenerator[str, None]:
+    async def run(self, input: RunAgentInput) -> AsyncGenerator[ProcessedEvents, None]:
         forwarded_props = {}
         if hasattr(input, "forwarded_props") and input.forwarded_props:
             forwarded_props = {
@@ -172,7 +172,7 @@ class LangGraphAgent:
         async for event_str in self._handle_stream_events(input.copy(update={"forwarded_props": forwarded_props})):
             yield event_str
 
-    async def _handle_stream_events(self, input: RunAgentInput) -> AsyncGenerator[str, None]:
+    async def _handle_stream_events(self, input: RunAgentInput) -> AsyncGenerator[ProcessedEvents, None]:
         thread_id = input.thread_id or str(uuid.uuid4())
         INITIAL_ACTIVE_RUN: RunMetadata = {
             "id": input.run_id,
@@ -865,7 +865,7 @@ class LangGraphAgent:
             state = filter_object_by_schema_keys(state, [*DEFAULT_SCHEMA_KEYS, *output_keys])
         return state
 
-    async def _handle_single_event(self, event: Any, state: State) -> AsyncGenerator[str, None]:
+    async def _handle_single_event(self, event: Any, state: State) -> AsyncGenerator[ProcessedEvents, None]:
         # Invariant: _handle_single_event is only invoked from the event
         # loop inside _handle_stream_events, where active_run has been
         # initialized for the current run.
