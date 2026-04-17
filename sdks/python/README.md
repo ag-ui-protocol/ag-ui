@@ -41,19 +41,26 @@ sse_data = encoder.encode(event)
 ### Multimodal user message
 
 ```python
-from ag_ui.core import UserMessage, TextInputContent, BinaryInputContent
+from ag_ui.core import UserMessage, TextInputContent, ImageInputPart, InputContentUrlSource
 
 message = UserMessage(
     id="user-123",
     content=[
         TextInputContent(text="Please describe this image"),
-        BinaryInputContent(mime_type="image/png", url="https://example.com/cat.png"),
+        ImageInputPart(
+            source=InputContentUrlSource(
+                value="https://example.com/cat.png",
+                mime_type="image/png",
+            )
+        ),
     ],
 )
 
 payload = message.model_dump(by_alias=True)
 # {"id": "user-123", "role": "user", "content": [...]}
 ```
+
+> `BinaryInputContent` is deprecated. Use modality-specific input parts (`ImageInputPart`, `AudioInputPart`, `VideoInputPart`, `DocumentInputPart`) with `InputContentDataSource` or `InputContentUrlSource`.
 
 ## Packages
 

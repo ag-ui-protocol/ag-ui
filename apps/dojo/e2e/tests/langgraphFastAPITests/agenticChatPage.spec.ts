@@ -39,13 +39,18 @@ test("[LangGraph FastAPI] Agentic Chat changes background on message and reset",
   await chat.sendMessage("Hi change the background color to blue");
   await chat.assertUserMessageVisible("Hi change the background color to blue");
 
+  // Wait for the full tool-execution cycle to complete (tool call + follow-up).
+  // awaitLLMResponseDone can return prematurely if data-copilot-running briefly
+  // flips to false between the two agent runs, so also wait for the agent's
+  // text reply and background change which prove the cycle fully finished.
+  await chat.assertAgentReplyVisible(/done|completed|changed|background/i);
   await expect.poll(getBackground).not.toBe(initialBackground);
   const backgroundAfterBlue = await getBackground();
 
   // 2. Change to pink
   await chat.sendMessage("Hi change the background color to pink");
   await chat.assertUserMessageVisible("Hi change the background color to pink");
-
+  await chat.assertAgentReplyVisible(/done|completed|changed|background/i);
   await expect.poll(getBackground).not.toBe(backgroundAfterBlue);
   const backgroundAfterPink = await getBackground();
   // Verify it also differs from initial (not a reset)

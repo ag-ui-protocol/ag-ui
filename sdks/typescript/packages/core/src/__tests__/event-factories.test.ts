@@ -43,10 +43,10 @@ describe("event factories", () => {
     expect(event.role).toBe("user");
   });
 
-  it("rejects empty deltas in TEXT_MESSAGE_CONTENT", () => {
-    expect(() => createTextMessageContentEvent({ messageId: "msg-3", delta: "" })).toThrow(
-      /Delta must not be an empty string/,
-    );
+  it("accepts empty deltas in TEXT_MESSAGE_CONTENT", () => {
+    const event = createTextMessageContentEvent({ messageId: "msg-3", delta: "" });
+    expect(event.type).toBe(EventType.TEXT_MESSAGE_CONTENT);
+    expect(event.delta).toBe("");
   });
 
   it("creates TEXT_MESSAGE_CONTENT when delta provided", () => {

@@ -119,6 +119,8 @@ export interface LangGraphAgentConfig extends AgentConfig {
   graphId: string;
 }
 
+const ROOT_SUBGRAPH_NAME = "root";
+
 export class LangGraphAgent extends AbstractAgent {
   client: LangGraphClient;
   assistantConfig?: LangGraphConfig;
@@ -126,8 +128,12 @@ export class LangGraphAgent extends AbstractAgent {
   graphId: string;
   assistant?: Assistant;
   messagesInProcess: MessagesInProgressRecord;
+  emittedToolCallStartIds: Set<string> = new Set();
   reasoningProcess: null | ReasoningInProgress;
   activeRun?: RunMetadata;
+  // Subgraph node names discovered dynamically from langgraph_checkpoint_ns
+  private subgraphs: Set<string> = new Set();
+  private currentSubgraph: string = ROOT_SUBGRAPH_NAME;
   // Stop control flags
   private cancelRequested: boolean = false;
   private cancelSent: boolean = false;
@@ -172,6 +178,8 @@ export class LangGraphAgent extends AbstractAgent {
       activeRun: this.activeRun ? structuredClone(this.activeRun) : undefined,
       cancelRequested: this.cancelRequested,
       cancelSent: this.cancelSent,
+      subgraphs: this.subgraphs ? new Set(this.subgraphs) : new Set(),
+      currentSubgraph: ROOT_SUBGRAPH_NAME,
     });
   }
 
@@ -182,7 +190,12 @@ export class LangGraphAgent extends AbstractAgent {
 
   run(input: RunAgentInput) {
     return new Observable<ProcessedEvents>((subscriber) => {
-      this.runAgentStream(input, subscriber);
+      this.runAgentStream(input, subscriber).catch((err) => {
+        console.error(`[LangGraph] runAgentStream error:`, err);
+        if (!subscriber.closed) {
+          subscriber.error(err);
+        }
+      });
       return () => {};
     });
   }
@@ -192,7 +205,6 @@ export class LangGraphAgent extends AbstractAgent {
       id: input.runId,
       threadId: input.threadId,
       hasFunctionStreaming: false,
-      hasPredictState: false,
     };
     // Reset per-run flags
     this.cancelRequested = false;
@@ -215,7 +227,7 @@ export class LangGraphAgent extends AbstractAgent {
   }
 
   async prepareRegenerateStream(input: RegenerateInput, streamMode: StreamMode | StreamMode[]) {
-    const { threadId, messageCheckpoint } = input;
+    const { threadId, messageCheckpoint, forwardedProps } = input;
 
     const timeTravelCheckpoint = await this.getCheckpointByMessage(
       messageCheckpoint!.id!,
@@ -235,6 +247,18 @@ export class LangGraphAgent extends AbstractAgent {
       asNode: timeTravelCheckpoint.next?.[0] ?? "__start__",
     });
 
+    let payloadConfig: LangGraphConfig | undefined;
+    const configsToMerge = [this.assistantConfig, forwardedProps?.config].filter(
+      Boolean,
+    ) as LangGraphConfig[];
+    if (configsToMerge.length) {
+      payloadConfig = await this.mergeConfigs({
+        configs: configsToMerge,
+        assistant: this.assistant,
+        schemaKeys: this.activeRun!.schemaKeys,
+      });
+    }
+
     const payload = {
       ...(input.forwardedProps ?? {}),
       input: this.langGraphDefaultMergeState(
@@ -245,6 +269,7 @@ export class LangGraphAgent extends AbstractAgent {
       // @ts-ignore
       checkpointId: fork.checkpoint.checkpoint_id!,
       streamMode,
+      config: payloadConfig,
     };
     return {
       streamResponse: this.client.runs.stream(threadId, this.assistant.assistant_id, payload),
@@ -297,9 +322,14 @@ export class LangGraphAgent extends AbstractAgent {
     let stateValues = threadState.values;
     this.activeRun!.schemaKeys = await this.getSchemaKeys();
 
-    if (
-      (agentState.values.messages ?? []).length > messages.filter((m) => m.role !== "system").length
-    ) {
+    // Compare non-system message counts to detect regeneration.
+    // Both sides must filter system messages for an accurate comparison,
+    // since the LangGraph state may contain system messages injected by
+    // the connector (e.g. CopilotKit context) that the frontend doesn't track.
+    const stateNonSystemCount = agentStateMessages.filter((m: LangGraphPlatformMessage) => m.type !== "system").length;
+    const inputNonSystemCount = messages.filter((m) => m.role !== "system").length;
+
+    if (stateNonSystemCount > inputNonSystemCount) {
       let lastUserMessage: LangGraphMessage | null = null;
       // Find the first user message by working backwards from the last message
       for (let i = messages.length - 1; i >= 0; i--) {
@@ -425,6 +455,8 @@ export class LangGraphAgent extends AbstractAgent {
     this.subscriber = subscriber;
     let shouldExit = false;
     if (!stream) return;
+    // Reset per-run tracking of emitted tool call IDs
+    this.emittedToolCallStartIds = new Set<string>();
 
     let { streamResponse, state } = stream;
 
@@ -463,7 +495,7 @@ export class LangGraphAgent extends AbstractAgent {
           break;
         }
 
-        const subgraphsStreamEnabled = input.forwardedProps?.streamSubgraphs;
+        const subgraphsStreamEnabled = input.forwardedProps?.streamSubgraphs ?? true;
         const isSubgraphStream =
           subgraphsStreamEnabled &&
           (streamResponseChunk.event.startsWith("events") ||
@@ -519,6 +551,18 @@ export class LangGraphAgent extends AbstractAgent {
         const currentNodeName = metadata.langgraph_node;
         const eventType = chunkData.event;
 
+        // Subgraph detection via langgraph_checkpoint_ns
+        // ns format: "" | "node:uuid" | "node:uuid|inner:uuid"
+        const ns: string = metadata.langgraph_checkpoint_ns ?? "";
+        const nsRoot = ns.split("|")[0].split(":")[0];
+        if (ns.includes("|") && nsRoot) this.subgraphs.add(nsRoot);
+        const currentSubgraph = (nsRoot && this.subgraphs.has(nsRoot)) ? nsRoot : ROOT_SUBGRAPH_NAME;
+
+        if (currentSubgraph !== this.currentSubgraph) {
+          this.currentSubgraph = currentSubgraph;
+          await this.getStateAndMessagesSnapshots(threadId);
+        }
+
         // Set server-assigned run id as soon as available
         if (metadata.run_id) {
           this.activeRun!.id = metadata.run_id;
@@ -564,16 +608,12 @@ export class LangGraphAgent extends AbstractAgent {
         }
 
         const hasStateDiff = JSON.stringify(updatedState) !== JSON.stringify(state);
-        // We should not update snapshot while a message is in progress or when
-        // a predict_state tool call is pending (the model node exits before the
-        // tool runs, so the state would be stale).
-        const suppressedByPredictState = this.activeRun!.exitingNode && this.activeRun!.hasPredictState;
+        // We should not update snapshot while a message is in progress.
         if (
           (hasStateDiff ||
             this.activeRun!.prevNodeName != this.activeRun!.nodeName ||
             this.activeRun!.exitingNode) &&
-          !Boolean(this.getMessageInProgress(this.activeRun!.id)) &&
-          !suppressedByPredictState
+          !Boolean(this.getMessageInProgress(this.activeRun!.id))
         ) {
           state = updatedState;
           this.activeRun!.prevNodeName = this.activeRun!.nodeName;
@@ -583,10 +623,6 @@ export class LangGraphAgent extends AbstractAgent {
             snapshot: this.getStateSnapshot(state),
             rawEvent: chunk,
           });
-        } else if (suppressedByPredictState) {
-          console.debug(
-            `[ag-ui/langgraph] Suppressing STATE_SNAPSHOT on node exit (node=${this.activeRun!.nodeName}, hasPredictState=${this.activeRun!.hasPredictState})`,
-          );
         }
 
         this.dispatchEvent({
@@ -624,14 +660,7 @@ export class LangGraphAgent extends AbstractAgent {
       // Immediately turn off new step
       this.handleNodeChange(undefined);
 
-      this.dispatchEvent({
-        type: EventType.STATE_SNAPSHOT,
-        snapshot: this.getStateSnapshot(state),
-      });
-      this.dispatchEvent({
-        type: EventType.MESSAGES_SNAPSHOT,
-        messages: langchainMessagesToAgui((state.values as { messages: any[] }).messages ?? []),
-      });
+      await this.getStateAndMessagesSnapshots(threadId);
 
       this.dispatchEvent({
         type: EventType.RUN_FINISHED,
@@ -646,6 +675,23 @@ export class LangGraphAgent extends AbstractAgent {
     } catch (e) {
       return subscriber.error(e);
     }
+  }
+
+  private async getStateAndMessagesSnapshots(threadId: string): Promise<void> {
+    const state: ThreadState<State> = await this.client.threads.getState(threadId);
+    this.dispatchEvent({
+      type: EventType.STATE_SNAPSHOT,
+      snapshot: this.getStateSnapshot(state),
+    });
+    const checkpointMessages: LangGraphMessage[] = (state.values as State).messages ?? [];
+    const streamedMessages = this.activeRun?.streamedMessages ?? [];
+    const checkpointIds = new Set(checkpointMessages.map((m) => m.id).filter(Boolean));
+    const extra = streamedMessages.filter((m) => m.id && !checkpointIds.has(m.id));
+    const snapshotMessages = [...checkpointMessages, ...(extra as unknown as LangGraphMessage[])];
+    this.dispatchEvent({
+      type: EventType.MESSAGES_SNAPSHOT,
+      messages: langchainMessagesToAgui(snapshotMessages),
+    });
   }
 
   handleSingleEvent(event: any): void {
@@ -666,14 +712,14 @@ export class LangGraphAgent extends AbstractAgent {
 
     switch (event.event) {
       case LangGraphEventTypes.OnChatModelStream:
-        let shouldEmitMessages = event.metadata?.["emit-messages"] ?? true;
-        let shouldEmitToolCalls = event.metadata?.["emit-tool-calls"] ?? true;
+        let shouldEmitMessages = event.metadata["emit-messages"] ?? true;
+        let shouldEmitToolCalls = event.metadata["emit-tool-calls"] ?? true;
 
         if (event.data.chunk.response_metadata.finish_reason) return;
         let currentStream = this.getMessageInProgress(this.activeRun!.id);
         const hasCurrentStream = Boolean(currentStream?.id);
         const toolCallData = event.data.chunk.tool_call_chunks?.[0];
-        const toolCallUsedToPredictState = event.metadata?.["predict_state"]?.some(
+        const toolCallUsedToPredictState = event.metadata["predict_state"]?.some(
           (predictStateTool: PredictStateTool) => predictStateTool.tool === toolCallData?.name,
         );
 
@@ -732,11 +778,10 @@ export class LangGraphAgent extends AbstractAgent {
         }
 
         if (toolCallUsedToPredictState) {
-          this.activeRun!.hasPredictState = true;
           this.dispatchEvent({
             type: EventType.CUSTOM,
             name: "PredictState",
-            value: event.metadata?.["predict_state"],
+            value: event.metadata["predict_state"],
           });
         }
 
@@ -773,6 +818,7 @@ export class LangGraphAgent extends AbstractAgent {
             rawEvent: event,
           });
           if (resolved) {
+            this.emittedToolCallStartIds.add(toolCallData.id);
             this.setMessageInProgress(this.activeRun!.id, {
               id: event.data.chunk.id,
               toolCallId: toolCallData.id,
@@ -821,7 +867,12 @@ export class LangGraphAgent extends AbstractAgent {
         }
 
         break;
-      case LangGraphEventTypes.OnChatModelEnd:
+      case LangGraphEventTypes.OnChatModelEnd: {
+        const outputMsg = event.data?.output;
+        if (outputMsg && typeof outputMsg === "object" && outputMsg.id && outputMsg.type) {
+          if (!this.activeRun!.streamedMessages) this.activeRun!.streamedMessages = [];
+          this.activeRun!.streamedMessages.push(outputMsg);
+        }
         if (this.getMessageInProgress(this.activeRun!.id)?.toolCallId) {
           const resolved = this.dispatchEvent({
             type: EventType.TOOL_CALL_END,
@@ -845,6 +896,7 @@ export class LangGraphAgent extends AbstractAgent {
           break;
         }
         break;
+      }
       case LangGraphEventTypes.OnCustomEvent:
         if (event.name === CustomEventNames.ManuallyEmitMessage) {
           this.dispatchEvent({
@@ -908,7 +960,6 @@ export class LangGraphAgent extends AbstractAgent {
         });
         break;
       case LangGraphEventTypes.OnToolEnd:
-        this.activeRun!.hasPredictState = false;
         let toolCallOutput = event.data?.output
 
         // Command from within a tool. We need to grab result from the tool result message
@@ -948,7 +999,11 @@ export class LangGraphAgent extends AbstractAgent {
           break;
         }
 
-        if (!this.activeRun!.hasFunctionStreaming) {
+        // Emit TOOL_CALL_START + ARGS + END for tool calls that were not
+        // already handled by the streaming path. Uses emittedToolCallStartIds
+        // to avoid duplicates from parallel tool calls.
+        if (!this.emittedToolCallStartIds.has(toolCallOutput.tool_call_id)) {
+          this.emittedToolCallStartIds.add(toolCallOutput.tool_call_id);
           this.dispatchEvent({
             type: EventType.TOOL_CALL_START,
             toolCallId: toolCallOutput.tool_call_id,
@@ -1267,7 +1322,7 @@ export class LangGraphAgent extends AbstractAgent {
 
   async getAssistant(): Promise<Assistant> {
     try {
-      const assistants = await this.client.assistants.search();
+      const assistants = await this.client.assistants.search({ graphId: this.graphId, limit: 1 });
       const retrievedAssistant = assistants.find(
         (searchResult) => searchResult.graph_id === this.graphId,
       );

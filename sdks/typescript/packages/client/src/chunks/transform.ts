@@ -15,6 +15,7 @@ import {
   ReasoningMessageStartEvent,
 } from "@ag-ui/core";
 import { EventType } from "@ag-ui/core";
+import { type DebugLoggerInput, resolveDebugLogger } from "@/debug-logger";
 
 interface TextMessageFields {
   messageId: string;
@@ -32,8 +33,9 @@ interface ReasoningMessageFields {
 }
 
 export const transformChunks =
-  (debug: boolean) =>
+  (debugLogger?: DebugLoggerInput) =>
   (events$: Observable<BaseEvent>): Observable<BaseEvent> => {
+    const log = resolveDebugLogger(debugLogger);
     let textMessageFields: TextMessageFields | undefined;
     let toolCallFields: ToolCallFields | undefined;
     let reasoningMessageFields: ReasoningMessageFields | undefined;
@@ -50,9 +52,9 @@ export const transformChunks =
       mode = undefined;
       textMessageFields = undefined;
 
-      if (debug) {
-        console.debug("[TRANSFORM]: TEXT_MESSAGE_END", JSON.stringify(event));
-      }
+      log?.event("TRANSFORM", "TEXT_MESSAGE_END", event, {
+        messageId: event.messageId,
+      });
 
       return event;
     };
@@ -68,9 +70,9 @@ export const transformChunks =
       mode = undefined;
       toolCallFields = undefined;
 
-      if (debug) {
-        console.debug("[TRANSFORM]: TOOL_CALL_END", JSON.stringify(event));
-      }
+      log?.event("TRANSFORM", "TOOL_CALL_END", event, {
+        toolCallId: event.toolCallId,
+      });
 
       return event;
     };
@@ -86,9 +88,9 @@ export const transformChunks =
       mode = undefined;
       reasoningMessageFields = undefined;
 
-      if (debug) {
-        console.debug("[TRANSFORM]: REASONING_MESSAGE_END", JSON.stringify(event));
-      }
+      log?.event("TRANSFORM", "REASONING_MESSAGE_END", event, {
+        messageId: event.messageId,
+      });
 
       return event;
     };
@@ -176,12 +178,9 @@ export const transformChunks =
 
               textMessageResult.push(textMessageStartEvent);
 
-              if (debug) {
-                console.debug(
-                  "[TRANSFORM]: TEXT_MESSAGE_START",
-                  JSON.stringify(textMessageStartEvent),
-                );
-              }
+              log?.event("TRANSFORM", "TEXT_MESSAGE_START", textMessageStartEvent, {
+                messageId: messageChunkEvent.messageId,
+              });
             }
 
             if (messageChunkEvent.delta !== undefined) {
@@ -193,12 +192,9 @@ export const transformChunks =
 
               textMessageResult.push(textMessageContentEvent);
 
-              if (debug) {
-                console.debug(
-                  "[TRANSFORM]: TEXT_MESSAGE_CONTENT",
-                  JSON.stringify(textMessageContentEvent),
-                );
-              }
+              log?.event("TRANSFORM", "TEXT_MESSAGE_CONTENT", textMessageContentEvent, {
+                messageId: textMessageFields!.messageId,
+              });
             }
 
             return textMessageResult;
@@ -239,9 +235,10 @@ export const transformChunks =
 
               toolMessageResult.push(toolCallStartEvent);
 
-              if (debug) {
-                console.debug("[TRANSFORM]: TOOL_CALL_START", JSON.stringify(toolCallStartEvent));
-              }
+              log?.event("TRANSFORM", "TOOL_CALL_START", toolCallStartEvent, {
+                toolCallId: toolCallChunkEvent.toolCallId,
+                toolCallName: toolCallChunkEvent.toolCallName,
+              });
             }
 
             if (toolCallChunkEvent.delta !== undefined) {
@@ -253,9 +250,9 @@ export const transformChunks =
 
               toolMessageResult.push(toolCallArgsEvent);
 
-              if (debug) {
-                console.debug("[TRANSFORM]: TOOL_CALL_ARGS", JSON.stringify(toolCallArgsEvent));
-              }
+              log?.event("TRANSFORM", "TOOL_CALL_ARGS", toolCallArgsEvent, {
+                toolCallId: toolCallFields!.toolCallId,
+              });
             }
 
             return toolMessageResult;
@@ -290,12 +287,9 @@ export const transformChunks =
               } as ReasoningMessageStartEvent;
               reasoningMessageResult.push(reasoningMessageStartEvent);
 
-              if (debug) {
-                console.debug(
-                  "[TRANSFORM]: REASONING_MESSAGE_START",
-                  JSON.stringify(reasoningMessageStartEvent),
-                );
-              }
+              log?.event("TRANSFORM", "REASONING_MESSAGE_START", reasoningMessageStartEvent, {
+                messageId: reasoningChunkEvent.messageId,
+              });
             }
 
             if (reasoningChunkEvent.delta !== undefined) {
@@ -307,12 +301,9 @@ export const transformChunks =
 
               reasoningMessageResult.push(reasoningMessageContentEvent);
 
-              if (debug) {
-                console.debug(
-                  "[TRANSFORM]: REASONING_MESSAGE_CONTENT",
-                  JSON.stringify(reasoningMessageContentEvent),
-                );
-              }
+              log?.event("TRANSFORM", "REASONING_MESSAGE_CONTENT", reasoningMessageContentEvent, {
+                messageId: reasoningMessageFields!.messageId,
+              });
             }
 
             return reasoningMessageResult;

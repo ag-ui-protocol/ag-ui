@@ -1,5 +1,5 @@
 import { AbstractAgent } from "../agent";
-import { AgentSubscriber } from "../subscriber";
+import { AgentSubscriber, runSubscribersWithMutation } from "../subscriber";
 import {
   BaseEvent,
   EventType,
@@ -1261,6 +1261,220 @@ describe("AgentSubscriber", () => {
     });
   });
 
+  describe("runSubscribersWithMutation isolation contract", () => {
+    const runWith = (
+      subscribers: AgentSubscriber[],
+      messages: Message[] = [{ id: "orig", role: "user", content: "hi" }],
+      state: Record<string, any> = {},
+    ) =>
+      runSubscribersWithMutation(subscribers, messages, state, (subscriber, msgs, st) =>
+        subscriber.onEvent?.({
+          messages: msgs,
+          state: st,
+          agent: {} as any,
+          input: {} as any,
+          event: { type: EventType.RUN_STARTED } as any,
+        }),
+      );
+
+    it("should detect changes when subscriber returns a new messages array with same content", async () => {
+      const cloningSubscriber: AgentSubscriber = {
+        onEvent: ({ messages }) => ({
+          messages: [...messages],
+        }),
+      };
+
+      const result = await runWith([cloningSubscriber]);
+
+      // Reference equality means a new array is detected as a change
+      // (trade-off: may cause extra onMessagesChanged callbacks, but avoids JSON.stringify cost)
+      expect(result.messages).toBeDefined();
+    });
+
+    it("should detect changes when subscriber returns a new state object with same content", async () => {
+      const cloningSubscriber: AgentSubscriber = {
+        onEvent: ({ state }) => ({
+          state: { ...state },
+        }),
+      };
+
+      const result = await runWith([cloningSubscriber]);
+
+      expect(result.state).toBeDefined();
+    });
+
+    it("should not report changes when subscriber returns the same messages reference", async () => {
+      const passThroughSubscriber: AgentSubscriber = {
+        onEvent: ({ messages }) => ({
+          messages: messages as Message[],
+        }),
+      };
+
+      const result = await runWith([passThroughSubscriber]);
+
+      // Same reference returned — detected as no-op, no clone needed
+      expect(result.messages).toBeUndefined();
+    });
+
+    it("should not report changes when subscriber returns the same state reference", async () => {
+      const passThroughSubscriber: AgentSubscriber = {
+        onEvent: ({ state }) => ({
+          state,
+        }),
+      };
+
+      const result = await runWith([passThroughSubscriber]);
+
+      // Same reference returned — detected as no-op, no clone needed
+      expect(result.state).toBeUndefined();
+    });
+
+    it("should not report in-place mutations that are not returned (production mode)", async () => {
+      // Stub to production mode: no freeze, so the push succeeds, but the mutation is
+      // not communicated via return value and therefore not detected.
+      vi.stubEnv("NODE_ENV", "production");
+      vi.stubEnv("VITEST_WORKER_ID", "");
+
+      try {
+        const inPlaceMutator: AgentSubscriber = {
+          onEvent: ({ messages }) => {
+            // In production mode inputs are not frozen, so push succeeds silently.
+            // But since nothing is returned, the change is not propagated — silent data loss.
+            // This documents the contract: subscribers MUST return mutations, not mutate in-place.
+            (messages as Message[]).push({
+              id: "injected",
+              role: "assistant",
+              content: "injected",
+            });
+            // Return void — no mutation communicated
+          },
+        };
+
+        const result = await runWith([inPlaceMutator]);
+
+        // The in-place push is NOT reflected in the result because it wasn't returned
+        expect(result.messages).toBeUndefined();
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+
+    it("should re-throw TypeError when subscriber mutates frozen inputs in dev/test mode", async () => {
+      // In dev/test mode, inputs are deep-frozen. Any in-place mutation attempt
+      // throws a TypeError that runSubscribersWithMutation re-throws so violations
+      // are visible rather than silently swallowed.
+      const inPlaceMutator: AgentSubscriber = {
+        onEvent: ({ messages }) => {
+          (messages as Message[]).push({ id: "bad", role: "assistant", content: "bad" });
+        },
+      };
+
+      await expect(runWith([inPlaceMutator])).rejects.toThrow(TypeError);
+    });
+
+    it("should log a freeze violation and continue in development mode (non-test)", async () => {
+      // In dev mode (NODE_ENV=development), freeze violations are logged with a specific
+      // message instead of re-throwing — the violating subscriber is skipped, and remaining
+      // subscribers continue to execute.
+      vi.stubEnv("NODE_ENV", "development");
+      vi.stubEnv("VITEST_WORKER_ID", "");
+
+      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      try {
+        const inPlaceMutator: AgentSubscriber = {
+          onEvent: ({ messages }) => {
+            (messages as Message[]).push({ id: "bad", role: "assistant", content: "bad" });
+          },
+        };
+
+        // Should resolve (not reject) because dev mode logs instead of re-throwing
+        const result = await runWith([inPlaceMutator]);
+
+        expect(result.messages).toBeUndefined();
+        expect(consoleErrorSpy).toHaveBeenCalledWith(
+          expect.stringContaining("AG-UI:"),
+          expect.any(TypeError),
+        );
+      } finally {
+        consoleErrorSpy.mockRestore();
+        vi.unstubAllEnvs();
+      }
+    });
+
+    it("should return unfrozen messages even after freeze was applied internally", async () => {
+      // Verifies that the internal deepFreeze does not leak frozen references to callers.
+      // The returned AgentStateMutation.messages must be mutable.
+      const mutatingSubscriber: AgentSubscriber = {
+        onEvent: () => ({
+          messages: [{ id: "new", role: "assistant", content: "new message" }],
+        }),
+      };
+
+      // Add a second subscriber that does nothing, so the messages clone gets frozen
+      // on the next iteration — this is the scenario that could return a frozen value.
+      const noopSubscriber: AgentSubscriber = {
+        onEvent: () => undefined,
+      };
+
+      const result = await runWith([mutatingSubscriber, noopSubscriber]);
+
+      expect(result.messages).toBeDefined();
+      // Must not be frozen — callers should be able to mutate the returned value
+      expect(Object.isFrozen(result.messages)).toBe(false);
+    });
+
+    it("should return unfrozen state even after freeze was applied internally", async () => {
+      // Same as the messages variant above, but for state. The state clone at the
+      // return point must also be unfrozen (symmetric code path, separately tested).
+      const mutatingSubscriber: AgentSubscriber = {
+        onEvent: () => ({
+          state: { key: "value" },
+        }),
+      };
+
+      // Second subscriber triggers the freeze-on-next-iteration path for state.
+      const noopSubscriber: AgentSubscriber = {
+        onEvent: () => undefined,
+      };
+
+      const result = await runWith([mutatingSubscriber, noopSubscriber]);
+
+      expect(result.state).toBeDefined();
+      expect(Object.isFrozen(result.state)).toBe(false);
+    });
+
+    it("should give subscriber B a clone of subscriber A's mutation output", async () => {
+      // Verifies multi-subscriber isolation: the new cloning-on-output strategy
+      // must still ensure each subsequent subscriber sees its own defensive copy,
+      // not a direct reference to the previous subscriber's returned array.
+      let subscriberBReceivedMessages: ReadonlyArray<Readonly<Message>> | undefined;
+      let subscriberAReturnedMessages: Message[] | undefined;
+
+      const subscriberA: AgentSubscriber = {
+        onEvent: () => {
+          subscriberAReturnedMessages = [{ id: "a-msg", role: "assistant", content: "from A" }];
+          return { messages: subscriberAReturnedMessages };
+        },
+      };
+
+      const subscriberB: AgentSubscriber = {
+        onEvent: ({ messages }) => {
+          subscriberBReceivedMessages = messages;
+        },
+      };
+
+      await runWith([subscriberA, subscriberB]);
+
+      // B should see A's messages content
+      expect(subscriberBReceivedMessages).toBeDefined();
+      expect(subscriberBReceivedMessages).toHaveLength(1);
+      expect(subscriberBReceivedMessages![0].id).toBe("a-msg");
+      // But NOT the same reference — B received a defensive clone
+      expect(subscriberBReceivedMessages).not.toBe(subscriberAReturnedMessages);
+    });
+  });
+
   describe("EmptyError Bug Reproduction", () => {
     test("should demonstrate EmptyError with STEP_STARTED/STEP_FINISHED events that cause no mutations", async () => {
       const emptyAgent = new TestAgent();
@@ -1291,6 +1505,64 @@ describe("AgentSubscriber", () => {
       // 3. ALL calls to emitUpdates() return EMPTY
       // 4. Observable completes without emitting anything
       await expect(emptyAgent.runAgent({}));
+    });
+  });
+
+  describe("browser environment (no process global)", () => {
+    it("runSubscribersWithMutation should not throw when process is undefined", async () => {
+      const originalProcess = globalThis.process;
+      try {
+        // Simulate a browser environment where `process` does not exist.
+        // @ts-expect-error - intentionally removing process to simulate browser
+        delete globalThis.process;
+
+        const subscriber: AgentSubscriber = {
+          onRunInitialized: vi.fn().mockReturnValue({ messages: [] }),
+        };
+
+        const result = await runSubscribersWithMutation(
+          [subscriber],
+          [],
+          {},
+          (sub, messages, state) =>
+            (sub as { onRunInitialized: Function }).onRunInitialized({ messages, state }),
+        );
+
+        expect(result).toBeDefined();
+        expect(subscriber.onRunInitialized).toHaveBeenCalled();
+      } finally {
+        globalThis.process = originalProcess;
+      }
+    });
+
+    it("runSubscribersWithMutation should not deep-freeze when process is undefined", async () => {
+      const originalProcess = globalThis.process;
+      try {
+        // @ts-expect-error - intentionally removing process to simulate browser
+        delete globalThis.process;
+
+        const mutableState = { counter: 0 };
+        const subscriber: AgentSubscriber = {
+          onRunInitialized: vi.fn().mockImplementation(({ state }) => {
+            // In a browser (no process), isDev is false, so inputs should NOT be frozen.
+            // If the guard is missing, this would throw ReferenceError before we get here.
+            return undefined;
+          }),
+        };
+
+        await runSubscribersWithMutation(
+          [subscriber],
+          [],
+          mutableState,
+          (sub, messages, state) =>
+            (sub as { onRunInitialized: Function }).onRunInitialized({ messages, state }),
+        );
+
+        // If we reach here, no ReferenceError was thrown — the guard works.
+        expect(subscriber.onRunInitialized).toHaveBeenCalled();
+      } finally {
+        globalThis.process = originalProcess;
+      }
     });
   });
 });

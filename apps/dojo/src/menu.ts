@@ -21,7 +21,6 @@ export const menuIntegrations = [
       "backend_tool_rendering",
       "human_in_the_loop",
       "tool_based_generative_ui",
-      "a2ui_chat",
     ],
   },
   {
@@ -33,7 +32,6 @@ export const menuIntegrations = [
       "backend_tool_rendering",
       "human_in_the_loop",
       "tool_based_generative_ui",
-      "a2ui_chat",
     ],
   },
   {
@@ -41,6 +39,8 @@ export const menuIntegrations = [
     name: "LangGraph (Python)",
     features: [
       "agentic_chat",
+      "agentic_chat_reasoning",
+      "agentic_chat_multimodal",
       "v1_agentic_chat",
       "backend_tool_rendering",
       "human_in_the_loop",
@@ -49,7 +49,6 @@ export const menuIntegrations = [
       "shared_state",
       "tool_based_generative_ui",
       "subgraphs",
-      "a2ui_chat",
     ],
   },
   {
@@ -57,6 +56,8 @@ export const menuIntegrations = [
     name: "LangGraph (FastAPI)",
     features: [
       "agentic_chat",
+      "agentic_chat_reasoning",
+      "agentic_chat_multimodal",
       "v1_agentic_chat",
       "backend_tool_rendering",
       "human_in_the_loop",
@@ -66,7 +67,9 @@ export const menuIntegrations = [
       "shared_state",
       "tool_based_generative_ui",
       "subgraphs",
-      "a2ui_chat",
+      "a2ui_fixed_schema",
+      "a2ui_dynamic_schema",
+      "a2ui_advanced",
     ],
   },
   {
@@ -74,6 +77,8 @@ export const menuIntegrations = [
     name: "LangGraph (Typescript)",
     features: [
       "agentic_chat",
+      "agentic_chat_reasoning",
+      "agentic_chat_multimodal",
       "v1_agentic_chat",
       // "backend_tool_rendering",
       "human_in_the_loop",
@@ -97,6 +102,8 @@ export const menuIntegrations = [
     name: "Mastra",
     features: [
       "agentic_chat",
+      "agentic_chat_reasoning",
+      "agentic_chat_multimodal",
       "v1_agentic_chat",
       "backend_tool_rendering",
       "human_in_the_loop",
@@ -231,6 +238,8 @@ export const menuIntegrations = [
       "predictive_state_updates",
       "shared_state",
       "tool_based_generative_ui",
+      "crew_chat",
+      "error_flow",
     ],
   },
   {
@@ -238,11 +247,11 @@ export const menuIntegrations = [
     name: "A2A (Direct)",
     features: ["vnext_chat"],
   },
-  {
-    id: "builtin",
-    name: "Built-in Agent",
-    features: ["a2ui_chat"],
-  },
+  // {
+  //   id: "builtin",
+  //   name: "Built-in Agent",
+  //   features: [],
+  // },
   // Disabled until we can support Vercel AI SDK v5
   // {
   //   id: "vercel-ai-sdk",
@@ -284,6 +293,8 @@ export const menuIntegrations = [
     name: "AWS Strands",
     features: [
       "agentic_chat",
+      "agentic_chat_reasoning",
+      "agentic_chat_multimodal",
       "v1_agentic_chat",
       "backend_tool_rendering",
       "agentic_generative_ui",

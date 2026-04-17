@@ -1,8 +1,10 @@
-"""AWS Strands Agent implementation for AG-UI.
+"""AWS Strands Agent adapter for AG-UI.
 
-Simple adapter following the Agno pattern.
+Translates Strands streaming events into the AG-UI event protocol.
 """
 
+import base64
+import inspect
 import json
 import logging
 import uuid
@@ -10,17 +12,55 @@ from typing import Any, AsyncIterator, Dict, List
 
 from strands import Agent as StrandsAgentCore
 
+# Params handled explicitly by StrandsAgent — excluded from auto-forwarding.
+# "messages" is excluded: per-thread agents start with no history;
+# AG-UI injects messages at runtime via RunAgentInput.
+# "hooks" is excluded: Agent stores hooks as a HookRegistry after init, not
+# the original list the constructor expects — forwarding it causes a TypeError.
+_AGUI_EXPLICIT_PARAMS = {"self", "model", "system_prompt", "tools", "messages", "hooks"}
+
+
+def _extract_agent_kwargs(agent: StrandsAgentCore) -> dict:
+    """Build kwargs for StrandsAgentCore by introspecting its constructor signature.
+
+    Forward-compatible: new Strands parameters are picked up automatically
+    without changes here, as long as they are stored as same-named instance
+    attributes (the same assumption the manual approach made).
+    """
+    kwargs = {}
+    for name in inspect.signature(StrandsAgentCore.__init__).parameters:
+        if name in _AGUI_EXPLICIT_PARAMS:
+            continue
+        if not hasattr(agent, name):
+            continue
+        value = getattr(agent, name)
+        if value is None:
+            continue
+        # state is an AgentState container; extract the underlying plain dict
+        if name == "state" and hasattr(value, "get"):
+            value = value.get()
+        kwargs[name] = value
+    return kwargs
+
+
 logger = logging.getLogger(__name__)
 from ag_ui.core import (
     AssistantMessage,
     CustomEvent,
     EventType,
-    MessagesSnapshotEvent,
+    ReasoningEncryptedValueEvent,
+    ReasoningEndEvent,
+    ReasoningMessageContentEvent,
+    ReasoningMessageEndEvent,
+    ReasoningMessageStartEvent,
+    ReasoningStartEvent,
     RunAgentInput,
     RunErrorEvent,
     RunFinishedEvent,
     RunStartedEvent,
     StateSnapshotEvent,
+    StepFinishedEvent,
+    StepStartedEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
@@ -40,6 +80,7 @@ from .config import (
     maybe_await,
     normalize_predict_state,
 )
+from .utils import convert_agui_content_to_strands, flatten_content_to_text
 
 
 class StrandsAgent:
@@ -60,11 +101,7 @@ class StrandsAgent:
             if hasattr(agent, "tool_registry")
             else []
         )
-        self._agent_kwargs = {
-            "record_direct_tool_call": agent.record_direct_tool_call
-            if hasattr(agent, "record_direct_tool_call")
-            else True,
-        }
+        self._agent_kwargs = _extract_agent_kwargs(agent)
 
         self.name = name
         self.description = description
@@ -166,14 +203,20 @@ class StrandsAgent:
                     if tool_name:
                         frontend_tool_names.add(tool_name)
 
-            # Check if the last message is a tool result - if so, don't emit tool events again
-            has_pending_tool_result = False
+            # Collect tool_call_ids that already have results in the message history
+            # so we suppress duplicate TOOL_CALL_START events only for those specific calls
+            pending_tool_result_ids: set[str] = set()
             if input_data.messages:
-                last_msg = input_data.messages[-1]
-                if last_msg.role == "tool":
-                    has_pending_tool_result = True
+                for msg in reversed(input_data.messages):
+                    if msg.role == "tool":
+                        tool_call_id = getattr(msg, "tool_call_id", None)
+                        if tool_call_id:
+                            pending_tool_result_ids.add(tool_call_id)
+                    else:
+                        break
+                if pending_tool_result_ids:
                     logger.debug(
-                        f"Has pending tool result detected: tool_call_id={getattr(last_msg, 'tool_call_id', 'unknown')}, thread_id={input_data.thread_id}"
+                        f"Has pending tool results detected: tool_call_ids={pending_tool_result_ids}, thread_id={input_data.thread_id}"
                     )
 
             # Convert AG-UI messages to Strands format
@@ -263,22 +306,61 @@ class StrandsAgent:
                     last_msg_had_tool_calls = False
                     strands_messages.append(strands_msg)
 
-            # Get the latest user message for state context builder
+            # Build a lookup of tool_call_id -> tool_name from the input messages
+            # directly (the assistant message in Run 2 already carries the tool name).
+            _tool_call_id_to_name: dict = {}
+            for _msg in (input_data.messages or []):
+                if _msg.role == "assistant" and hasattr(_msg, "tool_calls") and _msg.tool_calls:
+                    for tc in _msg.tool_calls:
+                        tc_name = tc.function.get("name") if isinstance(tc.function, dict) else tc.function.name
+                        if tc.id and tc_name:
+                            _tool_call_id_to_name[tc.id] = tc_name
+
+            # Get the latest user message for state context builder.
+            # For continuation runs (has_pending_tool_result), derive a meaningful
+            # message from the frontend tool that was just executed so the agent
+            # understands the context and can generate a proper conclusion.
             user_message = "Hello"
-            if input_data.messages:
+            if pending_tool_result_ids and input_data.messages:
+                for msg in reversed(input_data.messages):
+                    if msg.role == "tool" and hasattr(msg, "tool_call_id"):
+                        tool_name = _tool_call_id_to_name.get(msg.tool_call_id)
+                        if tool_name and tool_name in frontend_tool_names:
+                            user_message = f"{tool_name} executed successfully with no return value."
+                        break
+            elif input_data.messages:
                 for msg in reversed(input_data.messages):
                     if (msg.role == "user" or msg.role == "tool") and msg.content:
-                        user_message = msg.content
+                        if isinstance(msg.content, list):
+                            has_media = any(
+                                getattr(item, "type", None) in ("image", "audio", "video", "document")
+                                for item in msg.content
+                            )
+                            if has_media:
+                                user_message = convert_agui_content_to_strands(msg.content)
+                                if not user_message:
+                                    # All content blocks failed conversion — fall back to text
+                                    user_message = flatten_content_to_text(msg.content) or "Hello"
+                                    logger.warning("All media content blocks failed conversion, falling back to text")
+                            else:
+                                user_message = flatten_content_to_text(msg.content)
+                        else:
+                            user_message = msg.content
                         break
 
             # Optionally allow configuration to adjust the outgoing user message
             if self.config.state_context_builder:
                 try:
-                    user_message = self.config.state_context_builder(
-                        input_data, user_message
+                    text_for_builder = flatten_content_to_text(user_message) if isinstance(user_message, list) else user_message
+                    builder_result = self.config.state_context_builder(
+                        input_data, text_for_builder
                     )
+                    if not isinstance(user_message, list):
+                        user_message = builder_result
+                    else:
+                        logger.debug("state_context_builder result not applied to multimodal message — multimodal content preserved")
                     # If state_context_builder modifies the message, update the last user message
-                    if strands_messages and strands_messages[-1]["role"] == "user":
+                    if not isinstance(user_message, list) and strands_messages and strands_messages[-1]["role"] == "user":
                         strands_messages[-1]["content"] = [{"text": user_message}]
                 except Exception as e:
                     # If the builder fails, keep the original message
@@ -288,11 +370,17 @@ class StrandsAgent:
             message_id = str(uuid.uuid4())
             message_started = False
             tool_calls_seen = {}
+            current_state = dict(input_data.state or {})  # Track state for final snapshot
             stop_text_streaming = False
             halt_event_stream = False
+            pending_halt = False
+
+            # Reasoning/thinking state tracking
+            reasoning_started = False
+            reasoning_message_id = None
 
             logger.debug(
-                f"Starting agent run: thread_id={input_data.thread_id}, run_id={input_data.run_id}, has_pending_tool_result={has_pending_tool_result}, message_count={len(input_data.messages)}, strands_message_count={len(strands_messages)}"
+                f"Starting agent run: thread_id={input_data.thread_id}, run_id={input_data.run_id}, pending_tool_result_ids={pending_tool_result_ids}, message_count={len(input_data.messages)}, strands_message_count={len(strands_messages)}"
             )
 
             # Stream from persistent Strands agent with only the new user message
@@ -337,6 +425,105 @@ class StrandsAgent:
                             delta=text_chunk,
                         )
 
+                    # Handle reasoning/thinking text streaming
+                    elif "reasoningText" in event and event.get("reasoning"):
+                        reasoning_text = event["reasoningText"]
+
+                        if not reasoning_started:
+                            reasoning_message_id = str(uuid.uuid4())
+
+                            # Emit reasoning events
+                            yield ReasoningStartEvent(
+                                type=EventType.REASONING_START,
+                                message_id=reasoning_message_id
+                            )
+                            yield ReasoningMessageStartEvent(
+                                type=EventType.REASONING_MESSAGE_START,
+                                message_id=reasoning_message_id,
+                                role="reasoning"
+                            )
+                            reasoning_started = True
+
+                        # Stream reasoning content
+                        if reasoning_text:
+                            yield ReasoningMessageContentEvent(
+                                type=EventType.REASONING_MESSAGE_CONTENT,
+                                message_id=reasoning_message_id,
+                                delta=reasoning_text
+                            )
+
+                    # Handle encrypted/redacted reasoning content
+                    elif "reasoningRedactedContent" in event and event.get("reasoning"):
+                        redacted_content = event["reasoningRedactedContent"]
+
+                        if redacted_content is None:
+                            logger.debug(f"Ignoring reasoning event with None redacted content (thread_id={input_data.thread_id})")
+                            continue
+
+                        if not reasoning_started:
+                            reasoning_message_id = str(uuid.uuid4())
+                            yield ReasoningStartEvent(
+                                type=EventType.REASONING_START,
+                                message_id=reasoning_message_id
+                            )
+                            yield ReasoningMessageStartEvent(
+                                type=EventType.REASONING_MESSAGE_START,
+                                message_id=reasoning_message_id,
+                                role="reasoning"
+                            )
+                            reasoning_started = True
+
+                        # Encode bytes to base64 string for transport
+                        if isinstance(redacted_content, bytes):
+                            encrypted_value = base64.b64encode(redacted_content).decode()
+                        elif isinstance(redacted_content, str):
+                            encrypted_value = redacted_content
+                        else:
+                            logger.warning(f"Unexpected type for reasoningRedactedContent: {type(redacted_content)}, converting to str")
+                            encrypted_value = str(redacted_content)
+
+                        yield ReasoningEncryptedValueEvent(
+                            type=EventType.REASONING_ENCRYPTED_VALUE,
+                            subtype="message",
+                            entity_id=reasoning_message_id,
+                            encrypted_value=encrypted_value
+                        )
+
+                    # Handle reasoning signature (verification token) - typically not exposed to UI
+                    elif "reasoning_signature" in event and event.get("reasoning"):
+                        sig = event.get("reasoning_signature", "")
+                        logger.debug(f"Received reasoning signature: {str(sig)[:20]}...")
+
+                    # Handle multi-agent node start (maps to STEP_STARTED)
+                    elif isinstance(event, dict) and event.get("type") == "multiagent_node_start":
+                        node_id = event.get("node_id", "unknown")
+                        node_type = event.get("node_type", "agent")
+                        yield StepStartedEvent(
+                            type=EventType.STEP_STARTED,
+                            step_name=f"{node_type}:{node_id}"
+                        )
+
+                    # Handle multi-agent node stop (maps to STEP_FINISHED)
+                    elif isinstance(event, dict) and event.get("type") == "multiagent_node_stop":
+                        node_id = event.get("node_id", "unknown")
+                        node_type = event.get("node_type", "agent")
+                        yield StepFinishedEvent(
+                            type=EventType.STEP_FINISHED,
+                            step_name=f"{node_type}:{node_id}"
+                        )
+
+                    # Handle multi-agent handoff (emit as CUSTOM event)
+                    elif isinstance(event, dict) and event.get("type") == "multiagent_handoff":
+                        yield CustomEvent(
+                            type=EventType.CUSTOM,
+                            name="MultiAgentHandoff",
+                            value={
+                                "from_nodes": event.get("from_node_ids", []),
+                                "to_nodes": event.get("to_node_ids", []),
+                                "message": event.get("message")
+                            }
+                        )
+
                     # Handle tool streaming events for real-time state updates
                     # Strands tools can yield intermediate results as tool_stream_event
                     elif "tool_stream_event" in event:
@@ -352,6 +539,9 @@ class StrandsAgent:
 
                     # Handle tool results from Strands for backend tool rendering
                     elif "message" in event and event["message"].get("role") == "user":
+                        if pending_halt:
+                            halt_event_stream = True
+                            continue
                         message_content = event["message"].get("content", [])
                         if not message_content or not isinstance(message_content, list):
                             continue
@@ -386,7 +576,15 @@ class StrandsAgent:
                             if not result_tool_id or result_data is None:
                                 continue
 
+                            # Direct lookup works for backend tools (keyed by Strands ID).
+                            # Frontend tools are keyed by a generated UUID, so we fall back
+                            # to scanning by strands_tool_id when the direct lookup misses.
                             call_info = tool_calls_seen.get(result_tool_id, {})
+                            if not call_info:
+                                for _tid, _data in tool_calls_seen.items():
+                                    if _data.get("strands_tool_id") == result_tool_id:
+                                        call_info = _data
+                                        break
                             tool_name = call_info.get("name")
                             tool_args = call_info.get("args")
                             tool_input = call_info.get("input")
@@ -397,7 +595,7 @@ class StrandsAgent:
                             )
 
                             logger.debug(
-                                f"Processing tool result: tool_name={tool_name}, result_tool_id={result_tool_id}, has_pending_tool_result={has_pending_tool_result}, thread_id={input_data.thread_id}"
+                                f"Processing tool result: tool_name={tool_name}, result_tool_id={result_tool_id}, pending_tool_result_ids={pending_tool_result_ids}, thread_id={input_data.thread_id}"
                             )
 
                             # Skip emitting the placeholder result for forwarded/proxy tools
@@ -406,11 +604,13 @@ class StrandsAgent:
                                 continue
 
                             # Emit ToolCallResultEvent WITHOUT role field to complete the tool in UI
-                            # but prevent it from being added to conversation history
+                            # but prevent it from being added to conversation history.
+                            # A fresh message ID is used so CopilotKit creates a proper standalone
+                            # ToolMessage and closes the spinner correctly.
                             yield ToolCallResultEvent(
                                 type=EventType.TOOL_CALL_RESULT,
                                 tool_call_id=result_tool_id,
-                                message_id=message_id,
+                                message_id=str(uuid.uuid4()),
                                 content=json.dumps(result_data),
                                 # role is intentionally omitted - without role="tool",
                                 # the frontend won't add this to conversation history
@@ -432,6 +632,7 @@ class StrandsAgent:
                                         behavior.state_from_result(result_context)
                                     )
                                     if snapshot:
+                                        current_state.update(snapshot)
                                         yield StateSnapshotEvent(
                                             type=EventType.STATE_SNAPSHOT,
                                             snapshot=snapshot,
@@ -467,8 +668,8 @@ class StrandsAgent:
                                 logger.debug(
                                     f"Breaking event stream: stop_streaming_after_result behavior triggered (thread_id={input_data.thread_id}, tool_name={tool_name})"
                                 )
-                                # Continue consuming events silently to allow proper cleanup
-                                continue
+                                # Break inner loop — no further results should be emitted
+                                break
 
                     # Handle tool calls
                     elif "current_tool_use" in event and event["current_tool_use"]:
@@ -542,6 +743,19 @@ class StrandsAgent:
                     elif "event" in event and isinstance(event.get("event"), dict):
                         inner_event = event["event"]
                         if "contentBlockStop" in inner_event:
+                            # Close reasoning events if active
+                            if reasoning_started:
+                                yield ReasoningMessageEndEvent(
+                                    type=EventType.REASONING_MESSAGE_END,
+                                    message_id=reasoning_message_id
+                                )
+                                yield ReasoningEndEvent(
+                                    type=EventType.REASONING_END,
+                                    message_id=reasoning_message_id
+                                )
+                                reasoning_started = False
+                                reasoning_message_id = None
+
                             # Find the most recent tool call that hasn't been emitted yet
                             tool_name = None
                             tool_input = None
@@ -565,7 +779,7 @@ class StrandsAgent:
                                 behavior = self.config.tool_behaviors.get(tool_name)
 
                                 logger.debug(
-                                    f"Processing tool call on contentBlockStop: tool_name={tool_name}, tool_use_id={tool_use_id}, is_frontend_tool={is_frontend_tool}, has_pending_tool_result={has_pending_tool_result}, args_str={args_str}, thread_id={input_data.thread_id}"
+                                    f"Processing tool call on contentBlockStop: tool_name={tool_name}, tool_use_id={tool_use_id}, is_frontend_tool={is_frontend_tool}, is_pending_result={tool_use_id in pending_tool_result_ids}, args_str={args_str}, thread_id={input_data.thread_id}"
                                 )
                                 call_context = ToolCallContext(
                                     input_data=input_data,
@@ -581,6 +795,7 @@ class StrandsAgent:
                                             behavior.state_from_args(call_context)
                                         )
                                         if snapshot:
+                                            current_state.update(snapshot)
                                             yield StateSnapshotEvent(
                                                 type=EventType.STATE_SNAPSHOT,
                                                 snapshot=snapshot,
@@ -604,12 +819,25 @@ class StrandsAgent:
                                             name="PredictState",
                                             value=predict_state_payload,
                                         )
-                                if has_pending_tool_result:
+                                # Only suppress START for tool calls whose results are already
+                                # in the conversation history (pending_tool_result_ids).
+                                # New tool calls in this turn must still emit START events.
+                                is_pending = tool_use_id in pending_tool_result_ids
+                                if is_pending:
                                     logger.debug(
-                                        f"Skipping tool call START event due to has_pending_tool_result for {tool_name} (tool_use_id={tool_use_id}, thread_id={input_data.thread_id})"
+                                        f"Skipping tool call START event for already-resolved tool {tool_name} (tool_use_id={tool_use_id}, thread_id={input_data.thread_id})"
                                     )
 
-                                if not has_pending_tool_result:
+                                if not is_pending:
+                                    # Close any open text message before starting a tool call
+                                    # so each segment has clean start/end boundaries.
+                                    if message_started:
+                                        yield TextMessageEndEvent(
+                                            type=EventType.TEXT_MESSAGE_END, message_id=message_id
+                                        )
+                                        message_started = False
+                                        message_id = str(uuid.uuid4())
+
                                     logger.debug(
                                         f"Emitting tool call events for {tool_name} (tool_use_id={tool_use_id}, thread_id={input_data.thread_id})"
                                     )
@@ -658,11 +886,9 @@ class StrandsAgent:
                                         and behavior.continue_after_frontend_call
                                     ):
                                         logger.debug(
-                                            f"Breaking event stream: frontend tool call completed (thread_id={input_data.thread_id}, tool_name={tool_name}, tool_call_id={tool_use_id}, has_behavior={behavior is not None}, continue_after_frontend_call={behavior.continue_after_frontend_call if behavior else None})"
+                                            f"Deferring halt after frontend tool call: tool_name={tool_name}, tool_call_id={tool_use_id}, thread_id={input_data.thread_id}"
                                         )
-                                        halt_event_stream = True
-                                        # Continue consuming events silently to allow proper cleanup
-                                        continue
+                                        pending_halt = True
             finally:
                 # Properly close the async generator to avoid context detachment errors
                 # The generator should complete naturally when we consume all events,
@@ -701,11 +927,28 @@ class StrandsAgent:
                     # Log other errors but don't fail
                     logger.warning(f"Error closing agent stream: {e}")
 
+            # Close reasoning if still open
+            if reasoning_started:
+                yield ReasoningMessageEndEvent(
+                    type=EventType.REASONING_MESSAGE_END,
+                    message_id=reasoning_message_id
+                )
+                yield ReasoningEndEvent(
+                    type=EventType.REASONING_END,
+                    message_id=reasoning_message_id
+                )
+
             # End message if started
             if message_started:
                 yield TextMessageEndEvent(
                     type=EventType.TEXT_MESSAGE_END, message_id=message_id
                 )
+
+            # Final state snapshot before finishing
+            yield StateSnapshotEvent(
+                type=EventType.STATE_SNAPSHOT,
+                snapshot=current_state,
+            )
 
             # Always finish the run - frontend handles keeping action executing
             yield RunFinishedEvent(

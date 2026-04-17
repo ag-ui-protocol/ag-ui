@@ -34,17 +34,23 @@ export const stateStreamingMiddleware = (...items: StateItem[]) => {
     tool_argument: i.toolArgument,
   }));
 
+  const trackedTools = new Set(items.map((i) => i.tool));
+
   /**
-   * Return true if this model call may generate the initial tool call.
-   * When the last message is a ToolMessage the tool has already run and
-   * the model is being called for a follow-up response. Injecting
-   * predict_state in that case would re-trigger streaming if the model
-   * decides to call the same tool again, producing a duplicate stream.
+   * Return true if intermediate state should be injected for this model call.
+   *
+   * Suppress only when the last tool that ran is one we track. If we injected
+   * again after a tracked tool, predict_state would stream a second time for
+   * that same tool on its next invocation — a true duplicate stream. Untracked
+   * tools (e.g. open_canvas) are safe to inject after because the next call
+   * may need to stream a tracked tool.
    */
   const isPreToolCall = (request: { messages?: BaseMessage[] }): boolean => {
     const msgs = request?.messages ?? [];
     if (msgs.length === 0) return true;
-    return !(msgs[msgs.length - 1] instanceof ToolMessage);
+    const last = msgs[msgs.length - 1];
+    if (!(last instanceof ToolMessage)) return true;
+    return !trackedTools.has(last.name ?? "");
   };
 
   return createMiddleware({

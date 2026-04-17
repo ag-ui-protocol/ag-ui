@@ -2,7 +2,6 @@
 
 """FastAPI endpoint for ADK middleware."""
 
-import json
 import logging
 import warnings
 from typing import Any, Callable, Coroutine, List, Optional
@@ -35,8 +34,8 @@ class AgentStateResponse(BaseModel):
     """Response body for /agents/state endpoint."""
     threadId: str
     threadExists: bool
-    state: str  # JSON stringified
-    messages: str  # JSON stringified
+    state: dict
+    messages: list
 
 
 def _header_to_key(header_name: str) -> str:
@@ -187,6 +186,29 @@ def add_adk_fastapi_endpoint(
         
         return StreamingResponse(event_generator(), media_type=encoder.get_content_type())
 
+    capabilities_path = f"{path.rstrip('/')}/capabilities" if path != "/" else "/capabilities"
+
+    @app.get(capabilities_path)
+    async def capabilities_endpoint():
+        """Return the agent's declared capabilities.
+
+        Allows frontend clients to discover what features the agent supports
+        before initiating a run (e.g., predictive chips, suggested questions).
+        Returns an empty object when no capabilities are configured.
+        """
+        try:
+            caps = agent.get_capabilities()
+            if caps is None:
+                logger.debug("Capabilities endpoint called but no capabilities configured on agent")
+                return JSONResponse(content={})
+            return JSONResponse(content=caps)
+        except Exception as e:
+            logger.error(f"Error in capabilities endpoint: {e}", exc_info=True)
+            return JSONResponse(
+                status_code=500,
+                content={"error": f"Failed to retrieve capabilities: {str(e)}"}
+            )
+
     @app.post("/agents/state")
     async def agents_state_endpoint(request_data: AgentStateRequest):
         """EXPERIMENTAL: Retrieve thread state and message history.
@@ -224,7 +246,7 @@ def add_adk_fastapi_endpoint(
             session_id = None
 
             # Fast path: check cache first
-            metadata = agent._get_session_metadata(thread_id)
+            metadata = agent._get_session_metadata(thread_id, user_id)
             if metadata:
                 session_id, cached_app_name, cached_user_id = metadata
                 session = await agent._session_manager._session_service.get_session(
@@ -238,22 +260,34 @@ def add_adk_fastapi_endpoint(
 
             # Cache miss - search backend by thread_id
             if not session:
-                session = await agent._session_manager._find_session_by_thread_id(
-                    app_name=app_name,
-                    user_id=user_id,
-                    thread_id=thread_id
-                )
-                if session:
-                    # Found - cache for future lookups
-                    session_id = session.id
-                    agent._session_lookup_cache[thread_id] = (session_id, app_name, user_id)
-
-                    # Reload session to populate events (list_sessions returns metadata only)
-                    session = await agent._session_manager._session_service.get_session(
-                        session_id=session_id,
-                        app_name=app_name,
-                        user_id=user_id
+                # O(1) direct lookup when use_thread_id_as_session_id is enabled
+                if getattr(agent._session_manager, '_use_thread_id_as_session_id', False) is True:
+                    session = await agent._session_manager.get_session(
+                        thread_id, app_name, user_id
                     )
+                    if session:
+                        session_id = session.id
+                        agent._session_lookup_cache[(thread_id, user_id)] = (session_id, app_name, user_id)
+
+                # Fallback to O(n) scan (always used when flag is False,
+                # also used as legacy fallback when flag is True but direct lookup misses)
+                if not session:
+                    session = await agent._session_manager._find_session_by_thread_id(
+                        app_name=app_name,
+                        user_id=user_id,
+                        thread_id=thread_id
+                    )
+                    if session:
+                        # Found - cache for future lookups
+                        session_id = session.id
+                        agent._session_lookup_cache[(thread_id, user_id)] = (session_id, app_name, user_id)
+
+                        # Reload session to populate events (list_sessions returns metadata only)
+                        session = await agent._session_manager._session_service.get_session(
+                            session_id=session_id,
+                            app_name=app_name,
+                            user_id=user_id
+                        )
 
             thread_exists = session is not None
 
@@ -277,8 +311,8 @@ def add_adk_fastapi_endpoint(
             return JSONResponse(content={
                 "threadId": thread_id,
                 "threadExists": thread_exists,
-                "state": json.dumps(state),
-                "messages": json.dumps(messages_dict)
+                "state": state,
+                "messages": messages_dict
             })
 
         except Exception as e:
@@ -288,8 +322,8 @@ def add_adk_fastapi_endpoint(
                 content={
                     "threadId": thread_id,
                     "threadExists": False,
-                    "state": "{}",
-                    "messages": "[]",
+                    "state": {},
+                    "messages": [],
                     "error": str(e)
                 }
             )
