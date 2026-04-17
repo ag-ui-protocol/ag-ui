@@ -372,7 +372,10 @@ class LangGraphAgent:
         tasks = state.tasks if len(state.tasks) > 0 else None
         interrupts = tasks[0].interrupts if tasks else []
 
-        writes = state.metadata.get("writes", {}) or {}
+        # state.metadata can be None on freshly-initialised / empty checkpoints,
+        # which would AttributeError on .get — coerce to empty dict first.
+        state_metadata = state.metadata or {}
+        writes = state_metadata.get("writes", {}) or {}
         node_name = self.active_run["node_name"] if interrupts else next(iter(writes), None)
         next_nodes = state.next or ()
         is_end_node = len(next_nodes) == 0 and not interrupts
