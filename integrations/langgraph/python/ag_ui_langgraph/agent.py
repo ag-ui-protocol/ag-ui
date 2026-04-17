@@ -1301,7 +1301,7 @@ class LangGraphAgent:
             )
             return
 
-        reasoning_step_index = reasoning_data["index"]
+        reasoning_step_index = reasoning_data.get("index", 0)
 
         if (self.active_run.get("reasoning_process") and
                 self.active_run["reasoning_process"].get("index") is not None and
