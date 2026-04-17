@@ -24,15 +24,15 @@ class CustomEventNames(str, Enum):
 State = Dict[str, Any]
 
 SchemaKeys = TypedDict("SchemaKeys", {
-    "input": List[str],
-    "output": List[str],
-    "config": List[str],
-    "context": List[str],
+    "input": NotRequired[Optional[List[str]]],
+    "output": NotRequired[Optional[List[str]]],
+    "config": NotRequired[Optional[List[str]]],
+    "context": NotRequired[Optional[List[str]]],
 })
 
 ThinkingProcess = TypedDict("ThinkingProcess", {
     "index": int,
-    "message_id": str,
+    "message_id": NotRequired[str],
     "type": NotRequired[Optional[str]],
     "signature": NotRequired[Optional[str]],
 })
@@ -48,7 +48,7 @@ RunMetadata = TypedDict("RunMetadata", {
     "id": str,
     "thread_id": NotRequired[Optional[str]],
     # Run mode/flow
-    "mode": Literal["start", "continue"],
+    "mode": NotRequired[Literal["start", "continue"]],
     # Node tracking
     "node_name": NotRequired[Optional[str]],
     "prev_node_name": NotRequired[Optional[str]],
@@ -66,7 +66,7 @@ RunMetadata = TypedDict("RunMetadata", {
     "streamed_messages": NotRequired[List[Any]],
     "manually_emitted_state": NotRequired[Optional[State]],
     # Reasoning / thinking
-    "reasoning_process": Optional[ThinkingProcess],
+    "reasoning_process": NotRequired[Optional[ThinkingProcess]],
 })
 
 MessagesInProgressRecord = Dict[str, Optional[MessageInProgress]]
