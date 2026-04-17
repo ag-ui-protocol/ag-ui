@@ -333,10 +333,6 @@ class TestSupervisorBindToolsMessageSurvivesMidStream(unittest.IsolatedAsyncioTe
         agent = make_configured_agent(
             checkpoint_messages=[user],
             streamed_messages=[supervisor_bind_tools_msg],
-            # Intentionally none of these tools name
-            # SupervisorResponseFormatter — this is exactly the shape the
-            # old registry-based filter rejected.
-            registered_tool_names=["search_flights", "book_hotel"],
         )
 
         async for _ in agent.get_state_and_messages_snapshots({}):

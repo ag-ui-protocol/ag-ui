@@ -1,4 +1,4 @@
-from typing import TypedDict, Optional, List, Any, Dict, Set, Union, Literal
+from typing import TypedDict, Optional, List, Any, Dict, Union, Literal
 from typing_extensions import NotRequired
 from enum import Enum
 
@@ -52,9 +52,8 @@ RunMetadata = TypedDict("RunMetadata", {
     # Node tracking
     "node_name": NotRequired[Optional[str]],
     "prev_node_name": NotRequired[Optional[str]],
-    # Schema / registered tools
+    # Schema
     "schema_keys": NotRequired[Optional[SchemaKeys]],
-    "registered_tool_names": NotRequired[Set[str]],
     # Streaming state
     "has_function_streaming": NotRequired[bool],
     "model_made_tool_call": NotRequired[bool],

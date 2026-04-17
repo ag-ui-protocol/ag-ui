@@ -58,22 +58,17 @@ def make_configured_agent(
     checkpoint_messages: List[Any],
     streamed_messages: Optional[List[Any]] = None,
     subgraph_names: Optional[Iterable[str]] = None,
-    registered_tool_names: Optional[Iterable[str]] = None,
 ) -> LangGraphAgent:
     """Build an agent with a mocked checkpoint and a recording dispatcher.
 
     The mocked ``graph.aget_state`` returns a state whose ``.values``
     carries ``checkpoint_messages`` under the ``messages`` key.
     ``streamed_messages`` is placed on ``active_run`` so the merge path in
-    ``get_state_and_messages_snapshots`` can observe it. When
-    ``registered_tool_names`` is provided, it becomes the set used by the
-    structured-output filter to distinguish user-facing tool calls from
-    internal schema invocations."""
+    ``get_state_and_messages_snapshots`` can observe it."""
     agent = make_agent(list(subgraph_names) if subgraph_names else ["hotels_agent"])
     agent.active_run = {
         "id": "run-1",
         "streamed_messages": list(streamed_messages or []),
-        "registered_tool_names": set(registered_tool_names or []),
     }
     _record_dispatch(agent)
     agent.get_state_snapshot = MagicMock(return_value={})
