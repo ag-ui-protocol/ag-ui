@@ -122,5 +122,44 @@ class TestGetCheckpointBeforeMessage(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([m.id for m in merged_values["messages"]], ["older"])
 
 
+class TestPrepareRegenerateStreamValidation(unittest.IsolatedAsyncioTestCase):
+    """``prepare_regenerate_stream`` narrows two Optional fields into the
+    stricter types its downstream call chain demands: ``HumanMessage.id``
+    and ``RunAgentInput.thread_id``. Both are validated up-front so
+    callers see a targeted ValueError rather than an obscure failure in
+    ``get_checkpoint_before_message`` or ``aupdate_state``."""
+
+    async def test_raises_when_message_checkpoint_has_no_id(self):
+        agent = make_agent()
+        run_input = MagicMock()
+        run_input.tools = []
+        run_input.thread_id = "thread-xyz"
+        run_input.forwarded_props = {}
+        # HumanMessage with id=None triggers the narrow-guard.
+        msg = HumanMessage(content="redo this", id=None)
+
+        with self.assertRaisesRegex(ValueError, "message_checkpoint"):
+            await agent.prepare_regenerate_stream(
+                input=run_input,
+                message_checkpoint=msg,
+                config={"configurable": {"thread_id": "thread-xyz"}},
+            )
+
+    async def test_raises_when_thread_id_missing(self):
+        agent = make_agent()
+        run_input = MagicMock()
+        run_input.tools = []
+        run_input.thread_id = None
+        run_input.forwarded_props = {}
+        msg = HumanMessage(content="redo this", id="msg-1")
+
+        with self.assertRaisesRegex(ValueError, "thread_id"):
+            await agent.prepare_regenerate_stream(
+                input=run_input,
+                message_checkpoint=msg,
+                config={"configurable": {}},
+            )
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
