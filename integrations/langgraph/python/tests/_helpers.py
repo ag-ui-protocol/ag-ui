@@ -18,11 +18,17 @@ def make_agent(subgraph_names: Optional[Iterable[str]] = None) -> LangGraphAgent
     """Return a ``LangGraphAgent`` whose graph is a mock with the given
     subgraph nodes. Every listed name becomes a node whose ``bound``
     attribute is itself a ``CompiledStateGraph`` mock, which is how the
-    agent detects subgraphs at construction time."""
+    agent detects subgraphs at construction time.
+
+    Passing ``None`` (the default) means "no subgraphs"; passing an
+    explicit empty iterable is treated identically. Both produce a graph
+    whose ``nodes`` dict is empty. The distinction is only meaningful
+    for callers who want to signal intent — the result is the same."""
     graph = MagicMock(spec=CompiledStateGraph)
     graph.config_specs = []
     nodes = {}
-    for name in (subgraph_names or []):
+    names_iter: Iterable[str] = subgraph_names if subgraph_names is not None else []
+    for name in names_iter:
         node = MagicMock()
         node.bound = MagicMock(spec=CompiledStateGraph)
         nodes[name] = node
@@ -80,9 +86,15 @@ def make_configured_agent(
 def snapshot_event(dispatched: List[Any]):
     """Return the first ``MESSAGES_SNAPSHOT`` event in a dispatched list.
 
-    Raises ``StopIteration`` if no snapshot was dispatched — callers use
-    this as an assertion that the snapshot was emitted."""
-    return next(
-        e for e in dispatched
-        if getattr(e, "type", None) == EventType.MESSAGES_SNAPSHOT
+    Raises ``AssertionError`` with the sequence of actually-dispatched
+    event types when no snapshot is present, so test failures point
+    directly at what was emitted instead of the bare ``StopIteration``
+    that an unguarded ``next()`` would raise."""
+    for ev in dispatched:
+        if getattr(ev, "type", None) == EventType.MESSAGES_SNAPSHOT:
+            return ev
+    dispatched_types = [getattr(e, "type", None) for e in dispatched]
+    raise AssertionError(
+        "no MESSAGES_SNAPSHOT dispatched; got: "
+        f"{dispatched_types!r}"
     )
