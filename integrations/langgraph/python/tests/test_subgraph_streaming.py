@@ -237,10 +237,11 @@ class TestSubgraphChangeTrigger(unittest.IsolatedAsyncioTestCase):
 # ---------------------------------------------------------------------------
 
 class TestAgetStateMidStreamError(unittest.IsolatedAsyncioTestCase):
-    """``aget_state`` is called on every subgraph transition (hot path).
-    An exception there must propagate out — not be silently swallowed."""
+    """``get_state_and_messages_snapshots`` is invoked on every subgraph
+    transition. An exception raised inside it must propagate out of the
+    stream — not be silently swallowed."""
 
-    async def test_aget_state_error_propagates(self):
+    async def test_get_state_and_messages_snapshots_error_propagates(self):
         agent = _make_agent(["hotels_agent"])
 
         run_input = MagicMock()
@@ -280,16 +281,20 @@ class TestAgetStateMidStreamError(unittest.IsolatedAsyncioTestCase):
             }
 
         agent.prepare_stream = fake_prepare
-        # The first ``aget_state`` (called by ``_handle_stream_events``
-        # before iterating ``stream``) succeeds; the second, triggered
-        # inside ``get_state_and_messages_snapshots`` on the subgraph
-        # transition, raises.
-        agent.graph.aget_state = AsyncMock(side_effect=[
-            initial_state,
-            RuntimeError("checkpoint unavailable"),
-        ])
+        agent.graph.aget_state = AsyncMock(return_value=initial_state)
 
-        with self.assertRaises(RuntimeError):
+        # Stub the target function directly so we are independent of how
+        # many intermediate ``aget_state`` calls the adapter makes during
+        # a run. Any other wiring change (extra pre-stream peeks, etc.)
+        # is irrelevant — what we assert is simply that a failure
+        # originating in this helper is not swallowed on the way out.
+        async def raising_snapshots(*_args, **_kwargs):
+            raise RuntimeError("checkpoint unavailable")
+            yield  # pragma: no cover — keeps the function an async generator
+
+        agent.get_state_and_messages_snapshots = raising_snapshots
+
+        with self.assertRaisesRegex(RuntimeError, "checkpoint unavailable"):
             async for _ in agent._handle_stream_events(run_input):
                 pass
 
