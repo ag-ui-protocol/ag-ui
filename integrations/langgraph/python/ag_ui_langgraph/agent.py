@@ -565,7 +565,7 @@ class LangGraphAgent:
             **data,
         }
 
-    def get_schema_keys(self, config) -> SchemaKeys:
+    def get_schema_keys(self, config: RunnableConfig) -> SchemaKeys:
         try:
             input_schema = self.graph.get_input_jsonschema(config)
             output_schema = self.graph.get_output_jsonschema(config)
@@ -1274,7 +1274,7 @@ class LangGraphAgent:
 
         return kwargs
 
-    async def get_state_and_messages_snapshots(self, config, merge_streamed_messages: bool = True):
+    async def get_state_and_messages_snapshots(self, config: RunnableConfig, merge_streamed_messages: bool = True):
         """Emit STATE_SNAPSHOT + MESSAGES_SNAPSHOT for the current checkpoint.
 
         ``merge_streamed_messages`` controls whether uncommitted messages
