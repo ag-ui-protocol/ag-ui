@@ -34,7 +34,12 @@ def _event_types(events):
 
 
 def _ns_root(ns):
-    """Mirror the ns_root extraction logic from agent.py."""
+    """Mirror the ns_root extraction logic from agent.py.
+
+    WARNING: this duplicates the extraction rule used by the adapter —
+    if ``agent.py`` changes how it derives the root subgraph name from a
+    langgraph_checkpoint_ns string, this helper MUST be kept in sync or
+    the tests below will silently diverge from production semantics."""
     return ns.split("|")[0].split(":")[0] if ns else ""
 
 
@@ -239,7 +244,7 @@ class TestSubgraphChangeTrigger(unittest.IsolatedAsyncioTestCase):
 class TestAgetStateMidStreamError(unittest.IsolatedAsyncioTestCase):
     """``get_state_and_messages_snapshots`` is invoked on every subgraph
     transition. An exception raised inside it must propagate out of the
-    stream — not be silently swallowed."""
+    stream, not be silently swallowed."""
 
     async def test_get_state_and_messages_snapshots_error_propagates(self):
         agent = _make_agent(["hotels_agent"])

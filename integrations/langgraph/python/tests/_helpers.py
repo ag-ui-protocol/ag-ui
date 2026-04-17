@@ -15,15 +15,10 @@ from ag_ui_langgraph.agent import LangGraphAgent
 
 
 def make_agent(subgraph_names: Optional[Iterable[str]] = None) -> LangGraphAgent:
-    """Return a ``LangGraphAgent`` whose graph is a mock with the given
-    subgraph nodes. Every listed name becomes a node whose ``bound``
-    attribute is itself a ``CompiledStateGraph`` mock, which is how the
-    agent detects subgraphs at construction time.
-
-    Passing ``None`` (the default) means "no subgraphs"; passing an
-    explicit empty iterable is treated identically. Both produce a graph
-    whose ``nodes`` dict is empty. The distinction is only meaningful
-    for callers who want to signal intent — the result is the same."""
+    """Return a ``LangGraphAgent`` backed by a mock graph; each name in
+    ``subgraph_names`` becomes a node whose ``bound`` is a
+    ``CompiledStateGraph`` mock (how the agent detects subgraphs at
+    construction)."""
     graph = MagicMock(spec=CompiledStateGraph)
     graph.config_specs = []
     nodes = {}
@@ -83,8 +78,7 @@ def snapshot_event(dispatched: List[Any]):
 
     Raises ``AssertionError`` with the sequence of actually-dispatched
     event types when no snapshot is present, so test failures point
-    directly at what was emitted instead of the bare ``StopIteration``
-    that an unguarded ``next()`` would raise."""
+    directly at what was emitted."""
     for ev in dispatched:
         if getattr(ev, "type", None) == EventType.MESSAGES_SNAPSHOT:
             return ev

@@ -7,7 +7,6 @@ shape (TypeError/KeyError). Unexpected exceptions must propagate so programmer
 errors and infrastructure failures are not silently swallowed.
 """
 
-import logging
 import unittest
 from unittest.mock import MagicMock
 
@@ -105,20 +104,8 @@ class TestGetSchemaKeysFallback(unittest.TestCase):
         graph.context_schema = None
         agent = self._make_agent(graph)
 
-        logger = logging.getLogger("ag_ui_langgraph.agent")
-        # assertNoLogs is Py3.10+; we use a handler probe instead for portability.
-        records = []
-
-        class _Capture(logging.Handler):
-            def emit(self, record):
-                records.append(record)
-
-        handler = _Capture(level=logging.WARNING)
-        logger.addHandler(handler)
-        try:
+        with self.assertNoLogs("ag_ui_langgraph.agent", level="WARNING"):
             result = agent.get_schema_keys(self._config())
-        finally:
-            logger.removeHandler(handler)
 
         self.assertEqual(
             result["input"],
@@ -130,7 +117,6 @@ class TestGetSchemaKeysFallback(unittest.TestCase):
         )
         self.assertEqual(result["config"], ["cfg"])
         self.assertEqual(result["context"], [])
-        self.assertEqual(records, [])
 
 
 if __name__ == "__main__":

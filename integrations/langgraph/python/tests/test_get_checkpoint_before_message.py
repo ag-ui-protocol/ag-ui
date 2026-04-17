@@ -9,11 +9,9 @@ argument is authoritative over any value in the supplied config.
 """
 
 import unittest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 from langchain_core.messages import HumanMessage
-
-from ag_ui_langgraph.agent import LangGraphAgent
 
 from tests._helpers import make_agent
 
