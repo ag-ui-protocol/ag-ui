@@ -231,7 +231,7 @@ class LangGraphAgent:
 
         async for event in stream:
             subgraphs_stream_enabled = input.forwarded_props.get('stream_subgraphs', True) if input.forwarded_props else True
-            ns = event.get("metadata", {}).get("langgraph_checkpoint_ns", "")
+            ns = (event.get("metadata") or {}).get("langgraph_checkpoint_ns", "")
             # Derive which subgraph (if any) owns this event.
             # ns format: "" | "node:uuid" | "node:uuid|inner:uuid"
             # Only the outermost namespace matters here — we just need to
@@ -268,7 +268,7 @@ class LangGraphAgent:
                 )
                 break
 
-            current_node_name = event.get("metadata", {}).get("langgraph_node")
+            current_node_name = (event.get("metadata") or {}).get("langgraph_node")
             event_type = event.get("event")
             self.active_run["id"] = event.get("run_id")
             exiting_node = False
@@ -316,7 +316,7 @@ class LangGraphAgent:
                         else getattr(first, "name", None)
                     )
                     if first_name:
-                        predict_state_meta = event.get("metadata", {}).get("predict_state", [])
+                        predict_state_meta = (event.get("metadata") or {}).get("predict_state", [])
                         tool_used_to_predict_state = any(
                             (p.get("tool") if isinstance(p, dict) else getattr(p, "tool", None)) == first_name
                             for p in predict_state_meta
@@ -806,8 +806,8 @@ class LangGraphAgent:
         assert self.active_run is not None, "_handle_single_event called outside an active run"
         event_type = event.get("event")
         if event_type == LangGraphEventTypes.OnChatModelStream:
-            should_emit_messages = event.get("metadata", {}).get("emit-messages", True)
-            should_emit_tool_calls = event.get("metadata", {}).get("emit-tool-calls", True)
+            should_emit_messages = (event.get("metadata") or {}).get("emit-messages", True)
+            should_emit_tool_calls = (event.get("metadata") or {}).get("emit-tool-calls", True)
 
             if event["data"]["chunk"].response_metadata.get('finish_reason', None):
                 return
@@ -815,7 +815,7 @@ class LangGraphAgent:
             current_stream = self.get_message_in_progress(self.active_run["id"])
             has_current_stream = bool(current_stream and current_stream.get("id"))
             tool_call_data = event["data"]["chunk"].tool_call_chunks[0] if event["data"]["chunk"].tool_call_chunks else None
-            predict_state_metadata = event.get("metadata", {}).get("predict_state", [])
+            predict_state_metadata = (event.get("metadata") or {}).get("predict_state", [])
             tool_call_used_to_predict_state = False
             if tool_call_data and tool_call_data.get("name") and predict_state_metadata:
                 tool_call_used_to_predict_state = any(
