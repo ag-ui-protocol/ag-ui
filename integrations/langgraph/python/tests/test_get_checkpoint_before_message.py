@@ -39,20 +39,26 @@ class TestGetCheckpointBeforeMessage(unittest.IsolatedAsyncioTestCase):
         """Without a caller config, ``aget_state_history`` still receives
         a RunnableConfig carrying the ``thread_id`` under ``configurable``."""
         agent = make_agent()
-        captured = {}
+        captured_config = None
+
+        # Populate a synthetic snapshot so the function returns cleanly
+        # and the assertion is about the captured config, not about the
+        # incidental "empty history" ValueError path.
+        snapshot = MagicMock()
+        snapshot.values = {"messages": [MagicMock(id="msg-1")]}
 
         def _capture(history_config):
-            captured["config"] = history_config
-            return _async_iter([])
+            nonlocal captured_config
+            captured_config = history_config
+            return _async_iter([snapshot])
 
         agent.graph.aget_state_history = _capture
 
-        with self.assertRaises(ValueError):
-            # Empty history => "Message ID not found in history"
-            await agent.get_checkpoint_before_message("msg-1", "thread-xyz")
+        await agent.get_checkpoint_before_message("msg-1", "thread-xyz")
 
-        self.assertIn("configurable", captured["config"])
-        self.assertEqual(captured["config"]["configurable"]["thread_id"], "thread-xyz")
+        self.assertIsNotNone(captured_config)
+        self.assertIn("configurable", captured_config)
+        self.assertEqual(captured_config["configurable"]["thread_id"], "thread-xyz")
 
     async def test_merges_caller_config_preserving_configurable(self):
         """When the caller provides a RunnableConfig, extra configurable
@@ -60,11 +66,15 @@ class TestGetCheckpointBeforeMessage(unittest.IsolatedAsyncioTestCase):
         and ``thread_id`` is authoritative from the argument, not the
         caller's config."""
         agent = make_agent()
-        captured = {}
+        captured_config = None
+
+        snapshot = MagicMock()
+        snapshot.values = {"messages": [MagicMock(id="msg-1")]}
 
         def _capture(history_config):
-            captured["config"] = history_config
-            return _async_iter([])
+            nonlocal captured_config
+            captured_config = history_config
+            return _async_iter([snapshot])
 
         agent.graph.aget_state_history = _capture
 
@@ -76,15 +86,14 @@ class TestGetCheckpointBeforeMessage(unittest.IsolatedAsyncioTestCase):
             "tags": ["a-tag"],
         }
 
-        with self.assertRaises(ValueError):
-            await agent.get_checkpoint_before_message(
-                "msg-1", "thread-xyz", caller_config
-            )
+        await agent.get_checkpoint_before_message(
+            "msg-1", "thread-xyz", caller_config
+        )
 
-        cfg = captured["config"]
-        self.assertEqual(cfg["configurable"]["thread_id"], "thread-xyz")
-        self.assertEqual(cfg["configurable"]["checkpoint_ns"], "ns-1")
-        self.assertEqual(cfg["tags"], ["a-tag"])
+        self.assertIsNotNone(captured_config)
+        self.assertEqual(captured_config["configurable"]["thread_id"], "thread-xyz")
+        self.assertEqual(captured_config["configurable"]["checkpoint_ns"], "ns-1")
+        self.assertEqual(captured_config["tags"], ["a-tag"])
 
     async def test_returns_previous_snapshot(self):
         """When the target message lives in the second snapshot, the
