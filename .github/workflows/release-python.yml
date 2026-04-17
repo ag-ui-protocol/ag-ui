@@ -18,6 +18,8 @@ on:
         default: false
 
 concurrency:
+  # A single fixed group so push and workflow_dispatch runs serialize against
+  # each other regardless of the triggering ref.
   group: release-python
   cancel-in-progress: false
 
@@ -53,17 +55,36 @@ jobs:
       - name: Detect version changes
         id: detect
         run: |
-          CHANGED=$(bash scripts/release/detect-py-version-changes.sh 2>detect-py.log)
+          set -u
+          if ! CHANGED=$(bash scripts/release/detect-py-version-changes.sh 2>detect-py.log); then
+            echo "ERROR: detect-py-version-changes.sh failed" >&2
+            cat detect-py.log >&2
+            exit 1
+          fi
           cat detect-py.log
           [ "$CHANGED" = "null" ] && CHANGED="[]"
           echo "packages=$CHANGED" >> "$GITHUB_OUTPUT"
           COUNT=$(echo "$CHANGED" | jq 'length')
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
           if [ "$COUNT" -gt 0 ]; then
-            echo "## Python packages to publish" >> $GITHUB_STEP_SUMMARY
-            echo "$CHANGED" | jq -r '.[] | "- \(.name)@\(.version)"' >> $GITHUB_STEP_SUMMARY
+            echo "## Python packages to publish" >> "$GITHUB_STEP_SUMMARY"
+            echo "$CHANGED" | jq -r '.[] | "- \(.name)@\(.version)"' >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "## No Python version changes detected" >> $GITHUB_STEP_SUMMARY
+            echo "## No Python version changes detected" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Pre-flight publish credentials
+        if: steps.detect.outputs.count != '0'
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" != "true" ]; then
+            if [ -z "${UV_PUBLISH_TOKEN:-}" ]; then
+              echo "ERROR: PYPI_API_TOKEN (UV_PUBLISH_TOKEN) is not set" >&2
+              exit 1
+            fi
           fi
 
       - name: Build, test, and publish
@@ -71,8 +92,9 @@ jobs:
         env:
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
           PACKAGES: ${{ steps.detect.outputs.packages }}
-          DRY_RUN: ${{ github.event.inputs.dry_run }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
         run: |
+          set -u
           FAILED=0
           while read -r pkg; do
             NAME=$(echo "$pkg" | jq -r '.name')
@@ -83,6 +105,7 @@ jobs:
             echo "=== Processing $NAME@$VERSION ($BUILD_SYSTEM) ==="
 
             if ! (
+              set -u
               cd "$DIR"
 
               # Install dependencies
@@ -92,8 +115,10 @@ jobs:
                 uv sync
               fi
 
-              # Run tests if configured
-              TEST_CMD=$(python3 -c "
+              # Run tests if configured. Distinguish "not configured" (legitimate,
+              # empty TEST_CMD) from "extraction failed" (abort).
+              TEST_EXTRACT_LOG=$(mktemp)
+              if ! TEST_CMD=$(python3 -c "
           import tomllib, sys
           cfg = tomllib.load(open('pyproject.toml', 'rb'))
           try:
@@ -101,7 +126,13 @@ jobs:
               print(cmd)
           except KeyError:
               print('')
-          " 2>/dev/null || echo "")
+          " 2>"$TEST_EXTRACT_LOG"); then
+                echo "ERROR: failed to read test script from pyproject.toml for $NAME" >&2
+                cat "$TEST_EXTRACT_LOG" >&2
+                rm -f "$TEST_EXTRACT_LOG"
+                exit 1
+              fi
+              rm -f "$TEST_EXTRACT_LOG"
 
               if [ -n "$TEST_CMD" ]; then
                 echo "Running tests: $TEST_CMD"
@@ -111,8 +142,8 @@ jobs:
                   uv run $TEST_CMD
                 fi
               else
-                echo "WARNING: No test script configured in [tool.ag-ui.scripts] for $NAME — skipping tests" >&2
-                echo "⚠️ $NAME: no tests configured, skipping test step" >> $GITHUB_STEP_SUMMARY
+                echo "WARNING: No test script configured in [tool.ag-ui.scripts] for $NAME, skipping tests" >&2
+                echo "WARNING: $NAME has no tests configured, skipping test step" >> "$GITHUB_STEP_SUMMARY"
               fi
 
               # Build
@@ -122,10 +153,14 @@ jobs:
                 uv build
               fi
 
-              # Verify wheel permissions
+              # Verify wheel permissions. Require exactly one wheel.
               python3 -c "
           import zipfile, glob, sys
-          whl = glob.glob('dist/*.whl')[0]
+          whls = sorted(glob.glob('dist/*.whl'))
+          if len(whls) != 1:
+              print(f'ERROR: expected exactly one wheel in dist/, found {len(whls)}: {whls}', file=sys.stderr)
+              sys.exit(1)
+          whl = whls[0]
           print(f'Checking {whl}')
           bad = []
           for info in zipfile.ZipFile(whl).infolist():
@@ -141,13 +176,21 @@ jobs:
           print('All files have correct permissions.')
           "
 
-              # Publish
+              # Pre-publish existence probe. If the version is already on PyPI,
+              # skip publish instead of failing on "File already exists". This
+              # makes retries after a partial run safe.
               if [ "$DRY_RUN" != "true" ]; then
-                echo "Publishing $NAME@$VERSION to PyPI..."
-                uv publish
-                echo "Published $NAME@$VERSION" >> $GITHUB_STEP_SUMMARY
+                PROBE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "https://pypi.org/pypi/${NAME}/${VERSION}/json" || echo "000")
+                if [ "$PROBE" = "200" ]; then
+                  echo "SKIP: $NAME@$VERSION already on PyPI (HTTP 200), not re-publishing"
+                  echo "SKIP: $NAME@$VERSION already published on PyPI" >> "$GITHUB_STEP_SUMMARY"
+                else
+                  echo "Publishing $NAME@$VERSION to PyPI..."
+                  uv publish
+                  echo "Published $NAME@$VERSION" >> "$GITHUB_STEP_SUMMARY"
+                fi
               else
-                echo "DRY RUN: Would publish $NAME@$VERSION" >> $GITHUB_STEP_SUMMARY
+                echo "DRY RUN: Would publish $NAME@$VERSION" >> "$GITHUB_STEP_SUMMARY"
               fi
             ); then
               echo "ERROR: Failed to build/test/publish $NAME@$VERSION" >&2
@@ -160,52 +203,40 @@ jobs:
           fi
 
       - name: Create git tags
-        if: steps.detect.outputs.count != '0' && (github.event.inputs.dry_run != 'true')
+        if: steps.detect.outputs.count != '0' && (github.event.inputs.dry_run || 'false') != 'true'
         env:
           PACKAGES: ${{ steps.detect.outputs.packages }}
         run: |
-          TAGS_TO_PUSH=()
-          HEAD_SHA=$(git rev-parse HEAD)
-          while read -r pkg; do
-            NAME=$(echo "$pkg" | jq -r '.name')
-            VERSION=$(echo "$pkg" | jq -r '.version')
-            TAG="${NAME}@${VERSION}"
-            # Fetch in case tag exists on remote but not locally (previous partial run)
-            git fetch origin "refs/tags/${TAG}:refs/tags/${TAG}" 2>/dev/null || true
-            if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
-              EXISTING_SHA=$(git rev-parse "refs/tags/${TAG}^{commit}")
-              if [ "$EXISTING_SHA" = "$HEAD_SHA" ]; then
-                echo "Tag $TAG already exists at HEAD, skipping"
-                continue
-              else
-                echo "ERROR: Tag $TAG exists but points to $EXISTING_SHA, not HEAD ($HEAD_SHA) — version collision" >&2
-                exit 1
-              fi
-            fi
-            git tag "$TAG" || { echo "ERROR: Failed to tag $TAG" >&2; exit 1; }
-            TAGS_TO_PUSH+=("$TAG")
-            echo "Tagged $TAG"
-          done < <(echo "$PACKAGES" | jq -c '.[]')
-          if [ ${#TAGS_TO_PUSH[@]} -gt 0 ]; then
-            git push origin "${TAGS_TO_PUSH[@]}"
-          else
-            echo "No new tags to push (all already existed at HEAD)"
-          fi
+          set -u
+          bash scripts/release/create-tags.sh "$PACKAGES"
 
       - name: Create GitHub Release
-        if: steps.detect.outputs.count != '0' && (github.event.inputs.dry_run != 'true')
+        if: steps.detect.outputs.count != '0' && (github.event.inputs.dry_run || 'false') != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PACKAGES: ${{ steps.detect.outputs.packages }}
         run: |
+          set -u
           bash scripts/release/create-or-update-release.sh python "$PACKAGES"
 
+      - name: Reconcile GitHub Release (ensure all tags are represented)
+        # Always run reconciliation so that a prior-step failure after tags were
+        # pushed still results in a release that reflects what was published.
+        if: always() && steps.detect.outputs.count != '0' && (github.event.inputs.dry_run || 'false') != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PACKAGES: ${{ steps.detect.outputs.packages }}
+        run: |
+          set -u
+          bash scripts/release/reconcile-release.sh python "$PACKAGES"
+
       - name: Dry-run summary
-        if: steps.detect.outputs.count != '0' && (github.event.inputs.dry_run == 'true')
+        if: steps.detect.outputs.count != '0' && (github.event.inputs.dry_run || 'false') == 'true'
         env:
           DRY_RUN: "true"
           PACKAGES: ${{ steps.detect.outputs.packages }}
         run: |
-          echo "## Dry Run — would publish:" >> $GITHUB_STEP_SUMMARY
-          echo "$PACKAGES" | jq -r '.[] | "- \(.name)@\(.version)"' >> $GITHUB_STEP_SUMMARY
+          set -u
+          echo "## Dry Run: would publish" >> "$GITHUB_STEP_SUMMARY"
+          echo "$PACKAGES" | jq -r '.[] | "- \(.name)@\(.version)"' >> "$GITHUB_STEP_SUMMARY"
           DRY_RUN=true bash scripts/release/create-or-update-release.sh python "$PACKAGES"
