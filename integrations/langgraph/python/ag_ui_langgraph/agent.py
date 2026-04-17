@@ -674,14 +674,20 @@ class LangGraphAgent:
                 "config": config_schema_keys,
                 "context": context_schema_keys,
             }
-        except (AttributeError, TypeError, KeyError) as exc:
+        except (AttributeError, TypeError, KeyError, ValueError, NotImplementedError) as exc:
             # Legitimate fallback cases:
-            #   AttributeError — graph doesn't implement schema introspection
+            #   AttributeError      — graph doesn't implement schema introspection
             #     (older LangGraph versions, custom graph classes, or Pydantic v1/v2
             #     `.schema()` vs `.model_json_schema()` skew).
-            #   TypeError      — a schema call returned an unexpected shape
+            #   TypeError           — a schema call returned an unexpected shape
             #     (e.g. not a mapping, so `"properties" in ...` / `.keys()` blows up).
-            #   KeyError       — expected keys missing from an otherwise-dict schema.
+            #   KeyError            — expected keys missing from an otherwise-dict schema.
+            #   ValueError          — Pydantic v2 raises this (via PydanticUserError/
+            #     PydanticSchemaGenerationError, both ValueError subclasses) when
+            #     `.schema()` / `.model_json_schema()` can't be generated for a
+            #     given config or context schema.
+            #   NotImplementedError — custom graph classes sometimes advertise a
+            #     schema API but raise from the stub implementation.
             # Other exceptions (RuntimeError, I/O, asyncio, etc.) indicate real bugs
             # and are allowed to propagate rather than being silently swallowed.
             logger.warning(
