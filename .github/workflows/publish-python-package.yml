@@ -68,6 +68,32 @@ jobs:
         working-directory: ${{ inputs.package }}
         run: uv build
 
+      - name: Fix wheel permissions
+        working-directory: ${{ inputs.package }}
+        run: |
+          echo "## Normalizing wheel file permissions"
+          uv run python -c "
+          import glob, shutil, tempfile, zipfile, os
+
+          whl = glob.glob('dist/*.whl')[0]
+          print(f'Fixing permissions in {whl}')
+          tmp = whl + '.tmp'
+          with zipfile.ZipFile(whl, 'r') as zin, zipfile.ZipFile(tmp, 'w') as zout:
+              for info in zin.infolist():
+                  data = zin.read(info.filename)
+                  old_perms = (info.external_attr >> 16) & 0o777
+                  if info.is_dir():
+                      new_perms = 0o755
+                  else:
+                      new_perms = 0o644
+                  info.external_attr = (info.external_attr & ~(0o777 << 16)) | (new_perms << 16)
+                  zout.writestr(info, data)
+                  if old_perms != new_perms:
+                      print(f'  {oct(old_perms)} -> {oct(new_perms)}  {info.filename}')
+          shutil.move(tmp, whl)
+          print('Done.')
+          "
+
       - name: Verify wheel permissions
         working-directory: ${{ inputs.package }}
         run: |
