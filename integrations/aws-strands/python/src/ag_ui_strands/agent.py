@@ -17,23 +17,38 @@ from strands import Agent as StrandsAgentCore
 # AG-UI injects messages at runtime via RunAgentInput.
 # "hooks" is excluded: Agent stores hooks as a HookRegistry after init, not
 # the original list the constructor expects — forwarding it causes a TypeError.
-_AGUI_EXPLICIT_PARAMS = {"self", "model", "system_prompt", "tools", "messages", "hooks"}
+# "session_manager" is excluded: it is supplied per-thread via
+# StrandsAgentConfig.session_manager_provider (see run()). Forwarding a
+# template-level session_manager would make every thread share one session_id.
+_AGUI_EXPLICIT_PARAMS = {
+    "self",
+    "model",
+    "system_prompt",
+    "tools",
+    "messages",
+    "hooks",
+    "session_manager",
+}
 
 
 def _extract_agent_kwargs(agent: StrandsAgentCore) -> dict:
     """Build kwargs for StrandsAgentCore by introspecting its constructor signature.
 
-    Forward-compatible: new Strands parameters are picked up automatically
-    without changes here, as long as they are stored as same-named instance
-    attributes (the same assumption the manual approach made).
+    Tries ``self.<name>`` first, falls back to ``self._<name>`` — Strands stores
+    some init params with an underscore prefix (e.g. ``retry_strategy`` lives at
+    ``self._retry_strategy``). This keeps the adapter forward-compatible with
+    any future param that follows either naming convention.
     """
     kwargs = {}
     for name in inspect.signature(StrandsAgentCore.__init__).parameters:
         if name in _AGUI_EXPLICIT_PARAMS:
             continue
-        if not hasattr(agent, name):
+        if hasattr(agent, name):
+            value = getattr(agent, name)
+        elif hasattr(agent, f"_{name}"):
+            value = getattr(agent, f"_{name}")
+        else:
             continue
-        value = getattr(agent, name)
         if value is None:
             continue
         # state is an AgentState container; extract the underlying plain dict
@@ -106,6 +121,22 @@ class StrandsAgent:
         self.name = name
         self.description = description
         self.config = config or StrandsAgentConfig()
+
+        # Detect the common footgun: session_manager set on the template Agent
+        # (stored as `_session_manager` by Strands) with no per-thread provider.
+        # Forwarding it would make every AG-UI thread share one session_id.
+        template_session_manager = getattr(agent, "_session_manager", None)
+        if (
+            template_session_manager is not None
+            and self.config.session_manager_provider is None
+        ):
+            logger.warning(
+                "session_manager was set on the template Agent but will be ignored: "
+                "forwarding it would cause every AG-UI thread to share the same "
+                "session_id. Construct per-thread session managers via "
+                "StrandsAgentConfig.session_manager_provider instead. See "
+                "https://github.com/ag-ui-protocol/ag-ui/pull/798 for the pattern."
+            )
 
         # Dictionary to store agent instances per thread
         self._agents_by_thread: Dict[str, StrandsAgentCore] = {}
