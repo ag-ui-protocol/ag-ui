@@ -876,7 +876,17 @@ class LangGraphAgent:
 
             reasoning_data = resolve_reasoning_content(chunk) if chunk else None
             encrypted_reasoning_data = resolve_encrypted_reasoning_content(chunk) if chunk else None
-            message_content = resolve_message_content(chunk.content) if chunk and chunk.content else None
+            # Use an explicit ``is not None`` check so empty-string deltas
+            # (``chunk.content == ""``) still reach resolve_message_content.
+            # The prior truthy check ``if chunk and chunk.content`` treated
+            # "" the same as None and silently dropped zero-length deltas
+            # that some providers emit during tool-call / structured-output
+            # transitions.
+            message_content = (
+                resolve_message_content(chunk.content)
+                if chunk is not None and getattr(chunk, "content", None) is not None
+                else None
+            )
             is_message_content_event = tool_call_data is None and message_content
             is_message_end_event = has_current_stream and not current_stream.get("tool_call_id") and not is_message_content_event
 
