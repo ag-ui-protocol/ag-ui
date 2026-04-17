@@ -587,7 +587,7 @@ class LangGraphAgent:
             input: RunAgentInput,
             message_checkpoint: HumanMessage,
             config: RunnableConfig
-    ) -> Optional[PreparedStream]:
+    ) -> PreparedStream:
         tools = input.tools or []
         thread_id = input.thread_id
 
@@ -1287,20 +1287,19 @@ class LangGraphAgent:
             self.active_run["state_reliable"] = True
             self.active_run["has_function_streaming"] = False
 
-    def handle_reasoning_event(self, reasoning_data: LangGraphReasoning) -> Generator[ProcessedEvents, Any, str | None]:
+    def handle_reasoning_event(self, reasoning_data: LangGraphReasoning) -> Generator[ProcessedEvents, Any, None]:
         # Invariant: reasoning events are dispatched from _handle_single_event,
         # which itself runs inside an active run.
         if self.active_run is None:
             raise RuntimeError("handle_reasoning_event called outside an active run")
         if not reasoning_data or "type" not in reasoning_data or "text" not in reasoning_data:
-            # Return None rather than "" so the generator's declared return
-            # type (Optional[str]) matches reality. Log the malformed event
-            # so upstream shape drift is diagnosable.
+            # Drop malformed events rather than partially emitting. Log so
+            # upstream shape drift is diagnosable.
             logger.debug(
                 "handle_reasoning_event: malformed reasoning_data dropped: %r",
                 reasoning_data,
             )
-            return None
+            return
 
         reasoning_step_index = reasoning_data["index"]
 
