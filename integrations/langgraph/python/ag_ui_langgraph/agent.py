@@ -1230,7 +1230,7 @@ class LangGraphAgent:
             # integration delivers something else, log and skip rather than
             # AttributeError-crashing the whole stream.
             if not isinstance(tool_call_output, ToolMessage):
-                logger.debug(
+                logger.warning(
                     "OnToolEnd received non-ToolMessage output (%r); skipping dispatch",
                     type(tool_call_output).__name__,
                 )
