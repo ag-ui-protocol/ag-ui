@@ -164,16 +164,33 @@ jobs:
         env:
           PACKAGES: ${{ steps.detect.outputs.packages }}
         run: |
-          TAGS=()
+          TAGS_TO_PUSH=()
+          HEAD_SHA=$(git rev-parse HEAD)
           while read -r pkg; do
             NAME=$(echo "$pkg" | jq -r '.name')
             VERSION=$(echo "$pkg" | jq -r '.version')
             TAG="${NAME}@${VERSION}"
+            # Fetch in case tag exists on remote but not locally (previous partial run)
+            git fetch origin "refs/tags/${TAG}:refs/tags/${TAG}" 2>/dev/null || true
+            if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+              EXISTING_SHA=$(git rev-parse "refs/tags/${TAG}^{commit}")
+              if [ "$EXISTING_SHA" = "$HEAD_SHA" ]; then
+                echo "Tag $TAG already exists at HEAD, skipping"
+                continue
+              else
+                echo "ERROR: Tag $TAG exists but points to $EXISTING_SHA, not HEAD ($HEAD_SHA) — version collision" >&2
+                exit 1
+              fi
+            fi
             git tag "$TAG" || { echo "ERROR: Failed to tag $TAG" >&2; exit 1; }
-            TAGS+=("$TAG")
+            TAGS_TO_PUSH+=("$TAG")
             echo "Tagged $TAG"
           done < <(echo "$PACKAGES" | jq -c '.[]')
-          git push origin "${TAGS[@]}"
+          if [ ${#TAGS_TO_PUSH[@]} -gt 0 ]; then
+            git push origin "${TAGS_TO_PUSH[@]}"
+          else
+            echo "No new tags to push (all already existed at HEAD)"
+          fi
 
       - name: Create GitHub Release
         if: steps.detect.outputs.count != '0' && (github.event.inputs.dry_run != 'true')
