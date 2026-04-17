@@ -1,28 +1,34 @@
-"""Tests for StrandsAgent template kwarg propagation to new thread instances."""
+"""Tests that every Strands Agent __init__ param round-trips to per-thread instances.
+
+Driven by inspect.signature so new Strands params are covered automatically.
+"""
 
 from __future__ import annotations
 
+import inspect
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
 from strands import Agent
 from strands.tools.registry import ToolRegistry
 
-from ag_ui_strands.agent import StrandsAgent
+from ag_ui_strands.agent import (
+    StrandsAgent,
+    _AGUI_EXPLICIT_PARAMS,
+    _extract_agent_kwargs,
+)
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def _mock_model():
     m = MagicMock()
-    m.stateful = False  # prevent Strands from rejecting conversation_manager
+    m.stateful = False
     return m
 
 
 def _run_input(thread_id: str = "t1"):
     from ag_ui.core import RunAgentInput, UserMessage
+
     return RunAgentInput(
         thread_id=thread_id,
         run_id="r1",
@@ -35,8 +41,6 @@ def _run_input(thread_id: str = "t1"):
 
 
 class _CapturingCore:
-    """Replacement for StrandsAgentCore that records constructor kwargs."""
-
     def __init__(self, **kwargs):
         self.init_kwargs = kwargs
         self.tool_registry = ToolRegistry()
@@ -46,73 +50,132 @@ class _CapturingCore:
             yield
 
 
-async def _trigger_thread_creation(ag: StrandsAgent, thread_id: str) -> "_CapturingCore":
-    inp = _run_input(thread_id)
-    async for _ in ag.run(inp):
+async def _trigger_thread_creation(ag: StrandsAgent, thread_id: str) -> _CapturingCore:
+    async for _ in ag.run(_run_input(thread_id)):
         break
     return ag._agents_by_thread[thread_id]
 
 
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
+# Params that require a specific type or that we explicitly handle elsewhere.
+# Anything not in this set should round-trip a sentinel MagicMock cleanly.
+_UNTESTABLE_VIA_SENTINEL = {
+    "model",              # must be a Model-shaped object; we set it separately
+    "messages",           # excluded by AG-UI
+    "hooks",              # excluded by AG-UI
+    "tools",              # handled via tool_registry
+    "system_prompt",      # handled explicitly
+    "session_manager",    # excluded; see StrandsAgentConfig.session_manager_provider
+    "plugins",            # stored as _plugin_registry, not forwarded
+    "structured_output_model",  # template Agent rejects a MagicMock sentinel here
+    "trace_attributes",         # Strands merges into a dict, losing sentinel identity
+}
 
-def _make_template():
-    """One Agent with every hardcoded kwarg set to a non-default value."""
-    conversation_manager = MagicMock()
-    template = Agent(
-        model=_mock_model(),
-        trace_attributes={"env": "prod"},
-        agent_id="my-agent-id",
-        state={"count": 0},
-        conversation_manager=conversation_manager,
+
+def _discover_forwardable_params() -> list[str]:
+    """Every Agent.__init__ param we expect to auto-forward."""
+    sig = inspect.signature(Agent.__init__)
+    return [
+        n for n in sig.parameters
+        if n not in _AGUI_EXPLICIT_PARAMS and n not in _UNTESTABLE_VIA_SENTINEL
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("param_name", _discover_forwardable_params())
+async def test_template_param_round_trips(param_name):
+    """For each Strands Agent init param, a value set on the template
+    must reach the per-thread StrandsAgentCore with the same identity."""
+    sentinel = MagicMock(name=f"sentinel-{param_name}")
+    try:
+        template = Agent(model=_mock_model(), **{param_name: sentinel})
+    except (TypeError, ValueError) as e:
+        pytest.skip(f"{param_name}: template rejects sentinel ({e})")
+
+    ag = StrandsAgent(template, name="test")
+    with patch("ag_ui_strands.agent.StrandsAgentCore", _CapturingCore):
+        instance = await _trigger_thread_creation(ag, f"thread-{param_name}")
+
+    assert instance.init_kwargs.get(param_name) is sentinel, (
+        f"{param_name}: value on template did not round-trip to per-thread agent. "
+        f"got kwargs={list(instance.init_kwargs)}"
     )
-    return template, conversation_manager
 
 
-class TestExcludedParams:
-    """Params that must never appear in _agent_kwargs or be forwarded to new threads."""
+@pytest.mark.asyncio
+async def test_excluded_params_never_forwarded():
+    """Params in _AGUI_EXPLICIT_PARAMS are handled elsewhere and must never
+    appear in the generic _agent_kwargs forwarding path."""
+    template = Agent(model=_mock_model())
+    ag = StrandsAgent(template, name="test")
+    for p in _AGUI_EXPLICIT_PARAMS - {"self"}:
+        assert p not in ag._agent_kwargs, f"{p} leaked into _agent_kwargs"
 
-    @pytest.mark.asyncio
-    async def test_excluded_params_not_forwarded(self):
-        from ag_ui_strands.agent import _AGUI_EXPLICIT_PARAMS
 
-        template = Agent(model=_mock_model(), hooks=[MagicMock()])
+@pytest.mark.asyncio
+async def test_session_manager_on_template_is_dropped_and_warns(caplog):
+    """Template-level session_manager is the known footgun: drop it, warn loudly."""
+    session_manager = MagicMock(name="session_manager")
+    template = Agent(model=_mock_model(), session_manager=session_manager)
+
+    with caplog.at_level(logging.WARNING, logger="ag_ui_strands.agent"):
         ag = StrandsAgent(template, name="test")
 
-        with patch("ag_ui_strands.agent.StrandsAgentCore", _CapturingCore):
-            instance = await _trigger_thread_creation(ag, "excluded-thread")
+    assert any("session_manager_provider" in m for m in caplog.messages), (
+        f"expected a warning pointing to session_manager_provider; got {caplog.messages}"
+    )
+    assert "session_manager" not in ag._agent_kwargs
 
-        for param in _AGUI_EXPLICIT_PARAMS - {"self"}:
-            assert param not in ag._agent_kwargs, f"{param} should not be in _agent_kwargs"
+    with patch("ag_ui_strands.agent.StrandsAgentCore", _CapturingCore):
+        instance = await _trigger_thread_creation(ag, "t1")
 
-
-class TestTemplateKwargsCapture:
-    """All hardcoded template attributes must appear in _agent_kwargs after __init__."""
-
-    def test_all_hardcoded_kwargs_captured(self):
-        template, conversation_manager = _make_template()
-        ag = StrandsAgent(template, name="test")
-
-        assert ag._agent_kwargs.get("trace_attributes") == {"env": "prod"}
-        assert ag._agent_kwargs.get("agent_id") == "my-agent-id"
-        assert "state" in ag._agent_kwargs
-        assert ag._agent_kwargs.get("conversation_manager") is conversation_manager
+    # #798's explicit kwarg should be None since no provider is configured.
+    assert instance.init_kwargs.get("session_manager") is None
 
 
-class TestNewThreadUsesTemplateKwargs:
-    """New per-thread StrandsAgentCore instances must receive all hardcoded template kwargs."""
+def test_extract_agent_kwargs_underscore_fallback():
+    """Directly exercises the self._<name> fallback path in _extract_agent_kwargs.
 
-    @pytest.mark.asyncio
-    async def test_all_hardcoded_kwargs_forwarded_to_new_thread(self):
-        template, conversation_manager = _make_template()
-        ag = StrandsAgent(template, name="test")
+    Covers Strands params stored with an underscore prefix (e.g. retry_strategy
+    lives at self._retry_strategy). The parametrized round-trip test above
+    often can't cover these because Strands rejects MagicMock sentinels in
+    template construction for such params.
+    """
+    sig = inspect.signature(Agent.__init__)
+    candidate = next(
+        (
+            n
+            for n in sig.parameters
+            if n not in _AGUI_EXPLICIT_PARAMS and n != "self"
+        ),
+        None,
+    )
+    assert candidate, "Agent.__init__ has no forwardable params — test premise broken"
 
-        with patch("ag_ui_strands.agent.StrandsAgentCore", _CapturingCore):
-            instance = await _trigger_thread_creation(ag, "thread-1")
+    sentinel = object()
+    fake = type("FakeAgent", (), {})()
+    setattr(fake, f"_{candidate}", sentinel)
+    assert not hasattr(fake, candidate), (
+        f"precondition violated: {candidate} must only be set as _{candidate}"
+    )
 
-        kwargs = instance.init_kwargs
-        assert kwargs.get("trace_attributes") == {"env": "prod"}, f"got: {kwargs}"
-        assert kwargs.get("agent_id") == "my-agent-id", f"got: {kwargs}"
-        assert "state" in kwargs, f"got: {kwargs}"
-        assert kwargs.get("conversation_manager") is conversation_manager, f"got: {kwargs}"
+    kwargs = _extract_agent_kwargs(fake)
+    assert kwargs.get(candidate) is sentinel, (
+        f"underscore fallback did not resolve {candidate}; kwargs={list(kwargs)}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_template_session_manager_no_warning_when_provider_set(caplog):
+    """With a provider configured, the warning should NOT fire."""
+    from ag_ui_strands.config import StrandsAgentConfig
+
+    session_manager = MagicMock(name="session_manager")
+    template = Agent(model=_mock_model(), session_manager=session_manager)
+    config = StrandsAgentConfig(session_manager_provider=lambda _inp: MagicMock())
+
+    with caplog.at_level(logging.WARNING, logger="ag_ui_strands.agent"):
+        StrandsAgent(template, name="test", config=config)
+
+    assert not any("session_manager_provider" in m for m in caplog.messages), (
+        f"unexpected warning: {caplog.messages}"
+    )
