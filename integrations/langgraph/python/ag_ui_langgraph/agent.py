@@ -157,7 +157,7 @@ class LangGraphAgent:
 
     async def _handle_stream_events(self, input: RunAgentInput) -> AsyncGenerator[str, None]:
         thread_id = input.thread_id or str(uuid.uuid4())
-        INITIAL_ACTIVE_RUN = {
+        INITIAL_ACTIVE_RUN: RunMetadata = {
             "id": input.run_id,
             "thread_id": thread_id,
             "reasoning_process": None,
@@ -403,6 +403,9 @@ class LangGraphAgent:
         self.active_run = None
 
     async def prepare_stream(self, input: RunAgentInput, agent_state: State, config: RunnableConfig):
+        # Invariant: prepare_stream is only called from _handle_stream_events
+        # after self.active_run has been initialized for the current run.
+        assert self.active_run is not None, "prepare_stream called outside an active run"
         state_input = input.state or {}
         messages = input.messages or []
         forwarded_props = input.forwarded_props or {}
@@ -751,12 +754,19 @@ class LangGraphAgent:
         return head + tail
 
     def get_state_snapshot(self, state: State) -> State:
-        schema_keys = self.active_run["schema_keys"]
-        if schema_keys and schema_keys.get("output"):
-            state = filter_object_by_schema_keys(state, [*DEFAULT_SCHEMA_KEYS, *schema_keys["output"]])
+        # Invariant: callers always operate within an active run.
+        assert self.active_run is not None, "get_state_snapshot called outside an active run"
+        schema_keys = self.active_run.get("schema_keys")
+        output_keys = schema_keys.get("output") if schema_keys else None
+        if output_keys:
+            state = filter_object_by_schema_keys(state, [*DEFAULT_SCHEMA_KEYS, *output_keys])
         return state
 
     async def _handle_single_event(self, event: Any, state: State) -> AsyncGenerator[str, None]:
+        # Invariant: _handle_single_event is only invoked from the event
+        # loop inside _handle_stream_events, where active_run has been
+        # initialized for the current run.
+        assert self.active_run is not None, "_handle_single_event called outside an active run"
         event_type = event.get("event")
         if event_type == LangGraphEventTypes.OnChatModelStream:
             should_emit_messages = event.get("metadata", {}).get("emit-messages", True)
@@ -1088,6 +1098,9 @@ class LangGraphAgent:
             self.active_run["has_function_streaming"] = False
 
     def handle_reasoning_event(self, reasoning_data: LangGraphReasoning) -> Generator[ProcessedEvents, Any, str | None]:
+        # Invariant: reasoning events are dispatched from _handle_single_event,
+        # which itself runs inside an active run.
+        assert self.active_run is not None, "handle_reasoning_event called outside an active run"
         if not reasoning_data or "type" not in reasoning_data or "text" not in reasoning_data:
             return ""
 
@@ -1184,6 +1197,9 @@ class LangGraphAgent:
         Centralized method to handle node name changes and step transitions.
         Automatically manages step start/end events based on node name changes.
         """
+        # Invariant: node-change handling only happens mid-run.
+        assert self.active_run is not None, "handle_node_change called outside an active run"
+
         if node_name == "__end__":
             node_name = None
 
@@ -1210,13 +1226,16 @@ class LangGraphAgent:
 
     def end_step(self):
         """Simple step end event dispatcher - node_name management handled by handle_node_change"""
-        if not self.active_run.get("node_name"):
+        # Invariant: end_step is only called mid-run, from handle_node_change.
+        assert self.active_run is not None, "end_step called outside an active run"
+        node_name = self.active_run.get("node_name")
+        if not node_name:
             raise ValueError("No active step to end")
 
         return self._dispatch_event(
             StepFinishedEvent(
                 type=EventType.STEP_FINISHED,
-                step_name=self.active_run["node_name"]
+                step_name=node_name
             )
         )
 
@@ -1277,6 +1296,8 @@ class LangGraphAgent:
         that never committed and would otherwise appear as duplicate /
         empty assistant bubbles.
         """
+        # Invariant: snapshot emission only happens mid-run.
+        assert self.active_run is not None, "get_state_and_messages_snapshots called outside an active run"
         state = await self.graph.aget_state(config)
         state_values = state.values if state.values is not None else state
         yield self._dispatch_event(
