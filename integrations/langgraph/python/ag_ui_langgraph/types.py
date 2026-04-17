@@ -48,7 +48,7 @@ RunMetadata = TypedDict("RunMetadata", {
     "id": str,
     "thread_id": NotRequired[Optional[str]],
     # Run mode/flow
-    "mode": NotRequired[Literal["start", "continue"]],
+    "mode": Literal["start", "continue"],
     # Node tracking
     "node_name": NotRequired[Optional[str]],
     "prev_node_name": NotRequired[Optional[str]],

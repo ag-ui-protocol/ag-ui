@@ -160,6 +160,7 @@ class LangGraphAgent:
         INITIAL_ACTIVE_RUN: RunMetadata = {
             "id": input.run_id,
             "thread_id": thread_id,
+            "mode": "start",
             "reasoning_process": None,
             "node_name": None,
             "has_function_streaming": False,
