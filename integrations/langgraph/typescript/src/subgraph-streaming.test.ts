@@ -229,7 +229,7 @@ describe("subgraph change trigger", () => {
       exitingNode: false,
       manuallyEmittedState: null,
       hasFunctionStreaming: false,
-      hasPredictState: false,
+      modelMadeToolCall: false,
       streamedMessages: [],
     };
     (agent as any).getStateSnapshot = vi.fn().mockReturnValue({});
