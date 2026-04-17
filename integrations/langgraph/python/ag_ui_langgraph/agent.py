@@ -1305,14 +1305,24 @@ class LangGraphAgent:
 
         # ``aget_state_history`` needs a RunnableConfig with ``configurable.thread_id``.
         # Prefer the caller's config when provided so any downstream configurable keys
-        # (``thread_id``, ``checkpoint_ns``, ``checkpoint_id``) are preserved;
-        # otherwise fall back to a thread-only config derived from ``thread_id``.
+        # (graph subkey, etc.) are preserved; otherwise fall back to a thread-only
+        # config derived from ``thread_id``.
+        #
+        # Strip ``checkpoint_id`` and ``checkpoint_ns`` from the caller's configurable:
+        # if they survive into history_config, ``aget_state_history`` filters to the
+        # single pinned checkpoint and the linear walk that looks up the snapshot
+        # containing ``message_id`` always misses.
         history_config: RunnableConfig
         if config is not None:
+            caller_configurable = {
+                k: v
+                for k, v in (config.get("configurable") or {}).items()
+                if k not in ("checkpoint_id", "checkpoint_ns")
+            }
             history_config = {
                 **config,
                 "configurable": {
-                    **(config.get("configurable") or {}),
+                    **caller_configurable,
                     "thread_id": thread_id,
                 },
             }
