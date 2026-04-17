@@ -4,7 +4,7 @@
  */
 
 import { ChatOpenAI } from "@langchain/openai";
-import { SystemMessage, AIMessage, ToolMessage } from "@langchain/core/messages";
+import { SystemMessage, AIMessage } from "@langchain/core/messages";
 import { RunnableConfig } from "@langchain/core/runnables";
 import { 
   Annotation, 
@@ -312,34 +312,28 @@ async function supervisorAgent(state: TravelAgentState, config?: RunnableConfig)
     ...state.messages,
   ], config);
 
-  let messages = [...state.messages, response];
-
   // Handle tool calls for routing
   if (response.tool_calls && response.tool_calls.length > 0) {
     const toolCall = response.tool_calls[0];
     const toolCallArgs = toolCall.args;
     const nextAgent = toolCallArgs.next_agent;
+    const answer = toolCallArgs.answer;
 
-    const toolResponse = new ToolMessage({
-      tool_call_id: toolCall.id!,
-      content: `Routing to ${nextAgent} and providing the answer`,
+    // Commit only the user-visible routing message. The raw
+    // bind_tools response is empty-content + a schema-named
+    // tool_call — an internal formatting step the user should
+    // never see in history. `messages` uses the `add_messages`
+    // reducer, so this appends rather than replacing.
+    return new Command({
+      goto: nextAgent && nextAgent !== "complete" ? nextAgent : END,
+      update: { messages: [new AIMessage({ content: answer })] },
     });
-
-    messages = [
-      ...messages, 
-      toolResponse, 
-      new AIMessage({ content: toolCallArgs.answer })
-    ];
-
-    if (nextAgent && nextAgent !== "complete") {
-      return new Command({ goto: nextAgent });
-    }
   }
 
-  // Fallback if no tool call or complete
+  // Fallback: no tool call — the model answered inline.
   return new Command({
     goto: END,
-    update: { messages }
+    update: { messages: [response] },
   });
 }
 

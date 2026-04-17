@@ -263,36 +263,25 @@ async def supervisor_agent(state: TravelAgentState, config: RunnableConfig):
         *state["messages"],
     ], config)
 
-    messages = state["messages"] + [response]
-
     # Handle tool calls for routing
     if hasattr(response, "tool_calls") and response.tool_calls:
         tool_call = response.tool_calls[0]
-
-        if isinstance(tool_call, dict):
-            tool_call_args = tool_call["args"]
-        else:
-            tool_call_args = tool_call.args
-
+        tool_call_args = tool_call["args"] if isinstance(tool_call, dict) else tool_call.args
         next_agent = tool_call_args["next_agent"]
+        answer = tool_call_args["answer"]
 
-        # Add tool response
-        tool_response = {
-            "role": "tool",
-            "content": f"Routing to {next_agent} and providing the answer",
-            "tool_call_id": tool_call.id if hasattr(tool_call, 'id') else tool_call["id"]
-        }
+        # Commit only the user-visible routing message. The raw
+        # bind_tools response is empty-content + a schema-named
+        # tool_call — an internal formatting step the user should
+        # never see in history. ``messages`` uses the ``add_messages``
+        # reducer, so this appends rather than replacing.
+        return Command(
+            goto=next_agent if next_agent is not None else END,
+            update={"messages": [AIMessage(content=answer)]},
+        )
 
-        messages = messages + [tool_response, AIMessage(content=tool_call_args["answer"])]
-
-        if next_agent is not None:
-            return Command(goto=next_agent)
-
-    # Fallback if no tool call
-    return Command(
-        goto=END,
-        update={"messages": messages}
-    )
+    # Fallback: no tool call — the model answered inline.
+    return Command(goto=END, update={"messages": [response]})
 
 # Create subgraphs
 flights_graph = StateGraph(TravelAgentState)
