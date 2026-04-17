@@ -20,7 +20,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from ag_ui_langgraph.agent import ROOT_SUBGRAPH_NAME
 from ag_ui.core import EventType
 
-from tests._helpers import make_agent as _make_agent, make_configured_agent
+from tests._helpers import make_agent as _make_agent, make_configured_agent, snapshot_event
 
 
 def _event_types(events):
@@ -117,7 +117,7 @@ class TestGetStateAndMessagesSnapshots(unittest.IsolatedAsyncioTestCase):
         agent = make_configured_agent([user, flights, hotels])
         async for _ in agent.get_state_and_messages_snapshots({}):
             pass
-        snap = next(e for e in agent.dispatched if getattr(e, "type", None) == EventType.MESSAGES_SNAPSHOT)
+        snap = snapshot_event(agent.dispatched)
         ids = [m.id for m in snap.messages]
         self.assertIn("h1", ids)
         self.assertLess(ids.index("f1"), ids.index("h1"))
@@ -130,7 +130,7 @@ class TestGetStateAndMessagesSnapshots(unittest.IsolatedAsyncioTestCase):
         agent = make_configured_agent([user, flights], streamed_messages=[supervisor_routing])
         async for _ in agent.get_state_and_messages_snapshots({}):
             pass
-        snap = next(e for e in agent.dispatched if getattr(e, "type", None) == EventType.MESSAGES_SNAPSHOT)
+        snap = snapshot_event(agent.dispatched)
         ids = [m.id for m in snap.messages]
         self.assertIn("sup1", ids)
         self.assertGreater(ids.index("sup1"), ids.index("f1"))
@@ -142,7 +142,7 @@ class TestGetStateAndMessagesSnapshots(unittest.IsolatedAsyncioTestCase):
         agent = make_configured_agent([user, exp], streamed_messages=[exp])
         async for _ in agent.get_state_and_messages_snapshots({}):
             pass
-        snap = next(e for e in agent.dispatched if getattr(e, "type", None) == EventType.MESSAGES_SNAPSHOT)
+        snap = snapshot_event(agent.dispatched)
         self.assertEqual([m.id for m in snap.messages].count("exp1"), 1)
 
 
