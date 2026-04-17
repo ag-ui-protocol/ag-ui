@@ -269,8 +269,20 @@ class LangGraphAgent:
                         yield ev
 
                 if event["event"] == "error":
+                    # Upstream "error" events do not always carry a
+                    # data.message field; a hard subscript here crashed
+                    # the error path itself. Fall back to a generic
+                    # message and log the raw event so the real payload
+                    # is recoverable.
+                    error_data = event.get("data") or {}
+                    error_message = error_data.get("message") if isinstance(error_data, dict) else None
+                    if not error_message:
+                        logger.warning(
+                            "Upstream error event missing data.message: %r", event
+                        )
+                        error_message = "Unknown error"
                     yield self._dispatch_event(
-                        RunErrorEvent(type=EventType.RUN_ERROR, message=event["data"]["message"], raw_event=event)
+                        RunErrorEvent(type=EventType.RUN_ERROR, message=error_message, raw_event=event)
                     )
                     break
 
