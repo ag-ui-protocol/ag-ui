@@ -836,12 +836,24 @@ class LangGraphAgent:
             should_emit_messages = (event.get("metadata") or {}).get("emit-messages", True)
             should_emit_tool_calls = (event.get("metadata") or {}).get("emit-tool-calls", True)
 
-            if event["data"]["chunk"].response_metadata.get('finish_reason', None):
+            # Chunks are normally LangChain BaseMessage instances (attribute
+            # access), but some upstream paths deliver raw dicts — mirror the
+            # dual-path accessors used by the outer loop (~line 305) so either
+            # shape works instead of AttributeError-crashing here.
+            chunk_raw = event.get("data", {}).get("chunk") or {}
+            if isinstance(chunk_raw, dict):
+                response_metadata = chunk_raw.get("response_metadata") or {}
+                tool_call_chunks_list = chunk_raw.get("tool_call_chunks") or []
+            else:
+                response_metadata = getattr(chunk_raw, "response_metadata", None) or {}
+                tool_call_chunks_list = getattr(chunk_raw, "tool_call_chunks", None) or []
+
+            if response_metadata.get('finish_reason', None):
                 return
 
             current_stream = self.get_message_in_progress(self.active_run["id"])
             has_current_stream = bool(current_stream and current_stream.get("id"))
-            tool_call_data = event["data"]["chunk"].tool_call_chunks[0] if event["data"]["chunk"].tool_call_chunks else None
+            tool_call_data = tool_call_chunks_list[0] if tool_call_chunks_list else None
             predict_state_metadata = (event.get("metadata") or {}).get("predict_state", [])
             tool_call_used_to_predict_state = False
             if tool_call_data and tool_call_data.get("name") and predict_state_metadata:
