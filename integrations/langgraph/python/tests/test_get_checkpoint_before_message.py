@@ -1,27 +1,21 @@
 """Tests for LangGraphAgent.get_checkpoint_before_message().
 
 The function walks the graph's state history for a thread to find the
-snapshot immediately preceding a given message. Historically it called
-``aget_state_history`` with an undefined name (``history_config``) which
-would have raised ``NameError`` the first time the branch executed.
-These tests pin the correct behaviour: the RunnableConfig handed to
-``aget_state_history`` always carries ``configurable.thread_id``, and
-additional configurable keys provided by the caller survive the merge.
+snapshot immediately preceding a given message. Invariants pinned by
+these tests: the RunnableConfig handed to ``aget_state_history`` always
+carries ``configurable.thread_id``, additional configurable keys
+provided by the caller survive the merge, and the caller's ``thread_id``
+argument is authoritative over any value in the supplied config.
 """
 
 import unittest
 from unittest.mock import AsyncMock, MagicMock
 
-from langgraph.graph.state import CompiledStateGraph
+from langchain_core.messages import HumanMessage
 
 from ag_ui_langgraph.agent import LangGraphAgent
 
-
-def _make_agent() -> LangGraphAgent:
-    graph = MagicMock(spec=CompiledStateGraph)
-    graph.config_specs = []
-    graph.nodes = {}
-    return LangGraphAgent(name="test", graph=graph)
+from tests._helpers import make_agent
 
 
 def _async_iter(items):
@@ -40,14 +34,14 @@ class TestGetCheckpointBeforeMessage(unittest.IsolatedAsyncioTestCase):
 
     async def test_missing_thread_id_raises(self):
         """An empty ``thread_id`` fails fast rather than silently skipping."""
-        agent = _make_agent()
+        agent = make_agent()
         with self.assertRaises(ValueError):
             await agent.get_checkpoint_before_message("msg-1", "")
 
     async def test_passes_thread_id_in_configurable(self):
         """Without a caller config, ``aget_state_history`` still receives
         a RunnableConfig carrying the ``thread_id`` under ``configurable``."""
-        agent = _make_agent()
+        agent = make_agent()
         captured = {}
 
         def _capture(history_config):
@@ -68,7 +62,7 @@ class TestGetCheckpointBeforeMessage(unittest.IsolatedAsyncioTestCase):
         keys (checkpoint namespace, subgraph selector, etc.) are preserved
         and ``thread_id`` is authoritative from the argument, not the
         caller's config."""
-        agent = _make_agent()
+        agent = make_agent()
         captured = {}
 
         def _capture(history_config):
@@ -99,7 +93,7 @@ class TestGetCheckpointBeforeMessage(unittest.IsolatedAsyncioTestCase):
         """When the target message lives in the second snapshot, the
         snapshot returned is the one immediately before it, with the
         next-snapshot values (minus ``messages``) merged in."""
-        agent = _make_agent()
+        agent = make_agent()
 
         prev_snapshot = MagicMock()
         prev_snapshot.values = {"messages": [MagicMock(id="older")], "foo": 1}
