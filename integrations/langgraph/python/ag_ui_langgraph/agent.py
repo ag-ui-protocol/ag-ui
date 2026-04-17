@@ -950,7 +950,11 @@ class LangGraphAgent:
                 if chunk is not None and chunk_content is not None
                 else None
             )
-            is_message_content_event = tool_call_data is None and message_content
+            # Use ``is not None`` rather than truthy: an empty-string delta
+            # (``""``) is a legitimate streaming chunk some providers emit
+            # during tool-call / structured-output transitions, and the
+            # truthy check would misclassify it as an end-event.
+            is_message_content_event = tool_call_data is None and message_content is not None
             is_message_end_event = has_current_stream and not current_stream.get("tool_call_id") and not is_message_content_event
 
             if reasoning_data:
@@ -1050,6 +1054,16 @@ class LangGraphAgent:
                 return
 
             if is_message_content_event and should_emit_messages:
+                # Empty-string deltas are legitimate streaming chunks but
+                # AG-UI's TextMessageContentEvent enforces delta min_length=1.
+                # Swallow them here (no-op): we must not misclassify ``""``
+                # as an end-event (see is_message_content_event above), but
+                # we also can't emit an invalid event. Skipping matches the
+                # prior behaviour for non-empty content and keeps the
+                # in-progress message open for the next delta.
+                if message_content == "":
+                    return
+
                 if bool(current_stream and current_stream.get("id")) == False:
                     yield self._dispatch_event(
                         TextMessageStartEvent(

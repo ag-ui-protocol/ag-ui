@@ -412,5 +412,70 @@ class TestChunkReasoningHelpersDictShape(unittest.IsolatedAsyncioTestCase):
             collected.append(ev)
 
 
+class TestEmptyStringDeltaEmitsContentEvent(unittest.IsolatedAsyncioTestCase):
+    """C.8 — An empty-string content delta on an in-progress assistant
+    message must NOT emit ``TEXT_MESSAGE_END``.
+
+    Regression for PR 1544 reviewer repro: with the prior truthy check
+    ``tool_call_data is None and message_content``, ``""`` is falsey and
+    the event falls through to the end-event branch, prematurely closing
+    the streamed message. After the fix, an empty-string delta is a
+    silent no-op and the in-progress message stays open.
+    """
+
+    async def test_empty_string_delta_does_not_end_message(self):
+        from types import SimpleNamespace
+
+        from ag_ui_langgraph.agent import MessageInProgress
+
+        agent = make_agent()
+        agent.active_run = {
+            "id": "run-1",
+            "node_name": "n",
+            "has_function_streaming": False,
+        }
+        _record_dispatch(agent)
+
+        # Put an in-progress text message into the agent so the code path
+        # reaches the content-vs-end decision.
+        agent.set_message_in_progress(
+            "run-1",
+            MessageInProgress(id="msg-1", tool_call_id=None, tool_call_name=None),
+        )
+
+        chunk = SimpleNamespace(
+            content="",
+            id="msg-1",
+            response_metadata={},
+            tool_call_chunks=[],
+            additional_kwargs={},
+        )
+        event = {
+            "event": "on_chat_model_stream",
+            "data": {"chunk": chunk},
+            "metadata": {},
+        }
+
+        collected = []
+        async for ev in agent._handle_single_event(event, {"messages": []}):
+            collected.append(ev)
+
+        types = [getattr(e, "type", None) for e in collected]
+        # The primary regression: a zero-length delta must NOT prematurely
+        # close the in-progress assistant message.
+        self.assertNotIn(
+            EventType.TEXT_MESSAGE_END,
+            types,
+            f"empty-string delta prematurely closed the message: {types!r}",
+        )
+        # AG-UI's TextMessageContentEvent rejects delta="" (min_length=1),
+        # so the correct behaviour is a silent no-op: no event is emitted,
+        # and the message stays open for the next non-empty delta.
+        self.assertEqual(collected, [])
+        still_open = agent.get_message_in_progress("run-1")
+        self.assertIsNotNone(still_open)
+        self.assertEqual(still_open["id"], "msg-1")
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
