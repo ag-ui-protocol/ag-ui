@@ -1166,6 +1166,22 @@ class LangGraphAgent:
         if not thread_id:
             raise ValueError("Missing thread_id in config")
 
+        # ``aget_state_history`` needs a RunnableConfig with ``configurable.thread_id``.
+        # Prefer the caller's config when provided so any downstream configurable keys
+        # (checkpoint namespace, graph subkey, etc.) are preserved; otherwise fall back
+        # to a thread-only config derived from ``thread_id``.
+        history_config: RunnableConfig
+        if config is not None:
+            history_config = {
+                **config,
+                "configurable": {
+                    **(config.get("configurable") or {}),
+                    "thread_id": thread_id,
+                },
+            }
+        else:
+            history_config = {"configurable": {"thread_id": thread_id}}
+
         history_list = []
         async for snapshot in self.graph.aget_state_history(history_config):
             history_list.append(snapshot)
