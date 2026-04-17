@@ -1493,7 +1493,11 @@ class LangGraphAgent:
         # Invariant: snapshot emission only happens mid-run.
         assert self.active_run is not None, "get_state_and_messages_snapshots called outside an active run"
         state = await self.graph.aget_state(config)
-        state_values = state.values if state.values is not None else state
+        # Fallback to an empty dict when state.values is missing: using the
+        # StateSnapshot itself as a fallback crashed downstream .get()
+        # access and made empty-checkpoint paths fail loudly instead of
+        # emitting a plausible empty snapshot.
+        state_values = state.values if state.values is not None else {}
         yield self._dispatch_event(
             StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=self.get_state_snapshot(state_values))
         )
