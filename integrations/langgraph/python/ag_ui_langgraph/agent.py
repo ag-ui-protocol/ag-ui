@@ -2,8 +2,8 @@ import logging
 import re
 import uuid
 import json
-from typing import Optional, List, Any, Union, AsyncGenerator, Generator, Literal, Dict
-from typing_extensions import Self
+from typing import Optional, List, Any, Union, AsyncGenerator, Generator, Literal, Dict, TypedDict
+from typing_extensions import NotRequired, Self
 import inspect
 
 from langgraph.graph.state import CompiledStateGraph
@@ -101,6 +101,21 @@ ProcessedEvents = Union[
 logger = logging.getLogger(__name__)
 
 ROOT_SUBGRAPH_NAME = "root"
+
+
+class PreparedStream(TypedDict):
+    """Payload returned by prepare_stream / prepare_regenerate_stream.
+
+    ``stream`` is the graph's ``astream_events`` async iterator (or ``None``
+    when the caller should only dispatch ``events_to_dispatch`` and return).
+    ``state`` and ``config`` mirror the state and config used to build the
+    stream. ``events_to_dispatch`` is an optional list of pre-built events
+    for the short-circuit path (e.g. active interrupts with no resume).
+    """
+    stream: Optional[Any]
+    state: Optional[Any]
+    config: Optional[RunnableConfig]
+    events_to_dispatch: NotRequired[Optional[List[ProcessedEvents]]]
 
 class LangGraphAgent:
     def __init__(self, *, name: str, graph: CompiledStateGraph, description: Optional[str] = None, config:  Union[Optional[RunnableConfig], dict] = None):
@@ -403,7 +418,7 @@ class LangGraphAgent:
         )
         self.active_run = None
 
-    async def prepare_stream(self, input: RunAgentInput, agent_state: State, config: RunnableConfig):
+    async def prepare_stream(self, input: RunAgentInput, agent_state: State, config: RunnableConfig) -> PreparedStream:
         # Invariant: prepare_stream is only called from _handle_stream_events
         # after self.active_run has been initialized for the current run.
         assert self.active_run is not None, "prepare_stream called outside an active run"
@@ -524,7 +539,7 @@ class LangGraphAgent:
             input: RunAgentInput,
             message_checkpoint: HumanMessage,
             config: RunnableConfig
-    ):
+    ) -> Optional[PreparedStream]:
         tools = input.tools or []
         thread_id = input.thread_id
 
@@ -573,7 +588,7 @@ class LangGraphAgent:
     def get_message_in_progress(self, run_id: str) -> Optional[MessageInProgress]:
         return self.messages_in_process.get(run_id)
 
-    def set_message_in_progress(self, run_id: str, data: MessageInProgress):
+    def set_message_in_progress(self, run_id: str, data: MessageInProgress) -> None:
         current_message_in_progress = self.messages_in_process.get(run_id) or {}
         self.messages_in_process[run_id] = {
             **current_message_in_progress,
@@ -1177,7 +1192,7 @@ class LangGraphAgent:
                 )
             )
 
-    async def get_checkpoint_before_message(self, message_id: str, thread_id: str, config: Optional[RunnableConfig] = None):
+    async def get_checkpoint_before_message(self, message_id: str, thread_id: str, config: Optional[RunnableConfig] = None) -> Any:
         if not thread_id:
             raise ValueError("Missing thread_id in config")
 
@@ -1223,7 +1238,7 @@ class LangGraphAgent:
 
         raise ValueError("Message ID not found in history")
 
-    def handle_node_change(self, node_name: Optional[str]):
+    def handle_node_change(self, node_name: Optional[str]) -> Generator[ProcessedEvents, None, None]:
         """
         Centralized method to handle node name changes and step transitions.
         Automatically manages step start/end events based on node name changes.
@@ -1246,8 +1261,8 @@ class LangGraphAgent:
 
         self.active_run["node_name"] = node_name
 
-    def start_step(self, step_name: str):
-        """Simple step start event dispatcher - node_name management handled by handle_node_change"""
+    def start_step(self, step_name: str) -> Generator[ProcessedEvents, None, None]:
+        """Emit STEP_STARTED for ``step_name``; node_name bookkeeping is done by handle_node_change."""
         yield self._dispatch_event(
             StepStartedEvent(
                 type=EventType.STEP_STARTED,
@@ -1255,8 +1270,8 @@ class LangGraphAgent:
             )
         )
 
-    def end_step(self):
-        """Simple step end event dispatcher - node_name management handled by handle_node_change"""
+    def end_step(self) -> ProcessedEvents:
+        """Emit STEP_FINISHED for the active step; node_name bookkeeping is done by handle_node_change."""
         # Invariant: end_step is only called mid-run, from handle_node_change.
         assert self.active_run is not None, "end_step called outside an active run"
         node_name = self.active_run.get("node_name")
@@ -1270,7 +1285,9 @@ class LangGraphAgent:
             )
         )
 
-    # Check if some kwargs are enabled per LG version, to "catch all versions" and backwards compatibility
+    # Probe the graph's astream_events signature for version-specific support
+    # (notably the ``context`` parameter, added in newer LangGraph releases)
+    # so this adapter remains backwards-compatible across LangGraph versions.
     def get_stream_kwargs(
             self,
             input: Any,
@@ -1279,7 +1296,7 @@ class LangGraphAgent:
             config: Optional[RunnableConfig] = None,
             context: Optional[Dict[str, Any]] = None,
             fork: Optional[Any] = None,
-    ):
+    ) -> Dict[str, Any]:
         kwargs = dict(
             input=input,
             subgraphs=subgraphs,
@@ -1305,7 +1322,7 @@ class LangGraphAgent:
 
         return kwargs
 
-    async def get_state_and_messages_snapshots(self, config: RunnableConfig, merge_streamed_messages: bool = True):
+    async def get_state_and_messages_snapshots(self, config: RunnableConfig, merge_streamed_messages: bool = True) -> AsyncGenerator[ProcessedEvents, None]:
         """Emit STATE_SNAPSHOT + MESSAGES_SNAPSHOT for the current checkpoint.
 
         ``merge_streamed_messages`` controls whether uncommitted messages
