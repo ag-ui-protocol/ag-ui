@@ -5,7 +5,7 @@ These helpers build lightweight ``LangGraphAgent`` fixtures backed by
 isolation, without spinning up a real graph or hitting any network.
 """
 
-from typing import Any, Iterable, List, Optional
+from typing import Any, List
 from unittest.mock import AsyncMock, MagicMock
 
 from langgraph.graph.state import CompiledStateGraph
@@ -14,19 +14,15 @@ from ag_ui.core import EventType
 from ag_ui_langgraph.agent import LangGraphAgent
 
 
-def make_agent(subgraph_names: Optional[Iterable[str]] = None) -> LangGraphAgent:
-    """Return a ``LangGraphAgent`` whose graph is a mock with the given
-    subgraph nodes. Every listed name becomes a node whose ``bound``
-    attribute is itself a ``CompiledStateGraph`` mock, which is how the
-    agent detects subgraphs at construction time."""
+def make_agent() -> LangGraphAgent:
+    """Return a ``LangGraphAgent`` backed by a mock ``CompiledStateGraph``.
+
+    The mock graph has no nodes; tests drive ``_handle_stream_events``
+    by feeding synthetic event chunks rather than compiling a real
+    graph, so node wiring is irrelevant."""
     graph = MagicMock(spec=CompiledStateGraph)
     graph.config_specs = []
-    nodes = {}
-    for name in (subgraph_names or []):
-        node = MagicMock()
-        node.bound = MagicMock(spec=CompiledStateGraph)
-        nodes[name] = node
-    graph.nodes = nodes
+    graph.nodes = {}
     return LangGraphAgent(name="test", graph=graph)
 
 
@@ -50,25 +46,15 @@ def _record_dispatch(agent: LangGraphAgent):
 
 def make_configured_agent(
     checkpoint_messages: List[Any],
-    streamed_messages: Optional[List[Any]] = None,
-    subgraph_names: Optional[Iterable[str]] = None,
-    registered_tool_names: Optional[Iterable[str]] = None,
 ) -> LangGraphAgent:
     """Build an agent with a mocked checkpoint and a recording dispatcher.
 
     The mocked ``graph.aget_state`` returns a state whose ``.values``
-    carries ``checkpoint_messages`` under the ``messages`` key.
-    ``streamed_messages`` is placed on ``active_run`` so the merge path in
-    ``get_state_and_messages_snapshots`` can observe it. When
-    ``registered_tool_names`` is provided, it becomes the set used by the
-    structured-output filter to distinguish user-facing tool calls from
-    internal schema invocations."""
-    agent = make_agent(list(subgraph_names) if subgraph_names else ["hotels_agent"])
-    agent.active_run = {
-        "id": "run-1",
-        "streamed_messages": list(streamed_messages or []),
-        "registered_tool_names": set(registered_tool_names or []),
-    }
+    carries ``checkpoint_messages`` under the ``messages`` key. That
+    checkpoint is the sole source the agent draws MESSAGES_SNAPSHOT
+    from — no streaming-layer side channel is plumbed through."""
+    agent = make_agent()
+    agent.active_run = {"id": "run-1"}
     _record_dispatch(agent)
     agent.get_state_snapshot = MagicMock(return_value={})
     state = MagicMock()
