@@ -119,8 +119,6 @@ export interface LangGraphAgentConfig extends AgentConfig {
   graphId: string;
 }
 
-const ROOT_SUBGRAPH_NAME = "root";
-
 export class LangGraphAgent extends AbstractAgent {
   client: LangGraphClient;
   assistantConfig?: LangGraphConfig;
@@ -131,9 +129,6 @@ export class LangGraphAgent extends AbstractAgent {
   emittedToolCallStartIds: Set<string> = new Set();
   reasoningProcess: null | ReasoningInProgress;
   activeRun?: RunMetadata;
-  // Subgraph node names discovered dynamically from langgraph_checkpoint_ns
-  private subgraphs: Set<string> = new Set();
-  private currentSubgraph: string = ROOT_SUBGRAPH_NAME;
   // Stop control flags
   private cancelRequested: boolean = false;
   private cancelSent: boolean = false;
@@ -178,8 +173,6 @@ export class LangGraphAgent extends AbstractAgent {
       activeRun: this.activeRun ? structuredClone(this.activeRun) : undefined,
       cancelRequested: this.cancelRequested,
       cancelSent: this.cancelSent,
-      subgraphs: this.subgraphs ? new Set(this.subgraphs) : new Set(),
-      currentSubgraph: ROOT_SUBGRAPH_NAME,
     });
   }
 
@@ -552,18 +545,6 @@ export class LangGraphAgent extends AbstractAgent {
         const currentNodeName = metadata.langgraph_node;
         const eventType = chunkData.event;
 
-        // Subgraph detection via langgraph_checkpoint_ns
-        // ns format: "" | "node:uuid" | "node:uuid|inner:uuid"
-        const ns: string = metadata.langgraph_checkpoint_ns ?? "";
-        const nsRoot = ns.split("|")[0].split(":")[0];
-        if (ns.includes("|") && nsRoot) this.subgraphs.add(nsRoot);
-        const currentSubgraph = (nsRoot && this.subgraphs.has(nsRoot)) ? nsRoot : ROOT_SUBGRAPH_NAME;
-
-        if (currentSubgraph !== this.currentSubgraph) {
-          this.currentSubgraph = currentSubgraph;
-          await this.getStateAndMessagesSnapshots(threadId);
-        }
-
         // Set server-assigned run id as soon as available
         if (metadata.run_id) {
           this.activeRun!.id = metadata.run_id;
@@ -688,19 +669,19 @@ export class LangGraphAgent extends AbstractAgent {
   }
 
   private async getStateAndMessagesSnapshots(threadId: string): Promise<void> {
+    // MESSAGES_SNAPSHOT is strictly the checkpoint's messages — the
+    // committed state of the conversation. Streaming events
+    // (TEXT_MESSAGE_*, TOOL_CALL_*) carry in-progress content
+    // separately; the snapshot never mirrors or merges them.
     const state: ThreadState<State> = await this.client.threads.getState(threadId);
     this.dispatchEvent({
       type: EventType.STATE_SNAPSHOT,
       snapshot: this.getStateSnapshot(state),
     });
     const checkpointMessages: LangGraphMessage[] = (state.values as State).messages ?? [];
-    const streamedMessages = this.activeRun?.streamedMessages ?? [];
-    const checkpointIds = new Set(checkpointMessages.map((m) => m.id).filter(Boolean));
-    const extra = streamedMessages.filter((m) => m.id && !checkpointIds.has(m.id));
-    const snapshotMessages = [...checkpointMessages, ...(extra as unknown as LangGraphMessage[])];
     this.dispatchEvent({
       type: EventType.MESSAGES_SNAPSHOT,
-      messages: langchainMessagesToAgui(snapshotMessages),
+      messages: langchainMessagesToAgui(checkpointMessages),
     });
   }
 
@@ -879,11 +860,6 @@ export class LangGraphAgent extends AbstractAgent {
 
         break;
       case LangGraphEventTypes.OnChatModelEnd: {
-        const outputMsg = event.data?.output;
-        if (outputMsg && typeof outputMsg === "object" && outputMsg.id && outputMsg.type) {
-          if (!this.activeRun!.streamedMessages) this.activeRun!.streamedMessages = [];
-          this.activeRun!.streamedMessages.push(outputMsg);
-        }
         if (this.getMessageInProgress(this.activeRun!.id)?.toolCallId) {
           const resolved = this.dispatchEvent({
             type: EventType.TOOL_CALL_END,
