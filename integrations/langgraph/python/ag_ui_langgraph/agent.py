@@ -211,99 +211,98 @@ class LangGraphAgent:
         should_exit = False
         current_graph_state = state
 
-        try:
-            async for event in stream:
-                subgraphs_stream_enabled = input.forwarded_props.get('stream_subgraphs', True) if input.forwarded_props else True
-                ns = event.get("metadata", {}).get("langgraph_checkpoint_ns", "")
-                # Derive which subgraph (if any) owns this event.
-                # ns format: "" | "node:uuid" | "node:uuid|inner:uuid"
-                # The first segment before "|" and ":" gives the outermost node name.
-                ns_root = ns.split("|")[0].split(":")[0] if ns else ""
-                current_subgraph = ns_root if ns_root in self.subgraphs else None
+        async for event in stream:
+            subgraphs_stream_enabled = input.forwarded_props.get('stream_subgraphs', True) if input.forwarded_props else True
+            ns = event.get("metadata", {}).get("langgraph_checkpoint_ns", "")
+            # Derive which subgraph (if any) owns this event.
+            # ns format: "" | "node:uuid" | "node:uuid|inner:uuid"
+            # The first segment before "|" and ":" gives the outermost node name.
+            ns_root = ns.split("|")[0].split(":")[0] if ns else ""
+            current_subgraph = ns_root if ns_root in self.subgraphs else None
 
-                # Legacy detection (LangGraph < 0.6): subgraph events use stream mode names as event types
-                is_subgraph_stream = (subgraphs_stream_enabled and (
-                    event.get("event", "").startswith("events") or
-                    event.get("event", "").startswith("values")
-                ))
-                # Modern detection (LangGraph >= 0.6): subgraph if inside one (|) or at its boundary
-                if not is_subgraph_stream and ("|" in ns or current_subgraph is not None):
-                    is_subgraph_stream = True
+            # Legacy detection (LangGraph < 0.6): subgraph events use stream mode names as event types
+            is_subgraph_stream = (subgraphs_stream_enabled and (
+                event.get("event", "").startswith("events") or
+                event.get("event", "").startswith("values")
+            ))
+            # Modern detection (LangGraph >= 0.6): subgraph if inside one (|) or at its boundary
+            if not is_subgraph_stream and ("|" in ns or current_subgraph is not None):
+                is_subgraph_stream = True
 
-                graph_context = current_subgraph if current_subgraph else ROOT_SUBGRAPH_NAME
+            graph_context = current_subgraph if current_subgraph else ROOT_SUBGRAPH_NAME
 
-                if is_subgraph_stream and current_subgraph != self.current_subgraph:
-                    self.current_subgraph = current_subgraph
-                    # Every time a subgraph changes, we need to update the state and messages snapshots.
-                    # Record that a mid-stream merge fired: the post-run
-                    # snapshot must preserve these streamed_messages
-                    # (delivered to the client here) rather than wiping
-                    # them with a checkpoint-only final snapshot.
-                    self.active_run["any_mid_stream_merge_fired"] = True
-                    async for ev in self.get_state_and_messages_snapshots(config):
-                        yield ev
+            if is_subgraph_stream and current_subgraph != self.current_subgraph:
+                self.current_subgraph = current_subgraph
+                # Every time a subgraph changes, we need to update the state and messages snapshots.
+                # Record that a mid-stream merge fired: the post-run
+                # snapshot must preserve these streamed_messages
+                # (delivered to the client here) rather than wiping
+                # them with a checkpoint-only final snapshot.
+                self.active_run["any_mid_stream_merge_fired"] = True
+                async for ev in self.get_state_and_messages_snapshots(config):
+                    yield ev
 
-                if event["event"] == "error":
-                    yield self._dispatch_event(
-                        RunErrorEvent(type=EventType.RUN_ERROR, message=event["data"]["message"], raw_event=event)
+            if event["event"] == "error":
+                yield self._dispatch_event(
+                    RunErrorEvent(type=EventType.RUN_ERROR, message=event["data"]["message"], raw_event=event)
+                )
+                break
+
+            current_node_name = event.get("metadata", {}).get("langgraph_node")
+            event_type = event.get("event")
+            self.active_run["id"] = event.get("run_id")
+            exiting_node = False
+
+            if event_type == "on_chain_end" and isinstance(
+                    event.get("data", {}).get("output"), dict
+            ):
+                output = event["data"]["output"]
+                current_graph_state.update(output)
+                exiting_node = self.active_run["node_name"] == current_node_name
+                # If output contains any key outside the protocol-internal set
+                # ("messages", "tools", "ag-ui"), the local current_graph_state
+                # is reliably up-to-date again.
+                if any(k not in ("messages", "tools", "ag-ui") for k in output):
+                    self.active_run["state_reliable"] = True
+
+            should_exit = should_exit or (
+                    event_type == "on_custom_event" and
+                    event["name"] == "exit"
+                )
+
+            if current_node_name and current_node_name != self.active_run.get("node_name"):
+                for ev in self.handle_node_change(current_node_name):
+                    yield ev
+
+            # Track whether the current model turn is making a predict_state tool
+            # call so we can suppress the model-node exit snapshot.  The model-node
+            # exit fires *before* the tool runs, so current_graph_state still
+            # carries the previous value — emitting it would wipe predict_state
+            # progress on the client.  This applies to every iteration, not just
+            # the first.  Note: _handle_single_event uses the same predict_state
+            # metadata check to emit the PredictState custom event — keep both
+            # sites in sync if the check logic changes.
+            if event_type == LangGraphEventTypes.OnChatModelStream.value:
+                chunk = event.get("data", {}).get("chunk") or {}
+                tool_call_chunks = (
+                    chunk.get("tool_call_chunks") or []
+                    if isinstance(chunk, dict)
+                    else getattr(chunk, "tool_call_chunks", None) or []
+                )
+                if tool_call_chunks:
+                    first = tool_call_chunks[0]
+                    first_name = (
+                        first.get("name") if isinstance(first, dict)
+                        else getattr(first, "name", None)
                     )
-                    break
-
-                current_node_name = event.get("metadata", {}).get("langgraph_node")
-                event_type = event.get("event")
-                self.active_run["id"] = event.get("run_id")
-                exiting_node = False
-
-                if event_type == "on_chain_end" and isinstance(
-                        event.get("data", {}).get("output"), dict
-                ):
-                    output = event["data"]["output"]
-                    current_graph_state.update(output)
-                    exiting_node = self.active_run["node_name"] == current_node_name
-                    # If output contains any key outside the protocol-internal set
-                    # ("messages", "tools", "ag-ui"), the local current_graph_state
-                    # is reliably up-to-date again.
-                    if any(k not in ("messages", "tools", "ag-ui") for k in output):
-                        self.active_run["state_reliable"] = True
-
-                should_exit = should_exit or (
-                        event_type == "on_custom_event" and
-                        event["name"] == "exit"
-                    )
-
-                if current_node_name and current_node_name != self.active_run.get("node_name"):
-                    for ev in self.handle_node_change(current_node_name):
-                        yield ev
-
-                # Track whether the current model turn is making a predict_state tool
-                # call so we can suppress the model-node exit snapshot.  The model-node
-                # exit fires *before* the tool runs, so current_graph_state still
-                # carries the previous value — emitting it would wipe predict_state
-                # progress on the client.  This applies to every iteration, not just
-                # the first.  Note: _handle_single_event uses the same predict_state
-                # metadata check to emit the PredictState custom event — keep both
-                # sites in sync if the check logic changes.
-                if event_type == LangGraphEventTypes.OnChatModelStream.value:
-                    chunk = event.get("data", {}).get("chunk") or {}
-                    tool_call_chunks = (
-                        chunk.get("tool_call_chunks") or []
-                        if isinstance(chunk, dict)
-                        else getattr(chunk, "tool_call_chunks", None) or []
-                    )
-                    if tool_call_chunks:
-                        first = tool_call_chunks[0]
-                        first_name = (
-                            first.get("name") if isinstance(first, dict)
-                            else getattr(first, "name", None)
+                    if first_name:
+                        predict_state_meta = event.get("metadata", {}).get("predict_state", [])
+                        tool_used_to_predict_state = any(
+                            (p.get("tool") if isinstance(p, dict) else getattr(p, "tool", None)) == first_name
+                            for p in predict_state_meta
                         )
-                        if first_name:
-                            predict_state_meta = event.get("metadata", {}).get("predict_state", [])
-                            tool_used_to_predict_state = any(
-                                (p.get("tool") if isinstance(p, dict) else getattr(p, "tool", None)) == first_name
-                                for p in predict_state_meta
-                            )
-                            if tool_used_to_predict_state:
-                                self.active_run["model_made_tool_call"] = True
+                        if tool_used_to_predict_state:
+                            self.active_run["model_made_tool_call"] = True
 
                 updated_state = self.active_run.get("manually_emitted_state") or current_graph_state
                 has_state_diff = updated_state != state
@@ -336,74 +335,72 @@ class LangGraphAgent:
                             )
                         )
 
-                yield self._dispatch_event(
-                    RawEvent(type=EventType.RAW, event=event)
-                )
-
-                async for single_event in self._handle_single_event(event, state):
-                    yield single_event
-
-            state = await self.graph.aget_state(config)
-
-            tasks = state.tasks if len(state.tasks) > 0 else None
-            interrupts = tasks[0].interrupts if tasks else []
-
-            writes = state.metadata.get("writes", {}) or {}
-            node_name = self.active_run["node_name"] if interrupts else next(iter(writes), None)
-            next_nodes = state.next or ()
-            is_end_node = len(next_nodes) == 0 and not interrupts
-
-            node_name = "__end__" if is_end_node else node_name
-
-            for interrupt in interrupts:
-                yield self._dispatch_event(
-                    CustomEvent(
-                        type=EventType.CUSTOM,
-                        name=LangGraphEventTypes.OnInterrupt.value,
-                        value=dump_json_safe(interrupt.value),
-                        raw_event=interrupt,
-                    )
-                )
-
-            if self.active_run.get("node_name") != node_name:
-                for ev in self.handle_node_change(node_name):
-                    yield ev
-
-            # Post-run MESSAGES_SNAPSHOT semantics:
-            #
-            # - Non-subgraph runs (supervisor flow never fired a
-            #   mid-stream boundary snapshot): the checkpoint is the
-            #   authoritative final state. Do NOT merge in
-            #   ``streamed_messages`` — they include transient LLM
-            #   outputs (``.with_structured_output()`` / router /
-            #   classifier calls) that never committed, and their
-            #   presence here shows up as duplicate / empty assistant
-            #   bubbles in the final snapshot.
-            #
-            # - Subgraph runs (at least one subgraph-boundary snapshot
-            #   already fired): keep the ``streamed_messages`` merge.
-            #   Subgraph messages are delivered to the client via the
-            #   mid-stream snapshots and must remain visible in the
-            #   final snapshot; the parent graph often returns
-            #   ``Command(goto=...)`` without folding them into state,
-            #   so the checkpoint alone is incomplete.
-            any_mid_stream_merge_fired = self.active_run.get(
-                "any_mid_stream_merge_fired", False
-            )
-            async for ev in self.get_state_and_messages_snapshots(
-                config, merge_streamed_messages=any_mid_stream_merge_fired
-            ):
-                yield ev
-
-            for ev in self.handle_node_change(None):
-                yield ev
-
             yield self._dispatch_event(
-                RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=self.active_run["id"])
+                RawEvent(type=EventType.RAW, event=event)
             )
-            self.active_run = None
-        except Exception:
-            raise
+
+            async for single_event in self._handle_single_event(event, state):
+                yield single_event
+
+        state = await self.graph.aget_state(config)
+
+        tasks = state.tasks if len(state.tasks) > 0 else None
+        interrupts = tasks[0].interrupts if tasks else []
+
+        writes = state.metadata.get("writes", {}) or {}
+        node_name = self.active_run["node_name"] if interrupts else next(iter(writes), None)
+        next_nodes = state.next or ()
+        is_end_node = len(next_nodes) == 0 and not interrupts
+
+        node_name = "__end__" if is_end_node else node_name
+
+        for interrupt in interrupts:
+            yield self._dispatch_event(
+                CustomEvent(
+                    type=EventType.CUSTOM,
+                    name=LangGraphEventTypes.OnInterrupt.value,
+                    value=dump_json_safe(interrupt.value),
+                    raw_event=interrupt,
+                )
+            )
+
+        if self.active_run.get("node_name") != node_name:
+            for ev in self.handle_node_change(node_name):
+                yield ev
+
+        # Post-run MESSAGES_SNAPSHOT semantics:
+        #
+        # - Non-subgraph runs (supervisor flow never fired a
+        #   mid-stream boundary snapshot): the checkpoint is the
+        #   authoritative final state. Do NOT merge in
+        #   ``streamed_messages`` — they include transient LLM
+        #   outputs (``.with_structured_output()`` / router /
+        #   classifier calls) that never committed, and their
+        #   presence here shows up as duplicate / empty assistant
+        #   bubbles in the final snapshot.
+        #
+        # - Subgraph runs (at least one subgraph-boundary snapshot
+        #   already fired): keep the ``streamed_messages`` merge.
+        #   Subgraph messages are delivered to the client via the
+        #   mid-stream snapshots and must remain visible in the
+        #   final snapshot; the parent graph often returns
+        #   ``Command(goto=...)`` without folding them into state,
+        #   so the checkpoint alone is incomplete.
+        any_mid_stream_merge_fired = self.active_run.get(
+            "any_mid_stream_merge_fired", False
+        )
+        async for ev in self.get_state_and_messages_snapshots(
+            config, merge_streamed_messages=any_mid_stream_merge_fired
+        ):
+            yield ev
+
+        for ev in self.handle_node_change(None):
+            yield ev
+
+        yield self._dispatch_event(
+            RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=self.active_run["id"])
+        )
+        self.active_run = None
 
     async def prepare_stream(self, input: RunAgentInput, agent_state: State, config: RunnableConfig):
         state_input = input.state or {}
