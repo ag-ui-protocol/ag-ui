@@ -125,7 +125,10 @@ class LangGraphAgent:
         self.messages_in_process: MessagesInProgressRecord = {}
         self.active_run: Optional[RunMetadata] = None
         self.constant_schema_keys = ['messages', 'tools']
-        # Names of nodes that are compiled subgraphs — used for subgraph event detection
+        # Collect nodes bound to a CompiledStateGraph: those are the declared
+        # subgraphs whose boundaries we attribute events to during streaming
+        # (so mid-stream MESSAGES_SNAPSHOT can fire at the right transitions).
+        # Nodes bound to plain callables / runnables are intentionally excluded.
         self.subgraphs: set = {
             name for name, node in self.graph.nodes.items()
             if isinstance(getattr(node, 'bound', None), CompiledStateGraph)
@@ -231,7 +234,9 @@ class LangGraphAgent:
             ns = event.get("metadata", {}).get("langgraph_checkpoint_ns", "")
             # Derive which subgraph (if any) owns this event.
             # ns format: "" | "node:uuid" | "node:uuid|inner:uuid"
-            # The first segment before "|" and ":" gives the outermost node name.
+            # Only the outermost namespace matters here — we just need to
+            # know which declared subgraph owns the event for boundary
+            # transitions; inner-graph nesting doesn't affect that decision.
             ns_root = ns.split("|")[0].split(":")[0] if ns else ""
             current_subgraph = ns_root if ns_root in self.subgraphs else None
 
@@ -385,18 +390,17 @@ class LangGraphAgent:
 
         # Post-run MESSAGES_SNAPSHOT semantics:
         #
-        # - Non-subgraph runs (supervisor flow never fired a
-        #   mid-stream boundary snapshot): the checkpoint is the
-        #   authoritative final state. Do NOT merge in
-        #   ``streamed_messages`` — they include transient LLM
+        # - Runs where no mid-stream boundary snapshot fired: the
+        #   checkpoint is the authoritative final state. Do NOT merge
+        #   in ``streamed_messages`` — they include transient LLM
         #   outputs (``.with_structured_output()`` / router /
         #   classifier calls) that never committed, and their
         #   presence here shows up as duplicate / empty assistant
         #   bubbles in the final snapshot.
         #
-        # - Subgraph runs (at least one subgraph-boundary snapshot
-        #   already fired): keep the ``streamed_messages`` merge.
-        #   Subgraph messages are delivered to the client via the
+        # - Runs where at least one mid-stream boundary snapshot
+        #   fired: keep the ``streamed_messages`` merge. Those
+        #   messages were already delivered to the client via the
         #   mid-stream snapshots and must remain visible in the
         #   final snapshot; the parent graph often returns
         #   ``Command(goto=...)`` without folding them into state,
@@ -1201,8 +1205,8 @@ class LangGraphAgent:
 
         # ``aget_state_history`` needs a RunnableConfig with ``configurable.thread_id``.
         # Prefer the caller's config when provided so any downstream configurable keys
-        # (checkpoint namespace, graph subkey, etc.) are preserved; otherwise fall back
-        # to a thread-only config derived from ``thread_id``.
+        # (``thread_id``, ``checkpoint_ns``, ``checkpoint_id``) are preserved;
+        # otherwise fall back to a thread-only config derived from ``thread_id``.
         history_config: RunnableConfig
         if config is not None:
             history_config = {
@@ -1334,7 +1338,9 @@ class LangGraphAgent:
 
         Mid-stream callers (subgraph-boundary transitions) pass ``True``
         (the default) so in-flight subgraph messages surface before their
-        parent commits — this is the PR #1426 subgraph-lag fix.
+        parent graph commits them to checkpoint state — otherwise clients
+        see a lag where assistant output streams from an inner subgraph
+        but the outer snapshot hasn't yet merged those messages.
 
         The post-run caller passes ``True`` only when at least one
         mid-stream merge already fired (``any_mid_stream_merge_fired``),
