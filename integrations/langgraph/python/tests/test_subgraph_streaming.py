@@ -1,14 +1,15 @@
-"""
-Tests for subgraph streaming: detection, ordering fix, and snapshot dispatch.
+"""Tests for subgraph streaming detection, ordering, and snapshot dispatch.
 
-The bug: when a subgraph (e.g. hotels_agent) commits a message mid-stream,
-the client only sees it in the final MESSAGES_SNAPSHOT — by which point
-supervisor/experiences TEXT_MESSAGE events have already arrived, so hotels_msg
-gets appended *after* them (wrong order).
+When a subgraph (e.g. hotels_agent) commits a message mid-stream, the
+supervisor must see that commit reflected before it emits further text —
+otherwise the late-arriving subgraph message gets appended after
+supervisor text and the client renders them out of order.
 
-The fix: every time current_subgraph changes, get_state_and_messages_snapshots
-is called, fetching the fresh checkpoint and dispatching STATE_SNAPSHOT +
-MESSAGES_SNAPSHOT before any subsequent TEXT_MESSAGE events arrive.
+The adapter handles this by calling
+``get_state_and_messages_snapshots`` on every subgraph transition,
+fetching the fresh checkpoint and dispatching STATE_SNAPSHOT +
+MESSAGES_SNAPSHOT before the next TEXT_MESSAGE events arrive. These
+tests pin that ordering and the underlying namespace-detection logic.
 """
 
 import unittest
@@ -236,7 +237,7 @@ class TestSubgraphChangeTrigger(unittest.IsolatedAsyncioTestCase):
 # ---------------------------------------------------------------------------
 
 class TestAgetStateMidStreamError(unittest.IsolatedAsyncioTestCase):
-    """aget_state is now called on every subgraph transition (hot path).
+    """``aget_state`` is called on every subgraph transition (hot path).
     An exception there must propagate out — not be silently swallowed."""
 
     async def test_aget_state_error_propagates(self):
@@ -279,8 +280,10 @@ class TestAgetStateMidStreamError(unittest.IsolatedAsyncioTestCase):
             }
 
         agent.prepare_stream = fake_prepare
-        # Call 1 (before stream, line ~180) succeeds.
-        # Call 2 (mid-stream, inside get_state_and_messages_snapshots) raises.
+        # The first ``aget_state`` (called by ``_handle_stream_events``
+        # before iterating ``stream``) succeeds; the second, triggered
+        # inside ``get_state_and_messages_snapshots`` on the subgraph
+        # transition, raises.
         agent.graph.aget_state = AsyncMock(side_effect=[
             initial_state,
             RuntimeError("checkpoint unavailable"),
