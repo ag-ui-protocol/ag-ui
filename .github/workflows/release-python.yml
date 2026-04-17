@@ -186,7 +186,11 @@ jobs:
                   echo "SKIP: $NAME@$VERSION already published on PyPI" >> "$GITHUB_STEP_SUMMARY"
                 else
                   echo "Publishing $NAME@$VERSION to PyPI..."
-                  uv publish
+                  # --check-url is a server-side belt-and-suspenders on top of
+                  # the client-side HTTP probe above: if the client probe
+                  # raced and returned 404 while PyPI actually has the file,
+                  # uv will notice via --check-url and skip instead of 400ing.
+                  uv publish --check-url "https://pypi.org/simple/"
                   echo "Published $NAME@$VERSION" >> "$GITHUB_STEP_SUMMARY"
                 fi
               else

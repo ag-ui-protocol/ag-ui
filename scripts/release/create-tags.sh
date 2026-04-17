@@ -11,7 +11,7 @@
 #   - For each package, constructs TAG="<name>@<version>" and creates/pushes it.
 #   - If the tag already exists locally or on the remote:
 #       * and it points to HEAD, or to an ancestor of HEAD (main advanced since
-#         the original run), skip the tag — this is the retry-safe case.
+#         the original run), skip the tag - this is the retry-safe case.
 #       * otherwise it is a real collision; record the error but keep going so
 #         other packages still get tagged.
 #   - Pushes each tag immediately after creating it, so partial success is
@@ -65,13 +65,13 @@ while read -r pkg; do
   VERSION=$(echo "$pkg" | jq -r '.version')
 
   if ! [[ "$NAME" =~ $NAME_RE ]]; then
-    echo "ERROR: invalid package name '$NAME' — refusing to construct tag" >&2
+    echo "ERROR: invalid package name '$NAME': refusing to construct tag" >&2
     summary "| (invalid) | error | invalid name '$NAME' |"
     FAILED=1
     continue
   fi
   if ! [[ "$VERSION" =~ $VERSION_RE ]]; then
-    echo "ERROR: invalid version '$VERSION' for $NAME — refusing to construct tag" >&2
+    echo "ERROR: invalid version '$VERSION' for $NAME: refusing to construct tag" >&2
     summary "| $NAME | error | invalid version '$VERSION' |"
     FAILED=1
     continue
@@ -90,7 +90,7 @@ while read -r pkg; do
     # Non-zero exit: either the ref doesn't exist on the remote (fine) or
     # something is actually wrong. "couldn't find remote ref" => benign.
     if grep -qiE "couldn.t find remote ref|does not appear to be a git repository|no such ref" "$FETCH_LOG"; then
-      : # expected — tag not on remote yet
+      : # expected - tag not on remote yet
     else
       echo "ERROR: git fetch for tag $TAG failed:" >&2
       cat "$FETCH_LOG" >&2

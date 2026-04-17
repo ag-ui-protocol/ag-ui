@@ -24,7 +24,7 @@ TIMESTAMP=$(date -u +%H:%M:%S)
 # Build the section for this ecosystem using real newlines (not \n literals)
 NL=$'\n'
 if [ "$ECOSYSTEM" = "typescript" ]; then
-  SECTION="### TypeScript (npm) — published at ${TIMESTAMP} UTC${NL}"
+  SECTION="### TypeScript (npm) - published at ${TIMESTAMP} UTC${NL}"
   SECTION+="| Package | Version | Install |${NL}"
   SECTION+="|---------|---------|--------|${NL}"
   while read -r pkg; do
@@ -33,7 +33,7 @@ if [ "$ECOSYSTEM" = "typescript" ]; then
     SECTION+="| ${NAME} | ${VERSION} | \`npm install ${NAME}@${VERSION}\` |${NL}"
   done < <(echo "$PACKAGES_JSON" | jq -c '.[]')
 elif [ "$ECOSYSTEM" = "python" ]; then
-  SECTION="### Python (PyPI) — published at ${TIMESTAMP} UTC${NL}"
+  SECTION="### Python (PyPI) - published at ${TIMESTAMP} UTC${NL}"
   SECTION+="| Package | Version | Install |${NL}"
   SECTION+="|---------|---------|--------|${NL}"
   while read -r pkg; do
@@ -54,11 +54,11 @@ if [ "${DRY_RUN:-false}" = "true" ]; then
   exit 0
 fi
 
-# Try to get existing release — retry logic for race condition
+# Try to get existing release - retry logic for race condition
 MAX_RETRIES=3
 for i in $(seq 1 $MAX_RETRIES); do
   if gh release view "$TAG" &>/dev/null; then
-    # Release exists — append our section, but skip rows already present so
+    # Release exists - append our section, but skip rows already present so
     # a retry after a partial failure doesn't create a duplicate section.
     EXISTING_BODY=$(gh release view "$TAG" --json body -q .body)
 
@@ -87,9 +87,9 @@ for i in $(seq 1 $MAX_RETRIES); do
     fi
 
     if [ "$ECOSYSTEM" = "typescript" ]; then
-      HEADER="### TypeScript (npm) — published at ${TIMESTAMP} UTC${NL}| Package | Version | Install |${NL}|---------|---------|--------|${NL}"
+      HEADER="### TypeScript (npm) - published at ${TIMESTAMP} UTC${NL}| Package | Version | Install |${NL}|---------|---------|--------|${NL}"
     else
-      HEADER="### Python (PyPI) — published at ${TIMESTAMP} UTC${NL}| Package | Version | Install |${NL}|---------|---------|--------|${NL}"
+      HEADER="### Python (PyPI) - published at ${TIMESTAMP} UTC${NL}| Package | Version | Install |${NL}|---------|---------|--------|${NL}"
     fi
     UPDATED_BODY="${EXISTING_BODY}${NL}${HEADER}${APPEND_SECTION}"
     echo "$UPDATED_BODY" | gh release edit "$TAG" --notes-file -
