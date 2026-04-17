@@ -584,7 +584,21 @@ class LangGraphAgent:
                 "config": config_schema_keys,
                 "context": context_schema_keys,
             }
-        except Exception:
+        except (AttributeError, TypeError, KeyError) as exc:
+            # Legitimate fallback cases:
+            #   AttributeError — graph doesn't implement schema introspection
+            #     (older LangGraph versions, custom graph classes, or Pydantic v1/v2
+            #     `.schema()` vs `.model_json_schema()` skew).
+            #   TypeError      — a schema call returned an unexpected shape
+            #     (e.g. not a mapping, so `"properties" in ...` / `.keys()` blows up).
+            #   KeyError       — expected keys missing from an otherwise-dict schema.
+            # Other exceptions (RuntimeError, I/O, asyncio, etc.) indicate real bugs
+            # and are allowed to propagate rather than being silently swallowed.
+            logger.warning(
+                "get_schema_keys: falling back to default schema keys due to %s: %s",
+                type(exc).__name__,
+                exc,
+            )
             return {
                 "input": self.constant_schema_keys,
                 "output": self.constant_schema_keys,
