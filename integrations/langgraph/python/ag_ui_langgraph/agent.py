@@ -1435,7 +1435,19 @@ class LangGraphAgent:
             streamed_messages = self.active_run.get("streamed_messages", [])
             if streamed_messages:
                 checkpoint_ids = {getattr(m, "id", None) for m in checkpoint_messages} - {None}
-                extra = [m for m in streamed_messages if getattr(m, "id", None) and getattr(m, "id", None) not in checkpoint_ids]
+                extra = []
+                for m in streamed_messages:
+                    mid = getattr(m, "id", None)
+                    if not mid:
+                        # Streamed messages without an id cannot be deduplicated
+                        # against the checkpoint and would merge as duplicates;
+                        # log so the drop is observable in debug builds.
+                        logger.debug(
+                            "dropping streamed message without id: %r", type(m).__name__,
+                        )
+                        continue
+                    if mid not in checkpoint_ids:
+                        extra.append(m)
                 checkpoint_messages = checkpoint_messages + extra
         snapshot_messages = self._filter_orphan_tool_messages(checkpoint_messages)
         yield self._dispatch_event(
