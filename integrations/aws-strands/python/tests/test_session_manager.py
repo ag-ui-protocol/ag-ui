@@ -5,10 +5,16 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
+from strands.session import SessionManager
 
 from ag_ui.core import EventType, RunAgentInput
 from ag_ui_strands.agent import StrandsAgent
 from ag_ui_strands.config import StrandsAgentConfig
+
+
+def _mock_session_manager() -> MagicMock:
+    """Create a MagicMock that passes isinstance(..., SessionManager)."""
+    return MagicMock(spec=SessionManager)
 
 
 # ---------------------------------------------------------------------------
@@ -69,7 +75,7 @@ class TestSessionManagerProvider:
     @pytest.mark.asyncio
     async def test_provider_called_for_new_thread(self):
         """Provider is invoked exactly once when a new thread is first seen."""
-        mock_session_manager = MagicMock()
+        mock_session_manager = _mock_session_manager()
         provider = MagicMock(return_value=mock_session_manager)
         agent = _make_base_agent(session_manager_provider=provider)
         input_data = _make_run_input(thread_id="new-thread")
@@ -85,7 +91,7 @@ class TestSessionManagerProvider:
     @pytest.mark.asyncio
     async def test_provider_not_called_for_existing_thread(self):
         """Provider is NOT called again for subsequent requests on the same thread."""
-        mock_session_manager = MagicMock()
+        mock_session_manager = _mock_session_manager()
         provider = MagicMock(return_value=mock_session_manager)
         agent = _make_base_agent(session_manager_provider=provider)
         thread_id = "cached-thread"
@@ -126,7 +132,7 @@ class TestSessionManagerProvider:
     @pytest.mark.asyncio
     async def test_async_provider_is_awaited(self):
         """Async provider functions are properly awaited and their result used."""
-        mock_session_manager = MagicMock()
+        mock_session_manager = _mock_session_manager()
 
         async def async_provider(input_data):
             return mock_session_manager
@@ -161,7 +167,7 @@ class TestSessionManagerProvider:
     @pytest.mark.asyncio
     async def test_empty_thread_id_uses_default_key(self):
         """Empty/falsy thread_id falls back to the 'default' cache key."""
-        provider = MagicMock(return_value=MagicMock())
+        provider = MagicMock(return_value=_mock_session_manager())
         agent = _make_base_agent(session_manager_provider=provider)
 
         with patch("ag_ui_strands.agent.StrandsAgentCore") as MockCore:
@@ -170,6 +176,49 @@ class TestSessionManagerProvider:
 
         provider.assert_called_once()
         assert "default" in agent._agents_by_thread
+
+    @pytest.mark.asyncio
+    async def test_provider_failure_does_not_cache_thread(self):
+        """A failed provider must not cache the thread — the next request
+        must re-invoke the provider so a transient failure can recover."""
+        call_count = {"n": 0}
+
+        def flaky_provider(_input_data):
+            call_count["n"] += 1
+            raise RuntimeError(f"failure #{call_count['n']}")
+
+        agent = _make_base_agent(session_manager_provider=flaky_provider)
+
+        with patch("ag_ui_strands.agent.StrandsAgentCore"):
+            await _collect_events(agent, _make_run_input(thread_id="retry-thread", run_id="r1"))
+            assert "retry-thread" not in agent._agents_by_thread, (
+                "thread must not be cached after provider failure"
+            )
+            await _collect_events(agent, _make_run_input(thread_id="retry-thread", run_id="r2"))
+
+        assert call_count["n"] == 2, (
+            f"provider must be re-invoked on the next request; got {call_count['n']} call(s)"
+        )
+
+    @pytest.mark.asyncio
+    async def test_provider_returning_invalid_type_yields_error(self):
+        """Provider returning a non-SessionManager instance yields RUN_ERROR
+        with SESSION_MANAGER_INVALID_TYPE code, rather than silently passing
+        garbage into Strands."""
+        # Common footgun: provider returns the class instead of an instance.
+        def bad_provider(_input_data):
+            return "not-a-session-manager"
+
+        agent = _make_base_agent(session_manager_provider=bad_provider)
+
+        with patch("ag_ui_strands.agent.StrandsAgentCore") as MockCore:
+            events = await _collect_events(agent, _make_run_input())
+
+        MockCore.assert_not_called()
+        error_event = next(e for e in events if e.type == EventType.RUN_ERROR)
+        assert error_event.code == "SESSION_MANAGER_INVALID_TYPE"
+        assert "str" in error_event.message  # the actual type is reported
+        assert EventType.RUN_FINISHED not in [e.type for e in events]
 
     @pytest.mark.asyncio
     async def test_provider_returns_none_logs_warning(self, caplog):

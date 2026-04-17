@@ -13,7 +13,11 @@ import pytest
 from strands import Agent
 from strands.tools.registry import ToolRegistry
 
-from ag_ui_strands.agent import StrandsAgent, _AGUI_EXPLICIT_PARAMS
+from ag_ui_strands.agent import (
+    StrandsAgent,
+    _AGUI_EXPLICIT_PARAMS,
+    _extract_agent_kwargs,
+)
 
 
 def _mock_model():
@@ -126,6 +130,38 @@ async def test_session_manager_on_template_is_dropped_and_warns(caplog):
 
     # #798's explicit kwarg should be None since no provider is configured.
     assert instance.init_kwargs.get("session_manager") is None
+
+
+def test_extract_agent_kwargs_underscore_fallback():
+    """Directly exercises the self._<name> fallback path in _extract_agent_kwargs.
+
+    Covers Strands params stored with an underscore prefix (e.g. retry_strategy
+    lives at self._retry_strategy). The parametrized round-trip test above
+    often can't cover these because Strands rejects MagicMock sentinels in
+    template construction for such params.
+    """
+    sig = inspect.signature(Agent.__init__)
+    candidate = next(
+        (
+            n
+            for n in sig.parameters
+            if n not in _AGUI_EXPLICIT_PARAMS and n != "self"
+        ),
+        None,
+    )
+    assert candidate, "Agent.__init__ has no forwardable params — test premise broken"
+
+    sentinel = object()
+    fake = type("FakeAgent", (), {})()
+    setattr(fake, f"_{candidate}", sentinel)
+    assert not hasattr(fake, candidate), (
+        f"precondition violated: {candidate} must only be set as _{candidate}"
+    )
+
+    kwargs = _extract_agent_kwargs(fake)
+    assert kwargs.get(candidate) is sentinel, (
+        f"underscore fallback did not resolve {candidate}; kwargs={list(kwargs)}"
+    )
 
 
 @pytest.mark.asyncio
