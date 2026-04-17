@@ -122,6 +122,57 @@ class TestGetCheckpointBeforeMessage(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([m.id for m in merged_values["messages"]], ["older"])
 
 
+class TestGetCheckpointBeforeMessageEmptyHistoryBranch(unittest.IsolatedAsyncioTestCase):
+    """When the target message lives in the oldest snapshot (idx == 0
+    after the chronological reverse) there is no predecessor to hand
+    back. The adapter returns a synthetic "empty-before" snapshot with
+    ``messages=[]`` rather than raising, so callers can still fork from
+    the start. The snapshot returned must not share mutable state with
+    the original checkpoint — stomping on the checkpoint's ``messages``
+    list would leak across the rest of the run."""
+
+    async def test_idx_zero_returns_snapshot_with_empty_messages(self):
+        original_messages = [MagicMock(id="target-msg"), MagicMock(id="trailing")]
+        snapshot = MagicMock()
+        snapshot.values = {"messages": original_messages, "other": 1}
+
+        agent = make_agent()
+        agent.graph.aget_state_history = lambda _cfg: _async_iter([snapshot])
+
+        result = await agent.get_checkpoint_before_message("target-msg", "thread-xyz")
+
+        self.assertIs(result, snapshot)
+        self.assertEqual(result.values["messages"], [])
+
+    async def test_idx_zero_does_not_mutate_original_snapshot_values(self):
+        """Defensive: the synthetic empty-before must not be carved out of
+        the live snapshot by overwriting its ``values["messages"]``. If the
+        helper mutates the original snapshot's values dict, downstream
+        consumers holding a reference (e.g. the adapter's own state-merge
+        path on a subsequent iteration) see an emptied checkpoint. This
+        ties directly to the H5 no-mutation invariant added in the
+        sibling branch."""
+        original_messages = [MagicMock(id="target-msg"), MagicMock(id="trailing")]
+        original_values = {"messages": original_messages, "other": 1}
+
+        snapshot = MagicMock()
+        snapshot.values = original_values
+
+        agent = make_agent()
+        agent.graph.aget_state_history = lambda _cfg: _async_iter([snapshot])
+
+        await agent.get_checkpoint_before_message("target-msg", "thread-xyz")
+
+        # After the call, inspect the ORIGINAL values dict: its messages
+        # key must still point at the full list (or the helper must have
+        # swapped in a fresh dict on the returned snapshot, leaving this
+        # one untouched).
+        self.assertEqual(
+            [getattr(m, "id", None) for m in original_values["messages"]],
+            ["target-msg", "trailing"],
+        )
+
+
 class TestPrepareRegenerateStreamValidation(unittest.IsolatedAsyncioTestCase):
     """``prepare_regenerate_stream`` narrows two Optional fields into the
     stricter types its downstream call chain demands: ``HumanMessage.id``
