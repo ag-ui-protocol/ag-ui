@@ -35,7 +35,7 @@ class TestGetCheckpointBeforeMessage(unittest.IsolatedAsyncioTestCase):
     async def test_missing_thread_id_raises(self):
         """An empty ``thread_id`` fails fast rather than silently skipping."""
         agent = make_agent()
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "thread_id"):
             await agent.get_checkpoint_before_message("msg-1", "")
 
     async def test_passes_thread_id_in_configurable(self):
@@ -120,6 +120,9 @@ class TestGetCheckpointBeforeMessage(unittest.IsolatedAsyncioTestCase):
         merged_values = prev_snapshot._replace.call_args.kwargs["values"]
         self.assertEqual(merged_values["foo"], 1)
         self.assertEqual(merged_values["bar"], 2)
+        # Messages must come from the PREVIOUS snapshot, not be clobbered by
+        # the target's messages during the merge.
+        self.assertEqual([m.id for m in merged_values["messages"]], ["older"])
 
 
 if __name__ == "__main__":  # pragma: no cover
