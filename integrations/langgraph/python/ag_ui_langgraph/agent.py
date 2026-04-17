@@ -210,7 +210,12 @@ class LangGraphAgent:
             yield self._dispatch_event(
                 RunStartedEvent(type=EventType.RUN_STARTED, thread_id=thread_id, run_id=self.active_run["id"])
             )
-            self.handle_node_change(node_name_input)
+            # handle_node_change is a generator; discarding the return value
+            # silently dropped its STEP_STARTED/STEP_FINISHED events and
+            # skipped the active_run["node_name"] state update. Iterate so
+            # the state update runs and any emitted events reach the client.
+            for ev in self.handle_node_change(node_name_input):
+                yield ev
 
             # In case of resume (interrupt), re-start resumed step
             if resume_input and self.active_run.get("node_name"):
