@@ -64,7 +64,6 @@ RunMetadata = TypedDict("RunMetadata", {
     "any_mid_stream_merge_fired": NotRequired[bool],
     # Message / state data
     "streamed_messages": NotRequired[List[Any]],
-    "current_graph_state": NotRequired[State],
     "manually_emitted_state": NotRequired[Optional[State]],
     # Reasoning / thinking
     "reasoning_process": NotRequired[Optional[ThinkingProcess]],

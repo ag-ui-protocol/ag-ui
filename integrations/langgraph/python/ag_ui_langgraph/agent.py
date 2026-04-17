@@ -412,10 +412,8 @@ class LangGraphAgent:
         thread_id = input.thread_id
 
         state_input["messages"] = agent_state.values.get("messages", [])
-        self.active_run["current_graph_state"] = agent_state.values.copy()
         langchain_messages = agui_messages_to_langchain(messages)
         state = self.langgraph_default_merge_state(state_input, langchain_messages, input)
-        self.active_run["current_graph_state"].update(state)
         config["configurable"]["thread_id"] = thread_id
         interrupts = agent_state.tasks[0].interrupts if agent_state.tasks and len(agent_state.tasks) > 0 else []
         has_active_interrupts = len(interrupts) > 0
