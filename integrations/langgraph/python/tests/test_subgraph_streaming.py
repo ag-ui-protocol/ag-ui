@@ -354,19 +354,26 @@ class TestStreamSubgraphsGating(unittest.IsolatedAsyncioTestCase):
         }
 
     async def test_legacy_events_do_not_trigger_snapshot_when_disabled(self):
-        """With stream_subgraphs=False the legacy 'events' chunk must not set
-        is_subgraph_stream=True, so no mid-stream snapshot fires.  Only the
-        single end-of-run MESSAGES_SNAPSHOT should be present."""
+        """With stream_subgraphs=False the legacy 'events' chunk must not
+        set is_subgraph_stream=True, so no mid-stream snapshot fires —
+        the run ends with exactly the one end-of-run MESSAGES_SNAPSHOT."""
         agent = _make_agent(["hotels_agent"])
-        events = await self._drive(agent, [self._legacy_subgraph_chunk()], stream_subgraphs=False)
+        events = await self._drive(
+            agent, [self._legacy_subgraph_chunk()], stream_subgraphs=False
+        )
+        # Exactly-1 asserted rather than >=1: the gating guarantee is
+        # "no EXTRA snapshot fires", which a loose >=1 would not catch.
         self.assertEqual(_event_types(events).count("MESSAGES_SNAPSHOT"), 1)
 
     async def test_legacy_events_do_trigger_snapshot_when_enabled(self):
         """With stream_subgraphs=True the legacy 'events' chunk sets
-        is_subgraph_stream=True, firing a mid-stream snapshot in addition to
-        the end-of-run one — at least 2 total."""
+        is_subgraph_stream=True, firing a mid-stream snapshot in addition
+        to the end-of-run one — at least 2 total (additional snapshots
+        are acceptable as the adapter adds instrumentation)."""
         agent = _make_agent(["hotels_agent"])
-        events = await self._drive(agent, [self._legacy_subgraph_chunk()], stream_subgraphs=True)
+        events = await self._drive(
+            agent, [self._legacy_subgraph_chunk()], stream_subgraphs=True
+        )
         self.assertGreaterEqual(_event_types(events).count("MESSAGES_SNAPSHOT"), 2)
 
 
