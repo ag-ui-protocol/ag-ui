@@ -1007,6 +1007,14 @@ class LangGraphAgent:
             output_msg = event.get("data", {}).get("output")
             if isinstance(output_msg, BaseMessage):
                 self.active_run.setdefault("streamed_messages", []).append(output_msg)
+            else:
+                # Non-BaseMessage outputs (None / dicts / bespoke return types)
+                # can't be merged into the streamed_messages buffer. Log for
+                # observability — callers running in debug can see drops.
+                logger.debug(
+                    "OnChatModelEnd output not appended to streamed_messages (type=%r)",
+                    type(output_msg).__name__,
+                )
             if self.get_message_in_progress(self.active_run["id"]) and self.get_message_in_progress(self.active_run["id"]).get("tool_call_id"):
                 resolved = self._dispatch_event(
                     ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=self.get_message_in_progress(self.active_run["id"])["tool_call_id"], raw_event=event)
