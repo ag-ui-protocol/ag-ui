@@ -19,6 +19,8 @@ on:
         default: false
 
 concurrency:
+  # A single fixed group so push and workflow_dispatch runs serialize against
+  # each other regardless of the triggering ref.
   group: release-typescript
   cancel-in-progress: false
 
@@ -72,62 +74,116 @@ jobs:
       - name: Detect version changes
         id: detect
         run: |
-          CHANGED=$(bash scripts/release/detect-ts-version-changes.sh 2>detect-ts.log)
+          set -u
+          if ! CHANGED=$(bash scripts/release/detect-ts-version-changes.sh 2>detect-ts.log); then
+            echo "ERROR: detect-ts-version-changes.sh failed" >&2
+            cat detect-ts.log >&2
+            exit 1
+          fi
           cat detect-ts.log
           [ "$CHANGED" = "null" ] && CHANGED="[]"
           echo "packages=$CHANGED" >> "$GITHUB_OUTPUT"
           COUNT=$(echo "$CHANGED" | jq 'length')
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
           if [ "$COUNT" -gt 0 ]; then
-            echo "## TypeScript packages to publish" >> $GITHUB_STEP_SUMMARY
-            echo "$CHANGED" | jq -r '.[] | "- \(.name)@\(.version)"' >> $GITHUB_STEP_SUMMARY
+            echo "## TypeScript packages to publish" >> "$GITHUB_STEP_SUMMARY"
+            echo "$CHANGED" | jq -r '.[] | "- \(.name)@\(.version)"' >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "## No TypeScript version changes detected" >> $GITHUB_STEP_SUMMARY
+            echo "## No TypeScript version changes detected" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Publish changed packages
-        if: steps.detect.outputs.count != '0' && (github.event.inputs.dry_run != 'true')
+      - name: Pre-flight publish credentials
+        if: steps.detect.outputs.count != '0'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" != "true" ]; then
+            if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+              echo "ERROR: NPM_TOKEN (NODE_AUTH_TOKEN) is not set" >&2
+              exit 1
+            fi
+          fi
+
+      - name: Filter out already-published packages
+        id: filter
+        if: steps.detect.outputs.count != '0' && (github.event.inputs.dry_run || 'false') != 'true'
+        env:
           PACKAGES: ${{ steps.detect.outputs.packages }}
         run: |
-          # Build project list for nx release publish
+          set -u
+          # Probe npm for each candidate and keep only versions not yet published.
+          # This makes the overall job retry-safe when a prior run published some
+          # packages but failed before completing.
+          FILTERED="[]"
+          SKIPPED=0
+          while read -r pkg; do
+            NAME=$(echo "$pkg" | jq -r '.name')
+            VERSION=$(echo "$pkg" | jq -r '.version')
+            # npm view returns the version string if present, empty otherwise.
+            PUBLISHED=$(npm view "$NAME@$VERSION" version 2>/dev/null || true)
+            if [ -n "$PUBLISHED" ]; then
+              echo "SKIP: $NAME@$VERSION already published on npm"
+              echo "SKIP: $NAME@$VERSION already published on npm" >> "$GITHUB_STEP_SUMMARY"
+              SKIPPED=$((SKIPPED + 1))
+            else
+              FILTERED=$(echo "$FILTERED" | jq -c --argjson p "$pkg" '. + [$p]')
+            fi
+          done < <(echo "$PACKAGES" | jq -c '.[]')
+          REMAINING=$(echo "$FILTERED" | jq 'length')
+          echo "packages=$FILTERED" >> "$GITHUB_OUTPUT"
+          echo "count=$REMAINING" >> "$GITHUB_OUTPUT"
+          echo "Filter: $SKIPPED skipped, $REMAINING remaining"
+
+      - name: Publish changed packages
+        if: steps.detect.outputs.count != '0' && (github.event.inputs.dry_run || 'false') != 'true' && steps.filter.outputs.count != '0'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PACKAGES: ${{ steps.filter.outputs.packages }}
+        run: |
+          set -u
           PROJECTS=$(echo "$PACKAGES" | jq -r '[.[].name] | join(",")')
           echo "Publishing projects: $PROJECTS"
           npx nx release publish --projects="$PROJECTS"
 
       - name: Create git tags
-        if: steps.detect.outputs.count != '0' && (github.event.inputs.dry_run != 'true')
+        if: steps.detect.outputs.count != '0' && (github.event.inputs.dry_run || 'false') != 'true'
         env:
+          # Use the full detected set (not the filtered set) so tags get created
+          # for packages that were already on npm from a prior partial run.
           PACKAGES: ${{ steps.detect.outputs.packages }}
         run: |
-          TAGS=()
-          while read -r pkg; do
-            NAME=$(echo "$pkg" | jq -r '.name')
-            VERSION=$(echo "$pkg" | jq -r '.version')
-            TAG="${NAME}@${VERSION}"
-            git tag "$TAG" || { echo "ERROR: Failed to tag $TAG" >&2; exit 1; }
-            TAGS+=("$TAG")
-            echo "Tagged $TAG"
-          done < <(echo "$PACKAGES" | jq -c '.[]')
-          git push origin "${TAGS[@]}"
+          set -u
+          bash scripts/release/create-tags.sh "$PACKAGES"
 
       - name: Create GitHub Release
-        if: steps.detect.outputs.count != '0' && (github.event.inputs.dry_run != 'true')
+        if: steps.detect.outputs.count != '0' && (github.event.inputs.dry_run || 'false') != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PACKAGES: ${{ steps.detect.outputs.packages }}
         run: |
+          set -u
           bash scripts/release/create-or-update-release.sh typescript "$PACKAGES"
 
+      - name: Reconcile GitHub Release (ensure all tags are represented)
+        if: always() && steps.detect.outputs.count != '0' && (github.event.inputs.dry_run || 'false') != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PACKAGES: ${{ steps.detect.outputs.packages }}
+        run: |
+          set -u
+          bash scripts/release/reconcile-release.sh typescript "$PACKAGES"
+
       - name: Dry-run summary
-        if: steps.detect.outputs.count != '0' && (github.event.inputs.dry_run == 'true')
+        if: steps.detect.outputs.count != '0' && (github.event.inputs.dry_run || 'false') == 'true'
         env:
           DRY_RUN: "true"
           PACKAGES: ${{ steps.detect.outputs.packages }}
         run: |
+          set -u
           PROJECTS=$(echo "$PACKAGES" | jq -r '[.[].name] | join(",")')
-          echo "## Dry Run — would publish:" >> $GITHUB_STEP_SUMMARY
-          echo "$PACKAGES" | jq -r '.[] | "- \(.name)@\(.version)"' >> $GITHUB_STEP_SUMMARY
-          npx nx release publish --projects="$PROJECTS" --dry-run 2>&1 | tee -a $GITHUB_STEP_SUMMARY
+          echo "## Dry Run: would publish" >> "$GITHUB_STEP_SUMMARY"
+          echo "$PACKAGES" | jq -r '.[] | "- \(.name)@\(.version)"' >> "$GITHUB_STEP_SUMMARY"
+          npx nx release publish --projects="$PROJECTS" --dry-run 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
           DRY_RUN=true bash scripts/release/create-or-update-release.sh typescript "$PACKAGES"
