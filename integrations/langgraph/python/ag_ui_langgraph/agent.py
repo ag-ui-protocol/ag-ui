@@ -569,10 +569,22 @@ class LangGraphAgent:
         if time_travel_checkpoint is None:
             return None
 
+        # Time-travel regeneration forks at a single ``as_node`` target. When the
+        # checkpoint's ``next`` tuple has more than one entry (a parallel/fan-out
+        # branch), we pick the first one and surface the choice via a warning so
+        # operators can see the non-determinism rather than have branches
+        # silently dropped.
+        next_nodes = time_travel_checkpoint.next or ()
+        if len(next_nodes) > 1:
+            logger.warning(
+                "time-travel checkpoint has multiple next nodes %r; "
+                "forking only at %r (other branches are not replayed)",
+                next_nodes, next_nodes[0],
+            )
         fork = await self.graph.aupdate_state(
             time_travel_checkpoint.config,
             time_travel_checkpoint.values,
-            as_node=time_travel_checkpoint.next[0] if time_travel_checkpoint.next else "__start__"
+            as_node=next_nodes[0] if next_nodes else "__start__",
         )
 
         stream_input = self.langgraph_default_merge_state(time_travel_checkpoint.values, [message_checkpoint], input)
