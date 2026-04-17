@@ -324,7 +324,12 @@ class LangGraphAgent:
                         if tool_used_to_predict_state:
                             self.active_run["model_made_tool_call"] = True
 
-                updated_state = self.active_run.get("manually_emitted_state") or current_graph_state
+            # Explicit ``is None`` check: an empty dict (``{}``) is a
+            # legitimate manually-emitted state ("reset to empty") and must
+            # not be silently coerced back to current_graph_state by a
+            # truthy ``or`` fallback.
+            manually_emitted = self.active_run.get("manually_emitted_state")
+            updated_state = manually_emitted if manually_emitted is not None else current_graph_state
                 has_state_diff = updated_state != state
                 if exiting_node or (has_state_diff and not self.get_message_in_progress(self.active_run["id"])):
                     state = updated_state
