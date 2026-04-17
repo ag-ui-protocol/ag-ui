@@ -59,10 +59,12 @@ class TestGetCheckpointBeforeMessage(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured_config["configurable"]["thread_id"], "thread-xyz")
 
     async def test_merges_caller_config_preserving_configurable(self):
-        """When the caller provides a RunnableConfig, extra configurable
-        keys (checkpoint namespace, subgraph selector, etc.) are preserved
-        and ``thread_id`` is authoritative from the argument, not the
-        caller's config."""
+        """When the caller provides a RunnableConfig, extra caller-level
+        fields (``tags``, etc.) and non-pin configurable keys are
+        preserved, ``thread_id`` is authoritative from the argument
+        (not the caller's config), and the pin-to-single-checkpoint
+        keys ``checkpoint_id`` / ``checkpoint_ns`` are stripped so the
+        linear history walk sees every snapshot."""
         agent = make_agent()
         captured_config = None
 
@@ -80,6 +82,8 @@ class TestGetCheckpointBeforeMessage(unittest.IsolatedAsyncioTestCase):
             "configurable": {
                 "thread_id": "stale-thread-from-caller",
                 "checkpoint_ns": "ns-1",
+                "checkpoint_id": "ckpt-42",
+                "graph_subkey": "keep-me",
             },
             "tags": ["a-tag"],
         }
@@ -90,7 +94,12 @@ class TestGetCheckpointBeforeMessage(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNotNone(captured_config)
         self.assertEqual(captured_config["configurable"]["thread_id"], "thread-xyz")
-        self.assertEqual(captured_config["configurable"]["checkpoint_ns"], "ns-1")
+        # Pin keys must be stripped so aget_state_history doesn't filter
+        # to a single pinned checkpoint.
+        self.assertNotIn("checkpoint_ns", captured_config["configurable"])
+        self.assertNotIn("checkpoint_id", captured_config["configurable"])
+        # Non-pin configurable keys and caller-level fields survive.
+        self.assertEqual(captured_config["configurable"]["graph_subkey"], "keep-me")
         self.assertEqual(captured_config["tags"], ["a-tag"])
 
     async def test_returns_previous_snapshot(self):
@@ -148,8 +157,16 @@ class TestGetCheckpointBeforeMessageEmptyHistoryBranch(unittest.IsolatedAsyncioT
 
         result = await agent.get_checkpoint_before_message("target-msg", "thread-xyz")
 
-        self.assertIs(result, snapshot)
-        self.assertEqual(result.values["messages"], [])
+        # The H5 no-mutation fix routes the idx==0 branch through
+        # ``snapshot._replace(values=...)`` so the original snapshot's
+        # ``values["messages"]`` is never overwritten. Verify that the
+        # returned object is the ``_replace`` result (not the original)
+        # and that ``_replace`` was invoked with empty messages.
+        self.assertIs(result, snapshot._replace.return_value)
+        snapshot._replace.assert_called_once()
+        replace_values = snapshot._replace.call_args.kwargs["values"]
+        self.assertEqual(replace_values["messages"], [])
+        self.assertEqual(replace_values["other"], 1)
 
     async def test_idx_zero_does_not_mutate_original_snapshot_values(self):
         """Defensive: the synthetic empty-before must not be carved out of

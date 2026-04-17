@@ -81,15 +81,22 @@ class TestGetSchemaKeysFallback(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             agent.get_schema_keys(self._config())
 
-    def test_value_error_propagates(self):
-        """ValueError (likely programmer error) must propagate."""
+    def test_value_error_falls_back(self):
+        """ValueError (Pydantic v2 raises it via PydanticUserError /
+        PydanticSchemaGenerationError when a schema model can't be
+        built for runtime-only types) must fall back to defaults, not
+        propagate.
+        """
         graph = MagicMock()
         graph.config_specs = []
         graph.get_input_jsonschema.side_effect = ValueError("bad value")
         agent = self._make_agent(graph)
 
-        with self.assertRaises(ValueError):
-            agent.get_schema_keys(self._config())
+        with self.assertLogs("ag_ui_langgraph.agent", level="WARNING") as log_ctx:
+            result = agent.get_schema_keys(self._config())
+
+        self.assertEqual(result["input"], agent.constant_schema_keys)
+        self.assertIn("ValueError", "\n".join(log_ctx.output))
 
     def test_happy_path_no_warning(self):
         """Well-formed schemas return extracted keys and emit no warning."""
