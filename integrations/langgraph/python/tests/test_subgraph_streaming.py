@@ -15,27 +15,11 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock
 
 from langchain_core.messages import AIMessage, HumanMessage
-from langgraph.graph.state import CompiledStateGraph
 
-from ag_ui_langgraph.agent import LangGraphAgent, ROOT_SUBGRAPH_NAME
+from ag_ui_langgraph.agent import ROOT_SUBGRAPH_NAME
 from ag_ui.core import EventType
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _make_agent(subgraph_names=None):
-    """Return a LangGraphAgent with mocked CompiledStateGraph subgraph nodes."""
-    graph = MagicMock(spec=CompiledStateGraph)
-    graph.config_specs = []
-    nodes = {}
-    for name in (subgraph_names or []):
-        node = MagicMock()
-        node.bound = MagicMock(spec=CompiledStateGraph)
-        nodes[name] = node
-    graph.nodes = nodes
-    return LangGraphAgent(name="test", graph=graph)
+from tests._helpers import make_agent as _make_agent, make_configured_agent
 
 
 def _event_types(events):
@@ -112,25 +96,14 @@ class TestSubgraphDetection(unittest.TestCase):
 
 class TestGetStateAndMessagesSnapshots(unittest.IsolatedAsyncioTestCase):
 
-    def _make_agent(self, checkpoint_messages, streamed_messages=None):
-        agent = _make_agent(["hotels_agent"])
-        agent.active_run = {"id": "run-1", "streamed_messages": streamed_messages or []}
-        agent.dispatched = []
-        agent._dispatch_event = lambda ev: agent.dispatched.append(ev) or ev
-        agent.get_state_snapshot = MagicMock(return_value={})
-        state = MagicMock()
-        state.values = {"messages": checkpoint_messages}
-        agent.graph.aget_state = AsyncMock(return_value=state)
-        return agent
-
     async def test_dispatches_state_snapshot(self):
-        agent = self._make_agent([HumanMessage(content="hi", id="u1")])
+        agent = make_configured_agent([HumanMessage(content="hi", id="u1")])
         async for _ in agent.get_state_and_messages_snapshots({}):
             pass
         self.assertIn("STATE_SNAPSHOT", _event_types(agent.dispatched))
 
     async def test_dispatches_messages_snapshot(self):
-        agent = self._make_agent([HumanMessage(content="hi", id="u1")])
+        agent = make_configured_agent([HumanMessage(content="hi", id="u1")])
         async for _ in agent.get_state_and_messages_snapshots({}):
             pass
         self.assertIn("MESSAGES_SNAPSHOT", _event_types(agent.dispatched))
@@ -140,7 +113,7 @@ class TestGetStateAndMessagesSnapshots(unittest.IsolatedAsyncioTestCase):
         user = HumanMessage(content="AMS to SF", id="u1")
         flights = AIMessage(content="Booked KLM", id="f1")
         hotels = AIMessage(content="Booked Hotel Zoe", id="h1")
-        agent = self._make_agent([user, flights, hotels])
+        agent = make_configured_agent([user, flights, hotels])
         async for _ in agent.get_state_and_messages_snapshots({}):
             pass
         snap = next(e for e in agent.dispatched if getattr(e, "type", None) == EventType.MESSAGES_SNAPSHOT)
@@ -153,7 +126,7 @@ class TestGetStateAndMessagesSnapshots(unittest.IsolatedAsyncioTestCase):
         user = HumanMessage(content="hi", id="u1")
         flights = AIMessage(content="Booked KLM", id="f1")
         supervisor_routing = AIMessage(content="routing", id="sup1")
-        agent = self._make_agent([user, flights], streamed_messages=[supervisor_routing])
+        agent = make_configured_agent([user, flights], streamed_messages=[supervisor_routing])
         async for _ in agent.get_state_and_messages_snapshots({}):
             pass
         snap = next(e for e in agent.dispatched if getattr(e, "type", None) == EventType.MESSAGES_SNAPSHOT)
@@ -165,7 +138,7 @@ class TestGetStateAndMessagesSnapshots(unittest.IsolatedAsyncioTestCase):
         """A streamed message whose ID is already in the checkpoint appears only once."""
         user = HumanMessage(content="hi", id="u1")
         exp = AIMessage(content="activities", id="exp1")
-        agent = self._make_agent([user, exp], streamed_messages=[exp])
+        agent = make_configured_agent([user, exp], streamed_messages=[exp])
         async for _ in agent.get_state_and_messages_snapshots({}):
             pass
         snap = next(e for e in agent.dispatched if getattr(e, "type", None) == EventType.MESSAGES_SNAPSHOT)
