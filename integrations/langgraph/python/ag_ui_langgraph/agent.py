@@ -1357,11 +1357,16 @@ class LangGraphAgent:
             messages = snapshot.values.get("messages", [])
             if any(getattr(m, "id", None) == message_id for m in messages):
                 if idx == 0:
-                    # No snapshot before this
-                    # Return synthetic "empty before" version
-                    empty_snapshot = snapshot
-                    empty_snapshot.values["messages"] = []
-                    return empty_snapshot
+                    # No snapshot before this.
+                    # Return a synthetic "empty before" snapshot whose
+                    # values share no structure with the original:
+                    # assigning back into ``snapshot.values["messages"]``
+                    # mutated the real checkpoint in place (StateSnapshot
+                    # is an alias, not a copy), which bled into callers
+                    # and any cached history entries.
+                    empty_values = snapshot.values.copy()
+                    empty_values["messages"] = []
+                    return snapshot._replace(values=empty_values)
 
                 snapshot_values_without_messages = snapshot.values.copy()
                 del snapshot_values_without_messages["messages"]
