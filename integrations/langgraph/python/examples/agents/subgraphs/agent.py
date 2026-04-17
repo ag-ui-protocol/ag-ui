@@ -275,8 +275,13 @@ async def supervisor_agent(state: TravelAgentState, config: RunnableConfig):
         # tool_call — an internal formatting step the user should
         # never see in history. ``messages`` uses the ``add_messages``
         # reducer, so this appends rather than replacing.
+        #
+        # Normalize the ``"complete"`` sentinel (see system_prompt,
+        # which instructs the model to route there when done) to
+        # ``END`` — there is no node called ``complete`` in the graph.
+        # Mirrors the TypeScript demo.
         return Command(
-            goto=next_agent if next_agent is not None else END,
+            goto=next_agent if next_agent and next_agent != "complete" else END,
             update={"messages": [AIMessage(content=answer)]},
         )
 
