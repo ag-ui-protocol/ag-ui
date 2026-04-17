@@ -256,7 +256,7 @@ export class LangGraphAgent extends AbstractAgent {
       payloadConfig = await this.mergeConfigs({
         configs: configsToMerge,
         assistant: this.assistant,
-        schemaKeys: this.activeRun!.schemaKeys!,
+        schemaKeys: this.activeRun!.schemaKeys ?? null,
       });
     }
 
@@ -609,14 +609,15 @@ export class LangGraphAgent extends AbstractAgent {
         }
 
         const hasStateDiff = JSON.stringify(updatedState) !== JSON.stringify(state);
-        // We should not update snapshot while a message is in progress,
-        // or while a predict_state tool call is being streamed (modelMadeToolCall).
-        // Mirrors Python agent's suppression: emitting a snapshot before the
-        // tracked tool has run would overwrite optimistic UI state pushed to the client.
-        // Suppress STATE_SNAPSHOT while modelMadeToolCall is true — the tracked
-        // tool is still streaming args and the graph state does not yet reflect
-        // the forthcoming update. Flag is cleared in the OnToolEnd handler once
-        // the tool has actually run and real state is available.
+        // Suppress STATE_SNAPSHOT while a message is in progress, or while a
+        // predict_state tool call is streaming args (modelMadeToolCall=true).
+        // During tool arg streaming the graph state does not yet reflect the
+        // forthcoming update, so emitting a snapshot would clobber optimistic
+        // UI state. Flag is cleared in OnToolEnd/OnToolError.
+        //
+        // Diverges from Python: TS blocks ALL snapshot kinds (state-diff,
+        // node change, node exit) while the flag is set; Python only
+        // suppresses on node exit. A post-run snapshot runs the safety net.
         if (
           !this.activeRun!.modelMadeToolCall &&
           (hasStateDiff ||
@@ -1056,6 +1057,13 @@ export class LangGraphAgent extends AbstractAgent {
           rawEvent: event,
         });
         // Tool has completed — reset so the next snapshot reflects real state.
+        this.activeRun!.modelMadeToolCall = false;
+        this.activeRun!.hasFunctionStreaming = false;
+        break;
+      case LangGraphEventTypes.OnToolError:
+        // A tool threw before OnToolEnd could fire. Without this, the
+        // modelMadeToolCall flag would stay set and suppress snapshots
+        // for the rest of the run.
         this.activeRun!.modelMadeToolCall = false;
         this.activeRun!.hasFunctionStreaming = false;
         break;

@@ -11,6 +11,7 @@ class LangGraphEventTypes(str, Enum):
     OnChatModelEnd = "on_chat_model_end"
     OnToolStart = "on_tool_start"
     OnToolEnd = "on_tool_end"
+    OnToolError = "on_tool_error"
     OnCustomEvent = "on_custom_event"
     OnInterrupt = "on_interrupt"
 

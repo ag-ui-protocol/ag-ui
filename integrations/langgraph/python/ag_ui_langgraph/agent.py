@@ -315,6 +315,12 @@ class LangGraphAgent:
                     state_reliable = self.active_run.get("state_reliable", True)
                     suppressed = exiting_node and (mmtc or not state_reliable)
                     if suppressed:
+                        logger.debug(
+                            "Suppressing node-exit STATE_SNAPSHOT (node=%s, model_made_tool_call=%s, state_reliable=%s)",
+                            self.active_run.get("node_name"),
+                            mmtc,
+                            state_reliable,
+                        )
                         self.active_run["model_made_tool_call"] = False
                         if mmtc:
                             # A predict_state tool call was detected — the tool has
@@ -1014,6 +1020,8 @@ class LangGraphAgent:
                             role="tool"
                         )
                     )
+                self.active_run["model_made_tool_call"] = False
+                self.active_run["state_reliable"] = True
                 self.active_run["has_function_streaming"] = False
                 return
 
@@ -1053,6 +1061,17 @@ class LangGraphAgent:
                 )
             )
 
+            self.active_run["model_made_tool_call"] = False
+            self.active_run["state_reliable"] = True
+            self.active_run["has_function_streaming"] = False
+
+        elif event_type == LangGraphEventTypes.OnToolError:
+            # A tool threw before OnToolEnd could fire. Reset the suppression
+            # flags so subsequent snapshots are not permanently blocked.
+            logger.debug(
+                "on_tool_error received — clearing model_made_tool_call/state_reliable (tool=%s)",
+                event.get("name"),
+            )
             self.active_run["model_made_tool_call"] = False
             self.active_run["state_reliable"] = True
             self.active_run["has_function_streaming"] = False
