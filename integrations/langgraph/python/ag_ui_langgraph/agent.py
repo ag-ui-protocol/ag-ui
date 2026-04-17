@@ -1118,7 +1118,7 @@ class LangGraphAgent:
         if not reasoning_data or "type" not in reasoning_data or "text" not in reasoning_data:
             return ""
 
-        reasoning_step_index = reasoning_data.get("index")
+        reasoning_step_index = reasoning_data["index"]
 
         if (self.active_run.get("reasoning_process") and
                 self.active_run["reasoning_process"].get("index") and

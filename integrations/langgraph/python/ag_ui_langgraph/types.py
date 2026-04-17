@@ -31,7 +31,7 @@ SchemaKeys = TypedDict("SchemaKeys", {
 })
 
 ThinkingProcess = TypedDict("ThinkingProcess", {
-    "index": Optional[int],
+    "index": int,
     "message_id": str,
     "type": NotRequired[Optional[str]],
     "signature": NotRequired[Optional[str]],
