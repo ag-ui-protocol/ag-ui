@@ -38,9 +38,10 @@ import com.contextable.a2ui4k.data.DataModel
 import com.contextable.a2ui4k.model.DataChangeEvent
 import com.contextable.a2ui4k.model.UiDefinition
 import com.contextable.a2ui4k.model.UiEvent
-import com.contextable.a2ui4k.model.UserActionEvent
+import com.contextable.a2ui4k.model.ActionEvent
 import com.contextable.a2ui4k.state.SurfaceStateManager
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import com.agui.example.chatapp.data.auth.AuthManager
@@ -392,8 +393,8 @@ class ChatController(
      */
     fun sendA2UiAction(event: UiEvent) {
         // Per A2UI protocol: DataChangeEvent only updates local state (already done by the widget).
-        // Only UserActionEvent (e.g., button clicks) should be sent to the server.
-        if (event !is UserActionEvent) return
+        // Only ActionEvent (e.g., button clicks) should be sent to the server.
+        if (event !is ActionEvent) return
         if (currentAgent == null || controllerClosed.value) return
 
         // Build forwardedProps with A2UI ClientEvent at root
@@ -715,13 +716,31 @@ class ChatController(
             is StateDeltaEvent, is StateSnapshotEvent -> Unit
             is ActivitySnapshotEvent -> {
                 if (event.activityType == "a2ui-surface") {
-                    surfaceStateManager.processSnapshot(event.messageId, event.content)
+                    val envelope = buildJsonObject {
+                        put("type", JsonPrimitive("ACTIVITY_SNAPSHOT"))
+                        put("messageId", JsonPrimitive(event.messageId))
+                        put("activityType", JsonPrimitive(event.activityType))
+                        put("content", event.content)
+                    }
+                    val handled = surfaceStateManager.processMessage(envelope)
+                    if (!handled) {
+                        logger.w { "a2ui: snapshot envelope rejected for messageId=${event.messageId}" }
+                    }
                     updateA2UiSurfaces()
                 }
             }
             is ActivityDeltaEvent -> {
                 if (event.activityType == "a2ui-surface") {
-                    surfaceStateManager.processDelta(event.messageId, event.patch)
+                    val envelope = buildJsonObject {
+                        put("type", JsonPrimitive("ACTIVITY_DELTA"))
+                        put("messageId", JsonPrimitive(event.messageId))
+                        put("activityType", JsonPrimitive(event.activityType))
+                        put("patch", event.patch)
+                    }
+                    val handled = surfaceStateManager.processMessage(envelope)
+                    if (!handled) {
+                        logger.w { "a2ui: delta envelope rejected for messageId=${event.messageId}" }
+                    }
                     updateA2UiSurfaces()
                 }
             }
