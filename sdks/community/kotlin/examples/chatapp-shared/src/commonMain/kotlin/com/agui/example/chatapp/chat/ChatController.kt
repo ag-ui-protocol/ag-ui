@@ -35,12 +35,16 @@ import com.agui.core.types.ToolCallStartEvent
 import com.agui.core.types.ToolMessage
 import com.agui.core.types.UserMessage
 import com.contextable.a2ui4k.data.DataModel
+import com.contextable.a2ui4k.model.ActionEvent
 import com.contextable.a2ui4k.model.DataChangeEvent
+import com.contextable.a2ui4k.model.ProtocolVersion
 import com.contextable.a2ui4k.model.UiDefinition
 import com.contextable.a2ui4k.model.UiEvent
-import com.contextable.a2ui4k.model.UserActionEvent
+import com.contextable.a2ui4k.model.toClientMessage
 import com.contextable.a2ui4k.state.SurfaceStateManager
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import com.agui.example.chatapp.data.auth.AuthManager
@@ -392,31 +396,33 @@ class ChatController(
      */
     fun sendA2UiAction(event: UiEvent) {
         // Per A2UI protocol: DataChangeEvent only updates local state (already done by the widget).
-        // Only UserActionEvent (e.g., button clicks) should be sent to the server.
-        if (event !is UserActionEvent) return
+        // Only ActionEvent (e.g., button clicks) should be sent to the server.
+        if (event !is ActionEvent) return
         if (currentAgent == null || controllerClosed.value) return
 
-        // Build forwardedProps with A2UI ClientEvent at root
+        // Let a2ui-4k serialise the wire envelope. Each surface is tagged with its
+        // ProtocolVersion by the state manager, so outbound shape matches inbound:
+        // V0_8 surfaces emit {"userAction":{…}}, V0_9 emits {"version":"v0.9","action":{…}}.
+        val version = surfaceStateManager.getSurfaceProtocolVersion(event.surfaceId)
+            ?: ProtocolVersion.V0_9
+        val wire = event.toClientMessage(version) ?: return
+
+        // WORKAROUND: CopilotKit's @copilotkit/a2ui-renderer transforms action.name to
+        // actionName on the renderer side (A2UIViewer.js:97-98); demo backends such as
+        // CopilotKit/with-a2a-a2ui then read actionName. a2ui-4k emits the spec-correct
+        // "name" only, so splice "actionName" in next to it so either shape is accepted.
+        val actionKey = if (wire.containsKey("userAction")) "userAction" else "action"
+        val action = (wire[actionKey] as? JsonObject) ?: JsonObject(emptyMap())
+        val patchedWire = JsonObject(
+            wire + (actionKey to JsonObject(action + ("actionName" to JsonPrimitive(event.name))))
+        )
+
         // NOTE: forwardedProps is AG-UI specific. The @ag-ui/a2a integration extracts
-        // a2uiAction and converts it to an A2A DataPart with mimeType "application/json+a2ui"
+        // a2uiAction and converts it to an A2A DataPart with mimeType "application/json+a2ui".
         val forwardedProps = buildJsonObject {
-            put("a2uiAction", buildJsonObject {
-                put("userAction", buildJsonObject {
-                    // A2UI spec field
-                    put("name", event.name)
-                    // WORKAROUND: CopilotKit's a2ui-renderer transforms "name" to "actionName".
-                    // Some demo apps expect "actionName" instead of the spec's "name".
-                    // See: @copilotkit/a2ui-renderer/dist/A2UIViewer.js:97-98
-                    put("actionName", event.name)
-                    put("surfaceId", event.surfaceId)
-                    put("sourceComponentId", event.sourceComponentId)
-                    put("timestamp", event.timestamp)
-                    event.context?.let { put("context", it) }
-                })
-            })
+            put("a2uiAction", patchedWire)
         }
 
-        // Send as an action message with forwardedProps
         startConversationWithForwardedProps("[A2UI Action]", forwardedProps)
     }
 
@@ -715,13 +721,25 @@ class ChatController(
             is StateDeltaEvent, is StateSnapshotEvent -> Unit
             is ActivitySnapshotEvent -> {
                 if (event.activityType == "a2ui-surface") {
-                    surfaceStateManager.processSnapshot(event.messageId, event.content)
+                    // Rewrap as a v0.8 activity envelope; SurfaceStateManager.processMessage
+                    // recognises both v0.8 (transcoded internally) and v0.9 envelopes.
+                    val envelope = buildJsonObject {
+                        put("activityId", event.messageId)
+                        put("event", "ACTIVITY_SNAPSHOT")
+                        put("content", event.content)
+                    }
+                    surfaceStateManager.processMessage(envelope)
                     updateA2UiSurfaces()
                 }
             }
             is ActivityDeltaEvent -> {
                 if (event.activityType == "a2ui-surface") {
-                    surfaceStateManager.processDelta(event.messageId, event.patch)
+                    val envelope = buildJsonObject {
+                        put("activityId", event.messageId)
+                        put("event", "ACTIVITY_DELTA")
+                        put("patch", event.patch)
+                    }
+                    surfaceStateManager.processMessage(envelope)
                     updateA2UiSurfaces()
                 }
             }
