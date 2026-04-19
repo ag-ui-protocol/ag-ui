@@ -41,8 +41,11 @@ import com.contextable.a2ui4k.model.UiEvent
 import com.contextable.a2ui4k.model.ActionEvent
 import com.contextable.a2ui4k.state.SurfaceStateManager
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import com.agui.example.chatapp.data.auth.AuthManager
 import com.agui.example.chatapp.data.model.AgentConfig
@@ -716,11 +719,24 @@ class ChatController(
             is StateDeltaEvent, is StateSnapshotEvent -> Unit
             is ActivitySnapshotEvent -> {
                 if (event.activityType == "a2ui-surface") {
-                    val envelope = buildJsonObject {
-                        put("type", JsonPrimitive("ACTIVITY_SNAPSHOT"))
-                        put("messageId", JsonPrimitive(event.messageId))
-                        put("activityType", JsonPrimitive(event.activityType))
-                        put("content", event.content)
+                    // The with-a2a-a2ui bridge emits ACTIVITY_SNAPSHOT for every v0.9
+                    // A2A DataPart with `content` set to the raw v0.9 envelope
+                    // ({version:"v0.9", <op>:{…}}). Pass those straight to
+                    // processMessage so the library takes the v0.9 path.
+                    // Legacy v0.8 snapshots still need the {type: ACTIVITY_SNAPSHOT, …}
+                    // wrapper for the v0.8 transcoder.
+                    val contentObj = event.content as? JsonObject
+                    val isV09Native = contentObj?.get("version")
+                        ?.jsonPrimitive?.contentOrNull == "v0.9"
+                    val envelope = if (isV09Native) {
+                        contentObj!!
+                    } else {
+                        buildJsonObject {
+                            put("type", JsonPrimitive("ACTIVITY_SNAPSHOT"))
+                            put("messageId", JsonPrimitive(event.messageId))
+                            put("activityType", JsonPrimitive(event.activityType))
+                            put("content", event.content)
+                        }
                     }
                     val handled = surfaceStateManager.processMessage(envelope)
                     if (!handled) {
