@@ -52,10 +52,10 @@ sequenceDiagram
   Agent-->>Client: RUN_FINISHED { outcome: "interrupt", interrupts: [...] }
 
   Note over Agent,Client: User resolves interrupts
-  Client-->>Agent: RunAgentInput { threadId, resume: [...], parentRunId: r1 }
+  Client-->>Agent: RunAgentInput { threadId, resume: [{interruptId, status, payload?}, ...] }
 
-  Note over Agent,Client: Run 2 begins as a lineage continuation
-  Agent-->>Client: RUN_STARTED (runId: r2, parentRunId: r1)
+  Note over Agent,Client: Run 2 begins; resume[].interruptId links back to run 1's interrupts
+  Agent-->>Client: RUN_STARTED (runId: r2)
   Agent-->>Client: ...continue / TOOL_CALL_RESULT / ...
   Agent-->>Client: RUN_FINISHED { outcome: "success", result }
 ```
@@ -149,12 +149,15 @@ type RunAgentInput = {
 1. **Same thread.** Resume requests **MUST** use the same `threadId` as the
    interrupted run.
 
-2. **`parentRunId` on resumed runs.** A run created by submitting a `resume`
-   **MUST** set `parentRunId` to the interrupted run's `runId`. This keeps the
-   logical turn reconstructable for telemetry, UI, and debugging.
-   `parentRunId` expresses lineage only; it does not express agent-orchestration
-   hierarchy. Multi-agent composition patterns are out of scope for this
-   proposal.
+2. **Resume linkage.** The relationship between a resumed run and the
+   interrupted run is expressed entirely by the `resume` field:
+   `resume[].interruptId` **MUST** reference an `id` from the interrupted run's
+   `interrupts[]`. The resumed run does **not** use `parentRunId` to encode this
+   relationship — `parentRunId` retains its existing AG-UI semantics of
+   branching / time-travel lineage and is orthogonal to interrupt resolution.
+   A client that wants to explore alternate resumes (e.g. "what if I had denied
+   instead of approved?") uses `parentRunId` the same way it would for any
+   branch, independently of the resume mechanism.
 
 3. **Cover all open interrupts.** A single `resume` array **MUST** address every
    open interrupt from the interrupted run. Partial resumes (leaving some
@@ -320,7 +323,6 @@ insufficient.
 {
   "threadId": "thread-1",
   "runId": "run-2",
-  "parentRunId": "run-1",
   "resume": [
     {
       "interruptId": "int-abc123",
@@ -382,7 +384,6 @@ the execution outcome, then `RUN_FINISHED { outcome: "success" }`.
 {
   "threadId": "thread-2",
   "runId": "run-11",
-  "parentRunId": "run-10",
   "resume": [
     {
       "interruptId": "int-email-edit",
@@ -431,7 +432,6 @@ Agent fires three parallel tool calls, all requiring approval:
 {
   "threadId": "thread-3",
   "runId": "run-21",
-  "parentRunId": "run-20",
   "resume": [
     { "interruptId": "i-1", "status": "resolved", "payload": { "approved": true } },
     { "interruptId": "i-2", "status": "resolved", "payload": { "approved": true } },
@@ -479,7 +479,6 @@ Agent requests structured data:
 {
   "threadId": "thread-4",
   "runId": "run-31",
-  "parentRunId": "run-30",
   "resume": [
     {
       "interruptId": "int-form",
@@ -511,8 +510,8 @@ requirements. Framework-specific reason with structured `metadata`.
 ### Multi-Step Wizards
 
 Complex workflows where each step requires user confirmation or input. Each
-step produces an interrupt; the chain of `parentRunId` lineage preserves the
-logical turn for observability.
+step produces its own interrupt; thread chronology plus `resume[].interruptId`
+references preserve the logical turn for observability.
 
 ### Error Recovery (custom reason)
 
