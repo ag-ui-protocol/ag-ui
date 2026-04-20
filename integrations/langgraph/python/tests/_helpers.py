@@ -51,19 +51,15 @@ def _record_dispatch(agent: LangGraphAgent):
 
 def make_configured_agent(
     checkpoint_messages: List[Any],
-    streamed_messages: Optional[List[Any]] = None,
     subgraph_names: Optional[Iterable[str]] = None,
 ) -> LangGraphAgent:
     """Build an agent with a mocked checkpoint and a recording dispatcher.
 
     The mocked ``graph.aget_state`` returns a state whose ``.values``
-    carries ``checkpoint_messages`` under the ``messages`` key.
-    ``streamed_messages`` is placed on ``active_run`` so the merge path in
-    ``get_state_and_messages_snapshots`` can observe it."""
+    carries ``checkpoint_messages`` under the ``messages`` key."""
     agent = make_agent(list(subgraph_names) if subgraph_names else ["hotels_agent"])
     agent.active_run = {
         "id": "run-1",
-        "streamed_messages": list(streamed_messages or []),
     }
     _record_dispatch(agent)
     agent.get_state_snapshot = MagicMock(return_value={})

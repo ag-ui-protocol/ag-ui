@@ -58,12 +58,7 @@ RunMetadata = TypedDict("RunMetadata", {
     "has_function_streaming": NotRequired[bool],
     "model_made_tool_call": NotRequired[bool],
     "state_reliable": NotRequired[bool],
-    # Post-run MESSAGES_SNAPSHOT semantics: set True when a mid-stream
-    # MESSAGES_SNAPSHOT fired during the stream; the post-run snapshot
-    # merges streamed_messages only when this is True.
-    "any_mid_stream_merge_fired": NotRequired[bool],
     # Message / state data
-    "streamed_messages": NotRequired[List[Any]],
     "manually_emitted_state": NotRequired[Optional[State]],
     # Reasoning / thinking
     "reasoning_process": NotRequired[Optional[ThinkingProcess]],
