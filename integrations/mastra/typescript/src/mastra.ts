@@ -2,6 +2,7 @@ import type {
   AgentConfig,
   BaseEvent,
   CustomEvent,
+  MessagesSnapshotEvent,
   ReasoningStartEvent,
   ReasoningMessageStartEvent,
   ReasoningMessageContentEvent,
@@ -26,6 +27,7 @@ import { Observable } from "rxjs";
 import type { MastraClient } from "@mastra/client-js";
 import {
   convertAGUIMessagesToMastra,
+  convertMastraMessagesToAGUI,
   GetLocalAgentsOptions,
   getLocalAgents,
   getRemoteAgents,
@@ -106,6 +108,7 @@ export class MastraAgent extends AbstractAgent {
         // Close the run cleanly without calling resumeStream.
         if (forwardedCommand?.resume === false && forwardedCommand?.interruptEvent) {
           await this.emitWorkingMemorySnapshot(subscriber, input.threadId);
+          await this.emitMessagesSnapshot(subscriber, input.threadId);
           subscriber.next({
             type: EventType.RUN_FINISHED,
             threadId: input.threadId,
@@ -189,6 +192,7 @@ export class MastraAgent extends AbstractAgent {
 
             if (!hadError) {
               await this.emitWorkingMemorySnapshot(subscriber, input.threadId);
+              await this.emitMessagesSnapshot(subscriber, input.threadId);
               subscriber.next({
                 type: EventType.RUN_FINISHED,
                 threadId: input.threadId,
@@ -274,6 +278,7 @@ export class MastraAgent extends AbstractAgent {
             },
             onRunFinished: async () => {
               await this.emitWorkingMemorySnapshot(subscriber, input.threadId);
+              await this.emitMessagesSnapshot(subscriber, input.threadId);
               subscriber.next({
                 type: EventType.RUN_FINISHED,
                 threadId: input.threadId,
@@ -353,6 +358,54 @@ export class MastraAgent extends AbstractAgent {
     } catch (error) {
       console.warn(
         `[MastraAgent] Failed to emit working memory snapshot for thread ${threadId}:`,
+        error,
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Fetches conversation history from a local agent's memory and emits a
+   * MESSAGES_SNAPSHOT event so frontends (e.g. CopilotKit) can synchronize
+   * thread state without re-sending all messages.
+   *
+   * Best-effort: logs a warning and returns gracefully on failure so callers
+   * can proceed with RUN_FINISHED even when the snapshot could not be delivered.
+   */
+  private async emitMessagesSnapshot(
+    subscriber: { next: (event: BaseEvent) => void },
+    threadId: string,
+  ): Promise<boolean> {
+    if (!this.isLocalMastraAgent(this.agent)) return true;
+    try {
+      const memory = await this.agent.getMemory({
+        requestContext: this.requestContext,
+      });
+      if (memory) {
+        const { messages } = await memory.recall({
+          threadId,
+          resourceId: this.resourceId,
+          perPage: false,
+        });
+
+        if (messages && messages.length > 0) {
+          const aguiMessages = convertMastraMessagesToAGUI(messages);
+          // Guard against emitting an empty snapshot when all recalled
+          // messages were filtered out (e.g. system-only history).
+          // MESSAGES_SNAPSHOT is authoritative on the client, so an empty
+          // array would clear visible conversation state.
+          if (aguiMessages.length > 0) {
+            subscriber.next({
+              type: EventType.MESSAGES_SNAPSHOT,
+              messages: aguiMessages,
+            } as MessagesSnapshotEvent);
+          }
+        }
+      }
+      return true;
+    } catch (error) {
+      console.warn(
+        `[MastraAgent] Failed to emit messages snapshot for thread ${threadId}:`,
         error,
       );
       return false;
@@ -663,6 +716,11 @@ export class MastraAgent extends AbstractAgent {
     const convertedMessages = convertAGUIMessagesToMastra(messages);
     this.requestContext?.set("ag-ui", { context: inputContext });
     const requestContext = this.requestContext;
+
+    // Message IDs are preserved by convertAGUIMessagesToMastra, so Mastra's
+    // MessageHistory processor dedupes input against stored messages by ID
+    // and storage.saveMessages upserts by ID. We forward everything
+    // CopilotKit sends and let Mastra handle deduplication.
 
     if (this.isLocalMastraAgent(this.agent)) {
       try {

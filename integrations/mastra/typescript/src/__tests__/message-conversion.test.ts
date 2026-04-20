@@ -10,7 +10,7 @@ describe("convertAGUIMessagesToMastra", () => {
 
       const result = convertAGUIMessagesToMastra(messages);
 
-      expect(result).toEqual([{ role: "user", content: "Hello world" }]);
+      expect(result).toEqual([{ id: expect.any(String), role: "user", content: "Hello world" }]);
     });
 
     it("converts array content with text parts", () => {
@@ -28,7 +28,7 @@ describe("convertAGUIMessagesToMastra", () => {
       const result = convertAGUIMessagesToMastra(messages);
 
       expect(result).toEqual([
-        { role: "user", content: "First part\nSecond part" },
+        { id: expect.any(String), role: "user", content: "First part\nSecond part" },
       ]);
     });
 
@@ -39,7 +39,7 @@ describe("convertAGUIMessagesToMastra", () => {
 
       const result = convertAGUIMessagesToMastra(messages);
 
-      expect(result).toEqual([{ role: "user", content: "" }]);
+      expect(result).toEqual([{ id: expect.any(String), role: "user", content: "" }]);
     });
 
     it("preserves non-text parts as structured content", () => {
@@ -61,6 +61,7 @@ describe("convertAGUIMessagesToMastra", () => {
 
       expect(result).toEqual([
         {
+          id: expect.any(String),
           role: "user",
           content: [
             { type: "text", text: "Keep this" },
@@ -85,7 +86,7 @@ describe("convertAGUIMessagesToMastra", () => {
 
       const result = convertAGUIMessagesToMastra(messages);
 
-      expect(result).toEqual([{ role: "user", content: "hello\nworld" }]);
+      expect(result).toEqual([{ id: expect.any(String), role: "user", content: "hello\nworld" }]);
     });
   });
 
@@ -111,6 +112,7 @@ describe("convertAGUIMessagesToMastra", () => {
 
       expect(result).toEqual([
         {
+          id: expect.any(String),
           role: "user",
           content: [
             { type: "image", image: "https://example.com/photo.jpg" },
@@ -141,6 +143,7 @@ describe("convertAGUIMessagesToMastra", () => {
 
       expect(result).toEqual([
         {
+          id: expect.any(String),
           role: "user",
           content: [
             { type: "image", image: "data:image/png;base64,abc123" },
@@ -171,6 +174,7 @@ describe("convertAGUIMessagesToMastra", () => {
 
       expect(result).toEqual([
         {
+          id: expect.any(String),
           role: "user",
           content: [
             {
@@ -205,6 +209,7 @@ describe("convertAGUIMessagesToMastra", () => {
 
       expect(result).toEqual([
         {
+          id: expect.any(String),
           role: "user",
           content: [
             {
@@ -232,7 +237,7 @@ describe("convertAGUIMessagesToMastra", () => {
       const result = convertAGUIMessagesToMastra(messages);
 
       expect(result).toEqual([
-        { role: "user", content: "Hello\nWorld" },
+        { id: expect.any(String), role: "user", content: "Hello\nWorld" },
       ]);
     });
 
@@ -244,7 +249,7 @@ describe("convertAGUIMessagesToMastra", () => {
       const result = convertAGUIMessagesToMastra(messages);
 
       expect(result).toEqual([
-        { role: "user", content: "Just a string" },
+        { id: expect.any(String), role: "user", content: "Just a string" },
       ]);
     });
 
@@ -295,6 +300,7 @@ describe("convertAGUIMessagesToMastra", () => {
 
       expect(result).toEqual([
         {
+          id: expect.any(String),
           role: "user",
           content: [
             { type: "text", text: "Look at this image:" },
@@ -316,6 +322,7 @@ describe("convertAGUIMessagesToMastra", () => {
 
       expect(result).toEqual([
         {
+          id: expect.any(String),
           role: "assistant",
           content: [{ type: "text", text: "I can help with that" }],
         },
@@ -345,6 +352,7 @@ describe("convertAGUIMessagesToMastra", () => {
 
       expect(result).toEqual([
         {
+          id: expect.any(String),
           role: "assistant",
           content: [
             {
@@ -381,6 +389,7 @@ describe("convertAGUIMessagesToMastra", () => {
 
       expect(result).toEqual([
         {
+          id: expect.any(String),
           role: "assistant",
           content: [
             { type: "text", text: "Let me check" },
@@ -457,6 +466,7 @@ describe("convertAGUIMessagesToMastra", () => {
       const result = convertAGUIMessagesToMastra(messages);
 
       expect(result[1]).toEqual({
+        id: expect.any(String),
         role: "tool",
         content: [
           {
@@ -482,6 +492,7 @@ describe("convertAGUIMessagesToMastra", () => {
       const result = convertAGUIMessagesToMastra(messages);
 
       expect(result[0]).toEqual({
+        id: expect.any(String),
         role: "tool",
         content: [
           {
@@ -538,6 +549,38 @@ describe("convertAGUIMessagesToMastra", () => {
 
     it("returns empty array for empty messages", () => {
       expect(convertAGUIMessagesToMastra([])).toEqual([]);
+    });
+  });
+
+  describe("id preservation", () => {
+    it("preserves AG-UI message ids on CoreMessage output so Mastra dedupes", () => {
+      const messages: Message[] = [
+        { id: "msg-user-1", role: "user", content: "hi" },
+        {
+          id: "msg-assistant-1",
+          role: "assistant",
+          content: "hello",
+          toolCalls: [
+            {
+              id: "tc-1",
+              type: "function",
+              function: { name: "f", arguments: "{}" },
+            },
+          ],
+        },
+        {
+          id: "msg-tool-1",
+          role: "tool",
+          content: "done",
+          toolCallId: "tc-1",
+        },
+      ];
+
+      const result = convertAGUIMessagesToMastra(messages);
+
+      expect((result[0] as any).id).toBe("msg-user-1");
+      expect((result[1] as any).id).toBe("msg-assistant-1");
+      expect((result[2] as any).id).toBe("msg-tool-1");
     });
   });
 });
