@@ -183,8 +183,6 @@ class LangGraphAgent:
             "has_function_streaming": False,
             "model_made_tool_call": False,
             "state_reliable": True,
-            "streamed_messages": [],
-            "any_mid_stream_merge_fired": False,
         }
         self.active_run = INITIAL_ACTIVE_RUN
         try:
@@ -260,12 +258,7 @@ class LangGraphAgent:
                 if is_subgraph_stream and current_subgraph != self.current_subgraph:
                     self.current_subgraph = current_subgraph
                     # Every time a subgraph changes, we need to update the state and messages snapshots.
-                    # Record that a mid-stream merge fired: the post-run
-                    # snapshot must preserve these streamed_messages
-                    # (delivered to the client here) rather than wiping
-                    # them with a checkpoint-only final snapshot.
-                    self.active_run["any_mid_stream_merge_fired"] = True
-                    async for ev in self.get_state_and_messages_snapshots(config):
+                    async for ev in self.get_state_and_messages_snapshots(config, merge_streamed_messages=False):
                         yield ev
 
                 if event["event"] == "error":
@@ -427,28 +420,8 @@ class LangGraphAgent:
                 for ev in self.handle_node_change(node_name):
                     yield ev
 
-            # Post-run MESSAGES_SNAPSHOT semantics:
-            #
-            # - Runs where no mid-stream boundary snapshot fired: the
-            #   checkpoint is the authoritative final state. Do NOT merge
-            #   in ``streamed_messages`` — they include transient LLM
-            #   outputs (``.with_structured_output()`` / router /
-            #   classifier calls) that never committed, and their
-            #   presence here shows up as duplicate / empty assistant
-            #   bubbles in the final snapshot.
-            #
-            # - Runs where at least one mid-stream boundary snapshot
-            #   fired: keep the ``streamed_messages`` merge. Those
-            #   messages were already delivered to the client via the
-            #   mid-stream snapshots and must remain visible in the
-            #   final snapshot; the parent graph often returns
-            #   ``Command(goto=...)`` without folding them into state,
-            #   so the checkpoint alone is incomplete.
-            any_mid_stream_merge_fired = self.active_run.get(
-                "any_mid_stream_merge_fired", False
-            )
             async for ev in self.get_state_and_messages_snapshots(
-                config, merge_streamed_messages=any_mid_stream_merge_fired
+                config, merge_streamed_messages=False
             ):
                 yield ev
 
@@ -1094,17 +1067,6 @@ class LangGraphAgent:
                 return
 
         elif event_type == LangGraphEventTypes.OnChatModelEnd:
-            output_msg = event.get("data", {}).get("output")
-            if isinstance(output_msg, BaseMessage):
-                self.active_run.setdefault("streamed_messages", []).append(output_msg)
-            else:
-                # Non-BaseMessage outputs (None / dicts / bespoke return types)
-                # can't be merged into the streamed_messages buffer. Log for
-                # observability — callers running in debug can see drops.
-                logger.debug(
-                    "OnChatModelEnd output not appended to streamed_messages (type=%r)",
-                    type(output_msg).__name__,
-                )
             if self.get_message_in_progress(self.active_run["id"]) and self.get_message_in_progress(self.active_run["id"]).get("tool_call_id"):
                 resolved = self._dispatch_event(
                     ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=self.get_message_in_progress(self.active_run["id"])["tool_call_id"], raw_event=event)
