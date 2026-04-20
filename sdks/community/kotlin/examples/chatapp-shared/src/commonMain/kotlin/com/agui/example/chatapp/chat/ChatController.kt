@@ -40,6 +40,7 @@ import com.contextable.a2ui4k.model.UiDefinition
 import com.contextable.a2ui4k.model.UiEvent
 import com.contextable.a2ui4k.model.ActionEvent
 import com.contextable.a2ui4k.state.SurfaceStateManager
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -719,26 +720,43 @@ class ChatController(
             is StateDeltaEvent, is StateSnapshotEvent -> Unit
             is ActivitySnapshotEvent -> {
                 if (event.activityType == "a2ui-surface") {
-                    // The with-a2a-a2ui bridge emits ACTIVITY_SNAPSHOT for every v0.9
-                    // A2A DataPart with `content` set to the raw v0.9 envelope
-                    // ({version:"v0.9", <op>:{…}}). Pass those straight to
-                    // processMessage so the library takes the v0.9 path.
-                    // Legacy v0.8 snapshots still need the {type: ACTIVITY_SNAPSHOT, …}
-                    // wrapper for the v0.8 transcoder.
+                    // Three supported snapshot shapes, in order of precedence:
+                    //   1. `a2ui_operations` array — emitted by CopilotRuntime's
+                    //      a2ui middleware (pure AG-UI stack). Each element is
+                    //      a v0.9 envelope; replay them in order.
+                    //   2. Raw v0.9 envelope (`{version:"v0.9", <op>:{…}}`) —
+                    //      emitted by the with-a2a-a2ui A2A bridge's v0.9 pass-
+                    //      through patch. Pass straight to processMessage.
+                    //   3. Legacy v0.8 payload — wrap in the ACTIVITY_SNAPSHOT
+                    //      envelope for the library's v0.8 transcoder.
                     val contentObj = event.content as? JsonObject
+                    val opsArray = contentObj?.get("a2ui_operations") as? JsonArray
                     val isV09Native = contentObj?.get("version")
                         ?.jsonPrimitive?.contentOrNull == "v0.9"
-                    val envelope = if (isV09Native) {
-                        contentObj!!
-                    } else {
-                        buildJsonObject {
-                            put("type", JsonPrimitive("ACTIVITY_SNAPSHOT"))
-                            put("messageId", JsonPrimitive(event.messageId))
-                            put("activityType", JsonPrimitive(event.activityType))
-                            put("content", event.content)
+
+                    val handled: Boolean = when {
+                        opsArray != null -> {
+                            // Iterate ops and feed each to processMessage; a
+                            // surface is considered handled if any op was.
+                            var anyHandled = false
+                            for (op in opsArray) {
+                                val opObj = op as? JsonObject ?: continue
+                                if (surfaceStateManager.processMessage(opObj)) {
+                                    anyHandled = true
+                                }
+                            }
+                            anyHandled
                         }
+                        isV09Native -> surfaceStateManager.processMessage(contentObj!!)
+                        else -> surfaceStateManager.processMessage(
+                            buildJsonObject {
+                                put("type", JsonPrimitive("ACTIVITY_SNAPSHOT"))
+                                put("messageId", JsonPrimitive(event.messageId))
+                                put("activityType", JsonPrimitive(event.activityType))
+                                put("content", event.content)
+                            }
+                        )
                     }
-                    val handled = surfaceStateManager.processMessage(envelope)
                     if (!handled) {
                         logger.w { "a2ui: snapshot envelope rejected for messageId=${event.messageId}" }
                     }
