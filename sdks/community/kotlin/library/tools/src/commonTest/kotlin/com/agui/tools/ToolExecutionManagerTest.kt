@@ -57,7 +57,12 @@ class ToolExecutionManagerTest {
     }
 
     @Test
-    fun missingToolProducesFailureResponse() = runTest {
+    fun unknownToolIsSkippedNotErrored() = runTest {
+        // Unknown tools are assumed to be server-handled (e.g. A2UI's render_a2ui
+        // injected by CopilotRuntime's a2ui middleware). Emitting a client-side
+        // error response would race the server's synthetic TOOL_CALL_RESULT and
+        // leave two conflicting tool results in history, breaking subsequent
+        // turns. Silently skip instead.
         val registry = DefaultToolRegistry() // intentionally empty
         val handler = RecordingResponseHandler()
         val manager = ToolExecutionManager(registry, handler)
@@ -73,10 +78,7 @@ class ToolExecutionManagerTest {
             runId = "run-2"
         ).toList()
 
-        assertEquals(1, handler.messages.size)
-        val response = handler.messages.single()
-        assertEquals("missing-1", response.toolCallId)
-        assertTrue(response.content.contains("not available"))
+        assertEquals(0, handler.messages.size)
     }
 
     private class RecordingResponseHandler : ToolResponseHandler {

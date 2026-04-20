@@ -149,17 +149,20 @@ class ToolExecutionManager(
             )
             
         } catch (e: ToolNotFoundException) {
-            logger.w { "Tool not found: $toolName (ID: $toolCallId)" }
-            
-            val errorMessage = ToolMessage(
-                id = generateMessageId(),
-                content = "Error: Tool '$toolName' is not available",
-                toolCallId = toolCallId
-            )
-            
-            responseHandler.sendToolResponse(errorMessage, threadId, runId)
-            _executionEvents.emit(ToolExecutionEvent.Failed(toolCallId, toolName, "Tool not found"))
-            
+            // Tool isn't registered on this client. Under middleware-injected
+            // server-side tools (e.g. A2UI's render_a2ui, which CopilotRuntime's
+            // a2ui middleware adds to RunAgentInput.tools and handles entirely
+            // on the server), the server owns execution and emits its own
+            // synthetic TOOL_CALL_RESULT. Emitting a client-side error response
+            // here would race that synthetic result, leaving two conflicting
+            // tool results in history and breaking the next turn. Silently
+            // skip — the server is responsible for this tool.
+            logger.i {
+                "Skipping client-side execution for tool '$toolName' (not in registry;" +
+                    " assuming server-side handling). ID: $toolCallId"
+            }
+            _executionEvents.emit(ToolExecutionEvent.Failed(toolCallId, toolName, "Tool not found (server-handled)"))
+
         } catch (e: Exception) {
             logger.e(e) { "Tool execution failed: $toolName (ID: $toolCallId)" }
             
