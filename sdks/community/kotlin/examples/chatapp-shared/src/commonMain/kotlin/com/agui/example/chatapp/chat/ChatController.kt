@@ -551,7 +551,12 @@ class ChatController(
             content = formatAssistantContent(this),
             isStreaming = streamingMessageIds.contains(id)
         )
-        is UserMessage -> if (content == "[A2UI Action]") null else DisplayMessage(
+        // A2UI user actions are inlined into the UserMessage.content (see
+        // sendA2UiAction) so the LLM sees them without the CopilotRuntime
+        // a2ui middleware synthesizing a `log_a2ui_event` tool pair that
+        // trips ag_ui_adk's historical-tool-batch skip. Don't render those
+        // messages as chat bubbles — they're plumbing, not user prose.
+        is UserMessage -> if (content.startsWith("[A2UI Action]")) null else DisplayMessage(
             id = id,
             role = MessageRole.USER,
             content = content,
