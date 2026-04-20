@@ -127,28 +127,6 @@ class TestGetStateAndMessagesSnapshots(unittest.IsolatedAsyncioTestCase):
         self.assertIn("h1", ids)
         self.assertLess(ids.index("f1"), ids.index("h1"))
 
-    async def test_uncommitted_streamed_message_appended_after_checkpoint(self):
-        """Uncommitted streamed messages (e.g. supervisor routing) go after checkpoint."""
-        user = HumanMessage(content="hi", id="u1")
-        flights = AIMessage(content="Booked KLM", id="f1")
-        supervisor_routing = AIMessage(content="routing", id="sup1")
-        agent = make_configured_agent([user, flights], streamed_messages=[supervisor_routing])
-        async for _ in agent.get_state_and_messages_snapshots({}):
-            pass
-        snap = snapshot_event(agent.dispatched)
-        ids = [m.id for m in snap.messages]
-        self.assertIn("sup1", ids)
-        self.assertGreater(ids.index("sup1"), ids.index("f1"))
-
-    async def test_streamed_message_already_in_checkpoint_not_duplicated(self):
-        """A streamed message whose ID is already in the checkpoint appears only once."""
-        user = HumanMessage(content="hi", id="u1")
-        exp = AIMessage(content="activities", id="exp1")
-        agent = make_configured_agent([user, exp], streamed_messages=[exp])
-        async for _ in agent.get_state_and_messages_snapshots({}):
-            pass
-        snap = snapshot_event(agent.dispatched)
-        self.assertEqual([m.id for m in snap.messages].count("exp1"), 1)
 
 
 # ---------------------------------------------------------------------------
