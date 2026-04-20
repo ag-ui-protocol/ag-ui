@@ -1,4 +1,15 @@
-name: Publish Release
+name: release / publish
+
+# Mirrors CopilotKit's `release / publish` DX. Fires on any merged PR to
+# main. We differ from CopilotKit in one way: we detect version changes
+# by diffing against the npm/PyPI registries (rather than parsing the
+# merged branch name), which lets BOTH the automated release-PR flow and
+# plain version-bump PRs from external maintainers trigger a publish.
+#
+# Handles stable AND prerelease versions:
+#   "1.2.3"              → publishes to npm `latest` / PyPI normal
+#   "1.2.3-alpha.0"      → publishes to npm `alpha` / PyPI (pip needs --pre)
+#   "1.2.3a0" / "1.2.3b0" / "1.2.3rc0" → same, with PEP 440 prerelease tags
 
 on:
   pull_request:
@@ -6,231 +17,160 @@ on:
     branches: [main]
 
 concurrency:
-  group: publish-release
+  group: release-publish
   cancel-in-progress: false
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  NX_VERBOSE_LOGGING: true
 
 jobs:
   publish:
-    # Only run when a release PR is merged (not closed without merging)
-    if: >
-      github.event.pull_request.merged == true &&
-      startsWith(github.event.pull_request.head.ref, 'release/publish/')
+    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      id-token: write
-
+    timeout-minutes: 20
     steps:
-      - name: Parse release metadata
-        id: meta
-        env:
-          PR_BODY: ${{ github.event.pull_request.body }}
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
-        run: |
-          # Extract scope from branch name
-          SCOPE=$(echo "$HEAD_REF" | sed 's|release/publish/||')
-          echo "scope=$SCOPE" >> "$GITHUB_OUTPUT"
-          echo "Release scope: $SCOPE"
-
-          # Extract release metadata from PR body HTML comment
-          RELEASE_META=$(echo "$PR_BODY" | python3 -c "
-          import re, sys
-          m = re.search(r'<!-- release-meta: (.+?) -->', sys.stdin.read())
-          print(m.group(1) if m else '')
-          ")
-          if [ -z "$RELEASE_META" ]; then
-            echo "ERROR: Could not find release metadata in PR body" >&2
-            echo "Expected <!-- release-meta: {...} --> comment" >&2
-            exit 1
-          fi
-          echo "release_meta=$RELEASE_META" >> "$GITHUB_OUTPUT"
-
-          # Partition packages by ecosystem
-          TS_PACKAGES=$(echo "$RELEASE_META" | jq -c '[.packages[] | select(.ecosystem == "typescript")]')
-          PY_PACKAGES=$(echo "$RELEASE_META" | jq -c '[.packages[] | select(.ecosystem == "python")]')
-
-          TS_COUNT=$(echo "$TS_PACKAGES" | jq 'length')
-          PY_COUNT=$(echo "$PY_PACKAGES" | jq 'length')
-
-          echo "ts_packages=$TS_PACKAGES" >> "$GITHUB_OUTPUT"
-          echo "py_packages=$PY_PACKAGES" >> "$GITHUB_OUTPUT"
-          echo "ts_count=$TS_COUNT" >> "$GITHUB_OUTPUT"
-          echo "py_count=$PY_COUNT" >> "$GITHUB_OUTPUT"
-
-          echo "TypeScript packages: $TS_COUNT"
-          echo "Python packages: $PY_COUNT"
-
-      - name: Validate versions against registries
-        env:
-          RELEASE_META: ${{ steps.meta.outputs.release_meta }}
-        run: |
-          FAILED=false
-          while read -r pkg; do
-            NAME=$(echo "$pkg" | jq -r '.name')
-            VERSION=$(echo "$pkg" | jq -r '.newVersion')
-            ECOSYSTEM=$(echo "$pkg" | jq -r '.ecosystem')
-
-            if [ "$ECOSYSTEM" = "typescript" ]; then
-              if npm view "$NAME" version > /tmp/npm-check 2>&1; then
-                CURRENT=$(cat /tmp/npm-check | tr -d '\n')
-              elif grep -q "E404" /tmp/npm-check; then
-                CURRENT="0.0.0"
-              else
-                echo "ERROR: npm registry check failed for $NAME" >&2
-                cat /tmp/npm-check >&2
-                FAILED=true
-                continue
-              fi
-              echo "npm: $NAME current=$CURRENT new=$VERSION"
-            else
-              HTTP_CODE=$(curl -s -o /tmp/pypi-check -w "%{http_code}" "https://pypi.org/pypi/$NAME/json")
-              if [ "$HTTP_CODE" = "200" ]; then
-                CURRENT=$(python3 -c "import json; print(json.load(open('/tmp/pypi-check'))['info']['version'])")
-              elif [ "$HTTP_CODE" = "404" ]; then
-                CURRENT="0.0.0"
-              else
-                echo "ERROR: PyPI registry check failed for $NAME (HTTP $HTTP_CODE)" >&2
-                FAILED=true
-                continue
-              fi
-              echo "PyPI: $NAME current=$CURRENT new=$VERSION"
-            fi
-
-            # Version must not already be published
-            if [ "$VERSION" = "$CURRENT" ]; then
-              echo "ERROR: $NAME@$VERSION is already published" >&2
-              FAILED=true
-            fi
-
-            # Reject version downgrades
-            if [ "$CURRENT" != "0.0.0" ] && [ "$VERSION" != "$CURRENT" ]; then
-              IFS='.' read -r CUR_MAJ CUR_MIN CUR_PAT <<< "$(echo "$CURRENT" | sed 's/[^0-9.]//g' | cut -d. -f1-3)"
-              IFS='.' read -r NEW_MAJ NEW_MIN NEW_PAT <<< "$(echo "$VERSION" | sed 's/[^0-9.]//g' | cut -d. -f1-3)"
-              if [ "$NEW_MAJ" -lt "$CUR_MAJ" ] || \
-                 ([ "$NEW_MAJ" -eq "$CUR_MAJ" ] && [ "$NEW_MIN" -lt "$CUR_MIN" ]) || \
-                 ([ "$NEW_MAJ" -eq "$CUR_MAJ" ] && [ "$NEW_MIN" -eq "$CUR_MIN" ] && [ "$NEW_PAT" -lt "$CUR_PAT" ]); then
-                echo "ERROR: $NAME@$VERSION would be a downgrade from $CURRENT" >&2
-                FAILED=true
-              fi
-            fi
-          done < <(echo "$RELEASE_META" | jq -c '.packages[]')
-
-          if [ "$FAILED" = "true" ]; then
-            echo "ERROR: One or more versions are already published. Bump versions and try again." >&2
-            exit 1
-          fi
-          echo "All versions validated"
-
-      - name: Checkout code
+      - name: Checkout merged main
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      # -- TypeScript setup (only if needed) --
-      - name: Install pnpm
-        if: steps.meta.outputs.ts_count != '0'
+      - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 10.13.1
+          version: "10.13.1"
 
-      - name: Set up Node.js
-        if: steps.meta.outputs.ts_count != '0'
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-          registry-url: "https://registry.npmjs.org"
+          registry-url: https://registry.npmjs.org
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Configure npm auth
+        run: |
+          npm config set "//registry.npmjs.org/:_authToken" "${NPM_TOKEN}"
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Install protoc
-        if: steps.meta.outputs.ts_count != '0'
         uses: arduino/setup-protoc@v3
         with:
           version: "25.x"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Setup pnpm cache
-        if: steps.meta.outputs.ts_count != '0'
-        uses: actions/cache@v4
-        with:
-          path: ~/.local/share/pnpm/store
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-store-
-
-      - name: Install TypeScript dependencies
-        if: steps.meta.outputs.ts_count != '0'
-        run: pnpm install --frozen-lockfile
-
-      - name: Build TypeScript packages
-        if: steps.meta.outputs.ts_count != '0'
-        run: pnpm run build
-
-      - name: Test TypeScript packages
-        if: steps.meta.outputs.ts_count != '0'
-        run: pnpm run test
-
-      # -- Tagging (before publish so tags exist if publish succeeds) --
-      - name: Create git tags
-        env:
-          RELEASE_META: ${{ steps.meta.outputs.release_meta }}
-        run: |
-          TAGS=()
-          while read -r pkg; do
-            NAME=$(echo "$pkg" | jq -r '.name')
-            VERSION=$(echo "$pkg" | jq -r '.newVersion')
-            TAG="${NAME}@${VERSION}"
-            if git rev-parse "$TAG" >/dev/null 2>&1; then
-              echo "ERROR: Tag $TAG already exists" >&2
-              exit 1
-            fi
-            git tag "$TAG" || { echo "ERROR: Failed to tag $TAG" >&2; exit 1; }
-            TAGS+=("$TAG")
-            echo "Tagged $TAG"
-          done < <(echo "$RELEASE_META" | jq -c '.packages[]')
-
-          git push origin "${TAGS[@]}"
-
-      - name: Publish TypeScript packages
-        if: steps.meta.outputs.ts_count != '0'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          TS_PACKAGES: ${{ steps.meta.outputs.ts_packages }}
-        run: |
-          PROJECTS=$(echo "$TS_PACKAGES" | jq -r '[.[].name] | join(",")')
-          echo "Publishing TypeScript projects: $PROJECTS"
-          npx nx release publish --projects="$PROJECTS"
-
-      # -- Python setup (only if needed) --
       - name: Install uv
-        if: steps.meta.outputs.py_count != '0'
         uses: astral-sh/setup-uv@v4
         with:
           version: ">=0.8.0"
 
-      - name: Set up Python
-        if: steps.meta.outputs.py_count != '0'
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Install Poetry
-        if: steps.meta.outputs.py_count != '0'
         run: pip install poetry
 
+      - name: Install packaging library
+        run: pip install packaging
+
+      - name: Detect TypeScript version changes vs npm
+        id: detect_ts
+        run: |
+          CHANGED=$(bash scripts/release/detect-ts-version-changes.sh 2>detect-ts.log || echo "[]")
+          cat detect-ts.log || true
+          [ -z "$CHANGED" ] && CHANGED="[]"
+          [ "$CHANGED" = "null" ] && CHANGED="[]"
+          echo "packages=$CHANGED" >> "$GITHUB_OUTPUT"
+          COUNT=$(echo "$CHANGED" | jq 'length')
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+
+      - name: Detect Python version changes vs PyPI
+        id: detect_py
+        run: |
+          CHANGED=$(bash scripts/release/detect-py-version-changes.sh 2>detect-py.log || echo "[]")
+          cat detect-py.log || true
+          [ -z "$CHANGED" ] && CHANGED="[]"
+          [ "$CHANGED" = "null" ] && CHANGED="[]"
+          echo "packages=$CHANGED" >> "$GITHUB_OUTPUT"
+          COUNT=$(echo "$CHANGED" | jq 'length')
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+
+      - name: Nothing to publish
+        if: steps.detect_ts.outputs.count == '0' && steps.detect_py.outputs.count == '0'
+        run: |
+          echo "## release / publish" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "No version changes detected — nothing to publish." >> $GITHUB_STEP_SUMMARY
+
+      - name: Install dependencies
+        if: steps.detect_ts.outputs.count != '0'
+        run: pnpm install --frozen-lockfile
+
+      - name: Build TypeScript packages
+        if: steps.detect_ts.outputs.count != '0'
+        run: pnpm run build
+
+      - name: Test TypeScript packages
+        if: steps.detect_ts.outputs.count != '0'
+        run: pnpm run test
+
+      - name: Group TypeScript packages by dist-tag
+        if: steps.detect_ts.outputs.count != '0'
+        id: ts_groups
+        env:
+          TS_PACKAGES: ${{ steps.detect_ts.outputs.packages }}
+        run: |
+          echo "$TS_PACKAGES" > /tmp/ts-packages.json
+          python3 <<'PYEOF' > /tmp/ts-groups.json
+          import json, re
+          packages = json.load(open('/tmp/ts-packages.json'))
+          groups = {}
+          for pkg in packages:
+              v = pkg['version']
+              # Prerelease → dist-tag is the preid (e.g. "1.2.3-alpha.0" → alpha)
+              m = re.match(r'^\d+\.\d+\.\d+-([a-zA-Z]+)(?:[.\-].*)?$', v)
+              tag = m.group(1) if m else 'latest'
+              groups.setdefault(tag, []).append(pkg['name'])
+          print(json.dumps(groups))
+          PYEOF
+          cat /tmp/ts-groups.json
+
+      - name: Publish TypeScript packages
+        if: steps.detect_ts.outputs.count != '0'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          for TAG in $(jq -r 'keys[]' /tmp/ts-groups.json); do
+            PROJECTS=$(jq -r --arg t "$TAG" '.[$t] | join(",")' /tmp/ts-groups.json)
+            echo "Publishing ${PROJECTS} with --tag ${TAG}"
+            npx nx release publish --projects="$PROJECTS" --tag "$TAG"
+          done
+
       - name: Publish Python packages
-        if: steps.meta.outputs.py_count != '0'
+        if: steps.detect_py.outputs.count != '0'
         env:
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
-          PY_PACKAGES: ${{ steps.meta.outputs.py_packages }}
+          PY_PACKAGES: ${{ steps.detect_py.outputs.packages }}
         run: |
           FAILED=0
           while read -r pkg; do
-            DIR=$(echo "$pkg" | jq -r '.file' | xargs dirname)
-            # The file path is like "integrations/langgraph/python/pyproject.toml"
-            # We need the directory: "integrations/langgraph/python"
-            BUILD_SYSTEM=$(echo "$pkg" | jq -r '.buildSystem // "uv"')
+            NAME=$(echo "$pkg" | jq -r '.name')
+            VERSION=$(echo "$pkg" | jq -r '.version')
+            DIR=$(echo "$pkg" | jq -r '.dir')
+            BUILD_SYSTEM=$(echo "$pkg" | jq -r '.build_system')
 
+            echo "=== Publishing ${NAME}@${VERSION} from ${DIR} (${BUILD_SYSTEM}) ==="
             if ! bash scripts/release/publish-python-package.sh "$DIR" "$BUILD_SYSTEM"; then
-              echo "ERROR: Failed to publish Python package in $DIR" >&2
+              echo "ERROR: Failed to publish ${NAME}@${VERSION}" >&2
               FAILED=1
             fi
           done < <(echo "$PY_PACKAGES" | jq -c '.[]')
@@ -240,43 +180,83 @@ jobs:
             exit 1
           fi
 
-      # -- GitHub Releases --
+      - name: Configure git
+        if: steps.detect_ts.outputs.count != '0' || steps.detect_py.outputs.count != '0'
+        run: |
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+
+      - name: Create and push per-package git tags
+        if: steps.detect_ts.outputs.count != '0' || steps.detect_py.outputs.count != '0'
+        env:
+          TS_PACKAGES: ${{ steps.detect_ts.outputs.packages }}
+          PY_PACKAGES: ${{ steps.detect_py.outputs.packages }}
+        run: |
+          TAGS=()
+          append_tags() {
+            local packages_json="$1"
+            [ -z "$packages_json" ] && return
+            [ "$packages_json" = "null" ] && return
+            while read -r pkg; do
+              NAME=$(echo "$pkg" | jq -r '.name')
+              VERSION=$(echo "$pkg" | jq -r '.version')
+              TAG="${NAME}@${VERSION}"
+              if git rev-parse "$TAG" >/dev/null 2>&1; then
+                echo "WARN: Tag $TAG already exists — skipping"
+                continue
+              fi
+              git tag -a "$TAG" -m "Release ${TAG}"
+              TAGS+=("$TAG")
+              echo "Tagged $TAG"
+            done < <(echo "$packages_json" | jq -c '.[]')
+          }
+
+          append_tags "$TS_PACKAGES"
+          append_tags "$PY_PACKAGES"
+
+          if [ "${#TAGS[@]}" -gt 0 ]; then
+            git push origin "${TAGS[@]}"
+          fi
+
       - name: Create GitHub Release (TypeScript)
-        if: steps.meta.outputs.ts_count != '0'
+        if: steps.detect_ts.outputs.count != '0'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          TS_PACKAGES: ${{ steps.meta.outputs.ts_packages }}
-        run: |
-          # Convert to the format expected by create-or-update-release.sh
-          PACKAGES=$(echo "$TS_PACKAGES" | jq -c '[.[] | {name, version: .newVersion, path: .file}]')
-          bash scripts/release/create-or-update-release.sh typescript "$PACKAGES"
+          TS_PACKAGES: ${{ steps.detect_ts.outputs.packages }}
+        run: bash scripts/release/create-or-update-release.sh typescript "$TS_PACKAGES"
 
       - name: Create GitHub Release (Python)
-        if: steps.meta.outputs.py_count != '0'
+        if: steps.detect_py.outputs.count != '0'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          PY_PACKAGES: ${{ steps.meta.outputs.py_packages }}
-        run: |
-          # Convert to the format expected by create-or-update-release.sh
-          PACKAGES=$(echo "$PY_PACKAGES" | jq -c '[.[] | {name, version: .newVersion, dir: (.file | split("/") | .[:-1] | join("/"))}]')
-          bash scripts/release/create-or-update-release.sh python "$PACKAGES"
+          PY_PACKAGES: ${{ steps.detect_py.outputs.packages }}
+        run: bash scripts/release/create-or-update-release.sh python "$PY_PACKAGES"
 
-      - name: Delete release branch
+      - name: Delete release/next if that's what was merged
+        if: github.event.pull_request.head.ref == 'release/next'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
-          git push origin --delete "$HEAD_REF" || echo "::warning::Failed to delete branch $HEAD_REF"
+          git push origin --delete release/next 2>/dev/null || echo "Branch already gone"
 
-      - name: Summary
+      - name: Release summary
+        if: steps.detect_ts.outputs.count != '0' || steps.detect_py.outputs.count != '0'
         env:
-          SCOPE: ${{ steps.meta.outputs.scope }}
-          RELEASE_META: ${{ steps.meta.outputs.release_meta }}
+          TS_PACKAGES: ${{ steps.detect_ts.outputs.packages }}
+          PY_PACKAGES: ${{ steps.detect_py.outputs.packages }}
         run: |
-          echo "## Published Release: ${SCOPE}" >> $GITHUB_STEP_SUMMARY
+          echo "## release / publish" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Package | Version | Registry |" >> $GITHUB_STEP_SUMMARY
-          echo "|---------|---------|----------|" >> $GITHUB_STEP_SUMMARY
-          echo "$RELEASE_META" | jq -r '.packages[] | "| \(.name) | \(.newVersion) | \(.ecosystem) |"' >> $GITHUB_STEP_SUMMARY
+
+          if [ "$(echo "$TS_PACKAGES" | jq 'length')" -gt 0 ]; then
+            echo "### npm" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "$TS_PACKAGES" | jq -r '.[] | "- `\(.name)@\(.version)`"' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "$(echo "$PY_PACKAGES" | jq 'length')" -gt 0 ]; then
+            echo "### PyPI" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "$PY_PACKAGES" | jq -r '.[] | "- `\(.name)@\(.version)`"' >> $GITHUB_STEP_SUMMARY
+          fi
