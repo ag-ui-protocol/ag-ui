@@ -51,10 +51,17 @@ class TestIsPreToolCall(unittest.TestCase):
         req = _make_request([HumanMessage(content="hi"), AIMessage(content="sure")])
         self.assertTrue(self.middleware._is_pre_tool_call(req))
 
-    def test_tool_message_last_is_not_pre_tool_call(self):
-        tool_msg = ToolMessage(content="result", tool_call_id="tc1")
+    def test_tracked_tool_message_last_suppresses_inject(self):
+        """A ToolMessage from a tracked tool should suppress injection."""
+        tool_msg = ToolMessage(content="result", tool_call_id="tc1", name="write_recipe")
         req = _make_request([HumanMessage(content="go"), tool_msg])
         self.assertFalse(self.middleware._is_pre_tool_call(req))
+
+    def test_untracked_tool_message_last_is_pre_tool_call(self):
+        """A ToolMessage from an untracked tool (e.g. open_canvas) should still inject."""
+        tool_msg = ToolMessage(content="Canvas is now open.", tool_call_id="tc1", name="open_canvas")
+        req = _make_request([HumanMessage(content="go"), tool_msg])
+        self.assertTrue(self.middleware._is_pre_tool_call(req))
 
 
 class TestWrapModelCall(unittest.TestCase):
@@ -192,11 +199,11 @@ class TestWrapModelCallConfigInjection(unittest.TestCase):
         tools = [p["tool"] for p in captured["meta"]["predict_state"]]
         self.assertIn("write_recipe", tools)
 
-    def test_predict_state_not_injected_post_tool_call(self):
-        """predict_state metadata is NOT set when last message is a ToolMessage."""
+    def test_predict_state_not_injected_post_tracked_tool_call(self):
+        """predict_state metadata is NOT set when last message is a tracked ToolMessage."""
         middleware = self._make_middleware()
         req = MagicMock()
-        req.messages = [ToolMessage(content="result", tool_call_id="tc1")]
+        req.messages = [ToolMessage(content="result", tool_call_id="tc1", name="write_recipe")]
 
         captured = {}
         def handler(request):
@@ -224,11 +231,26 @@ class TestWrapModelCallConfigInjection(unittest.TestCase):
         tools = [p["tool"] for p in captured["meta"]["predict_state"]]
         self.assertIn("write_recipe", tools)
 
-    def test_predict_state_not_injected_async_post_tool_call(self):
-        """Async: predict_state metadata is NOT set when last message is a ToolMessage."""
+    def test_predict_state_injected_after_untracked_tool_call(self):
+        """predict_state IS injected when last ToolMessage is from an untracked tool."""
         middleware = self._make_middleware()
         req = MagicMock()
-        req.messages = [ToolMessage(content="result", tool_call_id="tc1")]
+        req.messages = [ToolMessage(content="Canvas is now open.", tool_call_id="tc1", name="open_canvas")]
+
+        captured = {}
+        def handler(request):
+            captured["meta"] = (var_child_runnable_config.get() or {}).get("metadata", {})
+            return MagicMock()
+
+        middleware.wrap_model_call(req, handler)
+
+        self.assertIn("predict_state", captured["meta"])
+
+    def test_predict_state_not_injected_async_post_tracked_tool_call(self):
+        """Async: predict_state metadata is NOT set when last message is a tracked ToolMessage."""
+        middleware = self._make_middleware()
+        req = MagicMock()
+        req.messages = [ToolMessage(content="result", tool_call_id="tc1", name="write_recipe")]
 
         captured = {}
         async def handler(request):

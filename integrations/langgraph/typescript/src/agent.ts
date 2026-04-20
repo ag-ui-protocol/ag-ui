@@ -209,6 +209,7 @@ export class LangGraphAgent extends AbstractAgent {
       id: input.runId,
       threadId: input.threadId,
       hasFunctionStreaming: false,
+      modelMadeToolCall: false,
     };
     // Reset per-run flags
     this.cancelRequested = false;
@@ -231,7 +232,7 @@ export class LangGraphAgent extends AbstractAgent {
   }
 
   async prepareRegenerateStream(input: RegenerateInput, streamMode: StreamMode | StreamMode[]) {
-    const { threadId, messageCheckpoint } = input;
+    const { threadId, messageCheckpoint, forwardedProps } = input;
 
     const timeTravelCheckpoint = await this.getCheckpointByMessage(
       messageCheckpoint!.id!,
@@ -251,6 +252,18 @@ export class LangGraphAgent extends AbstractAgent {
       asNode: timeTravelCheckpoint.next?.[0] ?? "__start__",
     });
 
+    let payloadConfig: LangGraphConfig | undefined;
+    const configsToMerge = [this.assistantConfig, forwardedProps?.config].filter(
+      Boolean,
+    ) as LangGraphConfig[];
+    if (configsToMerge.length) {
+      payloadConfig = await this.mergeConfigs({
+        configs: configsToMerge,
+        assistant: this.assistant,
+        schemaKeys: this.activeRun!.schemaKeys ?? null,
+      });
+    }
+
     const payload = {
       ...(input.forwardedProps ?? {}),
       input: this.langGraphDefaultMergeState(
@@ -261,6 +274,7 @@ export class LangGraphAgent extends AbstractAgent {
       // @ts-ignore
       checkpointId: fork.checkpoint.checkpoint_id!,
       streamMode,
+      config: payloadConfig,
     };
     return {
       streamResponse: this.client.runs.stream(threadId, this.assistant.assistant_id, payload),
@@ -601,8 +615,17 @@ export class LangGraphAgent extends AbstractAgent {
         }
 
         const hasStateDiff = JSON.stringify(updatedState) !== JSON.stringify(state);
-        // We should not update snapshot while a message is in progress.
+        // Suppress STATE_SNAPSHOT while a message is in progress, or while a
+        // predict_state tool call is streaming args (modelMadeToolCall=true).
+        // During tool arg streaming the graph state does not yet reflect the
+        // forthcoming update, so emitting a snapshot would clobber optimistic
+        // UI state. Flag is cleared in OnToolEnd/OnToolError.
+        //
+        // Diverges from Python: TS blocks ALL snapshot kinds (state-diff,
+        // node change, node exit) while the flag is set; Python only
+        // suppresses on node exit. A post-run snapshot runs the safety net.
         if (
+          !this.activeRun!.modelMadeToolCall &&
           (hasStateDiff ||
             this.activeRun!.prevNodeName != this.activeRun!.nodeName ||
             this.activeRun!.exitingNode) &&
@@ -772,6 +795,7 @@ export class LangGraphAgent extends AbstractAgent {
         }
 
         if (toolCallUsedToPredictState) {
+          this.activeRun!.modelMadeToolCall = true;
           this.dispatchEvent({
             type: EventType.CUSTOM,
             name: "PredictState",
@@ -990,6 +1014,9 @@ export class LangGraphAgent extends AbstractAgent {
             })
           })
 
+          // Tool has completed — reset so the next snapshot reflects real state.
+          this.activeRun!.modelMadeToolCall = false;
+          this.activeRun!.hasFunctionStreaming = false;
           break;
         }
 
@@ -1035,7 +1062,17 @@ export class LangGraphAgent extends AbstractAgent {
           messageId: randomUUID(),
           role: "tool",
           rawEvent: event,
-        })
+        });
+        // Tool has completed — reset so the next snapshot reflects real state.
+        this.activeRun!.modelMadeToolCall = false;
+        this.activeRun!.hasFunctionStreaming = false;
+        break;
+      case LangGraphEventTypes.OnToolError:
+        // A tool threw before OnToolEnd could fire. Without this, the
+        // modelMadeToolCall flag would stay set and suppress snapshots
+        // for the rest of the run.
+        this.activeRun!.modelMadeToolCall = false;
+        this.activeRun!.hasFunctionStreaming = false;
         break;
     }
   }

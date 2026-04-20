@@ -3,6 +3,7 @@
 """Main ADKAgent implementation for bridging AG-UI Protocol with Google ADK."""
 from ag_ui_adk.agui_toolset import AGUIToolset
 
+import copy
 from typing import Optional, Dict, Callable, Any, AsyncGenerator, List, Iterable, TYPE_CHECKING, Tuple, Union
 
 if TYPE_CHECKING:
@@ -22,6 +23,24 @@ from ag_ui.core import (
 
 from google.adk import Runner
 from google.adk.agents import BaseAgent, LlmAgent, RunConfig as ADKRunConfig
+
+# Feature detect ADK's invocation_id override.
+#
+# Runner._resolve_invocation_id() was added somewhere between google-adk 1.24
+# and 1.28 and is present on every version since (including 1.30.0, the release
+# whose failing tests motivated ag-ui-protocol/ag-ui#1534). It inspects
+# new_message and — if it contains a FunctionResponse — forcibly substitutes
+# the caller-supplied invocation_id with the one on the matching FunctionCall
+# event, then routes the run through the resumed-invocation path. For
+# standalone LlmAgent roots that previously emitted end_of_agent=True on the
+# function_call event, that path early-returns without calling the LLM, so
+# HITL resumption silently produces zero content events.
+#
+# When this override is present we reshape the tool-result submission so that
+# new_message does NOT contain a FunctionResponse: the FunctionResponse is
+# pre-appended to the session as its own event, and new_message becomes a
+# minimal placeholder that short-circuits _resolve_invocation_id.
+_ADK_OVERRIDES_INVOCATION_ID = hasattr(Runner, "_resolve_invocation_id")
 from google.adk.agents.run_config import StreamingMode
 from google.adk.agents.llm_agent import InstructionProvider, ToolUnion
 from google.adk.sessions import BaseSessionService, InMemorySessionService
@@ -111,6 +130,8 @@ class ADKAgent:
 
         # Session identity
         use_thread_id_as_session_id: bool = False,
+
+        capabilities: Optional[Dict[str, Any]] = None,
     ):
         """Initialize the ADKAgent.
 
@@ -158,6 +179,12 @@ class ADKAgent:
                 as the ADK session_id instead of letting the backend generate one.
                 Eliminates the O(n) list_sessions scan for session recovery after
                 middleware restarts. Defaults to False for backward compatibility.
+            capabilities: Optional dictionary of agent capabilities conforming to
+                the AG-UI AgentCapabilities schema. When provided, the capabilities
+                are returned from the GET /capabilities endpoint, enabling frontend
+                clients to discover agent features before initiating a run. Use the
+                "custom" key for application-specific feature flags (e.g.,
+                {"custom": {"predictiveChips": True, "suggestedQuestions": True}}).
 
             Note:
             If delete_session_on_cleanup=False but save_session_to_memory_on_cleanup=True, sessions will accumulate in SessionService but still be saved to memory on cleanup.
@@ -169,7 +196,15 @@ class ADKAgent:
         
         if user_id and user_id_extractor:
             raise ValueError("Cannot specify both 'user_id' and 'user_id_extractor'")
-        
+
+        if capabilities is not None:
+            if not isinstance(capabilities, dict):
+                raise TypeError(f"capabilities must be a dict, got {type(capabilities).__name__}")
+            try:
+                json.dumps(capabilities)
+            except (TypeError, ValueError) as e:
+                raise ValueError(f"capabilities must be JSON-serializable: {e}") from e
+
         self._adk_agent = adk_agent
         self._static_app_name = app_name
         self._app_name_extractor = app_name_extractor
@@ -216,11 +251,16 @@ class ADKAgent:
         # Session lookup cache for efficient (thread_id, user_id) to session metadata mapping
         # Maps (thread_id, user_id) -> (session_id, app_name, user_id)
         self._session_lookup_cache: Dict[Tuple[str, str], Tuple[str, str, str]] = {}
+        # Keys where hydration already scanned DB and found nothing (avoids redundant scan)
+        self._cache_checked_keys: set = set()
+        # Keys where _ensure_session_exists has verified pending tool calls on this instance
+        self._sessions_verified_locally: set = set()
 
         # Predictive state configuration for real-time state updates
         self._predict_state = predict_state
         # Message snapshot configuration
         self._emit_messages_snapshot = emit_messages_snapshot
+        self._capabilities = capabilities
 
         # Streaming function call arguments (Gemini 3+ via Vertex AI)
         if streaming_function_call_arguments and not self._adk_supports_streaming_fc_args():
@@ -302,6 +342,30 @@ class ADKAgent:
 
         return _has_composite_descendant(root)
 
+    @staticmethod
+    def _find_function_call_invocation_id(session, tool_call_id: str) -> Optional[str]:
+        """Find the invocation_id of the event that authored a FunctionCall.
+
+        ADK 1.30+ derives the effective invocation_id for tool-result submissions
+        by looking up the matching FunctionCall event in session history. We read
+        the same attribute here so that any FunctionResponse we pre-append carries
+        a consistent invocation_id with the upstream FunctionCall.
+
+        Returns None if no matching FunctionCall event is found.
+        """
+        events = getattr(session, "events", None) or []
+        for event in events:
+            content = getattr(event, "content", None)
+            parts = getattr(content, "parts", None) if content else None
+            if not parts:
+                continue
+            for part in parts:
+                fc = getattr(part, "function_call", None)
+                fc_id = getattr(fc, "id", None) if fc else None
+                if fc_id and fc_id == tool_call_id:
+                    return getattr(event, "invocation_id", None)
+        return None
+
     @classmethod
     def from_app(
         cls,
@@ -334,6 +398,8 @@ class ADKAgent:
         streaming_function_call_arguments: bool = False,
         # Session identity
         use_thread_id_as_session_id: bool = False,
+        # Agent capabilities
+        capabilities: Optional[Dict[str, Any]] = None,
     ) -> "ADKAgent":
         """Create ADKAgent from an ADK App instance.
 
@@ -369,6 +435,8 @@ class ADKAgent:
                 call arguments from Gemini 3+ models. Requires google-adk >= 1.24.0.
             use_thread_id_as_session_id: When True, use the AG-UI thread_id directly
                 as the ADK session_id. See ADKAgent.__init__ for details.
+            capabilities: Optional dictionary of agent capabilities conforming to
+                the AG-UI AgentCapabilities schema. See ADKAgent.__init__ for details.
 
         Returns:
             ADKAgent instance configured to use the App
@@ -413,11 +481,22 @@ class ADKAgent:
             emit_messages_snapshot=emit_messages_snapshot,
             streaming_function_call_arguments=streaming_function_call_arguments,
             use_thread_id_as_session_id=use_thread_id_as_session_id,
+            capabilities=capabilities,
         )
         # Store App for per-request App creation with modified agents
         instance._app = app
         instance._plugin_close_timeout = plugin_close_timeout
         return instance
+
+    def get_capabilities(self) -> Optional[Dict[str, Any]]:
+        """Return a copy of the agent's declared capabilities, or None if not configured.
+
+        These capabilities conform to the AG-UI AgentCapabilities schema and are
+        served by the GET /capabilities endpoint when using add_adk_fastapi_endpoint().
+        """
+        if self._capabilities is None:
+            return None
+        return copy.deepcopy(self._capabilities)
 
     def _get_session_metadata(self, thread_id: str, user_id: str) -> Optional[Tuple[str, str, str]]:
         """Get session metadata for a (thread_id, user_id) pair efficiently.
@@ -857,6 +936,30 @@ class ADKAgent:
         Yields:
             AG-UI protocol events
         """
+
+        # Multi-instance: hydrate in-memory session cache from DB on startup/switch.
+        # Ensures pending tool calls are detected across load-balanced instances
+        # so user messages are not dispatched before tool results (prevents LLM errors).
+        user_id = self._get_user_id(input)
+        cache_key = (input.thread_id, user_id)
+        if cache_key not in self._session_lookup_cache:
+            app_name = self._get_app_name(input)
+            session = await self._session_manager._find_session_by_thread_id(
+                app_name, user_id, input.thread_id
+            )
+            if session:
+                self._session_lookup_cache[cache_key] = (
+                    session.id, app_name, user_id
+                )
+                logger.info(
+                    "Hydrated session cache from DB for thread %s (session %s)",
+                    input.thread_id, session.id,
+                )
+            else:
+                # Record that we already checked DB — _ensure_session_exists
+                # can skip the redundant _find_session_by_thread_id scan.
+                self._cache_checked_keys.add(cache_key)
+
         unseen_messages = await self._get_unseen_messages(input)
 
         if not unseen_messages:
@@ -1054,7 +1157,6 @@ class ADKAgent:
         Returns:
             Tuple of (session, backend_session_id)
         """
-        # Check cache first using composite key (thread_id, user_id)
         cache_key = (thread_id, user_id)
         cached = self._session_lookup_cache.get(cache_key)
         if cached:
@@ -1063,47 +1165,77 @@ class ADKAgent:
             session = await self._session_manager.get_session(session_id, cached_app_name, cached_user_id)
             if session:
                 logger.debug(f"Session cache hit for thread {thread_id}, user {user_id}: {session_id}")
+                await self._verify_pending_tool_calls(cache_key, session_id, cached_app_name, cached_user_id)
                 return session, session_id
 
-        # Cache miss or stale - resolve via SessionManager
+        # Cache miss or stale — resolve via SessionManager.
+        # If run() already scanned DB for this key and found nothing,
+        # pass skip_find to avoid a redundant list_sessions call.
+        already_scanned = cache_key in self._cache_checked_keys
+        self._cache_checked_keys.discard(cache_key)
+
         try:
             session, backend_session_id = await self._session_manager.get_or_create_session(
                 thread_id=thread_id,
                 app_name=app_name,
                 user_id=user_id,
-                initial_state=initial_state
+                initial_state=initial_state,
+                skip_find=already_scanned,
             )
 
-            # Cache the mapping as tuple: (session_id, app_name, user_id)
             self._session_lookup_cache[cache_key] = (backend_session_id, app_name, user_id)
-
-            # Clear stale pending_tool_calls on session resumption.
-            # Cache miss + existing session = middleware restart.
-            existing_pending = await self._session_manager.get_state_value(
-                session_id=backend_session_id,
-                app_name=app_name,
-                user_id=user_id,
-                key="pending_tool_calls",
-                default=[],
-            )
-            if existing_pending:
-                logger.info(
-                    f"Cleared {len(existing_pending)} stale pending tool calls "
-                    f"for thread {thread_id} (session {backend_session_id})"
-                )
-                await self._session_manager.set_state_value(
-                    session_id=backend_session_id,
-                    app_name=app_name,
-                    user_id=user_id,
-                    key="pending_tool_calls",
-                    value=[],
-                )
+            await self._verify_pending_tool_calls(cache_key, backend_session_id, app_name, user_id)
 
             logger.debug(f"Session ready for thread {thread_id}: {backend_session_id}")
             return session, backend_session_id
         except Exception as e:
             logger.error(f"Failed to ensure session for thread {thread_id}: {e}")
             raise
+
+    async def _verify_pending_tool_calls(
+        self, cache_key: Tuple[str, str],
+        session_id: str, app_name: str, user_id: str,
+    ) -> None:
+        """On first local access of a session, clear stale pending tool calls.
+
+        Runs once per instance per session. Pending calls are stale when no
+        active execution exists to fulfill them (e.g. after a middleware restart).
+        In multi-instance deployments where another instance has an active
+        execution, pending calls are preserved because the incoming run() will
+        carry tool result messages that satisfy them.
+        """
+        if cache_key in self._sessions_verified_locally:
+            return
+        self._sessions_verified_locally.add(cache_key)
+
+        existing_pending = await self._session_manager.get_state_value(
+            session_id=session_id,
+            app_name=app_name,
+            user_id=user_id,
+            key="pending_tool_calls",
+            default=[],
+        )
+        if not existing_pending:
+            return
+
+        # If there's an active execution on this instance waiting for tool
+        # results, these calls aren't stale.
+        execution = self._active_executions.get(cache_key)
+        if execution and not execution.is_complete:
+            return
+
+        logger.info(
+            "Clearing %d stale pending tool calls for thread %s "
+            "(session %s, no active execution on this instance)",
+            len(existing_pending), cache_key[0], session_id,
+        )
+        await self._session_manager.set_state_value(
+            session_id=session_id,
+            app_name=app_name,
+            user_id=user_id,
+            key="pending_tool_calls",
+            value=[],
+        )
 
     async def _convert_latest_message(
         self,
@@ -1991,18 +2123,73 @@ class ADKAgent:
                     )
                     function_response_parts.append(updated_function_response_part)
 
-                # Create function_response_content but DON'T pre-persist to avoid duplicates.
-                # Instead, pass as new_message with explicit invocation_id to control the ID ADK uses.
                 function_response_content = types.Content(parts=function_response_parts, role='user')
-                # Use input.run_id (not stored_invocation_id) as the invocation_id for this tool response
-                # This ensures DatabaseSessionService compatibility
-                tool_response_invocation_id = input.run_id
 
-                # Pass both new_message AND invocation_id to ADK.
-                # This tells ADK: "process this message, but use THIS specific invocation_id"
-                # (rather than auto-generating an e-xxx ID)
-                new_message = function_response_content
-                tool_only_invocation_id = tool_response_invocation_id
+                if _ADK_OVERRIDES_INVOCATION_ID and self._is_adk_resumable():
+                    # ADK with _resolve_invocation_id (~1.28+) routing:
+                    #
+                    # When new_message contains a FunctionResponse, Runner._resolve_invocation_id()
+                    # looks up the matching FunctionCall event in session history and forces the
+                    # invocation_id to that event's invocation_id, sending the run down the
+                    # _setup_context_for_resumed_invocation() path. For standalone LlmAgent roots
+                    # (whose function_call events were emitted with end_of_agent=True), that path
+                    # then early-returns in run_async() because populate_invocation_agent_states()
+                    # sets end_of_agents[agent] = True — so the LLM is never invoked and the run
+                    # emits zero content events (see ag-ui #1534).
+                    #
+                    # To avoid that, we pre-append the FunctionResponse as its own session event
+                    # (mirroring the "tool_results + user_message" branch above) and pass a
+                    # minimal placeholder as new_message that carries NO FunctionResponse. That
+                    # makes _resolve_invocation_id short-circuit on the "no function_responses"
+                    # branch and preserves whatever invocation_id handling run_kwargs already
+                    # encodes (new-invocation path for standalone LlmAgent; resume path with
+                    # stored_invocation_id for composite orchestrators).
+                    first_tool_call_id = active_tool_results[0]['message'].tool_call_id
+                    first_tool_call_id = lro_id_remap.get(first_tool_call_id, first_tool_call_id)
+                    fc_event_invocation_id = self._find_function_call_invocation_id(
+                        session, first_tool_call_id
+                    )
+                    # Prefer the matching FunctionCall event's invocation_id so ADK's own
+                    # persistence/lookup contract stays consistent; fall back through
+                    # stored_invocation_id and input.run_id so DatabaseSessionService still
+                    # receives a non-null value (GitHub #957).
+                    resume_invocation_id = (
+                        fc_event_invocation_id or stored_invocation_id or input.run_id
+                    )
+                    function_response_event = Event(
+                        timestamp=time.time(),
+                        author='user',
+                        content=function_response_content,
+                        invocation_id=resume_invocation_id,
+                    )
+                    logger.debug(
+                        "Pre-appending FunctionResponse for _resolve_invocation_id-capable ADK "
+                        f"tool-only submission with invocation_id={resume_invocation_id}"
+                    )
+                    await self._session_manager._session_service.append_event(
+                        session, function_response_event
+                    )
+
+                    # Placeholder trigger: a single empty text part. _append_new_message_to_session
+                    # requires at least one part, and _get_function_responses_from_content returns
+                    # [] for a text-only Content — which is exactly what we need.
+                    new_message = types.Content(
+                        role='user',
+                        parts=[types.Part(text='')],
+                    )
+                    # Don't force a caller-supplied invocation_id from here. Composite-agent
+                    # resumption still gets stored_invocation_id via the run_kwargs logic below;
+                    # standalone LlmAgents correctly take the new-invocation path.
+                    tool_only_invocation_id = None
+                else:
+                    # ADK without _resolve_invocation_id (<1.28) or non-resumable apps:
+                    # Pass the FunctionResponse as new_message with the AG-UI run_id as the
+                    # invocation_id. Older ADK honors the caller-supplied invocation_id and
+                    # treats every tool submission as a fresh invocation, so the LLM is invoked
+                    # on the updated history. This preserves the #1074 fix (no duplicate
+                    # FunctionResponse events) by avoiding the pre-append.
+                    new_message = function_response_content
+                    tool_only_invocation_id = input.run_id
             else:
                 # No tool results, just use the user message
                 # If user_message is None (e.g., unseen_messages was empty because all were
@@ -2093,13 +2280,18 @@ class ADKAgent:
             # Composite agents (SequentialAgent, LoopAgent) — whether as root or
             # as sub-agents of an LlmAgent root — need it so ADK calls
             # populate_invocation_agent_states() to restore internal state.
-            # For tool responses, we pass tool_only_invocation_id (input.run_id) to ensure
-            # ADK uses the client's run_id instead of auto-generating an e-xxx ID.
+            # For tool responses on ADK < 1.30, we pass tool_only_invocation_id
+            # (input.run_id) so ADK uses the client's run_id instead of
+            # auto-generating an e-xxx ID. On ADK 1.30+, the tool-only branch
+            # above leaves tool_only_invocation_id unset because the runner
+            # forcibly overrides caller-supplied invocation_ids when a
+            # FunctionResponse is present — we work around that by pre-appending
+            # the FunctionResponse and passing a text-only placeholder instead.
             if stored_invocation_id and self._is_adk_resumable() and self._root_agent_needs_invocation_id():
                 run_kwargs["invocation_id"] = stored_invocation_id
                 logger.debug(f"HITL resumption with invocation_id: {stored_invocation_id}")
             elif tool_only_invocation_id and self._is_adk_resumable():
-                # Tool response case: use client's run_id as invocation_id
+                # Tool response case (ADK < 1.30): use client's run_id as invocation_id
                 run_kwargs["invocation_id"] = tool_only_invocation_id
                 logger.debug(f"Tool response with explicit invocation_id: {tool_only_invocation_id}")
 
@@ -2443,8 +2635,10 @@ class ADKAgent:
                 await execution.cancel()
             self._active_executions.clear()
 
-        # Clear session lookup cache
+        # Clear session lookup cache and related tracking sets
         self._session_lookup_cache.clear()
+        self._cache_checked_keys.clear()
+        self._sessions_verified_locally.clear()
 
         # Stop session manager cleanup task
         await self._session_manager.stop_cleanup_task()

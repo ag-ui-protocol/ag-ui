@@ -1,6 +1,6 @@
 [project]
 name = "ag-ui-langgraph"
-version = "0.0.32"
+version = "0.0.33"
 description = "Implementation of the AG-UI protocol for LangGraph."
 authors = [
     { name = "Ran Shem Tov", email = "ran@copilotkit.ai" }
@@ -8,7 +8,7 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
 dependencies = [
-    "ag-ui-protocol>=0.1.10",
+    "ag-ui-protocol>=0.1.15",
     "langchain>=1.2.0",
     "langchain-core>=0.3.0",
     "langgraph>=0.3.25,<2",

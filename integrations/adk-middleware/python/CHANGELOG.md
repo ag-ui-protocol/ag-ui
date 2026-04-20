@@ -27,6 +27,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **FIX**: First-turn HITL `TOOL_CALL_*` emission on `google-adk` <1.18 (#1536)
+  - `EventTranslator.translate_lro_function_calls` previously suppressed emission for client-tool names in resumable mode, relying on `ClientProxyTool` as the sole emitter
+  - On `google-adk` 1.16/1.17 the runner's resumable flow returns before invoking LRO tools on the first turn (`base_llm_flow.py` pause-early-return), so the proxy never ran and the trio was never emitted — the first HITL turn produced no `TOOL_CALL_START/ARGS/END`
+  - Translator is now the primary LRO emitter across all supported ADK versions; `ClientProxyTool`'s existing `_translator_emitted_tool_call_ids` dedupe guard keeps emissions idempotent when ADK 1.18+ does invoke the proxy
+  - Added a self-dedupe against `emitted_tool_call_ids` so the same LRO event seen twice under SSE streaming (partial=True then partial=False on ADK 1.23+) emits the trio exactly once
+  - `test_hitl_tool_result_submission_with_resumability` now passes on the full `>=1.16,<2.0` pin range
+
+- **FIX**: HITL resumption on google-adk >= 1.28 (`_resolve_invocation_id` override) (#1534)
+  - ADK's `Runner._resolve_invocation_id()` (present since ~1.28, behavior visible from 1.30 onward) inspects `new_message`, and when it contains a `FunctionResponse`, forcibly substitutes the caller-supplied `invocation_id` with the one from the matching `FunctionCall` event and routes the run through the resumed-invocation code path.  For standalone `LlmAgent` roots (whose `function_call` events were emitted with `end_of_agent=True`), that path early-returned in `run_async()` — the LLM was never invoked and HITL tool-result submissions produced zero content events.
+  - Feature-detected via `hasattr(Runner, '_resolve_invocation_id')` so the middleware keeps working across the full supported range (`>=1.16,<2.0`).
+  - When the override is present, tool-only submissions now pre-append the `FunctionResponse` as its own session event (tagged with the originating `FunctionCall`'s `invocation_id` for DatabaseSessionService compatibility, #957) and pass a minimal text-only placeholder as `new_message` so `_resolve_invocation_id` short-circuits on the "no function_responses" branch.  Composite-agent HITL resumption continues to pass the stored `invocation_id` via `run_kwargs`.
+  - `test_function_response_has_correct_invocation_id` is now version-aware: it asserts the persisted `invocation_id` matches the originating `FunctionCall` event on ADK >=1.28 and continues to assert the AG-UI `run_id` on older ADK.
+  - New regression suite `tests/test_adk_130_invocation_id_override.py` pins the tool-only HITL flow end-to-end and verifies pre-append doesn't duplicate the persisted `FunctionResponse`.
+
+- **FIX**: Multi-instance session cache hydration in `ADKAgent.run()` (#1484, thanks @deb538)
+  - Hydrates the in-memory `_session_lookup_cache` from the database-backed `SessionService` on cache miss, before pending-tool-call detection runs
+  - Prevents HITL breakage in load-balanced deployments where requests land on an instance that did not create the session: without hydration, `_has_pending_tool_calls()` returned `False` and user messages were dispatched ahead of pending tool results, causing the LLM to reject the turn
+
+- **FIX**: Redundant `list_sessions` scan on new thread creation (#1514)
+  - Tracks hydration DB misses in `_cache_checked_keys` and passes `skip_find=True` to `get_or_create_session`, eliminating a duplicate `_find_session_by_thread_id` call for new threads
+
+- **FIX**: Stale pending-tool-call cleanup after cache hydration (#1515)
+  - Replaces the cache-miss heuristic in `_ensure_session_exists` with `_verify_pending_tool_calls()`, which runs once per instance per session and only clears pending calls when no active execution exists to fulfill them
+  - Correctly distinguishes multi-instance cache misses (valid calls) from middleware restarts (stale calls)
+
+### Security
+
+- **SEC**: Bump transitive dependencies to fix 1 critical and 7 high Dependabot alerts
+  - `authlib` → 1.6.10 (critical: JWS signature bypass; high: OIDC hash binding, Bleichenbacher oracle, `alg:none` bypass)
+  - `pyasn1` → 0.6.3 (high: DoS via unbounded recursion)
+  - `pyopenssl` → 26.0.0 (high: DTLS cookie callback buffer overflow)
+  - `PyJWT` → 2.12.1 (high: unknown `crit` header extensions)
+  - `black` → 26.3.1 (high: arbitrary file writes from cache file name)
+  - `cryptography` → 46.0.7 (high: subgroup attack on SECT curves)
+  - `protobuf` → 6.33.5+ (high: JSON recursion depth bypass)
+  - `python-multipart` → 0.0.22+ (high: arbitrary file write via non-default config)
+
+- **FIX**: JSON Schema cleaning for `google.genai.types.Schema` compatibility (#1495, fixes #1003)
+  - Replaces `_strip_json_schema_meta` with `_clean_schema_for_genai`: strips `$`-prefixed keys, filters remaining keys via an allowlist derived from `types.Schema.model_fields` (with camelCase aliases), and maps `examples` → `example` (first element) and `const` → `enum` (JSON-serialized single-value list)
+  - Preserves valid genai fields (`title`, `default`, `additionalProperties`, `minProperties`, etc.) that were previously stripped, while correctly removing unsupported fields (`readOnly`, `deprecated`, `contentMediaType`, etc.) that caused `ValidationError`
+  - Adds unit tests (positive, negative, mapping) and end-to-end tests validating cleaned schemas through `types.Schema.model_validate()`
+
 - **FIX**: HITL resumption for LlmAgent roots with composite sub-agents (#1444)
   - `_root_agent_needs_invocation_id()` now recursively detects `SequentialAgent` / `LoopAgent` anywhere in the sub-agent tree, not just at the root level
   - Previously, topologies like `LlmAgent → SequentialAgent` or `LlmAgent → LlmAgent → SequentialAgent` lost `invocation_id` across HITL turns, causing the SequentialAgent to lose its position state and ADK to bypass its orchestration on resume

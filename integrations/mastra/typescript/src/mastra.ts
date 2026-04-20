@@ -40,7 +40,7 @@ type RemoteMastraAgent = ReturnType<MastraClient["getAgent"]>;
 
 export interface MastraAgentConfig extends AgentConfig {
   agent: LocalMastraAgent | RemoteMastraAgent;
-  resourceId: string;
+  resourceId?: string;
   requestContext?: RequestContext;
 }
 
@@ -69,7 +69,7 @@ interface MastraAgentStreamOptions {
 
 export class MastraAgent extends AbstractAgent {
   agent: LocalMastraAgent | RemoteMastraAgent;
-  resourceId: string;
+  resourceId?: string;
   requestContext?: RequestContext;
 
   constructor(private config: MastraAgentConfig) {
@@ -216,6 +216,17 @@ export class MastraAgent extends AbstractAgent {
             ) {
               let thread: StorageThreadType | null = await memory.getThreadById({
                 threadId: input.threadId,
+                // Mastra's abstract Memory.getThreadById type is narrower than
+                // its runtime contract — concrete Memory subclasses (and
+                // `AGENT_MEMORY_MISSING_RESOURCE_ID` checks along the thread
+                // lifecycle) expect `resourceId`. We forward it here to stay
+                // consistent with the sibling saveThread call below (which
+                // also normalizes `thread.resourceId`) and the
+                // `emitWorkingMemorySnapshot` call to `getWorkingMemory`, and
+                // to match the rest of the run's memory options (`resource:`
+                // on `.stream()` / `.resumeStream()` in `streamMastraAgent`).
+                // @ts-expect-error upstream type omits resourceId; runtime accepts it
+                resourceId: this.resourceId ?? input.threadId,
               });
 
               if (!thread) {
@@ -246,6 +257,15 @@ export class MastraAgent extends AbstractAgent {
               await memory.saveThread({
                 thread: {
                   ...thread,
+                  // Ensure resourceId is always set on the persisted thread.
+                  // If storage returned a thread with a stale/missing
+                  // resourceId (migrated data, foreign writer, etc.) the
+                  // naive `...thread` spread would carry that through and
+                  // Mastra's Memory would reject the save with
+                  // AGENT_MEMORY_MISSING_RESOURCE_ID. Normalize to the run's
+                  // authoritative resourceId, matching the sibling
+                  // getThreadById call above.
+                  resourceId: this.resourceId ?? input.threadId,
                   metadata: {
                     ...thread.metadata,
                     workingMemory,
@@ -320,7 +340,7 @@ export class MastraAgent extends AbstractAgent {
       });
       if (memory) {
         const workingMemory = await memory.getWorkingMemory({
-          resourceId: this.resourceId,
+          resourceId: this.resourceId ?? threadId,
           threadId,
           memoryConfig: {
             workingMemory: {

@@ -11,6 +11,7 @@ class LangGraphEventTypes(str, Enum):
     OnChatModelEnd = "on_chat_model_end"
     OnToolStart = "on_tool_start"
     OnToolEnd = "on_tool_end"
+    OnToolError = "on_tool_error"
     OnCustomEvent = "on_custom_event"
     OnInterrupt = "on_interrupt"
 
@@ -26,12 +27,14 @@ SchemaKeys = TypedDict("SchemaKeys", {
     "input": NotRequired[Optional[List[str]]],
     "output": NotRequired[Optional[List[str]]],
     "config": NotRequired[Optional[List[str]]],
-    "context": NotRequired[Optional[List[str]]]
+    "context": NotRequired[Optional[List[str]]],
 })
 
 ThinkingProcess = TypedDict("ThinkingProcess", {
     "index": int,
-    "type": NotRequired[Optional[Literal['text']]],
+    "message_id": NotRequired[str],
+    "type": NotRequired[Optional[str]],
+    "signature": NotRequired[Optional[str]],
 })
 
 MessageInProgress = TypedDict("MessageInProgress", {
@@ -41,17 +44,29 @@ MessageInProgress = TypedDict("MessageInProgress", {
 })
 
 RunMetadata = TypedDict("RunMetadata", {
+    # Identification
     "id": str,
-    "schema_keys": NotRequired[Optional[SchemaKeys]],
+    "thread_id": NotRequired[Optional[str]],
+    # Run mode/flow
+    "mode": NotRequired[Literal["start", "continue"]],
+    # Node tracking
     "node_name": NotRequired[Optional[str]],
     "prev_node_name": NotRequired[Optional[str]],
-    "exiting_node": NotRequired[bool],
-    "manually_emitted_state": NotRequired[Optional[State]],
-    "thread_id": NotRequired[Optional[str]],
-    "reasoning_process": NotRequired[Optional[ThinkingProcess]],
+    # Schema
+    "schema_keys": NotRequired[Optional[SchemaKeys]],
+    # Streaming state
     "has_function_streaming": NotRequired[bool],
     "model_made_tool_call": NotRequired[bool],
     "state_reliable": NotRequired[bool],
+    # Post-run MESSAGES_SNAPSHOT semantics: set True when a mid-stream
+    # MESSAGES_SNAPSHOT fired during the stream; the post-run snapshot
+    # merges streamed_messages only when this is True.
+    "any_mid_stream_merge_fired": NotRequired[bool],
+    # Message / state data
+    "streamed_messages": NotRequired[List[Any]],
+    "manually_emitted_state": NotRequired[Optional[State]],
+    # Reasoning / thinking
+    "reasoning_process": NotRequired[Optional[ThinkingProcess]],
 })
 
 MessagesInProgressRecord = Dict[str, Optional[MessageInProgress]]
