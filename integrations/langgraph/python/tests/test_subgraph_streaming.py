@@ -127,8 +127,6 @@ class TestGetStateAndMessagesSnapshots(unittest.IsolatedAsyncioTestCase):
         self.assertIn("h1", ids)
         self.assertLess(ids.index("f1"), ids.index("h1"))
 
-
-
 # ---------------------------------------------------------------------------
 # Subgraph change triggers mid-stream snapshot
 # ---------------------------------------------------------------------------
