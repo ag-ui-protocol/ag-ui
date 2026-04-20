@@ -400,7 +400,19 @@ class StrandsAgent:
                     if msg.role == "tool" and hasattr(msg, "tool_call_id"):
                         tool_name = _tool_call_id_to_name.get(msg.tool_call_id)
                         if tool_name and tool_name in frontend_tool_names:
-                            user_message = f"{tool_name} executed successfully with no return value."
+                            if isinstance(msg.content, str):
+                                result_text = msg.content
+                            if result_text:
+                                user_message = (
+                                    f"Frontend tool '{tool_name}' returned: {result_text}\n"
+                                    "Use this tool result as authoritative context. "
+                                    "If this indicates denial/rejection, do not execute downstream tools."
+                                )
+                            else:
+                                user_message = (
+                                    f"Frontend tool '{tool_name}' returned no content.\n"
+                                    "Ask user how else you can be of assistance"
+                                )
                         break
             elif input_data.messages:
                 for msg in reversed(input_data.messages):
