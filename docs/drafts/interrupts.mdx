@@ -17,8 +17,10 @@ frameworks.
 ### Motivation
 
 Support **human-in-the-loop pauses** (and related mechanisms) natively in AG-UI
-and CopilotKit. This enables compatibility with various framework interrupts,
-workflow suspend/resume, and other framework-specific pause mechanisms.
+and CopilotKit. The goal is a protocol expansive enough to cover all needed
+use cases and let agent frameworks (LangGraph, Mastra, CrewAI, TanStack AI,
+custom orchestrators) adapt their native pause/suspend semantics onto AG-UI
+without bespoke conventions.
 
 ## Status
 
@@ -27,21 +29,40 @@ workflow suspend/resume, and other framework-specific pause mechanisms.
 
 ## Overview
 
-This proposal introduces a standardized interrupt/resume pattern:
+This proposal introduces a standardized interrupt/resume pattern with:
+
+- A terminal model: an interrupt closes the run; a resume starts a new run.
+- Plural interrupts (one run may surface multiple concurrent interrupts).
+- A tiered `Interrupt` shape: required discriminators + optional standardized
+  fields + a `metadata` extension channel for framework-specific data.
+- Explicit resume status (`resolved` / `cancelled`).
+- A schema-based capability mechanism (`responseSchema`) so generic clients
+  can render forms, validate user input, and discover capabilities like
+  approve-with-edits.
 
 ```mermaid
 sequenceDiagram
   participant Agent
   participant Client as Client App
 
-  Agent-->>Client: RUN_FINISHED { outcome: "interrupt", interrupt:{ id, reason, payload }}
-  Client-->>Agent: RunAgentInput.resume { threadId, interruptId, payload }
+  Note over Agent,Client: Run 1 begins
+  Agent-->>Client: RUN_STARTED (runId: r1)
+  Agent-->>Client: ...TOOL_CALL_* / TEXT_MESSAGE_* / STATE_SNAPSHOT...
+  Note over Agent,Client: Agent needs user input — emit snapshot, interrupt
+  Agent-->>Client: RUN_FINISHED { outcome: "interrupt", interrupts: [...] }
+
+  Note over Agent,Client: User resolves interrupts
+  Client-->>Agent: RunAgentInput { threadId, resume: [...], parentRunId: r1 }
+
+  Note over Agent,Client: Run 2 begins as a lineage continuation
+  Agent-->>Client: RUN_STARTED (runId: r2, parentRunId: r1)
+  Agent-->>Client: ...continue / TOOL_CALL_RESULT / ...
   Agent-->>Client: RUN_FINISHED { outcome: "success", result }
 ```
 
 ## Detailed Specification
 
-### Updates to RUN_FINISHED Event
+### Updates to `RUN_FINISHED`
 
 ```typescript
 type RunFinishedOutcome = "success" | "interrupt"
@@ -51,149 +72,453 @@ type RunFinished = {
 
   // ... existing fields
 
-  outcome?: RunFinishedOutcome // optional for back-compat (see rules below)
+  outcome?: RunFinishedOutcome   // optional with default "success" (back-compat)
 
-  // Present when outcome === "success" (or when outcome omitted and interrupt is absent)
+  // Present when outcome === "success" (or omitted)
   result?: any
 
-  // Present when outcome === "interrupt" (or when outcome omitted and interrupt is present)
-  interrupt?: {
-    id?: string // id can be set when needed
-    reason?: string // e.g. "human_approval" | "upload_required" | "policy_hold"
-    payload?: any // arbitrary JSON for UI (forms, proposals, diffs, etc.)
-  }
+  // Present when outcome === "interrupt"
+  interrupts?: Interrupt[]
 }
 ```
 
-When a run finishes with `outcome == "interrupt"`, the agent indicates that on
-the next run, a value needs to be provided to continue.
+Structural invariants:
 
-### Updates to RunAgentInput
+- If `outcome === "interrupt"`, `interrupts` **MUST** be a non-empty array and
+  `result` **MUST NOT** be present.
+- If `outcome === "success"` (or omitted), `interrupts` **MUST** be absent or
+  empty. `result` **MAY** be present.
+- Back-compat inference: if `outcome` is omitted and `interrupts` is non-empty,
+  clients **MUST** treat the outcome as `"interrupt"`.
+
+### The `Interrupt` type
+
+The shape has three tiers: required discriminators, optional standardized
+fields, and a `metadata` escape hatch for framework-specific data.
+
+```typescript
+type Interrupt = {
+  // === Required ===
+  id: string
+  reason: string
+
+  // === Optional standardized ===
+  message?: string                 // human-readable description for UI fallback
+  toolCallId?: string              // when bound to a specific tool call
+  responseSchema?: JsonSchema      // expected shape of resume payload
+  expiresAt?: string               // ISO-8601; interrupt is stale after this
+
+  // === Framework extension ===
+  metadata?: Record<string, any>   // pass-through for framework-specific data
+}
+```
+
+| Field | Purpose |
+| --- | --- |
+| `id` | Correlation key across interrupt, resume, idempotency, and audit. |
+| `reason` | Categorical routing hint. See [Reason Taxonomy](#reason-taxonomy). |
+| `message` | Human-readable prompt. Guarantees a universal fallback UI — any client can render a usable "agent is paused" card from this field alone. |
+| `toolCallId` | Binds the interrupt to a specific prior `TOOL_CALL_*` sequence. Enables generic tool-approval UI and structured audit trails. See [Tool-Bound Interrupts](#tool-bound-interrupt-audit-trail). |
+| `responseSchema` | JSON Schema describing the required shape of `resume.payload` for this interrupt. Unlocks generic form rendering, client-side validation, and capability discovery (e.g. approve-with-edits). |
+| `expiresAt` | Optional TTL. Clients **MUST NOT** submit a resume past expiry; agents receiving a stale resume emit `RUN_ERROR`. |
+| `metadata` | Free-form `Record<string, any>`. The protocol makes no claims about its shape. Frameworks document their own `metadata` contract (e.g. `metadata.langgraph.checkpointId`). |
+
+### Updates to `RunAgentInput`
 
 ```typescript
 type RunAgentInput = {
   // ... existing fields
 
-  // NEW: resume channel for continuing a suspension
-  resume?: {
-    interruptId?: string // echo back if one was provided
-    payload?: any // arbitrary JSON: approvals, edits, files-as-refs, etc.
-  }
+  // NEW: resume channel for continuing interrupts
+  resume?: Array<{
+    interruptId: string
+    status: "resolved" | "cancelled"
+    payload?: any                   // validated against the interrupt's responseSchema
+  }>
 }
 ```
+
+- `resolved` — user provided a response. The `payload` carries it. Denials are
+  expressed inside the payload per `responseSchema` (e.g. `{ approved: false }`),
+  not as a separate status.
+- `cancelled` — user abandoned without providing meaningful input. `payload`
+  should be omitted.
 
 ### Contract Rules
 
-- Resume requests **must** use the same `threadId`
-- When given in the `interrupt`, the `interruptId` must be provided via
-  `RunAgentInput`
-- Agents should handle missing or invalid resume payloads gracefully
+1. **Same thread.** Resume requests **MUST** use the same `threadId` as the
+   interrupted run.
+
+2. **`parentRunId` on resumed runs.** A run created by submitting a `resume`
+   **MUST** set `parentRunId` to the interrupted run's `runId`. This keeps the
+   logical turn reconstructable for telemetry, UI, and debugging.
+   `parentRunId` expresses lineage only; it does not express agent-orchestration
+   hierarchy. Multi-agent composition patterns are out of scope for this
+   proposal.
+
+3. **Cover all open interrupts.** A single `resume` array **MUST** address every
+   open interrupt from the interrupted run. Partial resumes (leaving some
+   interrupts pending across a resume) are not supported in v1.
+
+4. **Pending interrupts block new input.** If a thread has unresolved
+   interrupts, any `RunAgentInput` on that thread **MUST** include a `resume`
+   addressing them. Agents receiving a non-conforming input **MUST** emit
+   `RUN_ERROR`.
+
+5. **Idempotency.** A resume with the same
+   `(threadId, interruptId, status, payload)` **MUST** be safe to replay.
+   Agents using replay-style continuation **MUST** dedupe on `interruptId`.
+
+6. **Payload validation.** If an interrupt declares a `responseSchema`, the
+   agent **MAY** validate the corresponding resume `payload` and emit
+   `RUN_ERROR` on mismatch. Clients **SHOULD** validate before submitting.
+
+7. **Expiry enforcement.** If `Interrupt.expiresAt` is set, clients **MUST NOT**
+   submit a resume for that interrupt past the expiry. Agents receiving a
+   stale resume **MUST** emit `RUN_ERROR`.
+
+8. **Graceful handling.** Agents **SHOULD** handle missing or invalid resume
+   payloads via `RUN_ERROR` rather than silent failures.
+
+### State at Interrupt Boundary
+
+At the moment of interrupt, the agent **MUST** emit any state required for
+resume via `STATE_SNAPSHOT` and `MESSAGES_SNAPSHOT` events prior to the
+`RUN_FINISHED` event that carries the interrupt.
+
+This rule makes the protocol **resume-mode-agnostic**: both replay-style
+continuations (rebuild context from messages + state) and checkpoint-style
+continuations (restore a suspended coroutine) **MUST** produce identical
+observable behavior on resume. Framework-native checkpointing is an
+implementation optimization, not a protocol contract. Agents cannot rely on
+hidden continuation state that was never exposed via the protocol.
+
+Practical consequence: any information the resumed run needs — partial tool
+results, accumulated context, plan data — must be in the emitted events at
+the interrupt boundary.
+
+### Error Handling
+
+`RUN_ERROR` is the **sole** error event. The `outcome` enum does not carry an
+`"error"` value. Interrupt-specific error conditions that produce `RUN_ERROR`:
+
+- A resume arrives past an interrupt's `expiresAt`.
+- A resume payload fails validation against the corresponding
+  `responseSchema`.
+- A resume references an `interruptId` the agent cannot correlate (lost state,
+  wrong run, unknown id).
+- A resume fails to address all open interrupts from the interrupted run
+  (violates Contract Rule 3).
+- A `RunAgentInput` on a thread with pending interrupts omits `resume`
+  (violates Contract Rule 4).
+
+### Reason Taxonomy
+
+`reason` is a required string with a small set of spec-defined core values
+and free-form extension for framework-specific reasons.
+
+**Core values:**
+
+| Value | Semantics | Typical companion fields |
+| --- | --- | --- |
+| `tool_call` | Interrupt bound to a specific tool call awaiting a decision or result. | `toolCallId` **MUST** be set. |
+| `input_required` | Agent needs structured input (form, data, file reference) to continue. | `responseSchema` **SHOULD** be set. |
+| `confirmation` | Free-standing yes/no decision not bound to a tool. | `responseSchema` optional; boolean is the default expectation. |
+
+**Custom reasons:** Any other string is valid. Agents **SHOULD** namespace
+custom reasons as `<framework>:<name>` (e.g. `langgraph:database_modification`,
+`mastra:workflow_suspend`) to prevent collisions. The `core:` prefix is
+reserved for future spec additions.
+
+**Client routing rules:**
+
+- Clients **SHOULD** switch on known core values for dedicated UI.
+- For unknown reasons, clients **MUST NOT** error. They **MUST** fall back to
+  rendering from `message` (if present), `responseSchema`, and `metadata`.
+
+### Tool-Bound Interrupt Audit Trail
+
+When an interrupt carries `reason: "tool_call"` and a `toolCallId`, the tool
+call and its resolution span two runs. The spec defines the audit trail
+explicitly so consumers can reconstruct full execution history.
+
+**Recommended `responseSchema` pattern** for tool-bound interrupts that
+support approve-with-edits:
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "approved": { "type": "boolean" },
+    "editedArgs": {
+      "type": "object",
+      "description": "Full replacement of the tool args. Not merged."
+    }
+  },
+  "required": ["approved"]
+}
+```
+
+**Semantics:**
+
+- `editedArgs` is a **full replacement** of the tool args, not a partial
+  merge. Clients submit the complete edited object.
+- Presence of `editedArgs` in the schema is the **capability signal** that
+  the client may offer edit UI. Absence means approve/deny only.
+
+**Resumed-run event emission:**
+
+- When a resume for a `tool_call` interrupt is processed, the agent emits
+  `TOOL_CALL_RESULT` against the **original `toolCallId`** from the
+  interrupted run. The agent **does not** re-emit
+  `TOOL_CALL_START`/`TOOL_CALL_ARGS`/`TOOL_CALL_END` in the resumed run.
+
+**Full audit record:**
+
+The thread's complete record of a tool-bound interrupt is the combination of:
+
+1. `TOOL_CALL_ARGS` from the interrupted run (the agent's proposal).
+2. `RunAgentInput.resume` payload from the resumed run (user decision and any
+   edits).
+3. `TOOL_CALL_RESULT` from the resumed run (actual execution outcome).
+
+Consumers that need full audit fidelity **MUST** read both the event stream
+and the `resume` input on the resumed run. The event stream alone is
+insufficient.
 
 ## Implementation Examples
 
-### Minimal Interrupt/Resume
+### Example 1 — Minimal tool approval
 
-**Agent sends interrupt:**
-
-```json
-{
-  "type": "RUN_FINISHED",
-  "threadId": "t1",
-  "runId": "r1",
-  "outcome": "interrupt",
-  "interrupt": {
-    "id": "int-abc123",
-    "reason": "human_approval",
-    "payload": {
-      "proposal": {
-        "tool": "sendEmail",
-        "args": { "to": "a@b.com", "subject": "Hi", "body": "…" }
-      }
-    }
-  }
-}
-```
-
-**User responds:**
-
-```json
-{
-  "threadId": "t1",
-  "runId": "r2",
-  "resume": {
-    "interruptId": "int-abc123",
-    "payload": { "approved": true }
-  }
-}
-```
-
-### Complex Approval Flow
-
-**Agent requests approval with context:**
+**Agent interrupts** after proposing `sendEmail`:
 
 ```json
 {
   "type": "RUN_FINISHED",
-  "threadId": "thread-456",
-  "runId": "run-789",
+  "threadId": "thread-1",
+  "runId": "run-1",
   "outcome": "interrupt",
-  "interrupt": {
-    "id": "approval-001",
-    "reason": "database_modification",
-    "payload": {
-      "action": "DELETE",
-      "table": "users",
-      "affectedRows": 42,
-      "query": "DELETE FROM users WHERE last_login < '2023-01-01'",
-      "rollbackPlan": "Restore from backup snapshot-2025-01-23",
-      "riskLevel": "high"
+  "interrupts": [
+    {
+      "id": "int-abc123",
+      "reason": "tool_call",
+      "message": "Send email to a@b.com with subject 'Hi'?",
+      "toolCallId": "tc-001",
+      "responseSchema": {
+        "type": "object",
+        "properties": { "approved": { "type": "boolean" } },
+        "required": ["approved"]
+      }
     }
-  }
+  ]
 }
 ```
 
-**User approves with modifications:**
+**Client submits resume:**
 
 ```json
 {
-  "threadId": "thread-456",
-  "runId": "run-790",
-  "resume": {
-    "interruptId": "approval-001",
-    "payload": {
-      "approved": true,
-      "modifications": {
-        "batchSize": 10,
-        "dryRun": true
+  "threadId": "thread-1",
+  "runId": "run-2",
+  "parentRunId": "run-1",
+  "resume": [
+    {
+      "interruptId": "int-abc123",
+      "status": "resolved",
+      "payload": { "approved": true }
+    }
+  ]
+}
+```
+
+**Agent continues in run-2** — emits `TOOL_CALL_RESULT` against `tc-001` with
+the execution outcome, then `RUN_FINISHED { outcome: "success" }`.
+
+### Example 2 — Approve with edits (full audit)
+
+**Agent proposes with editable schema:**
+
+```json
+{
+  "type": "RUN_FINISHED",
+  "threadId": "thread-2",
+  "runId": "run-10",
+  "outcome": "interrupt",
+  "interrupts": [
+    {
+      "id": "int-email-edit",
+      "reason": "tool_call",
+      "message": "Send email to a@b.com? You can edit the body before approving.",
+      "toolCallId": "tc-42",
+      "responseSchema": {
+        "type": "object",
+        "properties": {
+          "approved": { "type": "boolean" },
+          "editedArgs": {
+            "type": "object",
+            "properties": {
+              "to": { "type": "string", "format": "email" },
+              "subject": { "type": "string" },
+              "body": { "type": "string" }
+            }
+          }
+        },
+        "required": ["approved"]
+      },
+      "metadata": {
+        "langgraph": {
+          "checkpointId": "ckpt-xyz",
+          "nodeId": "tool_executor"
+        }
       }
     }
-  }
+  ]
+}
+```
+
+**Client submits edited approval:**
+
+```json
+{
+  "threadId": "thread-2",
+  "runId": "run-11",
+  "parentRunId": "run-10",
+  "resume": [
+    {
+      "interruptId": "int-email-edit",
+      "status": "resolved",
+      "payload": {
+        "approved": true,
+        "editedArgs": {
+          "to": "a@b.com",
+          "subject": "Hi",
+          "body": "Hi (revised per my note)"
+        }
+      }
+    }
+  ]
+}
+```
+
+**In run-11** the agent executes with the edited args and emits
+`TOOL_CALL_RESULT` against `tc-42`. The audit trail is:
+
+- run-10 `TOOL_CALL_ARGS` on `tc-42` = original proposal.
+- run-11 `RunAgentInput.resume[0].payload.editedArgs` = user edits.
+- run-11 `TOOL_CALL_RESULT` on `tc-42` = actual outcome.
+
+### Example 3 — Parallel interrupts
+
+Agent fires three parallel tool calls, all requiring approval:
+
+```json
+{
+  "type": "RUN_FINISHED",
+  "threadId": "thread-3",
+  "runId": "run-20",
+  "outcome": "interrupt",
+  "interrupts": [
+    { "id": "i-1", "reason": "tool_call", "toolCallId": "tc-a", "message": "Approve sendEmail to x@y.com?" },
+    { "id": "i-2", "reason": "tool_call", "toolCallId": "tc-b", "message": "Approve sendEmail to y@z.com?" },
+    { "id": "i-3", "reason": "tool_call", "toolCallId": "tc-c", "message": "Approve sendEmail to z@w.com?" }
+  ]
+}
+```
+
+**Client responds to all — approves two, cancels one:**
+
+```json
+{
+  "threadId": "thread-3",
+  "runId": "run-21",
+  "parentRunId": "run-20",
+  "resume": [
+    { "interruptId": "i-1", "status": "resolved", "payload": { "approved": true } },
+    { "interruptId": "i-2", "status": "resolved", "payload": { "approved": true } },
+    { "interruptId": "i-3", "status": "cancelled" }
+  ]
+}
+```
+
+In run-21 the agent emits `TOOL_CALL_RESULT` for `tc-a` and `tc-b` (approved)
+and treats `tc-c` as not-executed (cancelled).
+
+### Example 4 — Non-tool input request
+
+Agent requests structured data:
+
+```json
+{
+  "type": "RUN_FINISHED",
+  "threadId": "thread-4",
+  "runId": "run-30",
+  "outcome": "interrupt",
+  "interrupts": [
+    {
+      "id": "int-form",
+      "reason": "input_required",
+      "message": "Please provide the quarterly filing details.",
+      "responseSchema": {
+        "type": "object",
+        "properties": {
+          "quarter": { "type": "string", "enum": ["Q1", "Q2", "Q3", "Q4"] },
+          "year": { "type": "integer", "minimum": 2000 },
+          "revenue": { "type": "number" }
+        },
+        "required": ["quarter", "year", "revenue"]
+      },
+      "expiresAt": "2026-04-20T17:00:00Z"
+    }
+  ]
+}
+```
+
+**Client submits structured response:**
+
+```json
+{
+  "threadId": "thread-4",
+  "runId": "run-31",
+  "parentRunId": "run-30",
+  "resume": [
+    {
+      "interruptId": "int-form",
+      "status": "resolved",
+      "payload": { "quarter": "Q1", "year": 2026, "revenue": 4200000 }
+    }
+  ]
 }
 ```
 
 ## Use Cases
 
-### Human Approval
+### Human Approval (`reason: "tool_call"`)
 
 Agents pause before executing sensitive operations (sending emails, making
-purchases, deleting data).
+purchases, deleting data). Typically bound to a `toolCallId` with a
+`responseSchema` declaring `{ approved, editedArgs? }`.
 
-### Information Gathering
+### Information Gathering (`reason: "input_required"`)
 
-Agent requests additional context or files from the user mid-execution.
+Agent requests additional context, files, or structured data from the user
+mid-execution. `responseSchema` describes the expected form.
 
-### Policy Enforcement
+### Policy Enforcement (custom reason, e.g. `org:policy_hold`)
 
 Automatic pauses triggered by organizational policies or compliance
-requirements.
+requirements. Framework-specific reason with structured `metadata`.
 
 ### Multi-Step Wizards
 
-Complex workflows where each step requires user confirmation or input.
+Complex workflows where each step requires user confirmation or input. Each
+step produces an interrupt; the chain of `parentRunId` lineage preserves the
+logical turn for observability.
 
-### Error Recovery
+### Error Recovery (custom reason)
 
 Agent pauses when encountering an error, allowing user to provide guidance.
+Typically uses a framework-specific reason with the error context in
+`metadata`.
 
 ## Implementation Considerations
 
@@ -201,47 +526,63 @@ Agent pauses when encountering an error, allowing user to provide guidance.
 
 TypeScript SDK:
 
-- Extended `RunFinishedEvent` type with outcome and interrupt fields
-- Updated `RunAgentInput` with resume field
-- Helper methods for interrupt handling
+- Extended `RunFinishedEvent` schema: `outcome`, `result`, `interrupts`.
+- New `Interrupt` type (required `id`/`reason`; optional `message`,
+  `toolCallId`, `responseSchema`, `expiresAt`, `metadata`).
+- Extended `RunAgentInput`: `resume` array with per-interrupt status.
+- Helpers: build resume arrays, validate payloads against `responseSchema`,
+  enforce `expiresAt` client-side.
 
 Python SDK:
 
-- Extended `RunFinishedEvent` class
-- Updated `RunAgentInput` with resume support
-- Interrupt state management utilities
+- Extended `RunFinishedEvent` class and `Interrupt` class mirroring TS.
+- `RunAgentInput.resume` support.
+- Utilities for schema validation and expiry checks.
 
 ### Framework Integration
 
-**Planning Frameworks:**
+**Checkpoint-style frameworks (LangGraph, Temporal):**
 
-- Map framework interrupts to AG-UI interrupt events
-- Handle resume payloads in execution continuation
+- Map native interrupts to AG-UI `Interrupt` entries. Store framework
+  checkpoint references in `metadata`.
+- On resume, use `resume[].interruptId` to locate the checkpoint and
+  `resume[].payload` to inject the continuation value. Emit
+  `STATE_SNAPSHOT` to satisfy the state-at-boundary rule.
 
-**Workflow Systems:**
+**Replay-style frameworks (Vercel-style, stateless):**
 
-- Convert workflow suspensions to AG-UI interrupts
-- Resume workflow execution with provided payload
+- Translate interrupts into message-history additions on resume:
+  `resume[].payload` is appended as the effective user input for the next
+  LLM call.
+- Rely on `STATE_SNAPSHOT` / `MESSAGES_SNAPSHOT` to carry context across runs.
 
-**Custom Frameworks:**
+**Custom frameworks:**
 
-- Provide interrupt/resume adapter interface
-- Documentation for integration patterns
+- Provide adapters that produce `Interrupt` entries and consume `resume`
+  arrays. The `metadata` field is the documented extension point.
 
 ### UI Considerations
 
-- Standard components for common interrupt reasons
-- Customizable interrupt UI based on payload
-- Clear indication of pending interrupts
-- History of interrupt/resume actions
+- Standard generic renderer: display `message` (if present), derive form UI
+  from `responseSchema`, offer approve/deny + cancel controls.
+- Known `reason` values (`tool_call`, `input_required`, `confirmation`) drive
+  specialized UI where available.
+- Unknown `reason` values must render without error via the generic path.
+- `expiresAt` drives countdown UI and prevents late submissions.
 
 ## Testing Strategy
 
-- Unit tests for interrupt/resume serialization
-- Integration tests with multiple frameworks
-- E2E tests demonstrating various interrupt scenarios
-- State consistency tests across interrupt boundaries
-- Performance tests for rapid interrupt/resume cycles
+- Unit tests for `RunFinished` schema invariants (outcome/result/interrupts
+  consistency, non-empty array rule).
+- Unit tests for resume array validation (status enum, coverage of all open
+  interrupts, idempotency by `(threadId, interruptId, status, payload)`).
+- Unit tests for `responseSchema` payload validation.
+- Integration tests with multiple frameworks demonstrating portable
+  interrupt handling.
+- E2E tests: parallel interrupts with mixed resolved/cancelled, edit-in-place
+  audit trail, stale resume producing `RUN_ERROR`.
+- State consistency tests: replay-style and checkpoint-style agents produce
+  identical observable behavior on resume (state-at-boundary rule).
 
 ## References
 
