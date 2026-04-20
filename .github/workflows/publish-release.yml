@@ -1,0 +1,282 @@
+name: Publish Release
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+concurrency:
+  group: publish-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    # Only run when a release PR is merged (not closed without merging)
+    if: >
+      github.event.pull_request.merged == true &&
+      startsWith(github.event.pull_request.head.ref, 'release/publish/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - name: Parse release metadata
+        id: meta
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          # Extract scope from branch name
+          SCOPE=$(echo "$HEAD_REF" | sed 's|release/publish/||')
+          echo "scope=$SCOPE" >> "$GITHUB_OUTPUT"
+          echo "Release scope: $SCOPE"
+
+          # Extract release metadata from PR body HTML comment
+          RELEASE_META=$(echo "$PR_BODY" | python3 -c "
+          import re, sys
+          m = re.search(r'<!-- release-meta: (.+?) -->', sys.stdin.read())
+          print(m.group(1) if m else '')
+          ")
+          if [ -z "$RELEASE_META" ]; then
+            echo "ERROR: Could not find release metadata in PR body" >&2
+            echo "Expected <!-- release-meta: {...} --> comment" >&2
+            exit 1
+          fi
+          echo "release_meta=$RELEASE_META" >> "$GITHUB_OUTPUT"
+
+          # Partition packages by ecosystem
+          TS_PACKAGES=$(echo "$RELEASE_META" | jq -c '[.packages[] | select(.ecosystem == "typescript")]')
+          PY_PACKAGES=$(echo "$RELEASE_META" | jq -c '[.packages[] | select(.ecosystem == "python")]')
+
+          TS_COUNT=$(echo "$TS_PACKAGES" | jq 'length')
+          PY_COUNT=$(echo "$PY_PACKAGES" | jq 'length')
+
+          echo "ts_packages=$TS_PACKAGES" >> "$GITHUB_OUTPUT"
+          echo "py_packages=$PY_PACKAGES" >> "$GITHUB_OUTPUT"
+          echo "ts_count=$TS_COUNT" >> "$GITHUB_OUTPUT"
+          echo "py_count=$PY_COUNT" >> "$GITHUB_OUTPUT"
+
+          echo "TypeScript packages: $TS_COUNT"
+          echo "Python packages: $PY_COUNT"
+
+      - name: Validate versions against registries
+        env:
+          RELEASE_META: ${{ steps.meta.outputs.release_meta }}
+        run: |
+          FAILED=false
+          while read -r pkg; do
+            NAME=$(echo "$pkg" | jq -r '.name')
+            VERSION=$(echo "$pkg" | jq -r '.newVersion')
+            ECOSYSTEM=$(echo "$pkg" | jq -r '.ecosystem')
+
+            if [ "$ECOSYSTEM" = "typescript" ]; then
+              if npm view "$NAME" version > /tmp/npm-check 2>&1; then
+                CURRENT=$(cat /tmp/npm-check | tr -d '\n')
+              elif grep -q "E404" /tmp/npm-check; then
+                CURRENT="0.0.0"
+              else
+                echo "ERROR: npm registry check failed for $NAME" >&2
+                cat /tmp/npm-check >&2
+                FAILED=true
+                continue
+              fi
+              echo "npm: $NAME current=$CURRENT new=$VERSION"
+            else
+              HTTP_CODE=$(curl -s -o /tmp/pypi-check -w "%{http_code}" "https://pypi.org/pypi/$NAME/json")
+              if [ "$HTTP_CODE" = "200" ]; then
+                CURRENT=$(python3 -c "import json; print(json.load(open('/tmp/pypi-check'))['info']['version'])")
+              elif [ "$HTTP_CODE" = "404" ]; then
+                CURRENT="0.0.0"
+              else
+                echo "ERROR: PyPI registry check failed for $NAME (HTTP $HTTP_CODE)" >&2
+                FAILED=true
+                continue
+              fi
+              echo "PyPI: $NAME current=$CURRENT new=$VERSION"
+            fi
+
+            # Version must not already be published
+            if [ "$VERSION" = "$CURRENT" ]; then
+              echo "ERROR: $NAME@$VERSION is already published" >&2
+              FAILED=true
+            fi
+
+            # Reject version downgrades
+            if [ "$CURRENT" != "0.0.0" ] && [ "$VERSION" != "$CURRENT" ]; then
+              IFS='.' read -r CUR_MAJ CUR_MIN CUR_PAT <<< "$(echo "$CURRENT" | sed 's/[^0-9.]//g' | cut -d. -f1-3)"
+              IFS='.' read -r NEW_MAJ NEW_MIN NEW_PAT <<< "$(echo "$VERSION" | sed 's/[^0-9.]//g' | cut -d. -f1-3)"
+              if [ "$NEW_MAJ" -lt "$CUR_MAJ" ] || \
+                 ([ "$NEW_MAJ" -eq "$CUR_MAJ" ] && [ "$NEW_MIN" -lt "$CUR_MIN" ]) || \
+                 ([ "$NEW_MAJ" -eq "$CUR_MAJ" ] && [ "$NEW_MIN" -eq "$CUR_MIN" ] && [ "$NEW_PAT" -lt "$CUR_PAT" ]); then
+                echo "ERROR: $NAME@$VERSION would be a downgrade from $CURRENT" >&2
+                FAILED=true
+              fi
+            fi
+          done < <(echo "$RELEASE_META" | jq -c '.packages[]')
+
+          if [ "$FAILED" = "true" ]; then
+            echo "ERROR: One or more versions are already published. Bump versions and try again." >&2
+            exit 1
+          fi
+          echo "All versions validated"
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # -- TypeScript setup (only if needed) --
+      - name: Install pnpm
+        if: steps.meta.outputs.ts_count != '0'
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+
+      - name: Set up Node.js
+        if: steps.meta.outputs.ts_count != '0'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install protoc
+        if: steps.meta.outputs.ts_count != '0'
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "25.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup pnpm cache
+        if: steps.meta.outputs.ts_count != '0'
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install TypeScript dependencies
+        if: steps.meta.outputs.ts_count != '0'
+        run: pnpm install --frozen-lockfile
+
+      - name: Build TypeScript packages
+        if: steps.meta.outputs.ts_count != '0'
+        run: pnpm run build
+
+      - name: Test TypeScript packages
+        if: steps.meta.outputs.ts_count != '0'
+        run: pnpm run test
+
+      # -- Tagging (before publish so tags exist if publish succeeds) --
+      - name: Create git tags
+        env:
+          RELEASE_META: ${{ steps.meta.outputs.release_meta }}
+        run: |
+          TAGS=()
+          while read -r pkg; do
+            NAME=$(echo "$pkg" | jq -r '.name')
+            VERSION=$(echo "$pkg" | jq -r '.newVersion')
+            TAG="${NAME}@${VERSION}"
+            if git rev-parse "$TAG" >/dev/null 2>&1; then
+              echo "ERROR: Tag $TAG already exists" >&2
+              exit 1
+            fi
+            git tag "$TAG" || { echo "ERROR: Failed to tag $TAG" >&2; exit 1; }
+            TAGS+=("$TAG")
+            echo "Tagged $TAG"
+          done < <(echo "$RELEASE_META" | jq -c '.packages[]')
+
+          git push origin "${TAGS[@]}"
+
+      - name: Publish TypeScript packages
+        if: steps.meta.outputs.ts_count != '0'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          TS_PACKAGES: ${{ steps.meta.outputs.ts_packages }}
+        run: |
+          PROJECTS=$(echo "$TS_PACKAGES" | jq -r '[.[].name] | join(",")')
+          echo "Publishing TypeScript projects: $PROJECTS"
+          npx nx release publish --projects="$PROJECTS"
+
+      # -- Python setup (only if needed) --
+      - name: Install uv
+        if: steps.meta.outputs.py_count != '0'
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: ">=0.8.0"
+
+      - name: Set up Python
+        if: steps.meta.outputs.py_count != '0'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Poetry
+        if: steps.meta.outputs.py_count != '0'
+        run: pip install poetry
+
+      - name: Publish Python packages
+        if: steps.meta.outputs.py_count != '0'
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+          PY_PACKAGES: ${{ steps.meta.outputs.py_packages }}
+        run: |
+          FAILED=0
+          while read -r pkg; do
+            DIR=$(echo "$pkg" | jq -r '.file' | xargs dirname)
+            # The file path is like "integrations/langgraph/python/pyproject.toml"
+            # We need the directory: "integrations/langgraph/python"
+            BUILD_SYSTEM=$(echo "$pkg" | jq -r '.buildSystem // "uv"')
+
+            if ! bash scripts/release/publish-python-package.sh "$DIR" "$BUILD_SYSTEM"; then
+              echo "ERROR: Failed to publish Python package in $DIR" >&2
+              FAILED=1
+            fi
+          done < <(echo "$PY_PACKAGES" | jq -c '.[]')
+
+          if [ "$FAILED" -ne 0 ]; then
+            echo "ERROR: One or more Python packages failed to publish" >&2
+            exit 1
+          fi
+
+      # -- GitHub Releases --
+      - name: Create GitHub Release (TypeScript)
+        if: steps.meta.outputs.ts_count != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TS_PACKAGES: ${{ steps.meta.outputs.ts_packages }}
+        run: |
+          # Convert to the format expected by create-or-update-release.sh
+          PACKAGES=$(echo "$TS_PACKAGES" | jq -c '[.[] | {name, version: .newVersion, path: .file}]')
+          bash scripts/release/create-or-update-release.sh typescript "$PACKAGES"
+
+      - name: Create GitHub Release (Python)
+        if: steps.meta.outputs.py_count != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          PY_PACKAGES: ${{ steps.meta.outputs.py_packages }}
+        run: |
+          # Convert to the format expected by create-or-update-release.sh
+          PACKAGES=$(echo "$PY_PACKAGES" | jq -c '[.[] | {name, version: .newVersion, dir: (.file | split("/") | .[:-1] | join("/"))}]')
+          bash scripts/release/create-or-update-release.sh python "$PACKAGES"
+
+      - name: Delete release branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          git push origin --delete "$HEAD_REF" || echo "::warning::Failed to delete branch $HEAD_REF"
+
+      - name: Summary
+        env:
+          SCOPE: ${{ steps.meta.outputs.scope }}
+          RELEASE_META: ${{ steps.meta.outputs.release_meta }}
+        run: |
+          echo "## Published Release: ${SCOPE}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Package | Version | Registry |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|---------|----------|" >> $GITHUB_STEP_SUMMARY
+          echo "$RELEASE_META" | jq -r '.packages[] | "| \(.name) | \(.newVersion) | \(.ecosystem) |"' >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,219 @@
+name: Prepare Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: "Release scope (from release.config.json)"
+        required: true
+        type: choice
+        options:
+          - a2a
+          - a2a-middleware
+          - a2ui-middleware
+          - adk-middleware
+          - ag2
+          - agent-spec
+          - agno
+          - aws-strands
+          - claude-agent-sdk
+          - crewai
+          - langchain
+          - langgraph
+          - langroid
+          - llama-index
+          - mastra
+          - mcp-apps-middleware
+          - pydantic-ai
+          - py-sdk
+          - spring-ai
+          - ts-sdk
+      bump:
+        description: "Version bump type"
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+          - prerelease
+      preid:
+        description: "Prerelease identifier (only used for prerelease bump)"
+        required: false
+        type: string
+        default: "alpha"
+      dry_run:
+        description: "Dry run — show changes without creating PR"
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: prepare-release-${{ github.event.inputs.scope }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check for existing release PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SCOPE: ${{ github.event.inputs.scope }}
+        run: |
+          EXISTING=$(gh pr list --head "release/publish/${SCOPE}" --state open --json number,url --jq '.[0].url // empty')
+          if [ -n "$EXISTING" ]; then
+            echo "ERROR: An open release PR for scope '${SCOPE}' already exists: ${EXISTING}" >&2
+            echo "Close or merge the existing PR before creating a new one." >&2
+            exit 1
+          fi
+          echo "No existing release PR found for scope '${SCOPE}'"
+
+      - name: Bump versions
+        id: bump
+        env:
+          SCOPE: ${{ github.event.inputs.scope }}
+          BUMP: ${{ github.event.inputs.bump }}
+          PREID: ${{ github.event.inputs.preid }}
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+        run: |
+          EXTRA_ARGS=""
+          if [ "$DRY_RUN" = "true" ]; then
+            EXTRA_ARGS="--dry-run"
+          fi
+
+          RESULT=$(npx tsx scripts/release/prepare-release.ts \
+            --scope "$SCOPE" \
+            --bump "$BUMP" \
+            --preid "$PREID" \
+            $EXTRA_ARGS)
+
+          echo "$RESULT" > /tmp/bump-result.json
+          echo "result<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$RESULT" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+          # Extract version summary for PR title
+          SUMMARY=$(echo "$RESULT" | jq -r '.packages | map("\(.name)@\(.newVersion)") | join(", ")')
+          echo "summary=$SUMMARY" >> "$GITHUB_OUTPUT"
+
+          # Extract changed files for git add
+          FILES=$(echo "$RESULT" | jq -r '.packages[].file' | tr '\n' ' ')
+          echo "files=$FILES" >> "$GITHUB_OUTPUT"
+
+      - name: Generate release notes
+        id: notes
+        env:
+          SCOPE: ${{ github.event.inputs.scope }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          RAW_NOTES=$(npx tsx scripts/release/generate-release-notes.ts --scope "$SCOPE")
+          echo "$RAW_NOTES" > /tmp/raw-release-notes.md
+
+          # Optionally polish with AI (falls back to raw notes if no API key)
+          NOTES=$(echo "$RAW_NOTES" | npx tsx scripts/release/generate-ai-release-notes.ts)
+          echo "$NOTES" > /tmp/release-notes.md
+
+          echo "notes<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$NOTES" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Dry-run summary
+        if: github.event.inputs.dry_run == 'true'
+        run: |
+          echo "## Dry Run — Prepare Release (${{ github.event.inputs.scope }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Version Changes" >> $GITHUB_STEP_SUMMARY
+          jq -r '.packages[] | "- **\(.name)**: \(.oldVersion) → \(.newVersion) (\(.file))"' /tmp/bump-result.json >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Release Notes Preview" >> $GITHUB_STEP_SUMMARY
+          cat /tmp/release-notes.md >> $GITHUB_STEP_SUMMARY
+
+      - name: Prepare PR metadata
+        if: github.event.inputs.dry_run != 'true'
+        env:
+          SCOPE: ${{ github.event.inputs.scope }}
+          SUMMARY: ${{ steps.bump.outputs.summary }}
+          FILES: ${{ steps.bump.outputs.files }}
+        run: |
+          echo "BRANCH=release/publish/${SCOPE}" >> "$GITHUB_ENV"
+          echo "SUMMARY=${SUMMARY}" >> "$GITHUB_ENV"
+
+          # Stage changed files so create-pull-request can detect them
+          for f in $FILES; do
+            git add "$f"
+          done
+
+          # Build PR body with release notes and embedded metadata
+          RELEASE_META=$(cat /tmp/bump-result.json | jq -c .)
+
+          # Use a temp file to avoid GITHUB_ENV multiline issues
+          cat > /tmp/pr-body.md <<PREOF
+          ## Release: ${SCOPE}
+
+          ### Version Changes
+
+          $(jq -r '.packages[] | "- **\(.name)**: \(.oldVersion) → \(.newVersion)"' /tmp/bump-result.json)
+
+          ### Release Notes
+
+          $(cat /tmp/release-notes.md)
+
+          ---
+
+          > Merging this PR will automatically publish the packages listed above.
+
+          <!-- release-meta: ${RELEASE_META} -->
+          PREOF
+
+          # Strip leading whitespace from heredoc indentation
+          sed -i 's/^          //' /tmp/pr-body.md
+
+          echo "PR_BODY_FILE=/tmp/pr-body.md" >> "$GITHUB_ENV"
+
+      - name: Create release PR
+        if: github.event.inputs.dry_run != 'true'
+        uses: peter-evans/create-pull-request@v8
+        with:
+          branch: ${{ env.BRANCH }}
+          title: "release(${{ github.event.inputs.scope }}): ${{ env.SUMMARY }}"
+          body-path: ${{ env.PR_BODY_FILE }}
+          labels: release
+          delete-branch: true
+          commit-message: "chore(release): bump ${{ github.event.inputs.scope }} versions"
+
+      - name: Summary
+        if: github.event.inputs.dry_run != 'true'
+        env:
+          SCOPE: ${{ github.event.inputs.scope }}
+          SUMMARY: ${{ steps.bump.outputs.summary }}
+        run: |
+          echo "## Release PR Created" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Scope: ${SCOPE}" >> $GITHUB_STEP_SUMMARY
+          echo "Branch: release/publish/${SCOPE}" >> $GITHUB_STEP_SUMMARY
+          echo "Packages: ${SUMMARY}" >> $GITHUB_STEP_SUMMARY
