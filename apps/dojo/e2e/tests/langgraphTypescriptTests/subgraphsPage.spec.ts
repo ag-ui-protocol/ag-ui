@@ -145,6 +145,8 @@ test.describe("Subgraphs Travel Agent Feature", () => {
         );
       });
 
+    await subgraphsPage.verifyStaticHotelData();
+
     // FEATURE TEST: Test different hotel selection - Ritz-Carlton
     await subgraphsPage.selectHotel("Ritz-Carlton");
 
