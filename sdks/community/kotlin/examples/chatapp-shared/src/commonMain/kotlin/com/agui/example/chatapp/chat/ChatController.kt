@@ -40,6 +40,7 @@ import com.contextable.a2ui4k.model.UiDefinition
 import com.contextable.a2ui4k.model.UiEvent
 import com.contextable.a2ui4k.model.ActionEvent
 import com.contextable.a2ui4k.state.SurfaceStateManager
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -401,28 +402,36 @@ class ChatController(
         if (event !is ActionEvent) return
         if (currentAgent == null || controllerClosed.value) return
 
-        // Build forwardedProps with A2UI ClientEvent at root
-        // NOTE: forwardedProps is AG-UI specific. The @ag-ui/a2a integration extracts
-        // a2uiAction and converts it to an A2A DataPart with mimeType "application/json+a2ui"
-        val forwardedProps = buildJsonObject {
-            put("a2uiAction", buildJsonObject {
-                put("userAction", buildJsonObject {
-                    // A2UI spec field
-                    put("name", event.name)
-                    // WORKAROUND: CopilotKit's a2ui-renderer transforms "name" to "actionName".
-                    // Some demo apps expect "actionName" instead of the spec's "name".
-                    // See: @copilotkit/a2ui-renderer/dist/A2UIViewer.js:97-98
-                    put("actionName", event.name)
-                    put("surfaceId", event.surfaceId)
-                    put("sourceComponentId", event.sourceComponentId)
-                    put("timestamp", event.timestamp)
-                    event.context?.let { put("context", it) }
-                })
-            })
+        // Inline the action into the user message content.
+        //
+        // Rationale: we previously forwarded the action via
+        // forwardedProps.a2uiAction so CopilotRuntime's a2ui middleware (or
+        // @ag-ui/a2a bridge) could lift it into a synthetic assistant+tool
+        // message pair for the agent. That round-trips through fine for the
+        // bridge, but CopilotRuntime's middleware combined with ag_ui_adk
+        // hits a known heuristic: ag_ui_adk sees the synthesized tool-result
+        // pair as unseen + no matching pending tool call and skips the
+        // whole batch INCLUDING the preceding user message, so no run
+        // happens and the client gets "Run ended without emitting a
+        // terminal event".
+        //
+        // Putting the action data directly in the user message avoids the
+        // synthesis entirely: the LLM reads the action as plain text (which
+        // is enough — the action name + context tells it what to render
+        // next), and ag_ui_adk processes the user message normally.
+        val contextJson = event.context?.let { Json.encodeToString(JsonElement.serializer(), it) } ?: "{}"
+        val content = buildString {
+            append("[A2UI Action] name=")
+            append(event.name)
+            append(", surfaceId=")
+            append(event.surfaceId)
+            append(", sourceComponentId=")
+            append(event.sourceComponentId)
+            append(", context=")
+            append(contextJson)
         }
 
-        // Send as an action message with forwardedProps
-        startConversationWithForwardedProps("[A2UI Action]", forwardedProps)
+        startConversation(content)
     }
 
     private fun startConversation(content: String) {
