@@ -2,7 +2,7 @@
 # scripts/release/publish-python-package.sh
 #
 # Builds, tests, and publishes a single Python package to PyPI.
-# Extracted from release-python.yml for reuse across workflows.
+# Invoked by release/publish.yml and release/pre.yml for each detected package.
 #
 # Usage: ./publish-python-package.sh <dir> <build_system> [--dry-run]
 #   dir:          Path to the package directory (e.g., "integrations/langgraph/python")

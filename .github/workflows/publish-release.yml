@@ -1,10 +1,14 @@
 name: release / publish
 
-# Mirrors CopilotKit's `release / publish` DX. Fires on any merged PR to
-# main. We differ from CopilotKit in one way: we detect version changes
-# by diffing against the npm/PyPI registries (rather than parsing the
-# merged branch name), which lets BOTH the automated release-PR flow and
-# plain version-bump PRs from external maintainers trigger a publish.
+# Mirrors CopilotKit's `release / publish` DX. Fires automatically on any
+# merged PR to main, and also supports manual dispatch (useful for retries
+# after a partial failure, or for forcing a publish of a version that's
+# already on main but not yet on the registries).
+#
+# We differ from CopilotKit in one way: we detect version changes by
+# diffing against the npm/PyPI registries (rather than parsing the merged
+# branch name), which lets BOTH the automated release-PR flow and plain
+# version-bump PRs from external maintainers trigger a publish.
 #
 # Handles stable AND prerelease versions:
 #   "1.2.3"              → publishes to npm `latest` / PyPI normal
@@ -15,6 +19,13 @@ on:
   pull_request:
     types: [closed]
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (detect but don't publish). Useful for previewing."
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: release-publish
@@ -29,7 +40,10 @@ env:
 
 jobs:
   publish:
-    if: github.event.pull_request.merged == true
+    # Fires on merged release PRs OR on manual dispatch (retry / forced publish).
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -144,7 +158,7 @@ jobs:
           cat /tmp/ts-groups.json
 
       - name: Publish TypeScript packages
-        if: steps.detect_ts.outputs.count != '0'
+        if: steps.detect_ts.outputs.count != '0' && inputs.dry_run != true
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -156,7 +170,7 @@ jobs:
           done
 
       - name: Publish Python packages
-        if: steps.detect_py.outputs.count != '0'
+        if: steps.detect_py.outputs.count != '0' && inputs.dry_run != true
         env:
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
           PY_PACKAGES: ${{ steps.detect_py.outputs.packages }}
@@ -187,7 +201,7 @@ jobs:
           git config --global user.name "github-actions[bot]"
 
       - name: Create and push per-package git tags
-        if: steps.detect_ts.outputs.count != '0' || steps.detect_py.outputs.count != '0'
+        if: (steps.detect_ts.outputs.count != '0' || steps.detect_py.outputs.count != '0') && inputs.dry_run != true
         env:
           TS_PACKAGES: ${{ steps.detect_ts.outputs.packages }}
           PY_PACKAGES: ${{ steps.detect_py.outputs.packages }}
@@ -219,21 +233,21 @@ jobs:
           fi
 
       - name: Create GitHub Release (TypeScript)
-        if: steps.detect_ts.outputs.count != '0'
+        if: steps.detect_ts.outputs.count != '0' && inputs.dry_run != true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TS_PACKAGES: ${{ steps.detect_ts.outputs.packages }}
         run: bash scripts/release/create-or-update-release.sh typescript "$TS_PACKAGES"
 
       - name: Create GitHub Release (Python)
-        if: steps.detect_py.outputs.count != '0'
+        if: steps.detect_py.outputs.count != '0' && inputs.dry_run != true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PY_PACKAGES: ${{ steps.detect_py.outputs.packages }}
         run: bash scripts/release/create-or-update-release.sh python "$PY_PACKAGES"
 
       - name: Delete release/next if that's what was merged
-        if: github.event.pull_request.head.ref == 'release/next'
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'release/next' && inputs.dry_run != true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
