@@ -115,18 +115,6 @@ open class StatefulAgUiAgent(
             context = config.context,
             forwardedProps = config.forwardedProps
         )
-        logger.i {
-            "Sending run with ${messages.size} msgs: " +
-                messages.joinToString(" | ") { m ->
-                    when (m) {
-                        is UserMessage -> "U:${m.id}:${m.content.take(30)}"
-                        is AssistantMessage -> "A:${m.id}:tc=${m.toolCalls?.size ?: 0}"
-                        is ToolMessage -> "T:${m.id}:tcid=${m.toolCallId}"
-                        is SystemMessage -> "S:${m.id}"
-                        else -> m::class.simpleName.orEmpty()
-                    }
-                }
-        }
         
         // Per-run buffers for streaming tool-call reconstruction. Keyed by
         // toolCallId (args accumulator) and parentMessageId (pending assistant
