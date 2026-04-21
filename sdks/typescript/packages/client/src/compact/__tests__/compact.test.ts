@@ -6,6 +6,8 @@ import {
   ToolCallStartEvent,
   ToolCallArgsEvent,
   CustomEvent,
+  StateSnapshotEvent,
+  StateDeltaEvent,
 } from "@ag-ui/core";
 
 describe("Event Compaction", () => {
@@ -289,6 +291,267 @@ describe("Event Compaction", () => {
       expect(compacted[4].type).toBe(EventType.TOOL_CALL_ARGS);
       expect((compacted[4] as ToolCallArgsEvent).delta).toBe('{"q": "test"}');
       expect(compacted[5].type).toBe(EventType.TOOL_CALL_END);
+    });
+  });
+
+  describe("State Compaction", () => {
+    it("should compact multiple state snapshots into one per run", () => {
+      const events = [
+        { type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" },
+        { type: EventType.STATE_SNAPSHOT, snapshot: { count: 1 } },
+        { type: EventType.STATE_SNAPSHOT, snapshot: { count: 2 } },
+        { type: EventType.STATE_SNAPSHOT, snapshot: { count: 3 } },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" },
+      ];
+
+      const compacted = compactEvents(events);
+
+      expect(compacted).toHaveLength(3);
+      expect(compacted[0].type).toBe(EventType.RUN_STARTED);
+      expect(compacted[1].type).toBe(EventType.STATE_SNAPSHOT);
+      expect((compacted[1] as StateSnapshotEvent).snapshot).toEqual({ count: 3 });
+      expect(compacted[2].type).toBe(EventType.RUN_FINISHED);
+    });
+
+    it("should compact snapshot + deltas into a single snapshot", () => {
+      const events = [
+        { type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" },
+        { type: EventType.STATE_SNAPSHOT, snapshot: { count: 0, name: "test" } },
+        { type: EventType.STATE_DELTA, delta: [{ op: "replace", path: "/count", value: 1 }] },
+        { type: EventType.STATE_DELTA, delta: [{ op: "replace", path: "/count", value: 2 }] },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" },
+      ];
+
+      const compacted = compactEvents(events);
+
+      expect(compacted).toHaveLength(3);
+      expect(compacted[0].type).toBe(EventType.RUN_STARTED);
+      expect(compacted[1].type).toBe(EventType.STATE_SNAPSHOT);
+      expect((compacted[1] as StateSnapshotEvent).snapshot).toEqual({ count: 2, name: "test" });
+      expect(compacted[2].type).toBe(EventType.RUN_FINISHED);
+    });
+
+    it("should compact deltas-only into a single snapshot (starting from empty)", () => {
+      const events = [
+        { type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" },
+        { type: EventType.STATE_DELTA, delta: [{ op: "add", path: "/foo", value: "bar" }] },
+        { type: EventType.STATE_DELTA, delta: [{ op: "add", path: "/baz", value: 42 }] },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" },
+      ];
+
+      const compacted = compactEvents(events);
+
+      expect(compacted).toHaveLength(3);
+      expect(compacted[0].type).toBe(EventType.RUN_STARTED);
+      expect(compacted[1].type).toBe(EventType.STATE_SNAPSHOT);
+      expect((compacted[1] as StateSnapshotEvent).snapshot).toEqual({ foo: "bar", baz: 42 });
+      expect(compacted[2].type).toBe(EventType.RUN_FINISHED);
+    });
+
+    it("should handle snapshot followed by delta that overwrites it", () => {
+      const events = [
+        { type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" },
+        { type: EventType.STATE_SNAPSHOT, snapshot: { a: 1, b: 2 } },
+        { type: EventType.STATE_DELTA, delta: [{ op: "remove", path: "/b" }] },
+        { type: EventType.STATE_DELTA, delta: [{ op: "add", path: "/c", value: 3 }] },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" },
+      ];
+
+      const compacted = compactEvents(events);
+
+      expect(compacted).toHaveLength(3);
+      expect((compacted[1] as StateSnapshotEvent).snapshot).toEqual({ a: 1, c: 3 });
+    });
+
+    it("should handle multiple runs independently", () => {
+      const events = [
+        { type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" },
+        { type: EventType.STATE_SNAPSHOT, snapshot: { step: 1 } },
+        { type: EventType.STATE_DELTA, delta: [{ op: "replace", path: "/step", value: 2 }] },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" },
+        { type: EventType.RUN_STARTED, threadId: "t1", runId: "r2" },
+        { type: EventType.STATE_SNAPSHOT, snapshot: { step: 10 } },
+        { type: EventType.STATE_DELTA, delta: [{ op: "replace", path: "/step", value: 20 }] },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r2" },
+      ];
+
+      const compacted = compactEvents(events);
+
+      expect(compacted).toHaveLength(6);
+      // Run 1
+      expect(compacted[0].type).toBe(EventType.RUN_STARTED);
+      expect(compacted[1].type).toBe(EventType.STATE_SNAPSHOT);
+      expect((compacted[1] as StateSnapshotEvent).snapshot).toEqual({ step: 2 });
+      expect(compacted[2].type).toBe(EventType.RUN_FINISHED);
+      // Run 2
+      expect(compacted[3].type).toBe(EventType.RUN_STARTED);
+      expect(compacted[4].type).toBe(EventType.STATE_SNAPSHOT);
+      expect((compacted[4] as StateSnapshotEvent).snapshot).toEqual({ step: 20 });
+      expect(compacted[5].type).toBe(EventType.RUN_FINISHED);
+    });
+
+    it("should not emit state snapshot when no state events in run", () => {
+      const events = [
+        { type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" },
+        { type: EventType.TEXT_MESSAGE_START, messageId: "msg1", role: "assistant" },
+        { type: EventType.TEXT_MESSAGE_CONTENT, messageId: "msg1", delta: "Hello" },
+        { type: EventType.TEXT_MESSAGE_END, messageId: "msg1" },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" },
+      ];
+
+      const compacted = compactEvents(events);
+
+      expect(compacted).toHaveLength(5);
+      expect(compacted.filter((e) => e.type === EventType.STATE_SNAPSHOT)).toHaveLength(0);
+    });
+
+    it("should handle state events outside of runs", () => {
+      const events = [
+        { type: EventType.STATE_SNAPSHOT, snapshot: { x: 1 } },
+        { type: EventType.STATE_DELTA, delta: [{ op: "replace", path: "/x", value: 2 }] },
+      ];
+
+      const compacted = compactEvents(events);
+
+      expect(compacted).toHaveLength(1);
+      expect(compacted[0].type).toBe(EventType.STATE_SNAPSHOT);
+      expect((compacted[0] as StateSnapshotEvent).snapshot).toEqual({ x: 2 });
+    });
+
+    it("should handle snapshot after deltas within a run (snapshot resets state)", () => {
+      const events = [
+        { type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" },
+        { type: EventType.STATE_DELTA, delta: [{ op: "add", path: "/old", value: true }] },
+        { type: EventType.STATE_SNAPSHOT, snapshot: { fresh: true } },
+        { type: EventType.STATE_DELTA, delta: [{ op: "add", path: "/extra", value: 1 }] },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" },
+      ];
+
+      const compacted = compactEvents(events);
+
+      expect(compacted).toHaveLength(3);
+      expect((compacted[1] as StateSnapshotEvent).snapshot).toEqual({ fresh: true, extra: 1 });
+    });
+
+    it("should preserve non-state events alongside state compaction", () => {
+      const events = [
+        { type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" },
+        { type: EventType.STATE_SNAPSHOT, snapshot: { count: 0 } },
+        { type: EventType.TEXT_MESSAGE_START, messageId: "msg1", role: "assistant" },
+        { type: EventType.TEXT_MESSAGE_CONTENT, messageId: "msg1", delta: "Hi" },
+        { type: EventType.TEXT_MESSAGE_END, messageId: "msg1" },
+        { type: EventType.STATE_DELTA, delta: [{ op: "replace", path: "/count", value: 1 }] },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" },
+      ];
+
+      const compacted = compactEvents(events);
+
+      expect(compacted).toHaveLength(6);
+      expect(compacted[0].type).toBe(EventType.RUN_STARTED);
+      // Text message events
+      expect(compacted[1].type).toBe(EventType.TEXT_MESSAGE_START);
+      expect(compacted[2].type).toBe(EventType.TEXT_MESSAGE_CONTENT);
+      expect(compacted[3].type).toBe(EventType.TEXT_MESSAGE_END);
+      // Compacted state before RUN_FINISHED
+      expect(compacted[4].type).toBe(EventType.STATE_SNAPSHOT);
+      expect((compacted[4] as StateSnapshotEvent).snapshot).toEqual({ count: 1 });
+      expect(compacted[5].type).toBe(EventType.RUN_FINISHED);
+    });
+
+    it("should flush state events before RUN_STARTED when they precede any run", () => {
+      const events = [
+        { type: EventType.STATE_SNAPSHOT, snapshot: { preRun: true } },
+        { type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" },
+        { type: EventType.STATE_SNAPSHOT, snapshot: { inRun: true } },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" },
+      ];
+
+      const compacted = compactEvents(events);
+
+      expect(compacted).toHaveLength(4);
+      expect(compacted[0].type).toBe(EventType.STATE_SNAPSHOT);
+      expect((compacted[0] as StateSnapshotEvent).snapshot).toEqual({ preRun: true });
+      expect(compacted[1].type).toBe(EventType.RUN_STARTED);
+      expect(compacted[2].type).toBe(EventType.STATE_SNAPSHOT);
+      expect((compacted[2] as StateSnapshotEvent).snapshot).toEqual({ inRun: true });
+      expect(compacted[3].type).toBe(EventType.RUN_FINISHED);
+    });
+
+    it("should flush state events between runs", () => {
+      const events = [
+        { type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" },
+        { type: EventType.STATE_SNAPSHOT, snapshot: { run: 1 } },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" },
+        { type: EventType.STATE_SNAPSHOT, snapshot: { between: true } },
+        { type: EventType.STATE_DELTA, delta: [{ op: "add", path: "/extra", value: 1 }] },
+        { type: EventType.RUN_STARTED, threadId: "t1", runId: "r2" },
+        { type: EventType.STATE_SNAPSHOT, snapshot: { run: 2 } },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r2" },
+      ];
+
+      const compacted = compactEvents(events);
+
+      expect(compacted).toHaveLength(7);
+      // Run 1
+      expect(compacted[0].type).toBe(EventType.RUN_STARTED);
+      expect(compacted[1].type).toBe(EventType.STATE_SNAPSHOT);
+      expect((compacted[1] as StateSnapshotEvent).snapshot).toEqual({ run: 1 });
+      expect(compacted[2].type).toBe(EventType.RUN_FINISHED);
+      // Between runs — flushed before RUN_STARTED
+      expect(compacted[3].type).toBe(EventType.STATE_SNAPSHOT);
+      expect((compacted[3] as StateSnapshotEvent).snapshot).toEqual({ between: true, extra: 1 });
+      // Run 2
+      expect(compacted[4].type).toBe(EventType.RUN_STARTED);
+      expect(compacted[5].type).toBe(EventType.STATE_SNAPSHOT);
+      expect((compacted[5] as StateSnapshotEvent).snapshot).toEqual({ run: 2 });
+      expect(compacted[6].type).toBe(EventType.RUN_FINISHED);
+    });
+
+    it("should flush state on RUN_ERROR", () => {
+      const events = [
+        { type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" },
+        { type: EventType.STATE_SNAPSHOT, snapshot: { count: 0 } },
+        { type: EventType.STATE_DELTA, delta: [{ op: "replace", path: "/count", value: 5 }] },
+        { type: EventType.RUN_ERROR, threadId: "t1", runId: "r1", message: "something failed" },
+      ];
+
+      const compacted = compactEvents(events);
+
+      expect(compacted).toHaveLength(3);
+      expect(compacted[0].type).toBe(EventType.RUN_STARTED);
+      expect(compacted[1].type).toBe(EventType.STATE_SNAPSHOT);
+      expect((compacted[1] as StateSnapshotEvent).snapshot).toEqual({ count: 5 });
+      expect(compacted[2].type).toBe(EventType.RUN_ERROR);
+    });
+
+    it("should handle complex nested state with JSON patch operations", () => {
+      const events = [
+        { type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" },
+        {
+          type: EventType.STATE_SNAPSHOT,
+          snapshot: { users: [{ name: "Alice", age: 30 }], settings: { theme: "dark" } },
+        },
+        {
+          type: EventType.STATE_DELTA,
+          delta: [{ op: "add", path: "/users/-", value: { name: "Bob", age: 25 } }],
+        },
+        {
+          type: EventType.STATE_DELTA,
+          delta: [{ op: "replace", path: "/settings/theme", value: "light" }],
+        },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" },
+      ];
+
+      const compacted = compactEvents(events);
+
+      expect(compacted).toHaveLength(3);
+      expect((compacted[1] as StateSnapshotEvent).snapshot).toEqual({
+        users: [
+          { name: "Alice", age: 30 },
+          { name: "Bob", age: 25 },
+        ],
+        settings: { theme: "light" },
+      });
     });
   });
 });

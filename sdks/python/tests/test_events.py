@@ -1,8 +1,10 @@
 import unittest
 import json
+import typing
 from datetime import datetime
 from pydantic import ValidationError, TypeAdapter
 
+from ag_ui.core import events as events_module
 from ag_ui.core.types import Message, UserMessage, AssistantMessage, FunctionCall, ToolCall
 from ag_ui.core.events import (
     EventType,
@@ -26,6 +28,7 @@ from ag_ui.core.events import (
     RunErrorEvent,
     StepStartedEvent,
     StepFinishedEvent,
+    ReasoningMessageStartEvent,
     Event
 )
 
@@ -423,14 +426,13 @@ class TestEvents(unittest.TestCase):
             self.assertEqual(event.type.value, data["type"])
             self.assertEqual(event.timestamp, data["timestamp"])
 
-    def test_validation_constraints(self):
-        """Test validation constraints for different event types"""
-        # TextMessageContentEvent delta cannot be empty
-        with self.assertRaises(ValueError):
-            TextMessageContentEvent(
-                message_id="msg_123",
-                delta=""  # Empty delta, should fail
-            )
+    def test_empty_delta_accepted(self):
+        """Models like GPT-5 legitimately send empty deltas during streaming"""
+        event = TextMessageContentEvent(
+            message_id="msg_123",
+            delta=""
+        )
+        self.assertEqual(event.delta, "")
 
     def test_serialization_round_trip(self):
         """Test serialization and deserialization for different event types"""
@@ -637,6 +639,76 @@ class TestEvents(unittest.TestCase):
         # Verify Unicode and special characters are preserved
         self.assertEqual(deserialized.delta, text)
 
+    def test_all_event_subclasses_in_event_union(self):
+        """Ensure all BaseEvent subclasses are included in the Event union type"""
+        # Get all classes defined in the events module that are subclasses of BaseEvent
+        event_subclasses = set()
+        for name in dir(events_module):
+            obj = getattr(events_module, name)
+            if (
+                isinstance(obj, type)
+                and issubclass(obj, BaseEvent)
+                and obj is not BaseEvent
+            ):
+                event_subclasses.add(obj)
 
+        # Get all types in the Event union
+        union_types = set(typing.get_args(typing.get_args(Event)[0]))
+
+        # Check that all event subclasses are in the union
+        missing_from_union = event_subclasses - union_types
+        self.assertEqual(
+            missing_from_union,
+            set(),
+            f"The following event types are missing from the Event union: {missing_from_union}"
+        )
+
+    def test_reasoning_message_start_event_role_is_reasoning(self):
+        """Test that ReasoningMessageStartEvent uses role='reasoning' to match TypeScript SDK.
+
+        Regression test for GitHub issue #1169: the Python SDK previously used
+        role='assistant' while the TypeScript SDK used role='reasoning', causing
+        wire-incompatibility between the two SDKs.
+        """
+        # Creating with role="reasoning" should succeed
+        event = ReasoningMessageStartEvent(
+            message_id="msg_reasoning_1",
+            role="reasoning",
+            timestamp=1648214400000,
+        )
+        self.assertEqual(event.role, "reasoning")
+        self.assertEqual(event.message_id, "msg_reasoning_1")
+
+        # Test serialization produces role="reasoning"
+        serialized = event.model_dump(by_alias=True)
+        self.assertEqual(serialized["role"], "reasoning")
+        self.assertEqual(serialized["type"], "REASONING_MESSAGE_START")
+
+        # Test deserialization from JSON (simulating TypeScript SDK wire format)
+        event_adapter = TypeAdapter(Event)
+        json_data = json.dumps({
+            "type": "REASONING_MESSAGE_START",
+            "messageId": "msg_reasoning_2",
+            "role": "reasoning",
+            "timestamp": 1648214400000,
+        })
+        deserialized = event_adapter.validate_json(json_data)
+        self.assertIsInstance(deserialized, ReasoningMessageStartEvent)
+        self.assertEqual(deserialized.role, "reasoning")
+
+    def test_reasoning_message_start_event_rejects_assistant_role(self):
+        """Test that ReasoningMessageStartEvent rejects role='assistant'.
+
+        After fixing issue #1169, role='assistant' should no longer be accepted.
+        """
+        with self.assertRaises(ValidationError):
+            ReasoningMessageStartEvent(
+                message_id="msg_bad",
+                role="assistant",
+                timestamp=1648214400000,
+            )
+
+
+        
 if __name__ == "__main__":
     unittest.main()

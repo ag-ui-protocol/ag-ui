@@ -20,9 +20,76 @@ from ag_ui.core import (
 )
 
 from .config import PredictStateMapping
+from .serialization import serialize_tool_args
 
 logger = logging.getLogger(__name__)
 
+
+# Build an allowlist of keys accepted by google.genai.types.Schema,
+# including both snake_case field names and their camelCase aliases.
+# This is more robust than a denylist — new JSON Schema fields that
+# aren't in genai.Schema are automatically filtered without maintenance.
+try:
+    from google.genai._common import alias_generators
+    _ALLOWED_SCHEMA_KEYS = frozenset(
+        set(types.Schema.model_fields.keys())
+        | {alias_generators.to_camel(f) for f in types.Schema.model_fields}
+    )
+except (ImportError, AttributeError):
+    # Fallback if genai internals change — use a static allowlist
+    _ALLOWED_SCHEMA_KEYS = frozenset({
+        "type", "format", "description", "nullable", "enum", "example",
+        "items", "properties", "required", "default", "title", "pattern",
+        "minimum", "maximum", "minItems", "maxItems", "minLength", "maxLength",
+        "minProperties", "maxProperties", "additionalProperties", "anyOf",
+        "ref", "defs", "propertyOrdering",
+    })
+
+
+def _clean_schema_for_genai(schema: Any) -> Any:
+    """Recursively clean a JSON Schema dict for google.genai.types.Schema.
+
+    Three transformations:
+    1. Strip ``$``-prefixed keys (``$schema``, ``$id``, ``$ref``, ``$defs``,
+       ``$comment``) — these are JSON Schema infrastructure, never in genai.
+    2. Map ``examples`` → ``example`` (first element only) and
+       ``const`` → ``enum`` (single-value list), preserving useful context.
+    3. Filter remaining keys to only those accepted by ``types.Schema``,
+       using an allowlist derived from ``types.Schema.model_fields``.
+    """
+    if isinstance(schema, dict):
+        result = {}
+        for k, v in schema.items():
+            # Always strip $-prefixed keys
+            if k.startswith("$"):
+                continue
+            # Map examples -> example (preserve first element as opaque data)
+            if k == "examples" and isinstance(v, list) and v:
+                result["example"] = v[0]
+                continue
+            # Map const -> enum (single-value list, stringified for genai)
+            if k == "const":
+                result["enum"] = [v if isinstance(v, str) else json.dumps(v)]
+                continue
+            # Only keep keys that genai.types.Schema accepts
+            if k not in _ALLOWED_SCHEMA_KEYS:
+                continue
+            # "properties" and "defs" are dict-of-schemas — recurse into
+            # values but preserve the user-defined keys (property names).
+            if k in ("properties", "defs") and isinstance(v, dict):
+                result[k] = {
+                    prop_name: _clean_schema_for_genai(prop_schema)
+                    for prop_name, prop_schema in v.items()
+                }
+            # "default", "example", "enum" are opaque values — don't recurse
+            elif k in ("default", "example", "enum"):
+                result[k] = v
+            else:
+                result[k] = _clean_schema_for_genai(v)
+        return result
+    if isinstance(schema, list):
+        return [_clean_schema_for_genai(item) for item in schema]
+    return schema
 
 
 class ClientProxyTool(BaseTool):
@@ -134,6 +201,11 @@ class ClientProxyTool(BaseTool):
             parameters = {"type": "object", "properties": {}}
             logger.warning(f"Tool {self.name} had non-dict parameters, using empty schema")
 
+        # Clean JSON Schema for genai.types.Schema compatibility:
+        # strips $-prefixed keys, maps examples->example and const->enum,
+        # filters to only genai-accepted fields via allowlist.
+        parameters = _clean_schema_for_genai(parameters)
+
         # Create FunctionDeclaration
         function_declaration = types.FunctionDeclaration(
             name=self.name,
@@ -223,7 +295,7 @@ class ClientProxyTool(BaseTool):
             logger.debug(f"Emitted TOOL_CALL_START for {tool_call_id}")
 
             # Emit TOOL_CALL_ARGS event
-            args_json = json.dumps(args)
+            args_json = serialize_tool_args(args)
             args_event = ToolCallArgsEvent(
                 type=EventType.TOOL_CALL_ARGS,
                 tool_call_id=tool_call_id,

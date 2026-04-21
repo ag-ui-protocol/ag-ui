@@ -7,12 +7,18 @@ import {
   ToolCallStartEvent,
   ToolCallArgsEvent,
   ToolCallEndEvent,
+  StateSnapshotEvent,
+  StateDeltaEvent,
 } from "@ag-ui/core";
+import * as jsonpatch from "fast-json-patch";
+import { structuredClone_ } from "../utils";
 
 /**
  * Compacts streaming events by consolidating multiple deltas into single events.
  * For text messages: multiple content deltas become one concatenated delta.
  * For tool calls: multiple args deltas become one concatenated delta.
+ * For state: all STATE_SNAPSHOT and STATE_DELTA events within a run are compacted
+ *   into a single STATE_SNAPSHOT representing the final state.
  * Events between related streaming events are reordered to keep streaming events together.
  *
  * @param events - Array of events to compact
@@ -38,6 +44,9 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
       otherEvents: BaseEvent[];
     }
   >();
+
+  // State compaction: collects state events, flushed at RUN_STARTED (pre-run/inter-run), RUN_FINISHED/RUN_ERROR (in-run), and at end (trailing)
+  let stateEvents: (StateSnapshotEvent | StateDeltaEvent)[] = [];
 
   for (const event of events) {
     // Handle text message streaming events
@@ -127,6 +136,25 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
       // Flush this tool call's events
       flushToolCall(toolCallId, pending, compacted);
       pendingToolCalls.delete(toolCallId);
+    } else if (event.type === EventType.RUN_STARTED) {
+      // Flush any pre-run state events before starting a new run
+      flushState(stateEvents, compacted);
+      stateEvents = [];
+      compacted.push(event);
+    } else if (
+      event.type === EventType.RUN_FINISHED ||
+      event.type === EventType.RUN_ERROR
+    ) {
+      // Flush compacted state into output before the run boundary event
+      flushState(stateEvents, compacted);
+      stateEvents = [];
+      compacted.push(event);
+    } else if (
+      event.type === EventType.STATE_SNAPSHOT ||
+      event.type === EventType.STATE_DELTA
+    ) {
+      // Collect state events for compaction
+      stateEvents.push(event as StateSnapshotEvent | StateDeltaEvent);
     } else {
       // For non-streaming events, check if we're in the middle of any streaming sequences
       let addedToBuffer = false;
@@ -169,6 +197,9 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
   for (const [toolCallId, pending] of pendingToolCalls) {
     flushToolCall(toolCallId, pending, compacted);
   }
+
+  // Flush any remaining state events (incomplete run or events outside runs)
+  flushState(stateEvents, compacted);
 
   return compacted;
 }
@@ -249,4 +280,31 @@ function flushToolCall(
   for (const otherEvent of pending.otherEvents) {
     compacted.push(otherEvent);
   }
+}
+
+function flushState(
+  stateEvents: (StateSnapshotEvent | StateDeltaEvent)[],
+  compacted: BaseEvent[],
+): void {
+  if (stateEvents.length === 0) {
+    return;
+  }
+
+  let state: any = {};
+
+  for (const event of stateEvents) {
+    if (event.type === EventType.STATE_SNAPSHOT) {
+      state = structuredClone_(event.snapshot);
+    } else {
+      const result = jsonpatch.applyPatch(state, structuredClone_(event.delta), true, false);
+      state = result.newDocument;
+    }
+  }
+
+  const compactedSnapshot: StateSnapshotEvent = {
+    type: EventType.STATE_SNAPSHOT,
+    snapshot: state,
+  };
+
+  compacted.push(compactedSnapshot);
 }

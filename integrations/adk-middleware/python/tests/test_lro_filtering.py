@@ -570,14 +570,60 @@ async def test_shared_set_mutation_visible_to_translator():
         f"Late-added ID should still suppress, got: {event_types}"
 
 
-async def test_client_tool_names_suppress_lro_path():
-    """LRO translate path must skip tools whose name is in client_tool_names.
-
-    This is the primary mechanism for preventing duplicate emission when ADK
-    assigns different IDs to the LRO event vs the confirmed event — ID-based
-    filtering can't catch it, so we filter by name instead.
+async def test_lro_path_does_not_double_emit_on_repeated_event():
+    """Regression: SSE streams an LRO event twice (partial=True then
+    partial=False). The translator must emit TOOL_CALL_* exactly once per
+    fc.id, not once per event. Without the self-dedupe against
+    emitted_tool_call_ids, the second call would duplicate the trio,
+    breaking frontends that treat TOOL_CALL_START for an already-open id as
+    an error (observed as an empty assistant bubble in the adk-middleware
+    dojo HITL flow on ADK 1.23+).
     """
-    # Simulate a resumable agent where ClientProxyTool handles emission
+    translator = EventTranslator(
+        client_tool_names={"generate_task_steps"},
+        is_resumable=True,
+    )
+
+    lro_id = "fc-repeated"
+    lro_call = MagicMock()
+    lro_call.id = lro_id
+    lro_call.name = "generate_task_steps"
+    lro_call.args = {"steps": []}
+
+    lro_part = MagicMock()
+    lro_part.function_call = lro_call
+
+    adk_event = MagicMock()
+    adk_event.content = MagicMock()
+    adk_event.content.parts = [lro_part]
+    adk_event.long_running_tool_ids = [lro_id]
+
+    first = []
+    async for e in translator.translate_lro_function_calls(adk_event):
+        first.append(e)
+    assert [e.type for e in first] == [
+        EventType.TOOL_CALL_START,
+        EventType.TOOL_CALL_ARGS,
+        EventType.TOOL_CALL_END,
+    ]
+
+    second = []
+    async for e in translator.translate_lro_function_calls(adk_event):
+        second.append(e)
+    assert second == [], \
+        f"Repeated LRO event must not re-emit; got {[e.type for e in second]}"
+
+
+async def test_lro_path_emits_for_resumable_client_tool():
+    """LRO translate path emits for client tools in resumable mode.
+
+    The translator is the primary LRO emitter across all ADK versions. On
+    google-adk >=1.18 the ClientProxyTool is also invoked and would emit, but
+    its dedupe guard (_translator_emitted_tool_call_ids) short-circuits since
+    the translator already added the id to emitted_tool_call_ids. On
+    google-adk <1.18 the proxy is never invoked (base_llm_flow pauses early),
+    so translator-side emission is the only path. See issue #1536.
+    """
     translator = EventTranslator(
         client_tool_names={"generate_task_steps"},
         is_resumable=True,
@@ -601,8 +647,14 @@ async def test_client_tool_names_suppress_lro_path():
     async for e in translator.translate_lro_function_calls(adk_event):
         events.append(e)
 
-    assert len(events) == 0, \
-        f"LRO path should skip client tool by name, got {len(events)} events"
+    event_types = [e.type for e in events]
+    assert event_types == [
+        EventType.TOOL_CALL_START,
+        EventType.TOOL_CALL_ARGS,
+        EventType.TOOL_CALL_END,
+    ], f"LRO path should emit START/ARGS/END, got {event_types}"
+    assert lro_id in translator.emitted_tool_call_ids, \
+        "Translator must record emitted id so ClientProxyTool can dedupe"
 
 
 async def test_client_tool_names_suppress_confirmed_event():
@@ -759,11 +811,18 @@ async def test_full_resumable_hitl_flow_no_duplicates():
     """End-to-end: simulates the exact ADK flow with ResumabilityConfig.
 
     Reproduces the real-world scenario:
-    1. ADK emits LRO event (ID-A) with long_running_tool_ids — translator skips (client name)
-    2. ADK emits confirmed event (ID-B, different!) without long_running_tool_ids — translator skips (client name)
-    3. ADK executes ClientProxyTool (ID-B) — proxy checks translator set, emits (translator didn't emit)
+    1. ADK emits LRO event (ID-A) with long_running_tool_ids — translator emits
+       START/ARGS/END for ID-A and records it in emitted_tool_call_ids.
+    2. ADK emits confirmed event (ID-B, different!) — translator suppresses via
+       client_tool_names (regular _translate_function_calls path), since the
+       tool call was already emitted under ID-A.
+    3. ClientProxyTool execution (ID-B) would see ID-B is not in the translator
+       set and would emit — but on resumable flows ADK invokes the proxy with
+       the same id the translator already saw on 1.18+, so the proxy dedupes
+       via _translator_emitted_tool_call_ids. On <1.18 the proxy is not
+       invoked at all (first-turn pause in base_llm_flow).
 
-    Only ONE emission should occur: from ClientProxyTool.
+    Total emissions across all paths: exactly one START/ARGS/END trio.
     """
     client_emitted_ids: set[str] = set()
     translator = EventTranslator(
@@ -775,7 +834,7 @@ async def test_full_resumable_hitl_flow_no_duplicates():
     lro_id = "adk-lro-id-A"
     confirmed_id = "adk-confirmed-id-B"
 
-    # Step 1: LRO event — should be suppressed by client_tool_names
+    # Step 1: LRO event — translator emits START/ARGS/END
     lro_call = MagicMock()
     lro_call.id = lro_id
     lro_call.name = "generate_task_steps"
@@ -792,9 +851,15 @@ async def test_full_resumable_hitl_flow_no_duplicates():
     lro_events = []
     async for e in translator.translate_lro_function_calls(lro_event):
         lro_events.append(e)
-    assert len(lro_events) == 0, f"LRO path should emit 0 events, got {len(lro_events)}"
+    assert [e.type for e in lro_events] == [
+        EventType.TOOL_CALL_START,
+        EventType.TOOL_CALL_ARGS,
+        EventType.TOOL_CALL_END,
+    ], f"LRO path should emit START/ARGS/END, got {[e.type for e in lro_events]}"
+    assert lro_id in translator.emitted_tool_call_ids
 
-    # Step 2: Confirmed event (different ID!) — should be suppressed by client_tool_names
+    # Step 2: Confirmed event (different ID) — suppressed by client_tool_names
+    # filter in the regular _translate_function_calls path.
     confirmed_event = MagicMock()
     confirmed_event.author = "assistant"
     confirmed_event.partial = False
@@ -814,30 +879,21 @@ async def test_full_resumable_hitl_flow_no_duplicates():
         confirmed_events.append(e)
 
     tool_events = [e for e in confirmed_events if "TOOL_CALL" in str(e.type)]
-    assert len(tool_events) == 0, f"Confirmed path should emit 0 tool events, got {len(tool_events)}"
-
-    # Step 3: ClientProxyTool would run here with confirmed_id
-    # Since translator.emitted_tool_call_ids is empty (translator didn't emit),
-    # the proxy tool should emit its events. Verify the translator set is empty.
-    assert confirmed_id not in translator.emitted_tool_call_ids, \
-        "Translator should NOT have recorded suppressed IDs"
-    assert lro_id not in translator.emitted_tool_call_ids, \
-        "Translator should NOT have recorded suppressed IDs"
+    assert len(tool_events) == 0, \
+        f"Confirmed path should emit 0 tool events, got {len(tool_events)}"
 
 
-async def test_has_lro_function_call_sets_is_long_running_tool_even_when_translator_skips():
-    """is_long_running_tool must be True when has_lro_function_call is True,
-    even if translate_lro_function_calls emits no events (e.g. client tool filtered).
+async def test_has_lro_function_call_sets_is_long_running_tool():
+    """is_long_running_tool must be True when has_lro_function_call is True.
 
     This is critical for HITL SequentialAgent resumption: if is_long_running_tool
     stays False, the invocation_id is cleared after the run, breaking multi-turn
     resumption.
 
-    Reproduces the bug from commit c08a56f5 where client_tool_names filtering
-    in translate_lro_function_calls caused no TOOL_CALL_END to be emitted,
-    so is_long_running_tool was never set to True.
+    adk_agent.py sets the flag from has_lro_function_call directly (not just
+    from observing TOOL_CALL_END), so detection works regardless of whether
+    the translator is the emitter or ClientProxyTool is.
     """
-    # Resumable agent: ClientProxyTool handles emission, translator skips by name
     translator = EventTranslator(
         client_tool_names={"generate_task_steps"},
         is_resumable=True,
@@ -858,26 +914,29 @@ async def test_has_lro_function_call_sets_is_long_running_tool_even_when_transla
     adk_event.long_running_tool_ids = [lro_id]
 
     # Simulate the _run_adk_in_background logic:
-    # has_lro_function_call is True (detected upstream), but translator emits nothing
+    # has_lro_function_call is True (detected upstream); set the flag directly.
     has_lro_function_call = True
     is_long_running_tool = False
-
-    # The fix: set flag based on has_lro_function_call directly
     if has_lro_function_call:
         is_long_running_tool = True
 
-    # Translator emits nothing due to client_tool_names filtering (resumable)
     events = []
     async for e in translator.translate_lro_function_calls(adk_event):
         events.append(e)
         if e.type == EventType.TOOL_CALL_END:
             is_long_running_tool = True
 
-    assert len(events) == 0, "Translator should emit 0 events (client tool filtered in resumable mode)"
     assert is_long_running_tool is True, (
-        "is_long_running_tool must be True even when translator skips client tool emission. "
-        "Without this, invocation_id is cleared and SequentialAgent resumption breaks."
+        "is_long_running_tool must be True. Without this, invocation_id is cleared "
+        "and SequentialAgent resumption breaks."
     )
+    # Translator emits for LRO regardless of resumable/client_tool_names — the
+    # proxy tool dedupes via the shared emitted_tool_call_ids set when invoked.
+    assert [e.type for e in events] == [
+        EventType.TOOL_CALL_START,
+        EventType.TOOL_CALL_ARGS,
+        EventType.TOOL_CALL_END,
+    ]
 
 
 async def test_non_resumable_agent_tool_round_trip():
@@ -956,13 +1015,14 @@ async def test_non_resumable_agent_tool_round_trip():
 
 
 async def test_resumable_agent_no_duplicate_emission():
-    """Resumable agent: LRO tool calls emitted exactly once (by ClientProxyTool, not translator).
+    """Resumable agent: LRO tool call emitted exactly once across translator + proxy.
 
-    When is_resumable=True, the translate_lro_function_calls must filter out
-    client tool names to prevent duplicates — ClientProxyTool handles emission.
-
-    After ClientProxyTool runs, the confirmed event from ADK must also be
-    suppressed by the translator (via client_emitted_tool_call_ids or client_tool_names).
+    Translator emits on the LRO event (single emission point for the trio).
+    A follow-up confirmed event with a DIFFERENT id must be suppressed to
+    avoid duplicating the same logical tool call under a second id. The
+    client_tool_names filter in _translate_function_calls handles that.
+    ClientProxyTool, when invoked by ADK (1.18+), dedupes against the
+    translator's emitted_tool_call_ids.
     """
     client_emitted_ids: set[str] = set()
     translator = EventTranslator(
@@ -973,7 +1033,7 @@ async def test_resumable_agent_no_duplicate_emission():
 
     lro_id = "adk-lro-hitl-1"
 
-    # Step 1: LRO event — translator should suppress (client tool, resumable)
+    # Step 1: LRO event — translator emits START/ARGS/END
     lro_call = MagicMock()
     lro_call.id = lro_id
     lro_call.name = "generate_task_steps"
@@ -991,15 +1051,15 @@ async def test_resumable_agent_no_duplicate_emission():
     async for e in translator.translate_lro_function_calls(lro_event):
         lro_events.append(e)
 
-    assert len(lro_events) == 0, (
-        f"Resumable agent: translator must suppress client tool LRO, got {len(lro_events)} events"
-    )
+    assert [e.type for e in lro_events] == [
+        EventType.TOOL_CALL_START,
+        EventType.TOOL_CALL_ARGS,
+        EventType.TOOL_CALL_END,
+    ], f"Resumable agent: translator must emit LRO events, got {[e.type for e in lro_events]}"
 
-    # Step 2: ClientProxyTool emits (simulated by adding to shared set)
+    # Step 2: Confirmed event with different ID — must be suppressed so the
+    # same logical tool call isn't emitted a second time under a new id.
     confirmed_id = "adk-confirmed-hitl-2"
-    client_emitted_ids.add(confirmed_id)
-
-    # Step 3: Confirmed event with different ID — must also be suppressed
     confirmed_event = MagicMock()
     confirmed_event.author = "assistant"
     confirmed_event.partial = False
@@ -1020,11 +1080,9 @@ async def test_resumable_agent_no_duplicate_emission():
 
     tool_events = [e for e in confirmed_events if "TOOL_CALL" in str(e.type)]
     assert len(tool_events) == 0, (
-        f"Resumable agent: confirmed event must be suppressed (already emitted by proxy), "
+        f"Resumable agent: confirmed event must be suppressed (already emitted under LRO id), "
         f"got {len(tool_events)} tool events"
     )
-
-    # Total tool call emissions across all paths: 0 from translator
     # (ClientProxyTool would emit exactly 1 set — not tested here as it's a different component)
 
 

@@ -10,10 +10,14 @@ import logging
 
 from ag_ui.core import (
     Message, UserMessage, AssistantMessage, SystemMessage, ToolMessage,
-    ToolCall, FunctionCall, TextInputContent, BinaryInputContent, InputContent
+    ToolCall, FunctionCall, TextInputContent, BinaryInputContent, InputContent,
+    ImageInputContent, AudioInputContent, VideoInputContent, DocumentInputContent,
+    InputContentDataSource, InputContentUrlSource,
 )
 from google.adk.events import Event as ADKEvent
 from google.genai import types
+
+from ..serialization import serialize_tool_args
 
 logger = logging.getLogger(__name__)
 
@@ -88,13 +92,85 @@ def _is_binary_content(item: Union[dict, InputContent]) -> bool:
     is_binary_input_content = isinstance(item, BinaryInputContent)
     return is_binary_dict or is_binary_input_content
 
+_MEDIA_CONTENT_TYPES = (ImageInputContent, AudioInputContent, VideoInputContent, DocumentInputContent)
+_MEDIA_TYPE_STRINGS = {"image", "audio", "video", "document"}
+
+def _is_media_content(item: Union[dict, InputContent]) -> bool:
+    if isinstance(item, _MEDIA_CONTENT_TYPES):
+        return True
+    return isinstance(item, dict) and item.get("type") in _MEDIA_TYPE_STRINGS
+
+def _media_content_to_part(item: Union[dict, InputContent]) -> Optional[types.Part]:
+    """Convert a media content item (image/audio/video/document) to a types.Part."""
+    if isinstance(item, _MEDIA_CONTENT_TYPES):
+        source = item.source
+    elif isinstance(item, dict):
+        source = item.get("source")
+    else:
+        return None
+
+    if source is None:
+        logger.warning("Media content item has no source; ignoring.")
+        return None
+
+    # Handle InputContentDataSource (inline base64)
+    if isinstance(source, InputContentDataSource):
+        mime_type = source.mime_type
+        data_value = source.value
+    elif isinstance(source, dict) and source.get("type") == "data":
+        mime_type = source.get("mimeType") or source.get("mime_type")
+        data_value = source.get("value")
+    else:
+        mime_type = None
+        data_value = None
+
+    if data_value is not None:
+        if not mime_type:
+            logger.warning("Media content data source missing mime_type; ignoring.")
+            return None
+        try:
+            decoded = base64.b64decode(data_value, validate=True)
+            return types.Part(
+                inline_data=types.Blob(
+                    mime_type=mime_type,
+                    data=decoded,
+                )
+            )
+        except (binascii.Error, ValueError) as e:
+            logger.warning("Failed to base64 decode media content data: %s", e)
+            return None
+
+    # Handle InputContentUrlSource (URI reference)
+    if isinstance(source, InputContentUrlSource):
+        url_value = source.value
+        url_mime = source.mime_type
+    elif isinstance(source, dict) and source.get("type") == "url":
+        url_value = source.get("value")
+        url_mime = source.get("mimeType") or source.get("mime_type")
+    else:
+        logger.warning("Media content has unrecognized source type; ignoring.")
+        return None
+
+    if not url_value:
+        logger.warning("Media content URL source missing value; ignoring.")
+        return None
+
+    return types.Part(
+        file_data=types.FileData(
+            file_uri=url_value,
+            mime_type=url_mime,
+        )
+    )
+
 def convert_message_content_to_parts(content: Optional[Union[str, List[Any]]]) -> List[types.Part]:
     """Convert AG-UI message content into google.genai types.Part list.
 
     Supports:
     - str -> [Part(text=...)]
-    - List[InputContent] -> text parts + binary parts (inline_data only; data/base64 only)
-    - List[dict] -> dict-shaped text/binary items (data/base64 only)
+    - List[InputContent] -> text parts + media parts (image/audio/video/document) + binary parts
+    - Media data sources (base64) -> Part(inline_data=Blob(...))
+    - Media URL sources -> Part(file_data=FileData(file_uri=...))
+    - Legacy BinaryInputContent -> Part(inline_data=Blob(...)) (deprecated)
     """
     if content is None:
         return []
@@ -107,6 +183,10 @@ def convert_message_content_to_parts(content: Optional[Union[str, List[Any]]]) -
         if _is_text_content(item):
             text_value = _get_text_value(item)
             part = _to_text_part(text_value)
+            if part:
+                parts.append(part)
+        elif _is_media_content(item):
+            part = _media_content_to_part(item)
             if part:
                 parts.append(part)
         elif _is_binary_content(item):
@@ -234,7 +314,7 @@ def convert_adk_event_to_ag_ui_message(event: ADKEvent) -> Optional[Message]:
                         type="function",
                         function=FunctionCall(
                             name=part.function_call.name,
-                            arguments=json.dumps(part.function_call.args) if hasattr(part.function_call, 'args') else "{}"
+                            arguments=serialize_tool_args(part.function_call.args) if hasattr(part.function_call, 'args') else "{}"
                         )
                     ))
             

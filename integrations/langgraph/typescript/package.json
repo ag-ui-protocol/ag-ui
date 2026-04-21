@@ -1,6 +1,6 @@
 {
   "name": "@ag-ui/langgraph",
-  "version": "0.0.24",
+  "version": "0.0.29",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
@@ -26,8 +26,9 @@
     "unlink:global": "pnpm unlink --global"
   },
   "dependencies": {
-    "@langchain/core": "^0.3.80",
-    "@langchain/langgraph-sdk": "^0.1.2",
+    "@langchain/core": "^1.1.40",
+    "@langchain/langgraph-sdk": "^1.8.8",
+    "langchain": ">=1.2.0",
     "partial-json": "^0.1.7",
     "rxjs": "7.8.1"
   },
@@ -48,8 +49,12 @@
   },
   "exports": {
     ".": {
-      "require": "./dist/index.js",
-      "import": "./dist/index.mjs"
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    },
+    "./middlewares": {
+      "import": "./dist/middlewares/index.mjs",
+      "require": "./dist/middlewares/index.js"
     },
     "./package.json": "./package.json"
   }

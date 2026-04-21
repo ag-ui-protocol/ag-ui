@@ -41,8 +41,11 @@ export interface AgentStateMutation {
 }
 
 export interface AgentSubscriberParams {
-  messages: Message[];
-  state: State;
+  messages: ReadonlyArray<Readonly<Message>>;
+  // NOTE: State resolves to `any` at the type level (z.infer<typeof z.any()>), so Readonly<State>
+  // provides no compile-time mutation protection. Runtime enforcement via deepFreeze in
+  // dev/test mode is the only guard against in-place mutation of state.
+  state: Readonly<State>;
   agent: AbstractAgent;
   input: RunAgentInput;
 }
@@ -205,41 +208,68 @@ export interface AgentSubscriber {
   ): MaybePromise<void>;
 }
 
+function deepFreeze<T>(obj: T): T {
+  Object.freeze(obj);
+  if (obj !== null && typeof obj === "object") {
+    for (const value of Object.values(obj)) {
+      if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
+        deepFreeze(value);
+      }
+    }
+  }
+  return obj;
+}
+
 export async function runSubscribersWithMutation(
   subscribers: AgentSubscriber[],
   initialMessages: Message[],
   initialState: State,
   executor: (
     subscriber: AgentSubscriber,
-    messages: Message[],
-    state: State,
+    messages: ReadonlyArray<Readonly<Message>>,
+    state: Readonly<State>,
   ) => MaybePromise<AgentStateMutation | void>,
 ): Promise<AgentStateMutation> {
-  let messages: Message[] = initialMessages;
-  let state: State = initialState;
+  const hasProcess = typeof process !== "undefined" && typeof process.env !== "undefined";
+  const isTestEnvironment =
+    hasProcess && (process.env.NODE_ENV === "test" || Boolean(process.env.VITEST_WORKER_ID));
+  const isDev =
+    hasProcess &&
+    (process.env.NODE_ENV === "development" ||
+      process.env.NODE_ENV === "test" ||
+      Boolean(process.env.VITEST_WORKER_ID));
+  const baselineMessages = structuredClone_(initialMessages);
+  const baselineState = structuredClone_(initialState);
+  let messages: Message[] = baselineMessages;
+  let state: State = baselineState;
 
   let stopPropagation: boolean | undefined = undefined;
 
   for (const subscriber of subscribers) {
     try {
-      const mutation = await executor(
-        subscriber,
-        structuredClone_(messages),
-        structuredClone_(state),
-      );
+      // Subscribers receive shared references and must not mutate them in-place.
+      // Mutations should only be communicated via the return value.
+      // In dev/test mode only: deep-freeze inputs so accidental in-place mutations surface
+      // as TypeErrors immediately. In production, enforcement is type-level only.
+      if (isDev) {
+        deepFreeze(messages);
+        deepFreeze(state);
+      }
+      const mutation = await executor(subscriber, messages, state);
 
       if (mutation === undefined) {
         // Nothing returned – keep going
         continue;
       }
 
-      // Merge messages/state so next subscriber sees latest view
-      if (mutation.messages !== undefined) {
-        messages = mutation.messages;
+      // Replace with a defensive copy of the subscriber's mutation,
+      // but skip if the subscriber returned the same reference (no-op).
+      if (mutation.messages !== undefined && mutation.messages !== messages) {
+        messages = structuredClone_(mutation.messages);
       }
 
-      if (mutation.state !== undefined) {
-        state = mutation.state;
+      if (mutation.state !== undefined && mutation.state !== state) {
+        state = structuredClone_(mutation.state);
       }
 
       stopPropagation = mutation.stopPropagation;
@@ -248,21 +278,37 @@ export async function runSubscribersWithMutation(
         break;
       }
     } catch (error) {
-      // Log subscriber errors but continue processing (silence during tests)
-      const isTestEnvironment =
-        process.env.NODE_ENV === "test" || process.env.VITEST_WORKER_ID !== undefined;
-
-      if (!isTestEnvironment) {
+      if (isDev && error instanceof TypeError) {
+        // Likely a freeze violation: subscriber attempted to mutate frozen inputs in-place.
+        // In test environments, re-throw so tests fail fast and the violation is visible.
+        // In development (non-test), log a specific message to distinguish freeze violations
+        // from ordinary subscriber errors.
+        if (isTestEnvironment) {
+          throw error;
+        }
+        console.error(
+          "AG-UI: Subscriber attempted to mutate frozen inputs in-place. " +
+            "Return mutations via AgentStateMutation instead of mutating directly.",
+          error,
+        );
+      } else if (!isTestEnvironment) {
         console.error("Subscriber error:", error);
       }
-      // Continue to next subscriber unless we want to stop propagation
+      // Skip this subscriber's mutation and continue
       continue;
     }
   }
 
+  // In dev/test mode, the canonical messages/state references may have been
+  // frozen in-place (for subscriber mutation detection). Clone them before
+  // returning so callers receive a mutable copy, not a frozen one.
   return {
-    ...(JSON.stringify(messages) !== JSON.stringify(initialMessages) ? { messages } : {}),
-    ...(JSON.stringify(state) !== JSON.stringify(initialState) ? { state } : {}),
+    ...(messages !== baselineMessages
+      ? { messages: isDev && Object.isFrozen(messages) ? structuredClone_(messages) : messages }
+      : {}),
+    ...(state !== baselineState
+      ? { state: isDev && Object.isFrozen(state) ? structuredClone_(state) : state }
+      : {}),
     ...(stopPropagation !== undefined ? { stopPropagation } : {}),
   };
 }

@@ -26,6 +26,7 @@ import { useURLParams } from "@/contexts/url-params-context";
 import { View } from "@/types/interface";
 import { getTitleForCurrentDomain } from "@/utils/domain-config";
 import { useTheme } from "next-themes";
+import posthog from "posthog-js";
 
 interface SidebarProps {
   isMobile?: boolean;
@@ -69,6 +70,11 @@ export function Sidebar({ isMobile, onMobileClose }: SidebarProps) {
   // Handle selecting a demo
   const handleDemoSelect = (demoId: string) => {
     if (currentIntegration) {
+      posthog.capture("demo_selected", {
+        demo_id: demoId,
+        integration_id: currentIntegration.id,
+        integration_name: currentIntegration.name,
+      });
       const queryString = searchParams.toString();
       const newPath = `/${currentIntegration.id}/feature/${demoId}`;
       const url = queryString ? `${newPath}?${queryString}` : newPath;
@@ -82,6 +88,10 @@ export function Sidebar({ isMobile, onMobileClose }: SidebarProps) {
 
   // Handle integration selection
   const handleIntegrationSelect = (integrationId: string) => {
+    posthog.capture("integration_selected", {
+      integration_id: integrationId,
+      previous_integration_id: currentIntegrationId || null,
+    });
     const queryString = searchParams.toString();
     const newPath = `/${integrationId}`;
     const url = queryString ? `${newPath}?${queryString}` : newPath;
@@ -153,7 +163,14 @@ export function Sidebar({ isMobile, onMobileClose }: SidebarProps) {
               <SectionTitle title="View" />
               <Tabs
                 value={view}
-                onValueChange={(tab) => setView(tab as View)}
+                onValueChange={(tab) => {
+                  posthog.capture("view_changed", {
+                    view: tab,
+                    integration_id: currentIntegrationId || null,
+                    demo_id: currentDemoId || null,
+                  });
+                  setView(tab as View);
+                }}
                 className="w-full rounded-lg bg-none border-none"
               >
                 <TabsList className="w-full rounded-lg h-8 p-0 bg-transparent border-none">

@@ -77,7 +77,7 @@ api_key = os.getenv("OPENAI_API_KEY")
 # If using api_key authentication remove the credential parameter
 # Explicitly pass deployment_name to align with .NET behavior and support both env var names
 chat_client = OpenAIChatClient(
-    model_id=deployment_name,
+    model_id=deployment_name or os.getenv("OPENAI_CHAT_MODEL_ID", "gpt-4o"),
     api_key=api_key,
 )
 # TODO: Uncomment this to authenticate with Azure

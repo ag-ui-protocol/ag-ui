@@ -17,6 +17,7 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
+    "dev:examples": "tsx --env-file=.env --watch examples/server.ts",
     "clean": "rm -rf dist .turbo node_modules",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

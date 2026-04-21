@@ -1,6 +1,6 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "willow",
+  "theme": "aspen",
   "name": "Agent User Interaction Protocol",
   "colors": {
     "primary": "#09090b",
@@ -55,7 +55,7 @@
             "group": "Draft Proposals",
             "pages": [
               "drafts/overview",
-              "drafts/multimodal-messages",
+
               "drafts/interrupts",
               "drafts/generative-ui",
               "drafts/meta-events"
@@ -73,7 +73,8 @@
             "pages": [
               "development/updates",
               "development/roadmap",
-              "development/contributing"
+              "development/contributing",
+              "talk-to-us"
             ]
           }
         ]
@@ -90,6 +91,7 @@
                 "pages": [
                   "sdk/js/core/overview",
                   "sdk/js/core/types",
+                  "sdk/js/core/multimodal-inputs",
                   "sdk/js/core/events"
                 ]
               },
@@ -116,6 +118,7 @@
                 "pages": [
                   "sdk/python/core/overview",
                   "sdk/python/core/types",
+                  "sdk/python/core/multimodal-inputs",
                   "sdk/python/core/events"
                 ]
               },
