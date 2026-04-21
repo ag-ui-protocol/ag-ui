@@ -1,5 +1,7 @@
 import unittest
 
+from pydantic import ValidationError
+
 from ag_ui.core.capabilities import (
     AgentCapabilities,
     ExecutionCapabilities,
@@ -200,8 +202,12 @@ class TestRoundTrip(unittest.TestCase):
         self.assertEqual(round_tripped, payload)
 
     def test_sub_agent_info_required_name(self):
-        with self.assertRaises(Exception):
+        with self.assertRaises(ValidationError) as ctx:
             SubAgentInfo()  # type: ignore[call-arg]
+        self.assertTrue(
+            any(err["loc"] == ("name",) for err in ctx.exception.errors()),
+            "ValidationError should flag the missing `name` field specifically",
+        )
         sa = SubAgentInfo(name="only-name")
         self.assertEqual(sa.name, "only-name")
         self.assertIsNone(sa.description)
