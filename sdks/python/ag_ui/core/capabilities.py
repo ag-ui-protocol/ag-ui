@@ -51,8 +51,8 @@ class IdentityCapabilities(ConfiguredBaseModel):
     documentation_url: Optional[str] = Field(
         default=None, description="URL to the agent's documentation or homepage."
     )
-    metadata: Dict[str, Any] = Field(
-        default_factory=dict,
+    metadata: Optional[Dict[str, Any]] = Field(
+        default=None,
         description="Arbitrary key-value pairs for integration-specific identity info.",
     )
 
@@ -102,8 +102,8 @@ class ToolsCapabilities(ConfiguredBaseModel):
             "disabled even if items are present."
         ),
     )
-    items: List[Tool] = Field(
-        default_factory=list,
+    items: Optional[List[Tool]] = Field(
+        default=None,
         description=(
             "The tools this agent provides on its own (full JSON Schema definitions). These are distinct from "
             "client-provided tools passed in `RunAgentInput.tools`."
@@ -131,8 +131,8 @@ class OutputCapabilities(ConfiguredBaseModel):
         default=None,
         description="Set `True` if the agent can produce structured JSON output matching a provided schema.",
     )
-    supported_mime_types: List[str] = Field(
-        default_factory=list,
+    supported_mime_types: Optional[List[str]] = Field(
+        default=None,
         description=(
             'MIME types the agent can produce (e.g., `["text/plain", "application/json"]`). Omit if the agent only '
             "produces plain text."
@@ -190,8 +190,8 @@ class MultiAgentCapabilities(ConfiguredBaseModel):
         default=None,
         description="Set `True` if the agent can transfer the conversation entirely to another agent.",
     )
-    sub_agents: List[SubAgentInfo] = Field(
-        default_factory=list,
+    sub_agents: Optional[List[SubAgentInfo]] = Field(
+        default=None,
         description="List of sub-agents this agent can invoke. Helps clients build agent selection UIs.",
     )
 
@@ -272,12 +272,12 @@ class MultimodalCapabilities(ConfiguredBaseModel):
     what it produces.
     """
 
-    input: MultimodalInputCapabilities = Field(
-        default_factory=MultimodalInputCapabilities,
+    input: Optional[MultimodalInputCapabilities] = Field(
+        default=None,
         description="Modalities the agent can accept as input (images, audio, video, PDFs, files).",
     )
-    output: MultimodalOutputCapabilities = Field(
-        default_factory=MultimodalOutputCapabilities,
+    output: Optional[MultimodalOutputCapabilities] = Field(
+        default=None,
         description="Modalities the agent can produce as output (images, audio).",
     )
 
@@ -303,7 +303,7 @@ class ExecutionCapabilities(ConfiguredBaseModel):
     max_iterations: Optional[int] = Field(
         default=None,
         description=(
-            "Maximum number of tool-call/reasoning iterations the agent will perform per run. Helps clients display"
+            "Maximum number of tool-call/reasoning iterations the agent will perform per run. Helps clients display "
             "progress or set timeout expectations."
         ),
     )
@@ -355,46 +355,46 @@ class AgentCapabilities(ConfiguredBaseModel):
     categories.
     """
 
-    identity: IdentityCapabilities = Field(
-        default_factory=IdentityCapabilities, description="Agent identity and metadata."
+    identity: Optional[IdentityCapabilities] = Field(
+        default=None, description="Agent identity and metadata."
     )
-    transport: TransportCapabilities = Field(
-        default_factory=TransportCapabilities,
+    transport: Optional[TransportCapabilities] = Field(
+        default=None,
         description="Supported transport mechanisms (SSE, WebSocket, binary, etc.).",
     )
-    tools: ToolsCapabilities = Field(
-        default_factory=ToolsCapabilities,
+    tools: Optional[ToolsCapabilities] = Field(
+        default=None,
         description="Tools the agent provides and tool calling configuration.",
     )
-    output: OutputCapabilities = Field(
-        default_factory=OutputCapabilities,
+    output: Optional[OutputCapabilities] = Field(
+        default=None,
         description="Output format support (structured output, MIME types).",
     )
-    state: StateCapabilities = Field(
-        default_factory=StateCapabilities,
+    state: Optional[StateCapabilities] = Field(
+        default=None,
         description="State and memory management (snapshots, deltas, persistence).",
     )
-    multi_agent: MultiAgentCapabilities = Field(
-        default_factory=MultiAgentCapabilities,
+    multi_agent: Optional[MultiAgentCapabilities] = Field(
+        default=None,
         description="Multi-agent coordination (delegation, handoffs, sub-agents).",
     )
-    reasoning: ReasoningCapabilities = Field(
-        default_factory=ReasoningCapabilities,
+    reasoning: Optional[ReasoningCapabilities] = Field(
+        default=None,
         description="Reasoning and thinking support (chain-of-thought, encrypted thinking).",
     )
-    multi_modal: MultimodalCapabilities = Field(
-        default_factory=MultimodalCapabilities,
+    multimodal: Optional[MultimodalCapabilities] = Field(
+        default=None,
         description="Multimodal input/output support (images, audio, video, files).",
     )
-    execution: ExecutionCapabilities = Field(
-        default_factory=ExecutionCapabilities,
+    execution: Optional[ExecutionCapabilities] = Field(
+        default=None,
         description="Execution control and limits (code execution, timeouts, iteration caps).",
     )
-    human_in_the_loop: HumanInTheLoopCapabilities = Field(
-        default_factory=HumanInTheLoopCapabilities,
+    human_in_the_loop: Optional[HumanInTheLoopCapabilities] = Field(
+        default=None,
         description="Human-in-the-loop support (approvals, interventions, feedback).",
     )
-    custom: Dict[str, Any] = Field(
-        default_factory=dict,
+    custom: Optional[Dict[str, Any]] = Field(
+        default=None,
         description="Integration-specific capabilities not covered by the standard categories.",
     )
