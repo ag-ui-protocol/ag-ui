@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Tracks preservation start time per session in `_hitl_preserved_since`; tracking is cleaned up automatically when sessions are untracked
   - Opt-in via `hitl_max_wait_seconds=7200` (or any value in seconds) on `ADKAgent()` — defaults to `None` (no limit)
 
+### Changed
+
+- **CHANGE**: `add_adk_fastapi_endpoint` now streams via FastAPI's native `fastapi.sse.EventSourceResponse` (added in FastAPI 0.135.0) instead of `StreamingResponse` (relates to [#1001](https://github.com/ag-ui-protocol/ag-ui/issues/1001); delivers the "lightweight" SSE-comment mode suggested by `@contextablemark` in the [#1002](https://github.com/ag-ui-protocol/ag-ui/pull/1002) review). This adds a 15-second `: ping\n\n` keep-alive comment per the [HTML SSE spec's authoring note](https://html.spec.whatwg.org/multipage/server-sent-events.html#authoring-notes), plus `Cache-Control: no-cache` and `X-Accel-Buffering: no` response headers, preventing proxies (Cloud Run 60 s, AWS API Gateway 29 s, nginx ingress) and Node `undici` sockets from dropping idle long-running agent turns. On-the-wire event format is unchanged (per-event JSON is passed through `ServerSentEvent(raw_data=...)`, producing the same `data: {json}\n\n` frames as before). Complementary to a future `HeartbeatPlugin` emitting protocol-level `ACTIVITY_SNAPSHOT` progress events. Minimum FastAPI version bumped to `>=0.135.0`.
+
 ### Fixed
 
 - **FIX**: First-turn HITL `TOOL_CALL_*` emission on `google-adk` <1.18 (#1536)

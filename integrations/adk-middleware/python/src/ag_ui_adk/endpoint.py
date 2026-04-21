@@ -7,9 +7,9 @@ import warnings
 from typing import Any, Callable, Coroutine, List, Optional
 
 from ag_ui.core import RunAgentInput
-from ag_ui.encoder import EventEncoder
 from fastapi import APIRouter, FastAPI, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
+from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel
 
 from .adk_agent import ADKAgent
@@ -118,73 +118,70 @@ def add_adk_fastapi_endpoint(
         else:
             raise ValueError("Cannot use both 'extract_headers' and 'extract_state_from_request' parameters together.")
 
-    @app.post(path)
+    @app.post(path, response_class=EventSourceResponse)
     async def adk_endpoint(input_data: RunAgentInput, request: Request):
-        """ADK middleware endpoint."""
+        """ADK middleware endpoint.
+
+        Streams AG-UI events as SSE via FastAPI's native ``EventSourceResponse``
+        (FastAPI >=0.135), which adds a 15 s ``: ping`` keep-alive comment and
+        sets ``Cache-Control: no-cache`` / ``X-Accel-Buffering: no`` headers to
+        prevent proxies and Node ``undici`` sockets from dropping idle streams
+        during long-running tool calls.
+        """
 
         # Extract headers into state.headers if list provided
         if extract_state_fn:
             extracted_state_dict = await extract_state_fn(request, input_data)
-            
+
             if extracted_state_dict:
                 existing_state = input_data.state if isinstance(input_data.state, dict) else {}
                 merged_state = {**existing_state, **extracted_state_dict}
                 input_data = input_data.model_copy(update={"state": merged_state})
 
-        # Get the accept header from the request
-        accept_header = request.headers.get("accept")
-        agent_id = path.lstrip('/')
-        
-        
-        # Create an event encoder to properly format SSE events
-        encoder = EventEncoder(accept=accept_header)
-        
-        async def event_generator():
-            """Generate events from ADK agent."""
-            try:
-                async for event in agent.run(input_data):
-                    try:
-                        encoded = encoder.encode(event)
-                        logger.debug(f"HTTP Response: {encoded}")
-                        yield encoded
-                    except Exception as encoding_error:
-                        # Handle encoding-specific errors
-                        logger.error(f"❌ Event encoding error: {encoding_error}", exc_info=True)
-                        # Create a RunErrorEvent for encoding failures
-                        from ag_ui.core import EventType, RunErrorEvent
-                        error_event = RunErrorEvent(
-                            type=EventType.RUN_ERROR,
-                            message=f"Event encoding failed: {str(encoding_error)}",
-                            code="ENCODING_ERROR"
-                        )
-                        try:
-                            error_encoded = encoder.encode(error_event)
-                            yield error_encoded
-                        except Exception:
-                            # If we can't even encode the error event, yield a basic SSE error
-                            logger.error("Failed to encode error event, yielding basic SSE error")
-                            yield "event: error\ndata: {\"error\": \"Event encoding failed\"}\n\n"
-                        break  # Stop the stream after an encoding error
-            except Exception as agent_error:
-                # Handle errors from ADKAgent.run() itself
-                logger.error(f"❌ ADKAgent error: {agent_error}", exc_info=True)
-                # ADKAgent should have yielded a RunErrorEvent, but if something went wrong
-                # in the async generator itself, we need to handle it
+        try:
+            async for event in agent.run(input_data):
                 try:
+                    encoded = event.model_dump_json(by_alias=True, exclude_none=True)
+                    logger.debug(f"HTTP Response: {encoded}")
+                    yield ServerSentEvent(raw_data=encoded)
+                except Exception as encoding_error:
+                    # Handle encoding-specific errors
+                    logger.error(f"❌ Event encoding error: {encoding_error}", exc_info=True)
+                    # Create a RunErrorEvent for encoding failures
                     from ag_ui.core import EventType, RunErrorEvent
                     error_event = RunErrorEvent(
                         type=EventType.RUN_ERROR,
-                        message=f"Agent execution failed: {str(agent_error)}",
-                        code="AGENT_ERROR"
+                        message=f"Event encoding failed: {str(encoding_error)}",
+                        code="ENCODING_ERROR"
                     )
-                    error_encoded = encoder.encode(error_event)
-                    yield error_encoded
-                except Exception:
-                    # If we can't encode the error event, yield a basic SSE error
-                    logger.error("Failed to encode agent error event, yielding basic SSE error")
-                    yield "event: error\ndata: {\"error\": \"Agent execution failed\"}\n\n"
-        
-        return StreamingResponse(event_generator(), media_type=encoder.get_content_type())
+                    try:
+                        yield ServerSentEvent(
+                            raw_data=error_event.model_dump_json(by_alias=True, exclude_none=True)
+                        )
+                    except Exception:
+                        # If we can't even encode the error event, yield a basic SSE error
+                        logger.error("Failed to encode error event, yielding basic SSE error")
+                        yield ServerSentEvent(event="error", raw_data='{"error": "Event encoding failed"}')
+                    return  # Stop the stream after an encoding error
+        except Exception as agent_error:
+            # Handle errors from ADKAgent.run() itself
+            logger.error(f"❌ ADKAgent error: {agent_error}", exc_info=True)
+            # ADKAgent should have yielded a RunErrorEvent, but if something went wrong
+            # in the async generator itself, we need to handle it
+            try:
+                from ag_ui.core import EventType, RunErrorEvent
+                error_event = RunErrorEvent(
+                    type=EventType.RUN_ERROR,
+                    message=f"Agent execution failed: {str(agent_error)}",
+                    code="AGENT_ERROR"
+                )
+                yield ServerSentEvent(
+                    raw_data=error_event.model_dump_json(by_alias=True, exclude_none=True)
+                )
+            except Exception:
+                # If we can't encode the error event, yield a basic SSE error
+                logger.error("Failed to encode agent error event, yielding basic SSE error")
+                yield ServerSentEvent(event="error", raw_data='{"error": "Agent execution failed"}')
 
     capabilities_path = f"{path.rstrip('/')}/capabilities" if path != "/" else "/capabilities"
 
