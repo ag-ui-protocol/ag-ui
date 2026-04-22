@@ -236,4 +236,73 @@ describe("HttpAgent", () => {
       signal: expect.any(AbortSignal),
     });
   });
+
+  describe("credentials option (#323)", () => {
+    function minimalInput(agent: HttpAgent) {
+      return {
+        threadId: agent.threadId,
+        runId: "mock-run-id",
+        tools: [],
+        context: [],
+        forwardedProps: {},
+        state: agent.state,
+        messages: agent.messages,
+      };
+    }
+
+    it("forwards a configured credentials value to runHttpRequest", () => {
+      (runHttpRequest as Mock).mockReturnValue(of());
+
+      const agent = new HttpAgent({
+        url: "https://api.example.com/v1/chat",
+        credentials: "include",
+      });
+
+      agent.run(minimalInput(agent));
+
+      expect(runHttpRequest).toHaveBeenCalledWith(
+        "https://api.example.com/v1/chat",
+        expect.objectContaining({ credentials: "include" }),
+      );
+    });
+
+    it("omits credentials when the option is not set", () => {
+      (runHttpRequest as Mock).mockReturnValue(of());
+
+      const agent = new HttpAgent({ url: "https://api.example.com/v1/chat" });
+
+      agent.run(minimalInput(agent));
+
+      // `credentials: undefined` flows through; fetch treats that the same as
+      // omitting the key entirely, so the browser uses its default mode.
+      const [, init] = (runHttpRequest as Mock).mock.calls[0];
+      expect(init.credentials).toBeUndefined();
+    });
+
+    it("stores the credentials option on the instance", () => {
+      const agent = new HttpAgent({
+        url: "https://api.example.com/v1/chat",
+        credentials: "same-origin",
+      });
+      expect(agent.credentials).toBe("same-origin");
+    });
+
+    it("preserves credentials through clone()", () => {
+      const agent = new HttpAgent({
+        url: "https://api.example.com/v1/chat",
+        credentials: "include",
+      });
+
+      const cloned = agent.clone() as HttpAgent;
+
+      expect(cloned.credentials).toBe("include");
+      // The clone must carry credentials through to its own request too.
+      (runHttpRequest as Mock).mockReturnValue(of());
+      cloned.run(minimalInput(cloned));
+      expect(runHttpRequest).toHaveBeenLastCalledWith(
+        "https://api.example.com/v1/chat",
+        expect.objectContaining({ credentials: "include" }),
+      );
+    });
+  });
 });
