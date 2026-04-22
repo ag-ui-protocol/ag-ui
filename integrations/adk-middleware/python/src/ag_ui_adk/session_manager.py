@@ -130,7 +130,8 @@ class SessionManager:
         thread_id: str,
         app_name: str,
         user_id: str,
-        initial_state: Optional[Dict[str, Any]] = None
+        initial_state: Optional[Dict[str, Any]] = None,
+        skip_find: bool = False,
     ) -> Tuple[Any, str]:
         """Get existing session or create new one.
 
@@ -139,6 +140,9 @@ class SessionManager:
             app_name: Application name
             user_id: User identifier
             initial_state: Optional initial state for new sessions
+            skip_find: If True, skip _find_session_by_thread_id in the scan
+                path (caller already confirmed no session exists). No effect
+                on the thread_id-as-session_id path (O(1) lookup is cheap).
 
         Returns:
             Tuple of (session, backend_session_id). The backend_session_id may differ
@@ -165,6 +169,7 @@ class SessionManager:
                 app_name=app_name,
                 user_id=user_id,
                 initial_state=initial_state,
+                skip_find=skip_find,
             )
 
         session_key = self._make_session_key(app_name, backend_session_id)
@@ -226,13 +231,15 @@ class SessionManager:
         app_name: str,
         user_id: str,
         initial_state: Optional[Dict[str, Any]] = None,
+        skip_find: bool = False,
     ) -> Tuple[Any, str]:
         """Original O(n) scan path: search state for matching thread_id."""
         # Try to find existing session by thread_id in state
-        session = await self._find_session_by_thread_id(app_name, user_id, thread_id)
-        if session:
-            logger.debug(f"Retrieved existing session for thread {thread_id}: {session.id}")
-            return session, session.id
+        if not skip_find:
+            session = await self._find_session_by_thread_id(app_name, user_id, thread_id)
+            if session:
+                logger.debug(f"Retrieved existing session for thread {thread_id}: {session.id}")
+                return session, session.id
 
         # Create new session - let backend generate session_id
         state = {

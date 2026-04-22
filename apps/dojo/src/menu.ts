@@ -293,6 +293,8 @@ export const menuIntegrations = [
     name: "AWS Strands",
     features: [
       "agentic_chat",
+      "agentic_chat_reasoning",
+      "agentic_chat_multimodal",
       "v1_agentic_chat",
       "backend_tool_rendering",
       "agentic_generative_ui",

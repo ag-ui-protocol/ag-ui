@@ -126,7 +126,7 @@ describe("subgraph detection", () => {
 // ---------------------------------------------------------------------------
 
 describe("getStateAndMessagesSnapshots", () => {
-  function setupAgent(checkpointMessages: LangGraphMessage[], streamedMessages: LangGraphMessage[] = []) {
+  function setupAgent(checkpointMessages: LangGraphMessage[]) {
     const config = makeConfig();
     (config.client as any).threads.getState = vi.fn().mockResolvedValue({
       values: { messages: checkpointMessages },
@@ -135,7 +135,7 @@ describe("getStateAndMessagesSnapshots", () => {
       metadata: {},
     });
     const { agent, dispatched } = makeAgent(config);
-    (agent as any).activeRun = { id: "run-1", streamedMessages };
+    (agent as any).activeRun = { id: "run-1" };
     (agent as any).getStateSnapshot = vi.fn().mockReturnValue({});
     return { agent, dispatched };
   }
@@ -165,32 +165,6 @@ describe("getStateAndMessagesSnapshots", () => {
     const ids = snap.messages.map((m: any) => m.id);
     expect(ids).toContain("h1");
     expect(ids.indexOf("f1")).toBeLessThan(ids.indexOf("h1"));
-  });
-
-  it("uncommitted streamed message appended after checkpoint", async () => {
-    const user = msg("u1", "human", "hi");
-    const flights = msg("f1", "ai", "Booked KLM");
-    const supervisorRouting = msg("sup1", "ai", "routing");
-    const { agent, dispatched } = setupAgent([user, flights], [supervisorRouting]);
-
-    await (agent as any).getStateAndMessagesSnapshots("thread-1");
-
-    const snap = dispatched.find((e) => e?.type === EventType.MESSAGES_SNAPSHOT);
-    const ids = snap.messages.map((m: any) => m.id);
-    expect(ids).toContain("sup1");
-    expect(ids.indexOf("sup1")).toBeGreaterThan(ids.indexOf("f1"));
-  });
-
-  it("streamed message already in checkpoint is not duplicated", async () => {
-    const user = msg("u1", "human", "hi");
-    const exp = msg("exp1", "ai", "activities");
-    const { agent, dispatched } = setupAgent([user, exp], [exp]);
-
-    await (agent as any).getStateAndMessagesSnapshots("thread-1");
-
-    const snap = dispatched.find((e) => e?.type === EventType.MESSAGES_SNAPSHOT);
-    const ids = snap.messages.map((m: any) => m.id);
-    expect(ids.filter((id: string) => id === "exp1")).toHaveLength(1);
   });
 });
 
@@ -229,8 +203,7 @@ describe("subgraph change trigger", () => {
       exitingNode: false,
       manuallyEmittedState: null,
       hasFunctionStreaming: false,
-      hasPredictState: false,
-      streamedMessages: [],
+      modelMadeToolCall: false,
     };
     (agent as any).getStateSnapshot = vi.fn().mockReturnValue({});
     return { agent, dispatched, config };
@@ -361,7 +334,7 @@ describe("getState error propagation", () => {
       .mockRejectedValue(new Error("checkpoint unavailable"));
 
     const { agent } = makeAgent(config);
-    (agent as any).activeRun = { id: "run-1", streamedMessages: [] };
+    (agent as any).activeRun = { id: "run-1" };
     (agent as any).getStateSnapshot = vi.fn().mockReturnValue({});
 
     await expect(
@@ -375,7 +348,7 @@ describe("getState error propagation", () => {
 // ---------------------------------------------------------------------------
 
 describe("streamSubgraphs gating", () => {
-  function setupAgent(checkpointMessages: LangGraphMessage[], streamedMessages: LangGraphMessage[] = []) {
+  function setupAgent(checkpointMessages: LangGraphMessage[]) {
     const config = makeConfig();
     (config.client as any).threads.getState = vi.fn().mockResolvedValue({
       values: { messages: checkpointMessages },
@@ -384,7 +357,7 @@ describe("streamSubgraphs gating", () => {
       metadata: {},
     });
     const { agent, dispatched } = makeAgent(config);
-    (agent as any).activeRun = { id: "run-1", streamedMessages };
+    (agent as any).activeRun = { id: "run-1" };
     (agent as any).getStateSnapshot = vi.fn().mockReturnValue({});
     return { agent, dispatched };
   }
@@ -414,7 +387,7 @@ describe("streamSubgraphs gating", () => {
     });
     (config.client as any).threads.getState = getStateSpy;
     const { agent } = makeAgent(config);
-    (agent as any).activeRun = { id: "run-1", streamedMessages: [] };
+    (agent as any).activeRun = { id: "run-1" };
     (agent as any).getStateSnapshot = vi.fn().mockReturnValue({});
 
     // Simulate what the loop does when subgraphsStreamEnabled = false:

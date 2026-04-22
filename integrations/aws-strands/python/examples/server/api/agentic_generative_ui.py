@@ -7,13 +7,12 @@ import os
 import asyncio
 import random
 import uuid
-from typing import List, Dict, Any, Annotated
+from typing import List, Dict, Any
 from pathlib import Path
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
 from strands import Agent, tool
-from strands.models.gemini import GeminiModel
 from ag_ui.core import (
     EventType,
     StateSnapshotEvent,
@@ -31,6 +30,7 @@ from ag_ui_strands import (
     ToolBehavior,
     PredictStateMapping,
 )
+from server.model_factory import create_model
 
 # Suppress OpenTelemetry warnings
 os.environ["OTEL_SDK_DISABLED"] = "true"
@@ -40,19 +40,8 @@ os.environ["OTEL_PYTHON_DISABLED_INSTRUMENTATIONS"] = "all"
 env_path = Path(__file__).parent.parent.parent / '.env'
 load_dotenv(dotenv_path=env_path)
 
-# Use Gemini model
-model = GeminiModel(
-    client_args={
-        "api_key": os.getenv("GOOGLE_API_KEY", "your-api-key-here"),
-    },
-    model_id="gemini-2.5-flash",
-    params={
-        "temperature": 0.3,
-        "max_output_tokens": 1024,
-        "top_p": 0.9,
-        "top_k": 40
-    }
-)
+# Create model from MODEL_PROVIDER env var (default: openai)
+model = create_model()
 
 
 class TaskStep(BaseModel):
@@ -66,7 +55,7 @@ class TaskStep(BaseModel):
 def plan_task_steps(
     task: str,
     context: str = "",
-    steps: Annotated[List[Any], Field(description="4-6 pending steps in gerund form")] = None,
+    steps: List[Any] = None,
 ) -> Dict[str, Any]:
     """
     Plan the concrete steps required to accomplish a task.

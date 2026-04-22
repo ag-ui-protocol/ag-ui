@@ -801,10 +801,19 @@ class EventTranslator:
             for i, part in enumerate(adk_event.content.parts):
                 if part.function_call:
                     fc = part.function_call
+                    # Emit whenever the FC is LRO and hasn't already been emitted
+                    # — by ClientProxyTool (1.18+ when ADK invokes the proxy) or
+                    # by a previous call to this method (SSE streams an LRO event
+                    # twice: once partial=True, once partial=False). The proxy's
+                    # own dedupe guard (client_proxy_tool.py
+                    # _translator_emitted_tool_call_ids) keeps emission idempotent
+                    # in the opposite direction. On ADK <1.18 the resumable
+                    # first-turn flow returns before invoking the proxy
+                    # (base_llm_flow.py pause-early-return), so the translator is
+                    # the only emitter. See issue #1536.
                     if fc.id in lro_ids \
                       and fc.id not in self._client_emitted_tool_call_ids \
-                      and (not self._is_resumable
-                           or getattr(fc, 'name', None) not in self._client_tool_names):
+                      and fc.id not in self.emitted_tool_call_ids:
                         self.long_running_tool_ids.append(fc.id)
                         if fc.name not in self.lro_emitted_ids_by_name:
                             self.lro_emitted_ids_by_name[fc.name] = []

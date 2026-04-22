@@ -1,8 +1,19 @@
 /**
- * A2UI component schema definition.
- * Declares which components are available, their props, and slots.
- * This is the contract between the application and the AI agent —
- * the agent can only generate UI using components defined here.
+ * A2UI v0.9 inline catalog schema.
+ * Matches the structure defined by the A2UI specification (basic_catalog.json).
+ * Components are keyed by name and use standard JSON Schema to describe
+ * their properties in the flat wire format.
+ */
+export interface A2UIInlineCatalogSchema {
+  /** Catalog identifier */
+  catalogId: string;
+  /** Component schemas keyed by component name */
+  components: Record<string, Record<string, unknown>>;
+}
+
+/**
+ * @deprecated Use A2UIInlineCatalogSchema instead.
+ * Legacy component schema definition with { name, props } format.
  */
 export interface A2UIComponentSchema {
   /** Component name (e.g. "TodoCard", "FlightResult") */
@@ -23,8 +34,11 @@ export interface A2UIMiddlewareConfig {
    * Component schema — declares which components are available to agents.
    * When provided, the schema is injected as context into RunAgentInput
    * so agents know what components they can generate.
+   *
+   * Accepts the v0.9 inline catalog format (preferred) or the legacy
+   * array format for backwards compatibility.
    */
-  schema?: A2UIComponentSchema[];
+  schema?: A2UIInlineCatalogSchema | A2UIComponentSchema[];
 
   /**
    * Controls whether the middleware injects an A2UI rendering tool into

@@ -13,6 +13,7 @@ from .config import (
     ToolCallContext,
     ToolResultContext,
     PredictStateMapping,
+    SessionManagerProvider,
 )
 
 __all__ = [
@@ -27,5 +28,6 @@ __all__ = [
     "ToolCallContext",
     "ToolResultContext",
     "PredictStateMapping",
+    "SessionManagerProvider",
 ]
 
