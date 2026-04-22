@@ -226,7 +226,7 @@ export const RunFinishedSuccessEventSchema = BaseEventSchema.extend({
   runId: z.string(),
   outcome: z.literal("success"),
   result: z.any().optional(),
-});
+}).strict();
 
 export const RunFinishedInterruptEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.RUN_FINISHED),
@@ -234,7 +234,7 @@ export const RunFinishedInterruptEventSchema = BaseEventSchema.extend({
   runId: z.string(),
   outcome: z.literal("interrupt"),
   interrupts: z.array(InterruptSchema).min(1),
-});
+}).strict();
 
 export const RunFinishedEventSchema = z.union([
   RunFinishedSuccessEventSchema,

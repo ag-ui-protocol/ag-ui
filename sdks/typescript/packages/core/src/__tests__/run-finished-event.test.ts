@@ -41,6 +41,18 @@ describe("RunFinishedEvent — success variant", () => {
       }),
     ).toThrow();
   });
+
+  it("rejects outcome='success' with stray interrupts", () => {
+    expect(() =>
+      RunFinishedSuccessEventSchema.parse({
+        type: EventType.RUN_FINISHED,
+        threadId: "t-1",
+        runId: "r-1",
+        outcome: "success",
+        interrupts: [{ id: "int-1", reason: "tool_call" }],
+      }),
+    ).toThrow();
+  });
 });
 
 describe("RunFinishedEvent — interrupt variant", () => {
@@ -64,6 +76,19 @@ describe("RunFinishedEvent — interrupt variant", () => {
         runId: "r-1",
         outcome: "interrupt",
         interrupts: [],
+      }),
+    ).toThrow();
+  });
+
+  it("rejects outcome='interrupt' with stray result", () => {
+    expect(() =>
+      RunFinishedInterruptEventSchema.parse({
+        type: EventType.RUN_FINISHED,
+        threadId: "t-1",
+        runId: "r-1",
+        outcome: "interrupt",
+        interrupts: [{ id: "int-1", reason: "tool_call" }],
+        result: "nope",
       }),
     ).toThrow();
   });
@@ -135,5 +160,8 @@ describe("EventSchemas — outer union routes RUN_FINISHED correctly", () => {
       interrupts: [{ id: "int-1", reason: "tool_call" }],
     });
     expect(parsed.type).toBe(EventType.RUN_FINISHED);
+    if (parsed.type === EventType.RUN_FINISHED && parsed.outcome === "interrupt") {
+      expect(parsed.interrupts).toHaveLength(1);
+    }
   });
 });
