@@ -32,7 +32,7 @@ Issues = "https://github.com/ag-ui-protocol/ag-ui/issues"
 
 [dependency-groups]
 dev = [
-    "black>=25.1.0",
+    "black>=26.3.1",
     "flake8>=7.3.0",
     "isort>=6.0.1",
     "mypy>=1.16.1",

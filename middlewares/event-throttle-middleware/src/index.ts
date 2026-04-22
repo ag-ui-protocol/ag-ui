@@ -17,7 +17,7 @@ import { Observable } from "rxjs";
 export interface EventThrottleConfig {
   /** Time-based throttle window in ms (e.g. 16 = ~60fps). */
   readonly intervalMs: number;
-  /** Min new characters to accumulate before flushing. Default: 0. */
+  /** Min new TEXT_MESSAGE_CHUNK characters to accumulate before flushing. Default: 0. */
   readonly minChunkSize?: number;
 }
 
@@ -161,7 +161,10 @@ export class EventThrottleMiddleware extends Middleware {
               // Merge delta into the previous chunk
               const prevDelta = chunkDelta(last) ?? "";
               const curDelta = chunkDelta(event) ?? "";
-              (last as any).delta = prevDelta + curDelta;
+              const merged = prevDelta + curDelta;
+              if (isTextChunk(last)) last.delta = merged;
+              else if (isToolCallChunk(last)) last.delta = merged;
+              else if (isReasoningChunk(last)) last.delta = merged;
             } else {
               // Push a shallow copy so we don't mutate the original event
               coalesced.push({ ...event } as BaseEvent);
@@ -196,7 +199,13 @@ export class EventThrottleMiddleware extends Middleware {
         next: (event) => {
           // Immediate events flush the buffer first, then pass through directly
           if (!BUFFERABLE_EVENT_TYPES.has(event.type)) {
-            flush();
+            try {
+              flush();
+            } catch (err) {
+              buffer = [];
+              subscriber.error(err);
+              return;
+            }
             subscriber.next(event);
             // Reset lastFlushTime so the time-based throttle window restarts from this point
             lastFlushTime = Date.now();
@@ -223,7 +232,13 @@ export class EventThrottleMiddleware extends Middleware {
             minChunkSize > 0 && charsSinceFlush >= minChunkSize;
 
           if (isLeading || timeThresholdMet || chunkThresholdMet) {
-            flush();
+            try {
+              flush();
+            } catch (err) {
+              buffer = [];
+              subscriber.error(err);
+              return;
+            }
           } else {
             scheduleTrailing();
           }
@@ -240,7 +255,12 @@ export class EventThrottleMiddleware extends Middleware {
         },
         complete: () => {
           // Flush remaining on completion
-          flush();
+          try {
+            flush();
+          } catch (err) {
+            subscriber.error(err);
+            return;
+          }
           subscriber.complete();
         },
       });

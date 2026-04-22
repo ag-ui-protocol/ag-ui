@@ -128,7 +128,7 @@ describe("EventThrottleMiddleware", () => {
   });
 
   describe("time-based throttle", () => {
-    it("with intervalMs, fewer events emitted than chunks sent", async () => {
+    it("coalesces synchronous chunks via leading-edge and completion flush", async () => {
       const mw = new EventThrottleMiddleware({ intervalMs: 50 });
       const { agent, events, done } = setup(mw);
 
@@ -401,7 +401,7 @@ describe("EventThrottleMiddleware", () => {
   });
 
   describe("state events", () => {
-    it("STATE_SNAPSHOT events are buffered and flushed correctly", async () => {
+    it("non-coalescable bufferable events all pass through in order", async () => {
       const mw = new EventThrottleMiddleware({ intervalMs: 5000 });
       const { agent, events, done } = setup(mw);
 
@@ -419,6 +419,7 @@ describe("EventThrottleMiddleware", () => {
       );
       expect(stateEvents).toHaveLength(3);
       expect((stateEvents[0] as any).snapshot).toEqual({ count: 1 });
+      expect((stateEvents[1] as any).snapshot).toEqual({ count: 2 });
       expect((stateEvents[2] as any).snapshot).toEqual({ count: 3 });
     });
   });

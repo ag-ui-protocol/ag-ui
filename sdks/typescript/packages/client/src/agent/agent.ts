@@ -37,6 +37,7 @@ import {
   FunctionMiddleware,
   BackwardCompatibility_0_0_39,
   BackwardCompatibility_0_0_45,
+  BackwardCompatibility_0_0_47,
 } from "@/middleware";
 import packageJson from "../../package.json";
 
@@ -111,6 +112,12 @@ export abstract class AbstractAgent {
     // with legacy THINKING events (deprecated, will be removed in 1.0.0)
     if (compareVersions(this.maxVersion, "0.0.45") <= 0) {
       this.middlewares.unshift(new BackwardCompatibility_0_0_45());
+    }
+
+    // Auto-insert BackwardCompatibility_0_0_47 for backward compatibility
+    // with legacy BinaryInputContent (maps to dedicated image/audio/video/document types)
+    if (compareVersions(this.maxVersion, "0.0.47") <= 0) {
+      this.middlewares.unshift(new BackwardCompatibility_0_0_47());
     }
   }
 
