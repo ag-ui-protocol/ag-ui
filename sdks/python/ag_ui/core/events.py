@@ -5,12 +5,15 @@ This module contains the event types for the Agent User Interaction Protocol Pyt
 from enum import Enum
 from typing import Annotated, Any, List, Literal, Optional, Union
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
-from .types import ConfiguredBaseModel, Message, State, Role, RunAgentInput
+from .types import ConfiguredBaseModel, Message, State, Role, RunAgentInput, Interrupt
 
 # Text messages can have any role except "tool"
 TextMessageRole = Literal["developer", "system", "assistant", "user"]
+
+# Outcome for a finished run
+RunFinishedOutcome = Literal["success", "interrupt"]
 
 
 class EventType(str, Enum):
@@ -254,7 +257,21 @@ class RunFinishedEvent(BaseEvent):
     type: Literal[EventType.RUN_FINISHED] = EventType.RUN_FINISHED  # pyright: ignore[reportIncompatibleVariableOverride]
     thread_id: str
     run_id: str
+    outcome: RunFinishedOutcome
     result: Optional[Any] = None
+    interrupts: Optional[List[Interrupt]] = None
+
+    @model_validator(mode="after")
+    def _check_variant_shape(self) -> "RunFinishedEvent":
+        if self.outcome == "interrupt":
+            if not self.interrupts:
+                raise ValueError("outcome='interrupt' requires non-empty interrupts")
+            if self.result is not None:
+                raise ValueError("outcome='interrupt' must not set result")
+        else:
+            if self.interrupts:
+                raise ValueError("outcome='success' must not have interrupts")
+        return self
 
 
 class RunErrorEvent(BaseEvent):
