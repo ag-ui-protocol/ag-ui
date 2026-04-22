@@ -142,14 +142,16 @@ jobs:
 
       - name: Bump versions for scope
         id: bump
-        env:
-          DRY_RUN_FLAG: ${{ inputs.dry_run == true && '--dry-run' || '' }}
         run: |
+          EXTRA_ARGS=()
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            EXTRA_ARGS+=(--dry-run)
+          fi
           RESULT=$(pnpm tsx scripts/release/prepare-release.ts \
             --scope "${{ inputs.scope }}" \
             --bump "${{ inputs.bump }}" \
             --preid "${{ inputs.preid }}" \
-            $DRY_RUN_FLAG)
+            "${EXTRA_ARGS[@]}")
 
           echo "$RESULT" > /tmp/bump-result.json
           CHANGED=$(jq '[.packages[] | select(.oldVersion != .newVersion)] | length' /tmp/bump-result.json)
@@ -164,12 +166,14 @@ jobs:
       - name: Dry-run summary
         if: inputs.dry_run == true
         run: |
-          echo "## Dry Run — release / create-pr" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Scope:** \`${{ inputs.scope }}\` | **Bump:** \`${{ inputs.bump }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Would bump" >> $GITHUB_STEP_SUMMARY
-          jq -r '.packages[] | "- **\(.name)**: \(.oldVersion) → \(.newVersion)"' /tmp/bump-result.json >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## Dry Run — release / create-pr"
+            echo ""
+            echo "**Scope:** \`${{ inputs.scope }}\` | **Bump:** \`${{ inputs.bump }}\`"
+            echo ""
+            echo "### Would bump"
+            jq -r '.packages[] | "- **\(.name)**: \(.oldVersion) → \(.newVersion)"' /tmp/bump-result.json
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Commit and push version bumps
         if: inputs.dry_run != true && steps.bump.outputs.changed_count != '0'
@@ -211,7 +215,7 @@ jobs:
           } > /tmp/raw-notes.md
 
           # Polish with AI if ANTHROPIC_API_KEY is set; otherwise passthrough
-          cat /tmp/raw-notes.md | pnpm tsx scripts/release/generate-ai-release-notes.ts > /tmp/release-notes.md
+          pnpm tsx scripts/release/generate-ai-release-notes.ts < /tmp/raw-notes.md > /tmp/release-notes.md
           cp /tmp/release-notes.md release-notes.md
           git add release-notes.md
           # Commit only if something changed
@@ -308,6 +312,8 @@ jobs:
       - name: No-op summary
         if: inputs.dry_run != true && steps.bump.outputs.changed_count == '0'
         run: |
-          echo "## release / create-pr" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Scope \`${{ inputs.scope }}\` is already bumped on \`release/next\` — nothing to add." >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## release / create-pr"
+            echo ""
+            echo "Scope \`${{ inputs.scope }}\` is already bumped on \`release/next\` — nothing to add."
+          } >> "$GITHUB_STEP_SUMMARY"

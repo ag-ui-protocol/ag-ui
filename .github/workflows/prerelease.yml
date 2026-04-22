@@ -116,8 +116,10 @@ jobs:
 
           echo "$RESULT" > /tmp/bump-result.json
 
-          echo "## Prerelease packages" >> $GITHUB_STEP_SUMMARY
-          jq -r '.packages[] | "- **\(.name)**: \(.oldVersion) → \(.newVersion)"' /tmp/bump-result.json >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## Prerelease packages"
+            jq -r '.packages[] | "- **\(.name)**: \(.oldVersion) → \(.newVersion)"' /tmp/bump-result.json
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Build TypeScript packages
         run: pnpm run build
@@ -167,15 +169,19 @@ jobs:
       - name: Dry-run summary
         if: inputs.dry_run == true
         run: |
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**DRY RUN** — no packages were published" >> $GITHUB_STEP_SUMMARY
+          {
+            echo ""
+            echo "**DRY RUN** — no packages were published"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish summary
         if: inputs.dry_run != true
         run: |
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Published canary versions." >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Install:" >> $GITHUB_STEP_SUMMARY
-          jq -r '.packages[] | select(.ecosystem == "typescript") | "```\nnpm install \(.name)@canary\n```"' /tmp/bump-result.json >> $GITHUB_STEP_SUMMARY
-          jq -r '.packages[] | select(.ecosystem == "python") | "```\npip install \(.name)==\(.newVersion)\n```"' /tmp/bump-result.json >> $GITHUB_STEP_SUMMARY
+          {
+            echo ""
+            echo "Published canary versions."
+            echo ""
+            echo "Install:"
+            jq -r '.packages[] | select(.ecosystem == "typescript") | "```\nnpm install \(.name)@canary\n```"' /tmp/bump-result.json
+            jq -r '.packages[] | select(.ecosystem == "python") | "```\npip install \(.name)==\(.newVersion)\n```"' /tmp/bump-result.json
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -120,9 +120,11 @@ jobs:
       - name: Nothing to publish
         if: steps.detect_ts.outputs.count == '0' && steps.detect_py.outputs.count == '0'
         run: |
-          echo "## release / publish" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "No version changes detected — nothing to publish." >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## release / publish"
+            echo ""
+            echo "No version changes detected — nothing to publish."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Install dependencies
         if: steps.detect_ts.outputs.count != '0'
@@ -253,18 +255,20 @@ jobs:
           TS_PACKAGES: ${{ steps.detect_ts.outputs.packages }}
           PY_PACKAGES: ${{ steps.detect_py.outputs.packages }}
         run: |
-          echo "## release / publish" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## release / publish"
+            echo ""
 
-          if [ "$(echo "$TS_PACKAGES" | jq 'length')" -gt 0 ]; then
-            echo "### npm" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "$TS_PACKAGES" | jq -r '.[] | "- `\(.name)@\(.version)`"' >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-          fi
+            if [ "$(echo "$TS_PACKAGES" | jq 'length')" -gt 0 ]; then
+              echo "### npm"
+              echo ""
+              echo "$TS_PACKAGES" | jq -r '.[] | "- `\(.name)@\(.version)`"'
+              echo ""
+            fi
 
-          if [ "$(echo "$PY_PACKAGES" | jq 'length')" -gt 0 ]; then
-            echo "### PyPI" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "$PY_PACKAGES" | jq -r '.[] | "- `\(.name)@\(.version)`"' >> $GITHUB_STEP_SUMMARY
-          fi
+            if [ "$(echo "$PY_PACKAGES" | jq 'length')" -gt 0 ]; then
+              echo "### PyPI"
+              echo ""
+              echo "$PY_PACKAGES" | jq -r '.[] | "- `\(.name)@\(.version)`"'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
