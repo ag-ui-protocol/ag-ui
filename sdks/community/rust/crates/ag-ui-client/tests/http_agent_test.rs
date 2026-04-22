@@ -2,7 +2,10 @@ use ag_ui_client::HttpAgent;
 use ag_ui_client::agent::{Agent, RunAgentParams};
 use ag_ui_client::core::types::{Message, Role};
 
+// Requires a live AG-UI server on localhost:3001; run explicitly with
+// `cargo test -- --ignored` when one is available.
 #[tokio::test]
+#[ignore]
 async fn test_http_agent_basic_functionality() {
     env_logger::init();
 
@@ -53,7 +56,10 @@ async fn test_http_agent_basic_functionality() {
     );
 }
 
+// Requires a live AG-UI server on localhost:3001; run explicitly with
+// `cargo test -- --ignored` when one is available.
 #[tokio::test]
+#[ignore]
 async fn test_http_agent_tool_calls() {
     // Create an HttpAgent
     let agent = HttpAgent::builder()
