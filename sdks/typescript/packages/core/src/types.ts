@@ -190,6 +190,22 @@ export const ToolSchema = z.object({
   metadata: z.record(z.any()).optional(), // Arbitrary tool metadata (e.g. a2ui schema)
 });
 
+export const InterruptSchema = z.object({
+  id: z.string(),
+  reason: z.string(),
+  message: z.string().optional(),
+  toolCallId: z.string().optional(),
+  responseSchema: z.record(z.any()).optional(),
+  expiresAt: z.string().optional(),
+  metadata: z.record(z.any()).optional(),
+});
+
+export const ResumeEntrySchema = z.object({
+  interruptId: z.string(),
+  status: z.enum(["resolved", "cancelled"]),
+  payload: z.any().optional(),
+});
+
 export const RunAgentInputSchema = z.object({
   threadId: z.string(),
   runId: z.string(),
@@ -233,6 +249,9 @@ export type Tool = z.infer<typeof ToolSchema>;
 export type RunAgentInput = z.infer<typeof RunAgentInputSchema>;
 export type State = z.infer<typeof StateSchema>;
 export type Role = z.infer<typeof RoleSchema>;
+export type Interrupt = z.infer<typeof InterruptSchema>;
+export type ResumeEntry = z.infer<typeof ResumeEntrySchema>;
+export type ResumeStatus = "resolved" | "cancelled";
 
 export class AGUIError extends Error {
   constructor(message: string) {
