@@ -18,7 +18,7 @@
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "test:exports": "publint --strict && attw --pack",
-    "generate": "mkdir -p ./src/generated && npx protoc --plugin=./node_modules/.bin/protoc-gen-ts_proto.CMD --ts_proto_out=./src/generated --ts_proto_opt=esModuleInterop=true,outputJsonMethods=false,outputClientImpl=false -I ./src/proto ./src/proto/*.proto",
+    "generate": "node -e \"require('fs').mkdirSync('./src/generated', {recursive: true})\" && npx protoc --plugin=./node_modules/.bin/protoc-gen-ts_proto.CMD --ts_proto_out=./src/generated --ts_proto_opt=esModuleInterop=true,outputJsonMethods=false,outputClientImpl=false -I ./src/proto ./src/proto/*.proto",
     "link:global": "pnpm link --global",
     "unlink:global": "pnpm unlink --global"
   },
