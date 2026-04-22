@@ -24,6 +24,7 @@ import com.agui.core.type.EventType;
 public class StepFinishedEvent extends BaseEvent {
 
     private String stepName;
+    private String description;
 
     /**
      * Creates a new StepFinishedEvent with type set to {@link EventType#STEP_FINISHED}.
@@ -52,5 +53,23 @@ public class StepFinishedEvent extends BaseEvent {
      */
     public String getStepName() {
         return this.stepName;
+    }
+
+    /**
+     * Sets an optional human-readable description of what this step does.
+     *
+     * @param description the step description. Can be null.
+     */
+    public void setDescription(final String description) {
+        this.description = description;
+    }
+
+    /**
+     * Returns the optional human-readable description of what this step does.
+     *
+     * @return the step description, can be null
+     */
+    public String getDescription() {
+        return this.description;
     }
 }

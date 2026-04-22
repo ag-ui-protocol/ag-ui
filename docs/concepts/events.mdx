@@ -132,11 +132,14 @@ or phase of its processing. Steps provide granular visibility into the agent's
 progress, enabling more precise tracking and feedback in the UI. Steps are
 optional but highly recommended for complex operations that benefit from being
 broken down into observable stages. The `stepName` could be the name of a node
-or function that is currently executing.
+or function that is currently executing. The optional `description` conveys
+what the step *does* in human-readable form, letting UIs render something
+meaningful when the `stepName` is a machine-level identifier.
 
-| Property   | Description      |
-| ---------- | ---------------- |
-| `stepName` | Name of the step |
+| Property      | Description                                                |
+| ------------- | ---------------------------------------------------------- |
+| `stepName`    | Name of the step                                           |
+| `description` | Optional human-readable description of what this step does |
 
 ### StepFinished
 
@@ -147,11 +150,14 @@ subtask or phase. When paired with a corresponding `StepStarted` event, it
 creates a bounded context for a discrete unit of work. Frontends can use these
 events to update progress indicators, show completion animations, or reveal
 results specific to that step. The `stepName` must match the corresponding
-`StepStarted` event to properly pair the beginning and end of the step.
+`StepStarted` event to properly pair the beginning and end of the step. An
+optional `description` may be supplied on completion to summarise what the
+step did or report a final status in human-readable form.
 
-| Property   | Description      |
-| ---------- | ---------------- |
-| `stepName` | Name of the step |
+| Property      | Description                                                |
+| ------------- | ---------------------------------------------------------- |
+| `stepName`    | Name of the step                                           |
+| `description` | Optional human-readable description of what this step does |
 
 ## Text Message Events
 

@@ -116,11 +116,13 @@ message RunErrorEvent {
 message StepStartedEvent {
   BaseEvent base_event = 1;
   string step_name = 2;
+  optional string description = 3;
 }
 
 message StepFinishedEvent {
   BaseEvent base_event = 1;
   string step_name = 2;
+  optional string description = 3;
 }
 
 message TextMessageChunkEvent {

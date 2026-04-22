@@ -133,12 +133,14 @@ Signals the start of a step within an agent run.
 type StepStartedEvent = BaseEvent & {
   type: EventType.STEP_STARTED
   stepName: string
+  description?: string
 }
 ```
 
-| Property   | Type     | Description      |
-| ---------- | -------- | ---------------- |
-| `stepName` | `string` | Name of the step |
+| Property      | Type                  | Description                                          |
+| ------------- | --------------------- | ---------------------------------------------------- |
+| `stepName`    | `string`              | Name of the step                                     |
+| `description` | `string` (optional)   | Human-readable description of what this step does    |
 
 ### StepFinishedEvent
 
@@ -148,12 +150,14 @@ Signals the completion of a step within an agent run.
 type StepFinishedEvent = BaseEvent & {
   type: EventType.STEP_FINISHED
   stepName: string
+  description?: string
 }
 ```
 
-| Property   | Type     | Description      |
-| ---------- | -------- | ---------------- |
-| `stepName` | `string` | Name of the step |
+| Property      | Type                  | Description                                          |
+| ------------- | --------------------- | ---------------------------------------------------- |
+| `stepName`    | `string`              | Name of the step                                     |
+| `description` | `string` (optional)   | Human-readable description of what this step does    |
 
 ## Text Message Events
 

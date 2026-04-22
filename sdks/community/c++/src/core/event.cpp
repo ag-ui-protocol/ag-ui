@@ -629,6 +629,9 @@ nlohmann::json StepStartedEvent::toJson() const {
     nlohmann::json j = baseFieldsToJson();
     j["type"] = "STEP_STARTED";
     j["stepName"] = stepName;
+    if (description.has_value()) {
+        j["description"] = *description;
+    }
     return j;
 }
 
@@ -636,6 +639,9 @@ StepStartedEvent StepStartedEvent::fromJson(const nlohmann::json& j) {
     StepStartedEvent e;
     e.m_baseData = BaseEventData::fromJson(j);
     e.stepName = j.value("stepName", "");
+    if (j.contains("description") && !j["description"].is_null()) {
+        e.description = j["description"].get<std::string>();
+    }
     return e;
 }
 
@@ -649,6 +655,9 @@ nlohmann::json StepFinishedEvent::toJson() const {
     nlohmann::json j = baseFieldsToJson();
     j["type"] = "STEP_FINISHED";
     j["stepName"] = stepName;
+    if (description.has_value()) {
+        j["description"] = *description;
+    }
     return j;
 }
 
@@ -656,6 +665,9 @@ StepFinishedEvent StepFinishedEvent::fromJson(const nlohmann::json& j) {
     StepFinishedEvent e;
     e.m_baseData = BaseEventData::fromJson(j);
     e.stepName = j.value("stepName", "");
+    if (j.contains("description") && !j["description"].is_null()) {
+        e.description = j["description"].get<std::string>();
+    }
     return e;
 }
 

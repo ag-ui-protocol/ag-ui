@@ -1143,9 +1143,12 @@ final class RunErrorEvent extends BaseEvent {
 /// Event indicating that a step has started
 final class StepStartedEvent extends BaseEvent {
   final String stepName;
+  /// Optional human-readable description of what this step does.
+  final String? description;
 
   const StepStartedEvent({
     required this.stepName,
+    this.description,
     super.timestamp,
     super.rawEvent,
   }) : super(eventType: EventType.stepStarted);
@@ -1154,9 +1157,10 @@ final class StepStartedEvent extends BaseEvent {
     // Handle both camelCase and snake_case field names
     final stepName = JsonDecoder.optionalField<String>(json, 'stepName') ??
         JsonDecoder.requireField<String>(json, 'step_name');
-    
+
     return StepStartedEvent(
       stepName: stepName,
+      description: JsonDecoder.optionalField<String>(json, 'description'),
       timestamp: JsonDecoder.optionalField<int>(json, 'timestamp'),
       rawEvent: json['rawEvent'],
     );
@@ -1166,16 +1170,19 @@ final class StepStartedEvent extends BaseEvent {
   Map<String, dynamic> toJson() => {
     ...super.toJson(),
     'stepName': stepName,
+    if (description != null) 'description': description,
   };
 
   @override
   StepStartedEvent copyWith({
     String? stepName,
+    String? description,
     int? timestamp,
     dynamic rawEvent,
   }) {
     return StepStartedEvent(
       stepName: stepName ?? this.stepName,
+      description: description ?? this.description,
       timestamp: timestamp ?? this.timestamp,
       rawEvent: rawEvent ?? this.rawEvent,
     );
@@ -1185,9 +1192,12 @@ final class StepStartedEvent extends BaseEvent {
 /// Event indicating that a step has finished
 final class StepFinishedEvent extends BaseEvent {
   final String stepName;
+  /// Optional human-readable description of what this step does.
+  final String? description;
 
   const StepFinishedEvent({
     required this.stepName,
+    this.description,
     super.timestamp,
     super.rawEvent,
   }) : super(eventType: EventType.stepFinished);
@@ -1196,9 +1206,10 @@ final class StepFinishedEvent extends BaseEvent {
     // Handle both camelCase and snake_case field names
     final stepName = JsonDecoder.optionalField<String>(json, 'stepName') ??
         JsonDecoder.requireField<String>(json, 'step_name');
-    
+
     return StepFinishedEvent(
       stepName: stepName,
+      description: JsonDecoder.optionalField<String>(json, 'description'),
       timestamp: JsonDecoder.optionalField<int>(json, 'timestamp'),
       rawEvent: json['rawEvent'],
     );
@@ -1208,16 +1219,19 @@ final class StepFinishedEvent extends BaseEvent {
   Map<String, dynamic> toJson() => {
     ...super.toJson(),
     'stepName': stepName,
+    if (description != null) 'description': description,
   };
 
   @override
   StepFinishedEvent copyWith({
     String? stepName,
+    String? description,
     int? timestamp,
     dynamic rawEvent,
   }) {
     return StepFinishedEvent(
       stepName: stepName ?? this.stepName,
+      description: description ?? this.description,
       timestamp: timestamp ?? this.timestamp,
       rawEvent: rawEvent ?? this.rawEvent,
     );
