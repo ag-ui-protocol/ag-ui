@@ -701,13 +701,9 @@ export class LangGraphAgent extends AbstractAgent {
       snapshot: this.getStateSnapshot(state),
     });
     const checkpointMessages: LangGraphMessage[] = (state.values as State).messages ?? [];
-    const streamedMessages = this.activeRun?.streamedMessages ?? [];
-    const checkpointIds = new Set(checkpointMessages.map((m) => m.id).filter(Boolean));
-    const extra = streamedMessages.filter((m) => m.id && !checkpointIds.has(m.id));
-    const snapshotMessages = [...checkpointMessages, ...(extra as unknown as LangGraphMessage[])];
     this.dispatchEvent({
       type: EventType.MESSAGES_SNAPSHOT,
-      messages: langchainMessagesToAgui(snapshotMessages),
+      messages: langchainMessagesToAgui(checkpointMessages),
     });
   }
 
@@ -885,12 +881,7 @@ export class LangGraphAgent extends AbstractAgent {
         }
 
         break;
-      case LangGraphEventTypes.OnChatModelEnd: {
-        const outputMsg = event.data?.output;
-        if (outputMsg && typeof outputMsg === "object" && outputMsg.id && outputMsg.type) {
-          if (!this.activeRun!.streamedMessages) this.activeRun!.streamedMessages = [];
-          this.activeRun!.streamedMessages.push(outputMsg);
-        }
+      case LangGraphEventTypes.OnChatModelEnd:
         if (this.getMessageInProgress(this.activeRun!.id)?.toolCallId) {
           const resolved = this.dispatchEvent({
             type: EventType.TOOL_CALL_END,
@@ -914,7 +905,6 @@ export class LangGraphAgent extends AbstractAgent {
           break;
         }
         break;
-      }
       case LangGraphEventTypes.OnCustomEvent:
         if (event.name === CustomEventNames.ManuallyEmitMessage) {
           this.dispatchEvent({
