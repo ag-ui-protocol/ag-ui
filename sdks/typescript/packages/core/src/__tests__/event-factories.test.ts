@@ -6,6 +6,8 @@ import {
   createRawEvent,
   createRunErrorEvent,
   createRunFinishedEvent,
+  createRunFinishedInterruptEvent,
+  createRunFinishedSuccessEvent,
   createRunStartedEvent,
   createStateDeltaEvent,
   createStateSnapshotEvent,
@@ -230,5 +232,44 @@ describe("event factories", () => {
     expect(started.type).toBe(EventType.STEP_STARTED);
     expect(finished.type).toBe(EventType.STEP_FINISHED);
     expect(finished.stepName).toBe("fetch");
+  });
+});
+
+describe("createRunFinishedSuccessEvent", () => {
+  it("produces a success RUN_FINISHED event", () => {
+    const e = createRunFinishedSuccessEvent({
+      threadId: "t-1",
+      runId: "r-1",
+      outcome: "success",
+      result: { ok: true },
+    });
+    expect(e.type).toBe(EventType.RUN_FINISHED);
+    expect(e.outcome).toBe("success");
+    expect(e.result).toEqual({ ok: true });
+  });
+});
+
+describe("createRunFinishedInterruptEvent", () => {
+  it("produces an interrupt RUN_FINISHED event", () => {
+    const e = createRunFinishedInterruptEvent({
+      threadId: "t-1",
+      runId: "r-1",
+      outcome: "interrupt",
+      interrupts: [{ id: "int-1", reason: "tool_call" }],
+    });
+    expect(e.type).toBe(EventType.RUN_FINISHED);
+    expect(e.outcome).toBe("interrupt");
+    expect(e.interrupts).toHaveLength(1);
+  });
+
+  it("rejects empty interrupts array", () => {
+    expect(() =>
+      createRunFinishedInterruptEvent({
+        threadId: "t-1",
+        runId: "r-1",
+        outcome: "interrupt",
+        interrupts: [],
+      }),
+    ).toThrow();
   });
 });

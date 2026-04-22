@@ -19,9 +19,12 @@ import {
   RunErrorEvent,
   RunErrorEventProps,
   RunErrorEventSchema,
-  RunFinishedEvent,
-  RunFinishedEventProps,
-  RunFinishedEventSchema,
+  RunFinishedSuccessEvent,
+  RunFinishedSuccessEventProps,
+  RunFinishedSuccessEventSchema,
+  RunFinishedInterruptEvent,
+  RunFinishedInterruptEventProps,
+  RunFinishedInterruptEventSchema,
   RunStartedEvent,
   RunStartedEventProps,
   RunStartedEventSchema,
@@ -261,10 +264,30 @@ export const createRunStartedEvent = (props: RunStartedEventProps): RunStartedEv
   buildEvent(EventType.RUN_STARTED, RunStartedEventSchema, props);
 
 /**
- * Creates a RUN_FINISHED event.
+ * Creates a RUN_FINISHED event with outcome "success".
  */
-export const createRunFinishedEvent = (props: RunFinishedEventProps): RunFinishedEvent =>
-  buildEvent(EventType.RUN_FINISHED, RunFinishedEventSchema, props);
+export const createRunFinishedSuccessEvent = (
+  props: RunFinishedSuccessEventProps,
+): RunFinishedSuccessEvent =>
+  buildEvent(EventType.RUN_FINISHED, RunFinishedSuccessEventSchema, props);
+
+/**
+ * Creates a RUN_FINISHED event with outcome "interrupt".
+ */
+export const createRunFinishedInterruptEvent = (
+  props: RunFinishedInterruptEventProps,
+): RunFinishedInterruptEvent =>
+  buildEvent(EventType.RUN_FINISHED, RunFinishedInterruptEventSchema, props);
+
+/**
+ * @deprecated Use createRunFinishedSuccessEvent or createRunFinishedInterruptEvent.
+ * Kept for callers written before the outcome field was introduced. Defaults
+ * outcome to "success" when callers supply only legacy fields.
+ */
+export const createRunFinishedEvent = (
+  props: Omit<RunFinishedSuccessEventProps, "outcome"> & { outcome?: "success" },
+): RunFinishedSuccessEvent =>
+  createRunFinishedSuccessEvent({ ...props, outcome: "success" });
 
 /**
  * Creates a RUN_ERROR event.
