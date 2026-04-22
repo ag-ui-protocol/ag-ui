@@ -200,37 +200,17 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git config --global user.name "github-actions[bot]"
 
-      - name: Create and push per-package git tags
-        if: (steps.detect_ts.outputs.count != '0' || steps.detect_py.outputs.count != '0') && inputs.dry_run != true
+      - name: Create and push per-package git tags (TypeScript)
+        if: steps.detect_ts.outputs.count != '0' && inputs.dry_run != true
         env:
           TS_PACKAGES: ${{ steps.detect_ts.outputs.packages }}
+        run: bash scripts/release/create-tags.sh "$TS_PACKAGES"
+
+      - name: Create and push per-package git tags (Python)
+        if: steps.detect_py.outputs.count != '0' && inputs.dry_run != true
+        env:
           PY_PACKAGES: ${{ steps.detect_py.outputs.packages }}
-        run: |
-          TAGS=()
-          append_tags() {
-            local packages_json="$1"
-            [ -z "$packages_json" ] && return
-            [ "$packages_json" = "null" ] && return
-            while read -r pkg; do
-              NAME=$(echo "$pkg" | jq -r '.name')
-              VERSION=$(echo "$pkg" | jq -r '.version')
-              TAG="${NAME}@${VERSION}"
-              if git rev-parse "$TAG" >/dev/null 2>&1; then
-                echo "WARN: Tag $TAG already exists — skipping"
-                continue
-              fi
-              git tag -a "$TAG" -m "Release ${TAG}"
-              TAGS+=("$TAG")
-              echo "Tagged $TAG"
-            done < <(echo "$packages_json" | jq -c '.[]')
-          }
-
-          append_tags "$TS_PACKAGES"
-          append_tags "$PY_PACKAGES"
-
-          if [ "${#TAGS[@]}" -gt 0 ]; then
-            git push origin "${TAGS[@]}"
-          fi
+        run: bash scripts/release/create-tags.sh "$PY_PACKAGES"
 
       - name: Create GitHub Release (TypeScript)
         if: steps.detect_ts.outputs.count != '0' && inputs.dry_run != true
@@ -245,6 +225,20 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PY_PACKAGES: ${{ steps.detect_py.outputs.packages }}
         run: bash scripts/release/create-or-update-release.sh python "$PY_PACKAGES"
+
+      - name: Reconcile GitHub Release (TypeScript) — safety net for partial failures
+        if: steps.detect_ts.outputs.count != '0' && inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TS_PACKAGES: ${{ steps.detect_ts.outputs.packages }}
+        run: bash scripts/release/reconcile-release.sh typescript "$TS_PACKAGES"
+
+      - name: Reconcile GitHub Release (Python) — safety net for partial failures
+        if: steps.detect_py.outputs.count != '0' && inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PY_PACKAGES: ${{ steps.detect_py.outputs.packages }}
+        run: bash scripts/release/reconcile-release.sh python "$PY_PACKAGES"
 
       - name: Delete release/next if that's what was merged
         if: github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'release/next' && inputs.dry_run != true

@@ -32,8 +32,7 @@
                   },
                   "quickstart/clients"
                 ]
-              },
-              "talk-to-us"
+              }
             ]
           },
           {
@@ -74,7 +73,8 @@
             "pages": [
               "development/updates",
               "development/roadmap",
-              "development/contributing"
+              "development/contributing",
+              "talk-to-us"
             ]
           }
         ]
