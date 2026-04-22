@@ -281,6 +281,18 @@ class LangGraphAgent:
 
                 current_node_name = (event.get("metadata") or {}).get("langgraph_node")
                 event_type = event.get("event")
+                # Defensive validation: the protocol run_id is assigned once at
+                # RUN_STARTED and must remain a string for downstream consumers.
+                # If an event surfaces a non-string run_id (e.g. LangGraph's
+                # internal UUID object, or bogus data from custom callbacks),
+                # log a warning and ignore it — never overwrite active_run["id"].
+                raw_run_id = event.get("run_id")
+                if raw_run_id is not None and not isinstance(raw_run_id, str):
+                    logger.warning(
+                        "Ignoring non-string run_id on stream event (type=%s); "
+                        "preserving protocol run_id on active_run.",
+                        type(raw_run_id).__name__,
+                    )
                 exiting_node = False
 
                 if event_type == "on_chain_end" and isinstance(
