@@ -170,6 +170,7 @@ describe("AgentSubscriber", () => {
         type: EventType.RUN_FINISHED,
         threadId: "test-thread",
         runId: "test-run",
+        outcome: "success",
         result: "test-result",
       };
 
