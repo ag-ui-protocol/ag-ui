@@ -31,7 +31,8 @@ import { LegacyRuntimeProtocolEvent } from "@/legacy/types";
 import { lastValueFrom } from "rxjs";
 import { transformChunks } from "@/chunks";
 import { AgentStateMutation, AgentSubscriber, runSubscribersWithMutation } from "./subscriber";
-import { AGUIConnectNotImplementedError } from "@ag-ui/core";
+import { AGUIConnectNotImplementedError, AGUIError } from "@ag-ui/core";
+import { isInterruptExpired } from "@/interrupts";
 import {
   Middleware,
   MiddlewareFunction,
@@ -399,6 +400,23 @@ export abstract class AbstractAgent {
   }
 
   protected async onInitialize(input: RunAgentInput, subscribers: AgentSubscriber[]) {
+    if (this.pendingInterrupts.length > 0) {
+      const resumeIds = new Set((input.resume ?? []).map((r) => r.interruptId));
+      const uncovered = this.pendingInterrupts
+        .map((i) => i.id)
+        .filter((id) => !resumeIds.has(id));
+      if (uncovered.length > 0) {
+        throw new AGUIError(
+          `Thread has ${uncovered.length} pending interrupt(s) not addressed by resume: ${uncovered.join(", ")}`,
+        );
+      }
+      for (const i of this.pendingInterrupts) {
+        if (isInterruptExpired(i)) {
+          throw new AGUIError(`Interrupt ${i.id} expired at ${i.expiresAt}`);
+        }
+      }
+    }
+
     const onRunInitializedMutation = await runSubscribersWithMutation(
       subscribers,
       this.messages,
