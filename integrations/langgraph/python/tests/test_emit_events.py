@@ -1,8 +1,7 @@
 """Tests for custom emit event dispatch.
 
 AG-UI LangGraph uses un-prefixed event names ("manually_emit_message" etc.).
-Framework integrations like CopilotKit add their own prefix via
-CustomEventNames overrides in their subclass.
+Downstream subclasses may override CustomEventNames to add their own prefix.
 """
 import pytest
 from unittest.mock import MagicMock

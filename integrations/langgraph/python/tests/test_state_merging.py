@@ -169,7 +169,7 @@ class TestLanggraphDefaultMergeState:
         tool_names_in_result = [tool_name(t) for t in result["tools"]]
         assert "only_input_tool" in tool_names_in_result
 
-    def test_ag_ui_and_copilotkit_keys_set(self):
+    def test_ag_ui_key_set(self):
         agent = make_agent()
         state = {"messages": []}
         input_tool = make_tool("my_tool")
@@ -178,5 +178,3 @@ class TestLanggraphDefaultMergeState:
         assert "ag-ui" in result
         assert result["ag-ui"]["tools"] == result["tools"]
         assert result["ag-ui"]["context"] == ctx
-        assert "copilotkit" in result
-        assert result["copilotkit"]["actions"] == result["tools"]

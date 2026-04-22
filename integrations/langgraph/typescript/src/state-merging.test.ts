@@ -31,7 +31,6 @@ interface MergeResult {
   messages: LangGraphMessage[];
   tools: LangGraphToolWithName[];
   "ag-ui": { tools: LangGraphToolWithName[]; context: unknown };
-  copilotkit: { actions: LangGraphToolWithName[] };
   [key: string]: unknown;
 }
 
@@ -85,10 +84,6 @@ function langGraphDefaultMergeState(
     "ag-ui": {
       tools: langGraphTools,
       context: input.context,
-    },
-    copilotkit: {
-      ...((state as any).copilotkit ?? {}),
-      actions: langGraphTools,
     },
   };
 }
@@ -227,7 +222,7 @@ describe("langGraphDefaultMergeState", () => {
     expect(result.tools.map(toolName)).toContain("input_tool");
   });
 
-  it("should set ag-ui and copilotkit keys", () => {
+  it("should set ag-ui key", () => {
     const state = { messages: [] };
     const result = langGraphDefaultMergeState(state, [], {
       tools: [makeTool("my_tool")],
@@ -235,7 +230,5 @@ describe("langGraphDefaultMergeState", () => {
     });
     expect(result["ag-ui"]).toBeDefined();
     expect(result["ag-ui"].tools).toEqual(result.tools);
-    expect(result.copilotkit).toBeDefined();
-    expect(result.copilotkit.actions).toEqual(result.tools);
   });
 });
