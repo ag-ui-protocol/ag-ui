@@ -281,13 +281,23 @@ export const createRunFinishedInterruptEvent = (
 
 /**
  * @deprecated Use createRunFinishedSuccessEvent or createRunFinishedInterruptEvent.
- * Kept for callers written before the outcome field was introduced. Defaults
- * outcome to "success" when callers supply only legacy fields.
+ * Kept for callers written before the outcome field was introduced. Accepts only
+ * legacy shape (no `outcome`) or explicit `outcome: "success"`; passing any other
+ * value (including bypassing TypeScript) throws.
  */
 export const createRunFinishedEvent = (
   props: Omit<RunFinishedSuccessEventProps, "outcome"> & { outcome?: "success" },
-): RunFinishedSuccessEvent =>
-  createRunFinishedSuccessEvent({ ...props, outcome: "success" });
+): RunFinishedSuccessEvent => {
+  const outcome = (props as { outcome?: unknown }).outcome;
+  if (outcome !== undefined && outcome !== "success") {
+    throw new Error(
+      `createRunFinishedEvent is deprecated and only supports outcome="success". ` +
+      `Received outcome=${JSON.stringify(outcome)}. ` +
+      `Use createRunFinishedInterruptEvent for interrupt outcomes.`,
+    );
+  }
+  return createRunFinishedSuccessEvent({ ...props, outcome: "success" });
+};
 
 /**
  * Creates a RUN_ERROR event.

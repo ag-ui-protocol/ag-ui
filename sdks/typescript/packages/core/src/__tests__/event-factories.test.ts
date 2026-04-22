@@ -273,3 +273,27 @@ describe("createRunFinishedInterruptEvent", () => {
     ).toThrow();
   });
 });
+
+describe("createRunFinishedEvent — deprecated shim", () => {
+  it("injects outcome='success' when caller omits it (legacy callers)", () => {
+    const e = createRunFinishedEvent({ threadId: "t-1", runId: "r-1", result: { ok: true } });
+    expect(e.outcome).toBe("success");
+    expect(e.result).toEqual({ ok: true });
+  });
+
+  it("accepts explicit outcome='success'", () => {
+    const e = createRunFinishedEvent({ threadId: "t-1", runId: "r-1", outcome: "success" });
+    expect(e.outcome).toBe("success");
+  });
+
+  it("throws when caller bypasses TypeScript and passes outcome='interrupt'", () => {
+    expect(() =>
+      createRunFinishedEvent({
+        threadId: "t-1",
+        runId: "r-1",
+        // Intentionally simulating a TypeScript bypass (plain JS caller).
+        outcome: "interrupt",
+      } as unknown as Parameters<typeof createRunFinishedEvent>[0]),
+    ).toThrow(/outcome="success"/);
+  });
+});
