@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { InterruptSchema, ResumeEntrySchema } from "../types";
+import { InterruptSchema, ResumeEntrySchema, RunAgentInputSchema } from "../types";
 
 describe("InterruptSchema", () => {
   it("accepts an interrupt with only required fields", () => {
@@ -55,8 +55,6 @@ describe("ResumeEntrySchema", () => {
     ).toThrow();
   });
 });
-
-import { RunAgentInputSchema } from "../types";
 
 describe("RunAgentInput.resume", () => {
   const baseInput = {
