@@ -102,6 +102,18 @@ logger = logging.getLogger(__name__)
 
 ROOT_SUBGRAPH_NAME = "root"
 
+
+def collect_interrupts(tasks):
+    """Flatten interrupts across every task in the sequence.
+
+    When a LangGraph agent fires multiple parallel tool calls and one of them
+    hits ``interrupt()``, the interrupt may land on ``tasks[1]`` or later
+    rather than ``tasks[0]``. Historical code only checked ``tasks[0]``,
+    silently losing interrupts on any other task (#1409). Iterate all tasks
+    so every active interrupt is surfaced.
+    """
+    return [i for t in (tasks or []) for i in t.interrupts]
+
 class LangGraphAgent:
     def __init__(self, *, name: str, graph: CompiledStateGraph, description: Optional[str] = None, config:  Union[Optional[RunnableConfig], dict] = None):
         self.name = name
@@ -338,7 +350,7 @@ class LangGraphAgent:
             state = await self.graph.aget_state(config)
 
             tasks = state.tasks if len(state.tasks) > 0 else None
-            interrupts = [i for t in (tasks or []) for i in t.interrupts]
+            interrupts = collect_interrupts(tasks)
 
             writes = state.metadata.get("writes", {}) or {}
             node_name = self.active_run["node_name"] if interrupts else next(iter(writes), None)
@@ -386,7 +398,7 @@ class LangGraphAgent:
         state = self.langgraph_default_merge_state(state_input, langchain_messages, input)
         self.active_run["current_graph_state"].update(state)
         config["configurable"]["thread_id"] = thread_id
-        interrupts = [i for t in (agent_state.tasks or []) for i in t.interrupts]
+        interrupts = collect_interrupts(agent_state.tasks)
         has_active_interrupts = len(interrupts) > 0
         resume_input = forwarded_props.get('command', {}).get('resume', None)
 
