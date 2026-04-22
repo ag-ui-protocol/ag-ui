@@ -342,6 +342,20 @@ class HumanInTheLoopCapabilities(ConfiguredBaseModel):
             "behavior within the current session."
         ),
     )
+    interrupts: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Set `true` if the agent participates in the AG-UI interrupt protocol "
+            '(emits RUN_FINISHED with outcome="interrupt", accepts resume[]).'
+        ),
+    )
+    approve_with_edits: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Set `true` if tool-call interrupts accept editedArgs in the resume "
+            "payload. Only meaningful when interrupts is true."
+        ),
+    )
 
 
 class AgentCapabilities(ConfiguredBaseModel):
