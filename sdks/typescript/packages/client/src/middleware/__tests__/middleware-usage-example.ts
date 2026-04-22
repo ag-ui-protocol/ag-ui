@@ -36,6 +36,7 @@ class ExampleAgent extends AbstractAgent {
 
       subscriber.next({
         type: EventType.RUN_FINISHED,
+        outcome: "success",
         threadId: input.threadId,
         runId: input.runId,
         result: { answer: 42 },

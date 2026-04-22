@@ -338,6 +338,7 @@ describe("defaultApplyEvents with text messages", () => {
       type: EventType.RUN_FINISHED,
       threadId: "test-thread",
       runId: "test-run",
+      outcome: "success",
     } as RunFinishedEvent);
 
     events$.complete();
@@ -386,6 +387,7 @@ describe("defaultApplyEvents with text messages", () => {
       type: EventType.RUN_FINISHED,
       threadId: "test-thread",
       runId: "test-run",
+      outcome: "success",
     } as RunFinishedEvent);
 
     events$.complete();

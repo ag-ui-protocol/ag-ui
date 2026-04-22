@@ -46,6 +46,7 @@ describe("AbstractAgent text message roles", () => {
       } as TextMessageEndEvent,
       {
         type: EventType.RUN_FINISHED,
+        outcome: "success",
       } as RunFinishedEvent,
     ];
 
@@ -96,6 +97,7 @@ describe("AbstractAgent text message roles", () => {
 
     events.push({
       type: EventType.RUN_FINISHED,
+      outcome: "success",
     } as RunFinishedEvent);
 
     agent.setEvents(events);
@@ -139,6 +141,7 @@ describe("AbstractAgent text message roles", () => {
       } as TextMessageChunkEvent,
       {
         type: EventType.RUN_FINISHED,
+        outcome: "success",
       } as RunFinishedEvent,
     ];
 
@@ -181,6 +184,7 @@ describe("AbstractAgent text message roles", () => {
       } as TextMessageEndEvent,
       {
         type: EventType.RUN_FINISHED,
+        outcome: "success",
       } as RunFinishedEvent,
     ];
 
@@ -229,6 +233,7 @@ describe("AbstractAgent text message roles", () => {
       } as TextMessageChunkEvent,
       {
         type: EventType.RUN_FINISHED,
+        outcome: "success",
       } as RunFinishedEvent,
     ];
 

@@ -62,6 +62,7 @@ describe("RunStartedEvent with input.messages", () => {
         type: EventType.RUN_FINISHED,
         threadId: "test-thread",
         runId: "run-1",
+        outcome: "success",
       } as RunFinishedEvent,
     ];
 
@@ -123,6 +124,7 @@ describe("RunStartedEvent with input.messages", () => {
         type: EventType.RUN_FINISHED,
         threadId: "test-thread",
         runId: "run-1",
+        outcome: "success",
       } as RunFinishedEvent,
     ];
 
@@ -158,6 +160,7 @@ describe("RunStartedEvent with input.messages", () => {
         type: EventType.RUN_FINISHED,
         threadId: "test-thread",
         runId: "run-1",
+        outcome: "success",
       } as RunFinishedEvent,
     ];
 
@@ -194,6 +197,7 @@ describe("RunStartedEvent with input.messages", () => {
         type: EventType.RUN_FINISHED,
         threadId: "test-thread",
         runId: "run-1",
+        outcome: "success",
       } as RunFinishedEvent,
     ];
 
@@ -243,6 +247,7 @@ describe("RunStartedEvent with input.messages", () => {
         type: EventType.RUN_FINISHED,
         threadId: "test-thread",
         runId: "run-1",
+        outcome: "success",
       } as RunFinishedEvent,
     ];
 
@@ -299,6 +304,7 @@ describe("RunStartedEvent with input.messages", () => {
         type: EventType.RUN_FINISHED,
         threadId: "test-thread",
         runId: "run-1",
+        outcome: "success",
       } as RunFinishedEvent,
     ];
 
@@ -347,6 +353,7 @@ describe("RunStartedEvent with input.messages", () => {
         type: EventType.RUN_FINISHED,
         threadId: "test-thread",
         runId: "run-1",
+        outcome: "success",
       } as RunFinishedEvent,
     ];
 
@@ -393,6 +400,7 @@ describe("RunStartedEvent with input.messages", () => {
         type: EventType.RUN_FINISHED,
         threadId: "test-thread",
         runId: "run-2",
+        outcome: "success",
       } as RunFinishedEvent,
     ];
 

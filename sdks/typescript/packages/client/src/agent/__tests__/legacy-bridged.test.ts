@@ -46,6 +46,7 @@ class TestAgent extends AbstractAgent {
         threadId: input.threadId,
         runId: input.runId,
         timestamp: Date.now(),
+        outcome: "success",
       } as BaseEvent);
 
       observer.complete();
@@ -78,6 +79,7 @@ class ChunkTestAgent extends AbstractAgent {
         threadId: input.threadId,
         runId: input.runId,
         timestamp: Date.now(),
+        outcome: "success",
       } as BaseEvent);
 
       observer.complete();
@@ -135,6 +137,7 @@ class ToolCallTestAgent extends AbstractAgent {
         threadId: input.threadId,
         runId: input.runId,
         timestamp: Date.now(),
+        outcome: "success",
       } as BaseEvent);
 
       observer.complete();
@@ -254,6 +257,7 @@ describe("AbstractAgent.legacy_to_be_removed_runAgentBridged", () => {
             threadId: input.threadId,
             runId: input.runId,
             timestamp: Date.now(),
+            outcome: "success",
           } as BaseEvent);
 
           observer.complete();

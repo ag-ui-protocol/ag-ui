@@ -132,6 +132,7 @@ describe("Agent Result", () => {
           threadId: "test-thread",
           runId: "test-run",
           result: expectedResult,
+          outcome: "success",
         } as RunFinishedEvent,
       ]);
 
@@ -150,6 +151,7 @@ describe("Agent Result", () => {
           threadId: "test-thread",
           runId: "test-run",
           result: expectedResult,
+          outcome: "success",
         } as RunFinishedEvent,
       ]);
 
@@ -165,6 +167,7 @@ describe("Agent Result", () => {
           threadId: "test-thread",
           runId: "test-run",
           result: null,
+          outcome: "success",
         } as RunFinishedEvent,
       ]);
 
@@ -201,6 +204,7 @@ describe("Agent Result", () => {
           threadId: "test-thread",
           runId: "test-run",
           result: "success",
+          outcome: "success",
         } as RunFinishedEvent,
       ]);
 
@@ -294,6 +298,7 @@ describe("Agent Result", () => {
         } as MessagesSnapshotEvent,
         {
           type: EventType.RUN_FINISHED,
+          outcome: "success",
           threadId: "test-thread",
           runId: "test-run",
           result: { toolsUsed: 1, messagesAdded: 4 },
@@ -365,6 +370,7 @@ describe("Agent Result", () => {
           type: EventType.RUN_FINISHED,
           threadId: "test-thread",
           runId: "run-ops",
+          outcome: "success",
         } as RunFinishedEvent,
       ]);
 
@@ -415,6 +421,7 @@ describe("Agent Result", () => {
           threadId: "test-thread",
           runId: "test-run",
           result: expectedResult,
+          outcome: "success",
         } as RunFinishedEvent,
       ]);
 
@@ -434,6 +441,7 @@ describe("Agent Result", () => {
           threadId: "test-thread",
           runId: "test-run",
           result: expectedResult,
+          outcome: "success",
         } as RunFinishedEvent,
       ]);
 
@@ -506,6 +514,7 @@ describe("Agent Result", () => {
           threadId: "test-thread",
           runId: "test-run",
           result: "no new messages",
+          outcome: "success",
         } as RunFinishedEvent,
       ]);
 
@@ -596,6 +605,7 @@ describe("Agent Result", () => {
           threadId: "test-thread",
           runId: "test-run",
           result: complexResult,
+          outcome: "success",
         } as RunFinishedEvent,
       ]);
 
@@ -720,6 +730,7 @@ describe("Agent Result", () => {
         type: EventType.RUN_FINISHED,
         threadId: "thread-detach-2",
         runId: "run-2",
+        outcome: "success",
       } as RunFinishedEvent);
       secondSubject.complete();
 

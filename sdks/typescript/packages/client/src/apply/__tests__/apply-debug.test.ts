@@ -62,6 +62,7 @@ describe("defaultApplyEvents debug logging", () => {
     } as TextMessageEndEvent);
     events$.next({
       type: EventType.RUN_FINISHED,
+      outcome: "success",
     } as RunFinishedEvent);
 
     await new Promise((resolve) => setTimeout(resolve, 10));

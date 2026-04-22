@@ -44,6 +44,7 @@ describe("AbstractAgent multiple runs", () => {
       } as TextMessageEndEvent,
       {
         type: EventType.RUN_FINISHED,
+        outcome: "success",
       } as RunFinishedEvent,
     ];
 
@@ -80,6 +81,7 @@ describe("AbstractAgent multiple runs", () => {
       } as TextMessageEndEvent,
       {
         type: EventType.RUN_FINISHED,
+        outcome: "success",
       } as RunFinishedEvent,
     ];
 
@@ -128,6 +130,7 @@ describe("AbstractAgent multiple runs", () => {
         } as TextMessageEndEvent,
         {
           type: EventType.RUN_FINISHED,
+          outcome: "success",
         } as RunFinishedEvent,
       ];
 
@@ -180,6 +183,7 @@ describe("AbstractAgent multiple runs", () => {
       } as TextMessageEndEvent,
       {
         type: EventType.RUN_FINISHED,
+        outcome: "success",
       } as RunFinishedEvent,
       // Second run
       {
@@ -203,6 +207,7 @@ describe("AbstractAgent multiple runs", () => {
       } as TextMessageEndEvent,
       {
         type: EventType.RUN_FINISHED,
+        outcome: "success",
       } as RunFinishedEvent,
     ];
 
@@ -258,6 +263,7 @@ describe("AbstractAgent multiple runs", () => {
       } as TextMessageEndEvent,
       {
         type: EventType.RUN_FINISHED,
+        outcome: "success",
       } as RunFinishedEvent,
     ];
 
@@ -294,6 +300,7 @@ describe("AbstractAgent multiple runs", () => {
       } as ActivitySnapshotEvent,
       {
         type: EventType.RUN_FINISHED,
+        outcome: "success",
       } as RunFinishedEvent,
     ];
 
@@ -325,6 +332,7 @@ describe("AbstractAgent multiple runs", () => {
       } as TextMessageEndEvent,
       {
         type: EventType.RUN_FINISHED,
+        outcome: "success",
       } as RunFinishedEvent,
     ];
 

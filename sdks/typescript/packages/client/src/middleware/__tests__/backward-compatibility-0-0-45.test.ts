@@ -185,7 +185,7 @@ describe("BackwardCompatibility_0_0_45", () => {
       { type: EventType.TEXT_MESSAGE_START, messageId: "msg-1", role: "assistant" },
       { type: EventType.TEXT_MESSAGE_CONTENT, messageId: "msg-1", delta: "Response" },
       { type: EventType.TEXT_MESSAGE_END, messageId: "msg-1" },
-      { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" },
+      { type: EventType.RUN_FINISHED, outcome: "success", threadId: "t1", runId: "r1" },
     ];
 
     const agent = new MockAgent(events);
@@ -264,6 +264,7 @@ describe("BackwardCompatibility_0_0_45 (auto insertion)", () => {
           { type: THINKING_END as EventType } as BaseEvent,
           {
             type: EventType.RUN_FINISHED,
+            outcome: "success",
             threadId: input.threadId,
             runId: input.runId,
           } as BaseEvent,

@@ -15,6 +15,7 @@ describe("FunctionMiddleware", () => {
 
         subscriber.next({
           type: EventType.RUN_FINISHED,
+          outcome: "success",
           threadId: input.threadId,
           runId: input.runId,
         });

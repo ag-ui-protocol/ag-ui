@@ -89,7 +89,7 @@ describe("Agent concurrent operations integration", () => {
       } as TextMessageContentEvent,
       { type: EventType.TEXT_MESSAGE_END, messageId: "msg2" } as TextMessageEndEvent,
       { type: EventType.TEXT_MESSAGE_END, messageId: "msg1" } as TextMessageEndEvent,
-      { type: EventType.RUN_FINISHED } as RunFinishedEvent,
+      { type: EventType.RUN_FINISHED, outcome: "success" } as RunFinishedEvent,
     ];
 
     agent.setEventsToEmit(events);
@@ -146,7 +146,7 @@ describe("Agent concurrent operations integration", () => {
       { type: EventType.TOOL_CALL_ARGS, toolCallId: "tool2", delta: '"1+1"}' } as ToolCallArgsEvent,
       { type: EventType.TOOL_CALL_END, toolCallId: "tool1" } as ToolCallEndEvent,
       { type: EventType.TOOL_CALL_END, toolCallId: "tool2" } as ToolCallEndEvent,
-      { type: EventType.RUN_FINISHED } as RunFinishedEvent,
+      { type: EventType.RUN_FINISHED, outcome: "success" } as RunFinishedEvent,
     ];
 
     agent.setEventsToEmit(events);
@@ -225,7 +225,7 @@ describe("Agent concurrent operations integration", () => {
       { type: EventType.TOOL_CALL_END, toolCallId: "search" } as ToolCallEndEvent,
       { type: EventType.TEXT_MESSAGE_END, messageId: "status" } as TextMessageEndEvent,
       { type: EventType.STEP_FINISHED, stepName: "thinking" } as StepFinishedEvent,
-      { type: EventType.RUN_FINISHED } as RunFinishedEvent,
+      { type: EventType.RUN_FINISHED, outcome: "success" } as RunFinishedEvent,
     ];
 
     agent.setEventsToEmit(events);
@@ -292,7 +292,7 @@ describe("Agent concurrent operations integration", () => {
       { type: EventType.TOOL_CALL_END, toolCallId: "tool2" } as ToolCallEndEvent,
       { type: EventType.TOOL_CALL_END, toolCallId: "tool1" } as ToolCallEndEvent,
       { type: EventType.TOOL_CALL_END, toolCallId: "tool3" } as ToolCallEndEvent,
-      { type: EventType.RUN_FINISHED } as RunFinishedEvent,
+      { type: EventType.RUN_FINISHED, outcome: "success" } as RunFinishedEvent,
     ];
 
     agent.setEventsToEmit(events);
@@ -361,7 +361,7 @@ describe("Agent concurrent operations integration", () => {
       { type: EventType.TEXT_MESSAGE_END, messageId: "msg3" } as TextMessageEndEvent,
       { type: EventType.TEXT_MESSAGE_END, messageId: "msg1" } as TextMessageEndEvent,
       { type: EventType.TEXT_MESSAGE_END, messageId: "msg2" } as TextMessageEndEvent,
-      { type: EventType.RUN_FINISHED } as RunFinishedEvent,
+      { type: EventType.RUN_FINISHED, outcome: "success" } as RunFinishedEvent,
     ];
 
     agent.setEventsToEmit(events);
@@ -448,7 +448,7 @@ describe("Agent concurrent operations integration", () => {
       } as ToolCallEndEvent);
     }
 
-    events.push({ type: EventType.RUN_FINISHED } as RunFinishedEvent);
+    events.push({ type: EventType.RUN_FINISHED, outcome: "success" } as RunFinishedEvent);
 
     agent.setEventsToEmit(events);
 
@@ -506,7 +506,7 @@ describe("Agent concurrent operations integration", () => {
       { type: EventType.TEXT_MESSAGE_END, messageId: "thinking" } as TextMessageEndEvent,
       { type: EventType.TOOL_CALL_END, toolCallId: "search_tool" } as ToolCallEndEvent,
       { type: EventType.STEP_FINISHED, stepName: "analysis" } as StepFinishedEvent,
-      { type: EventType.RUN_FINISHED } as RunFinishedEvent,
+      { type: EventType.RUN_FINISHED, outcome: "success" } as RunFinishedEvent,
     ];
 
     agent.setEventsToEmit(events);

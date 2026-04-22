@@ -1172,6 +1172,7 @@ describe("AgentSubscriber", () => {
           type: EventType.RUN_FINISHED,
           runId: "run-123",
           result: "success",
+          outcome: "success",
         } as RunFinishedEvent,
       ]);
 
@@ -1497,6 +1498,7 @@ describe("AgentSubscriber", () => {
         {
           type: EventType.RUN_FINISHED,
           runId: "run-123",
+          outcome: "success",
         } as RunFinishedEvent,
       ]);
 

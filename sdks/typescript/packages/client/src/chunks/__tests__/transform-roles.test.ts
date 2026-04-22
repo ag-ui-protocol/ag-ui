@@ -29,6 +29,7 @@ describe("transformChunks with roles", () => {
         type: EventType.RUN_FINISHED,
         threadId: "thread-123",
         runId: "run-123",
+        outcome: "success",
       };
 
       from([chunk, closeEvent])
@@ -69,6 +70,7 @@ describe("transformChunks with roles", () => {
         type: EventType.RUN_FINISHED,
         threadId: "thread-123",
         runId: "run-123",
+        outcome: "success",
       };
 
       from([chunk, closeEvent])
@@ -110,6 +112,7 @@ describe("transformChunks with roles", () => {
         type: EventType.RUN_FINISHED,
         threadId: "thread-123",
         runId: "run-123",
+        outcome: "success",
       };
 
       from([chunk1, chunk2, closeEvent])
