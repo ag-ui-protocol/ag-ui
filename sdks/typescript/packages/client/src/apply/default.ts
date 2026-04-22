@@ -806,18 +806,23 @@ export const defaultApplyEvents = (
         }
 
         case EventType.RUN_FINISHED: {
+          const e = event as RunFinishedEvent;
+          const isInterrupt = e.outcome === "interrupt";
+          agent.pendingInterrupts = isInterrupt ? e.interrupts : [];
+          const finishedParams = isInterrupt
+            ? ({ event: e, outcome: "interrupt" as const, interrupts: e.interrupts } as const)
+            : ({ event: e, outcome: "success" as const, result: e.result } as const);
           const mutation = await runSubscribersWithMutation(
             subscribers,
             messages,
             state,
             (subscriber, messages, state) =>
               subscriber.onRunFinishedEvent?.({
-                event: event as RunFinishedEvent,
+                ...finishedParams,
                 messages,
                 state,
                 agent,
                 input,
-                result: (event as RunFinishedEvent).result,
               }),
           );
           applyMutation(mutation);

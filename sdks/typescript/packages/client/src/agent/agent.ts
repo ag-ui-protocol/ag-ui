@@ -7,6 +7,7 @@ import {
   ToolCall,
   AssistantMessage,
   AgentCapabilities,
+  Interrupt,
 } from "@ag-ui/core";
 
 import {
@@ -57,6 +58,10 @@ export abstract class AbstractAgent {
   private _debugLogger: DebugLogger | undefined;
   public subscribers: AgentSubscriber[] = [];
   public isRunning: boolean = false;
+  /** Interrupts emitted by the most recent run that have not yet been resolved.
+   *  Populated when RUN_FINISHED arrives with outcome="interrupt".
+   *  Cleared when a subsequent run completes successfully. */
+  public pendingInterrupts: Interrupt[] = [];
   private middlewares: Middleware[] = [];
   // Emits to immediately detach from the active run (stop processing its stream)
   private activeRunDetach$?: Subject<void>;
@@ -173,7 +178,9 @@ export abstract class AbstractAgent {
       const subscribers: AgentSubscriber[] = [
         {
           onRunFinishedEvent: (params) => {
-            result = params.result;
+            if (params.outcome === "success") {
+              result = params.result;
+            }
           },
         },
         ...this.subscribers,
@@ -267,7 +274,9 @@ export abstract class AbstractAgent {
       const subscribers: AgentSubscriber[] = [
         {
           onRunFinishedEvent: (params) => {
-            result = params.result;
+            if (params.outcome === "success") {
+              result = params.result;
+            }
           },
         },
         ...this.subscribers,
@@ -385,6 +394,7 @@ export abstract class AbstractAgent {
       forwardedProps: structuredClone_(parameters?.forwardedProps ?? {}),
       state: structuredClone_(this.state),
       messages: messagesWithoutActivity,
+      ...(parameters?.resume !== undefined ? { resume: structuredClone_(parameters.resume) } : {}),
     };
   }
 

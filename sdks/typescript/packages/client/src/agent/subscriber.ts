@@ -1,5 +1,6 @@
 import {
   BaseEvent,
+  Interrupt,
   Message,
   RunAgentInput,
   RunErrorEvent,
@@ -74,7 +75,11 @@ export interface AgentSubscriber {
     params: { event: RunStartedEvent } & AgentSubscriberParams,
   ): MaybePromise<AgentStateMutation | void>;
   onRunFinishedEvent?(
-    params: { event: RunFinishedEvent; result?: any } & AgentSubscriberParams,
+    params: (
+      | { event: RunFinishedEvent; outcome: "success"; result?: unknown }
+      | { event: RunFinishedEvent; outcome: "interrupt"; interrupts: Interrupt[] }
+    ) &
+      AgentSubscriberParams,
   ): MaybePromise<AgentStateMutation | void>;
   onRunErrorEvent?(
     params: { event: RunErrorEvent } & AgentSubscriberParams,
