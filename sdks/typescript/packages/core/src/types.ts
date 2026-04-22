@@ -215,6 +215,7 @@ export const RunAgentInputSchema = z.object({
   tools: z.array(ToolSchema),
   context: z.array(ContextSchema),
   forwardedProps: z.any(),
+  resume: z.array(ResumeEntrySchema).optional(),
 });
 
 export const StateSchema = z.any();

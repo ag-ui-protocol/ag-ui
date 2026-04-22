@@ -55,3 +55,44 @@ describe("ResumeEntrySchema", () => {
     ).toThrow();
   });
 });
+
+import { RunAgentInputSchema } from "../types";
+
+describe("RunAgentInput.resume", () => {
+  const baseInput = {
+    threadId: "t-1",
+    runId: "r-1",
+    state: {},
+    messages: [],
+    tools: [],
+    context: [],
+    forwardedProps: {},
+  };
+
+  it("accepts input without resume (back-compat)", () => {
+    const parsed = RunAgentInputSchema.parse(baseInput);
+    expect(parsed.resume).toBeUndefined();
+  });
+
+  it("accepts input with a resume array", () => {
+    const parsed = RunAgentInputSchema.parse({
+      ...baseInput,
+      resume: [
+        { interruptId: "int-1", status: "resolved", payload: { approved: true } },
+        { interruptId: "int-2", status: "cancelled" },
+      ],
+    });
+    expect(parsed.resume).toHaveLength(2);
+    expect(parsed.resume?.[0].status).toBe("resolved");
+    expect(parsed.resume?.[1].status).toBe("cancelled");
+  });
+
+  it("rejects resume entry with invalid status", () => {
+    expect(() =>
+      RunAgentInputSchema.parse({
+        ...baseInput,
+        resume: [{ interruptId: "int-1", status: "ignored" }],
+      }),
+    ).toThrow();
+  });
+});
