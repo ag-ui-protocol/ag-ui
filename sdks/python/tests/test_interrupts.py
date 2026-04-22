@@ -39,6 +39,10 @@ class InterruptTest(unittest.TestCase):
         with self.assertRaises(ValidationError):
             Interrupt(reason="tool_call")
 
+    def test_rejects_missing_reason(self):
+        with self.assertRaises(ValidationError):
+            Interrupt(id="int-1")
+
 
 class ResumeEntryTest(unittest.TestCase):
     def test_resolved_with_payload(self):
@@ -54,6 +58,21 @@ class ResumeEntryTest(unittest.TestCase):
     def test_rejects_unknown_status(self):
         with self.assertRaises(ValidationError):
             ResumeEntry(interrupt_id="int-1", status="denied")
+
+    def test_rejects_missing_interrupt_id(self):
+        with self.assertRaises(ValidationError):
+            ResumeEntry(status="resolved")
+
+    def test_alias_camel_case_on_serialization(self):
+        r = ResumeEntry(interrupt_id="int-1", status="resolved", payload={"approved": True})
+        dumped = r.model_dump(by_alias=True)
+        self.assertIn("interruptId", dumped)
+        self.assertNotIn("interrupt_id", dumped)
+
+    def test_parse_from_camel_case(self):
+        r = ResumeEntry.model_validate({"interruptId": "int-1", "status": "cancelled"})
+        self.assertEqual(r.interrupt_id, "int-1")
+        self.assertEqual(r.status, "cancelled")
 
 
 class RunAgentInputResumeTest(unittest.TestCase):
