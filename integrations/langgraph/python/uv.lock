@@ -4,7 +4,7 @@ requires-python = ">=3.10, <3.14"
 
 [[package]]
 name = "ag-ui-langgraph"
-version = "0.0.29"
+version = "0.0.34"
 source = { editable = "." }
 dependencies = [
     { name = "ag-ui-protocol" },
@@ -26,7 +26,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ag-ui-protocol", specifier = ">=0.1.10" },
+    { name = "ag-ui-protocol", specifier = ">=0.1.15" },
     { name = "fastapi", marker = "extra == 'fastapi'", specifier = ">=0.115.12" },
     { name = "langchain", specifier = ">=1.2.0" },
     { name = "langchain-core", specifier = ">=0.3.0" },
@@ -40,14 +40,14 @@ dev = [{ name = "fastapi", specifier = ">=0.115.12" }]
 
 [[package]]
 name = "ag-ui-protocol"
-version = "0.1.11"
+version = "0.1.15"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a2/c1/33ab11dc829c6c28d0d346988b2f394aa632d3ad63d1d2eb5f16eccd769b/ag_ui_protocol-0.1.11.tar.gz", hash = "sha256:b336dfebb5751e9cc2c676a3008a4bce4819004e6f6f8cba73169823564472ae", size = 6249, upload-time = "2026-02-11T12:41:36.085Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/57/71/96c21ae7e2fb9b610c1a90d38bd2de8b6e5b2900a63001f3882f43e519af/ag_ui_protocol-0.1.15.tar.gz", hash = "sha256:5e23c1042c7d4e364d685e68d2fb74d37c16bc83c66d270102d8eaedce56ad82", size = 6269, upload-time = "2026-04-01T15:44:33.136Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/14/83/5c6f4cb24d27d9cbe0c31ba2f3b4d1ff42bc6f87ba9facfa9e9d44046c6b/ag_ui_protocol-0.1.11-py3-none-any.whl", hash = "sha256:b0cc25570462a8eba8e57a098e0a2d6892a1f571a7bea7da2d4b60efd5d66789", size = 8392, upload-time = "2026-02-11T12:41:35.303Z" },
+    { url = "https://files.pythonhosted.org/packages/e4/a0/a73398d30bb0f9ad70cd70426151a4a19527a7296e48a3a16a50e1d5db05/ag_ui_protocol-0.1.15-py3-none-any.whl", hash = "sha256:85cde077023ccbc37b5ce2ad953537883c262d210320f201fc2ec4e85408b06a", size = 8661, upload-time = "2026-04-01T15:44:32.079Z" },
 ]
 
 [[package]]
