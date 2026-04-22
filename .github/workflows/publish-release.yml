@@ -16,9 +16,17 @@ name: release / publish
 #   "1.2.3a0" / "1.2.3b0" / "1.2.3rc0" → same, with PEP 440 prerelease tags
 
 on:
+  # Version bumps can only live in package.json or pyproject.toml, so we
+  # gate the trigger on those paths. Combined with the release.config.json
+  # allowlist in detect-ts-version-changes.sh this gives defense in depth:
+  # unrelated PRs don't even start the workflow, and any workflow run that
+  # does fire still filters to enrolled packages before touching a registry.
   pull_request:
     types: [closed]
     branches: [main]
+    paths:
+      - "**/package.json"
+      - "**/pyproject.toml"
   workflow_dispatch:
     inputs:
       dry_run:
