@@ -4,7 +4,7 @@ requires-python = ">=3.10, <3.14"
 
 [[package]]
 name = "ag-ui-langgraph"
-version = "0.0.33"
+version = "0.0.34"
 source = { editable = "." }
 dependencies = [
     { name = "ag-ui-protocol" },
