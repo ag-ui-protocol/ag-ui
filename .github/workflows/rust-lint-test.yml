@@ -20,7 +20,7 @@ on:
 
 defaults:
   run:
-    working-directory: ./rust
+    working-directory: ./sdks/community/rust
 
 jobs:
   rust:
