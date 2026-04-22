@@ -251,7 +251,7 @@ export type State = z.infer<typeof StateSchema>;
 export type Role = z.infer<typeof RoleSchema>;
 export type Interrupt = z.infer<typeof InterruptSchema>;
 export type ResumeEntry = z.infer<typeof ResumeEntrySchema>;
-export type ResumeStatus = "resolved" | "cancelled";
+export type ResumeStatus = z.infer<typeof ResumeEntrySchema>["status"];
 
 export class AGUIError extends Error {
   constructor(message: string) {
