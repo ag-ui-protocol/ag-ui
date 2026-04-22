@@ -253,11 +253,16 @@ class RunStartedEvent(BaseEvent):
 class RunFinishedEvent(BaseEvent):
     """
     Event indicating that a run has finished.
+
+    `outcome` defaults to "success" for backward compatibility with producers
+    written before the interrupt-aware run lifecycle. New code should set
+    `outcome` explicitly — "success" with an optional `result`, or "interrupt"
+    with a non-empty `interrupts` list.
     """
     type: Literal[EventType.RUN_FINISHED] = EventType.RUN_FINISHED  # pyright: ignore[reportIncompatibleVariableOverride]
     thread_id: str
     run_id: str
-    outcome: RunFinishedOutcome
+    outcome: RunFinishedOutcome = "success"
     result: Optional[Any] = None
     interrupts: Optional[List[Interrupt]] = None
 

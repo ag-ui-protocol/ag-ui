@@ -54,9 +54,11 @@ class RunFinishedEventTest(unittest.TestCase):
                 interrupts=[Interrupt(id="int-1", reason="tool_call")],
             )
 
-    def test_outcome_is_required(self):
-        with self.assertRaises(ValidationError):
-            RunFinishedEvent(thread_id="t-1", run_id="r-1")
+    def test_outcome_defaults_to_success(self):
+        e = RunFinishedEvent(thread_id="t-1", run_id="r-1")
+        self.assertEqual(e.outcome, "success")
+        self.assertIsNone(e.result)
+        self.assertIsNone(e.interrupts)
 
     def test_camel_case_serialization(self):
         e = RunFinishedEvent(
