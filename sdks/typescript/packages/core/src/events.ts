@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { MessageSchema, StateSchema, RunAgentInputSchema } from "./types";
+import { MessageSchema, StateSchema, RunAgentInputSchema, InterruptSchema } from "./types";
 
 // Text messages can have any role except "tool"
 const TextMessageRoleSchema = z.union([
@@ -217,12 +217,29 @@ export const RunStartedEventSchema = BaseEventSchema.extend({
   input: RunAgentInputSchema.optional(),
 });
 
-export const RunFinishedEventSchema = BaseEventSchema.extend({
+export const RunFinishedOutcomeSchema = z.enum(["success", "interrupt"]);
+export type RunFinishedOutcome = z.infer<typeof RunFinishedOutcomeSchema>;
+
+export const RunFinishedSuccessEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.RUN_FINISHED),
   threadId: z.string(),
   runId: z.string(),
+  outcome: z.literal("success"),
   result: z.any().optional(),
 });
+
+export const RunFinishedInterruptEventSchema = BaseEventSchema.extend({
+  type: z.literal(EventType.RUN_FINISHED),
+  threadId: z.string(),
+  runId: z.string(),
+  outcome: z.literal("interrupt"),
+  interrupts: z.array(InterruptSchema).min(1),
+});
+
+export const RunFinishedEventSchema = z.union([
+  RunFinishedSuccessEventSchema,
+  RunFinishedInterruptEventSchema,
+]);
 
 export const RunErrorEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.RUN_ERROR),
@@ -286,7 +303,7 @@ export const ReasoningEncryptedValueEventSchema = BaseEventSchema.extend({
   encryptedValue: z.string(),
 });
 
-export const EventSchemas = z.discriminatedUnion("type", [
+export const EventSchemas = z.union([
   TextMessageStartEventSchema,
   TextMessageContentEventSchema,
   TextMessageEndEventSchema,
@@ -309,7 +326,8 @@ export const EventSchemas = z.discriminatedUnion("type", [
   RawEventSchema,
   CustomEventSchema,
   RunStartedEventSchema,
-  RunFinishedEventSchema,
+  RunFinishedSuccessEventSchema,
+  RunFinishedInterruptEventSchema,
   RunErrorEventSchema,
   StepStartedEventSchema,
   StepFinishedEventSchema,
@@ -393,7 +411,9 @@ export type ActivityDeltaEventProps = EventProps<typeof ActivityDeltaEventSchema
 export type RawEventProps = EventProps<typeof RawEventSchema>;
 export type CustomEventProps = EventProps<typeof CustomEventSchema>;
 export type RunStartedEventProps = EventProps<typeof RunStartedEventSchema>;
-export type RunFinishedEventProps = EventProps<typeof RunFinishedEventSchema>;
+export type RunFinishedSuccessEventProps = EventProps<typeof RunFinishedSuccessEventSchema>;
+export type RunFinishedInterruptEventProps = EventProps<typeof RunFinishedInterruptEventSchema>;
+export type RunFinishedEventProps = RunFinishedSuccessEventProps | RunFinishedInterruptEventProps;
 export type RunErrorEventProps = EventProps<typeof RunErrorEventSchema>;
 export type StepStartedEventProps = EventProps<typeof StepStartedEventSchema>;
 export type StepFinishedEventProps = EventProps<typeof StepFinishedEventSchema>;
@@ -431,7 +451,9 @@ export type ActivityDeltaEvent = z.infer<typeof ActivityDeltaEventSchema>;
 export type RawEvent = z.infer<typeof RawEventSchema>;
 export type CustomEvent = z.infer<typeof CustomEventSchema>;
 export type RunStartedEvent = z.infer<typeof RunStartedEventSchema>;
-export type RunFinishedEvent = z.infer<typeof RunFinishedEventSchema>;
+export type RunFinishedSuccessEvent = z.infer<typeof RunFinishedSuccessEventSchema>;
+export type RunFinishedInterruptEvent = z.infer<typeof RunFinishedInterruptEventSchema>;
+export type RunFinishedEvent = RunFinishedSuccessEvent | RunFinishedInterruptEvent;
 export type RunErrorEvent = z.infer<typeof RunErrorEventSchema>;
 export type StepStartedEvent = z.infer<typeof StepStartedEventSchema>;
 export type StepFinishedEvent = z.infer<typeof StepFinishedEventSchema>;
