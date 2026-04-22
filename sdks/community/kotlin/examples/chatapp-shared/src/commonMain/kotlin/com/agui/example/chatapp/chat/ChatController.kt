@@ -58,7 +58,9 @@ import com.agui.example.chatapp.util.getPlatformSettings
 import com.agui.example.tools.BackgroundChangeHandler
 import com.agui.example.tools.BackgroundStyle
 import com.agui.example.tools.ChangeBackgroundToolExecutor
+import com.agui.example.tools.RenderA2UiToolExecutor
 import com.agui.tools.DefaultToolRegistry
+import com.contextable.a2ui4k.agent.A2UiRenderTool
 import kotlinx.atomicfu.atomic
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -149,8 +151,14 @@ class ChatController(
                 }
             })
 
+            // Surface the same SurfaceStateManager the composable A2UISurface
+            // reads from — the executor's render() must mutate the instance
+            // already bound to the UI.
+            val renderA2UiTool = A2UiRenderTool(surfaceStateManager)
+
             val clientToolRegistry = DefaultToolRegistry().apply {
                 registerTool(backgroundTool)
+                registerTool(RenderA2UiToolExecutor(renderA2UiTool))
             }
 
             currentAgent = agentFactory.createAgent(
