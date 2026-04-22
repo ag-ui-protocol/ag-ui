@@ -75,3 +75,13 @@ message Message {
   optional string error = 7;
   repeated InputContent content_parts = 8;
 }
+
+message Interrupt {
+  string id = 1;
+  string reason = 2;
+  optional string message = 3;
+  optional string tool_call_id = 4;
+  optional google.protobuf.Value response_schema = 5;
+  optional string expires_at = 6;
+  optional google.protobuf.Value metadata = 7;
+}
