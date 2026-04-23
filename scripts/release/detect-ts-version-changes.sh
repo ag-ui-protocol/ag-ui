@@ -24,6 +24,18 @@ if [ ! -f "$CONFIG" ]; then
   exit 1
 fi
 
+# Preflight: semver precedence (especially prerelease ordering) needs the
+# 'semver' npm package, which we invoke via `node -e` below. That require()
+# only resolves once node_modules is populated. Fail early with a clear
+# message if dependencies aren't installed — otherwise the caller's
+# `|| echo "[]"` fallback silently swallows the failure and the publish
+# workflow no-ops instead of publishing what it should.
+if ! (cd "$REPO_ROOT" && node -e "require('semver')") 2>/dev/null; then
+  echo "ERROR: 'semver' module not resolvable from $REPO_ROOT." >&2
+  echo "       Run 'pnpm install --frozen-lockfile' before this script." >&2
+  exit 1
+fi
+
 # Build allowlist: every TypeScript package name listed under any scope.
 ALLOWLIST=$(jq -r '[.scopes[].packages[] | select(.ecosystem == "typescript") | .name] | sort | unique | join("\n")' "$CONFIG")
 if [ -z "$ALLOWLIST" ]; then
