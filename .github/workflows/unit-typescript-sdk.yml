@@ -26,7 +26,12 @@ on:
 
 jobs:
   typescript:
+    name: typescript (React ${{ matrix.react-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        react-version: ["17", "19"]
 
     steps:
       - name: Checkout code
@@ -58,6 +63,15 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Override React version
+        if: matrix.react-version != '19'
+        run: |
+          pnpm --filter demo-viewer add \
+            react@^${{ matrix.react-version }} \
+            react-dom@^${{ matrix.react-version }} \
+            -D @types/react@^${{ matrix.react-version }} \
+               @types/react-dom@^${{ matrix.react-version }}
 
       - name: Test Build
         run: pnpm run build
