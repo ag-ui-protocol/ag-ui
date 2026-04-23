@@ -164,6 +164,10 @@ class LangGraphAgent:
         return event
 
     async def run(self, input: RunAgentInput) -> AsyncGenerator[ProcessedEvents, None]:
+        # Normalize camelCase keys from the frontend to snake_case before forwarding.
+        # Required for all downstream forwarded_props consumers (node_name, stream_subgraphs,
+        # command.resume). Removing this conversion would silently break streaming options
+        # forwarded from JavaScript callers without raising an obvious error.
         forwarded_props = {}
         if hasattr(input, "forwarded_props") and input.forwarded_props:
             forwarded_props = {
@@ -308,7 +312,7 @@ class LangGraphAgent:
 
                 should_exit = should_exit or (
                         event_type == "on_custom_event" and
-                        event["name"] == "exit"
+                        event["name"] == CustomEventNames.Exit
                     )
 
                 if current_node_name and current_node_name != self.active_run.get("node_name"):
@@ -446,7 +450,7 @@ class LangGraphAgent:
         langchain_messages = agui_messages_to_langchain(messages)
         state = self.langgraph_default_merge_state(state_input, langchain_messages, input)
         config["configurable"]["thread_id"] = thread_id
-        interrupts = agent_state.tasks[0].interrupts if agent_state.tasks and len(agent_state.tasks) > 0 else []
+        interrupts = self._collect_interrupts(agent_state.tasks)
         has_active_interrupts = len(interrupts) > 0
         resume_input = forwarded_props.get('command', {}).get('resume', None)
 
@@ -755,6 +759,11 @@ class LangGraphAgent:
         new_messages = [
             msg for msg in messages
             if msg.id not in existing_message_ids
+            and not (
+                isinstance(msg, ToolMessage)
+                and hasattr(msg, 'tool_call_id')
+                and msg.tool_call_id in replaced_tool_call_ids
+            )
         ]
 
         tools = input.tools or []
@@ -768,7 +777,8 @@ class LangGraphAgent:
                 else:
                     tools_as_dicts.append(tool)
 
-        all_tools = [*state.get("tools", []), *tools_as_dicts]
+        # Input tools first so they win over stale state tools on name collision
+        all_tools = [*tools_as_dicts, *(state.get("tools") or [])]
 
         # Remove duplicates based on tool name
         seen_names = set()
@@ -848,6 +858,21 @@ class LangGraphAgent:
             )
         ]
         return head + tail
+
+    @staticmethod
+    def _collect_interrupts(tasks) -> list:
+        """Collect interrupts from ALL tasks, not just tasks[0].
+
+        This fixes #1409 where parallel tool calls could have interrupts
+        on tasks other than the first one.
+        """
+        if not tasks or len(tasks) == 0:
+            return []
+        interrupts = []
+        for task in tasks:
+            task_interrupts = getattr(task, "interrupts", None) or []
+            interrupts.extend(task_interrupts)
+        return interrupts
 
     def get_state_snapshot(self, state: State) -> State:
         # Invariant: callers always operate within an active run.
