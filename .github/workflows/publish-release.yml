@@ -103,6 +103,14 @@ jobs:
       - name: Install packaging library
         run: pip install packaging
 
+      - name: Install dependencies
+        # Run before detection so detect-ts-version-changes.sh can
+        # `require('semver')` (a root devDependency). The paths filter
+        # above already scopes this workflow to PRs that touch a
+        # package.json/pyproject.toml, so paying the install cost here
+        # is bounded to runs that could actually publish.
+        run: pnpm install --frozen-lockfile
+
       - name: Detect TypeScript version changes vs npm
         id: detect_ts
         run: |
@@ -133,10 +141,6 @@ jobs:
             echo ""
             echo "No version changes detected — nothing to publish."
           } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Install dependencies
-        if: steps.detect_ts.outputs.count != '0'
-        run: pnpm install --frozen-lockfile
 
       - name: Build TypeScript packages
         if: steps.detect_ts.outputs.count != '0'
