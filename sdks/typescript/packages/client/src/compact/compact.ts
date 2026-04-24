@@ -10,7 +10,7 @@ import {
   StateSnapshotEvent,
   StateDeltaEvent,
 } from "@ag-ui/core";
-import * as jsonpatch from "fast-json-patch";
+import jsonpatch from "fast-json-patch";
 import { structuredClone_ } from "../utils";
 
 /**
