@@ -1061,18 +1061,22 @@ class LangGraphAgent:
                     return
 
                 if bool(current_stream and current_stream.get("id")) == False:
+                    # Reuse the stable ID from earlier in this run so that text
+                    # resuming after a tool call stays in the same message bubble.
+                    message_id = self.active_run.get("current_text_message_id") or chunk_id
+                    self.active_run["current_text_message_id"] = message_id
                     yield self._dispatch_event(
                         TextMessageStartEvent(
                             type=EventType.TEXT_MESSAGE_START,
                             role="assistant",
-                            message_id=chunk_id,
+                            message_id=message_id,
                             raw_event=event,
                         )
                     )
                     self.set_message_in_progress(
                         self.active_run["id"],
                         MessageInProgress(
-                            id=chunk_id,
+                            id=message_id,
                             tool_call_id=None,
                             tool_call_name=None
                         )
