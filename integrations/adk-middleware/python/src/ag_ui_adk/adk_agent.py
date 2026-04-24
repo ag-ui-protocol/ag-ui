@@ -2565,6 +2565,15 @@ class ADKAgent:
             # moving states snapshot events after the text event clousure to avoid this error https://github.com/Contextable/ag-ui/issues/28
             final_state = await self._session_manager.get_session_state(backend_session_id, app_name, user_id)
 
+            # `temp:` keys are ephemeral invocation state (see issue #1571) —
+            # they're visible to tools during the run but must not leak into
+            # the client-facing STATE_SNAPSHOT.
+            if final_state:
+                final_state = {
+                    k: v for k, v in final_state.items()
+                    if not (isinstance(k, str) and k.startswith(_ADKState.TEMP_PREFIX))
+                }
+
             # Merge accumulated predictive state from all ClientProxyToolset instances
             # This ensures values set during HITL tool calls survive the final STATE_SNAPSHOT
             accumulated_predict_state = {}

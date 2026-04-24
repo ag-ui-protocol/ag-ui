@@ -319,6 +319,16 @@ class TestTempStateReachesToolContext:
             stored.sessions[0].id,
         ) not in adk_agent._request_state_service._pending_temp_state
 
+        # STATE_SNAPSHOT events sent to the client must not expose `temp:`
+        # keys — they're server-side ephemeral state.
+        snapshot_events = [e for e in events if str(e.type) == "EventType.STATE_SNAPSHOT"]
+        assert snapshot_events, "Expected at least one STATE_SNAPSHOT event"
+        for snap in snapshot_events:
+            assert not any(
+                isinstance(k, str) and k.startswith(ADKState.TEMP_PREFIX)
+                for k in snap.snapshot.keys()
+            ), f"temp: keys leaked into STATE_SNAPSHOT: {list(snap.snapshot.keys())}"
+
         await adk_agent.close()
 
     @pytest.mark.asyncio
