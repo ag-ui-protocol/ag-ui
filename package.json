@@ -27,6 +27,7 @@
     "test:exports": "nx run-many -t test:exports"
   },
   "devDependencies": {
+    "@nx/js": "22.5.0",
     "nx": "^22.4.5",
     "prettier": "^3.5.3",
     "semver": "^7.7.3",
