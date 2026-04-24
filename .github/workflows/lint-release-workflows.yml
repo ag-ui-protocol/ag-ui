@@ -37,7 +37,7 @@ jobs:
         with:
           reporter: github-check
           level: error
-          fail_on_error: true
+          fail_level: error
           actionlint_flags: >-
             .github/workflows/prepare-release.yml
             .github/workflows/publish-release.yml
