@@ -75,8 +75,6 @@ export interface RunMetadata {
   // execution; cleared in OnToolEnd/OnToolError. While set, STATE_SNAPSHOT
   // emission is suppressed so optimistic UI state is not overwritten.
   modelMadeToolCall?: boolean;
-  // Messages completed during streaming that may not be committed to the checkpoint
-  streamedMessages?: LangGraphPlatformMessage[];
 }
 
 export type MessagesInProgressRecord = Record<string, MessageInProgress | null>;

@@ -1,14 +1,15 @@
-"""
-Tests for subgraph streaming: detection, ordering fix, and snapshot dispatch.
+"""Tests for subgraph streaming detection, ordering, and snapshot dispatch.
 
-The bug: when a subgraph (e.g. hotels_agent) commits a message mid-stream,
-the client only sees it in the final MESSAGES_SNAPSHOT — by which point
-supervisor/experiences TEXT_MESSAGE events have already arrived, so hotels_msg
-gets appended *after* them (wrong order).
+When a subgraph (e.g. hotels_agent) commits a message mid-stream, the
+supervisor must see that commit reflected before it emits further text —
+otherwise the late-arriving subgraph message gets appended after
+supervisor text and the client renders them out of order.
 
-The fix: every time current_subgraph changes, get_state_and_messages_snapshots
-is called, fetching the fresh checkpoint and dispatching STATE_SNAPSHOT +
-MESSAGES_SNAPSHOT before any subsequent TEXT_MESSAGE events arrive.
+The adapter handles this by calling
+``get_state_and_messages_snapshots`` on every subgraph transition,
+fetching the fresh checkpoint and dispatching STATE_SNAPSHOT +
+MESSAGES_SNAPSHOT before the next TEXT_MESSAGE events arrive. These
+tests pin that ordering and the underlying namespace-detection logic.
 """
 
 import unittest
@@ -19,7 +20,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from ag_ui_langgraph.agent import ROOT_SUBGRAPH_NAME
 from ag_ui.core import EventType
 
-from tests._helpers import make_agent as _make_agent, make_configured_agent
+from tests._helpers import make_agent as _make_agent, make_configured_agent, snapshot_event
 
 
 def _event_types(events):
@@ -33,7 +34,12 @@ def _event_types(events):
 
 
 def _ns_root(ns):
-    """Mirror the ns_root extraction logic from agent.py."""
+    """Mirror the ns_root extraction logic from agent.py.
+
+    WARNING: this duplicates the extraction rule used by the adapter —
+    if ``agent.py`` changes how it derives the root subgraph name from a
+    langgraph_checkpoint_ns string, this helper MUST be kept in sync or
+    the tests below will silently diverge from production semantics."""
     return ns.split("|")[0].split(":")[0] if ns else ""
 
 
@@ -116,34 +122,10 @@ class TestGetStateAndMessagesSnapshots(unittest.IsolatedAsyncioTestCase):
         agent = make_configured_agent([user, flights, hotels])
         async for _ in agent.get_state_and_messages_snapshots({}):
             pass
-        snap = next(e for e in agent.dispatched if getattr(e, "type", None) == EventType.MESSAGES_SNAPSHOT)
+        snap = snapshot_event(agent.dispatched)
         ids = [m.id for m in snap.messages]
         self.assertIn("h1", ids)
         self.assertLess(ids.index("f1"), ids.index("h1"))
-
-    async def test_uncommitted_streamed_message_appended_after_checkpoint(self):
-        """Uncommitted streamed messages (e.g. supervisor routing) go after checkpoint."""
-        user = HumanMessage(content="hi", id="u1")
-        flights = AIMessage(content="Booked KLM", id="f1")
-        supervisor_routing = AIMessage(content="routing", id="sup1")
-        agent = make_configured_agent([user, flights], streamed_messages=[supervisor_routing])
-        async for _ in agent.get_state_and_messages_snapshots({}):
-            pass
-        snap = next(e for e in agent.dispatched if getattr(e, "type", None) == EventType.MESSAGES_SNAPSHOT)
-        ids = [m.id for m in snap.messages]
-        self.assertIn("sup1", ids)
-        self.assertGreater(ids.index("sup1"), ids.index("f1"))
-
-    async def test_streamed_message_already_in_checkpoint_not_duplicated(self):
-        """A streamed message whose ID is already in the checkpoint appears only once."""
-        user = HumanMessage(content="hi", id="u1")
-        exp = AIMessage(content="activities", id="exp1")
-        agent = make_configured_agent([user, exp], streamed_messages=[exp])
-        async for _ in agent.get_state_and_messages_snapshots({}):
-            pass
-        snap = next(e for e in agent.dispatched if getattr(e, "type", None) == EventType.MESSAGES_SNAPSHOT)
-        self.assertEqual([m.id for m in snap.messages].count("exp1"), 1)
-
 
 # ---------------------------------------------------------------------------
 # Subgraph change triggers mid-stream snapshot
@@ -236,10 +218,11 @@ class TestSubgraphChangeTrigger(unittest.IsolatedAsyncioTestCase):
 # ---------------------------------------------------------------------------
 
 class TestAgetStateMidStreamError(unittest.IsolatedAsyncioTestCase):
-    """aget_state is now called on every subgraph transition (hot path).
-    An exception there must propagate out — not be silently swallowed."""
+    """``get_state_and_messages_snapshots`` is invoked on every subgraph
+    transition. An exception raised inside it must propagate out of the
+    stream, not be silently swallowed."""
 
-    async def test_aget_state_error_propagates(self):
+    async def test_get_state_and_messages_snapshots_error_propagates(self):
         agent = _make_agent(["hotels_agent"])
 
         run_input = MagicMock()
@@ -279,14 +262,20 @@ class TestAgetStateMidStreamError(unittest.IsolatedAsyncioTestCase):
             }
 
         agent.prepare_stream = fake_prepare
-        # Call 1 (before stream, line ~180) succeeds.
-        # Call 2 (mid-stream, inside get_state_and_messages_snapshots) raises.
-        agent.graph.aget_state = AsyncMock(side_effect=[
-            initial_state,
-            RuntimeError("checkpoint unavailable"),
-        ])
+        agent.graph.aget_state = AsyncMock(return_value=initial_state)
 
-        with self.assertRaises(RuntimeError):
+        # Stub the target function directly so we are independent of how
+        # many intermediate ``aget_state`` calls the adapter makes during
+        # a run. Any other wiring change (extra pre-stream peeks, etc.)
+        # is irrelevant — what we assert is simply that a failure
+        # originating in this helper is not swallowed on the way out.
+        async def raising_snapshots(*_args, **_kwargs):
+            raise RuntimeError("checkpoint unavailable")
+            yield  # pragma: no cover — keeps the function an async generator
+
+        agent.get_state_and_messages_snapshots = raising_snapshots
+
+        with self.assertRaisesRegex(RuntimeError, "checkpoint unavailable"):
             async for _ in agent._handle_stream_events(run_input):
                 pass
 
@@ -346,19 +335,26 @@ class TestStreamSubgraphsGating(unittest.IsolatedAsyncioTestCase):
         }
 
     async def test_legacy_events_do_not_trigger_snapshot_when_disabled(self):
-        """With stream_subgraphs=False the legacy 'events' chunk must not set
-        is_subgraph_stream=True, so no mid-stream snapshot fires.  Only the
-        single end-of-run MESSAGES_SNAPSHOT should be present."""
+        """With stream_subgraphs=False the legacy 'events' chunk must not
+        set is_subgraph_stream=True, so no mid-stream snapshot fires —
+        the run ends with exactly the one end-of-run MESSAGES_SNAPSHOT."""
         agent = _make_agent(["hotels_agent"])
-        events = await self._drive(agent, [self._legacy_subgraph_chunk()], stream_subgraphs=False)
+        events = await self._drive(
+            agent, [self._legacy_subgraph_chunk()], stream_subgraphs=False
+        )
+        # Exactly-1 asserted rather than >=1: the gating guarantee is
+        # "no EXTRA snapshot fires", which a loose >=1 would not catch.
         self.assertEqual(_event_types(events).count("MESSAGES_SNAPSHOT"), 1)
 
     async def test_legacy_events_do_trigger_snapshot_when_enabled(self):
         """With stream_subgraphs=True the legacy 'events' chunk sets
-        is_subgraph_stream=True, firing a mid-stream snapshot in addition to
-        the end-of-run one — at least 2 total."""
+        is_subgraph_stream=True, firing a mid-stream snapshot in addition
+        to the end-of-run one — at least 2 total (additional snapshots
+        are acceptable as the adapter adds instrumentation)."""
         agent = _make_agent(["hotels_agent"])
-        events = await self._drive(agent, [self._legacy_subgraph_chunk()], stream_subgraphs=True)
+        events = await self._drive(
+            agent, [self._legacy_subgraph_chunk()], stream_subgraphs=True
+        )
         self.assertGreaterEqual(_event_types(events).count("MESSAGES_SNAPSHOT"), 2)
 
 

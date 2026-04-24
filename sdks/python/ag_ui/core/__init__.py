@@ -77,6 +77,23 @@ from ag_ui.core.types import (
     InputContentPart,
 )
 
+from ag_ui.core.capabilities import (
+    SubAgentInfo,
+    IdentityCapabilities,
+    TransportCapabilities,
+    ToolsCapabilities,
+    OutputCapabilities,
+    StateCapabilities,
+    MultiAgentCapabilities,
+    ReasoningCapabilities,
+    MultimodalInputCapabilities,
+    MultimodalOutputCapabilities,
+    MultimodalCapabilities,
+    ExecutionCapabilities,
+    HumanInTheLoopCapabilities,
+    AgentCapabilities,
+)
+
 __all__ = [
     # Events
     "EventType",
@@ -149,4 +166,19 @@ __all__ = [
     "BinaryInputContent",
     "InputContent",
     "InputContentPart",
+    # Capabilities
+    "SubAgentInfo",
+    "IdentityCapabilities",
+    "TransportCapabilities",
+    "ToolsCapabilities",
+    "OutputCapabilities",
+    "StateCapabilities",
+    "MultiAgentCapabilities",
+    "ReasoningCapabilities",
+    "MultimodalInputCapabilities",
+    "MultimodalOutputCapabilities",
+    "MultimodalCapabilities",
+    "ExecutionCapabilities",
+    "HumanInTheLoopCapabilities",
+    "AgentCapabilities",
 ]

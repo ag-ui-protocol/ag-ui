@@ -24,7 +24,7 @@ TIMESTAMP=$(date -u +%H:%M:%S)
 # Build the section for this ecosystem using real newlines (not \n literals)
 NL=$'\n'
 if [ "$ECOSYSTEM" = "typescript" ]; then
-  SECTION="### TypeScript (npm) — published at ${TIMESTAMP} UTC${NL}"
+  SECTION="### TypeScript (npm) - published at ${TIMESTAMP} UTC${NL}"
   SECTION+="| Package | Version | Install |${NL}"
   SECTION+="|---------|---------|--------|${NL}"
   while read -r pkg; do
@@ -33,7 +33,7 @@ if [ "$ECOSYSTEM" = "typescript" ]; then
     SECTION+="| ${NAME} | ${VERSION} | \`npm install ${NAME}@${VERSION}\` |${NL}"
   done < <(echo "$PACKAGES_JSON" | jq -c '.[]')
 elif [ "$ECOSYSTEM" = "python" ]; then
-  SECTION="### Python (PyPI) — published at ${TIMESTAMP} UTC${NL}"
+  SECTION="### Python (PyPI) - published at ${TIMESTAMP} UTC${NL}"
   SECTION+="| Package | Version | Install |${NL}"
   SECTION+="|---------|---------|--------|${NL}"
   while read -r pkg; do
@@ -54,15 +54,46 @@ if [ "${DRY_RUN:-false}" = "true" ]; then
   exit 0
 fi
 
-# Try to get existing release — retry logic for race condition
+# Try to get existing release - retry logic for race condition
 MAX_RETRIES=3
 for i in $(seq 1 $MAX_RETRIES); do
   if gh release view "$TAG" &>/dev/null; then
-    # Release exists — append our section
+    # Release exists - append our section, but skip rows already present so
+    # a retry after a partial failure doesn't create a duplicate section.
     EXISTING_BODY=$(gh release view "$TAG" --json body -q .body)
-    UPDATED_BODY="${EXISTING_BODY}${NEW_SECTION}"
+
+    # Determine which rows are genuinely new vs. already present.
+    APPEND_SECTION=""
+    APPEND_ROWS=0
+    while read -r pkg; do
+      NAME=$(echo "$pkg" | jq -r '.name')
+      VERSION=$(echo "$pkg" | jq -r '.version')
+      ROW_KEY="| ${NAME} | ${VERSION} |"
+      if grep -Fq "$ROW_KEY" <<<"$EXISTING_BODY"; then
+        echo "Row for ${NAME}@${VERSION} already present in release body; skipping" >&2
+      else
+        if [ "$ECOSYSTEM" = "typescript" ]; then
+          APPEND_SECTION+="| ${NAME} | ${VERSION} | \`npm install ${NAME}@${VERSION}\` |${NL}"
+        else
+          APPEND_SECTION+="| ${NAME} | ${VERSION} | \`pip install ${NAME}==${VERSION}\` |${NL}"
+        fi
+        APPEND_ROWS=$((APPEND_ROWS + 1))
+      fi
+    done < <(echo "$PACKAGES_JSON" | jq -c '.[]')
+
+    if [ "$APPEND_ROWS" -eq 0 ]; then
+      echo "All ${ECOSYSTEM} rows already present in release $TAG; no update needed" >&2
+      exit 0
+    fi
+
+    if [ "$ECOSYSTEM" = "typescript" ]; then
+      HEADER="### TypeScript (npm) - published at ${TIMESTAMP} UTC${NL}| Package | Version | Install |${NL}|---------|---------|--------|${NL}"
+    else
+      HEADER="### Python (PyPI) - published at ${TIMESTAMP} UTC${NL}| Package | Version | Install |${NL}|---------|---------|--------|${NL}"
+    fi
+    UPDATED_BODY="${EXISTING_BODY}${NL}${HEADER}${APPEND_SECTION}"
     echo "$UPDATED_BODY" | gh release edit "$TAG" --notes-file -
-    echo "Updated existing release $TAG with $ECOSYSTEM packages" >&2
+    echo "Updated existing release $TAG with $APPEND_ROWS new $ECOSYSTEM row(s)" >&2
     exit 0
   else
     # Try to create new release

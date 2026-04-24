@@ -109,6 +109,7 @@ class StrandsAgent:
         name: str,
         description: str = "",
         config: "StrandsAgentConfig | None" = None,
+        hooks: "list | None" = None,
     ):
         # Store template agent configuration for creating fresh instances
         self._model = agent.model
@@ -119,6 +120,19 @@ class StrandsAgent:
             else []
         )
         self._agent_kwargs = _extract_agent_kwargs(agent)
+
+        # Hook providers forwarded to each per-thread StrandsAgentCore.
+        #
+        # Why a dedicated kwarg instead of reading them off the template?
+        # Strands initializes ``Agent.hooks`` as a ``HookRegistry`` containing
+        # only the registered callbacks — the original list of HookProvider
+        # objects is not retained, and the registry also contains callbacks
+        # bound to internal Strands objects (conversation manager, retry
+        # strategy) that belong to the template and must not be cross-wired
+        # into per-thread agents. We therefore take providers directly from
+        # the caller and forward them to every per-thread instance so any
+        # observability / loop-cap / policy-enforcement hook actually fires.
+        self._hooks = list(hooks) if hooks else []
 
         self.name = name
         self.description = description
@@ -220,12 +234,21 @@ class StrandsAgent:
                             f"session_manager_provider returned None for thread_id={thread_id}; "
                             "agent will run without session persistence"
                         )
+                    # Only forward ``hooks`` when the caller actually
+                    # supplied providers. Passing ``hooks=None`` or
+                    # ``hooks=[]`` risks being interpreted differently by
+                    # future StrandsAgentCore versions (e.g. as "disable
+                    # default hooks"), so we omit the kwarg entirely when
+                    # there's nothing to forward.
+                    core_kwargs = dict(self._agent_kwargs)
+                    if self._hooks:
+                        core_kwargs["hooks"] = list(self._hooks)
                     self._agents_by_thread[thread_id] = StrandsAgentCore(
                         model=self._model,
                         system_prompt=self._system_prompt,
                         tools=self._tools,
                         session_manager=session_manager,
-                        **self._agent_kwargs,
+                        **core_kwargs,
                     )
         strands_agent = self._agents_by_thread[thread_id]
 
