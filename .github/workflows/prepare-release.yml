@@ -45,12 +45,6 @@ on:
           - patch
           - minor
           - major
-          - prerelease
-      preid:
-        description: "Prerelease identifier (only used for prerelease bump)"
-        required: false
-        type: string
-        default: "alpha"
       dry_run:
         description: "Dry run (preview without creating PR)"
         required: false
@@ -153,7 +147,6 @@ jobs:
           RESULT=$(pnpm tsx scripts/release/prepare-release.ts \
             --scope "${{ inputs.scope }}" \
             --bump "${{ inputs.bump }}" \
-            --preid "${{ inputs.preid }}" \
             "${EXTRA_ARGS[@]}")
 
           echo "$RESULT" > /tmp/bump-result.json
@@ -191,40 +184,16 @@ jobs:
           git commit -m "chore(release): bump ${SCOPE} (${SUMMARY})"
           git push -u origin release/next
 
-      - name: Collect accumulated bumps and generate release notes
+      - name: Collect accumulated bumps
         id: notes
         if: inputs.dry_run != true && steps.bump.outputs.changed_count != '0'
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           git fetch origin main
           python3 scripts/release/collect-accumulated-bumps.py origin/main HEAD > /tmp/accumulated.json
 
-          # Build title + raw release notes from accumulated state
           SCOPES=$(jq -r '[.[].scope] | unique | join(" + ")' /tmp/accumulated.json)
           [ -z "$SCOPES" ] || [ "$SCOPES" = "null" ] && SCOPES="${{ inputs.scope }}"
           echo "title=release: ${SCOPES}" >> "$GITHUB_OUTPUT"
-
-          # Raw notes: concatenate per-scope notes
-          SCOPE_LIST=$(jq -r '[.[].scope] | unique | .[]' /tmp/accumulated.json)
-          {
-            for s in $SCOPE_LIST; do
-              echo "### ${s}"
-              echo ""
-              pnpm tsx scripts/release/generate-release-notes.ts --scope "$s" 2>/dev/null \
-                || echo "_No release notes available._"
-              echo ""
-            done
-          } > /tmp/raw-notes.md
-
-          # Polish with AI if ANTHROPIC_API_KEY is set; otherwise passthrough
-          pnpm tsx scripts/release/generate-ai-release-notes.ts < /tmp/raw-notes.md > /tmp/release-notes.md
-          cp /tmp/release-notes.md release-notes.md
-          git add release-notes.md
-          # Commit only if something changed
-          git diff --cached --quiet || git commit -m "chore(release): update release-notes.md"
-          git diff --cached --quiet || true
-          git push origin release/next || true
 
       - name: Build PR body
         id: prbody
@@ -241,21 +210,14 @@ jobs:
             echo ""
             echo "---"
             echo ""
-            echo "## Release Notes"
-            echo ""
-            cat /tmp/release-notes.md
-            echo ""
-            echo "---"
-            echo ""
             echo "### How this release process works"
             echo ""
             echo "1. **This PR was created automatically** by the \`release / create-pr\` workflow."
             echo "   Each run appends a scope; re-run the workflow to add more to this PR before merging."
             echo "2. **CI runs on this PR** — tests, lint, type checks, build must pass before merge."
-            echo "3. **Review the release notes** above. Edit them in this PR if you want to refine them before merge."
-            echo "4. **When merged**, the \`release / publish\` workflow detects the version bumps and:"
+            echo "3. **When merged**, the \`release / publish\` workflow detects the version bumps and:"
             echo "   - Builds and tests all packages"
-            echo "   - Publishes to npm (with appropriate dist-tag for prereleases) and PyPI"
+            echo "   - Publishes to npm and PyPI"
             echo "   - Creates per-package git tags"
             echo "   - Creates a GitHub Release"
             echo ""
@@ -263,7 +225,6 @@ jobs:
             echo ""
             echo "- [ ] CI is green"
             echo "- [ ] Version bumps look correct"
-            echo "- [ ] Release notes are accurate"
             echo ""
             echo "> **Do not merge until CI is fully green.**"
             echo "> To add another scope to this release, re-run \`release / create-pr\` with a different scope."
