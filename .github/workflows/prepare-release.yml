@@ -1,0 +1,319 @@
+name: release / create-pr
+
+# Mirrors CopilotKit's `release / create-pr` DX (pick a scope + bump, click
+# run, get a release PR). AG-UI has ~20 scopes vs CopilotKit's 3, so we
+# additionally allow STACKING: running this workflow multiple times
+# accumulates version bumps onto a single `release/next` PR. Merge the PR
+# once when you're ready to ship everything together.
+
+on:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: "What to release"
+        required: true
+        type: choice
+        options:
+          - a2a
+          - a2a-middleware
+          - a2ui-middleware
+          - adk-middleware
+          - ag2
+          - agent-spec
+          - agno
+          - aws-strands
+          - claude-agent-sdk
+          - crewai
+          - langchain
+          - langgraph
+          - langroid
+          - llama-index
+          - mastra
+          - mcp-apps-middleware
+          - pydantic-ai
+          - py-sdk
+          - spring-ai
+          - ts-sdk
+      bump:
+        description: "Version bump level"
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+          - prerelease
+      preid:
+        description: "Prerelease identifier (only used for prerelease bump)"
+        required: false
+        type: string
+        default: "alpha"
+      dry_run:
+        description: "Dry run (preview without creating PR)"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: release-create-pr
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  NX_VERBOSE_LOGGING: true
+
+jobs:
+  create-release-pr:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Find existing release/next PR (stacking target)
+        id: existing
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { owner, repo } = context.repo;
+            const { data: prs } = await github.rest.pulls.list({
+              owner,
+              repo,
+              state: "open",
+              base: "main",
+              head: `${owner}:release/next`,
+            });
+            if (prs.length > 0) {
+              const pr = prs[0];
+              core.info(`Found existing release PR #${pr.number}: ${pr.html_url}`);
+              core.setOutput("has_existing", "true");
+              core.setOutput("pr_number", String(pr.number));
+              core.setOutput("pr_url", pr.html_url);
+            } else {
+              core.info("No existing release/next PR — will create a new one");
+              core.setOutput("has_existing", "false");
+            }
+
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: main
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "10.13.1"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Configure git
+        run: |
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+
+      - name: Check out or create release/next
+        if: inputs.dry_run != true
+        env:
+          HAS_EXISTING: ${{ steps.existing.outputs.has_existing }}
+        run: |
+          if [ "$HAS_EXISTING" = "true" ]; then
+            echo "Stacking onto existing release/next"
+            git fetch origin release/next:release/next
+            git checkout release/next
+          else
+            echo "Starting fresh release/next branch"
+            git checkout -b release/next
+          fi
+
+      - name: Bump versions for scope
+        id: bump
+        run: |
+          EXTRA_ARGS=()
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            EXTRA_ARGS+=(--dry-run)
+          fi
+          RESULT=$(pnpm tsx scripts/release/prepare-release.ts \
+            --scope "${{ inputs.scope }}" \
+            --bump "${{ inputs.bump }}" \
+            --preid "${{ inputs.preid }}" \
+            "${EXTRA_ARGS[@]}")
+
+          echo "$RESULT" > /tmp/bump-result.json
+          CHANGED=$(jq '[.packages[] | select(.oldVersion != .newVersion)] | length' /tmp/bump-result.json)
+          echo "changed_count=$CHANGED" >> "$GITHUB_OUTPUT"
+
+          SUMMARY=$(jq -r '.packages | map("\(.name)@\(.newVersion)") | join(", ")' /tmp/bump-result.json)
+          echo "summary=$SUMMARY" >> "$GITHUB_OUTPUT"
+
+          FILES=$(jq -r '.packages[].file' /tmp/bump-result.json | tr '\n' ' ')
+          echo "files=$FILES" >> "$GITHUB_OUTPUT"
+
+      - name: Dry-run summary
+        if: inputs.dry_run == true
+        run: |
+          {
+            echo "## Dry Run — release / create-pr"
+            echo ""
+            echo "**Scope:** \`${{ inputs.scope }}\` | **Bump:** \`${{ inputs.bump }}\`"
+            echo ""
+            echo "### Would bump"
+            jq -r '.packages[] | "- **\(.name)**: \(.oldVersion) → \(.newVersion)"' /tmp/bump-result.json
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Commit and push version bumps
+        if: inputs.dry_run != true && steps.bump.outputs.changed_count != '0'
+        env:
+          SCOPE: ${{ inputs.scope }}
+          SUMMARY: ${{ steps.bump.outputs.summary }}
+          FILES: ${{ steps.bump.outputs.files }}
+        run: |
+          for f in $FILES; do
+            git add "$f"
+          done
+          git commit -m "chore(release): bump ${SCOPE} (${SUMMARY})"
+          git push -u origin release/next
+
+      - name: Collect accumulated bumps and generate release notes
+        id: notes
+        if: inputs.dry_run != true && steps.bump.outputs.changed_count != '0'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          git fetch origin main
+          python3 scripts/release/collect-accumulated-bumps.py origin/main HEAD > /tmp/accumulated.json
+
+          # Build title + raw release notes from accumulated state
+          SCOPES=$(jq -r '[.[].scope] | unique | join(" + ")' /tmp/accumulated.json)
+          [ -z "$SCOPES" ] || [ "$SCOPES" = "null" ] && SCOPES="${{ inputs.scope }}"
+          echo "title=release: ${SCOPES}" >> "$GITHUB_OUTPUT"
+
+          # Raw notes: concatenate per-scope notes
+          SCOPE_LIST=$(jq -r '[.[].scope] | unique | .[]' /tmp/accumulated.json)
+          {
+            for s in $SCOPE_LIST; do
+              echo "### ${s}"
+              echo ""
+              pnpm tsx scripts/release/generate-release-notes.ts --scope "$s" 2>/dev/null \
+                || echo "_No release notes available._"
+              echo ""
+            done
+          } > /tmp/raw-notes.md
+
+          # Polish with AI if ANTHROPIC_API_KEY is set; otherwise passthrough
+          pnpm tsx scripts/release/generate-ai-release-notes.ts < /tmp/raw-notes.md > /tmp/release-notes.md
+          cp /tmp/release-notes.md release-notes.md
+          git add release-notes.md
+          # Commit only if something changed
+          git diff --cached --quiet || git commit -m "chore(release): update release-notes.md"
+          git diff --cached --quiet || true
+          git push origin release/next || true
+
+      - name: Build PR body
+        id: prbody
+        if: inputs.dry_run != true && steps.bump.outputs.changed_count != '0'
+        run: |
+          {
+            echo "## Accumulated Release"
+            echo ""
+            echo "Merging this PR publishes the following to npm and PyPI:"
+            echo ""
+            echo "| Package | Old | New | Registry |"
+            echo "|---------|-----|-----|----------|"
+            jq -r '.[] | "| \(.name) | \(.oldVersion) | \(.newVersion) | \(if .ecosystem == "typescript" then "npm" else "PyPI" end) |"' /tmp/accumulated.json
+            echo ""
+            echo "---"
+            echo ""
+            echo "## Release Notes"
+            echo ""
+            cat /tmp/release-notes.md
+            echo ""
+            echo "---"
+            echo ""
+            echo "### How this release process works"
+            echo ""
+            echo "1. **This PR was created automatically** by the \`release / create-pr\` workflow."
+            echo "   Each run appends a scope; re-run the workflow to add more to this PR before merging."
+            echo "2. **CI runs on this PR** — tests, lint, type checks, build must pass before merge."
+            echo "3. **Review the release notes** above. Edit them in this PR if you want to refine them before merge."
+            echo "4. **When merged**, the \`release / publish\` workflow detects the version bumps and:"
+            echo "   - Builds and tests all packages"
+            echo "   - Publishes to npm (with appropriate dist-tag for prereleases) and PyPI"
+            echo "   - Creates per-package git tags"
+            echo "   - Creates a GitHub Release"
+            echo ""
+            echo "### Before merging"
+            echo ""
+            echo "- [ ] CI is green"
+            echo "- [ ] Version bumps look correct"
+            echo "- [ ] Release notes are accurate"
+            echo ""
+            echo "> **Do not merge until CI is fully green.**"
+            echo "> To add another scope to this release, re-run \`release / create-pr\` with a different scope."
+            echo "> To cancel this release, close this PR and delete the \`release/next\` branch."
+          } > /tmp/pr-body.md
+          echo "body_path=/tmp/pr-body.md" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update release PR
+        if: inputs.dry_run != true && steps.bump.outputs.changed_count != '0'
+        uses: actions/github-script@v7
+        env:
+          HAS_EXISTING: ${{ steps.existing.outputs.has_existing }}
+          EXISTING_PR: ${{ steps.existing.outputs.pr_number }}
+          PR_TITLE: ${{ steps.notes.outputs.title }}
+          PR_BODY_PATH: ${{ steps.prbody.outputs.body_path }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require("fs");
+            const { owner, repo } = context.repo;
+            const title = process.env.PR_TITLE;
+            const body = fs.readFileSync(process.env.PR_BODY_PATH, "utf8");
+            const hasExisting = process.env.HAS_EXISTING === "true";
+
+            let pr;
+            if (hasExisting) {
+              const number = parseInt(process.env.EXISTING_PR, 10);
+              ({ data: pr } = await github.rest.pulls.update({
+                owner, repo, pull_number: number, title, body,
+              }));
+              core.info(`Updated PR #${pr.number}: ${pr.html_url}`);
+            } else {
+              ({ data: pr } = await github.rest.pulls.create({
+                owner, repo, base: "main", head: "release/next", title, body,
+              }));
+              core.info(`Created PR #${pr.number}: ${pr.html_url}`);
+              // Apply release label
+              await github.rest.issues.addLabels({
+                owner, repo, issue_number: pr.number, labels: ["release"],
+              }).catch((e) => core.warning(`Could not apply label: ${e.message}`));
+            }
+
+            await core.summary
+              .addHeading("release / create-pr", 2)
+              .addRaw(`**Added scope:** \`${{ inputs.scope }}\` (\`${{ inputs.bump }}\`)\n\n`)
+              .addRaw(`**PR:** ${pr.html_url}\n`)
+              .write();
+
+      - name: No-op summary
+        if: inputs.dry_run != true && steps.bump.outputs.changed_count == '0'
+        run: |
+          {
+            echo "## release / create-pr"
+            echo ""
+            echo "Scope \`${{ inputs.scope }}\` is already bumped on \`release/next\` — nothing to add."
+          } >> "$GITHUB_STEP_SUMMARY"

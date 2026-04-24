@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # scripts/release/detect-py-version-changes.sh
 #
-# Reads scripts/release/python-packages.json, extracts name and version
-# from each package's pyproject.toml (uv or poetry format), compares
-# against PyPI, and outputs a JSON array of packages that need publishing.
+# Derives the set of Python packages from scripts/release/release.config.json
+# (single source of truth — same file prepare-release.ts consumes), extracts
+# name and version from each package's pyproject.toml (uv or poetry format),
+# compares against PyPI, and outputs a JSON array of packages that need
+# publishing.
 #
 # Output format (stdout): [{"name":"ag-ui-protocol","version":"0.1.15","dir":"sdks/python","build_system":"uv"}, ...]
 # Logs go to stderr.
@@ -11,10 +13,20 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-REGISTRY="$REPO_ROOT/scripts/release/python-packages.json"
+CONFIG="$REPO_ROOT/scripts/release/release.config.json"
 
-if [ ! -f "$REGISTRY" ]; then
-  echo "ERROR: $REGISTRY not found" >&2
+if [ ! -f "$CONFIG" ]; then
+  echo "ERROR: $CONFIG not found" >&2
+  exit 1
+fi
+
+# Derive the Python package registry from release.config.json. Using a single
+# source of truth prevents drift between the version-bumper (prepare-release.ts)
+# and the publisher (this script) — if a Python package is enrolled in the
+# config it gets both bumped and published.
+PY_PACKAGES=$(jq -c '[.scopes[].packages[] | select(.ecosystem == "python") | {dir: .path, build_system: .buildSystem}]' "$CONFIG")
+if [ -z "$PY_PACKAGES" ] || [ "$PY_PACKAGES" = "[]" ]; then
+  echo "ERROR: release.config.json has no Python packages" >&2
   exit 1
 fi
 
@@ -80,7 +92,7 @@ except Exception as e:
       echo "UP-TO-DATE: $NAME@$VERSION (published: $PUBLISHED_VERSION)" >&2
     fi
   fi
-done < <(jq -c '.[]' "$REGISTRY")
+done < <(echo "$PY_PACKAGES" | jq -c '.[]')
 
 # Output results
 if [ ${#RESULTS[@]} -eq 0 ]; then

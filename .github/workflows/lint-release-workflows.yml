@@ -1,25 +1,27 @@
 name: Lint Release Workflows
 
-# Runs actionlint + shellcheck against the release-python / release-typescript
-# pipelines and the scripts they call. Keeps these critical, retry-sensitive
-# files from silently regressing on shell or action-syntax bugs.
+# Runs actionlint + shellcheck against the release / create-pr, release / publish,
+# and release / pre pipelines and the scripts they call. Keeps these critical,
+# retry-sensitive files from silently regressing on shell or action-syntax bugs.
 #
-# Scope is intentionally narrow: only release-*.yml and scripts/release/*.sh.
-# Expanding later is cheap; starting narrow avoids drowning unrelated changes
-# in pre-existing lint noise.
+# Scope is intentionally narrow: only the three release workflows and
+# scripts/release/*. Expanding later is cheap; starting narrow avoids
+# drowning unrelated changes in pre-existing lint noise.
 
 on:
   push:
     branches: [main]
     paths:
-      - ".github/workflows/release-python.yml"
-      - ".github/workflows/release-typescript.yml"
+      - ".github/workflows/prepare-release.yml"
+      - ".github/workflows/publish-release.yml"
+      - ".github/workflows/prerelease.yml"
       - ".github/workflows/lint-release-workflows.yml"
       - "scripts/release/**"
   pull_request:
     paths:
-      - ".github/workflows/release-python.yml"
-      - ".github/workflows/release-typescript.yml"
+      - ".github/workflows/prepare-release.yml"
+      - ".github/workflows/publish-release.yml"
+      - ".github/workflows/prerelease.yml"
       - ".github/workflows/lint-release-workflows.yml"
       - "scripts/release/**"
 
@@ -32,10 +34,12 @@ jobs:
         uses: reviewdog/action-actionlint@v1
         with:
           reporter: github-check
-          fail_level: error
+          level: error
+          fail_on_error: true
           actionlint_flags: >-
-            .github/workflows/release-python.yml
-            .github/workflows/release-typescript.yml
+            .github/workflows/prepare-release.yml
+            .github/workflows/publish-release.yml
+            .github/workflows/prerelease.yml
             .github/workflows/lint-release-workflows.yml
 
   shellcheck:
