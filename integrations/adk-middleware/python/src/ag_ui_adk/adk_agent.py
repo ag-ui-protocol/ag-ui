@@ -45,6 +45,7 @@ from google.adk.agents.run_config import StreamingMode
 from google.adk.agents.llm_agent import InstructionProvider, ToolUnion
 from google.adk.sessions import BaseSessionService, InMemorySessionService
 from google.adk.sessions.session import Event
+from google.adk.sessions.state import State as _ADKState
 from google.adk.artifacts import BaseArtifactService, InMemoryArtifactService
 from google.adk.memory import BaseMemoryService, InMemoryMemoryService
 from google.adk.auth.credential_service.base_credential_service import BaseCredentialService
@@ -71,6 +72,7 @@ _INTERNAL_STATE_KEYS = frozenset({
 from .execution_state import ExecutionState
 from .client_proxy_toolset import ClientProxyToolset
 from .config import PredictStateMapping
+from .request_state_service import RequestStateSessionService
 from .utils.converters import convert_message_content_to_parts
 
 import logging
@@ -228,7 +230,13 @@ class ADKAgent:
         # Use provided session service or create default based on use_in_memory_services
         if session_service is None:
             session_service = InMemorySessionService()  # Default for both dev and production
-            
+
+        # Wrap the session service so we can inject `temp:`-prefixed state into
+        # the session that ADK's Runner fetches at invocation time. See
+        # https://github.com/ag-ui-protocol/ag-ui/issues/1571 for context.
+        if not isinstance(session_service, RequestStateSessionService):
+            session_service = RequestStateSessionService(session_service)
+
         self._session_manager = SessionManager.get_instance(
             session_service=session_service,
             memory_service=self._memory_service,  # Pass memory service for automatic session memory
@@ -240,7 +248,16 @@ class ADKAgent:
             use_thread_id_as_session_id=use_thread_id_as_session_id,
             hitl_max_wait_seconds=hitl_max_wait_seconds,
         )
-        
+
+        # Reach through the singleton so every ADKAgent sharing this process
+        # writes pending `temp:` state onto whatever wrapper the singleton
+        # actually holds (the singleton ignores later session_service args).
+        active_service = self._session_manager._session_service
+        if not isinstance(active_service, RequestStateSessionService):
+            active_service = RequestStateSessionService(active_service)
+            self._session_manager._session_service = active_service
+        self._request_state_service: RequestStateSessionService = active_service
+
         # Tool execution tracking — keyed by (thread_id, user_id) to avoid cross-user collisions
         self._active_executions: Dict[Tuple[str, str], ExecutionState] = {}
         self._execution_timeout = execution_timeout_seconds
@@ -1913,6 +1930,7 @@ class ADKAgent:
             event_queue: Queue for emitting events
         """
         runner: Optional[Runner] = None
+        backend_session_id: Optional[str] = None
         logger.debug(f"[BG_EXEC] _run_adk_in_background called for thread={input.thread_id}")
         logger.debug(f"[BG_EXEC]   tool_results={len(tool_results) if tool_results else 0}, message_batch={len(message_batch) if message_batch else 0}")
         try:
@@ -1938,20 +1956,45 @@ class ADKAgent:
             # See: https://github.com/ag-ui-protocol/ag-ui/issues/1168
             for key in _INTERNAL_STATE_KEYS:
                 state_with_context.pop(key, None)
+
+            # Split `temp:`-prefixed keys from the persisted state. Every stock
+            # ADK session service strips `temp:` keys before writing, so if we
+            # passed them through the normal persistence path they would not
+            # reach `tool_context.state` at tool-invocation time. The wrapper
+            # registered on the session service (RequestStateSessionService)
+            # re-injects them when the Runner fetches the session.
+            # See: https://github.com/ag-ui-protocol/ag-ui/issues/1571
+            temp_state: Dict[str, Any] = {}
+            persistent_state: Dict[str, Any] = {}
+            for k, v in state_with_context.items():
+                if isinstance(k, str) and k.startswith(_ADKState.TEMP_PREFIX):
+                    temp_state[k] = v
+                else:
+                    persistent_state[k] = v
             if input.context:
-                state_with_context[CONTEXT_STATE_KEY] = [
+                persistent_state[CONTEXT_STATE_KEY] = [
                     {"description": ctx.description, "value": ctx.value}
                     for ctx in input.context
                 ]
 
             # Ensure session exists and get backend session_id
             session, backend_session_id = await self._ensure_session_exists(
-                app_name, user_id, input.thread_id, state_with_context
+                app_name, user_id, input.thread_id, persistent_state
+            )
+
+            # Register any `temp:` state so it gets merged into the session
+            # that ADK's Runner fetches for this invocation. Cleared in the
+            # finally-block below regardless of success / failure.
+            self._request_state_service.set_pending_temp_state(
+                app_name=app_name,
+                user_id=user_id,
+                session_id=backend_session_id,
+                temp_state=temp_state,
             )
 
             # this will always update the backend states with the frontend states
             # Recipe Demo Example: if there is a state "salt" in the ingredients state and in frontend user remove this salt state using UI from the ingredients list then our backend should also update these state changes as well to sync both the states
-            await self._session_manager.update_session_state(backend_session_id, app_name, user_id, state_with_context)
+            await self._session_manager.update_session_state(backend_session_id, app_name, user_id, persistent_state)
 
             # Refresh session to get updated last_update_time after state update
             # This prevents "stale session" errors when using DatabaseSessionService
@@ -2612,6 +2655,16 @@ class ADKAgent:
                             input.thread_id,
                             close_error,
                         )
+
+            # Drop any pending per-invocation `temp:` state so a later run on
+            # the same session does not inherit stale values (e.g. a rotated
+            # bearer token).
+            if backend_session_id is not None:
+                self._request_state_service.clear_pending_temp_state(
+                    app_name=app_name,
+                    user_id=user_id,
+                    session_id=backend_session_id,
+                )
     
     async def _cleanup_stale_executions(self):
         """Clean up stale executions."""
