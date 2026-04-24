@@ -142,13 +142,23 @@ jobs:
             echo "No version changes detected — nothing to publish."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Build TypeScript packages
+      - name: Extract TypeScript project names
         if: steps.detect_ts.outputs.count != '0'
-        run: pnpm run build
+        id: ts_projects
+        env:
+          TS_PACKAGES: ${{ steps.detect_ts.outputs.packages }}
+        run: |
+          PROJECTS=$(echo "$TS_PACKAGES" | jq -r '[.[].name] | join(",")')
+          echo "projects=$PROJECTS" >> "$GITHUB_OUTPUT"
+          echo "Scoped build/test to TypeScript projects: $PROJECTS"
 
-      - name: Test TypeScript packages
+      - name: Build TypeScript packages in scope
         if: steps.detect_ts.outputs.count != '0'
-        run: pnpm run test
+        run: npx nx run-many -t build --projects="${{ steps.ts_projects.outputs.projects }}"
+
+      - name: Test TypeScript packages in scope
+        if: steps.detect_ts.outputs.count != '0'
+        run: npx nx run-many -t test --projects="${{ steps.ts_projects.outputs.projects }}"
 
       - name: Group TypeScript packages by dist-tag
         if: steps.detect_ts.outputs.count != '0'

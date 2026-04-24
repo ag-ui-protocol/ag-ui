@@ -14,26 +14,29 @@ on:
         required: true
         type: choice
         options:
-          - a2a
-          - a2a-middleware
-          - a2ui-middleware
-          - adk-middleware
-          - ag2
-          - agent-spec
-          - agno
-          - aws-strands
-          - claude-agent-sdk
-          - crewai
-          - langchain
-          - langgraph
-          - langroid
-          - llama-index
-          - mastra
-          - mcp-apps-middleware
-          - pydantic-ai
-          - py-sdk
-          - spring-ai
-          - ts-sdk
+          - integration-a2a
+          - integration-adk
+          - integration-ag2
+          - integration-agent-spec
+          - integration-agno
+          - integration-aws-strands
+          - integration-claude-agent-sdk-py
+          - integration-claude-agent-sdk-ts
+          - integration-crewai-py
+          - integration-crewai-ts
+          - integration-langchain
+          - integration-langgraph-py
+          - integration-langgraph-ts
+          - integration-langroid
+          - integration-llama-index
+          - integration-mastra
+          - integration-pydantic-ai
+          - integration-spring-ai
+          - middleware-a2a
+          - middleware-a2ui
+          - middleware-mcp-apps
+          - sdk-py
+          - sdk-ts
       bump:
         description: "Version bump level"
         required: true

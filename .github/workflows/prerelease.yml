@@ -12,26 +12,29 @@ on:
         required: true
         type: choice
         options:
-          - a2a
-          - a2a-middleware
-          - a2ui-middleware
-          - adk-middleware
-          - ag2
-          - agent-spec
-          - agno
-          - aws-strands
-          - claude-agent-sdk
-          - crewai
-          - langchain
-          - langgraph
-          - langroid
-          - llama-index
-          - mastra
-          - mcp-apps-middleware
-          - pydantic-ai
-          - py-sdk
-          - spring-ai
-          - ts-sdk
+          - integration-a2a
+          - integration-adk
+          - integration-ag2
+          - integration-agent-spec
+          - integration-agno
+          - integration-aws-strands
+          - integration-claude-agent-sdk-py
+          - integration-claude-agent-sdk-ts
+          - integration-crewai-py
+          - integration-crewai-ts
+          - integration-langchain
+          - integration-langgraph-py
+          - integration-langgraph-ts
+          - integration-langroid
+          - integration-llama-index
+          - integration-mastra
+          - integration-pydantic-ai
+          - integration-spring-ai
+          - middleware-a2a
+          - middleware-a2ui
+          - middleware-mcp-apps
+          - sdk-py
+          - sdk-ts
       suffix:
         description: "Version suffix (e.g. 'fix-user-issue'). Leave blank for timestamp."
         required: false
@@ -121,25 +124,35 @@ jobs:
             jq -r '.packages[] | "- **\(.name)**: \(.oldVersion) → \(.newVersion)"' /tmp/bump-result.json
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Build TypeScript packages
-        run: pnpm run build
+      - name: Extract TypeScript projects in scope
+        id: ts
+        run: |
+          PROJECTS=$(jq -r '[.packages[] | select(.ecosystem == "typescript") | .name] | join(",")' /tmp/bump-result.json)
+          COUNT=$(jq '[.packages[] | select(.ecosystem == "typescript")] | length' /tmp/bump-result.json)
+          echo "projects=$PROJECTS" >> "$GITHUB_OUTPUT"
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          if [ "$COUNT" -gt 0 ]; then
+            echo "TypeScript projects in scope: $PROJECTS"
+          else
+            echo "No TypeScript projects in scope — build/test/publish will be skipped"
+          fi
 
-      - name: Test TypeScript packages
-        run: pnpm run test
+      - name: Build TypeScript packages in scope
+        if: steps.ts.outputs.count != '0'
+        run: npx nx run-many -t build --projects="${{ steps.ts.outputs.projects }}"
+
+      - name: Test TypeScript packages in scope
+        if: steps.ts.outputs.count != '0'
+        run: npx nx run-many -t test --projects="${{ steps.ts.outputs.projects }}"
 
       - name: Publish TypeScript packages
-        if: inputs.dry_run != true
+        if: steps.ts.outputs.count != '0' && inputs.dry_run != true
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          TS_PACKAGES=$(jq -c '[.packages[] | select(.ecosystem == "typescript")]' /tmp/bump-result.json)
-          TS_COUNT=$(echo "$TS_PACKAGES" | jq 'length')
-          if [ "$TS_COUNT" -gt 0 ]; then
-            PROJECTS=$(echo "$TS_PACKAGES" | jq -r '[.[].name] | join(",")')
-            echo "Publishing TypeScript canary: $PROJECTS"
-            npx nx release publish --projects="$PROJECTS" --tag canary
-          fi
+          echo "Publishing TypeScript canary: ${{ steps.ts.outputs.projects }}"
+          npx nx release publish --projects="${{ steps.ts.outputs.projects }}" --tag canary
 
       - name: Publish Python packages
         if: inputs.dry_run != true
