@@ -210,6 +210,10 @@ class TestStandaloneLlmAgentToolOnlyHITL:
         )
 
     @pytest.mark.asyncio
+    @pytest.mark.skipif(
+        not _ADK_OVERRIDES_INVOCATION_ID,
+        reason="FunctionCall lookup in session relies on the ADK >=1.30 pre-append workaround",
+    )
     async def test_tool_only_submission_persists_single_function_response_with_fc_invocation_id(
         self, check_api_key, resumable_standalone_agent
     ):
