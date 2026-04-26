@@ -1657,39 +1657,43 @@ class ADKAgent:
             
             # Stream events and track tool calls
             logger.debug(f"Starting to stream events for execution {execution.thread_id}")
-            has_tool_calls = False
-            tool_call_ids = []
+            app_name = self._get_app_name(input)
+            tool_call_ids: List[str] = []
 
             logger.debug(f"About to iterate over _stream_events for execution {execution.thread_id}")
             async for event in self._stream_events(execution):
-                # Track tool calls for HITL scenarios
+                # Register HITL tool calls in the backend session store BEFORE
+                # yielding ToolCallEndEvent. Otherwise a horizontally-scaled
+                # deployment can race: the client receives the event, posts the
+                # tool result to a different pod, and that pod sees an empty
+                # pending_tool_calls list because this pod hasn't written yet.
+                # See issue #1581.
                 if isinstance(event, ToolCallEndEvent):
                     logger.info(f"Detected ToolCallEndEvent with id: {event.tool_call_id}")
-                    has_tool_calls = True
                     tool_call_ids.append(event.tool_call_id)
+                    await self._add_pending_tool_call_with_context(
+                        execution.thread_id, event.tool_call_id, app_name, user_id
+                    )
 
-                # backend tools will always emit ToolCallResultEvent
-                # If it is a backend tool then we don't need to add the tool_id in pending_tools
+                # Backend tools complete within the same stream and emit a
+                # ToolCallResultEvent — no client continuation is expected, so
+                # remove the just-registered ID from the pending list before
+                # yielding the result.
                 if isinstance(event, ToolCallResultEvent) and event.tool_call_id in tool_call_ids:
                     logger.info(f"Detected ToolCallResultEvent with id: {event.tool_call_id}")
                     tool_call_ids.remove(event.tool_call_id)
+                    await self._remove_pending_tool_call(
+                        execution.thread_id, event.tool_call_id, user_id
+                    )
                     # Mark tool_call_id as processed so replay will skip it (fixes #437 replay bug)
                     self._session_manager.mark_messages_processed(
-                        self._get_app_name(input), execution.thread_id, [event.tool_call_id]
+                        app_name, execution.thread_id, [event.tool_call_id]
                     )
 
                 logger.debug(f"Yielding event: {type(event).__name__}")
                 yield event
 
             logger.debug(f"Finished iterating over _stream_events for execution {execution.thread_id}")
-
-            # If we found tool calls, add them to session state BEFORE cleanup
-            if has_tool_calls:
-                app_name = self._get_app_name(input)
-                for tool_call_id in tool_call_ids:
-                    await self._add_pending_tool_call_with_context(
-                        execution.thread_id, tool_call_id, app_name, user_id
-                    )
             logger.debug(f"Finished streaming events for execution {execution.thread_id}")
 
             # Emit RUN_FINISHED
