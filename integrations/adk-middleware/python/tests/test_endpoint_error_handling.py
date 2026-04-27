@@ -279,8 +279,11 @@ class TestEndpointErrorHandling:
             "forwarded_props": {}
         }
 
-        # Patch RunErrorEvent so the error-event encoding also fails
-        with patch('ag_ui.core.RunErrorEvent') as mock_run_error_event_cls:
+        # Patch RunErrorEvent so the error-event encoding also fails. The
+        # endpoint imports ``RunErrorEvent`` at module scope and routes its
+        # construction through ``_build_run_error``, so we patch the name as
+        # bound in ``ag_ui_adk.endpoint`` rather than its source module.
+        with patch('ag_ui_adk.endpoint.RunErrorEvent') as mock_run_error_event_cls:
             mock_error_event_instance = MagicMock()
             mock_error_event_instance.model_dump_json.side_effect = Exception(
                 "Error event encoding also failed!"

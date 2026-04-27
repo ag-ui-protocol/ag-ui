@@ -181,7 +181,7 @@ class TestAddADKFastAPIEndpoint:
         assert '"code":"ENCODING_ERROR"' in response.text
         assert "Event encoding failed" in response.text
 
-    @patch('ag_ui.core.RunErrorEvent')
+    @patch('ag_ui_adk.endpoint.RunErrorEvent')
     @patch('ag_ui_adk.endpoint.logger')
     def test_endpoint_encoding_error_double_failure(self, mock_logger, mock_run_error_event_cls, app, mock_agent, sample_input):
         """Test handling when both event and error event encoding fail."""
@@ -242,7 +242,7 @@ class TestAddADKFastAPIEndpoint:
         assert '"code":"AGENT_ERROR"' in response.text
         assert "Agent execution failed" in response.text
 
-    @patch('ag_ui.core.RunErrorEvent')
+    @patch('ag_ui_adk.endpoint.RunErrorEvent')
     @patch('ag_ui_adk.endpoint.logger')
     def test_endpoint_agent_error_encoding_failure(self, mock_logger, mock_run_error_event_cls, app, mock_agent, sample_input):
         """Test handling when agent error event encoding fails."""
@@ -301,6 +301,58 @@ class TestAddADKFastAPIEndpoint:
         # which is the stricter, semantically more correct directive for SSE.
         assert response.headers["cache-control"] in {"no-cache", "no-store"}
         assert response.headers.get("x-accel-buffering") == "no"
+
+    def test_endpoint_proto_accept_uses_streaming_response(self, app, mock_agent, sample_input):
+        """Test that a non-SSE Accept header routes through the legacy StreamingResponse path.
+
+        Locks in the Accept-header content negotiation regression mitigation
+        from PR #1566 review: when ``EventEncoder.get_content_type()`` returns
+        a non-``text/event-stream`` value (e.g. a future binary framing under
+        ``application/vnd.ag-ui.event+proto``), the endpoint must fall back to
+        ``StreamingResponse(encoder.encode(...))`` instead of
+        ``EventSourceResponse``. We patch ``EventEncoder`` itself so we can
+        simulate the future binary encoder without depending on the SDK
+        actually shipping one.
+        """
+        mock_event = RunStartedEvent(
+            type=EventType.RUN_STARTED,
+            thread_id="test_thread",
+            run_id="test_run",
+        )
+
+        async def mock_agent_run(input_data):
+            yield mock_event
+
+        mock_agent.run = mock_agent_run
+
+        proto_media_type = "application/vnd.ag-ui.event+proto"
+        encoded_payload = b"\x00binary-proto-payload\x01"
+
+        mock_encoder_instance = MagicMock()
+        mock_encoder_instance.get_content_type.return_value = proto_media_type
+        mock_encoder_instance.encode.return_value = encoded_payload
+
+        with patch("ag_ui_adk.endpoint.EventEncoder", return_value=mock_encoder_instance) as mock_encoder_cls:
+            add_adk_fastapi_endpoint(app, mock_agent, path="/test")
+
+            client = TestClient(self.get_test_app(app))
+            response = client.post(
+                "/test",
+                json=sample_input.model_dump(),
+                headers={"accept": proto_media_type},
+            )
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith(proto_media_type)
+        # SSE-only headers must not be present on the legacy streaming path;
+        # in particular keep-alive pings (which are SSE comments) would corrupt
+        # a binary stream, so the response goes through plain StreamingResponse.
+        assert "x-accel-buffering" not in {k.lower() for k in response.headers.keys()}
+        # Encoder was constructed with the request's Accept header and used to
+        # encode the streamed event, confirming the legacy path is in play.
+        mock_encoder_cls.assert_called_once_with(accept=proto_media_type)
+        mock_encoder_instance.encode.assert_called_with(mock_event)
+        assert encoded_payload in response.content
 
     def test_endpoint_input_validation(self, app, mock_agent):
         """Test that endpoint validates input as RunAgentInput."""
