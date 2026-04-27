@@ -101,6 +101,13 @@ logger = logging.getLogger(__name__)
 
 ROOT_SUBGRAPH_NAME = "root"
 
+# Cross-language contract: this string must exactly match
+# A2UI_SCHEMA_CONTEXT_DESCRIPTION in middlewares/a2ui-middleware/src/index.ts.
+A2UI_SCHEMA_CONTEXT_DESCRIPTION = (
+    "A2UI Component Schema \u2014 available components for generating UI surfaces. "
+    "Use these component names and properties when creating A2UI operations."
+)
+
 
 class PreparedStream(TypedDict):
     """Payload returned by prepare_stream / prepare_regenerate_stream.
@@ -820,22 +827,26 @@ class LangGraphAgent:
         # instead of it being dumped into the system prompt with all other context.
         # The remaining (regular) context is written to both state["ag-ui"]["context"]
         # and state["copilotkit"]["context"] — the latter is required because
-        # CopilotKitMiddleware.before_agent() reads context from the copilotkit
-        # state key to build the system prompt.
-        #
-        # Cross-language contract: this string must exactly match
-        # A2UI_SCHEMA_CONTEXT_DESCRIPTION in middlewares/a2ui-middleware/src/index.ts.
-        A2UI_SCHEMA_CONTEXT_DESCRIPTION = "A2UI Component Schema \u2014 available components for generating UI surfaces. Use these component names and properties when creating A2UI operations."
-
+        # the CopilotKit Python SDK reads context from the copilotkit state key
+        # to build the system prompt.
         all_context = input.context or []
         a2ui_schema_value = None
+        a2ui_match_count = 0
         regular_context = []
         for entry in all_context:
             desc = entry.get("description", "") if isinstance(entry, dict) else getattr(entry, "description", "")
             if desc == A2UI_SCHEMA_CONTEXT_DESCRIPTION:
+                a2ui_match_count += 1
                 a2ui_schema_value = entry.get("value", "") if isinstance(entry, dict) else getattr(entry, "value", "")
             else:
                 regular_context.append(entry)
+
+        if a2ui_match_count > 1:
+            logger.warning(
+                "Found %d context entries matching A2UI_SCHEMA_CONTEXT_DESCRIPTION; "
+                "only the last value will be used as the A2UI schema.",
+                a2ui_match_count,
+            )
 
         if a2ui_schema_value is None and all_context:
             for entry in all_context:
@@ -861,7 +872,7 @@ class LangGraphAgent:
             "tools": unique_tools,
             "ag-ui": ag_ui_state,
             "copilotkit": {
-                **state.get("copilotkit", {}),
+                **(state.get("copilotkit") or {}),
                 "actions": unique_tools,
                 "context": regular_context,
             },

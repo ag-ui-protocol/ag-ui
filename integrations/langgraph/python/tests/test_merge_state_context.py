@@ -12,20 +12,14 @@ from pathlib import Path
 
 from ag_ui.core import Context, RunAgentInput
 
+from ag_ui_langgraph.agent import A2UI_SCHEMA_CONTEXT_DESCRIPTION
 from tests._helpers import make_agent
 
 # Resolve repo root relative to this test file:
 # tests/ -> python/ -> langgraph/ -> integrations/ -> repo root
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 
-
-# Canonical A2UI description — must match the constant in agent.py and
-# middlewares/a2ui-middleware/src/index.ts.
-A2UI_DESC = (
-    "A2UI Component Schema \u2014 available components for generating UI "
-    "surfaces. Use these component names and properties when creating "
-    "A2UI operations."
-)
+A2UI_DESC = A2UI_SCHEMA_CONTEXT_DESCRIPTION
 
 
 def _make_input(context=None, tools=None):
@@ -63,6 +57,23 @@ class TestContextPropagation(unittest.TestCase):
         self.assertEqual(result["copilotkit"]["context"], [])
         self.assertNotIn("a2ui_schema", result["ag-ui"])
 
+    def test_dict_context_entries_propagated(self):
+        """Verify the dict code path works when context entries bypass
+        Pydantic validation (e.g. raw dicts from deserialized state)."""
+        agent = make_agent()
+        ctx = [
+            {"description": "user prefs", "value": "dark-mode"},
+            {"description": "locale", "value": "en-US"},
+        ]
+        # Pass dicts directly to langgraph_default_merge_state, bypassing
+        # RunAgentInput validation which would coerce dicts to Context objects.
+        inp = _make_input()
+        inp.context = ctx  # type: ignore[assignment]
+        result = agent.langgraph_default_merge_state({}, [], inp)
+
+        self.assertEqual(result["ag-ui"]["context"], ctx)
+        self.assertEqual(result["copilotkit"]["context"], ctx)
+
     def test_none_context(self):
         agent = make_agent()
         inp = _make_input()
@@ -84,6 +95,20 @@ class TestA2UISchemaExtraction(unittest.TestCase):
         ctx = [regular, a2ui_entry]
 
         result = agent.langgraph_default_merge_state({}, [], _make_input(context=ctx))
+
+        self.assertEqual(result["ag-ui"]["a2ui_schema"], '{"Button": {}}')
+        self.assertEqual(result["ag-ui"]["context"], [regular])
+        self.assertEqual(result["copilotkit"]["context"], [regular])
+
+    def test_a2ui_schema_extracted_from_dict_entries(self):
+        """Verify A2UI extraction works when context entries are plain dicts."""
+        agent = make_agent()
+        a2ui_entry = {"description": A2UI_DESC, "value": '{"Button": {}}'}
+        regular = {"description": "other", "value": "val"}
+        inp = _make_input()
+        inp.context = [regular, a2ui_entry]  # type: ignore[assignment]
+
+        result = agent.langgraph_default_merge_state({}, [], inp)
 
         self.assertEqual(result["ag-ui"]["a2ui_schema"], '{"Button": {}}')
         self.assertEqual(result["ag-ui"]["context"], [regular])
@@ -134,6 +159,14 @@ class TestCopilotKitStatePreservation(unittest.TestCase):
 
         self.assertEqual(result["copilotkit"]["context"], fresh)
 
+    def test_none_copilotkit_state_does_not_crash(self):
+        agent = make_agent()
+        state = {"copilotkit": None}
+        result = agent.langgraph_default_merge_state(state, [], _make_input())
+
+        self.assertEqual(result["copilotkit"]["context"], [])
+        self.assertIn("actions", result["copilotkit"])
+
 
 class TestA2UIMismatchWarning(unittest.TestCase):
     """Verify that a logger warning fires when an A2UI-related context
@@ -152,6 +185,24 @@ class TestA2UIMismatchWarning(unittest.TestCase):
             any("did not match" in msg for msg in cm.output),
             f"expected mismatch warning, got: {cm.output}",
         )
+
+    def test_warning_on_duplicate_a2ui_entries(self):
+        agent = make_agent()
+        a2ui_1 = Context(description=A2UI_DESC, value='{"Button": {}}')
+        a2ui_2 = Context(description=A2UI_DESC, value='{"Card": {}}')
+        with self.assertLogs("ag_ui_langgraph.agent", level="WARNING") as cm:
+            result = agent.langgraph_default_merge_state(
+                {}, [], _make_input(context=[a2ui_1, a2ui_2])
+            )
+
+        self.assertTrue(
+            any("Found 2" in msg for msg in cm.output),
+            f"expected duplicate warning, got: {cm.output}",
+        )
+        # Last value wins
+        self.assertEqual(result["ag-ui"]["a2ui_schema"], '{"Card": {}}')
+        self.assertEqual(result["ag-ui"]["context"], [])
+        self.assertEqual(result["copilotkit"]["context"], [])
 
     def test_no_warning_when_matched(self):
         agent = make_agent()
@@ -177,25 +228,13 @@ class TestA2UIMismatchWarning(unittest.TestCase):
 class TestCrossLanguageStringParity(unittest.TestCase):
     """Verify the A2UI description string is identical in the Python
     integration and the TypeScript middleware — the cross-language contract
-    that caused the original bug when the two diverged."""
+    that caused a silent failure when the Python string used "props" while
+    the TypeScript string used "properties", preventing A2UI schema extraction."""
 
-    _PY_PATH = (
-        _REPO_ROOT
-        / "integrations/langgraph/python/ag_ui_langgraph/agent.py"
-    )
     _TS_PATH = (
         _REPO_ROOT
         / "middlewares/a2ui-middleware/src/index.ts"
     )
-
-    @staticmethod
-    def _extract_py_constant(source: str) -> str:
-        match = re.search(
-            r'A2UI_SCHEMA_CONTEXT_DESCRIPTION\s*=\s*"([^"]+)"', source
-        )
-        if not match:
-            raise AssertionError("could not find A2UI_SCHEMA_CONTEXT_DESCRIPTION in Python source")
-        return match.group(1).encode().decode("unicode_escape")
 
     @staticmethod
     def _extract_ts_constant(source: str) -> str:
@@ -207,17 +246,14 @@ class TestCrossLanguageStringParity(unittest.TestCase):
         return match.group(1)
 
     def test_python_and_typescript_strings_match(self):
-        py_src = self._PY_PATH.read_text(encoding="utf-8")
         ts_src = self._TS_PATH.read_text(encoding="utf-8")
-
-        py_val = self._extract_py_constant(py_src)
         ts_val = self._extract_ts_constant(ts_src)
 
         self.assertEqual(
-            py_val,
+            A2UI_DESC,
             ts_val,
             "A2UI_SCHEMA_CONTEXT_DESCRIPTION has diverged between Python and TypeScript. "
-            f"Python: {py_val!r}  TypeScript: {ts_val!r}",
+            f"Python: {A2UI_DESC!r}  TypeScript: {ts_val!r}",
         )
 
 
