@@ -6,11 +6,17 @@ state["copilotkit"]["context"].
 """
 
 import logging
+import re
 import unittest
+from pathlib import Path
 
 from ag_ui.core import Context, RunAgentInput
 
 from tests._helpers import make_agent
+
+# Resolve repo root relative to this test file:
+# tests/ -> python/ -> langgraph/ -> integrations/ -> repo root
+_REPO_ROOT = Path(__file__).resolve().parents[4]
 
 
 # Canonical A2UI description — must match the constant in agent.py and
@@ -166,6 +172,53 @@ class TestA2UIMismatchWarning(unittest.TestCase):
                 agent.langgraph_default_merge_state(
                     {}, [], _make_input(context=[regular])
                 )
+
+
+class TestCrossLanguageStringParity(unittest.TestCase):
+    """Verify the A2UI description string is identical in the Python
+    integration and the TypeScript middleware — the cross-language contract
+    that caused the original bug when the two diverged."""
+
+    _PY_PATH = (
+        _REPO_ROOT
+        / "integrations/langgraph/python/ag_ui_langgraph/agent.py"
+    )
+    _TS_PATH = (
+        _REPO_ROOT
+        / "middlewares/a2ui-middleware/src/index.ts"
+    )
+
+    @staticmethod
+    def _extract_py_constant(source: str) -> str:
+        match = re.search(
+            r'A2UI_SCHEMA_CONTEXT_DESCRIPTION\s*=\s*"([^"]+)"', source
+        )
+        if not match:
+            raise AssertionError("could not find A2UI_SCHEMA_CONTEXT_DESCRIPTION in Python source")
+        return match.group(1).encode().decode("unicode_escape")
+
+    @staticmethod
+    def _extract_ts_constant(source: str) -> str:
+        match = re.search(
+            r'A2UI_SCHEMA_CONTEXT_DESCRIPTION\s*=\s*"([^"]+)"', source
+        )
+        if not match:
+            raise AssertionError("could not find A2UI_SCHEMA_CONTEXT_DESCRIPTION in TypeScript source")
+        return match.group(1)
+
+    def test_python_and_typescript_strings_match(self):
+        py_src = self._PY_PATH.read_text(encoding="utf-8")
+        ts_src = self._TS_PATH.read_text(encoding="utf-8")
+
+        py_val = self._extract_py_constant(py_src)
+        ts_val = self._extract_ts_constant(ts_src)
+
+        self.assertEqual(
+            py_val,
+            ts_val,
+            "A2UI_SCHEMA_CONTEXT_DESCRIPTION has diverged between Python and TypeScript. "
+            f"Python: {py_val!r}  TypeScript: {ts_val!r}",
+        )
 
 
 if __name__ == "__main__":
