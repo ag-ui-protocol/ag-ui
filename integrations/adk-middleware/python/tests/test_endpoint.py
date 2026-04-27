@@ -294,9 +294,12 @@ class TestAddADKFastAPIEndpoint:
 
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/event-stream")
-        # fastapi.sse.EventSourceResponse sets these headers so proxies and
-        # Node undici sockets don't buffer/close idle streams.
-        assert response.headers["cache-control"] == "no-cache"
+        # The SSE response sets these headers so proxies and Node undici
+        # sockets don't buffer/close idle streams. ``Cache-Control`` may be
+        # either ``no-cache`` or ``no-store`` -- both prevent caches from
+        # holding/replaying the stream; sse-starlette defaults to ``no-store``
+        # which is the stricter, semantically more correct directive for SSE.
+        assert response.headers["cache-control"] in {"no-cache", "no-store"}
         assert response.headers.get("x-accel-buffering") == "no"
 
     def test_endpoint_input_validation(self, app, mock_agent):
