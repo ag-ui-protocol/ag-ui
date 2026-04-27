@@ -818,6 +818,13 @@ class LangGraphAgent:
         # The A2UI schema goes into state["ag-ui"]["a2ui_schema"] so agents
         # can read it directly from state (e.g., for the generate_a2ui tool),
         # instead of it being dumped into the system prompt with all other context.
+        # The remaining (regular) context is written to both state["ag-ui"]["context"]
+        # and state["copilotkit"]["context"] — the latter is required because
+        # CopilotKitMiddleware.before_agent() reads context from the copilotkit
+        # state key to build the system prompt.
+        #
+        # Cross-language contract: this string must exactly match
+        # A2UI_SCHEMA_CONTEXT_DESCRIPTION in middlewares/a2ui-middleware/src/index.ts.
         A2UI_SCHEMA_CONTEXT_DESCRIPTION = "A2UI Component Schema \u2014 available components for generating UI surfaces. Use these component names and properties when creating A2UI operations."
 
         all_context = input.context or []
