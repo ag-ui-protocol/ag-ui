@@ -818,7 +818,7 @@ class LangGraphAgent:
         # The A2UI schema goes into state["ag-ui"]["a2ui_schema"] so agents
         # can read it directly from state (e.g., for the generate_a2ui tool),
         # instead of it being dumped into the system prompt with all other context.
-        A2UI_SCHEMA_CONTEXT_DESCRIPTION = "A2UI Component Schema \u2014 available components for generating UI surfaces. Use these component names and props when creating A2UI operations."
+        A2UI_SCHEMA_CONTEXT_DESCRIPTION = "A2UI Component Schema \u2014 available components for generating UI surfaces. Use these component names and properties when creating A2UI operations."
 
         all_context = input.context or []
         a2ui_schema_value = None
@@ -845,6 +845,7 @@ class LangGraphAgent:
             "copilotkit": {
                 **state.get("copilotkit", {}),
                 "actions": unique_tools,
+                "context": regular_context,
             },
         }
 
