@@ -837,6 +837,17 @@ class LangGraphAgent:
             else:
                 regular_context.append(entry)
 
+        if a2ui_schema_value is None and all_context:
+            for entry in all_context:
+                desc = entry.get("description", "") if isinstance(entry, dict) else getattr(entry, "description", "")
+                if "a2ui" in desc.lower():
+                    logger.warning(
+                        "Context entry with A2UI-related description %r did not match "
+                        "A2UI_SCHEMA_CONTEXT_DESCRIPTION. Expected: %r",
+                        desc,
+                        A2UI_SCHEMA_CONTEXT_DESCRIPTION,
+                    )
+
         ag_ui_state: dict = {
             "tools": unique_tools,
             "context": regular_context,
