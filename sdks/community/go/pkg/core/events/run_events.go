@@ -255,7 +255,8 @@ func (e *RunErrorEvent) ToJSON() ([]byte, error) {
 // StepStartedEvent indicates that an agent step has started
 type StepStartedEvent struct {
 	*BaseEvent
-	StepName string `json:"stepName"`
+	StepName    string  `json:"stepName"`
+	Description *string `json:"description,omitempty"`
 }
 
 // NewStepStartedEvent creates a new step started event
@@ -313,7 +314,8 @@ func (e *StepStartedEvent) ToJSON() ([]byte, error) {
 // StepFinishedEvent indicates that an agent step has finished
 type StepFinishedEvent struct {
 	*BaseEvent
-	StepName string `json:"stepName"`
+	StepName    string  `json:"stepName"`
+	Description *string `json:"description,omitempty"`
 }
 
 // NewStepFinishedEvent creates a new step finished event

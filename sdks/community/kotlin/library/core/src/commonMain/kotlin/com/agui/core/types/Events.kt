@@ -238,6 +238,7 @@ data class RunErrorEvent(
  * of a named step in the agent's workflow.
  * 
  * @param stepName The name of the step that has started
+ * @param description Optional human-readable description of what this step does
  * @param timestamp Optional timestamp when the step started
  * @param rawEvent Optional raw JSON representation of the event
  */
@@ -245,6 +246,7 @@ data class RunErrorEvent(
 @SerialName("STEP_STARTED")
 data class StepStartedEvent(
     val stepName: String,
+    val description: String? = null,
     override val timestamp: Long? = null,
     override val rawEvent: JsonElement? = null
 ) : BaseEvent () {
@@ -259,6 +261,7 @@ data class StepStartedEvent(
  * It can be used to track progress and measure step execution times.
  * 
  * @param stepName The name of the step that has finished
+ * @param description Optional human-readable description of what this step does
  * @param timestamp Optional timestamp when the step finished
  * @param rawEvent Optional raw JSON representation of the event
  */
@@ -266,6 +269,7 @@ data class StepStartedEvent(
 @SerialName("STEP_FINISHED")
 data class StepFinishedEvent(
     val stepName: String,
+    val description: String? = null,
     override val timestamp: Long? = null,
     override val rawEvent: JsonElement? = null
 ) : BaseEvent () {

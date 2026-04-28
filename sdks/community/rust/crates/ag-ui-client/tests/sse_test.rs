@@ -4,7 +4,11 @@ use reqwest::Client;
 use serde::Deserialize;
 use std::time::Duration;
 
+// Requires network access to httpbun.org; CI sandboxes block this and the
+// test panics on a TLS handshake failure. Run locally with
+// `cargo test -- --ignored` to exercise it.
 #[tokio::test]
+#[ignore]
 async fn test_sse_with_httpbun() {
     // Create a reqwest client
     let client = Client::new();
@@ -65,7 +69,11 @@ async fn test_sse_with_httpbun() {
     }
 }
 
+// Requires network access to sse.dev; CI sandboxes block this and the
+// test panics on a TLS handshake failure. Run locally with
+// `cargo test -- --ignored` to exercise it.
 #[tokio::test]
+#[ignore]
 async fn test_sse_with_json_data() {
     // Create a reqwest client
     let client = Client::new();

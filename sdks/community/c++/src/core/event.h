@@ -309,6 +309,8 @@ struct RunErrorEvent : public Event {
 
 struct StepStartedEvent : public Event {
     std::string stepName;
+    /// Optional human-readable description of what this step does.
+    std::optional<std::string> description;
 
     EventType type() const override { return EventType::StepStarted; }
     nlohmann::json toJson() const override;
@@ -318,6 +320,8 @@ struct StepStartedEvent : public Event {
 
 struct StepFinishedEvent : public Event {
     std::string stepName;
+    /// Optional human-readable description of what this step does.
+    std::optional<std::string> description;
 
     EventType type() const override { return EventType::StepFinished; }
     nlohmann::json toJson() const override;
