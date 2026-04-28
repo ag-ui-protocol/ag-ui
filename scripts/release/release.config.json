@@ -1,0 +1,171 @@
+{
+  "prereleaseTag": "canary",
+  "scopes": {
+    "sdk-ts": {
+      "description": "TypeScript SDK core packages",
+      "sharedVersion": true,
+      "versionSource": "sdks/typescript/packages/core/package.json",
+      "packages": [
+        { "name": "@ag-ui/core", "path": "sdks/typescript/packages/core", "ecosystem": "typescript" },
+        { "name": "@ag-ui/client", "path": "sdks/typescript/packages/client", "ecosystem": "typescript" },
+        { "name": "@ag-ui/encoder", "path": "sdks/typescript/packages/encoder", "ecosystem": "typescript" },
+        { "name": "@ag-ui/proto", "path": "sdks/typescript/packages/proto", "ecosystem": "typescript" },
+        { "name": "create-ag-ui-app", "path": "sdks/typescript/packages/cli", "ecosystem": "typescript" }
+      ]
+    },
+    "sdk-py": {
+      "description": "Python SDK",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "ag-ui-protocol", "path": "sdks/python", "ecosystem": "python", "buildSystem": "uv" }
+      ]
+    },
+    "integration-a2a": {
+      "description": "A2A integration (TypeScript)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "@ag-ui/a2a", "path": "integrations/a2a/typescript", "ecosystem": "typescript" }
+      ]
+    },
+    "integration-adk": {
+      "description": "ADK Middleware integration (Python)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "ag_ui_adk", "path": "integrations/adk-middleware/python", "ecosystem": "python", "buildSystem": "uv" }
+      ]
+    },
+    "integration-ag2": {
+      "description": "AG2 integration (TypeScript)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "@ag-ui/ag2", "path": "integrations/ag2/typescript", "ecosystem": "typescript" }
+      ]
+    },
+    "integration-agent-spec": {
+      "description": "Agent Spec integration (Python)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "ag-ui-agent-spec", "path": "integrations/agent-spec/python", "ecosystem": "python", "buildSystem": "uv" }
+      ]
+    },
+    "integration-agno": {
+      "description": "Agno integration (TypeScript)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "@ag-ui/agno", "path": "integrations/agno/typescript", "ecosystem": "typescript" }
+      ]
+    },
+    "integration-aws-strands": {
+      "description": "AWS Strands integration (Python)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "ag_ui_strands", "path": "integrations/aws-strands/python", "ecosystem": "python", "buildSystem": "uv" }
+      ]
+    },
+    "integration-claude-agent-sdk-ts": {
+      "description": "Claude Agent SDK integration (TypeScript)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "@ag-ui/claude-agent-sdk", "path": "integrations/claude-agent-sdk/typescript", "ecosystem": "typescript" }
+      ]
+    },
+    "integration-claude-agent-sdk-py": {
+      "description": "Claude Agent SDK integration (Python)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "ag-ui-claude-sdk", "path": "integrations/claude-agent-sdk/python", "ecosystem": "python", "buildSystem": "uv" }
+      ]
+    },
+    "integration-crewai-ts": {
+      "description": "CrewAI integration (TypeScript)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "@ag-ui/crewai", "path": "integrations/crew-ai/typescript", "ecosystem": "typescript" }
+      ]
+    },
+    "integration-crewai-py": {
+      "description": "CrewAI integration (Python)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "ag-ui-crewai", "path": "integrations/crew-ai/python", "ecosystem": "python", "buildSystem": "poetry" }
+      ]
+    },
+    "integration-langchain": {
+      "description": "LangChain integration (TypeScript)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "@ag-ui/langchain", "path": "integrations/langchain/typescript", "ecosystem": "typescript" }
+      ]
+    },
+    "integration-langgraph-ts": {
+      "description": "LangGraph integration (TypeScript)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "@ag-ui/langgraph", "path": "integrations/langgraph/typescript", "ecosystem": "typescript" }
+      ]
+    },
+    "integration-langgraph-py": {
+      "description": "LangGraph integration (Python)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "ag-ui-langgraph", "path": "integrations/langgraph/python", "ecosystem": "python", "buildSystem": "uv" }
+      ]
+    },
+    "integration-langroid": {
+      "description": "Langroid integration (Python)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "ag_ui_langroid", "path": "integrations/langroid/python", "ecosystem": "python", "buildSystem": "uv" }
+      ]
+    },
+    "integration-llama-index": {
+      "description": "Llama Index integration (TypeScript)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "@ag-ui/llamaindex", "path": "integrations/llama-index/typescript", "ecosystem": "typescript" }
+      ]
+    },
+    "integration-mastra": {
+      "description": "Mastra integration (TypeScript)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "@ag-ui/mastra", "path": "integrations/mastra/typescript", "ecosystem": "typescript" }
+      ]
+    },
+    "integration-pydantic-ai": {
+      "description": "Pydantic AI integration (TypeScript)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "@ag-ui/pydantic-ai", "path": "integrations/pydantic-ai/typescript", "ecosystem": "typescript" }
+      ]
+    },
+    "integration-spring-ai": {
+      "description": "Spring AI integration (community, TypeScript)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "@ag-ui/spring-ai", "path": "integrations/community/spring-ai/typescript", "ecosystem": "typescript" }
+      ]
+    },
+    "middleware-a2a": {
+      "description": "A2A Middleware (TypeScript)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "@ag-ui/a2a-middleware", "path": "middlewares/a2a-middleware", "ecosystem": "typescript" }
+      ]
+    },
+    "middleware-a2ui": {
+      "description": "A2UI Middleware (TypeScript)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "@ag-ui/a2ui-middleware", "path": "middlewares/a2ui-middleware", "ecosystem": "typescript" }
+      ]
+    },
+    "middleware-mcp-apps": {
+      "description": "MCP Apps Middleware (TypeScript)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "@ag-ui/mcp-apps-middleware", "path": "middlewares/mcp-apps-middleware", "ecosystem": "typescript" }
+      ]
+    }
+  }
+}

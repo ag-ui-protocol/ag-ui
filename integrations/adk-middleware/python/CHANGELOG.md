@@ -37,6 +37,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **FIX**: Race in multi-instance HITL pending tool-call registration (#1581)
+  - In multi-pod deployments sharing a Redis-backed `SessionService`, HITL tool results were silently dropped because `_start_new_execution` registered each pending tool-call ID in the session store *after* the streaming loop exited — i.e. after `ToolCallEndEvent` (and `RUN_FINISHED`) had already been delivered to the client.  A continuation request load-balanced to a different pod observed an empty `pending_tool_calls` list and failed to resume the agent.
+  - `_add_pending_tool_call_with_context` now runs inside the streaming loop, before `yield event`, when a `ToolCallEndEvent` is observed.  For backend ADK tools that complete in the same stream, the just-registered ID is removed via `_remove_pending_tool_call` when the corresponding `ToolCallResultEvent` is seen, preserving prior semantics.
+  - Adds two regression tests in `test_multi_instance_hitl.py` covering the ordering invariant and the backend-tool cleanup path.
+
+- **FIX**: Gate ADK >=1.30-only tests so they skip cleanly on supported older ADK versions
+  - Three tests in `test_lro_tool_response_persistence.py` and one in `test_adk_130_invocation_id_override.py` assert behaviour produced by the ADK >=1.30 pre-append workaround in `adk_agent.py` (guarded by `_ADK_OVERRIDES_INVOCATION_ID`).  On ADK <1.30 the workaround is intentionally a no-op, so these tests previously failed on the lower end of the `>=1.16,<2.0` supported range.
+  - Each of the four tests now carries `@pytest.mark.skipif(not _ADK_OVERRIDES_INVOCATION_ID, ...)` and skips with an explicit reason on <1.30; on >=1.30 they continue to run unchanged.  The version-aware `test_function_response_has_correct_invocation_id` and the meta-test `test_feature_detection_matches_installed_adk_version` are intentionally left un-gated.
+
+- **FIX**: `temp:`-prefixed state from `extract_state_from_request` now reaches `tool_context.state` (#1571)
+  - ADK's session services (`DatabaseSessionService`, `InMemorySessionService`, `VertexAiSessionService`) strip `temp:` keys before persisting, so request-scoped values (e.g. bearer tokens) returned by `extract_state_from_request` were silently dropped before the Runner fetched the session for an invocation
+  - The session service is now transparently wrapped by `RequestStateSessionService`, which holds pending `temp:` state in memory keyed by `(app_name, user_id, session_id)` and merges it into the session that ADK's Runner loads at invocation time — so `temp:` keys are visible to tools during the run while still not being persisted
+  - Pending state is cleared in the `finally` block of `_run_adk_in_background` so a later run on the same session cannot inherit a stale value (e.g. a rotated token)
+  - `temp:` keys extracted from the request are also filtered out of the end-of-run `STATE_SNAPSHOT` so ephemeral server-side state never leaks to clients
+  - Purely additive for callers: non-`temp:` keys flow through the existing persistence path unchanged; ADK-native `output_key="temp:foo"` flows (e.g. `SequentialAgent` passing data between sub-agents) continue to work; the wrapper is a transparent `BaseSessionService` proxy (unwrap via `.inner` if ever needed)
+  - New tests: `tests/test_temp_state_extraction.py` (10 tests) covering the wrapper, the `ADKAgent` wiring, and an end-to-end flow that asserts `temp:` visibility in `tool_context.state`, non-persistence to session storage, and non-leakage into `STATE_SNAPSHOT`
+
 - **FIX**: First-turn HITL `TOOL_CALL_*` emission on `google-adk` <1.18 (#1536)
   - `EventTranslator.translate_lro_function_calls` previously suppressed emission for client-tool names in resumable mode, relying on `ClientProxyTool` as the sole emitter
   - On `google-adk` 1.16/1.17 the runner's resumable flow returns before invoking LRO tools on the first turn (`base_llm_flow.py` pause-early-return), so the proxy never ran and the trio was never emitted — the first HITL turn produced no `TOOL_CALL_START/ARGS/END`
