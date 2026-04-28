@@ -26,6 +26,7 @@ import { A2AAgent } from "@ag-ui/a2a";
 import { A2AClient } from "@a2a-js/sdk/client";
 import { LangChainAgent } from "@ag-ui/langchain";
 import { Ag2Agent } from "@ag-ui/ag2";
+import { LangroidHttpAgent } from "@ag-ui/langroid";
 import { A2UIMiddleware } from "@ag-ui/a2ui-middleware";
 
 const envVars = getEnvVars();
@@ -450,4 +451,15 @@ export const agentsIntegrations = {
       },
     ),
 
+  langroid: async () =>
+    mapAgents(
+      (path) =>
+        new LangroidHttpAgent({ url: `${envVars.langroidUrl}/${path}/` }),
+      {
+        agentic_chat: "agentic_chat",
+        backend_tool_rendering: "backend_tool_rendering",
+        agentic_generative_ui: "agentic_generative_ui",
+        shared_state: "shared_state",
+      },
+    ),
 } satisfies AgentsMap;

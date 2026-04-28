@@ -451,6 +451,8 @@ projects:
         value: https://ag-ui-dojo-claude-agent-sdk-typescript.onrender.com
       - key: A2A_URL
         value: https://ag-ui-dojo-a2a-middleware-finance.onrender.com
+      - key: LANGROID_URL
+        value: https://ag-ui-dojo-langroid.onrender.com
       - key: NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN
         sync: false
       - key: NEXT_PUBLIC_POSTHOG_HOST
