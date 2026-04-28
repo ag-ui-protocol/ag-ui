@@ -101,6 +101,7 @@ class ADKAgent:
 
         # ADK Services
         session_service: Optional[BaseSessionService] = None,
+        session_manager: Optional[SessionManager] = None,
         artifact_service: Optional[BaseArtifactService] = None,
         memory_service: Optional[BaseMemoryService] = None,
         credential_service: Optional[BaseCredentialService] = None,
@@ -143,7 +144,15 @@ class ADKAgent:
             app_name_extractor: Function to extract app name dynamically from input
             user_id: Static user ID for all requests
             user_id_extractor: Function to extract user ID dynamically from input
-            session_service: Session management service (defaults to InMemorySessionService)
+            session_service: Session management service (defaults to InMemorySessionService).
+                When provided, this ADKAgent gets a dedicated SessionManager wrapping
+                the service, so multiple ADKAgents with distinct services no longer
+                collide (see GitHub issue #1601).
+            session_manager: Pre-constructed SessionManager to use. When provided,
+                ``session_service`` and the session-cleanup configuration arguments
+                are ignored (configure the manager directly instead). Useful when
+                multiple ADKAgents should share a manager for consolidated cleanup
+                and per-user session limits.
             artifact_service: File/artifact storage service
             memory_service: Conversation memory and search service (also enables automatic session memory)
             credential_service: Authentication credential storage
@@ -226,32 +235,57 @@ class ADKAgent:
             self._credential_service = credential_service
         
         
-        # Session lifecycle management - use singleton
-        # Use provided session service or create default based on use_in_memory_services
-        if session_service is None:
-            session_service = InMemorySessionService()  # Default for both dev and production
+        # Session lifecycle management. Three construction modes:
+        #   1. session_manager= passed in -> use it as-is (escape hatch for
+        #      callers who want explicit sharing across multiple ADKAgents).
+        #   2. session_service= passed in -> dedicated SessionManager wrapping
+        #      that service. Fixes https://github.com/ag-ui-protocol/ag-ui/issues/1601
+        #      where distinct services were silently collapsed onto the first
+        #      ADKAgent's manager.
+        #   3. Neither -> shared process-wide default. Preserves the historical
+        #      behavior where multiple ADKAgents constructed with no explicit
+        #      service share one manager (and therefore one cleanup loop and
+        #      one set of per-user session limits).
+        if session_manager is not None and session_service is not None:
+            raise ValueError(
+                "Cannot specify both 'session_manager' and 'session_service'. "
+                "Configure the session service via the SessionManager you pass in."
+            )
 
-        # Wrap the session service so we can inject `temp:`-prefixed state into
-        # the session that ADK's Runner fetches at invocation time. See
-        # https://github.com/ag-ui-protocol/ag-ui/issues/1571 for context.
-        if not isinstance(session_service, RequestStateSessionService):
-            session_service = RequestStateSessionService(session_service)
+        if session_manager is not None:
+            self._session_manager = session_manager
+        elif session_service is not None:
+            # Wrap the session service so we can inject `temp:`-prefixed state into
+            # the session that ADK's Runner fetches at invocation time. See
+            # https://github.com/ag-ui-protocol/ag-ui/issues/1571 for context.
+            if not isinstance(session_service, RequestStateSessionService):
+                session_service = RequestStateSessionService(session_service)
+            self._session_manager = SessionManager(
+                session_service=session_service,
+                memory_service=self._memory_service,
+                session_timeout_seconds=session_timeout_seconds,
+                cleanup_interval_seconds=cleanup_interval_seconds,
+                max_sessions_per_user=max_sessions_per_user,
+                delete_session_on_cleanup=delete_session_on_cleanup,
+                save_session_to_memory_on_cleanup=save_session_to_memory_on_cleanup,
+                use_thread_id_as_session_id=use_thread_id_as_session_id,
+                hitl_max_wait_seconds=hitl_max_wait_seconds,
+            )
+        else:
+            self._session_manager = SessionManager.get_default(
+                memory_service=self._memory_service,
+                session_timeout_seconds=session_timeout_seconds,
+                cleanup_interval_seconds=cleanup_interval_seconds,
+                max_sessions_per_user=max_sessions_per_user,
+                delete_session_on_cleanup=delete_session_on_cleanup,
+                save_session_to_memory_on_cleanup=save_session_to_memory_on_cleanup,
+                use_thread_id_as_session_id=use_thread_id_as_session_id,
+                hitl_max_wait_seconds=hitl_max_wait_seconds,
+            )
 
-        self._session_manager = SessionManager.get_instance(
-            session_service=session_service,
-            memory_service=self._memory_service,  # Pass memory service for automatic session memory
-            session_timeout_seconds=session_timeout_seconds,  # 20 minutes default
-            cleanup_interval_seconds=cleanup_interval_seconds,
-            max_sessions_per_user=max_sessions_per_user,
-            delete_session_on_cleanup=delete_session_on_cleanup,
-            save_session_to_memory_on_cleanup=save_session_to_memory_on_cleanup,
-            use_thread_id_as_session_id=use_thread_id_as_session_id,
-            hitl_max_wait_seconds=hitl_max_wait_seconds,
-        )
-
-        # Reach through the singleton so every ADKAgent sharing this process
-        # writes pending `temp:` state onto whatever wrapper the singleton
-        # actually holds (the singleton ignores later session_service args).
+        # The shared default and externally-supplied managers may not yet have
+        # their session service wrapped. Ensure the wrapper is in place so
+        # `temp:` state injection works regardless of construction path.
         active_service = self._session_manager._session_service
         if not isinstance(active_service, RequestStateSessionService):
             active_service = RequestStateSessionService(active_service)
@@ -392,6 +426,7 @@ class ADKAgent:
         user_id_extractor: Optional[Callable[[RunAgentInput], str]] = None,
         # ADK Services (App does NOT contain these - still passed to Runner separately)
         session_service: Optional[BaseSessionService] = None,
+        session_manager: Optional[SessionManager] = None,
         artifact_service: Optional[BaseArtifactService] = None,
         memory_service: Optional[BaseMemoryService] = None,
         credential_service: Optional[BaseCredentialService] = None,
@@ -434,7 +469,11 @@ class ADKAgent:
             app: The ADK App instance containing the root agent and configuration
             user_id: Static user ID for all requests
             user_id_extractor: Function to extract user ID dynamically from input
-            session_service: Session management service (defaults to InMemorySessionService)
+            session_service: Session management service (defaults to InMemorySessionService).
+                See ADKAgent.__init__ for details.
+            session_manager: Pre-constructed SessionManager to use. When provided,
+                ``session_service`` and the session-cleanup configuration arguments
+                are ignored. See ADKAgent.__init__ for details.
             artifact_service: File/artifact storage service
             memory_service: Conversation memory and search service
             credential_service: Authentication credential storage
@@ -481,6 +520,7 @@ class ADKAgent:
             user_id=user_id,
             user_id_extractor=user_id_extractor,
             session_service=session_service,
+            session_manager=session_manager,
             artifact_service=artifact_service,
             memory_service=memory_service,
             credential_service=credential_service,
