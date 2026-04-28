@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   - **Internal**: `EventType`, `RunErrorEvent`, and `EventEncoder` are now imported at module scope in `ag_ui_adk.endpoint` (previously imported lazily inside the error branches). Tests that relied on the lazy import to patch `ag_ui.core.RunErrorEvent` should patch `ag_ui_adk.endpoint.RunErrorEvent` instead.
 
+  - **Contributor**: Implementation by [@joar](https://github.com/joar) in [#1566](https://github.com/ag-ui-protocol/ag-ui/pull/1566). Thanks!
+
 ### Fixed
 
 - **FIX**: Race in multi-instance HITL pending tool-call registration (#1581)
