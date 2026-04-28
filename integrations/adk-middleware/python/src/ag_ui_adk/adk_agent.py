@@ -1882,6 +1882,9 @@ class ADKAgent:
 
         # Track all ClientProxyToolset instances for collecting accumulated predictive state
         client_proxy_toolsets: list[ClientProxyToolset] = []
+        # Track whether any AGUIToolset placeholder was found in the agent tree.
+        # Used to decide whether to auto-inject a ClientProxyToolset.
+        found_agui_toolset: bool = False
 
         def _update_agent_tools_recursive(agent: Any) -> None:
             """
@@ -1889,7 +1892,7 @@ class ADKAgent:
             Args:
                 agent: Agent instance to process
             """
-            nonlocal client_proxy_toolsets
+            nonlocal client_proxy_toolsets, found_agui_toolset
             logger.info(f"[TOOL_SETUP] Processing agent: {agent.name} (type: {type(agent).__name__})")
 
             if isinstance(agent, LlmAgent) and hasattr(agent, "tools"):
@@ -1899,6 +1902,7 @@ class ADKAgent:
 
                 for tool in agent.tools:
                     if isinstance(tool, AGUIToolset):
+                        found_agui_toolset = True
                         logger.info(f"[TOOL_SETUP] Agent {agent.name}: Found AGUIToolset with filter={tool.tool_filter}")
                         proxy_toolset = ClientProxyToolset(
                             ag_ui_tools=input.tools,
@@ -1926,6 +1930,24 @@ class ADKAgent:
                     _update_agent_tools_recursive(sub_agent)
 
         _update_agent_tools_recursive(adk_agent)
+
+        # Auto-inject a ClientProxyToolset into the root agent when frontend tools
+        # are present but no AGUIToolset placeholder was found anywhere in the tree.
+        # This means frontend tools "just work" without requiring the user to add
+        # AGUIToolset() explicitly — the explicit form is only needed for per-agent
+        # scoping in multi-agent setups.
+        if input.tools and not found_agui_toolset and isinstance(adk_agent, LlmAgent):
+            proxy_toolset = ClientProxyToolset(
+                ag_ui_tools=input.tools,
+                event_queue=event_queue,
+                predict_state=self._predict_state,
+            )
+            client_proxy_toolsets.append(proxy_toolset)
+            adk_agent.tools = list(adk_agent.tools or []) + [proxy_toolset]
+            logger.info(
+                f"[TOOL_SETUP] Auto-injected ClientProxyToolset into root agent {adk_agent.name} "
+                f"({len(input.tools)} frontend tool(s) available)"
+            )
 
         # Create background task
         logger.debug(f"Creating background task for thread {input.thread_id}")
