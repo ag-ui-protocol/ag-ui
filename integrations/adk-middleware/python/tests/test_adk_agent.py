@@ -1146,6 +1146,30 @@ class TestSessionManagerDispatch:
                 session_service=InMemorySessionService(),
             )
 
+    def test_direct_construction_yields_distinct_instances(self):
+        """SessionManager() is no longer a singleton: each call returns a new instance."""
+        m1 = SessionManager()
+        m2 = SessionManager()
+        assert m1 is not m2
+
+    def test_get_default_returns_same_instance_on_repeated_calls(self):
+        """The shared default is sticky once built."""
+        m1 = SessionManager.get_default()
+        m2 = SessionManager.get_default()
+        assert m1 is m2
+
+    def test_reset_default_and_alias_clear_shared_default(self):
+        """reset_default() and the reset_instance alias both let a new default be built."""
+        m1 = SessionManager.get_default()
+        SessionManager.reset_default()
+        m2 = SessionManager.get_default()
+        assert m1 is not m2
+
+        m3 = SessionManager.get_default()
+        SessionManager.reset_instance()  # legacy alias
+        m4 = SessionManager.get_default()
+        assert m3 is not m4
+
 
 class TestThreadIdSessionIdMapping:
     """Test cases for thread_id to session_id mapping and initial state."""
