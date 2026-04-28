@@ -520,10 +520,38 @@ export class MastraAgent extends AbstractAgent {
       args: any;
     } | null = null;
 
+    // Tracks whether we are inside an active text segment. Used to detect
+    // text-segment boundaries so that messageId is rotated when a text
+    // segment ends (i.e., when a non-text event like tool-call arrives),
+    // not just when the entire step/run finishes.
+    let inTextSegment = false;
+
+    // Deferred rotation flag. When a text segment closes (e.g. because a
+    // tool-call arrives), we mark that a messageId rotation is needed but
+    // delay the actual rotation until the *next* text segment starts.
+    // This ensures that tool-call events emitted between text segments
+    // still reference the messageId of the preceding text via
+    // parentMessageId (which reads getMessageId() at emit time).
+    let needsMessageIdRotation = false;
+
     const flush = () => {
       if (pendingToolCall) {
         callbacks.onToolCallPart?.(pendingToolCall);
         pendingToolCall = null;
+      }
+    };
+
+    const closeTextSegment = () => {
+      if (inTextSegment) {
+        inTextSegment = false;
+        needsMessageIdRotation = true;
+      }
+    };
+
+    const rotateMessageIdIfNeeded = () => {
+      if (needsMessageIdRotation) {
+        callbacks.onFinishMessagePart?.();
+        needsMessageIdRotation = false;
       }
     };
 
@@ -554,10 +582,13 @@ export class MastraAgent extends AbstractAgent {
           break;
         case "text-delta": {
           flush();
+          rotateMessageIdIfNeeded();
+          inTextSegment = true;
           callbacks.onTextPart?.(chunk.payload.text);
           break;
         }
         case "tool-call": {
+          closeTextSegment();
           flush();
           pendingToolCall = {
             toolCallId: chunk.payload.toolCallId,
@@ -567,6 +598,7 @@ export class MastraAgent extends AbstractAgent {
           break;
         }
         case "tool-result": {
+          closeTextSegment();
           flush();
           callbacks.onToolResultPart?.({
             toolCallId: chunk.payload.toolCallId,
@@ -580,6 +612,7 @@ export class MastraAgent extends AbstractAgent {
           return true;
         }
         case "tool-call-suspended": {
+          closeTextSegment();
           // Always discard the pending tool-call: if it matches, the tool
           // was suspended before execution; if it doesn't match, the pending
           // call is orphaned (never executed) so emitting TOOL_CALL_START/
@@ -602,13 +635,16 @@ export class MastraAgent extends AbstractAgent {
           });
           break;
         }
-        // Both "finish" and "step-finish" flush any pending tool call and rotate
-        // the messageId so the next step's text gets a fresh ID. When a stream
-        // ends with step-finish followed by finish, onFinishMessagePart fires
-        // twice — the second rotation produces an unused messageId, which is harmless.
+        // "finish" and "step-finish" close any open text segment and flush
+        // pending tool calls. After flushing (so tool events still reference
+        // the current messageId), we unconditionally rotate so the next
+        // step/run gets a fresh messageId. This also clears any deferred
+        // rotation from closeTextSegment.
         case "finish":
         case "step-finish": {
+          closeTextSegment();
           flush();
+          needsMessageIdRotation = false;
           callbacks.onFinishMessagePart?.();
           break;
         }
@@ -626,7 +662,15 @@ export class MastraAgent extends AbstractAgent {
       return false;
     };
 
-    return { handleChunk, flush };
+    // finalize: called at end-of-stream to close any open text segment,
+    // flush any pending tool call, and apply any deferred rotation.
+    const finalize = () => {
+      closeTextSegment();
+      flush();
+      rotateMessageIdIfNeeded();
+    };
+
+    return { handleChunk, finalize };
   }
 
   /**
@@ -637,11 +681,11 @@ export class MastraAgent extends AbstractAgent {
     stream: AsyncIterable<any>,
     callbacks: MastraAgentStreamOptions,
   ): Promise<boolean> {
-    const { handleChunk, flush } = this.createChunkProcessor(callbacks);
+    const { handleChunk, finalize } = this.createChunkProcessor(callbacks);
     for await (const chunk of stream) {
       if (handleChunk(chunk)) return true;
     }
-    flush();
+    finalize();
     return false;
   }
 
@@ -732,7 +776,7 @@ export class MastraAgent extends AbstractAgent {
         // Remote agents use processDataStream (callback-based) — share
         // chunk handling logic via createChunkProcessor.
         if (response && typeof response.processDataStream === "function") {
-          const { handleChunk, flush } = this.createChunkProcessor({
+          const { handleChunk, finalize } = this.createChunkProcessor({
             onTextPart,
             onReasoningStart,
             onReasoningPart,
@@ -750,7 +794,7 @@ export class MastraAgent extends AbstractAgent {
               if (handleChunk(chunk)) stopped = true;
             },
           });
-          if (!stopped) flush();
+          if (!stopped) finalize();
           if (!stopped) await onRunFinished?.();
         } else {
           throw new Error("Invalid response from remote agent");
