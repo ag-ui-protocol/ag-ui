@@ -137,7 +137,11 @@ export class LangGraphAgent extends AbstractAgent {
   // Stop control flags
   private cancelRequested: boolean = false;
   private cancelSent: boolean = false;
-  // messages-tuple fallback: tracks whether "events" mode is producing data
+  // Guards against double-streaming in the messages-tuple fallback path.
+  // Set to true when events-mode (on_chat_model_stream) begins; thereafter
+  // handleMessagesTupleEvent is skipped. Appears unused because it is only
+  // read inside the fallback branch — removing it would cause duplicate messages
+  // on LangGraph Platform deployments that emit both stream modes simultaneously.
   private eventsStreamActive: boolean = false;
   // @ts-expect-error no need to initialize subscriber right now
   subscriber: Subscriber<ProcessedEvents>;
@@ -408,7 +412,9 @@ export class LangGraphAgent extends AbstractAgent {
     };
 
     // If there are still outstanding unresolved interrupts, we must force resolution of them before moving forward
-    const interrupts = (agentState.tasks?.[0]?.interrupts ?? []) as Interrupt[];
+    // Collect interrupts from ALL tasks, not just tasks[0] (fixes #1409).
+    // The SDK doesn't export a Task type, so we use `any` here.
+    const interrupts = (agentState.tasks ?? []).flatMap((t: any) => t.interrupts ?? []) as Interrupt[];
     if (interrupts?.length && !forwardedProps?.command?.resume) {
       this.dispatchEvent({
         type: EventType.RUN_STARTED,
@@ -537,7 +543,10 @@ export class LangGraphAgent extends AbstractAgent {
         }
 
         if (streamResponseChunk.event === "values") {
-          latestStateValues = chunk.data;
+          latestStateValues = {
+            ...latestStateValues,
+            ...chunk.data,
+          };
           continue;
         } else if (subgraphsStreamEnabled && chunk.event.startsWith("values|")) {
           latestStateValues = {
@@ -588,6 +597,31 @@ export class LangGraphAgent extends AbstractAgent {
           shouldExit ||
           (eventType === LangGraphEventTypes.OnCustomEvent &&
             chunkData.name === CustomEventNames.Exit);
+
+        // Parity with Python reader (langgraph_agent.py:447): update local state
+        // cache from on_chain_end outputs so state stays fresh across node boundaries
+        // without relying on a `values` stream chunk after every step.
+        // LangGraph JS doesn't emit `values` chunks with the latest state between
+        // tool execution and run end, so without this update, intermediate
+        // STATE_SNAPSHOTs go stale after a tool Command updates state.
+        if (eventType === LangGraphEventTypes.OnChainEnd && chunkData.data?.output != null) {
+          const output: any = chunkData.data.output;
+          if (typeof output === "object" && !Array.isArray(output)) {
+            latestStateValues = { ...latestStateValues, ...output };
+          } else if (Array.isArray(output)) {
+            for (const item of output) {
+              if (
+                item &&
+                typeof item === "object" &&
+                (item as any).lg_name === "Command" &&
+                (item as any).update &&
+                typeof (item as any).update === "object"
+              ) {
+                latestStateValues = { ...latestStateValues, ...(item as any).update };
+              }
+            }
+          }
+        }
 
         if (eventType === LangGraphEventTypes.OnChainEnd && this.activeRun!.nodeName === currentNodeName) {
           this.activeRun!.exitingNode = true;
@@ -645,7 +679,8 @@ export class LangGraphAgent extends AbstractAgent {
 
       state = await this.client.threads.getState(threadId);
       const tasks = state.tasks;
-      const interrupts = (tasks?.[0]?.interrupts ?? []) as Interrupt[];
+      // Collect interrupts from ALL tasks, not just tasks[0] (fixes #1409)
+      const interrupts = (tasks ?? []).flatMap((t: any) => t.interrupts ?? []) as Interrupt[];
       const isEndNode = state.next.length === 0;
       const writes = state.metadata?.writes ?? {};
 
@@ -1064,6 +1099,11 @@ export class LangGraphAgent extends AbstractAgent {
    * Process [AIMessageChunk, metadata] tuples from messages-tuple stream mode
    * and convert them into AG-UI text message and tool call events.
    * Uses the same messagesInProcess tracking as events-mode streaming.
+   *
+   * This is a legacy fallback for LangGraph Platform deployments that do not emit
+   * on_chat_model_stream events (older streaming modes). It is only called when
+   * eventsStreamActive is false — i.e. no events-mode streaming has been seen yet.
+   * Do not remove: required for backward compatibility with older LangGraph Platform.
    */
   private handleMessagesTupleEvent(data: any[]) {
     const chunk = data[0];
@@ -1406,7 +1446,8 @@ export class LangGraphAgent extends AbstractAgent {
 
     const newMessages = messages.filter((message) => !existingMessageIds.has(message.id));
 
-    const langGraphTools: LangGraphToolWithName[] = [...(state.tools ?? []), ...(input.tools ?? [])].reduce((acc, tool) => {
+    // Input tools first so they win over stale state tools on name collision
+    const langGraphTools: LangGraphToolWithName[] = [...(input.tools ?? []), ...(state.tools ?? [])].reduce((acc, tool) => {
       let mappedTool = tool;
       if (!tool.type) {
         mappedTool = {

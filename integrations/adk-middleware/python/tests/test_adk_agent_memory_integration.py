@@ -91,9 +91,9 @@ class TestADKAgentMemoryIntegration:
 
     def test_adk_agent_passes_memory_service_to_session_manager(self, mock_memory_service, mock_agent):
         """Test that ADKAgent passes memory service to SessionManager."""
-        with patch.object(SessionManager, 'get_instance') as mock_get_instance:
+        with patch.object(SessionManager, 'get_default') as mock_get_default:
             mock_session_manager = Mock()
-            mock_get_instance.return_value = mock_session_manager
+            mock_get_default.return_value = mock_session_manager
 
             adk_agent = ADKAgent(
                 adk_agent=mock_agent,
@@ -103,9 +103,9 @@ class TestADKAgentMemoryIntegration:
                 use_in_memory_services=True
             )
 
-            # Verify SessionManager.get_instance was called with the memory service
-            mock_get_instance.assert_called_once()
-            call_args = mock_get_instance.call_args
+            # Verify SessionManager.get_default was called with the memory service
+            mock_get_default.assert_called_once()
+            call_args = mock_get_default.call_args
             assert call_args[1]['memory_service'] is mock_memory_service
 
     def test_adk_agent_memory_service_sharing_same_instance(self, mock_memory_service, mock_agent):

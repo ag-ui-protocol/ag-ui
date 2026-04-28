@@ -80,43 +80,8 @@ class TestAddADKFastAPIEndpoint:
         route = next(route for route in app.routes if route.path == "/test")
         assert "POST" in route.methods
 
-    @patch('ag_ui_adk.endpoint.EventEncoder')
-    def test_endpoint_creates_event_encoder(self, mock_encoder_class, app, mock_agent, sample_input):
-        """Test that endpoint creates EventEncoder with correct accept header."""
-        mock_encoder = MagicMock()
-        mock_encoder.encode.return_value = "encoded_event"
-        mock_encoder.get_content_type.return_value = "text/event-stream"
-        mock_encoder_class.return_value = mock_encoder
-
-        # Mock agent to return an event
-        mock_event = RunStartedEvent(
-            type=EventType.RUN_STARTED,
-            thread_id="test_thread",
-            run_id="test_run"
-        )
-        mock_agent.run = AsyncMock(return_value=AsyncMock(__aiter__=AsyncMock(return_value=iter([mock_event]))))
-
-        add_adk_fastapi_endpoint(app, mock_agent, path="/test")
-
-        client = TestClient(self.get_test_app(app))
-        response = client.post(
-            "/test",
-            json=sample_input.model_dump(),
-            headers={"accept": "text/event-stream"}
-        )
-
-        # EventEncoder should be created with accept header
-        mock_encoder_class.assert_called_once_with(accept="text/event-stream")
-        assert response.status_code == 200
-
-    @patch('ag_ui_adk.endpoint.EventEncoder')
-    def test_endpoint_agent_id_extraction(self, mock_encoder_class, app, mock_agent, sample_input):
+    def test_endpoint_agent_id_extraction(self, app, mock_agent, sample_input):
         """Test that agent_id is extracted from path."""
-        mock_encoder = MagicMock()
-        mock_encoder.encode.return_value = "encoded_event"
-        mock_encoder.get_content_type.return_value = "text/event-stream"
-        mock_encoder_class.return_value = mock_encoder
-
         # Mock agent to return an event
         mock_event = RunStartedEvent(
             type=EventType.RUN_STARTED,
@@ -134,14 +99,8 @@ class TestAddADKFastAPIEndpoint:
         mock_agent.run.assert_called_once_with(sample_input)
         assert response.status_code == 200
 
-    @patch('ag_ui_adk.endpoint.EventEncoder')
-    def test_endpoint_root_path_agent_id(self, mock_encoder_class, app, mock_agent, sample_input):
+    def test_endpoint_root_path_agent_id(self, app, mock_agent, sample_input):
         """Test agent_id extraction for root path."""
-        mock_encoder = MagicMock()
-        mock_encoder.encode.return_value = "encoded_event"
-        mock_encoder.get_content_type.return_value = "text/event-stream"
-        mock_encoder_class.return_value = mock_encoder
-
         # Mock agent to return an event
         mock_event = RunStartedEvent(
             type=EventType.RUN_STARTED,
@@ -159,15 +118,9 @@ class TestAddADKFastAPIEndpoint:
         mock_agent.run.assert_called_once_with(sample_input)
         assert response.status_code == 200
 
-    @patch('ag_ui_adk.endpoint.EventEncoder')
     @patch('ag_ui_adk.endpoint.logger')
-    def test_endpoint_successful_event_streaming(self, mock_logger, mock_encoder_class, app, mock_agent, sample_input):
+    def test_endpoint_successful_event_streaming(self, mock_logger, app, mock_agent, sample_input):
         """Test successful event streaming."""
-        mock_encoder = MagicMock()
-        mock_encoder.encode.return_value = "data: encoded_event\n\n"
-        mock_encoder.get_content_type.return_value = "text/event-stream"
-        mock_encoder_class.return_value = mock_encoder
-
         # Mock agent to return multiple events
         mock_event1 = RunStartedEvent(
             type=EventType.RUN_STARTED,
@@ -194,28 +147,19 @@ class TestAddADKFastAPIEndpoint:
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/event-stream")
 
-        # Check that events were encoded and logged
-        assert mock_encoder.encode.call_count == 2
+        # Check that both events were serialized and logged as HTTP Response debug lines
         assert mock_logger.debug.call_count == 2
+        # Each yielded event produces a `data: {json}\n\n` frame in the SSE wire format
+        assert response.text.count("data: ") == 2
 
-    @patch('ag_ui_adk.endpoint.EventEncoder')
     @patch('ag_ui_adk.endpoint.logger')
-    def test_endpoint_encoding_error_handling(self, mock_logger, mock_encoder_class, app, mock_agent, sample_input):
+    def test_endpoint_encoding_error_handling(self, mock_logger, app, mock_agent, sample_input):
         """Test handling of encoding errors."""
-        mock_encoder = MagicMock()
-        mock_encoder.encode.side_effect = [
-            ValueError("Encoding failed"),
-            "data: error_event\n\n"  # Error event encoding succeeds
-        ]
-        mock_encoder.get_content_type.return_value = "text/event-stream"
-        mock_encoder_class.return_value = mock_encoder
-
-        # Mock agent to return an event
-        mock_event = RunStartedEvent(
-            type=EventType.RUN_STARTED,
-            thread_id="test_thread",
-            run_id="test_run"
-        )
+        # Mock event whose first model_dump_json call raises. The RunErrorEvent
+        # that the endpoint creates after catching the failure is a real
+        # Pydantic model and will serialize normally.
+        mock_event = MagicMock()
+        mock_event.model_dump_json.side_effect = ValueError("Encoding failed")
 
         async def mock_agent_run(input_data):
             yield mock_event
@@ -233,30 +177,24 @@ class TestAddADKFastAPIEndpoint:
         mock_logger.error.assert_called_once()
         assert "Event encoding error" in str(mock_logger.error.call_args)
 
-        # Should create and encode RunErrorEvent
-        assert mock_encoder.encode.call_count == 2
+        # Stream should contain a RUN_ERROR event with ENCODING_ERROR code
+        assert '"code":"ENCODING_ERROR"' in response.text
+        assert "Event encoding failed" in response.text
 
-        # Check that second call was for error event
-        error_event_call = mock_encoder.encode.call_args_list[1]
-        error_event = error_event_call[0][0]
-        assert isinstance(error_event, RunErrorEvent)
-        assert error_event.code == "ENCODING_ERROR"
-
-    @patch('ag_ui_adk.endpoint.EventEncoder')
+    @patch('ag_ui_adk.endpoint.RunErrorEvent')
     @patch('ag_ui_adk.endpoint.logger')
-    def test_endpoint_encoding_error_double_failure(self, mock_logger, mock_encoder_class, app, mock_agent, sample_input):
+    def test_endpoint_encoding_error_double_failure(self, mock_logger, mock_run_error_event_cls, app, mock_agent, sample_input):
         """Test handling when both event and error event encoding fail."""
-        mock_encoder = MagicMock()
-        mock_encoder.encode.side_effect = ValueError("Always fails")
-        mock_encoder.get_content_type.return_value = "text/event-stream"
-        mock_encoder_class.return_value = mock_encoder
+        # First, make the initial event's model_dump_json fail so the endpoint
+        # enters the error-handling branch, then make the RunErrorEvent
+        # constructed inside that branch also fail to serialize, exercising
+        # the basic SSE error fallback.
+        mock_event = MagicMock()
+        mock_event.model_dump_json.side_effect = ValueError("Always fails")
 
-        # Mock agent to return an event
-        mock_event = RunStartedEvent(
-            type=EventType.RUN_STARTED,
-            thread_id="test_thread",
-            run_id="test_run"
-        )
+        mock_error_event_instance = MagicMock()
+        mock_error_event_instance.model_dump_json.side_effect = ValueError("Also fails")
+        mock_run_error_event_cls.return_value = mock_error_event_instance
 
         async def mock_agent_run(input_data):
             yield mock_event
@@ -279,18 +217,13 @@ class TestAddADKFastAPIEndpoint:
         response_text = response.text
         assert 'event: error\ndata: {"error": "Event encoding failed"}\n\n' in response_text
 
-    @patch('ag_ui_adk.endpoint.EventEncoder')
     @patch('ag_ui_adk.endpoint.logger')
-    def test_endpoint_agent_error_handling(self, mock_logger, mock_encoder_class, app, mock_agent, sample_input):
+    def test_endpoint_agent_error_handling(self, mock_logger, app, mock_agent, sample_input):
         """Test handling of agent execution errors."""
-        mock_encoder = MagicMock()
-        mock_encoder.encode.return_value = "data: error_event\n\n"
-        mock_encoder.get_content_type.return_value = "text/event-stream"
-        mock_encoder_class.return_value = mock_encoder
-
         # Mock agent to raise an error
         async def mock_agent_run(input_data):
             raise RuntimeError("Agent failed")
+            yield  # pragma: no cover - unreachable, makes this an async generator
 
         mock_agent.run = mock_agent_run
 
@@ -305,25 +238,22 @@ class TestAddADKFastAPIEndpoint:
         mock_logger.error.assert_called_once()
         assert "ADKAgent error" in str(mock_logger.error.call_args)
 
-        # Should create and encode RunErrorEvent
-        error_event_call = mock_encoder.encode.call_args
-        error_event = error_event_call[0][0]
-        assert isinstance(error_event, RunErrorEvent)
-        assert error_event.code == "AGENT_ERROR"
-        assert "Agent execution failed" in error_event.message
+        # Stream should contain a RUN_ERROR event with AGENT_ERROR code
+        assert '"code":"AGENT_ERROR"' in response.text
+        assert "Agent execution failed" in response.text
 
-    @patch('ag_ui_adk.endpoint.EventEncoder')
+    @patch('ag_ui_adk.endpoint.RunErrorEvent')
     @patch('ag_ui_adk.endpoint.logger')
-    def test_endpoint_agent_error_encoding_failure(self, mock_logger, mock_encoder_class, app, mock_agent, sample_input):
+    def test_endpoint_agent_error_encoding_failure(self, mock_logger, mock_run_error_event_cls, app, mock_agent, sample_input):
         """Test handling when agent error event encoding fails."""
-        mock_encoder = MagicMock()
-        mock_encoder.encode.side_effect = ValueError("Encoding failed")
-        mock_encoder.get_content_type.return_value = "text/event-stream"
-        mock_encoder_class.return_value = mock_encoder
+        mock_error_event_instance = MagicMock()
+        mock_error_event_instance.model_dump_json.side_effect = ValueError("Encoding failed")
+        mock_run_error_event_cls.return_value = mock_error_event_instance
 
         # Mock agent to raise an error
         async def mock_agent_run(input_data):
             raise RuntimeError("Agent failed")
+            yield  # pragma: no cover - unreachable, makes this an async generator
 
         mock_agent.run = mock_agent_run
 
@@ -343,14 +273,8 @@ class TestAddADKFastAPIEndpoint:
         response_text = response.text
         assert 'event: error\ndata: {"error": "Agent execution failed"}\n\n' in response_text
 
-    @patch('ag_ui_adk.endpoint.EventEncoder')
-    def test_endpoint_returns_streaming_response(self, mock_encoder_class, app, mock_agent, sample_input):
-        """Test that endpoint returns StreamingResponse."""
-        mock_encoder = MagicMock()
-        mock_encoder.encode.return_value = "data: event\n\n"
-        mock_encoder.get_content_type.return_value = "text/event-stream"
-        mock_encoder_class.return_value = mock_encoder
-
+    def test_endpoint_returns_event_source_response(self, app, mock_agent, sample_input):
+        """Test that endpoint returns an EventSourceResponse with SSE keep-alive headers."""
         # Mock agent to return an event
         mock_event = RunStartedEvent(
             type=EventType.RUN_STARTED,
@@ -370,6 +294,65 @@ class TestAddADKFastAPIEndpoint:
 
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/event-stream")
+        # The SSE response sets these headers so proxies and Node undici
+        # sockets don't buffer/close idle streams. ``Cache-Control`` may be
+        # either ``no-cache`` or ``no-store`` -- both prevent caches from
+        # holding/replaying the stream; sse-starlette defaults to ``no-store``
+        # which is the stricter, semantically more correct directive for SSE.
+        assert response.headers["cache-control"] in {"no-cache", "no-store"}
+        assert response.headers.get("x-accel-buffering") == "no"
+
+    def test_endpoint_proto_accept_uses_streaming_response(self, app, mock_agent, sample_input):
+        """Test that a non-SSE Accept header routes through the legacy StreamingResponse path.
+
+        Locks in the Accept-header content negotiation regression mitigation
+        from PR #1566 review: when ``EventEncoder.get_content_type()`` returns
+        a non-``text/event-stream`` value (e.g. a future binary framing under
+        ``application/vnd.ag-ui.event+proto``), the endpoint must fall back to
+        ``StreamingResponse(encoder.encode(...))`` instead of
+        ``EventSourceResponse``. We patch ``EventEncoder`` itself so we can
+        simulate the future binary encoder without depending on the SDK
+        actually shipping one.
+        """
+        mock_event = RunStartedEvent(
+            type=EventType.RUN_STARTED,
+            thread_id="test_thread",
+            run_id="test_run",
+        )
+
+        async def mock_agent_run(input_data):
+            yield mock_event
+
+        mock_agent.run = mock_agent_run
+
+        proto_media_type = "application/vnd.ag-ui.event+proto"
+        encoded_payload = b"\x00binary-proto-payload\x01"
+
+        mock_encoder_instance = MagicMock()
+        mock_encoder_instance.get_content_type.return_value = proto_media_type
+        mock_encoder_instance.encode.return_value = encoded_payload
+
+        with patch("ag_ui_adk.endpoint.EventEncoder", return_value=mock_encoder_instance) as mock_encoder_cls:
+            add_adk_fastapi_endpoint(app, mock_agent, path="/test")
+
+            client = TestClient(self.get_test_app(app))
+            response = client.post(
+                "/test",
+                json=sample_input.model_dump(),
+                headers={"accept": proto_media_type},
+            )
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith(proto_media_type)
+        # SSE-only headers must not be present on the legacy streaming path;
+        # in particular keep-alive pings (which are SSE comments) would corrupt
+        # a binary stream, so the response goes through plain StreamingResponse.
+        assert "x-accel-buffering" not in {k.lower() for k in response.headers.keys()}
+        # Encoder was constructed with the request's Accept header and used to
+        # encode the streamed event, confirming the legacy path is in play.
+        mock_encoder_cls.assert_called_once_with(accept=proto_media_type)
+        mock_encoder_instance.encode.assert_called_with(mock_event)
+        assert encoded_payload in response.content
 
     def test_endpoint_input_validation(self, app, mock_agent):
         """Test that endpoint validates input as RunAgentInput."""
@@ -383,15 +366,14 @@ class TestAddADKFastAPIEndpoint:
         # Should return 422 for validation error
         assert response.status_code == 422
 
-    @patch('ag_ui_adk.endpoint.EventEncoder')
-    def test_endpoint_no_accept_header(self, mock_encoder_class, app, mock_agent, sample_input):
-        """Test endpoint behavior when no accept header is provided."""
-        mock_encoder = MagicMock()
-        mock_encoder.encode.return_value = "data: event\n\n"
-        mock_encoder.get_content_type.return_value = "text/event-stream"
-        mock_encoder_class.return_value = mock_encoder
+    def test_endpoint_no_accept_header(self, app, mock_agent, sample_input):
+        """Test endpoint behavior when no accept header is provided.
 
-        # Mock agent to return an event
+        With the native ``EventSourceResponse`` the endpoint no longer branches
+        on the ``Accept`` header (FastAPI's SSE layer always emits
+        ``text/event-stream``), so this test just verifies the endpoint still
+        succeeds when the client sends TestClient's default ``*/*`` accept.
+        """
         mock_event = RunStartedEvent(
             type=EventType.RUN_STARTED,
             thread_id="test_thread",
@@ -408,9 +390,8 @@ class TestAddADKFastAPIEndpoint:
         client = TestClient(self.get_test_app(app))
         response = client.post("/test", json=sample_input.model_dump())
 
-        # EventEncoder should be created with default accept header from TestClient
-        mock_encoder_class.assert_called_once_with(accept="*/*")
         assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
 
 
 class TestCreateADKApp:
@@ -471,14 +452,8 @@ class TestCreateADKApp:
         routes = [route.path for route in app.routes]
         assert "/" in routes
 
-    @patch('ag_ui_adk.endpoint.EventEncoder')
-    def test_create_app_functional_test(self, mock_encoder_class, mock_agent):
+    def test_create_app_functional_test(self, mock_agent):
         """Test that created app is functional."""
-        mock_encoder = MagicMock()
-        mock_encoder.encode.return_value = "data: event\n\n"
-        mock_encoder.get_content_type.return_value = "text/event-stream"
-        mock_encoder_class.return_value = mock_encoder
-
         # Mock agent to return an event
         mock_event = RunStartedEvent(
             type=EventType.RUN_STARTED,
@@ -533,14 +508,8 @@ class TestEndpointIntegration:
             forwarded_props={}
         )
 
-    @patch('ag_ui_adk.endpoint.EventEncoder')
-    def test_full_endpoint_flow(self, mock_encoder_class, mock_agent, sample_input):
+    def test_full_endpoint_flow(self, mock_agent, sample_input):
         """Test complete endpoint flow from request to response."""
-        mock_encoder = MagicMock()
-        mock_encoder.encode.return_value = "data: test_event\n\n"
-        mock_encoder.get_content_type.return_value = "text/event-stream"
-        mock_encoder_class.return_value = mock_encoder
-
         # Mock agent to return multiple events
         events = [
             RunStartedEvent(
@@ -581,8 +550,8 @@ class TestEndpointIntegration:
         assert len(call_args) == 1
         assert call_args[0] == sample_input
 
-        # Verify events were encoded
-        assert mock_encoder.encode.call_count == len(events)
+        # Verify each event produced its own SSE `data: {json}\n\n` frame
+        assert response.text.count("data: ") == len(events)
 
     def test_endpoint_with_different_http_methods(self, mock_agent):
         """Test that endpoint only accepts POST requests."""
@@ -606,14 +575,8 @@ class TestEndpointIntegration:
         response = client.delete("/test")
         assert response.status_code == 405
 
-    @patch('ag_ui_adk.endpoint.EventEncoder')
-    def test_endpoint_with_long_running_stream(self, mock_encoder_class, mock_agent, sample_input):
+    def test_endpoint_with_long_running_stream(self, mock_agent, sample_input):
         """Test endpoint with long-running event stream."""
-        mock_encoder = MagicMock()
-        mock_encoder.encode.return_value = "data: event\n\n"
-        mock_encoder.get_content_type.return_value = "text/event-stream"
-        mock_encoder_class.return_value = mock_encoder
-
         # Mock agent to return many events
         async def mock_agent_run(input_data):
             for i in range(10):
@@ -633,8 +596,8 @@ class TestEndpointIntegration:
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/event-stream")
 
-        # Should have encoded 10 events
-        assert mock_encoder.encode.call_count == 10
+        # Each of the 10 events produces one SSE `data: {json}\n\n` frame
+        assert response.text.count("data: ") == 10
 
 class TestExtractHeaders:
     """Tests for extract_headers functionality."""
@@ -657,14 +620,8 @@ class TestExtractHeaders:
             forwarded_props={}
         )
 
-    @patch('ag_ui_adk.endpoint.EventEncoder')
-    def test_extract_headers_into_nested_state(self, mock_encoder_class, mock_agent, sample_input):
+    def test_extract_headers_into_nested_state(self, mock_agent, sample_input):
         """Test that headers are extracted into state.headers."""
-        mock_encoder = MagicMock()
-        mock_encoder.encode.return_value = "data: event\n\n"
-        mock_encoder.get_content_type.return_value = "text/event-stream"
-        mock_encoder_class.return_value = mock_encoder
-
         captured_input = []
 
         async def mock_agent_run(input_data):
@@ -696,14 +653,8 @@ class TestExtractHeaders:
         assert captured_input[0].state["headers"]["user_id"] == "user123"
         assert captured_input[0].state["headers"]["tenant_id"] == "tenant456"
 
-    @patch('ag_ui_adk.endpoint.EventEncoder')
-    def test_extract_headers_strips_x_prefix(self, mock_encoder_class, mock_agent, sample_input):
+    def test_extract_headers_strips_x_prefix(self, mock_agent, sample_input):
         """Test that x- prefix is stripped from header names."""
-        mock_encoder = MagicMock()
-        mock_encoder.encode.return_value = "data: event\n\n"
-        mock_encoder.get_content_type.return_value = "text/event-stream"
-        mock_encoder_class.return_value = mock_encoder
-
         captured_input = []
 
         async def mock_agent_run(input_data):
@@ -735,14 +686,8 @@ class TestExtractHeaders:
         assert "user_id" in captured_input[0].state["headers"]
         assert "x-user-id" not in captured_input[0].state["headers"]
 
-    @patch('ag_ui_adk.endpoint.EventEncoder')
-    def test_extract_headers_converts_hyphens_to_underscores(self, mock_encoder_class, mock_agent, sample_input):
+    def test_extract_headers_converts_hyphens_to_underscores(self, mock_agent, sample_input):
         """Test that hyphens are converted to underscores in key names."""
-        mock_encoder = MagicMock()
-        mock_encoder.encode.return_value = "data: event\n\n"
-        mock_encoder.get_content_type.return_value = "text/event-stream"
-        mock_encoder_class.return_value = mock_encoder
-
         captured_input = []
 
         async def mock_agent_run(input_data):
@@ -773,14 +718,8 @@ class TestExtractHeaders:
         # Hyphens should be converted: x-some-long-header-name -> some_long_header_name
         assert captured_input[0].state["headers"]["some_long_header_name"] == "value123"
 
-    @patch('ag_ui_adk.endpoint.EventEncoder')
-    def test_extract_headers_missing_headers_skipped(self, mock_encoder_class, mock_agent, sample_input):
+    def test_extract_headers_missing_headers_skipped(self, mock_agent, sample_input):
         """Test that missing headers are silently skipped."""
-        mock_encoder = MagicMock()
-        mock_encoder.encode.return_value = "data: event\n\n"
-        mock_encoder.get_content_type.return_value = "text/event-stream"
-        mock_encoder_class.return_value = mock_encoder
-
         captured_input = []
 
         async def mock_agent_run(input_data):
@@ -812,14 +751,8 @@ class TestExtractHeaders:
         assert captured_input[0].state["headers"]["user_id"] == "user123"
         assert "tenant_id" not in captured_input[0].state["headers"]
 
-    @patch('ag_ui_adk.endpoint.EventEncoder')
-    def test_extract_headers_client_state_preserved(self, mock_encoder_class, mock_agent):
+    def test_extract_headers_client_state_preserved(self, mock_agent):
         """Test that client-provided top-level state is preserved."""
-        mock_encoder = MagicMock()
-        mock_encoder.encode.return_value = "data: event\n\n"
-        mock_encoder.get_content_type.return_value = "text/event-stream"
-        mock_encoder_class.return_value = mock_encoder
-
         captured_input = []
 
         async def mock_agent_run(input_data):
@@ -864,14 +797,8 @@ class TestExtractHeaders:
         assert captured_input[0].state["existing_key"] == "existing_value"
         assert captured_input[0].state["another_key"] == "another_value"
 
-    @patch('ag_ui_adk.endpoint.EventEncoder')
-    def test_extract_headers_client_headers_take_precedence(self, mock_encoder_class, mock_agent):
+    def test_extract_headers_client_headers_take_precedence(self, mock_agent):
         """Test that client-provided state.headers takes precedence over extracted headers."""
-        mock_encoder = MagicMock()
-        mock_encoder.encode.return_value = "data: event\n\n"
-        mock_encoder.get_content_type.return_value = "text/event-stream"
-        mock_encoder_class.return_value = mock_encoder
-
         captured_input = []
 
         async def mock_agent_run(input_data):
@@ -913,14 +840,8 @@ class TestExtractHeaders:
         # Client state.headers should take precedence
         assert captured_input[0].state["headers"]["user_id"] == "client_user"
 
-    @patch('ag_ui_adk.endpoint.EventEncoder')
-    def test_no_extract_headers_backward_compatible(self, mock_encoder_class, mock_agent, sample_input):
+    def test_no_extract_headers_backward_compatible(self, mock_agent, sample_input):
         """Test that omitting extract_headers works as before."""
-        mock_encoder = MagicMock()
-        mock_encoder.encode.return_value = "data: event\n\n"
-        mock_encoder.get_content_type.return_value = "text/event-stream"
-        mock_encoder_class.return_value = mock_encoder
-
         captured_input = []
 
         async def mock_agent_run(input_data):
@@ -949,14 +870,8 @@ class TestExtractHeaders:
         # State should remain empty (headers not extracted)
         assert captured_input[0].state == {}
 
-    @patch('ag_ui_adk.endpoint.EventEncoder')
-    def test_extract_headers_with_non_dict_state(self, mock_encoder_class, mock_agent):
+    def test_extract_headers_with_non_dict_state(self, mock_agent):
         """Test header extraction when input.state is not a dict."""
-        mock_encoder = MagicMock()
-        mock_encoder.encode.return_value = "data: event\n\n"
-        mock_encoder.get_content_type.return_value = "text/event-stream"
-        mock_encoder_class.return_value = mock_encoder
-
         captured_input = []
 
         async def mock_agent_run(input_data):
@@ -998,14 +913,8 @@ class TestExtractHeaders:
         # Should create new state dict with headers
         assert captured_input[0].state["headers"]["user_id"] == "user123"
 
-    @patch('ag_ui_adk.endpoint.EventEncoder')
-    def test_extract_headers_case_insensitive(self, mock_encoder_class, mock_agent, sample_input):
+    def test_extract_headers_case_insensitive(self, mock_agent, sample_input):
         """Test that header names are case-insensitive (HTTP standard)."""
-        mock_encoder = MagicMock()
-        mock_encoder.encode.return_value = "data: event\n\n"
-        mock_encoder.get_content_type.return_value = "text/event-stream"
-        mock_encoder_class.return_value = mock_encoder
-
         captured_input = []
 
         async def mock_agent_run(input_data):
@@ -1037,14 +946,8 @@ class TestExtractHeaders:
         # Should extract header regardless of case
         assert captured_input[0].state["headers"]["user_id"] == "user123"
 
-    @patch('ag_ui_adk.endpoint.EventEncoder')
-    def test_create_adk_app_with_extract_headers(self, mock_encoder_class, mock_agent, sample_input):
+    def test_create_adk_app_with_extract_headers(self, mock_agent, sample_input):
         """Test create_adk_app with extract_headers parameter."""
-        mock_encoder = MagicMock()
-        mock_encoder.encode.return_value = "data: event\n\n"
-        mock_encoder.get_content_type.return_value = "text/event-stream"
-        mock_encoder_class.return_value = mock_encoder
-
         captured_input = []
 
         async def mock_agent_run(input_data):
@@ -1073,14 +976,8 @@ class TestExtractHeaders:
         assert len(captured_input) == 1
         assert captured_input[0].state["headers"]["user_id"] == "user123"
 
-    @patch('ag_ui_adk.endpoint.EventEncoder')
-    def test_extract_headers_non_x_prefix_header(self, mock_encoder_class, mock_agent, sample_input):
+    def test_extract_headers_non_x_prefix_header(self, mock_agent, sample_input):
         """Test extracting headers that don't have x- prefix."""
-        mock_encoder = MagicMock()
-        mock_encoder.encode.return_value = "data: event\n\n"
-        mock_encoder.get_content_type.return_value = "text/event-stream"
-        mock_encoder_class.return_value = mock_encoder
-
         captured_input = []
 
         async def mock_agent_run(input_data):
