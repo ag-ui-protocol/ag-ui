@@ -358,7 +358,7 @@ projects:
       name: ag-ui-dojo-claude-agent-sdk-python
       runtime: python
       repo: https://github.com/ag-ui-protocol/ag-ui
-      plan: starter
+      plan: standard
       scaling:
         minInstances: 1
         maxInstances: 3
@@ -376,7 +376,7 @@ projects:
       name: ag-ui-dojo-claude-agent-sdk-typescript
       runtime: node
       repo: https://github.com/ag-ui-protocol/ag-ui
-      plan: starter
+      plan: standard
       scaling:
         minInstances: 1
         maxInstances: 3
