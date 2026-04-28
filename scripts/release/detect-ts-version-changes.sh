@@ -2,8 +2,14 @@
 # scripts/release/detect-ts-version-changes.sh
 #
 # Discovers publishable TypeScript packages from the pnpm workspace,
-# compares each version against npm, and outputs a JSON array of
-# packages that need publishing.
+# filters to packages explicitly enrolled in scripts/release/release.config.json,
+# compares each version against npm, and outputs a JSON array of packages
+# that need publishing.
+#
+# The allowlist filter is a hard requirement: without it, any workspace
+# package whose local version > npm version would be swept into the next
+# publish on any merged PR to main. That includes packages the team
+# intentionally hasn't wired up for release yet.
 #
 # Output format (stdout): [{"name":"@ag-ui/core","version":"0.0.49","path":"sdks/typescript/packages/core"}, ...]
 # Logs go to stderr so they don't corrupt the JSON output.
@@ -11,6 +17,31 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+CONFIG="$REPO_ROOT/scripts/release/release.config.json"
+
+if [ ! -f "$CONFIG" ]; then
+  echo "ERROR: $CONFIG not found" >&2
+  exit 1
+fi
+
+# Preflight: semver precedence (especially prerelease ordering) needs the
+# 'semver' npm package, which we invoke via `node -e` below. That require()
+# only resolves once node_modules is populated. Fail early with a clear
+# message if dependencies aren't installed — otherwise the caller's
+# `|| echo "[]"` fallback silently swallows the failure and the publish
+# workflow no-ops instead of publishing what it should.
+if ! (cd "$REPO_ROOT" && node -e "require('semver')") 2>/dev/null; then
+  echo "ERROR: 'semver' module not resolvable from $REPO_ROOT." >&2
+  echo "       Run 'pnpm install --frozen-lockfile' before this script." >&2
+  exit 1
+fi
+
+# Build allowlist: every TypeScript package name listed under any scope.
+ALLOWLIST=$(jq -r '[.scopes[].packages[] | select(.ecosystem == "typescript") | .name] | sort | unique | join("\n")' "$CONFIG")
+if [ -z "$ALLOWLIST" ]; then
+  echo "ERROR: release.config.json has no TypeScript packages" >&2
+  exit 1
+fi
 
 # Get all workspace packages as JSON
 PACKAGES=$(cd "$REPO_ROOT" && pnpm list -r --json) || { echo "ERROR: pnpm list failed" >&2; exit 1; }
@@ -24,7 +55,7 @@ while read -r pkg; do
   NAME=$(echo "$pkg" | jq -r '.name')
   VERSION=$(echo "$pkg" | jq -r '.version')
   PKG_PATH=$(echo "$pkg" | jq -r '.path')
-  RELATIVE_PATH="${PKG_PATH#$REPO_ROOT/}"
+  RELATIVE_PATH="${PKG_PATH#"$REPO_ROOT"/}"
   PRIVATE=$(echo "$pkg" | jq -r '.private // false')
 
   # Skip private packages
@@ -45,21 +76,30 @@ while read -r pkg; do
     continue
   fi
 
+  # Enforce the release-config allowlist: skip anything not explicitly
+  # enrolled. This is what prevents unrelated workspace packages (e.g.
+  # server-starter, vercel-ai-sdk) from being swept into a publish on
+  # any unrelated PR merge.
+  if ! grep -Fxq -- "$NAME" <<<"$ALLOWLIST"; then
+    echo "SKIP (not in release.config.json): $NAME" >&2
+    continue
+  fi
+
   # Query npm for the published version
   if PUBLISHED_VERSION=$(npm view "$NAME" version 2>/dev/null); then
-    # Package exists on npm, compare versions using env vars to avoid shell injection
+    # Package exists on npm. Use the semver package (available via nx's
+    # transitive deps) for correct prerelease-aware comparison.
     IS_NEWER=$(VERSION="$VERSION" PUBLISHED="$PUBLISHED_VERSION" node -e "
-      const local = process.env.VERSION.split(/[-+]/)[0].split('.').map(Number);
-      const pub = process.env.PUBLISHED.split(/[-+]/)[0].split('.').map(Number);
-      for (let i = 0; i < 3; i++) {
-        if ((local[i]||0) > (pub[i]||0)) { console.log('true'); process.exit(); }
-        if ((local[i]||0) < (pub[i]||0)) { console.log('false'); process.exit(); }
+      const semver = require('semver');
+      const local = process.env.VERSION;
+      const pub = process.env.PUBLISHED;
+      if (!semver.valid(local) || !semver.valid(pub)) {
+        console.error('ERROR: invalid semver: local=' + local + ' published=' + pub);
+        process.exit(1);
       }
-      // Same base version: only upgrade if local is stable and published is prerelease
-      const localPre = process.env.VERSION.includes('-');
-      const pubPre = process.env.PUBLISHED.includes('-');
-      if (!localPre && pubPre) { console.log('true'); } // stable replaces prerelease
-      else { console.log('false'); } // same base, don't compare prerelease ordering
+      // semver.gt correctly handles prerelease ordering per semver.org:
+      //   1.2.3 > 1.2.3-alpha.1 > 1.2.3-alpha.0 > 1.2.3-alpha
+      console.log(semver.gt(local, pub) ? 'true' : 'false');
     ") || { echo "ERROR: version comparison failed for $NAME" >&2; exit 1; }
 
     if [ "$IS_NEWER" = "true" ]; then

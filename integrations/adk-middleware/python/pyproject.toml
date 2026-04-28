@@ -14,6 +14,15 @@ dependencies = [
     "fastapi>=0.115.2",
     "google-adk>=1.16.0,<2.0.0",
     "pydantic>=2.11.7",
+    # Primary SSE response implementation. Used unconditionally so the FastAPI
+    # floor stays at >=0.115.2 (rather than the >=0.135.0 jump that would be
+    # required to use fastapi.sse.EventSourceResponse). sse-starlette's
+    # EventSourceResponse is self-contained -- it ships its own 15 s keep-alive
+    # ping plus Cache-Control: no-cache / X-Accel-Buffering: no headers when
+    # constructed directly, which lets the endpoint dynamically branch on the
+    # request's Accept header (fastapi.sse is a marker class that only applies
+    # SSE encoding via response_class= on generator path operations).
+    "sse-starlette>=2.1.0",
     "uvicorn>=0.35.0",
 ]
 license = "MIT"
