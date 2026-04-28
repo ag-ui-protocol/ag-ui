@@ -31,10 +31,17 @@ async function getHandler(integrationId: string) {
     return null;
   }
 
-  const agents = await getAgents();
+  const agents = (await getAgents()) as Record<string, AbstractAgent>;
+
+  // Mirror the v2 route: alias `default` to the first agent so CopilotKit
+  // clients that don't pass an explicit `agent` prop still resolve cleanly.
+  const firstAgentKey = Object.keys(agents)[0];
+  if (firstAgentKey && !("default" in agents)) {
+    agents.default = agents[firstAgentKey];
+  }
 
   const runtime = new CopilotRuntime({
-    agents: agents as Record<string, AbstractAgent>,
+    agents,
     runner: new InMemoryAgentRunner(),
     a2ui: {
       agents: ["a2ui_fixed_schema", "a2ui_dynamic_schema", "a2ui_advanced"],
