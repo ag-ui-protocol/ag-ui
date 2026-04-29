@@ -40,6 +40,9 @@ from ag_ui.core.events import (
     ReasoningEncryptedValueEvent,
     ReasoningEncryptedValueSubtype,
     ReasoningMessageRole,
+    RunFinishedOutcome,
+    RunFinishedSuccessOutcome,
+    RunFinishedInterruptOutcome,
     Event
 )
 
@@ -58,6 +61,9 @@ from ag_ui.core.types import (
     Role,
     Context,
     Tool,
+    Interrupt,
+    ResumeEntry,
+    ResumeStatus,
     RunAgentInput,
     State,
     TextInputContent,
@@ -133,6 +139,9 @@ __all__ = [
     "ReasoningEncryptedValueEvent",
     "ReasoningEncryptedValueSubtype",
     "ReasoningMessageRole",
+    "RunFinishedOutcome",
+    "RunFinishedSuccessOutcome",
+    "RunFinishedInterruptOutcome",
     "Event",
     # Types
     "FunctionCall",
@@ -149,6 +158,9 @@ __all__ = [
     "Role",
     "Context",
     "Tool",
+    "Interrupt",
+    "ResumeEntry",
+    "ResumeStatus",
     "RunAgentInput",
     "State",
     "TextInputContent",

@@ -1,4 +1,11 @@
-import { BaseEvent, AGUIEvent, EventSchemas, EventType, Message } from "@ag-ui/core";
+import {
+  BaseEvent,
+  AGUIEvent,
+  EventSchemas,
+  EventType,
+  Message,
+  RunFinishedOutcome,
+} from "@ag-ui/core";
 import * as protoEvents from "./generated/events";
 import * as protoPatch from "./generated/patch";
 
@@ -224,6 +231,23 @@ export function encode(event: BaseEvent): Uint8Array {
     });
   }
 
+  // RunFinishedEvent: flatten the nested `outcome` discriminated union into the
+  // proto's `outcome` (string) and `interrupts` (repeated) fields. The wire
+  // shape stays stable; the TS layer just exposes a richer object.
+  if (type === EventType.RUN_FINISHED) {
+    const outcome: RunFinishedOutcome | undefined = rest.outcome;
+    if (outcome === undefined) {
+      rest.outcome = "";
+      rest.interrupts = [];
+    } else if (outcome.type === "interrupt") {
+      rest.outcome = "interrupt";
+      rest.interrupts = outcome.interrupts;
+    } else {
+      rest.outcome = "success";
+      rest.interrupts = [];
+    }
+  }
+
   // custom mapping for json patch operations
   if (type === EventType.STATE_DELTA && Array.isArray(rest.delta)) {
     rest.delta = (rest.delta as any[]).map((operation: any) => ({
@@ -258,6 +282,7 @@ export function decode(data: Uint8Array): BaseEvent {
   decoded.type = protoEvents.EventType[decoded.baseEvent.type];
   decoded.timestamp = decoded.baseEvent.timestamp;
   decoded.rawEvent = decoded.baseEvent.rawEvent;
+  delete decoded.baseEvent;
 
   // we want tool calls to be optional, so we need to remove them if they are empty
   if (decoded.type === EventType.MESSAGES_SNAPSHOT) {
@@ -281,6 +306,31 @@ export function decode(data: Uint8Array): BaseEvent {
       if (untypedMessage.toolCalls?.length === 0) {
         untypedMessage.toolCalls = undefined;
       }
+    }
+  }
+
+  // RunFinishedEvent: rebuild the nested `outcome` discriminated union from the
+  // flat proto fields. Empty/missing `outcome` decodes to `undefined` (legacy
+  // event); "success" decodes to `{ type: "success" }`; "interrupt" decodes to
+  // `{ type: "interrupt", interrupts }`.
+  if (decoded.type === EventType.RUN_FINISHED) {
+    const runFinished = decoded as any;
+    const wireOutcome: string | undefined =
+      typeof runFinished.outcome === "string" && runFinished.outcome !== ""
+        ? runFinished.outcome
+        : undefined;
+    const wireInterrupts: any[] = Array.isArray(runFinished.interrupts)
+      ? runFinished.interrupts
+      : [];
+
+    delete runFinished.interrupts;
+
+    if (wireOutcome === "interrupt") {
+      runFinished.outcome = { type: "interrupt", interrupts: wireInterrupts };
+    } else if (wireOutcome === "success") {
+      runFinished.outcome = { type: "success" };
+    } else {
+      delete runFinished.outcome;
     }
   }
 

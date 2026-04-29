@@ -1,4 +1,4 @@
-import { Message, RunAgentInput, State } from "@ag-ui/core";
+import { Message, ResumeEntry, RunAgentInput, State } from "@ag-ui/core";
 
 /** Normalized debug configuration for the AG-UI agent. */
 export interface ResolvedAgentDebugConfig {
@@ -44,6 +44,8 @@ export interface HttpAgentConfig extends AgentConfig {
   headers?: Record<string, string>;
 }
 
-export type RunAgentParameters = Partial<
-  Pick<RunAgentInput, "runId" | "tools" | "context" | "forwardedProps">
->;
+export interface RunAgentParameters
+  extends Partial<Pick<RunAgentInput, "runId" | "tools" | "context" | "forwardedProps">> {
+  /** Per-interrupt responses addressing every open interrupt from the previous run. */
+  resume?: ResumeEntry[];
+}
