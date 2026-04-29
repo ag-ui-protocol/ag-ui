@@ -466,6 +466,12 @@ class StrandsAgent:
             # Generate unique message ID
             message_id = str(uuid.uuid4())
             message_started = False
+            # Tracks the id of the most recently emitted text message, persisting
+            # across rotations. Tool calls reference this as parent_message_id so
+            # that back-to-back tool calls (with no text between them) all link
+            # back to the text message that triggered the assistant turn. None
+            # when the run has not produced any text yet.
+            last_emitted_message_id: str | None = None
             tool_calls_seen = {}
             current_state = dict(input_data.state or {})  # Track state for final snapshot
             stop_text_streaming = False
@@ -514,6 +520,7 @@ class StrandsAgent:
                                 role="assistant",
                             )
                             message_started = True
+                            last_emitted_message_id = message_id
 
                         text_chunk = str(event["data"])
                         yield TextMessageContentEvent(
@@ -938,11 +945,15 @@ class StrandsAgent:
                                     logger.debug(
                                         f"Emitting tool call events for {tool_name} (tool_use_id={tool_use_id}, thread_id={input_data.thread_id})"
                                     )
+                                    # parent_message_id references the most recently emitted
+                                    # text message — the assistant content that produced this
+                                    # tool call. None when no text has been emitted in the run
+                                    # yet (per-schema Optional[str]).
                                     yield ToolCallStartEvent(
                                         type=EventType.TOOL_CALL_START,
                                         tool_call_id=tool_use_id,
                                         tool_call_name=tool_name,
-                                        parent_message_id=message_id,
+                                        parent_message_id=last_emitted_message_id,
                                     )
 
                                     if behavior and behavior.args_streamer:
