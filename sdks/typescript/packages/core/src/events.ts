@@ -217,14 +217,18 @@ export const RunStartedEventSchema = BaseEventSchema.extend({
   input: RunAgentInputSchema.optional(),
 });
 
-export const RunFinishedSuccessOutcomeSchema = z.object({
-  type: z.literal("success"),
-});
+export const RunFinishedSuccessOutcomeSchema = z
+  .object({
+    type: z.literal("success"),
+  })
+  .strict();
 
-export const RunFinishedInterruptOutcomeSchema = z.object({
-  type: z.literal("interrupt"),
-  interrupts: z.array(InterruptSchema).min(1),
-});
+export const RunFinishedInterruptOutcomeSchema = z
+  .object({
+    type: z.literal("interrupt"),
+    interrupts: z.array(InterruptSchema).min(1),
+  })
+  .strict();
 
 export const RunFinishedOutcomeSchema = z.discriminatedUnion("type", [
   RunFinishedSuccessOutcomeSchema,

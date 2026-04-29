@@ -561,6 +561,7 @@ export abstract class AbstractAgent {
     cloned.isRunning = this.isRunning;
     cloned.subscribers = [...this.subscribers];
     cloned.middlewares = [...this.middlewares];
+    cloned.pendingInterrupts = structuredClone_(this.pendingInterrupts);
 
     return cloned;
   }

@@ -807,8 +807,6 @@ export const defaultApplyEvents = (
 
         case EventType.RUN_FINISHED: {
           const e = event as RunFinishedEvent;
-          agent.pendingInterrupts =
-            e.outcome?.type === "interrupt" ? e.outcome.interrupts : [];
           const finishedParams =
             e.outcome?.type === "interrupt"
               ? ({
@@ -831,6 +829,18 @@ export const defaultApplyEvents = (
               }),
           );
           applyMutation(mutation);
+
+          // Update pending interrupts AFTER subscribers run, and only if no
+          // subscriber suppressed the event — matches the lifecycle pattern
+          // used by every other case in this switch. Defensive-copy the
+          // interrupt list so consumers that hold the original event payload
+          // can't mutate the agent's tracked state through array aliasing.
+          if (mutation.stopPropagation !== true) {
+            agent.pendingInterrupts =
+              finishedParams.outcome === "interrupt"
+                ? [...finishedParams.interrupts]
+                : [];
+          }
 
           return emitUpdates();
         }

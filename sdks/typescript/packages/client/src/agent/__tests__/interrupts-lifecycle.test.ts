@@ -65,4 +65,27 @@ describe("AbstractAgent — interrupt lifecycle enforcement", () => {
       agent.runAgent({ resume: [{ interruptId: "int-1", status: "resolved" }] }),
     ).rejects.toThrow(/expired/i);
   });
+
+  it("clone() preserves pendingInterrupts", () => {
+    const agent = new StubAgent();
+    agent.pendingInterrupts = [
+      { id: "int-1", reason: "tool_call" },
+      { id: "int-2", reason: "confirmation" },
+    ];
+    const cloned = agent.clone();
+    expect(cloned.pendingInterrupts).toEqual(agent.pendingInterrupts);
+    // Defensive copy: mutating the clone must not leak into the original.
+    cloned.pendingInterrupts.push({ id: "int-3", reason: "tool_call" });
+    expect(agent.pendingInterrupts).toHaveLength(2);
+  });
+
+  it("clone() leaves pendingInterrupts as a usable empty array on a fresh agent", async () => {
+    const agent = new StubAgent();
+    const cloned = agent.clone();
+    // Regression test: Object.create skipped class field initializers, so
+    // `pendingInterrupts` could land as `undefined` and runAgent() would throw
+    // `TypeError: Cannot read properties of undefined (reading 'length')`.
+    expect(cloned.pendingInterrupts).toEqual([]);
+    await expect(cloned.runAgent()).resolves.toBeDefined();
+  });
 });
