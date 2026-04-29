@@ -7,6 +7,7 @@ import { MastraAgent } from "../mastra";
 export class FakeMemory {
   threads: Map<string, any> = new Map();
   workingMemoryValue: string | undefined = undefined;
+  recallMessages: any[] = [];
 
   async getThreadById({ threadId }: { threadId: string }) {
     return this.threads.get(threadId) ?? null;
@@ -18,6 +19,10 @@ export class FakeMemory {
 
   async getWorkingMemory(_opts: any): Promise<string | undefined> {
     return this.workingMemoryValue;
+  }
+
+  async recall(_opts: any): Promise<{ messages: any[] }> {
+    return { messages: this.recallMessages };
   }
 }
 
