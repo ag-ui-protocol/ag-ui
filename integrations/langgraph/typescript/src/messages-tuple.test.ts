@@ -633,6 +633,121 @@ describe("messages-tuple stream mode", () => {
       expect(run2Starts[0].messageId).toBe("run2-chunk");
     });
 
+    it("mints a fresh messageId when the graph transitions to a different node", () => {
+      // Different nodes within one run produce separate message bubbles.
+      // Mimics a supervisor → specialist agent flow. Drives the test through
+      // handleNodeChange (the same code path the outer event loop uses to
+      // update activeRun.nodeName) so the test covers the loop+handler
+      // interaction, not just the handler in isolation.
+      const { agent, events } = createAgent();
+      (agent as any).activeRun.nodeName = "supervisor";
+
+      // 1. Supervisor emits its routing message.
+      agent.handleSingleEvent([
+        {
+          type: "AIMessageChunk",
+          id: "msg-sup",
+          content: "Routing to billing",
+          response_metadata: {},
+        },
+        {},
+      ]);
+
+      // 2. Supervisor's stream finishes. Clears messagesInProcess so the next
+      //    text chunk enters the "new stream" branch.
+      agent.handleSingleEvent([
+        {
+          type: "AIMessageChunk",
+          id: "msg-sup",
+          content: "",
+          response_metadata: { finish_reason: "stop" },
+        },
+        {},
+      ]);
+
+      // 3. Graph transitions to the billing node. This is what the outer
+      //    loop does when it sees a different langgraph_node in event
+      //    metadata; we drive it directly to mimic that side effect.
+      agent.handleNodeChange("billing");
+
+      // 4. Billing emits its response. Different node, so fresh id.
+      agent.handleSingleEvent([
+        {
+          type: "AIMessageChunk",
+          id: "msg-bil",
+          content: "Here's your invoice",
+          response_metadata: {},
+        },
+        {},
+      ]);
+
+      const textStarts = events.filter(
+        (e) => e.type === EventType.TEXT_MESSAGE_START,
+      );
+      expect(textStarts).toHaveLength(2);
+      expect(textStarts[0].messageId).toBe("msg-sup");
+      expect(textStarts[1].messageId).toBe("msg-bil");
+      expect(textStarts[0].messageId).not.toBe(textStarts[1].messageId);
+    });
+
+    it("reuses the same messageId across LLM invocations within a single node", () => {
+      // The canonical bug case from #1317: text → tool → text within one
+      // node, where the second text comes from a fresh LLM invocation with
+      // a different chunk.id. Confirms node-boundary scoping doesn't break
+      // the original fix.
+      const { agent, events } = createAgent();
+      (agent as any).activeRun.nodeName = "agent";
+
+      agent.handleSingleEvent([
+        {
+          type: "AIMessageChunk",
+          id: "chunk-1",
+          content: "Let me search",
+          response_metadata: {},
+        },
+        {},
+      ]);
+      agent.handleSingleEvent([
+        {
+          type: "AIMessageChunk",
+          id: "chunk-1",
+          content: "",
+          tool_call_chunks: [{ id: "tc-1", name: "search", args: "" }],
+          response_metadata: {},
+        },
+        {},
+      ]);
+      agent.handleSingleEvent([
+        {
+          type: "AIMessageChunk",
+          id: "chunk-1",
+          content: "",
+          response_metadata: { finish_reason: "stop" },
+        },
+        {},
+      ]);
+      // No node change. Fresh LLM invocation, different chunk.id.
+      agent.handleSingleEvent([
+        {
+          type: "AIMessageChunk",
+          id: "chunk-2",
+          content: "The answer is 42",
+          response_metadata: {},
+        },
+        {},
+      ]);
+
+      const textStarts = events.filter(
+        (e) => e.type === EventType.TEXT_MESSAGE_START,
+      );
+      expect(textStarts.length).toBeGreaterThanOrEqual(2);
+      const firstId = textStarts[0].messageId;
+      for (const start of textStarts) {
+        expect(start.messageId).toBe(firstId);
+      }
+      expect(firstId).toBe("chunk-1");
+    });
+
     it("ManuallyEmitMessage uses its own messageId and does not mutate currentTextMessageId", () => {
       const { agent, events } = createAgent();
       (agent as any).activeRun.currentTextMessageId = "stable-stream-id";

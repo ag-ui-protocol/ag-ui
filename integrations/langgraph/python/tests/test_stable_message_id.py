@@ -221,6 +221,91 @@ class TestStableMessageId:
         assert run2_id == "run2-chunk"
 
     @pytest.mark.asyncio
+    async def test_node_transition_mints_fresh_message_id(self):
+        """Different nodes within one run produce separate message bubbles.
+        Mimics a supervisor → specialist agent flow: each node's text gets
+        its own message_id, so the frontend renders them as distinct bubbles.
+
+        Drives the test through handle_node_change (the same code path the
+        outer _handle_stream_events loop uses to update active_run.node_name)
+        so the test covers the loop-handler interaction, not just the handler
+        in isolation.
+        """
+        agent = _make_agent()
+        agent.active_run["node_name"] = "supervisor"
+
+        # 1. Supervisor emits its routing message.
+        async for _ in agent._handle_single_event(
+            _make_text_chunk("msg-sup", "Routing to billing"), {}
+        ):
+            pass
+
+        # 2. Supervisor's LLM call ends. Clears message_in_progress so the
+        #    next text chunk enters the "new stream" branch.
+        async for _ in agent._handle_single_event(_make_model_end_event(), {}):
+            pass
+
+        # 3. Graph transitions to the billing node. This is what the outer
+        #    loop does when it sees a different langgraph_node in event
+        #    metadata; we drive it directly to mimic that side effect.
+        for _ in agent.handle_node_change("billing"):
+            pass
+
+        # 4. Billing emits its response. Different node, so it must mint a
+        #    fresh message_id even though the run hasn't ended.
+        async for _ in agent._handle_single_event(
+            _make_text_chunk("msg-bil", "Here's your invoice"), {}
+        ):
+            pass
+
+        text_starts = [e for e in agent.dispatched if e.type == EventType.TEXT_MESSAGE_START]
+        assert len(text_starts) == 2, (
+            f"Expected 2 TEXT_MESSAGE_STARTs (one per node), got {len(text_starts)}"
+        )
+        assert text_starts[0].message_id != text_starts[1].message_id, (
+            "Different nodes within one run must mint separate message_ids; "
+            f"both got {text_starts[0].message_id!r}"
+        )
+        assert text_starts[0].message_id == "msg-sup"
+        assert text_starts[1].message_id == "msg-bil"
+
+    @pytest.mark.asyncio
+    async def test_same_node_across_llm_invocations_reuses_id(self):
+        """Within a single node, text resuming after an LLM-call boundary
+        (chat model end + new chat model start with a different chunk.id)
+        must still reuse the pinned id. This is the canonical bug case from
+        #1317; we run it explicitly through handle_node_change to confirm
+        the node-boundary scoping doesn't break the original fix.
+        """
+        agent = _make_agent()
+        agent.active_run["node_name"] = "agent"
+
+        # No node change in this scenario; text chunks come from successive
+        # LLM invocations within the same agent node.
+        async for _ in agent._handle_single_event(
+            _make_text_chunk("chunk-1", "Let me search"), {}
+        ):
+            pass
+        async for _ in agent._handle_single_event(
+            _make_tool_call_start_chunk("chunk-1", "tc-1", "search"), {}
+        ):
+            pass
+        async for _ in agent._handle_single_event(_make_model_end_event(), {}):
+            pass
+        # New LLM invocation in the same node yields a different chunk.id.
+        async for _ in agent._handle_single_event(
+            _make_text_chunk("chunk-2", "The answer is 42"), {}
+        ):
+            pass
+
+        text_starts = [e for e in agent.dispatched if e.type == EventType.TEXT_MESSAGE_START]
+        assert len(text_starts) >= 2
+        assert text_starts[0].message_id == text_starts[1].message_id == "chunk-1", (
+            "Text from successive LLM invocations within the same node must "
+            "share one message_id"
+        )
+
+    @pytest.mark.asyncio
     async def test_manually_emitted_message_uses_supplied_id(self):
         """ManuallyEmitMessage carries its own message_id and must not consult
         or mutate current_text_message_id."""

@@ -998,11 +998,20 @@ export class LangGraphAgent extends AbstractAgent {
         if (isMessageContentEvent && shouldEmitMessages) {
           // No existing message yet, also init the message
           if (!currentStream) {
-            // Reuse the stable ID from earlier in this run so that text
-            // resuming after a tool call stays in the same message bubble.
+            // chunk.id changes per model invocation, so a text→tool→text
+            // sequence within one node would otherwise render as multiple
+            // bubbles. Pin the first id per node. Different nodes (e.g. a
+            // supervisor routing to specialist agents) get fresh ids so their
+            // messages stay in separate bubbles. See #1317.
+            const storedId = this.activeRun!.currentTextMessageId;
+            const storedNode = this.activeRun!.currentTextMessageNode;
+            const currentNode = this.activeRun!.nodeName;
             const messageId =
-              this.activeRun!.currentTextMessageId ?? event.data.chunk.id;
+              storedId !== undefined && storedNode === currentNode
+                ? storedId
+                : event.data.chunk.id;
             this.activeRun!.currentTextMessageId = messageId;
+            this.activeRun!.currentTextMessageNode = currentNode;
             this.dispatchEvent({
               type: EventType.TEXT_MESSAGE_START,
               role: "assistant",
@@ -1313,10 +1322,20 @@ export class LangGraphAgent extends AbstractAgent {
     // Handle text content streaming
     if (content) {
       if (!currentStream) {
-        // Reuse the stable ID from earlier in this run so that text
-        // resuming after a tool call stays in the same message bubble.
-        const messageId = this.activeRun!.currentTextMessageId ?? chunk.id;
+        // chunk.id changes per model invocation, so a text→tool→text
+        // sequence within one node would otherwise render as multiple
+        // bubbles. Pin the first id per node. Different nodes (e.g. a
+        // supervisor routing to specialist agents) get fresh ids so their
+        // messages stay in separate bubbles. See #1317.
+        const storedId = this.activeRun!.currentTextMessageId;
+        const storedNode = this.activeRun!.currentTextMessageNode;
+        const currentNode = this.activeRun!.nodeName;
+        const messageId =
+          storedId !== undefined && storedNode === currentNode
+            ? storedId
+            : chunk.id;
         this.activeRun!.currentTextMessageId = messageId;
+        this.activeRun!.currentTextMessageNode = currentNode;
         this.dispatchEvent({
           type: EventType.TEXT_MESSAGE_START,
           role: "assistant",
