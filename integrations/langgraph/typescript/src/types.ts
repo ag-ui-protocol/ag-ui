@@ -1,4 +1,7 @@
-import { AssistantGraph, Message as LangGraphMessage } from "@langchain/langgraph-sdk";
+import {
+  AssistantGraph,
+  Message as LangGraphMessage,
+} from "@langchain/langgraph-sdk";
 import { MessageType } from "@langchain/core/messages";
 import { RunAgentInput } from "@ag-ui/core";
 
@@ -23,8 +26,8 @@ export type LangGraphToolWithName = {
     name: string;
     description: string;
     parameters: any;
-  },
-}
+  };
+};
 
 export type State<TDefinedState = Record<string, any>> = {
   [k in keyof TDefinedState]: TDefinedState[k] | null;
@@ -32,10 +35,10 @@ export type State<TDefinedState = Record<string, any>> = {
 export interface StateEnrichment {
   messages: LangGraphMessage[];
   tools: LangGraphToolWithName[];
-  'ag-ui': {
+  "ag-ui": {
     tools: LangGraphToolWithName[];
-    context: RunAgentInput['context']
-  }
+    context: RunAgentInput["context"];
+  };
 }
 
 export type SchemaKeys = {
@@ -53,10 +56,10 @@ export type MessageInProgress = {
 
 export type ReasoningInProgress = {
   index: number;
-  type?: LangGraphReasoning['type'];
+  type?: LangGraphReasoning["type"];
   messageId: string;
   signature?: string;
-}
+};
 
 export interface RunMetadata {
   id: string;
@@ -66,7 +69,7 @@ export interface RunMetadata {
   exitingNode?: boolean;
   manuallyEmittedState?: State | null;
   threadId?: string;
-  graphInfo?: AssistantGraph
+  graphInfo?: AssistantGraph;
   hasFunctionStreaming?: boolean;
   // True once the platform-assigned run id is known (set from stream metadata)
   serverRunIdKnown?: boolean;
@@ -75,6 +78,10 @@ export interface RunMetadata {
   // execution; cleared in OnToolEnd/OnToolError. While set, STATE_SNAPSHOT
   // emission is suppressed so optimistic UI state is not overwritten.
   modelMadeToolCall?: boolean;
+  // Message ID saved when text is paused for tool calls (not ended)
+  pausedTextMessageId?: string | null;
+  // Stable message ID cached from first text chunk, reused across chunks
+  stableMessageId?: string | null;
 }
 
 export type MessagesInProgressRecord = Record<string, MessageInProgress | null>;
@@ -107,7 +114,8 @@ interface LangGraphPlatformResultMessage extends BaseLangGraphPlatformMessage {
   name: string;
 }
 
-interface LangGraphPlatformActionExecutionMessage extends BaseLangGraphPlatformMessage {
+interface LangGraphPlatformActionExecutionMessage
+  extends BaseLangGraphPlatformMessage {
   tool_calls: ToolCall[];
 }
 
@@ -130,7 +138,7 @@ export interface PredictStateTool {
 }
 
 export interface LangGraphReasoning {
-  type: 'text';
+  type: "text";
   text: string;
   index: number;
   signature?: string;

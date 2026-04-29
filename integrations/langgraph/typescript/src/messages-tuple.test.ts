@@ -14,7 +14,7 @@ import { EventType } from "@ag-ui/client";
 function createAgent() {
   const agent = new LangGraphAgent({
     graphId: "test-graph",
-    url: "http://localhost:8000",
+    deploymentUrl: "http://localhost:8000",
   });
 
   // Wire up a mock subscriber and activeRun so dispatchEvent works
@@ -70,7 +70,12 @@ describe("messages-tuple stream mode", () => {
 
       // Now a messages-tuple array should be skipped
       agent.handleSingleEvent([
-        { type: "AIMessageChunk", id: "msg-1", content: "Hello", response_metadata: {} },
+        {
+          type: "AIMessageChunk",
+          id: "msg-1",
+          content: "Hello",
+          response_metadata: {},
+        },
         {},
       ]);
 
@@ -93,7 +98,9 @@ describe("messages-tuple stream mode", () => {
         },
       });
 
-      expect(events.some((e) => e.type === EventType.TEXT_MESSAGE_START)).toBe(true);
+      expect(events.some((e) => e.type === EventType.TEXT_MESSAGE_START)).toBe(
+        true,
+      );
     });
   });
 
@@ -129,12 +136,22 @@ describe("messages-tuple stream mode", () => {
 
       // First chunk starts the message
       agent.handleSingleEvent([
-        { type: "AIMessageChunk", id: "msg-1", content: "Hello", response_metadata: {} },
+        {
+          type: "AIMessageChunk",
+          id: "msg-1",
+          content: "Hello",
+          response_metadata: {},
+        },
         {},
       ]);
       // Second chunk continues
       agent.handleSingleEvent([
-        { type: "AIMessageChunk", id: "msg-1", content: " world", response_metadata: {} },
+        {
+          type: "AIMessageChunk",
+          id: "msg-1",
+          content: " world",
+          response_metadata: {},
+        },
         {},
       ]);
 
@@ -149,7 +166,12 @@ describe("messages-tuple stream mode", () => {
       const { agent, events } = createAgent();
 
       agent.handleSingleEvent([
-        { type: "AIMessageChunk", id: "msg-1", content: "Hello", response_metadata: {} },
+        {
+          type: "AIMessageChunk",
+          id: "msg-1",
+          content: "Hello",
+          response_metadata: {},
+        },
         {},
       ]);
       agent.handleSingleEvent([
@@ -162,7 +184,9 @@ describe("messages-tuple stream mode", () => {
         {},
       ]);
 
-      const endEvents = events.filter((e) => e.type === EventType.TEXT_MESSAGE_END);
+      const endEvents = events.filter(
+        (e) => e.type === EventType.TEXT_MESSAGE_END,
+      );
       expect(endEvents).toHaveLength(1);
       expect(endEvents[0].messageId).toBe("msg-1");
     });
@@ -232,7 +256,9 @@ describe("messages-tuple stream mode", () => {
         {},
       ]);
 
-      const endEvents = events.filter((e) => e.type === EventType.TOOL_CALL_END);
+      const endEvents = events.filter(
+        (e) => e.type === EventType.TOOL_CALL_END,
+      );
       expect(endEvents).toHaveLength(1);
       expect(endEvents[0].toolCallId).toBe("tc-1");
     });
@@ -290,7 +316,12 @@ describe("messages-tuple stream mode", () => {
 
       // Start text
       agent.handleSingleEvent([
-        { type: "AIMessageChunk", id: "msg-1", content: "Let me search", response_metadata: {} },
+        {
+          type: "AIMessageChunk",
+          id: "msg-1",
+          content: "Let me search",
+          response_metadata: {},
+        },
         {},
       ]);
 
@@ -307,7 +338,9 @@ describe("messages-tuple stream mode", () => {
       ]);
 
       const textEnd = events.find((e) => e.type === EventType.TEXT_MESSAGE_END);
-      const toolStart = events.find((e) => e.type === EventType.TOOL_CALL_START);
+      const toolStart = events.find(
+        (e) => e.type === EventType.TOOL_CALL_START,
+      );
       expect(textEnd).toBeDefined();
       expect(toolStart).toBeDefined();
 
