@@ -1061,9 +1061,11 @@ class LangGraphAgent:
                     return
 
                 if bool(current_stream and current_stream.get("id")) == False:
-                    # Reuse the stable ID from earlier in this run so that text
-                    # resuming after a tool call stays in the same message bubble.
-                    message_id = self.active_run.get("current_text_message_id") or chunk_id
+                    # chunk_id changes per model invocation, so a text→tool→text
+                    # sequence would otherwise render as multiple bubbles. Pin the
+                    # first id for the run. See #1317.
+                    stored_id = self.active_run.get("current_text_message_id")
+                    message_id = stored_id if stored_id is not None else chunk_id
                     self.active_run["current_text_message_id"] = message_id
                     yield self._dispatch_event(
                         TextMessageStartEvent(

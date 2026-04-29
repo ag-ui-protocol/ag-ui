@@ -62,8 +62,14 @@ RunMetadata = TypedDict("RunMetadata", {
     "manually_emitted_state": NotRequired[Optional[State]],
     # Reasoning / thinking
     "reasoning_process": NotRequired[Optional[ThinkingProcess]],
-    # Stable text message ID reused across text→tool→text sequences in one run
-    "current_text_message_id": NotRequired[Optional[str]],
+    # Set on the first auto-streamed text chunk of a run (from the chunk's id)
+    # and reused for every subsequent TEXT_MESSAGE_START in the same run, so
+    # text resuming after a tool call (or after a fresh model invocation in a
+    # text→tool→text sequence) stays in the same UI bubble. Never cleared
+    # mid-run; reset implicitly on the next run when active_run is replaced.
+    # Not used by ManuallyEmitMessage events — those carry their own message_id
+    # and bypass this field entirely.
+    "current_text_message_id": NotRequired[str],
 })
 
 MessagesInProgressRecord = Dict[str, Optional[MessageInProgress]]

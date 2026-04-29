@@ -78,8 +78,14 @@ export interface RunMetadata {
   // execution; cleared in OnToolEnd/OnToolError. While set, STATE_SNAPSHOT
   // emission is suppressed so optimistic UI state is not overwritten.
   modelMadeToolCall?: boolean;
-  // Stable text message ID reused across text→tool→text sequences in one run
-  currentTextMessageId?: string | null;
+  // Set on the first auto-streamed text chunk of a run (from the chunk's id)
+  // and reused for every subsequent TEXT_MESSAGE_START in the same run, so
+  // text resuming after a tool call (or after a fresh model invocation in a
+  // text→tool→text sequence) stays in the same UI bubble. Never cleared
+  // mid-run; reset implicitly on the next run when activeRun is replaced.
+  // Not used by ManuallyEmitMessage events — those carry their own messageId
+  // and bypass this field entirely.
+  currentTextMessageId?: string;
 }
 
 export type MessagesInProgressRecord = Record<string, MessageInProgress | null>;

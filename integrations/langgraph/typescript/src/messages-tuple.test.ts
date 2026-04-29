@@ -489,5 +489,169 @@ describe("messages-tuple stream mode", () => {
       expect(contentAfterTool).toHaveLength(1);
       expect(contentAfterTool[0].messageId).toBe(firstId);
     });
+
+    it("reuses the same messageId across multiple text/tool cycles in one run", () => {
+      // Three text segments separated by two tool calls all share one
+      // messageId. Pins the invariant against any future "reset on tool end".
+      const { agent, events } = createAgent();
+
+      // Cycle 1: text → tool → finish
+      agent.handleSingleEvent([
+        {
+          type: "AIMessageChunk",
+          id: "msg-a",
+          content: "First",
+          response_metadata: {},
+        },
+        {},
+      ]);
+      agent.handleSingleEvent([
+        {
+          type: "AIMessageChunk",
+          id: "msg-a",
+          content: "",
+          tool_call_chunks: [{ id: "tc-1", name: "search", args: "" }],
+          response_metadata: {},
+        },
+        {},
+      ]);
+      agent.handleSingleEvent([
+        {
+          type: "AIMessageChunk",
+          id: "msg-a",
+          content: "",
+          response_metadata: { finish_reason: "stop" },
+        },
+        {},
+      ]);
+
+      // Cycle 2: text (new chunk id) → tool → finish
+      agent.handleSingleEvent([
+        {
+          type: "AIMessageChunk",
+          id: "msg-b",
+          content: "Second",
+          response_metadata: {},
+        },
+        {},
+      ]);
+      agent.handleSingleEvent([
+        {
+          type: "AIMessageChunk",
+          id: "msg-b",
+          content: "",
+          tool_call_chunks: [{ id: "tc-2", name: "search", args: "" }],
+          response_metadata: {},
+        },
+        {},
+      ]);
+      agent.handleSingleEvent([
+        {
+          type: "AIMessageChunk",
+          id: "msg-b",
+          content: "",
+          response_metadata: { finish_reason: "stop" },
+        },
+        {},
+      ]);
+
+      // Cycle 3: final text segment with a third chunk id
+      agent.handleSingleEvent([
+        {
+          type: "AIMessageChunk",
+          id: "msg-c",
+          content: "Third",
+          response_metadata: {},
+        },
+        {},
+      ]);
+
+      const textStarts = events.filter(
+        (e) => e.type === EventType.TEXT_MESSAGE_START,
+      );
+      expect(textStarts.length).toBeGreaterThanOrEqual(3);
+      const firstId = textStarts[0].messageId;
+      for (const start of textStarts) {
+        expect(start.messageId).toBe(firstId);
+      }
+
+      const deltasToId = new Map<string, string>();
+      for (const e of events) {
+        if (e.type === EventType.TEXT_MESSAGE_CONTENT) {
+          deltasToId.set(e.delta, e.messageId);
+        }
+      }
+      expect(deltasToId.get("First")).toBe(firstId);
+      expect(deltasToId.get("Second")).toBe(firstId);
+      expect(deltasToId.get("Third")).toBe(firstId);
+    });
+
+    it("does not reuse a prior run's messageId on a new run", () => {
+      // Mimic the run-boundary reset that runAgentStream performs at the
+      // start of each run by replacing activeRun wholesale.
+      const { agent, events } = createAgent();
+
+      agent.handleSingleEvent([
+        {
+          type: "AIMessageChunk",
+          id: "run1-chunk",
+          content: "Hello",
+          response_metadata: {},
+        },
+        {},
+      ]);
+      const run1Starts = events.filter(
+        (e) => e.type === EventType.TEXT_MESSAGE_START,
+      );
+      expect(run1Starts).toHaveLength(1);
+      const run1Id = run1Starts[0].messageId;
+
+      // Run boundary: runAgentStream replaces activeRun with a fresh object
+      (agent as any).activeRun = {
+        id: "run-2",
+        threadId: "thread-1",
+        hasFunctionStreaming: false,
+      };
+      (agent as any).messagesInProcess = {};
+      events.length = 0;
+
+      agent.handleSingleEvent([
+        {
+          type: "AIMessageChunk",
+          id: "run2-chunk",
+          content: "World",
+          response_metadata: {},
+        },
+        {},
+      ]);
+
+      const run2Starts = events.filter(
+        (e) => e.type === EventType.TEXT_MESSAGE_START,
+      );
+      expect(run2Starts).toHaveLength(1);
+      expect(run2Starts[0].messageId).not.toBe(run1Id);
+      expect(run2Starts[0].messageId).toBe("run2-chunk");
+    });
+
+    it("ManuallyEmitMessage uses its own messageId and does not mutate currentTextMessageId", () => {
+      const { agent, events } = createAgent();
+      (agent as any).activeRun.currentTextMessageId = "stable-stream-id";
+
+      agent.handleSingleEvent({
+        event: "on_custom_event",
+        name: "manually_emit_message",
+        metadata: { "emit-messages": true, "emit-tool-calls": true },
+        data: { message_id: "user-supplied-id", message: "Hello" },
+      });
+
+      const textStarts = events.filter(
+        (e) => e.type === EventType.TEXT_MESSAGE_START,
+      );
+      expect(textStarts).toHaveLength(1);
+      expect(textStarts[0].messageId).toBe("user-supplied-id");
+      expect((agent as any).activeRun.currentTextMessageId).toBe(
+        "stable-stream-id",
+      );
+    });
   });
 });
