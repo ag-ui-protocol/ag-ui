@@ -39,9 +39,12 @@ export interface AgentConfig {
   debug?: AgentDebugConfig;
 }
 
+export type HttpAgentFetchFn = (url: string, requestInit: RequestInit) => Promise<Response>;
+
 export interface HttpAgentConfig extends AgentConfig {
   url: string;
   headers?: Record<string, string>;
+  fetch?: HttpAgentFetchFn;
 }
 
 export type RunAgentParameters = Partial<
