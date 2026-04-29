@@ -64,13 +64,28 @@ const Chat = () => {
       if (status !== "complete") {
         return <div data-testid="weather-info-loading">Loading weather...</div>;
       }
+
+      // Some integrations (e.g. LangGraph) deliver tool results as a JSON-encoded
+      // string in the ToolMessage content rather than a parsed object. Normalize
+      // so property access works in either case; otherwise every field reads as
+      // undefined and the card renders empty values.
+      let parsed: any = result;
+      if (typeof parsed === "string") {
+        try {
+          parsed = JSON.parse(parsed);
+        } catch {
+          parsed = {};
+        }
+      }
+      parsed = parsed ?? {};
+
       return (
         <div data-testid="weather-info">
-          <strong>Weather in {result?.city || args.location}</strong>
-          <div>Temperature: {result?.temperature}°C</div>
-          <div>Humidity: {result?.humidity}%</div>
-          <div>Wind Speed: {result?.windSpeed ?? result?.wind_speed} mph</div>
-          <div>Conditions: {result?.conditions}</div>
+          <strong>Weather in {parsed.city ?? args.location}</strong>
+          <div>Temperature: {parsed.temperature}°C</div>
+          <div>Humidity: {parsed.humidity}%</div>
+          <div>Wind Speed: {parsed.windSpeed ?? parsed.wind_speed} mph</div>
+          <div>Conditions: {parsed.conditions}</div>
         </div>
       );
     },
