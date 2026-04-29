@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { Interrupt } from "./types";
 import {
   ActivityDeltaEvent,
   ActivityDeltaEventProps,
@@ -275,9 +276,7 @@ export const createRunFinishedEvent = (props: RunFinishedEventProps): RunFinishe
  * Creates a RUN_FINISHED event with `outcome: { type: "success" }`.
  */
 export const createRunFinishedSuccessEvent = (
-  props: { threadId: string; runId: string; result?: unknown } & Partial<
-    Omit<RunFinishedEventProps, "threadId" | "runId" | "result" | "outcome">
-  >,
+  props: Omit<RunFinishedEventProps, "outcome">,
 ): RunFinishedEvent =>
   buildEvent(EventType.RUN_FINISHED, RunFinishedEventSchema, {
     ...props,
@@ -288,13 +287,7 @@ export const createRunFinishedSuccessEvent = (
  * Creates a RUN_FINISHED event with `outcome: { type: "interrupt", interrupts }`.
  */
 export const createRunFinishedInterruptEvent = (
-  props: {
-    threadId: string;
-    runId: string;
-    interrupts: NonNullable<
-      Extract<RunFinishedEventProps["outcome"], { type: "interrupt" }>
-    >["interrupts"];
-  } & Partial<Omit<RunFinishedEventProps, "threadId" | "runId" | "outcome">>,
+  props: Omit<RunFinishedEventProps, "outcome"> & { interrupts: Interrupt[] },
 ): RunFinishedEvent => {
   const { interrupts, ...rest } = props;
   return buildEvent(EventType.RUN_FINISHED, RunFinishedEventSchema, {

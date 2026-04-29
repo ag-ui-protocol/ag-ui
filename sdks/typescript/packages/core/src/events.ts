@@ -301,7 +301,7 @@ export const ReasoningEncryptedValueEventSchema = BaseEventSchema.extend({
   encryptedValue: z.string(),
 });
 
-export const EventSchemas = z.union([
+export const EventSchemas = z.discriminatedUnion("type", [
   TextMessageStartEventSchema,
   TextMessageContentEventSchema,
   TextMessageEndEventSchema,

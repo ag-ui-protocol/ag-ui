@@ -25,13 +25,14 @@ describe("Run Events and Misc Events", () => {
       expectRoundTripEquality(event);
     });
 
-    it("should round-trip encode/decode RunFinishedEvent event", () => {
+    it("should round-trip encode/decode RunFinishedEvent event (legacy, no outcome)", () => {
+      // Confirms back-compat: pre-interrupt-aware producers omit `outcome`
+      // entirely and the round-trip preserves that.
       const event: RunFinishedEvent = {
         type: EventType.RUN_FINISHED,
         timestamp: Date.now(),
         threadId: "thread-1234",
         runId: "run-5678",
-        outcome: { type: "success" },
       };
 
       expectRoundTripEquality(event);
@@ -226,7 +227,6 @@ describe("Run Events and Misc Events", () => {
           type: EventType.RUN_FINISHED,
           threadId: "thread-basic",
           runId: "run-basic",
-          outcome: { type: "success" },
         },
         { type: EventType.CUSTOM, name: "empty" },
       ];
@@ -252,7 +252,6 @@ describe("Run Events and Misc Events", () => {
           timestamp: Date.now(),
           threadId: "thread-full",
           runId: "run-full",
-          outcome: { type: "success" },
           rawEvent: { original: "data", from: "external_system" },
         },
       ];

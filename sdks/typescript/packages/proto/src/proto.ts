@@ -1,4 +1,11 @@
-import { BaseEvent, AGUIEvent, EventSchemas, EventType, Message } from "@ag-ui/core";
+import {
+  BaseEvent,
+  AGUIEvent,
+  EventSchemas,
+  EventType,
+  Message,
+  RunFinishedOutcome,
+} from "@ag-ui/core";
 import * as protoEvents from "./generated/events";
 import * as protoPatch from "./generated/patch";
 
@@ -228,16 +235,13 @@ export function encode(event: BaseEvent): Uint8Array {
   // proto's `outcome` (string) and `interrupts` (repeated) fields. The wire
   // shape stays stable; the TS layer just exposes a richer object.
   if (type === EventType.RUN_FINISHED) {
-    const outcome = rest.outcome as
-      | { type: "success" }
-      | { type: "interrupt"; interrupts: unknown[] }
-      | undefined;
+    const outcome: RunFinishedOutcome | undefined = rest.outcome;
     if (outcome === undefined) {
       rest.outcome = "";
       rest.interrupts = [];
     } else if (outcome.type === "interrupt") {
       rest.outcome = "interrupt";
-      rest.interrupts = Array.isArray(outcome.interrupts) ? outcome.interrupts : [];
+      rest.interrupts = outcome.interrupts;
     } else {
       rest.outcome = "success";
       rest.interrupts = [];
