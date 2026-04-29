@@ -42,6 +42,7 @@ export interface AgentConfig {
 export interface HttpAgentConfig extends AgentConfig {
   url: string;
   headers?: Record<string, string>;
+  credentials?: RequestCredentials;
 }
 
 export type RunAgentParameters = Partial<
