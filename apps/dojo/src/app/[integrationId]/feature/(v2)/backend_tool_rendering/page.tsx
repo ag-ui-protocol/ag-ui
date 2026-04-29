@@ -46,12 +46,27 @@ const Chat = () => {
         );
       }
 
+      // Some integrations (e.g. LangGraph) deliver tool results as a JSON-encoded
+      // string in the ToolMessage content rather than a parsed object. Normalize
+      // so property access works in either case; otherwise every field falls
+      // through to its `|| 0` default and the card shows 0° C.
+      let parsed: any = result;
+      if (typeof parsed === "string") {
+        try {
+          parsed = JSON.parse(parsed);
+        } catch {
+          parsed = {};
+        }
+      }
+      parsed = parsed ?? {};
+
       const weatherResult: WeatherToolResult = {
-        temperature: result?.temperature || 0,
-        conditions: result?.conditions || "clear",
-        humidity: result?.humidity || 0,
-        windSpeed: result?.wind_speed || 0,
-        feelsLike: result?.feels_like || result?.temperature || 0,
+        temperature: parsed.temperature ?? 0,
+        conditions: parsed.conditions ?? "clear",
+        humidity: parsed.humidity ?? 0,
+        windSpeed: parsed.wind_speed ?? parsed.windSpeed ?? 0,
+        feelsLike:
+          parsed.feels_like ?? parsed.feelsLike ?? parsed.temperature ?? 0,
       };
 
       const themeColor = getThemeColor(weatherResult.conditions);

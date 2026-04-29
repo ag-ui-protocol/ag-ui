@@ -164,6 +164,10 @@ class LangGraphAgent:
         return event
 
     async def run(self, input: RunAgentInput) -> AsyncGenerator[ProcessedEvents, None]:
+        # Normalize camelCase keys from the frontend to snake_case before forwarding.
+        # Required for all downstream forwarded_props consumers (node_name, stream_subgraphs,
+        # command.resume). Removing this conversion would silently break streaming options
+        # forwarded from JavaScript callers without raising an obvious error.
         forwarded_props = {}
         if hasattr(input, "forwarded_props") and input.forwarded_props:
             forwarded_props = {
@@ -183,8 +187,6 @@ class LangGraphAgent:
             "has_function_streaming": False,
             "model_made_tool_call": False,
             "state_reliable": True,
-            "streamed_messages": [],
-            "any_mid_stream_merge_fired": False,
         }
         self.active_run = INITIAL_ACTIVE_RUN
         try:
@@ -260,11 +262,6 @@ class LangGraphAgent:
                 if is_subgraph_stream and current_subgraph != self.current_subgraph:
                     self.current_subgraph = current_subgraph
                     # Every time a subgraph changes, we need to update the state and messages snapshots.
-                    # Record that a mid-stream merge fired: the post-run
-                    # snapshot must preserve these streamed_messages
-                    # (delivered to the client here) rather than wiping
-                    # them with a checkpoint-only final snapshot.
-                    self.active_run["any_mid_stream_merge_fired"] = True
                     async for ev in self.get_state_and_messages_snapshots(config):
                         yield ev
 
@@ -315,7 +312,7 @@ class LangGraphAgent:
 
                 should_exit = should_exit or (
                         event_type == "on_custom_event" and
-                        event["name"] == "exit"
+                        event["name"] == CustomEventNames.Exit
                     )
 
                 if current_node_name and current_node_name != self.active_run.get("node_name"):
@@ -427,29 +424,7 @@ class LangGraphAgent:
                 for ev in self.handle_node_change(node_name):
                     yield ev
 
-            # Post-run MESSAGES_SNAPSHOT semantics:
-            #
-            # - Runs where no mid-stream boundary snapshot fired: the
-            #   checkpoint is the authoritative final state. Do NOT merge
-            #   in ``streamed_messages`` — they include transient LLM
-            #   outputs (``.with_structured_output()`` / router /
-            #   classifier calls) that never committed, and their
-            #   presence here shows up as duplicate / empty assistant
-            #   bubbles in the final snapshot.
-            #
-            # - Runs where at least one mid-stream boundary snapshot
-            #   fired: keep the ``streamed_messages`` merge. Those
-            #   messages were already delivered to the client via the
-            #   mid-stream snapshots and must remain visible in the
-            #   final snapshot; the parent graph often returns
-            #   ``Command(goto=...)`` without folding them into state,
-            #   so the checkpoint alone is incomplete.
-            any_mid_stream_merge_fired = self.active_run.get(
-                "any_mid_stream_merge_fired", False
-            )
-            async for ev in self.get_state_and_messages_snapshots(
-                config, merge_streamed_messages=any_mid_stream_merge_fired
-            ):
+            async for ev in self.get_state_and_messages_snapshots(config):
                 yield ev
 
             for ev in self.handle_node_change(None):
@@ -475,7 +450,7 @@ class LangGraphAgent:
         langchain_messages = agui_messages_to_langchain(messages)
         state = self.langgraph_default_merge_state(state_input, langchain_messages, input)
         config["configurable"]["thread_id"] = thread_id
-        interrupts = agent_state.tasks[0].interrupts if agent_state.tasks and len(agent_state.tasks) > 0 else []
+        interrupts = self._collect_interrupts(agent_state.tasks)
         has_active_interrupts = len(interrupts) > 0
         resume_input = forwarded_props.get('command', {}).get('resume', None)
 
@@ -784,6 +759,11 @@ class LangGraphAgent:
         new_messages = [
             msg for msg in messages
             if msg.id not in existing_message_ids
+            and not (
+                isinstance(msg, ToolMessage)
+                and hasattr(msg, 'tool_call_id')
+                and msg.tool_call_id in replaced_tool_call_ids
+            )
         ]
 
         tools = input.tools or []
@@ -797,7 +777,8 @@ class LangGraphAgent:
                 else:
                     tools_as_dicts.append(tool)
 
-        all_tools = [*state.get("tools", []), *tools_as_dicts]
+        # Input tools first so they win over stale state tools on name collision
+        all_tools = [*tools_as_dicts, *(state.get("tools") or [])]
 
         # Remove duplicates based on tool name
         seen_names = set()
@@ -877,6 +858,21 @@ class LangGraphAgent:
             )
         ]
         return head + tail
+
+    @staticmethod
+    def _collect_interrupts(tasks) -> list:
+        """Collect interrupts from ALL tasks, not just tasks[0].
+
+        This fixes #1409 where parallel tool calls could have interrupts
+        on tasks other than the first one.
+        """
+        if not tasks or len(tasks) == 0:
+            return []
+        interrupts = []
+        for task in tasks:
+            task_interrupts = getattr(task, "interrupts", None) or []
+            interrupts.extend(task_interrupts)
+        return interrupts
 
     def get_state_snapshot(self, state: State) -> State:
         # Invariant: callers always operate within an active run.
@@ -1094,17 +1090,6 @@ class LangGraphAgent:
                 return
 
         elif event_type == LangGraphEventTypes.OnChatModelEnd:
-            output_msg = event.get("data", {}).get("output")
-            if isinstance(output_msg, BaseMessage):
-                self.active_run.setdefault("streamed_messages", []).append(output_msg)
-            else:
-                # Non-BaseMessage outputs (None / dicts / bespoke return types)
-                # can't be merged into the streamed_messages buffer. Log for
-                # observability — callers running in debug can see drops.
-                logger.debug(
-                    "OnChatModelEnd output not appended to streamed_messages (type=%r)",
-                    type(output_msg).__name__,
-                )
             if self.get_message_in_progress(self.active_run["id"]) and self.get_message_in_progress(self.active_run["id"]).get("tool_call_id"):
                 resolved = self._dispatch_event(
                     ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=self.get_message_in_progress(self.active_run["id"])["tool_call_id"], raw_event=event)
@@ -1523,30 +1508,8 @@ class LangGraphAgent:
 
         return kwargs
 
-    async def get_state_and_messages_snapshots(self, config: RunnableConfig, merge_streamed_messages: bool = True) -> AsyncGenerator[ProcessedEvents, None]:
-        """Emit STATE_SNAPSHOT + MESSAGES_SNAPSHOT for the current checkpoint.
-
-        ``merge_streamed_messages`` controls whether uncommitted messages
-        accumulated in ``active_run["streamed_messages"]`` are appended to
-        the checkpoint's message list before emitting MESSAGES_SNAPSHOT.
-
-        Mid-stream callers (subgraph-boundary transitions) pass ``True``
-        (the default) so in-flight subgraph messages surface before their
-        parent graph commits them to checkpoint state — otherwise clients
-        see a lag where assistant output streams from an inner subgraph
-        but the outer snapshot hasn't yet merged those messages.
-
-        The post-run caller passes ``True`` only when at least one
-        mid-stream merge already fired (``any_mid_stream_merge_fired``),
-        i.e. a subgraph handoff delivered ``streamed_messages`` to the
-        client that the parent graph never committed to state; the final
-        snapshot must preserve them. Otherwise the post-run caller
-        passes ``False`` so the final snapshot is emitted from the
-        checkpoint alone — dropping transient/intermediate LLM outputs
-        (e.g. ``.with_structured_output()`` / router / classifier calls)
-        that never committed and would otherwise appear as duplicate /
-        empty assistant bubbles.
-        """
+    async def get_state_and_messages_snapshots(self, config: RunnableConfig) -> AsyncGenerator[ProcessedEvents, None]:
+        """Emit STATE_SNAPSHOT + MESSAGES_SNAPSHOT for the current checkpoint."""
         # Invariant: snapshot emission only happens mid-run.
         if self.active_run is None:
             raise RuntimeError("get_state_and_messages_snapshots called outside an active run")
@@ -1566,26 +1529,7 @@ class LangGraphAgent:
             StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=self.get_state_snapshot(state_values))
         )
 
-        checkpoint_messages = state_values.get("messages", [])
-        if merge_streamed_messages:
-            streamed_messages = self.active_run.get("streamed_messages", [])
-            if streamed_messages:
-                checkpoint_ids = {getattr(m, "id", None) for m in checkpoint_messages} - {None}
-                extra = []
-                for m in streamed_messages:
-                    mid = getattr(m, "id", None)
-                    if not mid:
-                        # Streamed messages without an id cannot be deduplicated
-                        # against the checkpoint and would merge as duplicates;
-                        # log so the drop is observable in debug builds.
-                        logger.debug(
-                            "dropping streamed message without id: %r", type(m).__name__,
-                        )
-                        continue
-                    if mid not in checkpoint_ids:
-                        extra.append(m)
-                checkpoint_messages = checkpoint_messages + extra
-        snapshot_messages = self._filter_orphan_tool_messages(checkpoint_messages)
+        snapshot_messages = self._filter_orphan_tool_messages(state_values.get("messages", []))
         yield self._dispatch_event(
             MessagesSnapshotEvent(
                 type=EventType.MESSAGES_SNAPSHOT,
