@@ -729,6 +729,10 @@ class StrandsAgent:
             message_id = str(uuid.uuid4())
             message_started = False
             accumulated_text = ""
+            # Tracks the latest assistant text id that was actually emitted on
+            # the wire. Tool calls use it only when no snapshot will expose the
+            # tool-call AssistantMessage id.
+            last_emitted_text_message_id: str | None = None
             tool_calls_seen = {}
             current_state = dict(input_data.state or {})  # Track state for final snapshot
             stop_text_streaming = False
@@ -821,6 +825,7 @@ class StrandsAgent:
                                 role="assistant",
                             )
                             message_started = True
+                            last_emitted_text_message_id = message_id
 
                         text_chunk = str(event["data"])
                         accumulated_text += text_chunk
@@ -1291,11 +1296,20 @@ class StrandsAgent:
                                             value=predict_state_payload,
                                         )
 
+                                tool_parent_message_id = (
+                                    message_id
+                                    if self.config.emit_messages_snapshot
+                                    and not (
+                                        behavior_now
+                                        and behavior_now.skip_messages_snapshot
+                                    )
+                                    else last_emitted_text_message_id
+                                )
                                 yield ToolCallStartEvent(
                                     type=EventType.TOOL_CALL_START,
                                     tool_call_id=tool_use_id,
                                     tool_call_name=tool_name,
-                                    parent_message_id=message_id,
+                                    parent_message_id=tool_parent_message_id,
                                 )
                                 tool_calls_seen[tool_use_id]["start_emitted"] = True
                         elif tool_name and tool_use_id in tool_calls_seen:
@@ -1550,11 +1564,20 @@ class StrandsAgent:
                                         message_started = False
                                         message_id = str(uuid.uuid4())
 
+                                    tool_parent_message_id = (
+                                        message_id
+                                        if self.config.emit_messages_snapshot
+                                        and not (
+                                            behavior
+                                            and behavior.skip_messages_snapshot
+                                        )
+                                        else last_emitted_text_message_id
+                                    )
                                     yield ToolCallStartEvent(
                                         type=EventType.TOOL_CALL_START,
                                         tool_call_id=tool_use_id,
                                         tool_call_name=tool_name,
-                                        parent_message_id=message_id,
+                                        parent_message_id=tool_parent_message_id,
                                     )
 
                                     try:
