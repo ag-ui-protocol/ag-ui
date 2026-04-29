@@ -1061,18 +1061,32 @@ class LangGraphAgent:
                     return
 
                 if bool(current_stream and current_stream.get("id")) == False:
+                    # chunk_id changes per model invocation, so a text→tool→text
+                    # sequence within one node would otherwise render as multiple
+                    # bubbles. Pin the first id per node. Different nodes (e.g. a
+                    # supervisor routing to specialist agents) get fresh ids so
+                    # their messages stay in separate bubbles. See #1317.
+                    stored_id = self.active_run.get("current_text_message_id")
+                    stored_node = self.active_run.get("current_text_message_node")
+                    current_node = self.active_run.get("node_name")
+                    if stored_id is not None and stored_node == current_node:
+                        message_id = stored_id
+                    else:
+                        message_id = chunk_id
+                    self.active_run["current_text_message_id"] = message_id
+                    self.active_run["current_text_message_node"] = current_node
                     yield self._dispatch_event(
                         TextMessageStartEvent(
                             type=EventType.TEXT_MESSAGE_START,
                             role="assistant",
-                            message_id=chunk_id,
+                            message_id=message_id,
                             raw_event=event,
                         )
                     )
                     self.set_message_in_progress(
                         self.active_run["id"],
                         MessageInProgress(
-                            id=chunk_id,
+                            id=message_id,
                             tool_call_id=None,
                             tool_call_name=None
                         )
