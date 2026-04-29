@@ -314,7 +314,6 @@ class TestEvents(unittest.TestCase):
         event = RunFinishedEvent(
             thread_id="thread_123",
             run_id="run_456",
-            outcome="success",
             timestamp=1648214400000
         )
         self.assertEqual(event.thread_id, "thread_123")

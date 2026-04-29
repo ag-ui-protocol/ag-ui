@@ -236,30 +236,30 @@ describe("event factories", () => {
 });
 
 describe("createRunFinishedSuccessEvent", () => {
-  it("produces a success RUN_FINISHED event", () => {
+  it("produces a RUN_FINISHED event with outcome={ type: 'success' }", () => {
     const e = createRunFinishedSuccessEvent({
       threadId: "t-1",
       runId: "r-1",
-      outcome: "success",
       result: { ok: true },
     });
     expect(e.type).toBe(EventType.RUN_FINISHED);
-    expect(e.outcome).toBe("success");
+    expect(e.outcome).toEqual({ type: "success" });
     expect(e.result).toEqual({ ok: true });
   });
 });
 
 describe("createRunFinishedInterruptEvent", () => {
-  it("produces an interrupt RUN_FINISHED event", () => {
+  it("produces a RUN_FINISHED event with outcome={ type: 'interrupt', interrupts }", () => {
     const e = createRunFinishedInterruptEvent({
       threadId: "t-1",
       runId: "r-1",
-      outcome: "interrupt",
       interrupts: [{ id: "int-1", reason: "tool_call" }],
     });
     expect(e.type).toBe(EventType.RUN_FINISHED);
-    expect(e.outcome).toBe("interrupt");
-    expect(e.interrupts).toHaveLength(1);
+    expect(e.outcome?.type).toBe("interrupt");
+    if (e.outcome?.type === "interrupt") {
+      expect(e.outcome.interrupts).toHaveLength(1);
+    }
   });
 
   it("rejects empty interrupts array", () => {
@@ -267,33 +267,37 @@ describe("createRunFinishedInterruptEvent", () => {
       createRunFinishedInterruptEvent({
         threadId: "t-1",
         runId: "r-1",
-        outcome: "interrupt",
         interrupts: [],
       }),
     ).toThrow();
   });
 });
 
-describe("createRunFinishedEvent — deprecated shim", () => {
-  it("injects outcome='success' when caller omits it (legacy callers)", () => {
+describe("createRunFinishedEvent", () => {
+  it("produces a RUN_FINISHED event with no outcome (legacy shape)", () => {
     const e = createRunFinishedEvent({ threadId: "t-1", runId: "r-1", result: { ok: true } });
-    expect(e.outcome).toBe("success");
+    expect(e.outcome).toBeUndefined();
     expect(e.result).toEqual({ ok: true });
   });
 
-  it("accepts explicit outcome='success'", () => {
-    const e = createRunFinishedEvent({ threadId: "t-1", runId: "r-1", outcome: "success" });
-    expect(e.outcome).toBe("success");
+  it("accepts an explicit outcome={ type: 'success' }", () => {
+    const e = createRunFinishedEvent({
+      threadId: "t-1",
+      runId: "r-1",
+      outcome: { type: "success" },
+    });
+    expect(e.outcome).toEqual({ type: "success" });
   });
 
-  it("throws when caller bypasses TypeScript and passes outcome='interrupt'", () => {
-    expect(() =>
-      createRunFinishedEvent({
-        threadId: "t-1",
-        runId: "r-1",
-        // Intentionally simulating a TypeScript bypass (plain JS caller).
-        outcome: "interrupt",
-      } as unknown as Parameters<typeof createRunFinishedEvent>[0]),
-    ).toThrow(/outcome="success"/);
+  it("accepts an explicit outcome={ type: 'interrupt', interrupts }", () => {
+    const e = createRunFinishedEvent({
+      threadId: "t-1",
+      runId: "r-1",
+      outcome: {
+        type: "interrupt",
+        interrupts: [{ id: "int-1", reason: "tool_call" }],
+      },
+    });
+    expect(e.outcome?.type).toBe("interrupt");
   });
 });

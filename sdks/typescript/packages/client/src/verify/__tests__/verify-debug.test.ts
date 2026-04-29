@@ -48,7 +48,6 @@ describe("verifyEvents debug logging", () => {
       type: EventType.RUN_FINISHED,
       threadId: "thread-1",
       runId: "run-1",
-      outcome: "success",
     } as RunFinishedEvent);
     source$.complete();
   };

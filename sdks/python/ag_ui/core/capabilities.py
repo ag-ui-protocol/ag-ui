@@ -346,7 +346,8 @@ class HumanInTheLoopCapabilities(ConfiguredBaseModel):
         default=None,
         description=(
             "Set `true` if the agent participates in the AG-UI interrupt protocol "
-            '(emits RUN_FINISHED with outcome="interrupt", accepts resume[]).'
+            '(emits RUN_FINISHED with outcome={"type": "interrupt", "interrupts": [...]}, '
+            'accepts resume[]).'
         ),
     )
     approve_with_edits: Optional[bool] = Field(

@@ -40,7 +40,6 @@ import {
   BackwardCompatibility_0_0_39,
   BackwardCompatibility_0_0_45,
   BackwardCompatibility_0_0_47,
-  BackwardCompatibility_0_0_52,
 } from "@/middleware";
 import packageJson from "../../package.json";
 
@@ -60,7 +59,7 @@ export abstract class AbstractAgent {
   public subscribers: AgentSubscriber[] = [];
   public isRunning: boolean = false;
   /** Interrupts emitted by the most recent run that have not yet been resolved.
-   *  Populated when RUN_FINISHED arrives with outcome="interrupt".
+   *  Populated when RUN_FINISHED arrives with outcome.type === "interrupt".
    *  Cleared when a subsequent run completes successfully. */
   public pendingInterrupts: Interrupt[] = [];
   private middlewares: Middleware[] = [];
@@ -127,11 +126,6 @@ export abstract class AbstractAgent {
       this.middlewares.unshift(new BackwardCompatibility_0_0_47());
     }
 
-    // Auto-insert BackwardCompatibility_0_0_52 for backward compatibility with
-    // pre-interrupt-aware RUN_FINISHED events (missing `outcome`).
-    if (compareVersions(this.maxVersion, "0.0.52") <= 0) {
-      this.middlewares.unshift(new BackwardCompatibility_0_0_52());
-    }
   }
 
   public subscribe(subscriber: AgentSubscriber) {

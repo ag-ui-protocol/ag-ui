@@ -289,7 +289,8 @@ interface HumanInTheLoopCapabilities {
    *  to improve its behavior within the current session. */
   feedback?: boolean
   /** Set `true` if the agent participates in the AG-UI interrupt protocol (emits
-   *  `RunFinished` with `outcome: "interrupt"`, accepts `RunAgentInput.resume`). */
+   *  `RunFinished` with `outcome: { type: "interrupt", interrupts: [...] }`,
+   *  accepts `RunAgentInput.resume`). */
   interrupts?: boolean
   /** Set `true` if tool-call interrupts accept `editedArgs` in the resume payload.
    *  Only meaningful when `interrupts` is `true`. */

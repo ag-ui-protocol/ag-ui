@@ -258,7 +258,8 @@ class Tool(ConfiguredBaseModel):
 
 class Interrupt(ConfiguredBaseModel):
     """
-    A pause emitted in RUN_FINISHED with outcome="interrupt". The client resumes
+    A pause carried inside ``RunFinishedEvent.outcome`` when the outcome is
+    ``RunFinishedInterruptOutcome``. The client resumes
     by addressing this interrupt in the resume array of the next RunAgentInput.
     """
     id: str

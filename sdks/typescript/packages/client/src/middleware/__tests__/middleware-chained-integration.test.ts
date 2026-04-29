@@ -134,7 +134,6 @@ class TextChunkAgent extends AbstractAgent {
       } as TextMessageChunkEvent);
       subscriber.next({
         type: EventType.RUN_FINISHED,
-        outcome: "success",
         threadId: input.threadId,
         runId: input.runId,
       });
@@ -170,7 +169,6 @@ class FullTextAgent extends AbstractAgent {
       } as TextMessageEndEvent);
       subscriber.next({
         type: EventType.RUN_FINISHED,
-        outcome: "success",
         threadId: input.threadId,
         runId: input.runId,
       });
@@ -207,7 +205,6 @@ class ToolCallChunkAgent extends AbstractAgent {
       } as ToolCallResultEvent);
       subscriber.next({
         type: EventType.RUN_FINISHED,
-        outcome: "success",
         threadId: input.threadId,
         runId: input.runId,
       });
@@ -250,7 +247,6 @@ class FullToolCallAgent extends AbstractAgent {
       } as ToolCallResultEvent);
       subscriber.next({
         type: EventType.RUN_FINISHED,
-        outcome: "success",
         threadId: input.threadId,
         runId: input.runId,
       });
@@ -286,7 +282,6 @@ class TextAndStateAgent extends AbstractAgent {
       } as StateDeltaEvent);
       subscriber.next({
         type: EventType.RUN_FINISHED,
-        outcome: "success",
         threadId: input.threadId,
         runId: input.runId,
       });
@@ -331,7 +326,6 @@ class MessagesSnapshotAgent extends AbstractAgent {
       } as MessagesSnapshotEvent);
       subscriber.next({
         type: EventType.RUN_FINISHED,
-        outcome: "success",
         threadId: input.threadId,
         runId: input.runId,
       });
@@ -365,7 +359,6 @@ class MultiMessageAgent extends AbstractAgent {
       } as TextMessageChunkEvent);
       subscriber.next({
         type: EventType.RUN_FINISHED,
-        outcome: "success",
         threadId: input.threadId,
         runId: input.runId,
       });
@@ -416,7 +409,6 @@ class TextThenToolAgent extends AbstractAgent {
       } as ToolCallResultEvent);
       subscriber.next({
         type: EventType.RUN_FINISHED,
-        outcome: "success",
         threadId: input.threadId,
         runId: input.runId,
       });

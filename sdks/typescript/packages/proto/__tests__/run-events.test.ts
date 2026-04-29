@@ -31,7 +31,7 @@ describe("Run Events and Misc Events", () => {
         timestamp: Date.now(),
         threadId: "thread-1234",
         runId: "run-5678",
-        outcome: "success",
+        outcome: { type: "success" },
       };
 
       expectRoundTripEquality(event);
@@ -226,7 +226,7 @@ describe("Run Events and Misc Events", () => {
           type: EventType.RUN_FINISHED,
           threadId: "thread-basic",
           runId: "run-basic",
-          outcome: "success",
+          outcome: { type: "success" },
         },
         { type: EventType.CUSTOM, name: "empty" },
       ];
@@ -252,7 +252,7 @@ describe("Run Events and Misc Events", () => {
           timestamp: Date.now(),
           threadId: "thread-full",
           runId: "run-full",
-          outcome: "success",
+          outcome: { type: "success" },
           rawEvent: { original: "data", from: "external_system" },
         },
       ];

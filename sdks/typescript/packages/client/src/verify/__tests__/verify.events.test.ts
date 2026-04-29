@@ -25,7 +25,7 @@ import {
 } from "@ag-ui/core";
 
 const defaultRunContext = { threadId: "test-thread-id", runId: "test-run-id" };
-const finishedEvent: RunFinishedEvent = { type: EventType.RUN_FINISHED, outcome: "success", ...defaultRunContext };
+const finishedEvent: RunFinishedEvent = { type: EventType.RUN_FINISHED, ...defaultRunContext };
 
 describe("verifyEvents general validation", () => {
   // Test: Event IDs must match their parent events (e.g. TEXT_MESSAGE_CONTENT must have same ID as TEXT_MESSAGE_START)

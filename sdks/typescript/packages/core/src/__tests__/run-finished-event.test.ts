@@ -3,137 +3,68 @@ import {
   EventSchemas,
   EventType,
   RunFinishedEventSchema,
-  RunFinishedSuccessEventSchema,
-  RunFinishedInterruptEventSchema,
+  RunFinishedOutcomeSchema,
 } from "../events";
 
-describe("RunFinishedEvent — success variant", () => {
-  it("parses outcome='success' with a result", () => {
-    const parsed = RunFinishedSuccessEventSchema.parse({
+describe("RunFinishedEventSchema — outcome is optional and back-compat", () => {
+  it("parses a legacy event with no outcome", () => {
+    const parsed = RunFinishedEventSchema.parse({
       type: EventType.RUN_FINISHED,
       threadId: "t-1",
       runId: "r-1",
-      outcome: "success",
+    });
+    expect(parsed.outcome).toBeUndefined();
+  });
+
+  it("parses a legacy event with no outcome but with a result", () => {
+    const parsed = RunFinishedEventSchema.parse({
+      type: EventType.RUN_FINISHED,
+      threadId: "t-1",
+      runId: "r-1",
       result: { answer: 42 },
     });
-    expect(parsed.outcome).toBe("success");
+    expect(parsed.outcome).toBeUndefined();
     expect(parsed.result).toEqual({ answer: 42 });
   });
 
-  it("parses outcome='success' without result", () => {
-    const parsed = RunFinishedSuccessEventSchema.parse({
+  it("parses outcome={ type: 'success' }", () => {
+    const parsed = RunFinishedEventSchema.parse({
       type: EventType.RUN_FINISHED,
       threadId: "t-1",
       runId: "r-1",
-      outcome: "success",
+      outcome: { type: "success" },
+      result: { answer: 42 },
     });
-    expect(parsed.outcome).toBe("success");
-    expect(parsed.result).toBeUndefined();
+    expect(parsed.outcome).toEqual({ type: "success" });
+    expect(parsed.result).toEqual({ answer: 42 });
   });
 
-  it("rejects outcome='success' with outcome literal mismatch", () => {
-    expect(() =>
-      RunFinishedSuccessEventSchema.parse({
-        type: EventType.RUN_FINISHED,
-        threadId: "t-1",
-        runId: "r-1",
-        outcome: "interrupt",
-      }),
-    ).toThrow();
-  });
-
-  it("rejects outcome='success' with stray interrupts", () => {
-    expect(() =>
-      RunFinishedSuccessEventSchema.parse({
-        type: EventType.RUN_FINISHED,
-        threadId: "t-1",
-        runId: "r-1",
-        outcome: "success",
+  it("parses outcome={ type: 'interrupt', interrupts: [...] }", () => {
+    const parsed = RunFinishedEventSchema.parse({
+      type: EventType.RUN_FINISHED,
+      threadId: "t-1",
+      runId: "r-1",
+      outcome: {
+        type: "interrupt",
         interrupts: [{ id: "int-1", reason: "tool_call" }],
-      }),
-    ).toThrow();
+      },
+    });
+    expect(parsed.outcome?.type).toBe("interrupt");
+    if (parsed.outcome?.type === "interrupt") {
+      expect(parsed.outcome.interrupts).toHaveLength(1);
+    }
   });
 });
 
-describe("RunFinishedEvent — interrupt variant", () => {
-  it("parses outcome='interrupt' with non-empty interrupts", () => {
-    const parsed = RunFinishedInterruptEventSchema.parse({
-      type: EventType.RUN_FINISHED,
-      threadId: "t-1",
-      runId: "r-1",
-      outcome: "interrupt",
-      interrupts: [{ id: "int-1", reason: "tool_call" }],
-    });
-    expect(parsed.outcome).toBe("interrupt");
-    expect(parsed.interrupts).toHaveLength(1);
-  });
-
-  it("rejects outcome='interrupt' with empty interrupts array", () => {
+describe("RunFinishedOutcomeSchema — discriminated union", () => {
+  it("rejects outcome with empty interrupts", () => {
     expect(() =>
-      RunFinishedInterruptEventSchema.parse({
-        type: EventType.RUN_FINISHED,
-        threadId: "t-1",
-        runId: "r-1",
-        outcome: "interrupt",
-        interrupts: [],
-      }),
+      RunFinishedOutcomeSchema.parse({ type: "interrupt", interrupts: [] }),
     ).toThrow();
   });
 
-  it("rejects outcome='interrupt' with stray result", () => {
-    expect(() =>
-      RunFinishedInterruptEventSchema.parse({
-        type: EventType.RUN_FINISHED,
-        threadId: "t-1",
-        runId: "r-1",
-        outcome: "interrupt",
-        interrupts: [{ id: "int-1", reason: "tool_call" }],
-        result: "nope",
-      }),
-    ).toThrow();
-  });
-
-  it("rejects outcome='interrupt' with missing interrupts", () => {
-    expect(() =>
-      RunFinishedInterruptEventSchema.parse({
-        type: EventType.RUN_FINISHED,
-        threadId: "t-1",
-        runId: "r-1",
-        outcome: "interrupt",
-      }),
-    ).toThrow();
-  });
-});
-
-describe("RunFinishedEventSchema — discriminated by outcome via union", () => {
-  it("parses both variants", () => {
-    const success = RunFinishedEventSchema.parse({
-      type: EventType.RUN_FINISHED,
-      threadId: "t-1",
-      runId: "r-1",
-      outcome: "success",
-      result: "ok",
-    });
-    expect(success.outcome).toBe("success");
-
-    const interrupt = RunFinishedEventSchema.parse({
-      type: EventType.RUN_FINISHED,
-      threadId: "t-1",
-      runId: "r-1",
-      outcome: "interrupt",
-      interrupts: [{ id: "int-1", reason: "tool_call" }],
-    });
-    expect(interrupt.outcome).toBe("interrupt");
-  });
-
-  it("rejects events without an outcome field", () => {
-    expect(() =>
-      RunFinishedEventSchema.parse({
-        type: EventType.RUN_FINISHED,
-        threadId: "t-1",
-        runId: "r-1",
-      }),
-    ).toThrow();
+  it("rejects outcome with unknown type", () => {
+    expect(() => RunFinishedOutcomeSchema.parse({ type: "nope" })).toThrow();
   });
 });
 
@@ -143,11 +74,11 @@ describe("EventSchemas — outer union routes RUN_FINISHED correctly", () => {
       type: EventType.RUN_FINISHED,
       threadId: "t-1",
       runId: "r-1",
-      outcome: "success",
+      outcome: { type: "success" },
     });
     expect(parsed.type).toBe(EventType.RUN_FINISHED);
     if (parsed.type === EventType.RUN_FINISHED) {
-      expect(parsed.outcome).toBe("success");
+      expect(parsed.outcome?.type).toBe("success");
     }
   });
 
@@ -156,12 +87,26 @@ describe("EventSchemas — outer union routes RUN_FINISHED correctly", () => {
       type: EventType.RUN_FINISHED,
       threadId: "t-1",
       runId: "r-1",
-      outcome: "interrupt",
-      interrupts: [{ id: "int-1", reason: "tool_call" }],
+      outcome: {
+        type: "interrupt",
+        interrupts: [{ id: "int-1", reason: "tool_call" }],
+      },
     });
     expect(parsed.type).toBe(EventType.RUN_FINISHED);
-    if (parsed.type === EventType.RUN_FINISHED && parsed.outcome === "interrupt") {
-      expect(parsed.interrupts).toHaveLength(1);
+    if (parsed.type === EventType.RUN_FINISHED && parsed.outcome?.type === "interrupt") {
+      expect(parsed.outcome.interrupts).toHaveLength(1);
+    }
+  });
+
+  it("parses a legacy RUN_FINISHED event without outcome through the outer union", () => {
+    const parsed = EventSchemas.parse({
+      type: EventType.RUN_FINISHED,
+      threadId: "t-1",
+      runId: "r-1",
+    });
+    expect(parsed.type).toBe(EventType.RUN_FINISHED);
+    if (parsed.type === EventType.RUN_FINISHED) {
+      expect(parsed.outcome).toBeUndefined();
     }
   });
 });

@@ -5,7 +5,7 @@ import type {
   RunFinishedOutcome,
 } from "@ag-ui/core";
 
-export function getRunOutcome(event: RunFinishedEvent): RunFinishedOutcome {
+export function getRunOutcome(event: RunFinishedEvent): RunFinishedOutcome | undefined {
   return event.outcome;
 }
 

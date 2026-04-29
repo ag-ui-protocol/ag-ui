@@ -224,9 +224,22 @@ export function encode(event: BaseEvent): Uint8Array {
     });
   }
 
-  // since protobuf does not support optional arrays, ensure interrupts is always present on RunFinishedEvent
+  // RunFinishedEvent: flatten the nested `outcome` discriminated union into the
+  // proto's `outcome` (string) and `interrupts` (repeated) fields. The wire
+  // shape stays stable; the TS layer just exposes a richer object.
   if (type === EventType.RUN_FINISHED) {
-    if (!Array.isArray(rest.interrupts)) {
+    const outcome = rest.outcome as
+      | { type: "success" }
+      | { type: "interrupt"; interrupts: unknown[] }
+      | undefined;
+    if (outcome === undefined) {
+      rest.outcome = "";
+      rest.interrupts = [];
+    } else if (outcome.type === "interrupt") {
+      rest.outcome = "interrupt";
+      rest.interrupts = Array.isArray(outcome.interrupts) ? outcome.interrupts : [];
+    } else {
+      rest.outcome = "success";
       rest.interrupts = [];
     }
   }
@@ -292,13 +305,27 @@ export function decode(data: Uint8Array): BaseEvent {
     }
   }
 
-  // clean up empty default proto values for RunFinishedEvent
+  // RunFinishedEvent: rebuild the nested `outcome` discriminated union from the
+  // flat proto fields. Empty/missing `outcome` decodes to `undefined` (legacy
+  // event); "success" decodes to `{ type: "success" }`; "interrupt" decodes to
+  // `{ type: "interrupt", interrupts }`.
   if (decoded.type === EventType.RUN_FINISHED) {
     const runFinished = decoded as any;
-    if (runFinished.interrupts?.length === 0) {
-      delete runFinished.interrupts;
-    }
-    if (runFinished.outcome === "") {
+    const wireOutcome: string | undefined =
+      typeof runFinished.outcome === "string" && runFinished.outcome !== ""
+        ? runFinished.outcome
+        : undefined;
+    const wireInterrupts: any[] = Array.isArray(runFinished.interrupts)
+      ? runFinished.interrupts
+      : [];
+
+    delete runFinished.interrupts;
+
+    if (wireOutcome === "interrupt") {
+      runFinished.outcome = { type: "interrupt", interrupts: wireInterrupts };
+    } else if (wireOutcome === "success") {
+      runFinished.outcome = { type: "success" };
+    } else {
       delete runFinished.outcome;
     }
   }

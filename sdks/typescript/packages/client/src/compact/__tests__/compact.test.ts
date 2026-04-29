@@ -301,7 +301,7 @@ describe("Event Compaction", () => {
         { type: EventType.STATE_SNAPSHOT, snapshot: { count: 1 } },
         { type: EventType.STATE_SNAPSHOT, snapshot: { count: 2 } },
         { type: EventType.STATE_SNAPSHOT, snapshot: { count: 3 } },
-        { type: EventType.RUN_FINISHED, outcome: "success", threadId: "t1", runId: "r1" },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" },
       ];
 
       const compacted = compactEvents(events);
@@ -319,7 +319,7 @@ describe("Event Compaction", () => {
         { type: EventType.STATE_SNAPSHOT, snapshot: { count: 0, name: "test" } },
         { type: EventType.STATE_DELTA, delta: [{ op: "replace", path: "/count", value: 1 }] },
         { type: EventType.STATE_DELTA, delta: [{ op: "replace", path: "/count", value: 2 }] },
-        { type: EventType.RUN_FINISHED, outcome: "success", threadId: "t1", runId: "r1" },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" },
       ];
 
       const compacted = compactEvents(events);
@@ -336,7 +336,7 @@ describe("Event Compaction", () => {
         { type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" },
         { type: EventType.STATE_DELTA, delta: [{ op: "add", path: "/foo", value: "bar" }] },
         { type: EventType.STATE_DELTA, delta: [{ op: "add", path: "/baz", value: 42 }] },
-        { type: EventType.RUN_FINISHED, outcome: "success", threadId: "t1", runId: "r1" },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" },
       ];
 
       const compacted = compactEvents(events);
@@ -354,7 +354,7 @@ describe("Event Compaction", () => {
         { type: EventType.STATE_SNAPSHOT, snapshot: { a: 1, b: 2 } },
         { type: EventType.STATE_DELTA, delta: [{ op: "remove", path: "/b" }] },
         { type: EventType.STATE_DELTA, delta: [{ op: "add", path: "/c", value: 3 }] },
-        { type: EventType.RUN_FINISHED, outcome: "success", threadId: "t1", runId: "r1" },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" },
       ];
 
       const compacted = compactEvents(events);
@@ -368,11 +368,11 @@ describe("Event Compaction", () => {
         { type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" },
         { type: EventType.STATE_SNAPSHOT, snapshot: { step: 1 } },
         { type: EventType.STATE_DELTA, delta: [{ op: "replace", path: "/step", value: 2 }] },
-        { type: EventType.RUN_FINISHED, outcome: "success", threadId: "t1", runId: "r1" },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" },
         { type: EventType.RUN_STARTED, threadId: "t1", runId: "r2" },
         { type: EventType.STATE_SNAPSHOT, snapshot: { step: 10 } },
         { type: EventType.STATE_DELTA, delta: [{ op: "replace", path: "/step", value: 20 }] },
-        { type: EventType.RUN_FINISHED, outcome: "success", threadId: "t1", runId: "r2" },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r2" },
       ];
 
       const compacted = compactEvents(events);
@@ -396,7 +396,7 @@ describe("Event Compaction", () => {
         { type: EventType.TEXT_MESSAGE_START, messageId: "msg1", role: "assistant" },
         { type: EventType.TEXT_MESSAGE_CONTENT, messageId: "msg1", delta: "Hello" },
         { type: EventType.TEXT_MESSAGE_END, messageId: "msg1" },
-        { type: EventType.RUN_FINISHED, outcome: "success", threadId: "t1", runId: "r1" },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" },
       ];
 
       const compacted = compactEvents(events);
@@ -424,7 +424,7 @@ describe("Event Compaction", () => {
         { type: EventType.STATE_DELTA, delta: [{ op: "add", path: "/old", value: true }] },
         { type: EventType.STATE_SNAPSHOT, snapshot: { fresh: true } },
         { type: EventType.STATE_DELTA, delta: [{ op: "add", path: "/extra", value: 1 }] },
-        { type: EventType.RUN_FINISHED, outcome: "success", threadId: "t1", runId: "r1" },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" },
       ];
 
       const compacted = compactEvents(events);
@@ -441,7 +441,7 @@ describe("Event Compaction", () => {
         { type: EventType.TEXT_MESSAGE_CONTENT, messageId: "msg1", delta: "Hi" },
         { type: EventType.TEXT_MESSAGE_END, messageId: "msg1" },
         { type: EventType.STATE_DELTA, delta: [{ op: "replace", path: "/count", value: 1 }] },
-        { type: EventType.RUN_FINISHED, outcome: "success", threadId: "t1", runId: "r1" },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" },
       ];
 
       const compacted = compactEvents(events);
@@ -463,7 +463,7 @@ describe("Event Compaction", () => {
         { type: EventType.STATE_SNAPSHOT, snapshot: { preRun: true } },
         { type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" },
         { type: EventType.STATE_SNAPSHOT, snapshot: { inRun: true } },
-        { type: EventType.RUN_FINISHED, outcome: "success", threadId: "t1", runId: "r1" },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" },
       ];
 
       const compacted = compactEvents(events);
@@ -481,12 +481,12 @@ describe("Event Compaction", () => {
       const events = [
         { type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" },
         { type: EventType.STATE_SNAPSHOT, snapshot: { run: 1 } },
-        { type: EventType.RUN_FINISHED, outcome: "success", threadId: "t1", runId: "r1" },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" },
         { type: EventType.STATE_SNAPSHOT, snapshot: { between: true } },
         { type: EventType.STATE_DELTA, delta: [{ op: "add", path: "/extra", value: 1 }] },
         { type: EventType.RUN_STARTED, threadId: "t1", runId: "r2" },
         { type: EventType.STATE_SNAPSHOT, snapshot: { run: 2 } },
-        { type: EventType.RUN_FINISHED, outcome: "success", threadId: "t1", runId: "r2" },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r2" },
       ];
 
       const compacted = compactEvents(events);
@@ -539,7 +539,7 @@ describe("Event Compaction", () => {
           type: EventType.STATE_DELTA,
           delta: [{ op: "replace", path: "/settings/theme", value: "light" }],
         },
-        { type: EventType.RUN_FINISHED, outcome: "success", threadId: "t1", runId: "r1" },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" },
       ];
 
       const compacted = compactEvents(events);

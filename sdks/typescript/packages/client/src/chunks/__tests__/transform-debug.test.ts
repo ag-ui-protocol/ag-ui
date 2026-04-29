@@ -27,7 +27,6 @@ describe("transformChunks debug logging", () => {
     type: EventType.RUN_FINISHED,
     threadId: "thread-1",
     runId: "run-1",
-    outcome: "success",
   };
 
   describe("when debugLogger is falsy", () => {

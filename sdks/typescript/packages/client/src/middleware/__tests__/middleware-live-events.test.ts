@@ -29,7 +29,6 @@ describe("Middleware live events", () => {
 
         subscriber.next({
           type: EventType.RUN_FINISHED,
-          outcome: "success",
           threadId: input.threadId,
           runId: input.runId,
           result: { success: true },

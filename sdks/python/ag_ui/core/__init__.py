@@ -41,6 +41,8 @@ from ag_ui.core.events import (
     ReasoningEncryptedValueSubtype,
     ReasoningMessageRole,
     RunFinishedOutcome,
+    RunFinishedSuccessOutcome,
+    RunFinishedInterruptOutcome,
     Event
 )
 
@@ -138,6 +140,8 @@ __all__ = [
     "ReasoningEncryptedValueSubtype",
     "ReasoningMessageRole",
     "RunFinishedOutcome",
+    "RunFinishedSuccessOutcome",
+    "RunFinishedInterruptOutcome",
     "Event",
     # Types
     "FunctionCall",

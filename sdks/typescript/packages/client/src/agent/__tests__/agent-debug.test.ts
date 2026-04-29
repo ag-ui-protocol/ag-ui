@@ -152,7 +152,6 @@ describe("Agent run lifecycle logging", () => {
         type: EventType.RUN_FINISHED,
         threadId: "thread-1",
         runId: "run-1",
-        outcome: "success",
       } as RunFinishedEvent,
     ]);
 
@@ -184,7 +183,6 @@ describe("Agent run lifecycle logging", () => {
         type: EventType.RUN_FINISHED,
         threadId: "thread-1",
         runId: "run-1",
-        outcome: "success",
       } as RunFinishedEvent,
     ]);
 
@@ -216,7 +214,6 @@ describe("Agent run lifecycle logging", () => {
         type: EventType.RUN_FINISHED,
         threadId: "thread-1",
         runId: "run-1",
-        outcome: "success",
       } as RunFinishedEvent,
     ]);
 
@@ -244,7 +241,6 @@ describe("Agent run lifecycle logging", () => {
         type: EventType.RUN_FINISHED,
         threadId: "thread-1",
         runId: "run-1",
-        outcome: "success",
       } as RunFinishedEvent,
     ]);
 
@@ -351,7 +347,6 @@ describe("Agent pipeline integration", () => {
         type: EventType.RUN_FINISHED,
         threadId: "thread-1",
         runId: "run-1",
-        outcome: "success",
       } as RunFinishedEvent,
     ]);
 

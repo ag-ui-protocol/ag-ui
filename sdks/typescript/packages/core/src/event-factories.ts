@@ -19,12 +19,9 @@ import {
   RunErrorEvent,
   RunErrorEventProps,
   RunErrorEventSchema,
-  RunFinishedSuccessEvent,
-  RunFinishedSuccessEventProps,
-  RunFinishedSuccessEventSchema,
-  RunFinishedInterruptEvent,
-  RunFinishedInterruptEventProps,
-  RunFinishedInterruptEventSchema,
+  RunFinishedEvent,
+  RunFinishedEventProps,
+  RunFinishedEventSchema,
   RunStartedEvent,
   RunStartedEventProps,
   RunStartedEventSchema,
@@ -264,39 +261,46 @@ export const createRunStartedEvent = (props: RunStartedEventProps): RunStartedEv
   buildEvent(EventType.RUN_STARTED, RunStartedEventSchema, props);
 
 /**
- * Creates a RUN_FINISHED event with outcome "success".
+ * Creates a RUN_FINISHED event.
+ *
+ * `outcome` is optional. Omit it for legacy/back-compat behavior, or set it
+ * explicitly to `{ type: "success" }` or `{ type: "interrupt", interrupts }`
+ * — see `createRunFinishedSuccessEvent` and `createRunFinishedInterruptEvent`
+ * for convenience helpers.
+ */
+export const createRunFinishedEvent = (props: RunFinishedEventProps): RunFinishedEvent =>
+  buildEvent(EventType.RUN_FINISHED, RunFinishedEventSchema, props);
+
+/**
+ * Creates a RUN_FINISHED event with `outcome: { type: "success" }`.
  */
 export const createRunFinishedSuccessEvent = (
-  props: RunFinishedSuccessEventProps,
-): RunFinishedSuccessEvent =>
-  buildEvent(EventType.RUN_FINISHED, RunFinishedSuccessEventSchema, props);
+  props: { threadId: string; runId: string; result?: unknown } & Partial<
+    Omit<RunFinishedEventProps, "threadId" | "runId" | "result" | "outcome">
+  >,
+): RunFinishedEvent =>
+  buildEvent(EventType.RUN_FINISHED, RunFinishedEventSchema, {
+    ...props,
+    outcome: { type: "success" },
+  });
 
 /**
- * Creates a RUN_FINISHED event with outcome "interrupt".
+ * Creates a RUN_FINISHED event with `outcome: { type: "interrupt", interrupts }`.
  */
 export const createRunFinishedInterruptEvent = (
-  props: RunFinishedInterruptEventProps,
-): RunFinishedInterruptEvent =>
-  buildEvent(EventType.RUN_FINISHED, RunFinishedInterruptEventSchema, props);
-
-/**
- * @deprecated Use createRunFinishedSuccessEvent or createRunFinishedInterruptEvent.
- * Kept for callers written before the outcome field was introduced. Accepts only
- * legacy shape (no `outcome`) or explicit `outcome: "success"`; passing any other
- * value (including bypassing TypeScript) throws.
- */
-export const createRunFinishedEvent = (
-  props: Omit<RunFinishedSuccessEventProps, "outcome"> & { outcome?: "success" },
-): RunFinishedSuccessEvent => {
-  const outcome = (props as { outcome?: unknown }).outcome;
-  if (outcome !== undefined && outcome !== "success") {
-    throw new Error(
-      `createRunFinishedEvent is deprecated and only supports outcome="success". ` +
-      `Received outcome=${JSON.stringify(outcome)}. ` +
-      `Use createRunFinishedInterruptEvent for interrupt outcomes.`,
-    );
-  }
-  return createRunFinishedSuccessEvent({ ...props, outcome: "success" });
+  props: {
+    threadId: string;
+    runId: string;
+    interrupts: NonNullable<
+      Extract<RunFinishedEventProps["outcome"], { type: "interrupt" }>
+    >["interrupts"];
+  } & Partial<Omit<RunFinishedEventProps, "threadId" | "runId" | "outcome">>,
+): RunFinishedEvent => {
+  const { interrupts, ...rest } = props;
+  return buildEvent(EventType.RUN_FINISHED, RunFinishedEventSchema, {
+    ...rest,
+    outcome: { type: "interrupt", interrupts },
+  });
 };
 
 /**

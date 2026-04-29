@@ -32,7 +32,6 @@ describe("transformChunks", () => {
       type: EventType.RUN_FINISHED,
       threadId: "thread-123",
       runId: "run-123",
-      outcome: "success",
     };
 
     const events$ = concat(of(chunk), of(closeEvent));
@@ -79,7 +78,6 @@ describe("transformChunks", () => {
       type: EventType.RUN_FINISHED,
       threadId: "thread-123",
       runId: "run-123",
-      outcome: "success",
     };
 
     const events$ = concat(of(chunk1, chunk2), of(closeEvent));
@@ -127,7 +125,6 @@ describe("transformChunks", () => {
       type: EventType.RUN_FINISHED,
       threadId: "thread-123",
       runId: "run-123",
-      outcome: "success",
     };
 
     const events$ = concat(of(chunk), of(closeEvent));
@@ -175,7 +172,6 @@ describe("transformChunks", () => {
       type: EventType.RUN_FINISHED,
       threadId: "thread-123",
       runId: "run-123",
-      outcome: "success",
     };
 
     const events$ = concat(of(textChunk, toolChunk), of(closeEvent));
@@ -256,7 +252,6 @@ describe("transformChunks", () => {
       type: EventType.RUN_FINISHED,
       threadId: "thread-123",
       runId: "run-123",
-      outcome: "success",
     };
 
     const events$ = concat(of(chunk1, chunk2), of(closeEvent));
@@ -346,7 +341,6 @@ describe("transformChunks", () => {
       type: EventType.RUN_FINISHED,
       threadId: "thread-123",
       runId: "run-123",
-      outcome: "success",
     };
 
     const events$ = concat(of(chunk), of(closeEvent));
@@ -420,7 +414,6 @@ describe("transformChunks", () => {
         type: EventType.RUN_FINISHED,
         threadId: "thread-123",
         runId: "run-123",
-        outcome: "success",
       } as RunFinishedEvent,
     ];
 
@@ -461,7 +454,6 @@ describe("transformChunks", () => {
       type: EventType.RUN_FINISHED,
       threadId: "thread-123",
       runId: "run-123",
-      outcome: "success",
     };
 
     const events$ = concat(of(chunk), of(closeEvent));
@@ -499,7 +491,6 @@ describe("transformChunks", () => {
       type: EventType.RUN_FINISHED,
       threadId: "thread-123",
       runId: "run-123",
-      outcome: "success",
     };
 
     const events$ = concat(of(chunk), of(closeEvent));
@@ -554,7 +545,6 @@ describe("transformChunks", () => {
       type: EventType.RUN_FINISHED,
       threadId: "thread-123",
       runId: "run-123",
-      outcome: "success",
     };
 
     const events$ = concat(of(...chunks), of(closeEvent));
@@ -615,7 +605,6 @@ describe("transformChunks", () => {
       type: EventType.RUN_FINISHED,
       threadId: "thread-123",
       runId: "run-123",
-      outcome: "success",
     };
 
     const events$ = concat(of(chunk), of(closeEvent));
@@ -638,7 +627,6 @@ describe("transformChunks", () => {
       type: EventType.RUN_FINISHED,
       threadId: "thread-123",
       runId: "run-123",
-      outcome: "success",
     };
 
     const events$ = concat(of(chunk), of(closeEvent));
@@ -703,7 +691,6 @@ describe("transformChunks", () => {
         type: EventType.RUN_FINISHED,
         threadId: "thread-123",
         runId: "run-123",
-        outcome: "success",
       } as RunFinishedEvent,
     ];
 

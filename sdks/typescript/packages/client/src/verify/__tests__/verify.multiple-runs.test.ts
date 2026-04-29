@@ -21,7 +21,6 @@ import {
 
 const runFinished = (threadId: string, runId: string): RunFinishedEvent => ({
   type: EventType.RUN_FINISHED,
-  outcome: "success",
   threadId,
   runId,
 });

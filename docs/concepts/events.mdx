@@ -96,12 +96,16 @@ run.
 Signals the end of an agent run. Every run terminates with either `RunFinished`
 or `RunError`.
 
-`RunFinished` has two outcomes:
+`RunFinished` has an optional `outcome` discriminated union:
 
-- `outcome: "success"` — the run completed normally. Carries an optional `result`.
-- `outcome: "interrupt"` — the run paused for human input. Carries a non-empty
-  `interrupts[]` array; the client resumes by starting a new run whose
-  `RunAgentInput` includes a `resume` array addressing every open interrupt.
+- **omitted** — legacy producer that has not yet adopted the interrupt-aware
+  lifecycle. Treated as a normal completion.
+- `outcome: { type: "success" }` — the run completed normally. The optional
+  `result` stays at the root of the event for back-compat.
+- `outcome: { type: "interrupt", interrupts: [...] }` — the run paused for human
+  input. The non-empty `interrupts` array lives inside the outcome variant. The
+  client resumes by starting a new run whose `RunAgentInput` includes a `resume`
+  array addressing every open interrupt.
 
 <Note>
   For the full interrupt lifecycle — the `Interrupt` type, contract rules,
@@ -766,10 +770,10 @@ Extensions to existing lifecycle events to support interrupts and branching.
 
 The `RunFinished` event gains new fields to support interrupt-aware workflows.
 
-| Property    | Description                                      |
-| ----------- | ------------------------------------------------ |
-| `outcome`   | Optional: "success" or "interrupt"               |
-| `interrupt` | Optional: Contains interrupt details when paused |
+| Property  | Description                                                                                                                       |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `outcome` | Optional discriminated union: `{ type: "success" }` or `{ type: "interrupt", interrupts: [...] }`. Omitted on legacy producers.   |
+| `result`  | Optional. Free-form completion payload. Lives at the event root for back-compat with legacy producers; coexists with any outcome. |
 
 See [Serialization](/concepts/serialization) for lineage and input capture.
 

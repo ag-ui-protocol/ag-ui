@@ -20,7 +20,7 @@ sequenceDiagram
   Agent-->>Client: RunStarted (runId: r1)
   Agent-->>Client: ...ToolCall* / TextMessage* / StateSnapshot...
   Note over Agent,Client: Agent needs user input — emit snapshot, then interrupt
-  Agent-->>Client: RunFinished { outcome: "interrupt", interrupts: [...] }
+  Agent-->>Client: RunFinished { outcome: { type: "interrupt", interrupts: [...] } }
 
   Note over Agent,Client: User resolves interrupts
   Client-->>Agent: RunAgentInput { threadId, resume: [{interruptId, status, payload?}, ...] }
@@ -28,20 +28,41 @@ sequenceDiagram
   Note over Agent,Client: Run 2 begins; resume[].interruptId links back to run 1's interrupts
   Agent-->>Client: RunStarted (runId: r2)
   Agent-->>Client: ...continue / ToolCallResult / ...
-  Agent-->>Client: RunFinished { outcome: "success", result }
+  Agent-->>Client: RunFinished { outcome: { type: "success" }, result }
 ```
 
 ## Run outcomes
 
-`RunFinished` carries an `outcome` field with two values:
+`RunFinished` carries an optional `outcome` field — a discriminated union with
+the variant-specific data nested inside:
 
-- `"success"` — the run completed normally. Carries an optional `result`.
-- `"interrupt"` — the run paused for user input. Carries a non-empty
-  `interrupts[]` array.
+- **omitted** — legacy/back-compat. Treated as a normal completion. Pre-existing
+  AG-UI clients that did not yet know about interrupts still emit this shape,
+  and new readers should accept it.
+- `{ type: "success" }` — the run completed normally. The optional `result`
+  stays at the root of the event for back-compat.
+- `{ type: "interrupt", interrupts: [...] }` — the run paused for user input.
+  `interrupts` is a non-empty array, and it lives inside the outcome so it
+  travels with the variant that needs it.
 
 ```typescript
-type RunFinishedOutcome = "success" | "interrupt"
+type RunFinishedOutcome =
+  | { type: "success" }
+  | { type: "interrupt"; interrupts: Interrupt[] }
+
+type RunFinishedEvent = {
+  type: "RUN_FINISHED"
+  threadId: string
+  runId: string
+  result?: unknown
+  outcome?: RunFinishedOutcome
+}
 ```
+
+Because `outcome` is optional, an old producer that has never heard of
+interrupts (no `outcome` field) still validates as a `RunFinished` event under
+the new schema — clients only need to inspect `outcome` when they care about
+the interrupt-aware variant.
 
 ## The Interrupt type
 
@@ -208,20 +229,22 @@ The agent interrupts after proposing `sendEmail`:
   "type": "RUN_FINISHED",
   "threadId": "thread-1",
   "runId": "run-1",
-  "outcome": "interrupt",
-  "interrupts": [
-    {
-      "id": "int-abc123",
-      "reason": "tool_call",
-      "message": "Send email to a@b.com with subject 'Hi'?",
-      "toolCallId": "tc-001",
-      "responseSchema": {
-        "type": "object",
-        "properties": { "approved": { "type": "boolean" } },
-        "required": ["approved"]
+  "outcome": {
+    "type": "interrupt",
+    "interrupts": [
+      {
+        "id": "int-abc123",
+        "reason": "tool_call",
+        "message": "Send email to a@b.com with subject 'Hi'?",
+        "toolCallId": "tc-001",
+        "responseSchema": {
+          "type": "object",
+          "properties": { "approved": { "type": "boolean" } },
+          "required": ["approved"]
+        }
       }
-    }
-  ]
+    ]
+  }
 }
 ```
 
@@ -238,7 +261,7 @@ The client submits the resume:
 ```
 
 The agent continues in `run-2`, emits `ToolCallResult` against `tc-001`, then
-`RunFinished { outcome: "success" }`.
+`RunFinished { outcome: { type: "success" } }`.
 
 ### Approve with edits (full audit)
 
@@ -247,36 +270,38 @@ The agent continues in `run-2`, emits `ToolCallResult` against `tc-001`, then
   "type": "RUN_FINISHED",
   "threadId": "thread-2",
   "runId": "run-10",
-  "outcome": "interrupt",
-  "interrupts": [
-    {
-      "id": "int-email-edit",
-      "reason": "tool_call",
-      "message": "Send email to a@b.com? You can edit the body before approving.",
-      "toolCallId": "tc-42",
-      "responseSchema": {
-        "type": "object",
-        "properties": {
-          "approved": { "type": "boolean" },
-          "editedArgs": {
-            "type": "object",
-            "properties": {
-              "to": { "type": "string", "format": "email" },
-              "subject": { "type": "string" },
-              "body": { "type": "string" }
+  "outcome": {
+    "type": "interrupt",
+    "interrupts": [
+      {
+        "id": "int-email-edit",
+        "reason": "tool_call",
+        "message": "Send email to a@b.com? You can edit the body before approving.",
+        "toolCallId": "tc-42",
+        "responseSchema": {
+          "type": "object",
+          "properties": {
+            "approved": { "type": "boolean" },
+            "editedArgs": {
+              "type": "object",
+              "properties": {
+                "to": { "type": "string", "format": "email" },
+                "subject": { "type": "string" },
+                "body": { "type": "string" }
+              }
             }
-          }
+          },
+          "required": ["approved"]
         },
-        "required": ["approved"]
-      },
-      "metadata": {
-        "langgraph": {
-          "checkpointId": "ckpt-xyz",
-          "nodeId": "tool_executor"
+        "metadata": {
+          "langgraph": {
+            "checkpointId": "ckpt-xyz",
+            "nodeId": "tool_executor"
+          }
         }
       }
-    }
-  ]
+    ]
+  }
 }
 ```
 
@@ -316,12 +341,14 @@ Audit trail for `tc-42`:
   "type": "RUN_FINISHED",
   "threadId": "thread-3",
   "runId": "run-20",
-  "outcome": "interrupt",
-  "interrupts": [
-    { "id": "i-1", "reason": "tool_call", "toolCallId": "tc-a", "message": "Approve sendEmail to x@y.com?" },
-    { "id": "i-2", "reason": "tool_call", "toolCallId": "tc-b", "message": "Approve sendEmail to y@z.com?" },
-    { "id": "i-3", "reason": "tool_call", "toolCallId": "tc-c", "message": "Approve sendEmail to z@w.com?" }
-  ]
+  "outcome": {
+    "type": "interrupt",
+    "interrupts": [
+      { "id": "i-1", "reason": "tool_call", "toolCallId": "tc-a", "message": "Approve sendEmail to x@y.com?" },
+      { "id": "i-2", "reason": "tool_call", "toolCallId": "tc-b", "message": "Approve sendEmail to y@z.com?" },
+      { "id": "i-3", "reason": "tool_call", "toolCallId": "tc-c", "message": "Approve sendEmail to z@w.com?" }
+    ]
+  }
 }
 ```
 
@@ -349,24 +376,26 @@ In `run-21` the agent emits `ToolCallResult` for `tc-a` and `tc-b` and treats
   "type": "RUN_FINISHED",
   "threadId": "thread-4",
   "runId": "run-30",
-  "outcome": "interrupt",
-  "interrupts": [
-    {
-      "id": "int-form",
-      "reason": "input_required",
-      "message": "Please provide the quarterly filing details.",
-      "responseSchema": {
-        "type": "object",
-        "properties": {
-          "quarter": { "type": "string", "enum": ["Q1", "Q2", "Q3", "Q4"] },
-          "year": { "type": "integer", "minimum": 2000 },
-          "revenue": { "type": "number" }
+  "outcome": {
+    "type": "interrupt",
+    "interrupts": [
+      {
+        "id": "int-form",
+        "reason": "input_required",
+        "message": "Please provide the quarterly filing details.",
+        "responseSchema": {
+          "type": "object",
+          "properties": {
+            "quarter": { "type": "string", "enum": ["Q1", "Q2", "Q3", "Q4"] },
+            "year": { "type": "integer", "minimum": 2000 },
+            "revenue": { "type": "number" }
+          },
+          "required": ["quarter", "year", "revenue"]
         },
-        "required": ["quarter", "year", "revenue"]
-      },
-      "expiresAt": "2026-04-20T17:00:00Z"
-    }
-  ]
+        "expiresAt": "2026-04-20T17:00:00Z"
+      }
+    ]
+  }
 }
 ```
 

@@ -4,25 +4,38 @@ import { EventType } from "@ag-ui/core";
 import { getRunOutcome, isInterruptExpired, buildResumeArray } from "../index";
 
 describe("getRunOutcome", () => {
-  it("returns the outcome of a success event", () => {
+  it("returns undefined when outcome is omitted (legacy events)", () => {
     const event: RunFinishedEvent = {
       type: EventType.RUN_FINISHED,
       threadId: "t-1",
       runId: "r-1",
-      outcome: "success",
     };
-    expect(getRunOutcome(event)).toBe("success");
+    expect(getRunOutcome(event)).toBeUndefined();
   });
 
-  it("returns the outcome of an interrupt event", () => {
+  it("returns the success outcome", () => {
     const event: RunFinishedEvent = {
       type: EventType.RUN_FINISHED,
       threadId: "t-1",
       runId: "r-1",
-      outcome: "interrupt",
-      interrupts: [{ id: "int-1", reason: "tool_call" }],
+      outcome: { type: "success" },
     };
-    expect(getRunOutcome(event)).toBe("interrupt");
+    expect(getRunOutcome(event)).toEqual({ type: "success" });
+  });
+
+  it("returns the interrupt outcome with interrupts nested", () => {
+    const interrupts: Interrupt[] = [{ id: "int-1", reason: "tool_call" }];
+    const event: RunFinishedEvent = {
+      type: EventType.RUN_FINISHED,
+      threadId: "t-1",
+      runId: "r-1",
+      outcome: { type: "interrupt", interrupts },
+    };
+    const outcome = getRunOutcome(event);
+    expect(outcome?.type).toBe("interrupt");
+    if (outcome?.type === "interrupt") {
+      expect(outcome.interrupts).toEqual(interrupts);
+    }
   });
 });
 

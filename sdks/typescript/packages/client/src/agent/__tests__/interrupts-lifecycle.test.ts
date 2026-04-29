@@ -10,7 +10,7 @@ class StubAgent extends AbstractAgent {
     this.received = input;
     return of<BaseEvent>(
       { type: EventType.RUN_STARTED, threadId: input.threadId, runId: input.runId } as BaseEvent,
-      { type: EventType.RUN_FINISHED, threadId: input.threadId, runId: input.runId, outcome: "success" } as BaseEvent,
+      { type: EventType.RUN_FINISHED, threadId: input.threadId, runId: input.runId } as BaseEvent,
     );
   }
 }
