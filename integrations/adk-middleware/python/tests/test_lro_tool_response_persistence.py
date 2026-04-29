@@ -166,6 +166,10 @@ class TestLROToolResponseIntegration:
         )
 
     @pytest.mark.asyncio
+    @pytest.mark.skipif(
+        not _ADK_OVERRIDES_INVOCATION_ID,
+        reason="Single-FunctionResponse persistence guarantee depends on the ADK >=1.30 pre-append workaround",
+    )
     async def test_tool_result_persists_single_function_response(
         self, check_api_key, simple_agent
     ):
@@ -420,6 +424,10 @@ class TestLROToolResponseIntegration:
                     )
 
     @pytest.mark.asyncio
+    @pytest.mark.skipif(
+        not _ADK_OVERRIDES_INVOCATION_ID,
+        reason="Single-FunctionResponse persistence guarantee depends on the ADK >=1.30 pre-append workaround",
+    )
     async def test_tool_result_with_trailing_user_message(
         self, check_api_key, simple_agent
     ):
@@ -554,6 +562,10 @@ class TestHITLResumptionIntegration:
         )
 
     @pytest.mark.asyncio
+    @pytest.mark.skipif(
+        not _ADK_OVERRIDES_INVOCATION_ID,
+        reason="HITL resumption FunctionResponse persistence depends on the ADK >=1.30 pre-append workaround",
+    )
     async def test_hitl_resumption_preserves_invocation_context(
         self, check_api_key, hitl_agent
     ):

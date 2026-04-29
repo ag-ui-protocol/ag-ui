@@ -242,11 +242,6 @@ export const menuIntegrations = [
       "error_flow",
     ],
   },
-  {
-    id: "a2a-basic",
-    name: "A2A (Direct)",
-    features: ["vnext_chat"],
-  },
   // {
   //   id: "builtin",
   //   name: "Built-in Agent",
@@ -282,11 +277,6 @@ export const menuIntegrations = [
       "shared_state",
       "tool_based_generative_ui",
     ],
-  },
-  {
-    id: "a2a",
-    name: "A2A",
-    features: ["a2a_chat"],
   },
   {
     id: "aws-strands",

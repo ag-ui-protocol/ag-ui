@@ -610,7 +610,10 @@ export class LangGraphAgent extends AbstractAgent {
         }
 
         if (streamResponseChunk.event === "values") {
-          latestStateValues = chunk.data;
+          latestStateValues = {
+            ...latestStateValues,
+            ...chunk.data,
+          };
           continue;
         } else if (
           subgraphsStreamEnabled &&
@@ -673,13 +676,48 @@ export class LangGraphAgent extends AbstractAgent {
           (eventType === LangGraphEventTypes.OnCustomEvent &&
             chunkData.name === CustomEventNames.Exit);
 
-        if (
-          eventType === LangGraphEventTypes.OnChainEnd &&
-          this.activeRun!.nodeName === currentNodeName
-        ) {
+        // Parity with Python reader (langgraph_agent.py:447): update local state
+        // cache from on_chain_end outputs so state stays fresh across node boundaries
+        // without relying on a `values` stream chunk after every step.
+        // LangGraph JS doesn't emit `values` chunks with the latest state between
+        // tool execution and run end, so without this update, intermediate
+        // STATE_SNAPSHOTs go stale after a tool Command updates state.
+        if (eventType === LangGraphEventTypes.OnChainEnd && chunkData.data?.output != null) {
+          const output: any = chunkData.data.output;
+          if (typeof output === "object" && !Array.isArray(output)) {
+            latestStateValues = { ...latestStateValues, ...output };
+          } else if (Array.isArray(output)) {
+            for (const item of output) {
+              if (
+                item &&
+                typeof item === "object" &&
+                (item as any).lg_name === "Command" &&
+                (item as any).update &&
+                typeof (item as any).update === "object"
+              ) {
+                latestStateValues = { ...latestStateValues, ...(item as any).update };
+              }
+            }
+          }
+        }
+
+        if (eventType === LangGraphEventTypes.OnChainEnd && this.activeRun!.nodeName === currentNodeName) {
           this.activeRun!.exitingNode = true;
         }
         if (this.activeRun!.exitingNode) {
+          // Persist manually-emitted keys into latestStateValues before clearing,
+          // so the next STATE_SNAPSHOT (which falls back to latestStateValues)
+          // doesn't lose the streamed-in fields if the graph's own values/Command
+          // chunk for those fields hasn't landed yet.
+          if (
+            this.activeRun!.manuallyEmittedState &&
+            typeof this.activeRun!.manuallyEmittedState === "object"
+          ) {
+            latestStateValues = {
+              ...latestStateValues,
+              ...this.activeRun!.manuallyEmittedState,
+            };
+          }
           this.activeRun!.manuallyEmittedState = null;
         }
 

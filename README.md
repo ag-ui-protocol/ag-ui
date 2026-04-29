@@ -102,7 +102,6 @@ AG-UI was born from CopilotKit's initial **partnership** with LangGraph and Crew
 | [Microsoft Agent Framework](https://azure.microsoft.com/en-us/blog/introducing-microsoft-agent-framework/) | ✅ Supported | ➡️ [Docs](https://docs.copilotkit.ai/microsoft-agent-framework) 🎮 [Demos](https://dojo.ag-ui.com/microsoft-agent-framework-dotnet/feature/shared_state) |
 | [Google ADK](https://google.github.io/adk-docs/get-started/) | ✅ Supported | ➡️ [Docs](https://docs.copilotkit.ai/adk) 🎮 [Demos](https://dojo.ag-ui.com/adk-middleware/feature/shared_state?openCopilot=true) |
 | [AWS Strands Agents](https://github.com/strands-agents/sdk-python) | ✅ Supported | ➡️ [Docs](https://docs.copilotkit.ai/aws-strands) 🎮 [Demos](https://dojo.ag-ui.com/aws-strands/feature/shared_state) |
-| [AWS Bedrock AgentCore](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-agui-protocol-contract.html) | ✅ Supported | ➡️ [Docs](https://github.com/awslabs/fullstack-solution-template-for-agentcore) |
 | [Mastra](https://mastra.ai/) | ✅ Supported | ➡️ [Docs](https://docs.copilotkit.ai/mastra/) 🎮 [Demos](https://dojo.ag-ui.com/mastra/feature/tool_based_generative_ui) |
 | [Pydantic AI](https://github.com/pydantic/pydantic-ai) | ✅ Supported | ➡️ [Docs](https://docs.copilotkit.ai/pydantic-ai/) 🎮 [Demos](https://dojo.ag-ui.com/pydantic-ai/feature/shared_state) |
 | [Agno](https://github.com/agno-agi/agno) | ✅ Supported | ➡️ [Docs](https://docs.copilotkit.ai/agno/) 🎮 [Demos](https://dojo.ag-ui.com/agno/feature/tool_based_generative_ui) |
@@ -115,6 +114,7 @@ AG-UI was born from CopilotKit's initial **partnership** with LangGraph and Crew
 ### 🌐 Community
 | Framework | Status | AG-UI Resources |
 | ---------- | ------- | ---------------- |
+| [Claude Agent SDK](https://github.com/ag-ui-protocol/ag-ui/tree/main/integrations/claude-agent-sdk) | ✅ Supported | 🎮 [Demos](https://dojo.ag-ui.com/claude-agent-sdk-python/feature/shared_state) |
 | [Langroid](https://github.com/ag-ui-protocol/ag-ui/tree/main/integrations/langroid) | ✅ Supported | 🎮 [Demos](https://dojo.ag-ui.com/langroid/feature/shared_state) |
 | [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) | 🛠️ In Progress | – |
 | [Cloudflare Agents](https://developers.cloudflare.com/agents/) | 🛠️ In Progress | – |
@@ -154,11 +154,11 @@ AG-UI was born from CopilotKit's initial **partnership** with LangGraph and Crew
 | [Java]() | ✅ Supported | ➡️ [Getting Started](https://github.com/ag-ui-protocol/ag-ui/blob/main/docs/sdk/java/overview.mdx) | Community |
 | [Rust]() | ✅ Supported | ➡️ [Getting Started](https://github.com/ag-ui-protocol/ag-ui/tree/main/sdks/community/rust/crates/ag-ui-client) | Community |
 | [Ruby]() | ✅ Supported | ➡️ [Getting Started](https://github.com/ag-ui-protocol/ag-ui/tree/main/sdks/community/ruby) | Community |
+| [C++]() | ✅ Supported | ➡️ [GitHub Source](https://github.com/ag-ui-protocol/ag-ui/tree/main/sdks/community/c%2B%2B) | Community |
 | [.NET]() | 🛠️ In Progress | ➡️ [PR](https://github.com/ag-ui-protocol/ag-ui/pull/38) | Community |
 | [Nim]() | 🛠️ In Progress | ➡️ [PR](https://github.com/ag-ui-protocol/ag-ui/pull/29) | Community |
 | [Flowise]() | 🛠️ In Progress | ➡️ [GitHub Source](https://github.com/ag-ui-protocol/ag-ui/issues/367) | Community |
 | [Langflow]() | 🛠️ In Progress | ➡️ [GitHub Source](https://github.com/ag-ui-protocol/ag-ui/issues/366) | Community |
-| [C++]() | 🛠️ In Progress | ➡️ [GitHub Source](https://github.com/ag-ui-protocol/ag-ui/issues/1108) | Community |
 
 ## Clients
 

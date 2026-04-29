@@ -17,6 +17,7 @@ on:
       - ".github/workflows/prerelease.yml"
       - ".github/workflows/lint-release-workflows.yml"
       - "scripts/release/**"
+      - "nx.json"
   pull_request:
     paths:
       - ".github/workflows/prepare-release.yml"
@@ -24,6 +25,7 @@ on:
       - ".github/workflows/prerelease.yml"
       - ".github/workflows/lint-release-workflows.yml"
       - "scripts/release/**"
+      - "nx.json"
 
 jobs:
   actionlint:
@@ -35,7 +37,7 @@ jobs:
         with:
           reporter: github-check
           level: error
-          fail_on_error: true
+          fail_level: error
           actionlint_flags: >-
             .github/workflows/prepare-release.yml
             .github/workflows/publish-release.yml
@@ -58,3 +60,14 @@ jobs:
             exit 0
           fi
           shellcheck --severity=warning "${files[@]}"
+
+  release-allowlist-sync:
+    # Verifies nx.json's release.projects matches release.config.json's
+    # TypeScript package allowlist. Drift between these two lists causes
+    # nx release publish to either fail (extra project without versionActions)
+    # or silently skip a package (missing from nx.json).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify nx.json and release.config.json are in sync
+        run: bash scripts/release/verify-nx-release-allowlist.sh

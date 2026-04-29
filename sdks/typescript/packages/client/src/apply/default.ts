@@ -42,7 +42,7 @@ import {
   type ToolMessage,
   UserMessage,
 } from "@ag-ui/core";
-import * as jsonpatch from "fast-json-patch";
+import jsonpatch from "fast-json-patch";
 import { EMPTY, of } from "rxjs";
 import type { Observable } from "rxjs";
 import { concatMap, defaultIfEmpty, mergeAll, mergeMap } from "rxjs/operators";
