@@ -422,8 +422,11 @@ class StrandsAgent:
                 for msg in reversed(input_data.messages):
                     if msg.role == "tool" and hasattr(msg, "tool_call_id"):
                         tool_name = _tool_call_id_to_name.get(msg.tool_call_id)
-                        if tool_name and tool_name in frontend_tool_names:
-                            user_message = f"{tool_name} executed successfully with no return value."
+                        if tool_name and tool_name in frontend_tool_names:     
+                            if not msg.content:
+                                user_message = f"{tool_name} executed successfully with no return value."
+                            else:
+                                user_message = msg.content
                         break
             elif input_data.messages:
                 for msg in reversed(input_data.messages):
