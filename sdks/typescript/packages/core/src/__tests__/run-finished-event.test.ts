@@ -16,6 +16,20 @@ describe("RunFinishedEventSchema — outcome is optional and back-compat", () =>
     expect(parsed.outcome).toBeUndefined();
   });
 
+  it("accepts an explicit `outcome: null` and normalizes it to undefined", () => {
+    // Cross-language back-compat: Python's default `model_dump()` (without
+    // `exclude_none=True`) serializes the optional `outcome` as JSON `null`.
+    // Treating null as equivalent to "field omitted" keeps Python→TS wire
+    // interop working.
+    const parsed = RunFinishedEventSchema.parse({
+      type: EventType.RUN_FINISHED,
+      threadId: "t-1",
+      runId: "r-1",
+      outcome: null,
+    });
+    expect(parsed.outcome).toBeUndefined();
+  });
+
   it("parses a legacy event with no outcome but with a result", () => {
     const parsed = RunFinishedEventSchema.parse({
       type: EventType.RUN_FINISHED,
