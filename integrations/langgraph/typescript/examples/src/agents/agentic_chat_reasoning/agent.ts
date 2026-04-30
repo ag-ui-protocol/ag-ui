@@ -57,6 +57,11 @@ async function chatNode(state: AgentState, config?: RunnableConfig) {
       model: "o4-mini",
       useResponsesApi: true,
       reasoning: { effort: "high", summary: "auto" },
+      // Required for cross-turn reasoning round-trip on the Responses API.
+      // Without this opt-in, OpenAI omits `encrypted_content` from the
+      // reasoning output items, so the model can't recover its prior chain
+      // of thought on subsequent turns (OSS-71).
+      include: ["reasoning.encrypted_content"],
     });
   }
 
