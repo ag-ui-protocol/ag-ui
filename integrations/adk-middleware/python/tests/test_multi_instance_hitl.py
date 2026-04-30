@@ -16,6 +16,7 @@ from ag_ui.core import (
     RunAgentInput, UserMessage, AssistantMessage, ToolMessage,
     ToolCall, FunctionCall, Tool as AGUITool,
     ToolCallStartEvent, ToolCallArgsEvent, ToolCallEndEvent,
+    ToolCallResultEvent,
     EventType, RunErrorEvent,
 )
 from google.adk.agents import LlmAgent
@@ -244,6 +245,129 @@ class TestMultiInstanceHITL:
         cached_b = instance_b._session_lookup_cache.get((thread_id, "test_user"))
         assert cached_b is not None
         assert cached_b[0] == session_id_a, "Instance B should find Instance A's session"
+
+    @pytest.mark.asyncio
+    async def test_pending_tool_call_registered_before_tool_call_end_event_yielded(
+        self, instance_a, sample_tool,
+    ):
+        """Regression test for #1581.
+
+        The pending tool call ID must be persisted to the shared session store
+        the moment a `ToolCallEndEvent` is delivered to the consumer. Otherwise
+        a continuation request routed to another pod will see an empty
+        pending_tool_calls list and silently drop the tool result.
+
+        We verify via ``instance_a._has_pending_tool_calls`` (warm cache),
+        which reads through to the shared session service — proving the write
+        has reached the backing store before the event reached the consumer.
+        """
+        thread_id = "race_condition_thread"
+        tool_call_id = "tool_call_race_xyz"
+
+        await instance_a._ensure_session_exists(
+            app_name="test_app", user_id="test_user",
+            thread_id=thread_id, initial_state={},
+        )
+
+        input_a = RunAgentInput(
+            thread_id=thread_id,
+            run_id="run_race",
+            messages=[UserMessage(id="msg_1", role="user", content="Plan something")],
+            tools=[sample_tool],
+            context=[],
+            state={},
+            forwarded_props={},
+        )
+
+        async def mock_run_a(*args, **kwargs):
+            eq = kwargs["event_queue"]
+            await eq.put(ToolCallStartEvent(
+                type=EventType.TOOL_CALL_START,
+                tool_call_id=tool_call_id,
+                tool_call_name="approve_plan",
+            ))
+            await eq.put(ToolCallArgsEvent(
+                type=EventType.TOOL_CALL_ARGS,
+                tool_call_id=tool_call_id,
+                delta="{}",
+            ))
+            await eq.put(ToolCallEndEvent(
+                type=EventType.TOOL_CALL_END,
+                tool_call_id=tool_call_id,
+            ))
+            await eq.put(None)
+
+        observed_end = False
+        with patch.object(instance_a, "_run_adk_in_background", side_effect=mock_run_a):
+            async for event in instance_a.run(input_a):
+                if isinstance(event, ToolCallEndEvent):
+                    observed_end = True
+                    assert await instance_a._has_pending_tool_calls(
+                        thread_id, "test_user"
+                    ), (
+                        "pending_tool_calls must be persisted before "
+                        "ToolCallEndEvent is yielded (issue #1581)"
+                    )
+
+        assert observed_end, "Test setup error: never observed ToolCallEndEvent"
+
+    @pytest.mark.asyncio
+    async def test_backend_tool_result_clears_pending_before_stream_ends(
+        self, instance_a, sample_tool,
+    ):
+        """Backend ADK tools complete in-stream and must not leave a stale
+        entry in pending_tool_calls. The just-registered ID is removed when
+        the corresponding ToolCallResultEvent is observed.
+        """
+        thread_id = "backend_tool_thread"
+        tool_call_id = "tool_call_backend_456"
+
+        await instance_a._ensure_session_exists(
+            app_name="test_app", user_id="test_user",
+            thread_id=thread_id, initial_state={},
+        )
+
+        input_a = RunAgentInput(
+            thread_id=thread_id,
+            run_id="run_backend",
+            messages=[UserMessage(id="msg_1", role="user", content="Do a backend thing")],
+            tools=[sample_tool],
+            context=[],
+            state={},
+            forwarded_props={},
+        )
+
+        async def mock_run_backend_tool(*args, **kwargs):
+            eq = kwargs["event_queue"]
+            await eq.put(ToolCallStartEvent(
+                type=EventType.TOOL_CALL_START,
+                tool_call_id=tool_call_id,
+                tool_call_name="server_side_tool",
+            ))
+            await eq.put(ToolCallArgsEvent(
+                type=EventType.TOOL_CALL_ARGS,
+                tool_call_id=tool_call_id,
+                delta="{}",
+            ))
+            await eq.put(ToolCallEndEvent(
+                type=EventType.TOOL_CALL_END,
+                tool_call_id=tool_call_id,
+            ))
+            await eq.put(ToolCallResultEvent(
+                type=EventType.TOOL_CALL_RESULT,
+                message_id="msg_result",
+                tool_call_id=tool_call_id,
+                content='{"ok": true}',
+            ))
+            await eq.put(None)
+
+        with patch.object(instance_a, "_run_adk_in_background", side_effect=mock_run_backend_tool):
+            async for _ in instance_a.run(input_a):
+                pass
+
+        assert not await instance_a._has_pending_tool_calls(thread_id, "test_user"), (
+            "Backend tool result should clear the pending tool call entry"
+        )
 
     @pytest.mark.asyncio
     async def test_independent_caches_shared_session_service(

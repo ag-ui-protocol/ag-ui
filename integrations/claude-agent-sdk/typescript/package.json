@@ -1,6 +1,6 @@
 {
   "name": "@ag-ui/claude-agent-sdk",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "AG-UI integration for Anthropic Claude Agent SDK",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",

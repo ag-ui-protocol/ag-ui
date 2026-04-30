@@ -113,8 +113,12 @@ async function runExample() {
       onRunFinalized: ({ messages }) => {
         console.log("Final messages:", messages);
       },
-      onRunFinishedEvent: ({ result }) => {
-        console.log("Run finished result:", result);
+      onRunFinishedEvent: (params) => {
+        if (params.outcome === "success") {
+          console.log("Run finished result:", params.result);
+        } else {
+          console.log("Run finished with interrupts:", params.interrupts);
+        }
       },
     }).then(({ newMessages, result }) => {
       console.log("New messages:", newMessages);

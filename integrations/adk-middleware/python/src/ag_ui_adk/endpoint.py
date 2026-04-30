@@ -6,16 +6,150 @@ import logging
 import warnings
 from typing import Any, Callable, Coroutine, List, Optional
 
-from ag_ui.core import RunAgentInput
+from ag_ui.core import EventType, RunAgentInput, RunErrorEvent
 from ag_ui.encoder import EventEncoder
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
+# Use ``sse-starlette`` for the SSE response so we can return a fully-formed
+# ``EventSourceResponse`` (with built-in 15 s keep-alive pings and the
+# ``Cache-Control: no-cache`` / ``X-Accel-Buffering: no`` headers) from inside
+# a path operation that conditionally returns a different response type for
+# non-SSE Accept values. ``fastapi.sse.EventSourceResponse`` (added in FastAPI
+# 0.135) is intentionally a marker class -- its SSE encoding only applies when
+# used via ``response_class=EventSourceResponse`` on a generator path operation,
+# which is incompatible with branching on the request's ``Accept`` header.
+# Pulling in ``sse-starlette`` keeps the ``fastapi`` floor at the long-standing
+# ``>=0.115.2`` and avoids the more aggressive bump originally proposed.
+from sse_starlette.sse import EventSourceResponse, ServerSentEvent
+
 from .adk_agent import ADKAgent
 from .event_translator import adk_events_to_messages
 
 logger = logging.getLogger(__name__)
+
+
+def _build_run_error(message: str, code: str) -> RunErrorEvent:
+    """Construct a ``RunErrorEvent`` with the given message and code.
+
+    Centralized so the SSE and legacy streaming paths build identical error
+    events and so tests can patch ``ag_ui_adk.endpoint.RunErrorEvent`` to
+    drive the error-encoding fallback path directly.
+    """
+    return RunErrorEvent(type=EventType.RUN_ERROR, message=message, code=code)
+
+
+def _sse_event(raw_data: str, *, event: Optional[str] = None) -> ServerSentEvent:
+    """Build a ``ServerSentEvent`` carrying ``raw_data`` byte-for-byte.
+
+    ``sse_starlette``'s ``ServerSentEvent`` formats ``data=<str>`` as
+    ``data: <str>\\n\\n`` without JSON-re-encoding, so passing the already
+    JSON-serialized event through here preserves the pre-PR wire format
+    exactly (``data: {json}\\n\\n``). The ``sep="\\n"`` keeps line endings as
+    ``\\n`` rather than ``\\r\\n`` to match the byte-level format the existing
+    test suite (and the prior ``EventEncoder`` output) uses.
+    """
+    if event is None:
+        return ServerSentEvent(data=raw_data, sep="\n")
+    return ServerSentEvent(data=raw_data, event=event, sep="\n")
+
+
+async def _sse_stream(agent: "ADKAgent", input_data: RunAgentInput):
+    """Yield ``ServerSentEvent``s for an SSE consumer.
+
+    Wire format is byte-identical to the pre-PR ``EventEncoder`` output: each
+    event becomes ``data: {json}\\n\\n``. The encoding error branch produces a
+    ``RunErrorEvent`` (``code="ENCODING_ERROR"``) which is itself JSON-encoded
+    and yielded; a final fallback frames a hard-coded JSON error so the client
+    always sees a structured stream tail.
+    """
+    try:
+        async for event in agent.run(input_data):
+            try:
+                encoded = event.model_dump_json(by_alias=True, exclude_none=True)
+                logger.debug(f"HTTP Response: {encoded}")
+                yield _sse_event(encoded)
+            except Exception as encoding_error:
+                logger.error(
+                    f"❌ Event encoding error: {encoding_error}", exc_info=True
+                )
+                error_event = _build_run_error(
+                    message=f"Event encoding failed: {str(encoding_error)}",
+                    code="ENCODING_ERROR",
+                )
+                try:
+                    yield _sse_event(
+                        error_event.model_dump_json(by_alias=True, exclude_none=True)
+                    )
+                except Exception:
+                    logger.error(
+                        "Failed to encode error event, yielding basic SSE error"
+                    )
+                    yield _sse_event(
+                        '{"error": "Event encoding failed"}', event="error"
+                    )
+                return
+    except Exception as agent_error:
+        logger.error(f"❌ ADKAgent error: {agent_error}", exc_info=True)
+        try:
+            error_event = _build_run_error(
+                message=f"Agent execution failed: {str(agent_error)}",
+                code="AGENT_ERROR",
+            )
+            yield _sse_event(
+                error_event.model_dump_json(by_alias=True, exclude_none=True)
+            )
+        except Exception:
+            logger.error("Failed to encode agent error event, yielding basic SSE error")
+            yield _sse_event('{"error": "Agent execution failed"}', event="error")
+
+
+async def _legacy_stream(
+    agent: "ADKAgent", input_data: RunAgentInput, encoder: EventEncoder
+):
+    """Yield encoded byte-strings for a non-SSE ``StreamingResponse`` consumer.
+
+    Re-engages the pre-PR ``EventEncoder.encode(...)`` path so any client that
+    negotiates a non-``text/event-stream`` content type (e.g. a future binary
+    framing under ``application/vnd.ag-ui.event+proto``) keeps working. Today
+    the Python ``EventEncoder`` is a no-op SSE/JSON encoder, but the API
+    surface and the runtime branch are preserved so that adding a binary
+    encoder later doesn't require a separate endpoint change.
+    """
+    try:
+        async for event in agent.run(input_data):
+            try:
+                encoded = encoder.encode(event)
+                logger.debug(f"HTTP Response: {encoded}")
+                yield encoded
+            except Exception as encoding_error:
+                logger.error(
+                    f"❌ Event encoding error: {encoding_error}", exc_info=True
+                )
+                error_event = _build_run_error(
+                    message=f"Event encoding failed: {str(encoding_error)}",
+                    code="ENCODING_ERROR",
+                )
+                try:
+                    yield encoder.encode(error_event)
+                except Exception:
+                    logger.error(
+                        "Failed to encode error event, yielding basic SSE error"
+                    )
+                    yield 'data: {"error": "Event encoding failed"}\n\n'
+                return
+    except Exception as agent_error:
+        logger.error(f"❌ ADKAgent error: {agent_error}", exc_info=True)
+        try:
+            error_event = _build_run_error(
+                message=f"Agent execution failed: {str(agent_error)}",
+                code="AGENT_ERROR",
+            )
+            yield encoder.encode(error_event)
+        except Exception:
+            logger.error("Failed to encode agent error event, yielding basic SSE error")
+            yield 'data: {"error": "Agent execution failed"}\n\n'
 
 
 class AgentStateRequest(BaseModel):
@@ -120,71 +254,45 @@ def add_adk_fastapi_endpoint(
 
     @app.post(path)
     async def adk_endpoint(input_data: RunAgentInput, request: Request):
-        """ADK middleware endpoint."""
+        """ADK middleware endpoint.
+
+        Negotiates the response framing on the request's ``Accept`` header via
+        ``EventEncoder.get_content_type()``:
+
+        * ``text/event-stream`` (the default for browsers / ``EventSource``
+          consumers) is served via ``EventSourceResponse``, which adds a 15 s
+          ``: ping`` keep-alive comment and sets ``Cache-Control: no-cache`` /
+          ``X-Accel-Buffering: no`` headers so proxies (Cloud Run, AWS API
+          Gateway, nginx ingress) and Node ``undici`` sockets don't drop idle
+          streams during long-running tool calls.
+        * Any other content type negotiated by ``EventEncoder`` (e.g. a future
+          ``application/vnd.ag-ui.event+proto``) keeps the legacy
+          ``StreamingResponse(encoder.encode(...))`` framing so binary clients
+          continue to work without keep-alive pings (which are SSE-specific).
+        """
 
         # Extract headers into state.headers if list provided
         if extract_state_fn:
             extracted_state_dict = await extract_state_fn(request, input_data)
-            
+
             if extracted_state_dict:
                 existing_state = input_data.state if isinstance(input_data.state, dict) else {}
                 merged_state = {**existing_state, **extracted_state_dict}
                 input_data = input_data.model_copy(update={"state": merged_state})
 
-        # Get the accept header from the request
-        accept_header = request.headers.get("accept")
-        agent_id = path.lstrip('/')
-        
-        
-        # Create an event encoder to properly format SSE events
+        # ``EventEncoder`` types ``accept`` as ``str`` (not ``Optional[str]``);
+        # pass an empty string when the client didn't send an ``Accept`` header
+        # so we still hit the default ``text/event-stream`` content type.
+        accept_header = request.headers.get("accept", "")
         encoder = EventEncoder(accept=accept_header)
-        
-        async def event_generator():
-            """Generate events from ADK agent."""
-            try:
-                async for event in agent.run(input_data):
-                    try:
-                        encoded = encoder.encode(event)
-                        logger.debug(f"HTTP Response: {encoded}")
-                        yield encoded
-                    except Exception as encoding_error:
-                        # Handle encoding-specific errors
-                        logger.error(f"❌ Event encoding error: {encoding_error}", exc_info=True)
-                        # Create a RunErrorEvent for encoding failures
-                        from ag_ui.core import EventType, RunErrorEvent
-                        error_event = RunErrorEvent(
-                            type=EventType.RUN_ERROR,
-                            message=f"Event encoding failed: {str(encoding_error)}",
-                            code="ENCODING_ERROR"
-                        )
-                        try:
-                            error_encoded = encoder.encode(error_event)
-                            yield error_encoded
-                        except Exception:
-                            # If we can't even encode the error event, yield a basic SSE error
-                            logger.error("Failed to encode error event, yielding basic SSE error")
-                            yield "event: error\ndata: {\"error\": \"Event encoding failed\"}\n\n"
-                        break  # Stop the stream after an encoding error
-            except Exception as agent_error:
-                # Handle errors from ADKAgent.run() itself
-                logger.error(f"❌ ADKAgent error: {agent_error}", exc_info=True)
-                # ADKAgent should have yielded a RunErrorEvent, but if something went wrong
-                # in the async generator itself, we need to handle it
-                try:
-                    from ag_ui.core import EventType, RunErrorEvent
-                    error_event = RunErrorEvent(
-                        type=EventType.RUN_ERROR,
-                        message=f"Agent execution failed: {str(agent_error)}",
-                        code="AGENT_ERROR"
-                    )
-                    error_encoded = encoder.encode(error_event)
-                    yield error_encoded
-                except Exception:
-                    # If we can't encode the error event, yield a basic SSE error
-                    logger.error("Failed to encode agent error event, yielding basic SSE error")
-                    yield "event: error\ndata: {\"error\": \"Agent execution failed\"}\n\n"
-        
-        return StreamingResponse(event_generator(), media_type=encoder.get_content_type())
+        content_type = encoder.get_content_type()
+
+        if content_type == "text/event-stream":
+            return EventSourceResponse(_sse_stream(agent, input_data))
+        return StreamingResponse(
+            _legacy_stream(agent, input_data, encoder),
+            media_type=content_type,
+        )
 
     capabilities_path = f"{path.rstrip('/')}/capabilities" if path != "/" else "/capabilities"
 

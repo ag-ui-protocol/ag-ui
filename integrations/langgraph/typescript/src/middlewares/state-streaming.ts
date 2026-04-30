@@ -62,7 +62,26 @@ export const stateStreamingMiddleware = (...items: StateItem[]) => {
       const modelWithState = request.model.withConfig({
         metadata: { predict_state: predictState },
       });
-      return handler({ ...request, model: modelWithState });
+
+      const m = request.model as any;
+      const proto = Object.getPrototypeOf(m);
+      const origCombine = proto._combineCallOptions;
+      if (origCombine) {
+        proto._combineCallOptions = function (options: any) {
+          const combined = origCombine.call(this, options);
+          combined.metadata = {
+            ...(this.defaultOptions?.metadata ?? {}),
+            ...(options?.metadata ?? {}),
+            predict_state: predictState,
+          };
+          return combined;
+        };
+      }
+      try {
+        return await handler({ ...request, model: modelWithState });
+      } finally {
+        if (origCombine) proto._combineCallOptions = origCombine;
+      }
     },
   });
 };

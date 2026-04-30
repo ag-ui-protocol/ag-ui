@@ -1,12 +1,11 @@
 import { test, expect } from "../../test-isolation-helper";
 import { A2AChatPage } from "../../pages/a2aMiddlewarePages/A2AChatPage";
 
-// The a2a_chat page has a pre-existing rendering issue where the React tree
-// intermittently fails to hydrate on first load. This test doesn't involve AI
-// at all (just checks for a static tab bar), but needs in-page navigation
-// retries to work around the flaky page rendering — Playwright-level retries
-// use fresh pages which don't help since the issue is per-navigation.
-test.describe("A2A Chat Feature", () => {
+// A2A has been hidden from the Dojo menu, so /a2a/feature/a2a_chat now 404s.
+// This test is preserved (rather than deleted) so it can be reactivated if/when
+// A2A is brought back — at which point the test should also be expanded beyond
+// a static tab-bar check to actually exercise the A2A integration end-to-end.
+test.describe.skip("A2A Chat Feature", () => {
   test("[A2A Middleware] Tab bar exists", async ({ page }) => {
     let lastError: unknown;
     for (let attempt = 0; attempt < 5; attempt++) {

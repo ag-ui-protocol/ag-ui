@@ -235,6 +235,14 @@ def agui_messages_to_langchain(messages: List[AGUIMessage]) -> List[BaseMessage]
     langchain_messages = []
     for message in messages:
         role = message.role
+        # Reasoning + developer AG-UI messages are display-only / handled
+        # elsewhere; their content is already represented in adjacent AIMessage
+        # content blocks (reasoning) or in the agent's configured system prompt
+        # (developer). Re-materializing them as standalone LangChain messages
+        # duplicates context on every turn and can drive the model into a
+        # tool-call loop.
+        if role in ("reasoning", "developer"):
+            continue
         if role == "user":
             # Handle multimodal content
             if isinstance(message.content, str):
@@ -332,7 +340,7 @@ def resolve_reasoning_content(chunk: Any) -> LangGraphReasoning | None:
                 result = LangGraphReasoning(
                     text=rc["text"],
                     type="text",
-                    index=block.get("index", 0),
+                    index=rc.get("index", 0),
                 )
                 if rc.get("signature"):
                     result["signature"] = rc["signature"]
@@ -349,6 +357,16 @@ def resolve_reasoning_content(chunk: Any) -> LangGraphReasoning | None:
                         text=data["text"],
                         index=data.get("index", 0)
                     )
+
+        # Bedrock Converse API format: { type: "reasoning_content", reasoning_content: { type: "text", text: "..." } }
+        if block_type == "reasoning_content" and isinstance(block.get("reasoning_content"), dict):
+            inner = block["reasoning_content"]
+            if inner.get("text"):
+                return LangGraphReasoning(
+                    type="text",
+                    text=inner["text"],
+                    index=inner.get("index", 0)
+                )
 
     # OpenAI legacy format via additional_kwargs
     additional_kwargs = _dual_get(chunk, "additional_kwargs")
@@ -488,6 +506,10 @@ def normalize_tool_content(content: Any) -> str:
     return json.dumps(content)
 
 
+# Used by run() to normalize forwarded_props keys from camelCase (JS frontend convention)
+# to snake_case (Python convention). Appears isolated but is called from agent.py and
+# removing it would silently break all streaming options forwarded from the frontend
+# (stream_subgraphs, node_name, command.resume, etc.).
 def camel_to_snake(name):
     return re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower()
 

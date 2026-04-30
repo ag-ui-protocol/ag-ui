@@ -256,6 +256,33 @@ class Tool(ConfiguredBaseModel):
     parameters: Optional[Any] = None  # JSON Schema for the tool parameters
 
 
+class Interrupt(ConfiguredBaseModel):
+    """
+    A pause carried inside ``RunFinishedEvent.outcome`` when the outcome is
+    ``RunFinishedInterruptOutcome``. The client resumes
+    by addressing this interrupt in the resume array of the next RunAgentInput.
+    """
+    id: str
+    reason: str
+    message: Optional[str] = None
+    tool_call_id: Optional[str] = None
+    response_schema: Optional[Dict[str, Any]] = None
+    expires_at: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+ResumeStatus = Literal["resolved", "cancelled"]
+
+
+class ResumeEntry(ConfiguredBaseModel):
+    """
+    A per-interrupt response in the resume array of a RunAgentInput.
+    """
+    interrupt_id: str
+    status: ResumeStatus
+    payload: Optional[Any] = None
+
+
 class RunAgentInput(ConfiguredBaseModel):
     """
     Input for running an agent.
@@ -268,6 +295,7 @@ class RunAgentInput(ConfiguredBaseModel):
     tools: List[Tool]
     context: List[Context]
     forwarded_props: Any
+    resume: Optional[List[ResumeEntry]] = None
 
 
 # State can be any type

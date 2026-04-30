@@ -32,7 +32,7 @@ def sample_app():
 def reset_session_manager():
     """Reset session manager between tests."""
     yield
-    SessionManager._instance = None
+    SessionManager.reset_default()
 
 
 @pytest.mark.asyncio
