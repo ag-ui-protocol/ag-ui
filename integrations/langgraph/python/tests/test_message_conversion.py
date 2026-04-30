@@ -9,6 +9,8 @@ from ag_ui.core import (
     AssistantMessage as AGUIAssistantMessage,
     SystemMessage as AGUISystemMessage,
     ToolMessage as AGUIToolMessage,
+    ReasoningMessage as AGUIReasoningMessage,
+    DeveloperMessage as AGUIDeveloperMessage,
     ToolCall as AGUIToolCall,
     FunctionCall as AGUIFunctionCall,
     TextInputContent,
@@ -131,6 +133,31 @@ class TestAguiMessagesToLangchain:
         assert isinstance(result[0], HumanMessage)
         assert isinstance(result[1], AIMessage)
         assert isinstance(result[2], HumanMessage)
+
+    def test_reasoning_messages_dropped(self):
+        # Reasoning content is already represented inside the assistant
+        # AIMessage's content blocks at the LangChain layer; emitting a
+        # separate LangGraph message would duplicate context on the next turn
+        # and can drive the model into a tool-call loop.
+        msgs = [
+            AGUIUserMessage(id="u1", role="user", content="Hi"),
+            AGUIReasoningMessage(id="r1", role="reasoning", content="thinking..."),
+            AGUIAssistantMessage(id="a1", role="assistant", content="Hello"),
+        ]
+        result = agui_messages_to_langchain(msgs)
+        assert len(result) == 2
+        assert isinstance(result[0], HumanMessage)
+        assert isinstance(result[1], AIMessage)
+
+    def test_developer_messages_dropped(self):
+        # Developer prompts are configured on the agent itself, not round-tripped.
+        msgs = [
+            AGUIDeveloperMessage(id="d1", role="developer", content="be concise"),
+            AGUIUserMessage(id="u1", role="user", content="Hi"),
+        ]
+        result = agui_messages_to_langchain(msgs)
+        assert len(result) == 1
+        assert isinstance(result[0], HumanMessage)
 
 
 class TestLangchainMessagesToAgui:

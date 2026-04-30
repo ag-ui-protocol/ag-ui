@@ -235,6 +235,14 @@ def agui_messages_to_langchain(messages: List[AGUIMessage]) -> List[BaseMessage]
     langchain_messages = []
     for message in messages:
         role = message.role
+        # Reasoning + developer AG-UI messages are display-only / handled
+        # elsewhere; their content is already represented in adjacent AIMessage
+        # content blocks (reasoning) or in the agent's configured system prompt
+        # (developer). Re-materializing them as standalone LangChain messages
+        # duplicates context on every turn and can drive the model into a
+        # tool-call loop.
+        if role in ("reasoning", "developer"):
+            continue
         if role == "user":
             # Handle multimodal content
             if isinstance(message.content, str):

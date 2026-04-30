@@ -77,6 +77,31 @@ describe("Message Conversion - All Types", () => {
       expect(result[1].type).toBe("ai");
       expect(result[2].type).toBe("human");
     });
+
+    it("should drop reasoning messages (display-only)", () => {
+      // Reasoning content already lives inside the assistant AIMessage's
+      // content blocks at the LangChain layer; emitting a separate LangGraph
+      // message would duplicate context on the next turn.
+      const msgs: Message[] = [
+        { id: "u1", role: "user", content: "Hi" },
+        { id: "r1", role: "reasoning", content: "thinking..." },
+        { id: "a1", role: "assistant", content: "Hello" },
+      ];
+      const result = aguiMessagesToLangChain(msgs);
+      expect(result).toHaveLength(2);
+      expect(result[0].type).toBe("human");
+      expect(result[1].type).toBe("ai");
+    });
+
+    it("should drop developer messages (handled by agent system prompt)", () => {
+      const msgs: Message[] = [
+        { id: "d1", role: "developer", content: "be concise" } as any,
+        { id: "u1", role: "user", content: "Hi" },
+      ];
+      const result = aguiMessagesToLangChain(msgs);
+      expect(result).toHaveLength(1);
+      expect(result[0].type).toBe("human");
+    });
   });
 
   describe("langchainMessagesToAgui", () => {

@@ -219,7 +219,15 @@ export function langchainMessagesToAgui(messages: LangGraphMessage[]): Message[]
 }
 
 export function aguiMessagesToLangChain(messages: Message[]): LangGraphMessage[] {
-  return messages.map((message, index) => {
+  return messages
+    // Reasoning AG-UI messages are display-only — their content already lives
+    // inside the corresponding assistant AIMessage's content blocks
+    // (langchain-openai writes them there for the Responses API). Developer
+    // messages are part of the agent's configured system prompt. Re-materializing
+    // either as standalone LangChain messages duplicates context on every turn
+    // and can drive the model into a tool-call loop.
+    .filter((message) => message.role !== "reasoning" && message.role !== "developer")
+    .map((message, index) => {
     switch (message.role) {
       case "user":
         // Handle multimodal content
