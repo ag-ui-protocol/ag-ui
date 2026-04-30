@@ -214,6 +214,8 @@ describe("transformHttpEventStream debug logging", () => {
   });
 
   it("event invalid log: [HTTP] Event invalid: on schema parse failure", async () => {
+    expect.assertions(1);
+
     const logger = createDebugLogger({
       enabled: true,
       events: true,
@@ -225,10 +227,9 @@ describe("transformHttpEventStream debug logging", () => {
     const event$ = transformHttpEventStream(source$, logger);
 
     // Subscribe to catch the error
-    let errorCaught = false;
     event$.subscribe({
       error: () => {
-        errorCaught = true;
+        // expected
       },
     });
 
@@ -248,10 +249,6 @@ describe("transformHttpEventStream debug logging", () => {
       (call) => typeof call[0] === "string" && call[0] === "[HTTP] Event invalid:",
     );
 
-    // Either the event is invalid and logged, or the schema was lenient.
-    // If the schema rejects it, we should see the invalid log.
-    if (errorCaught) {
-      expect(invalidCalls.length).toBe(1);
-    }
+    expect(invalidCalls.length).toBe(1);
   });
 });

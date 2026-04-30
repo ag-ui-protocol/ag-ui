@@ -37,7 +37,7 @@ export const verifyEvents =
       mergeMap((event) => {
         const eventType = event.type;
 
-        log?.event("VERIFY", "", event, { type: event.type });
+        log?.event("VERIFY", "Event:", event, { type: event.type });
 
         // Check if run has errored
         if (runError) {

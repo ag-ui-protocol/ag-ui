@@ -51,7 +51,7 @@ export abstract class AbstractAgent {
   public messages: Message[];
   public state: State;
   public debug: ResolvedAgentDebugConfig;
-  public debugLogger: DebugLogger | undefined;
+  private _debugLogger: DebugLogger | undefined;
   public subscribers: AgentSubscriber[] = [];
   public isRunning: boolean = false;
   private middlewares: Middleware[] = [];
@@ -61,6 +61,20 @@ export abstract class AbstractAgent {
 
   get maxVersion() {
     return packageJson.version;
+  }
+
+  get debugLogger(): DebugLogger | undefined {
+    return this._debugLogger;
+  }
+
+  set debugLogger(value: DebugLogger | boolean | undefined) {
+    if (typeof value === "boolean") {
+      this._debugLogger = value
+        ? createDebugLogger(resolveAgentDebugConfig(true))
+        : undefined;
+    } else {
+      this._debugLogger = value;
+    }
   }
 
   constructor({
@@ -647,7 +661,7 @@ export abstract class AbstractAgent {
       (events$: Observable<LegacyRuntimeProtocolEvent>) => {
         return events$.pipe(
           map((event) => {
-            this.debugLogger?.event("LEGACY", "", event, { type: (event as any).type });
+            this.debugLogger?.event("LEGACY", "Event:", event, { type: event.type });
             return event;
           }),
         );
