@@ -1507,4 +1507,62 @@ describe("AgentSubscriber", () => {
       await expect(emptyAgent.runAgent({}));
     });
   });
+
+  describe("browser environment (no process global)", () => {
+    it("runSubscribersWithMutation should not throw when process is undefined", async () => {
+      const originalProcess = globalThis.process;
+      try {
+        // Simulate a browser environment where `process` does not exist.
+        // @ts-expect-error - intentionally removing process to simulate browser
+        delete globalThis.process;
+
+        const subscriber: AgentSubscriber = {
+          onRunInitialized: vi.fn().mockReturnValue({ messages: [] }),
+        };
+
+        const result = await runSubscribersWithMutation(
+          [subscriber],
+          [],
+          {},
+          (sub, messages, state) =>
+            (sub as { onRunInitialized: Function }).onRunInitialized({ messages, state }),
+        );
+
+        expect(result).toBeDefined();
+        expect(subscriber.onRunInitialized).toHaveBeenCalled();
+      } finally {
+        globalThis.process = originalProcess;
+      }
+    });
+
+    it("runSubscribersWithMutation should not deep-freeze when process is undefined", async () => {
+      const originalProcess = globalThis.process;
+      try {
+        // @ts-expect-error - intentionally removing process to simulate browser
+        delete globalThis.process;
+
+        const mutableState = { counter: 0 };
+        const subscriber: AgentSubscriber = {
+          onRunInitialized: vi.fn().mockImplementation(({ state }) => {
+            // In a browser (no process), isDev is false, so inputs should NOT be frozen.
+            // If the guard is missing, this would throw ReferenceError before we get here.
+            return undefined;
+          }),
+        };
+
+        await runSubscribersWithMutation(
+          [subscriber],
+          [],
+          mutableState,
+          (sub, messages, state) =>
+            (sub as { onRunInitialized: Function }).onRunInitialized({ messages, state }),
+        );
+
+        // If we reach here, no ReferenceError was thrown — the guard works.
+        expect(subscriber.onRunInitialized).toHaveBeenCalled();
+      } finally {
+        globalThis.process = originalProcess;
+      }
+    });
+  });
 });

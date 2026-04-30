@@ -429,14 +429,14 @@ the message history.
 type ReasoningMessageStartEvent = BaseEvent & {
   type: EventType.REASONING_MESSAGE_START
   messageId: string
-  role: "assistant"
+  role: "reasoning"
 }
 ```
 
-| Property    | Type          | Description                       |
-| ----------- | ------------- | --------------------------------- |
-| `messageId` | `string`      | Unique identifier for the message |
-| `role`      | `"assistant"` | Role is always "assistant"        |
+| Property    | Type          | Description                        |
+| ----------- | ------------- | ---------------------------------- |
+| `messageId` | `string`      | Unique identifier for the message  |
+| `role`      | `"reasoning"` | Role is always "reasoning"         |
 
 ### ReasoningMessageContentEvent
 

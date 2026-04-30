@@ -10,4 +10,5 @@ export type {
 } from "./types";
 export { resolveAgentDebugConfig } from "./types";
 export type { AgentSubscriber, AgentStateMutation, AgentSubscriberParams } from "./subscriber";
-export { DebugLogger, createDebugLogger } from "../debug-logger";
+export { DebugLogger, createDebugLogger, resolveDebugLogger } from "../debug-logger";
+export type { DebugLoggerInput } from "../debug-logger";

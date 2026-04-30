@@ -1,4 +1,5 @@
 import unittest
+import warnings
 from pydantic import ValidationError
 from pydantic import TypeAdapter
 
@@ -14,6 +15,11 @@ from ag_ui.core.types import (
     Message,
     RunAgentInput,
     TextInputContent,
+    InputContentDataSource,
+    InputContentUrlSource,
+    ImageInputPart,
+    AudioInputPart,
+    DocumentInputPart,
     BinaryInputContent,
 )
 
@@ -168,7 +174,12 @@ class TestBaseTypes(unittest.TestCase):
         """Test creating and serializing a multimodal user message"""
         contents = [
             TextInputContent(text="Check this out"),
-            BinaryInputContent(mime_type="image/png", url="https://example.com/image.png"),
+            ImageInputPart(
+                source=InputContentUrlSource(
+                    value="https://example.com/image.png",
+                    mime_type="image/png",
+                )
+            ),
         ]
         msg = UserMessage(
             id="user_multi",
@@ -180,13 +191,60 @@ class TestBaseTypes(unittest.TestCase):
         self.assertIsInstance(serialized["content"], list)
         self.assertEqual(serialized["content"][0]["type"], "text")
         self.assertEqual(serialized["content"][0]["text"], "Check this out")
-        self.assertEqual(serialized["content"][1]["mimeType"], "image/png")
-        self.assertEqual(serialized["content"][1]["url"], "https://example.com/image.png")
+        self.assertEqual(serialized["content"][1]["type"], "image")
+        self.assertEqual(serialized["content"][1]["source"]["type"], "url")
+        self.assertEqual(serialized["content"][1]["source"]["mimeType"], "image/png")
+
+    def test_user_message_multimodal_data_source(self):
+        """Test data source serialization for multimodal parts"""
+        msg = UserMessage(
+            id="user_multi_data",
+            content=[
+                AudioInputPart(
+                    source=InputContentDataSource(
+                        value="UklGRmQAAABXQVZF",
+                        mime_type="audio/wav",
+                    )
+                )
+            ],
+        )
+
+        serialized = msg.model_dump(by_alias=True)
+        self.assertEqual(serialized["content"][0]["type"], "audio")
+        self.assertEqual(serialized["content"][0]["source"]["type"], "data")
+        self.assertEqual(serialized["content"][0]["source"]["mimeType"], "audio/wav")
+
+    def test_document_part_with_metadata(self):
+        """Test document parts accept provider metadata"""
+        msg = UserMessage(
+            id="user_doc",
+            content=[
+                DocumentInputPart(
+                    source=InputContentUrlSource(
+                        value="https://example.com/report.pdf",
+                        mime_type="application/pdf",
+                    ),
+                    metadata={"provider": "anthropic", "media_type": "application/pdf"},
+                )
+            ],
+        )
+
+        serialized = msg.model_dump(by_alias=True)
+        self.assertEqual(serialized["content"][0]["type"], "document")
+        self.assertEqual(serialized["content"][0]["metadata"]["provider"], "anthropic")
 
     def test_binary_input_requires_payload_source(self):
         """Binary content must specify at least one delivery channel"""
         with self.assertRaises(ValidationError):
             BinaryInputContent(mime_type="image/png")
+
+    def test_binary_input_emits_deprecation_warning(self):
+        """BinaryInputContent should emit deprecation warnings"""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            BinaryInputContent(mime_type="image/png", url="https://example.com/image.png")
+
+            self.assertTrue(any(w.category is DeprecationWarning for w in caught))
 
 
     def test_message_union_deserialization(self):
@@ -313,9 +371,12 @@ class TestBaseTypes(unittest.TestCase):
                     "content": [
                         {"type": "text", "text": "Can you explain these results?"},
                         {
-                            "type": "binary",
-                            "mimeType": "image/png",
-                            "url": "https://example.com/results-chart.png"
+                            "type": "image",
+                            "source": {
+                                "type": "url",
+                                "value": "https://example.com/results-chart.png",
+                                "mimeType": "image/png"
+                            }
                         }
                     ]
                 }
@@ -387,8 +448,9 @@ class TestBaseTypes(unittest.TestCase):
         self.assertIsInstance(multimodal_content, list)
         self.assertEqual(multimodal_content[0].type, "text")
         self.assertEqual(multimodal_content[0].text, "Can you explain these results?")
-        self.assertEqual(multimodal_content[1].mime_type, "image/png")
-        self.assertEqual(multimodal_content[1].url, "https://example.com/results-chart.png")
+        self.assertEqual(multimodal_content[1].type, "image")
+        self.assertEqual(multimodal_content[1].source.type, "url")
+        self.assertEqual(multimodal_content[1].source.value, "https://example.com/results-chart.png")
 
         # Verify assistant message with tool call
         assistant_msg = run_agent_input.messages[3]

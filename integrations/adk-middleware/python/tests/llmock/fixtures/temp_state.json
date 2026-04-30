@@ -1,0 +1,15 @@
+{
+  "fixtures": [
+    {
+      "match": { "userMessage": "read the temp token" },
+      "response": {
+        "toolCalls": [
+          {
+            "name": "check_temp_state_tool",
+            "arguments": "{}"
+          }
+        ]
+      }
+    }
+  ]
+}

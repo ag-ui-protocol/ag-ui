@@ -1,6 +1,5 @@
 package com.agui.example.config;
 
-import com.agui.core.exception.AGUIException;
 import com.agui.core.state.State;
 import com.agui.example.tools.WeatherRequest;
 import com.agui.example.tools.WeatherTool;
@@ -28,7 +27,7 @@ public class AgUiConfig {
     }
 
     @Bean
-    public SpringAIAgent agent(@Value("${spring.ai.openai.api-key}") final String apiKey) throws AGUIException {
+    public SpringAIAgent agent(@Value("${spring.ai.openai.api-key}") final String apiKey) {
         var openai = OpenAiChatModel.builder()
             .defaultOptions(OpenAiChatOptions.builder()
                 .model("gpt-4o")
@@ -64,7 +63,7 @@ public class AgUiConfig {
     }
 
     @Bean("AgenticChat")
-    public SpringAIAgent agenticChatAgent(@Value("${spring.ai.openai.api-key}") final String apiKey) throws AGUIException {
+    public SpringAIAgent agenticChatAgent(@Value("${spring.ai.openai.api-key}") final String apiKey) {
         var openai = chatModel(apiKey);
 
         ChatMemory chatMemory = MessageWindowChatMemory.builder()
@@ -84,7 +83,7 @@ public class AgUiConfig {
     }
 
     @Bean("SharedState")
-    public SpringAIAgent sharedStateAgent(@Value("${spring.ai.openai.api-key}") final String apiKey) throws AGUIException {
+    public SpringAIAgent sharedStateAgent(@Value("${spring.ai.openai.api-key}") final String apiKey) {
         var openai = chatModel(apiKey);
 
         ChatMemory chatMemory = MessageWindowChatMemory.builder()

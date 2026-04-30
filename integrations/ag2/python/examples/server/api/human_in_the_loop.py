@@ -26,6 +26,7 @@ agent = ConversableAgent(
         - If not accepted, ask the user for more information, DO NOT use the `generate_task_steps` tool again
     """),
     llm_config=LLMConfig({"model": "gpt-4o-mini", "stream": True}),
+    human_input_mode="NEVER",
 )
 
 stream = AGUIStream(agent)

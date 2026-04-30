@@ -1,11 +1,10 @@
 """Tests for make_json_safe function."""
 import json
 import threading
+import unittest
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
-
-import pytest
 
 from ag_ui_langgraph.utils import make_json_safe, json_safe_stringify
 
@@ -37,7 +36,7 @@ class DataclassWithRuntimeConfig:
     config: Any = None   # LangGraph-injected, not serializable
 
 
-class TestMakeJsonSafe:
+class TestMakeJsonSafe(unittest.TestCase):
     """Tests for make_json_safe function."""
 
     def test_primitives(self):

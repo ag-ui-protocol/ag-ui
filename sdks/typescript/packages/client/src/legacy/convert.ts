@@ -1,5 +1,5 @@
 import { mergeMap } from "rxjs/operators";
-import * as jsonpatch from "fast-json-patch";
+import jsonpatch from "fast-json-patch";
 
 import {
   BaseEvent,

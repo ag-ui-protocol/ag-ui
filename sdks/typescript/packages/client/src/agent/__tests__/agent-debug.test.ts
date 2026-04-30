@@ -95,6 +95,34 @@ describe("Agent construction debug config", () => {
       verbose: false,
     });
   });
+
+  it("setting debug = true after construction enables logging", () => {
+    const agent = new TestAgent({ debug: false });
+    expect(agent.debugLogger).toBeUndefined();
+
+    agent.debug = true;
+    expect(agent.debugLogger).toBeInstanceOf(DebugLogger);
+    expect(agent.debug).toEqual({
+      enabled: true,
+      events: true,
+      lifecycle: true,
+      verbose: true,
+    });
+  });
+
+  it("setting debug = false after construction disables logging", () => {
+    const agent = new TestAgent({ debug: true });
+    expect(agent.debugLogger).toBeInstanceOf(DebugLogger);
+
+    agent.debug = false;
+    expect(agent.debugLogger).toBeUndefined();
+    expect(agent.debug).toEqual({
+      enabled: false,
+      events: false,
+      lifecycle: false,
+      verbose: false,
+    });
+  });
 });
 
 describe("Agent run lifecycle logging", () => {

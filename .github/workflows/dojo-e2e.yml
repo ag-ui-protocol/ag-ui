@@ -32,6 +32,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -146,6 +148,18 @@ jobs:
             test_path: tests/claudeAgentSdkTypescriptTests
             services: ["dojo", "claude-agent-sdk-typescript"]
             wait_on: http://localhost:9999,tcp:localhost:8020
+          - suite: ag2
+            test_path: tests/ag2Tests
+            services: ["dojo", "ag2"]
+            wait_on: http://localhost:9999,tcp:localhost:8018
+          - suite: microsoft-agent-framework-python
+            test_path: tests/microsoftAgentFrameworkPythonTests
+            services: ["dojo", "microsoft-agent-framework-python"]
+            wait_on: http://localhost:9999,tcp:localhost:8015
+          - suite: microsoft-agent-framework-dotnet
+            test_path: tests/microsoftAgentFrameworkDotnetTests
+            services: ["dojo", "microsoft-agent-framework-dotnet"]
+            wait_on: http://localhost:9999,tcp:localhost:8016
           # - suite: vercel-ai-sdk
           #   test_path: tests/vercelAISdkTests
           #   services: ["dojo"]
@@ -154,6 +168,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -208,6 +224,12 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v6
+
+      - name: Set up .NET SDK
+        if: ${{ contains(join(matrix.services, ','), 'microsoft-agent-framework-dotnet') }}
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

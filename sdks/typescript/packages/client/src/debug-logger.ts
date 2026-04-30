@@ -1,4 +1,19 @@
-import { ResolvedAgentDebugConfig } from "@/agent/types";
+import { ResolvedAgentDebugConfig, resolveAgentDebugConfig } from "@/agent/types";
+
+/** Accepted input wherever a debug logger can be provided. */
+export type DebugLoggerInput = DebugLogger | boolean | null | undefined;
+
+/**
+ * Resolves a DebugLoggerInput into a DebugLogger or undefined.
+ * - `true` → creates a new DebugLogger with all logging enabled
+ * - `DebugLogger` instance → returned as-is
+ * - `false`, `null`, `undefined` → returns undefined
+ */
+export function resolveDebugLogger(input: DebugLoggerInput): DebugLogger | undefined {
+  if (input instanceof DebugLogger) return input;
+  if (input === true) return new DebugLogger(resolveAgentDebugConfig(true));
+  return undefined;
+}
 
 /**
  * Centralized debug logger for the AG-UI event pipeline.

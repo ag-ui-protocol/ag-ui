@@ -5,16 +5,16 @@ import { parseSSEStream } from "./sse";
 import { parseProtoStream } from "./proto";
 import * as proto from "@ag-ui/proto";
 import { EventType } from "@ag-ui/core";
-import { DebugLogger } from "@/debug-logger";
+import { type DebugLoggerInput, resolveDebugLogger } from "@/debug-logger";
 
 /**
  * Transforms HTTP events into BaseEvents using the appropriate format parser based on content type.
  */
 export const transformHttpEventStream = (
   source$: Observable<HttpEvent>,
-  debugLogger?: DebugLogger | false | null,
+  debugLogger?: DebugLoggerInput,
 ): Observable<BaseEvent> => {
-  const log = debugLogger || undefined;
+  const log = resolveDebugLogger(debugLogger);
   const eventSubject = new Subject<BaseEvent>();
 
   // Use ReplaySubject to buffer events until we decide on the parser

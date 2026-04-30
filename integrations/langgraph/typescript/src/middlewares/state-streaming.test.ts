@@ -16,7 +16,12 @@ vi.mock("langchain", () => ({
 }));
 
 import { stateStreamingMiddleware, stateItem } from "./state-streaming";
-import { BaseMessage, HumanMessage, SystemMessage, ToolMessage } from "@langchain/core/messages";
+import {
+  BaseMessage,
+  HumanMessage,
+  SystemMessage,
+  ToolMessage,
+} from "@langchain/core/messages";
 import { ModelRequest } from "langchain";
 
 /** Minimal mock of request.model — only withConfig is exercised. */
@@ -47,7 +52,13 @@ function makeRequest(messages: BaseMessage[]) {
 }
 
 describe("stateStreamingMiddleware", () => {
-  const items = [stateItem({ stateKey: "recipe", tool: "write_recipe", toolArgument: "draft" })];
+  const items = [
+    stateItem({
+      stateKey: "recipe",
+      tool: "write_recipe",
+      toolArgument: "draft",
+    }),
+  ];
 
   describe("wrapModelCall — isPreToolCall logic", () => {
     it("injects predict_state metadata when messages array is empty", async () => {
@@ -60,11 +71,21 @@ describe("stateStreamingMiddleware", () => {
       expect(model.withConfig).toHaveBeenCalledOnce();
       expect(model.withConfig).toHaveBeenCalledWith({
         metadata: {
-          predict_state: [{ state_key: "recipe", tool: "write_recipe", tool_argument: "draft" }],
+          predict_state: [
+            {
+              state_key: "recipe",
+              tool: "write_recipe",
+              tool_argument: "draft",
+            },
+          ],
         },
       });
       // handler receives a request with the enriched model
-      expect(handler).toHaveBeenCalledWith(expect.objectContaining({ model: expect.objectContaining({ _isModelWithConfig: true }) }));
+      expect(handler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: expect.objectContaining({ _isModelWithConfig: true }),
+        }),
+      );
     });
 
     it("injects predict_state metadata when last message is not a ToolMessage", async () => {
@@ -77,25 +98,60 @@ describe("stateStreamingMiddleware", () => {
       expect(model.withConfig).toHaveBeenCalledOnce();
     });
 
-    it("passes through without injecting when last message is a ToolMessage", async () => {
+    it("suppresses injection when last message is a ToolMessage for a tracked tool", async () => {
       const middleware = stateStreamingMiddleware(...items);
-      const toolMsg = new ToolMessage({ content: "result", tool_call_id: "tc1" });
-      const { request, model } = makeRequest([new HumanMessage("call it"), toolMsg]);
+      const toolMsg = new ToolMessage({
+        content: "result",
+        tool_call_id: "tc1",
+        name: "write_recipe",
+      });
+      const { request, model } = makeRequest([
+        new HumanMessage("call it"),
+        toolMsg,
+      ]);
       const handler = vi.fn().mockResolvedValue({ content: "ok" });
 
       await middleware.wrapModelCall!(request, handler);
 
-      // model.withConfig must NOT have been called — request passes through unchanged
+      // model.withConfig must NOT have been called — tracked tool suppresses
       expect(model.withConfig).not.toHaveBeenCalled();
       expect(handler).toHaveBeenCalledWith(request);
+    });
+
+    it("injects when last message is a ToolMessage for an untracked tool", async () => {
+      const middleware = stateStreamingMiddleware(...items);
+      // open_canvas is not in the tracked items list
+      const toolMsg = new ToolMessage({
+        content: "Canvas is now open.",
+        tool_call_id: "tc2",
+        name: "open_canvas",
+      });
+      const { request, model } = makeRequest([
+        new HumanMessage("call it"),
+        toolMsg,
+      ]);
+      const handler = vi.fn().mockResolvedValue({ content: "ok" });
+
+      await middleware.wrapModelCall!(request, handler);
+
+      // untracked tool — predict_state should be injected so manage_todos can stream
+      expect(model.withConfig).toHaveBeenCalledOnce();
     });
   });
 
   describe("predict_state payload shape", () => {
     it("maps StateItem camelCase fields to snake_case in predict_state", async () => {
       const middleware = stateStreamingMiddleware(
-        stateItem({ stateKey: "myState", tool: "my_tool", toolArgument: "my_arg" }),
-        stateItem({ stateKey: "otherState", tool: "other_tool", toolArgument: "other_arg" }),
+        stateItem({
+          stateKey: "myState",
+          tool: "my_tool",
+          toolArgument: "my_arg",
+        }),
+        stateItem({
+          stateKey: "otherState",
+          tool: "other_tool",
+          toolArgument: "other_arg",
+        }),
       );
       const { request, model } = makeRequest([new HumanMessage("go")]);
       const handler = vi.fn().mockResolvedValue({ content: "ok" });
@@ -106,7 +162,11 @@ describe("stateStreamingMiddleware", () => {
         metadata: {
           predict_state: [
             { state_key: "myState", tool: "my_tool", tool_argument: "my_arg" },
-            { state_key: "otherState", tool: "other_tool", tool_argument: "other_arg" },
+            {
+              state_key: "otherState",
+              tool: "other_tool",
+              tool_argument: "other_arg",
+            },
           ],
         },
       });
@@ -125,13 +185,13 @@ describe("stateStreamingMiddleware", () => {
     });
   });
 
-  describe("hasPredictState metadata check", () => {
+  describe("modelMadeToolCall metadata check", () => {
     /**
-     * The agent sets hasPredictState only when the streaming tool call's name
-     * appears in event.metadata["predict_state"].  Mirrors the Python
-     * model_made_tool_call metadata-awareness added in agent.py.
-     * See agent.ts for the live implementation — the lambda below isolates the
-     * same logic for regression testing without a full LangGraph stack.
+     * The agent sets modelMadeToolCall only when the streaming tool call's
+     * name appears in event.metadata["predict_state"]. Mirrors the Python
+     * model_made_tool_call metadata-awareness in agent.py.
+     * See agent.ts for the live implementation — the lambda below isolates
+     * the same logic for regression testing without a full LangGraph stack.
      */
     const toolCallUsedToPredictState = (
       toolName: string | undefined,
@@ -170,28 +230,52 @@ describe("stateStreamingMiddleware", () => {
 
   describe("snapshot suppression condition", () => {
     /**
-     * The TypeScript agent suppresses a STATE_SNAPSHOT on node exit when
-     * `hasPredictState` is true (set the moment the model starts streaming a
-     * tool call that matches a predict_state item). This avoids overwriting
-     * optimistic UI state that was already pushed to the client.
+     * TS agent suppresses ALL STATE_SNAPSHOT emissions while
+     * modelMadeToolCall is true, not just on node exit (diverges from
+     * Python, which only suppresses on node exit). See agent.ts
+     * condition `!this.activeRun!.modelMadeToolCall && (...)`.
      *
-     * The suppression sub-expression (from agent.ts line 563) is:
-     *   !(exitingNode && hasPredictState)
+     * Full emission condition requires:
+     *   !modelMadeToolCall
+     *   && (hasStateDiff || prevNodeName !== nodeName || exitingNode)
+     *   && !messageInProgress
      *
-     * Note: this is only the innermost guard; the full emission condition also
-     * requires (hasStateDiff || prevNodeName != nodeName || exitingNode) and
-     * no message in progress.  We isolate this sub-expression here so regressions
-     * are caught without a full LangGraph stack.  The lambda below is an
-     * intentional local re-statement of agent.ts line 563 — it is NOT dead code.
+     * The lambda below is an intentional local re-statement of that
+     * expression — kept to catch regressions without the full LangGraph
+     * stack. Must be updated if the production condition changes.
      */
-    it("suppresses snapshot when exiting node AND hasPredictState is true", () => {
-      const shouldEmit = (exitingNode: boolean, hasPredictState: boolean) =>
-        !(exitingNode && hasPredictState);
+    const shouldEmit = (
+      modelMadeToolCall: boolean,
+      hasStateDiff: boolean,
+      nodeChanged: boolean,
+      exitingNode: boolean,
+      messageInProgress: boolean,
+    ) =>
+      !modelMadeToolCall &&
+      (hasStateDiff || nodeChanged || exitingNode) &&
+      !messageInProgress;
 
-      expect(shouldEmit(true, true)).toBe(false);   // suppressed ✓
-      expect(shouldEmit(true, false)).toBe(true);   // not suppressed
-      expect(shouldEmit(false, true)).toBe(true);   // not suppressed
-      expect(shouldEmit(false, false)).toBe(true);  // not suppressed
+    it("suppresses every snapshot kind while modelMadeToolCall is true", () => {
+      // state-diff snapshot
+      expect(shouldEmit(true, true, false, false, false)).toBe(false);
+      // node-change snapshot
+      expect(shouldEmit(true, false, true, false, false)).toBe(false);
+      // node-exit snapshot
+      expect(shouldEmit(true, false, false, true, false)).toBe(false);
+    });
+
+    it("emits snapshots when modelMadeToolCall is false and a trigger is present", () => {
+      expect(shouldEmit(false, true, false, false, false)).toBe(true);
+      expect(shouldEmit(false, false, true, false, false)).toBe(true);
+      expect(shouldEmit(false, false, false, true, false)).toBe(true);
+    });
+
+    it("suppresses when a message is in progress regardless of flag", () => {
+      expect(shouldEmit(false, true, true, true, true)).toBe(false);
+    });
+
+    it("emits nothing when no trigger condition is true", () => {
+      expect(shouldEmit(false, false, false, false, false)).toBe(false);
     });
   });
 });

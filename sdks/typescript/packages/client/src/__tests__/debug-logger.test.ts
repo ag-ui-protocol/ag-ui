@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { DebugLogger, createDebugLogger } from "@/debug-logger";
+import { DebugLogger, createDebugLogger, resolveDebugLogger } from "@/debug-logger";
 import { resolveAgentDebugConfig, ResolvedAgentDebugConfig } from "@/agent/types";
 
 describe("resolveAgentDebugConfig", () => {
@@ -145,6 +145,40 @@ describe("createDebugLogger", () => {
     };
     const logger = createDebugLogger(config);
     expect(logger).toBeInstanceOf(DebugLogger);
+  });
+});
+
+describe("resolveDebugLogger", () => {
+  it("returns undefined for undefined", () => {
+    expect(resolveDebugLogger(undefined)).toBeUndefined();
+  });
+
+  it("returns undefined for null", () => {
+    expect(resolveDebugLogger(null)).toBeUndefined();
+  });
+
+  it("returns undefined for false", () => {
+    expect(resolveDebugLogger(false)).toBeUndefined();
+  });
+
+  it("returns a DebugLogger instance for true", () => {
+    const logger = resolveDebugLogger(true);
+    expect(logger).toBeInstanceOf(DebugLogger);
+    expect(logger!.enabled).toBe(true);
+    expect(logger!.eventsEnabled).toBe(true);
+    expect(logger!.lifecycleEnabled).toBe(true);
+  });
+
+  it("returns the same DebugLogger instance when given one", () => {
+    const config: ResolvedAgentDebugConfig = {
+      enabled: true,
+      events: true,
+      lifecycle: false,
+      verbose: false,
+    };
+    const original = new DebugLogger(config);
+    const resolved = resolveDebugLogger(original);
+    expect(resolved).toBe(original);
   });
 });
 

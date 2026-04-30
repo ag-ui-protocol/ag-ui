@@ -1,6 +1,6 @@
 import { Observable, Subject } from "rxjs";
 import { HttpEvent, HttpEventType } from "../run/http-request";
-import { DebugLogger } from "@/debug-logger";
+import { type DebugLoggerInput, resolveDebugLogger } from "@/debug-logger";
 
 /**
  * Parses a stream of HTTP events into a stream of JSON objects using Server-Sent Events (SSE) format.
@@ -12,9 +12,9 @@ import { DebugLogger } from "@/debug-logger";
  */
 export const parseSSEStream = (
   source$: Observable<HttpEvent>,
-  debugLogger?: DebugLogger | false | null,
+  debugLogger?: DebugLoggerInput,
 ): Observable<any> => {
-  const log = debugLogger || undefined;
+  const log = resolveDebugLogger(debugLogger);
   const jsonSubject = new Subject<any>();
   // Create TextDecoder with stream option set to true to handle split UTF-8 characters
   const decoder = new TextDecoder("utf-8", { fatal: false });

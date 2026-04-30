@@ -1,5 +1,6 @@
 import {
   BaseEvent,
+  Interrupt,
   Message,
   RunAgentInput,
   RunErrorEvent,
@@ -74,7 +75,11 @@ export interface AgentSubscriber {
     params: { event: RunStartedEvent } & AgentSubscriberParams,
   ): MaybePromise<AgentStateMutation | void>;
   onRunFinishedEvent?(
-    params: { event: RunFinishedEvent; result?: any } & AgentSubscriberParams,
+    params: (
+      | { event: RunFinishedEvent; outcome: "success"; result?: unknown }
+      | { event: RunFinishedEvent; outcome: "interrupt"; interrupts: Interrupt[] }
+    ) &
+      AgentSubscriberParams,
   ): MaybePromise<AgentStateMutation | void>;
   onRunErrorEvent?(
     params: { event: RunErrorEvent } & AgentSubscriberParams,
@@ -230,12 +235,14 @@ export async function runSubscribersWithMutation(
     state: Readonly<State>,
   ) => MaybePromise<AgentStateMutation | void>,
 ): Promise<AgentStateMutation> {
+  const hasProcess = typeof process !== "undefined" && typeof process.env !== "undefined";
   const isTestEnvironment =
-    process.env.NODE_ENV === "test" || Boolean(process.env.VITEST_WORKER_ID);
+    hasProcess && (process.env.NODE_ENV === "test" || Boolean(process.env.VITEST_WORKER_ID));
   const isDev =
-    process.env.NODE_ENV === "development" ||
-    process.env.NODE_ENV === "test" ||
-    Boolean(process.env.VITEST_WORKER_ID);
+    hasProcess &&
+    (process.env.NODE_ENV === "development" ||
+      process.env.NODE_ENV === "test" ||
+      Boolean(process.env.VITEST_WORKER_ID));
   const baselineMessages = structuredClone_(initialMessages);
   const baselineState = structuredClone_(initialState);
   let messages: Message[] = baselineMessages;

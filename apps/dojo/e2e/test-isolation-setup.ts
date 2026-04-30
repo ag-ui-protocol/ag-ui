@@ -1,5 +1,5 @@
 import { chromium, FullConfig } from "@playwright/test";
-import { setupLLMock } from "./llmock-setup";
+import { setupLLMock } from "./aimock-setup";
 
 async function globalSetup(config: FullConfig) {
   // Start the LLMock server before any tests run

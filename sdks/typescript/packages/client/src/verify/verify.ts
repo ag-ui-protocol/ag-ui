@@ -1,12 +1,12 @@
 import { BaseEvent, EventType, AGUIError } from "@ag-ui/core";
 import { Observable, throwError, of } from "rxjs";
 import { mergeMap } from "rxjs/operators";
-import { DebugLogger } from "@/debug-logger";
+import { type DebugLoggerInput, resolveDebugLogger } from "@/debug-logger";
 
 export const verifyEvents =
-  (debugLogger?: DebugLogger | false | null) =>
+  (debugLogger?: DebugLoggerInput) =>
   (source$: Observable<BaseEvent>): Observable<BaseEvent> => {
-    const log = debugLogger || undefined;
+    const log = resolveDebugLogger(debugLogger);
     // Declare variables in closure to maintain state across events
     let activeMessages = new Map<string, boolean>(); // Map of message ID -> active status
     let activeToolCalls = new Map<string, boolean>(); // Map of tool call ID -> active status

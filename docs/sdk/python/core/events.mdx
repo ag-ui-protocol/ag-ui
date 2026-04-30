@@ -470,13 +470,13 @@ the message history.
 class ReasoningMessageStartEvent(BaseEvent):
     type: Literal[EventType.REASONING_MESSAGE_START]
     message_id: str
-    role: Literal["assistant"]
+    role: Literal["reasoning"]
 ```
 
-| Property     | Type                   | Description                       |
-| ------------ | ---------------------- | --------------------------------- |
-| `message_id` | `str`                  | Unique identifier for the message |
-| `role`       | `Literal["assistant"]` | Role is always "assistant"        |
+| Property     | Type                    | Description                       |
+| ------------ | ----------------------- | --------------------------------- |
+| `message_id` | `str`                   | Unique identifier for the message |
+| `role`       | `Literal["reasoning"]`  | Role is always "reasoning"        |
 
 ### ReasoningMessageContentEvent
 

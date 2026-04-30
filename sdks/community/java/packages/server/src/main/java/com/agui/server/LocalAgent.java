@@ -52,7 +52,7 @@ public abstract class LocalAgent implements Agent {
             final String agentId,
             final State state,
             final List<BaseMessage> messages
-    ) throws AGUIException {
+    ) {
         this.agentId = agentId;
 
         this.state = state;

@@ -15,7 +15,7 @@ import {
   ReasoningMessageStartEvent,
 } from "@ag-ui/core";
 import { EventType } from "@ag-ui/core";
-import { DebugLogger } from "@/debug-logger";
+import { type DebugLoggerInput, resolveDebugLogger } from "@/debug-logger";
 
 interface TextMessageFields {
   messageId: string;
@@ -33,9 +33,9 @@ interface ReasoningMessageFields {
 }
 
 export const transformChunks =
-  (debugLogger?: DebugLogger | false | null) =>
+  (debugLogger?: DebugLoggerInput) =>
   (events$: Observable<BaseEvent>): Observable<BaseEvent> => {
-    const log = debugLogger || undefined;
+    const log = resolveDebugLogger(debugLogger);
     let textMessageFields: TextMessageFields | undefined;
     let toolCallFields: ToolCallFields | undefined;
     let reasoningMessageFields: ReasoningMessageFields | undefined;

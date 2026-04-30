@@ -19,6 +19,7 @@ import os
 
 from .api import (
     agentic_chat_app,
+    agentic_chat_reasoning_app,
     agentic_generative_ui_app,
     tool_based_generative_ui_app,
     human_in_the_loop_app,
@@ -37,6 +38,7 @@ app.include_router(human_in_the_loop_app.router, prefix='/adk-human-in-loop-agen
 app.include_router(shared_state_app.router, prefix='/adk-shared-state-agent', tags=['Shared State'])
 app.include_router(backend_tool_rendering_app.router, prefix='/backend_tool_rendering', tags=['Backend Tool Rendering'])
 app.include_router(predictive_state_updates_app.router, prefix='/adk-predictive-state-agent', tags=['Predictive State Updates'])
+app.include_router(agentic_chat_reasoning_app.router, prefix='/adk-reasoning-chat', tags=['Agentic Chat Reasoning'])
 
 
 @app.get("/")
@@ -51,6 +53,7 @@ async def root():
             "shared_state": "/adk-shared-state-agent",
             "backend_tool_rendering": "/backend_tool_rendering",
             "predictive_state_updates": "/adk-predictive-state-agent",
+            "agentic_chat_reasoning": "/adk-reasoning-chat",
             "docs": "/docs"
         }
     }
@@ -91,6 +94,7 @@ def main():
     print(f"  • Human in the Loop: http://localhost:{port}/adk-human-in-loop-agent")
     print(f"  • Shared State: http://localhost:{port}/adk-shared-state-agent")
     print(f"  • Predictive State Updates: http://localhost:{port}/adk-predictive-state-agent")
+    print(f"  • Agentic Chat Reasoning: http://localhost:{port}/adk-reasoning-chat")
     print(f"  • API docs: http://localhost:{port}/docs")
     uvicorn.run(app, host="0.0.0.0", port=port)
 

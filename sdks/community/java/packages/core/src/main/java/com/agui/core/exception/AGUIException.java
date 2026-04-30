@@ -9,15 +9,15 @@ package com.agui.core.exception;
  * exceptions to preserve the original cause of errors.
  * </p>
  * <p>
- * This is a checked exception, meaning it must be explicitly handled or declared
- * in method signatures where it might be thrown.
+ * This is an unchecked exception, meaning it does not need to be explicitly
+ * handled or declared in method signatures where it might be thrown.
  * </p>
  *
- * @see Exception
+ * @see RuntimeException
  *
  * @author Pascal Wilbrink
  */
-public class AGUIException extends Exception {
+public class AGUIException extends RuntimeException {
 
     /**
      * Creates a new AGUIException with the specified error message.

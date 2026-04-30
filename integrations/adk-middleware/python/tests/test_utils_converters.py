@@ -15,6 +15,12 @@ from ag_ui.core import (
     FunctionCall,
     TextInputContent,
     BinaryInputContent,
+    ImageInputContent,
+    AudioInputContent,
+    VideoInputContent,
+    DocumentInputContent,
+    InputContentDataSource,
+    InputContentUrlSource,
 )
 from google.adk.events import Event as ADKEvent
 from google.genai import types
@@ -122,6 +128,205 @@ class TestConvertAGUIMessagesToADK:
 
         assert len(event.content.parts) == 1
         assert event.content.parts[0].text == "Please look at the image at this URL."
+
+    def test_convert_user_message_image_input_data_source(self):
+        """Test converting ImageInputContent with inline base64 data source."""
+        raw = b"fake-image-bytes"
+        b64 = base64.b64encode(raw).decode("ascii")
+        user_msg = UserMessage(
+            id="user_img_data",
+            role="user",
+            content=[
+                TextInputContent(text="Describe this image."),
+                ImageInputContent(
+                    source=InputContentDataSource(
+                        value=b64,
+                        mime_type="image/png",
+                    ),
+                ),
+            ],
+        )
+
+        adk_events = convert_ag_ui_messages_to_adk([user_msg])
+        event = adk_events[0]
+
+        assert len(event.content.parts) == 2
+        assert event.content.parts[0].text == "Describe this image."
+        assert event.content.parts[1].inline_data.mime_type == "image/png"
+        assert event.content.parts[1].inline_data.data == raw
+
+    def test_convert_user_message_image_input_url_source(self):
+        """Test converting ImageInputContent with URL source uses file_data."""
+        user_msg = UserMessage(
+            id="user_img_url",
+            role="user",
+            content=[
+                TextInputContent(text="What is in this image?"),
+                ImageInputContent(
+                    source=InputContentUrlSource(
+                        value="https://example.com/photo.png",
+                        mime_type="image/png",
+                    ),
+                ),
+            ],
+        )
+
+        adk_events = convert_ag_ui_messages_to_adk([user_msg])
+        event = adk_events[0]
+
+        assert len(event.content.parts) == 2
+        assert event.content.parts[0].text == "What is in this image?"
+        assert event.content.parts[1].file_data.file_uri == "https://example.com/photo.png"
+        assert event.content.parts[1].file_data.mime_type == "image/png"
+
+    def test_convert_user_message_audio_input_data_source(self):
+        """Test converting AudioInputContent with inline base64 data source."""
+        raw = b"fake-audio-bytes"
+        b64 = base64.b64encode(raw).decode("ascii")
+        user_msg = UserMessage(
+            id="user_audio_data",
+            role="user",
+            content=[
+                AudioInputContent(
+                    source=InputContentDataSource(
+                        value=b64,
+                        mime_type="audio/wav",
+                    ),
+                ),
+            ],
+        )
+
+        adk_events = convert_ag_ui_messages_to_adk([user_msg])
+        event = adk_events[0]
+
+        assert len(event.content.parts) == 1
+        assert event.content.parts[0].inline_data.mime_type == "audio/wav"
+        assert event.content.parts[0].inline_data.data == raw
+
+    def test_convert_user_message_video_input_url_source(self):
+        """Test converting VideoInputContent with URL source."""
+        user_msg = UserMessage(
+            id="user_video_url",
+            role="user",
+            content=[
+                VideoInputContent(
+                    source=InputContentUrlSource(
+                        value="https://example.com/clip.mp4",
+                        mime_type="video/mp4",
+                    ),
+                ),
+            ],
+        )
+
+        adk_events = convert_ag_ui_messages_to_adk([user_msg])
+        event = adk_events[0]
+
+        assert len(event.content.parts) == 1
+        assert event.content.parts[0].file_data.file_uri == "https://example.com/clip.mp4"
+        assert event.content.parts[0].file_data.mime_type == "video/mp4"
+
+    def test_convert_user_message_document_input_data_source(self):
+        """Test converting DocumentInputContent with inline base64 data source."""
+        raw = b"%PDF-fake-document"
+        b64 = base64.b64encode(raw).decode("ascii")
+        user_msg = UserMessage(
+            id="user_doc_data",
+            role="user",
+            content=[
+                TextInputContent(text="Summarize this document."),
+                DocumentInputContent(
+                    source=InputContentDataSource(
+                        value=b64,
+                        mime_type="application/pdf",
+                    ),
+                ),
+            ],
+        )
+
+        adk_events = convert_ag_ui_messages_to_adk([user_msg])
+        event = adk_events[0]
+
+        assert len(event.content.parts) == 2
+        assert event.content.parts[0].text == "Summarize this document."
+        assert event.content.parts[1].inline_data.mime_type == "application/pdf"
+        assert event.content.parts[1].inline_data.data == raw
+
+    def test_convert_user_message_url_source_without_mime_type(self):
+        """Test converting URL source without mime_type still works (ADK auto-detects)."""
+        user_msg = UserMessage(
+            id="user_img_url_no_mime",
+            role="user",
+            content=[
+                ImageInputContent(
+                    source=InputContentUrlSource(
+                        value="https://example.com/photo.jpg",
+                    ),
+                ),
+            ],
+        )
+
+        adk_events = convert_ag_ui_messages_to_adk([user_msg])
+        event = adk_events[0]
+
+        assert len(event.content.parts) == 1
+        assert event.content.parts[0].file_data.file_uri == "https://example.com/photo.jpg"
+        assert event.content.parts[0].file_data.mime_type is None
+
+    def test_convert_user_message_media_broken_base64_ignored(self):
+        """Test that media content with broken base64 data is ignored."""
+        user_msg = UserMessage(
+            id="user_media_broken",
+            role="user",
+            content=[
+                TextInputContent(text="Check this."),
+                ImageInputContent(
+                    source=InputContentDataSource(
+                        value="This Is Not Valid Base64!!!",
+                        mime_type="image/png",
+                    ),
+                ),
+            ],
+        )
+
+        adk_events = convert_ag_ui_messages_to_adk([user_msg])
+        event = adk_events[0]
+
+        assert len(event.content.parts) == 1
+        assert event.content.parts[0].text == "Check this."
+
+    def test_convert_user_message_mixed_media_types(self):
+        """Test converting a message with multiple different media types."""
+        img_raw = b"fake-image"
+        img_b64 = base64.b64encode(img_raw).decode("ascii")
+        user_msg = UserMessage(
+            id="user_mixed",
+            role="user",
+            content=[
+                TextInputContent(text="Analyze these files."),
+                ImageInputContent(
+                    source=InputContentDataSource(
+                        value=img_b64,
+                        mime_type="image/png",
+                    ),
+                ),
+                DocumentInputContent(
+                    source=InputContentUrlSource(
+                        value="https://example.com/report.pdf",
+                        mime_type="application/pdf",
+                    ),
+                ),
+            ],
+        )
+
+        adk_events = convert_ag_ui_messages_to_adk([user_msg])
+        event = adk_events[0]
+
+        assert len(event.content.parts) == 3
+        assert event.content.parts[0].text == "Analyze these files."
+        assert event.content.parts[1].inline_data.mime_type == "image/png"
+        assert event.content.parts[1].inline_data.data == img_raw
+        assert event.content.parts[2].file_data.file_uri == "https://example.com/report.pdf"
+        assert event.content.parts[2].file_data.mime_type == "application/pdf"
 
     def test_convert_system_message(self):
         """Test converting a SystemMessage to ADK event."""

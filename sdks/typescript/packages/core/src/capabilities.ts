@@ -198,7 +198,8 @@ export const HumanInTheLoopCapabilitiesSchema = z.object({
    *  to improve its behavior within the current session. */
   feedback: z.boolean().optional(),
   /** Set `true` if the agent participates in the AG-UI interrupt protocol
-   *  (emits RUN_FINISHED with outcome="interrupt", accepts resume[]). */
+   *  (emits RUN_FINISHED with outcome={ type: "interrupt", interrupts: [...] },
+   *  accepts resume[]). */
   interrupts: z.boolean().optional(),
   /** Set `true` if tool-call interrupts accept editedArgs in the resume payload.
    *  Only meaningful when interrupts is true. */

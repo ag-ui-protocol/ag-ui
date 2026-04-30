@@ -26,6 +26,8 @@ load_dotenv(dotenv_path=env_path)
 # Import agent apps
 from .api import (
     agentic_chat_app,
+    agentic_chat_reasoning_app,
+    agentic_chat_multimodal_app,
     agentic_generative_ui_app,
     backend_tool_rendering_app,
     human_in_the_loop_app,
@@ -46,6 +48,8 @@ app.add_middleware(
 
 # Mount agents
 app.mount('/agentic-chat', agentic_chat_app, 'Agentic Chat')
+app.mount('/agentic-chat-reasoning', agentic_chat_reasoning_app, 'Agentic Chat Reasoning')
+app.mount('/agentic-chat-multimodal', agentic_chat_multimodal_app, 'Agentic Chat Multimodal')
 app.mount('/backend-tool-rendering', backend_tool_rendering_app, 'Backend Tool Rendering')
 app.mount('/agentic-generative-ui', agentic_generative_ui_app, 'Agentic Generative UI')
 app.mount('/shared-state', shared_state_app, 'Shared State')
