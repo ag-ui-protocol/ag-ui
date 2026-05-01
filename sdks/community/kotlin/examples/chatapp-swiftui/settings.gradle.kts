@@ -12,7 +12,6 @@ includeBuild("../../library") {
         substitute(module("com.ag-ui.community:kotlin-core")).using(project(":kotlin-core"))
         substitute(module("com.ag-ui.community:kotlin-client")).using(project(":kotlin-client"))
         substitute(module("com.ag-ui.community:kotlin-tools")).using(project(":kotlin-tools"))
-        substitute(module("com.ag-ui.community:kotlin-a2ui")).using(project(":kotlin-a2ui"))
     }
 }
 

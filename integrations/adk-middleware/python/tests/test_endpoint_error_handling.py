@@ -39,11 +39,13 @@ class TestEndpointErrorHandling:
         # Create a mock ADK agent
         mock_agent = AsyncMock(spec=ADKAgent)
 
-        # Create a mock event that will cause encoding issues
+        # Create a mock event whose model_dump_json raises to simulate the
+        # per-event encoding failure path in the endpoint.
         mock_event = MagicMock()
         mock_event.type = EventType.RUN_STARTED
         mock_event.thread_id = "test"
         mock_event.run_id = "test"
+        mock_event.model_dump_json.side_effect = Exception("Encoding failed!")
 
         # Mock the agent to yield the problematic event
         async def mock_run(input_data):
@@ -71,39 +73,32 @@ class TestEndpointErrorHandling:
             "forwarded_props": {}
         }
 
-        # Mock the encoder to simulate encoding failure
-        with patch('ag_ui_adk.endpoint.EventEncoder') as mock_encoder_class:
-            mock_encoder = MagicMock()
-            mock_encoder.encode.side_effect = Exception("Encoding failed!")
-            mock_encoder.get_content_type.return_value = "text/event-stream"
-            mock_encoder_class.return_value = mock_encoder
+        # Test the endpoint
+        with TestClient(self.get_test_app(app)) as client:
+            response = client.post(
+                "/test",
+                json=test_input,
+                headers={"Accept": "text/event-stream"}
+            )
 
-            # Test the endpoint
-            with TestClient(self.get_test_app(app)) as client:
-                response = client.post(
-                    "/test",
-                    json=test_input,
-                    headers={"Accept": "text/event-stream"}
-                )
+            print(f"📊 Response status: {response.status_code}")
 
-                print(f"📊 Response status: {response.status_code}")
+            if response.status_code == 200:
+                # Read the response content
+                content = response.text
+                print(f"📄 Response content preview: {content[:100]}...")
 
-                if response.status_code == 200:
-                    # Read the response content
-                    content = response.text
-                    print(f"📄 Response content preview: {content[:100]}...")
-
-                    # Check if error handling worked
-                    if "Event encoding failed" in content or "ENCODING_ERROR" in content:
-                        print("✅ Encoding error properly handled and communicated")
-                        return True
-                    else:
-                        print("⚠️ Error handling may not be working as expected")
-                        print(f"   Full content: {content}")
-                        return False
+                # Check if error handling worked
+                if "Event encoding failed" in content or "ENCODING_ERROR" in content:
+                    print("✅ Encoding error properly handled and communicated")
+                    return True
                 else:
-                    print(f"❌ Unexpected status code: {response.status_code}")
+                    print("⚠️ Error handling may not be working as expected")
+                    print(f"   Full content: {content}")
                     return False
+            else:
+                print(f"❌ Unexpected status code: {response.status_code}")
+                return False
 
 
     async def test_agent_error_handling(self, app):
@@ -250,11 +245,14 @@ class TestEndpointErrorHandling:
         # Create a mock ADK agent
         mock_agent = AsyncMock(spec=ADKAgent)
 
-        # Create a mock event
+        # Create a mock event whose model_dump_json raises, and patch
+        # RunErrorEvent so the inner error-event encoding also fails. This
+        # exercises the basic-SSE-fallback branch.
         mock_event = MagicMock()
         mock_event.type = EventType.RUN_STARTED
         mock_event.thread_id = "test"
         mock_event.run_id = "test"
+        mock_event.model_dump_json.side_effect = Exception("All encoding failed!")
 
         async def mock_run(input_data):
             yield mock_event
@@ -281,12 +279,16 @@ class TestEndpointErrorHandling:
             "forwarded_props": {}
         }
 
-        # Mock the encoder to fail on ALL encoding attempts (including error events)
-        with patch('ag_ui_adk.endpoint.EventEncoder') as mock_encoder_class:
-            mock_encoder = MagicMock()
-            mock_encoder.encode.side_effect = Exception("All encoding failed!")
-            mock_encoder.get_content_type.return_value = "text/event-stream"
-            mock_encoder_class.return_value = mock_encoder
+        # Patch RunErrorEvent so the error-event encoding also fails. The
+        # endpoint imports ``RunErrorEvent`` at module scope and routes its
+        # construction through ``_build_run_error``, so we patch the name as
+        # bound in ``ag_ui_adk.endpoint`` rather than its source module.
+        with patch('ag_ui_adk.endpoint.RunErrorEvent') as mock_run_error_event_cls:
+            mock_error_event_instance = MagicMock()
+            mock_error_event_instance.model_dump_json.side_effect = Exception(
+                "Error event encoding also failed!"
+            )
+            mock_run_error_event_cls.return_value = mock_error_event_instance
 
             # Test the endpoint
             with TestClient(self.get_test_app(app)) as client:
@@ -316,19 +318,27 @@ class TestEndpointErrorHandling:
                     return False
 
 
-    # Alternative approach if the exact module path is unknown
     async def test_encoding_error_handling_alternative(self, app):
-        """Test encoding error handling with alternative patching approach."""
+        """Test encoding error handling via ``event.model_dump_json`` side_effect.
+
+        Historically this exercised a different patch location for the
+        ``EventEncoder`` class. Since the endpoint no longer uses
+        ``EventEncoder`` at all (SSE framing moved to
+        ``fastapi.sse.EventSourceResponse``), this test now drives the same
+        error branch by making the event itself unserializable, which is
+        the direct equivalent of "encoding failed".
+        """
         print("\n🧪 Testing encoding error handling (alternative approach)...")
 
         # Create a mock ADK agent
         mock_agent = AsyncMock(spec=ADKAgent)
 
-        # Create a mock event that will cause encoding issues
+        # Create a mock event whose model_dump_json raises
         mock_event = MagicMock()
         mock_event.type = EventType.RUN_STARTED
         mock_event.thread_id = "test"
         mock_event.run_id = "test"
+        mock_event.model_dump_json.side_effect = Exception("Encoding failed!")
 
         # Mock the agent to yield the problematic event
         async def mock_run(input_data, agent_id=None):
@@ -356,37 +366,28 @@ class TestEndpointErrorHandling:
             "forwarded_props": {}
         }
 
-        # The correct patch location based on the import in endpoint.py
-        patch_location = 'ag_ui.encoder.EventEncoder'
+        # Test the endpoint
+        with TestClient(self.get_test_app(app)) as client:
+            response = client.post(
+                "/test",
+                json=test_input,
+                headers={"Accept": "text/event-stream"}
+            )
 
-        with patch(patch_location) as mock_encoder_class:
-            mock_encoder = MagicMock()
-            mock_encoder.encode.side_effect = Exception("Encoding failed!")
-            mock_encoder.get_content_type.return_value = "text/event-stream"
-            mock_encoder_class.return_value = mock_encoder
+            print(f"📊 Response status: {response.status_code}")
 
-            # Test the endpoint
-            with TestClient(self.get_test_app(app)) as client:
-                response = client.post(
-                    "/test",
-                    json=test_input,
-                    headers={"Accept": "text/event-stream"}
-                )
+            if response.status_code == 200:
+                # Read the response content
+                content = response.text
+                print(f"📄 Response content preview: {content[:100]}...")
 
-                print(f"📊 Response status: {response.status_code}")
-
-                if response.status_code == 200:
-                    # Read the response content
-                    content = response.text
-                    print(f"📄 Response content preview: {content[:100]}...")
-
-                    # Check if error handling worked
-                    if "Event encoding failed" in content or "ENCODING_ERROR" in content or "error" in content:
-                        print(f"✅ Encoding error properly handled with patch location: {patch_location}")
-                        return True
-                    else:
-                        print(f"⚠️ Error handling may not be working with patch location: {patch_location}")
-                        return False
+                # Check if error handling worked
+                if "Event encoding failed" in content or "ENCODING_ERROR" in content or "error" in content:
+                    print("✅ Encoding error properly handled")
+                    return True
                 else:
-                    print(f"❌ Unexpected status code: {response.status_code}")
+                    print("⚠️ Error handling may not be working")
                     return False
+            else:
+                print(f"❌ Unexpected status code: {response.status_code}")
+                return False

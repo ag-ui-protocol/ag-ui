@@ -100,6 +100,7 @@ class TestContextInSessionState:
         with patch.object(adk_agent, '_ensure_session_exists', side_effect=mock_ensure_session):
             with patch.object(adk_agent, '_session_manager') as mock_sm:
                 mock_sm.update_session_state = AsyncMock(return_value=True)
+                mock_sm._find_session_by_thread_id = AsyncMock(return_value=None)
                 with patch.object(adk_agent, '_create_runner') as mock_create_runner:
                     mock_runner = AsyncMock()
                     mock_runner.close = AsyncMock()
@@ -150,6 +151,7 @@ class TestContextInSessionState:
         with patch.object(adk_agent, '_ensure_session_exists', side_effect=mock_ensure_session):
             with patch.object(adk_agent, '_session_manager') as mock_sm:
                 mock_sm.update_session_state = AsyncMock(return_value=True)
+                mock_sm._find_session_by_thread_id = AsyncMock(return_value=None)
                 with patch.object(adk_agent, '_create_runner') as mock_create_runner:
                     mock_runner = AsyncMock()
                     mock_runner.close = AsyncMock()
@@ -233,6 +235,7 @@ class TestContextSerializationFormat:
         with patch.object(adk_agent, '_ensure_session_exists', side_effect=mock_ensure_session):
             with patch.object(adk_agent, '_session_manager') as mock_sm:
                 mock_sm.update_session_state = AsyncMock(return_value=True)
+                mock_sm._find_session_by_thread_id = AsyncMock(return_value=None)
                 with patch.object(adk_agent, '_create_runner') as mock_create_runner:
                     mock_runner = AsyncMock()
                     mock_runner.close = AsyncMock()

@@ -41,7 +41,7 @@ export const A2UIActivityType = "a2ui-surface";
  * The LangGraph connector uses this to extract the schema from context and inject it
  * into the agent's key/value state instead of the system prompt.
  */
-export const A2UI_SCHEMA_CONTEXT_DESCRIPTION = "A2UI Component Schema — available components for generating UI surfaces. Use these component names and props when creating A2UI operations.";
+export const A2UI_SCHEMA_CONTEXT_DESCRIPTION = "A2UI Component Schema — available components for generating UI surfaces. Use these component names and properties when creating A2UI operations.";
 
 /**
  * Extract EventWithState type from Middleware.runNextWithState return type
@@ -103,7 +103,14 @@ export class A2UIMiddleware extends Middleware {
    * the server-side schema replaces it.
    */
   private injectSchemaContext(input: RunAgentInput): RunAgentInput {
-    if (!this.config.schema || this.config.schema.length === 0) {
+    if (!this.config.schema) {
+      return input;
+    }
+    // Empty check: array → length, inline catalog → no components
+    const isEmpty = Array.isArray(this.config.schema)
+      ? this.config.schema.length === 0
+      : Object.keys(this.config.schema.components ?? {}).length === 0;
+    if (isEmpty) {
       return input;
     }
 

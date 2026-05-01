@@ -50,6 +50,57 @@ add_crewai_flow_fastapi_endpoint(app, MyFlow(), "/flow")
 - **Predictive state updates** – Real-time state synchronization between backend and frontend
 - **Streaming tool calls** – Live streaming of LLM responses and tool execution to the UI
 
+## Tuning knobs
+
+The CrewAI integration exposes three environment variables for tuning
+timeouts and teardown behaviour. Sensible defaults ship with the
+package; override these only if your deployment has specific needs
+(long-running crews, disconnect-heavy workloads, flaky LLM providers).
+
+### `AGUI_CREWAI_LLM_TIMEOUT_SECONDS`
+
+Per-read timeout forwarded to `litellm.acompletion` in
+`ChatWithCrewFlow.chat` (both the initial call and the post-`crew_exit`
+tool-choice=`"none"` call).
+
+- **Default:** `120` seconds.
+- **Non-positive** (e.g. `0`, `-1`): disables the per-read timeout —
+  the underlying HTTP client's default applies instead.
+- **Non-finite** (`nan`, `inf`): falls back to the default.
+- **Note:** LiteLLM forwards this as a **per-read** timeout to the
+  underlying HTTP client, not a session-level ceiling. A trickle-feeding
+  server can keep the coroutine alive indefinitely at this layer; use
+  `AGUI_CREWAI_FLOW_TIMEOUT_SECONDS` for the session-level cap.
+
+### `AGUI_CREWAI_FLOW_TIMEOUT_SECONDS`
+
+Hard wall-clock ceiling on a single flow run. Guards against a runaway
+flow (hung LiteLLM stream, infinite loop in a user task) pinning the
+process indefinitely.
+
+- **Default:** `600` seconds (10 minutes).
+- **Non-positive**: disables the ceiling. Only use this for
+  deployments with legitimately long-running crews where the wall-clock
+  ceiling is handled at a higher layer.
+- **Non-finite** (`nan`, `inf`): falls back to the default.
+- When the ceiling fires, the stream yields a `RUN_ERROR` event with
+  code `AGUI_CREWAI_FLOW_TIMEOUT` and a message carrying the configured
+  ceiling plus thread/run correlation IDs.
+
+### `AGUI_CREWAI_CANCEL_JOIN_TIMEOUT_SECONDS`
+
+Teardown ceiling: the total wall-clock budget for `_cancel_and_join` to
+unwind the kickoff task after a client disconnect, timeout, or error.
+Covers the grace window, force-cancel join, AND outer-cancel recovery
+— one shared monotonic deadline, not three.
+
+- **Default:** `10` seconds.
+- **Non-positive** or **non-finite**: falls back to the default
+  (deliberately not disable-able — a cancel that cannot be bounded is a
+  resource leak).
+- Tune upward if your deployment sees disconnect-heavy load and a
+  consistently-stuck cancel warning is logged.
+
 ## To run the dojo examples
 
 ```bash

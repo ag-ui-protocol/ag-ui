@@ -235,6 +235,14 @@ def agui_messages_to_langchain(messages: List[AGUIMessage]) -> List[BaseMessage]
     langchain_messages = []
     for message in messages:
         role = message.role
+        # Reasoning + developer AG-UI messages are display-only / handled
+        # elsewhere; their content is already represented in adjacent AIMessage
+        # content blocks (reasoning) or in the agent's configured system prompt
+        # (developer). Re-materializing them as standalone LangChain messages
+        # duplicates context on every turn and can drive the model into a
+        # tool-call loop.
+        if role in ("reasoning", "developer"):
+            continue
         if role == "user":
             # Handle multimodal content
             if isinstance(message.content, str):
@@ -281,8 +289,22 @@ def agui_messages_to_langchain(messages: List[AGUIMessage]) -> List[BaseMessage]
             raise ValueError(f"Unsupported message role: {role}")
     return langchain_messages
 
+def _dual_get(obj: Any, key: str, default: Any = None) -> Any:
+    """Fetch ``key`` from either a mapping or an attribute-bearing object.
+
+    Chunks arrive as LangChain ``BaseMessage`` instances on most paths but
+    some upstream integrations deliver raw dicts. Use this helper anywhere
+    chunk shape is not guaranteed so we don't AttributeError on dicts or
+    KeyError on objects."""
+    if obj is None:
+        return default
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
 def resolve_reasoning_content(chunk: Any) -> LangGraphReasoning | None:
-    content = chunk.content
+    content = _dual_get(chunk, "content")
     if not content:
         # Fall through to check additional_kwargs for OpenAI legacy format
         pass
@@ -318,7 +340,7 @@ def resolve_reasoning_content(chunk: Any) -> LangGraphReasoning | None:
                 result = LangGraphReasoning(
                     text=rc["text"],
                     type="text",
-                    index=block.get("index", 0),
+                    index=rc.get("index", 0),
                 )
                 if rc.get("signature"):
                     result["signature"] = rc["signature"]
@@ -336,10 +358,21 @@ def resolve_reasoning_content(chunk: Any) -> LangGraphReasoning | None:
                         index=data.get("index", 0)
                     )
 
+        # Bedrock Converse API format: { type: "reasoning_content", reasoning_content: { type: "text", text: "..." } }
+        if block_type == "reasoning_content" and isinstance(block.get("reasoning_content"), dict):
+            inner = block["reasoning_content"]
+            if inner.get("text"):
+                return LangGraphReasoning(
+                    type="text",
+                    text=inner["text"],
+                    index=inner.get("index", 0)
+                )
+
     # OpenAI legacy format via additional_kwargs
-    if hasattr(chunk, "additional_kwargs"):
-        reasoning = chunk.additional_kwargs.get("reasoning", {})
-        summary = reasoning.get("summary", [])
+    additional_kwargs = _dual_get(chunk, "additional_kwargs")
+    if isinstance(additional_kwargs, dict):
+        reasoning = additional_kwargs.get("reasoning", {})
+        summary = reasoning.get("summary", []) if isinstance(reasoning, dict) else []
         if summary:
             data = summary[0]
             if not data or not data.get("text"):
@@ -351,7 +384,7 @@ def resolve_reasoning_content(chunk: Any) -> LangGraphReasoning | None:
             )
 
         # DeepSeek / Qwen / xAI format: additional_kwargs.reasoning_content is a string
-        reasoning_content = chunk.additional_kwargs.get("reasoning_content")
+        reasoning_content = additional_kwargs.get("reasoning_content")
         if reasoning_content and isinstance(reasoning_content, str):
             return LangGraphReasoning(
                 type="text",
@@ -368,7 +401,7 @@ def resolve_encrypted_reasoning_content(chunk: Any) -> str | None:
     This handles:
     - `redacted_thinking` blocks with encrypted `data` (redacted chain-of-thought)
     """
-    content = chunk.content if chunk else None
+    content = _dual_get(chunk, "content") if chunk is not None else None
     if not content or not isinstance(content, list) or not content or not content[0]:
         return None
 
@@ -379,7 +412,11 @@ def resolve_encrypted_reasoning_content(chunk: Any) -> str | None:
     return None
 
 def resolve_message_content(content: Any) -> str | None:
-    if not content:
+    # Distinguish None (absent) from "" (explicit empty delta): some
+    # providers emit zero-length content during tool-call / structured-
+    # output transitions, and the caller in _handle_single_event relies on
+    # preserving the empty string so the delta still flows through.
+    if content is None:
         return None
 
     if isinstance(content, str):
@@ -469,6 +506,10 @@ def normalize_tool_content(content: Any) -> str:
     return json.dumps(content)
 
 
+# Used by run() to normalize forwarded_props keys from camelCase (JS frontend convention)
+# to snake_case (Python convention). Appears isolated but is called from agent.py and
+# removing it would silently break all streaming options forwarded from the frontend
+# (stream_subgraphs, node_name, command.resume, etc.).
 def camel_to_snake(name):
     return re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower()
 

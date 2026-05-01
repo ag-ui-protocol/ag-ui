@@ -334,9 +334,11 @@ class TestHITLToolTracking:
         )
         assert pending_before == stale_tool_ids, "Stale tool calls should be set"
 
-        # Step 2: Simulate middleware restart by clearing the in-memory cache
-        # This is what happens when the pod restarts - _session_lookup_cache is lost
+        # Step 2: Simulate middleware restart by clearing all in-memory state
+        # This is what happens when the pod restarts
         adk_middleware._session_lookup_cache.clear()
+        adk_middleware._sessions_verified_locally.clear()
+        adk_middleware._cache_checked_keys.clear()
 
         # Step 3: Call _ensure_session_exists again (simulating first request after restart)
         # This should find the existing session and clear stale pending_tool_calls

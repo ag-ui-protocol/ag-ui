@@ -11,6 +11,30 @@ output:
 pre-commit:
   parallel: true
   commands:
+    check-lfs:
+      tags: lfs
+      run: |
+        # Detect staged files that should be LFS-tracked but were added as raw blobs.
+        # This happens when a file matching an LFS pattern in .gitattributes is committed
+        # without the LFS clean filter converting it to a pointer.
+        BAD_FILES=""
+        for file in $(git diff --cached --name-only --diff-filter=ACM); do
+          FILTER=$(git check-attr filter -- "$file" | sed 's/.*: //')
+          if [ "$FILTER" = "lfs" ]; then
+            BLOB_ID=$(git ls-files -s -- "$file" | awk '{print $2}')
+            HEADER=$(git cat-file -p "$BLOB_ID" | head -c 20)
+            if [ "$HEADER" != "version https://git-" ]; then
+              BAD_FILES="$BAD_FILES\n  $file"
+            fi
+          fi
+        done
+        if [ -n "$BAD_FILES" ]; then
+          echo "Error: these files should be tracked by Git LFS but were staged as raw blobs:$BAD_FILES"
+          echo ""
+          echo "Fix: git rm --cached <file> && git add <file>"
+          echo "Make sure git-lfs is installed and 'git lfs install' has been run."
+          exit 1
+        fi
     sync-lockfile:
       tags: lockfile
       glob: "**/package.json"

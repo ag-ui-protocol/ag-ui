@@ -25,7 +25,9 @@ describe("Run Events and Misc Events", () => {
       expectRoundTripEquality(event);
     });
 
-    it("should round-trip encode/decode RunFinishedEvent event", () => {
+    it("should round-trip encode/decode RunFinishedEvent event (legacy, no outcome)", () => {
+      // Confirms back-compat: pre-interrupt-aware producers omit `outcome`
+      // entirely and the round-trip preserves that.
       const event: RunFinishedEvent = {
         type: EventType.RUN_FINISHED,
         timestamp: Date.now(),

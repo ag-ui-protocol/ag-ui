@@ -171,16 +171,6 @@ export class SubgraphsPage {
     await expect(this.page.getByText(message)).toBeVisible();
   }
 
-  async getAssistantMessageCount(): Promise<number> {
-    return this.agentMessage.count();
-  }
-
-  async assertMessagesNotLost(countBefore: number) {
-    expect(countBefore, "No assistant messages were visible before the interrupt — test precondition failed").toBeGreaterThan(0);
-    const countAfter = await this.getAssistantMessageCount();
-    expect(countAfter, `Expected at least ${countBefore} assistant messages after interrupt resume, but found ${countAfter}`).toBeGreaterThanOrEqual(countBefore);
-  }
-
   async waitForSupervisorCoordination() {
     await expect(
       this.page.getByText(/supervisor|coordinate|specialist|routing/i).first()

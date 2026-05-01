@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "ag-ui-crewai"
-version = "0.1.5"
+version = "0.2.0"
 description = "Implementation of the AG-UI protocol for CrewAI"
 authors = ["Markus Ecker <markus.ecker@gmail.com>"]
 readme = "README.md"
@@ -16,9 +16,25 @@ fastapi = "^0.115.12"
 uvicorn = "^0.34.3"
 crewai = "^0.130.0"
 
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0"
+pytest-asyncio = "^0.24"
+# Dev-only dep. Lower bound at 0.27 so transitive deps (fastapi test
+# client) continue to resolve to the current 0.28.x branch rather than
+# being accidentally downgraded. Upper bound <0.29 (finding #21) so a
+# breaking 0.x minor release (httpx is pre-1.0 and has historically
+# shipped transport-API breaks at minor-version boundaries) cannot
+# silently land in CI. Bump this ceiling deliberately when verified
+# against the new minor.
+httpx = ">=0.27,<0.29"
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
 dev = "ag_ui_crewai.dojo:main"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

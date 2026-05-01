@@ -19,7 +19,7 @@ INVOCATION_ID_STATE_KEY = "_ag_ui_invocation_id"
 
 class SessionManager:
     """Session manager that wraps ADK's session service.
-    
+
     Adds essential production features:
     - Timeout monitoring based on ADK's lastUpdateTime
     - Cross-user/app session enumeration
@@ -27,17 +27,17 @@ class SessionManager:
     - Automatic cleanup of expired sessions
     - Optional automatic session memory on deletion
     - State management and updates
+
+    Construction model:
+    - ``SessionManager(...)`` builds a regular, isolated instance.
+    - ``SessionManager.get_default(...)`` returns a process-wide shared instance,
+      lazily constructed on first call. ``ADKAgent`` uses this when no explicit
+      session service is supplied, preserving the historical default behavior
+      where multiple agents share one manager.
     """
-    
-    _instance = None
-    _initialized = False
-    
-    def __new__(cls, session_service=None, **kwargs):
-        """Ensure singleton instance."""
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
-    
+
+    _default: Optional["SessionManager"] = None
+
     def __init__(
         self,
         session_service=None,
@@ -53,7 +53,7 @@ class SessionManager:
         """Initialize the session manager.
 
         Args:
-            session_service: ADK session service (required on first initialization)
+            session_service: ADK session service (defaults to InMemorySessionService)
             memory_service: Optional ADK memory service for automatic session memory
             session_timeout_seconds: Time before a session is considered expired
             cleanup_interval_seconds: Interval between cleanup cycles
@@ -71,13 +71,10 @@ class SessionManager:
                 pending tool calls are preserved indefinitely. Set this to automatically
                 clean up abandoned HITL sessions after the specified duration.
         """
-        if self._initialized:
-            return
-            
         if session_service is None:
             from google.adk.sessions import InMemorySessionService
             session_service = InMemorySessionService()
-            
+
         self._session_service = session_service
         self._memory_service = memory_service
         self._timeout = session_timeout_seconds
@@ -93,10 +90,9 @@ class SessionManager:
         self._user_sessions: Dict[str, Set[str]] = {}  # user_id -> set of session_keys
         self._processed_message_ids: Dict[str, Set[str]] = {}
         self._hitl_preserved_since: Dict[str, float] = {}  # session_key -> first preservation timestamp
-        
+
         self._cleanup_task: Optional[asyncio.Task] = None
-        self._initialized = True
-        
+
         logger.info(
             f"Initialized SessionManager - "
             f"timeout: {session_timeout_seconds}s, "
@@ -106,31 +102,43 @@ class SessionManager:
             f"thread_id_as_session_id: {use_thread_id_as_session_id}, "
             f"hitl_max_wait: {hitl_max_wait_seconds or 'unlimited'}s"
         )
-    
+
     @classmethod
-    def get_instance(cls, **kwargs):
-        """Get the singleton instance."""
-        return cls(**kwargs)
-    
+    def get_default(cls, **kwargs) -> "SessionManager":
+        """Return the process-wide default SessionManager.
+
+        Constructed lazily on first call. ``kwargs`` are honored only on that
+        first call; subsequent calls return the existing instance regardless
+        of arguments.
+        """
+        if cls._default is None:
+            cls._default = cls(**kwargs)
+        return cls._default
+
     @classmethod
-    def reset_instance(cls):
-        """Reset singleton for testing."""
-        if cls._instance and hasattr(cls._instance, '_cleanup_task'):
-            task = cls._instance._cleanup_task
+    def reset_default(cls):
+        """Reset the process-wide default SessionManager (intended for tests)."""
+        if cls._default is not None:
+            task = cls._default._cleanup_task
             if task:
                 try:
                     task.cancel()
                 except RuntimeError:
                     pass
-        cls._instance = None
-        cls._initialized = False
+        cls._default = None
+
+    # Backward-compatible aliases for callers from before the singleton was
+    # removed. Prefer ``get_default``/``reset_default`` in new code.
+    get_instance = get_default
+    reset_instance = reset_default
     
     async def get_or_create_session(
         self,
         thread_id: str,
         app_name: str,
         user_id: str,
-        initial_state: Optional[Dict[str, Any]] = None
+        initial_state: Optional[Dict[str, Any]] = None,
+        skip_find: bool = False,
     ) -> Tuple[Any, str]:
         """Get existing session or create new one.
 
@@ -139,6 +147,9 @@ class SessionManager:
             app_name: Application name
             user_id: User identifier
             initial_state: Optional initial state for new sessions
+            skip_find: If True, skip _find_session_by_thread_id in the scan
+                path (caller already confirmed no session exists). No effect
+                on the thread_id-as-session_id path (O(1) lookup is cheap).
 
         Returns:
             Tuple of (session, backend_session_id). The backend_session_id may differ
@@ -165,6 +176,7 @@ class SessionManager:
                 app_name=app_name,
                 user_id=user_id,
                 initial_state=initial_state,
+                skip_find=skip_find,
             )
 
         session_key = self._make_session_key(app_name, backend_session_id)
@@ -226,13 +238,15 @@ class SessionManager:
         app_name: str,
         user_id: str,
         initial_state: Optional[Dict[str, Any]] = None,
+        skip_find: bool = False,
     ) -> Tuple[Any, str]:
         """Original O(n) scan path: search state for matching thread_id."""
         # Try to find existing session by thread_id in state
-        session = await self._find_session_by_thread_id(app_name, user_id, thread_id)
-        if session:
-            logger.debug(f"Retrieved existing session for thread {thread_id}: {session.id}")
-            return session, session.id
+        if not skip_find:
+            session = await self._find_session_by_thread_id(app_name, user_id, thread_id)
+            if session:
+                logger.debug(f"Retrieved existing session for thread {thread_id}: {session.id}")
+                return session, session.id
 
         # Create new session - let backend generate session_id
         state = {

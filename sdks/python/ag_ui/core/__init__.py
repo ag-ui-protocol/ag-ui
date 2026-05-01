@@ -40,6 +40,9 @@ from ag_ui.core.events import (
     ReasoningEncryptedValueEvent,
     ReasoningEncryptedValueSubtype,
     ReasoningMessageRole,
+    RunFinishedOutcome,
+    RunFinishedSuccessOutcome,
+    RunFinishedInterruptOutcome,
     Event
 )
 
@@ -58,6 +61,9 @@ from ag_ui.core.types import (
     Role,
     Context,
     Tool,
+    Interrupt,
+    ResumeEntry,
+    ResumeStatus,
     RunAgentInput,
     State,
     TextInputContent,
@@ -75,6 +81,23 @@ from ag_ui.core.types import (
     BinaryInputContent,
     InputContent,
     InputContentPart,
+)
+
+from ag_ui.core.capabilities import (
+    SubAgentInfo,
+    IdentityCapabilities,
+    TransportCapabilities,
+    ToolsCapabilities,
+    OutputCapabilities,
+    StateCapabilities,
+    MultiAgentCapabilities,
+    ReasoningCapabilities,
+    MultimodalInputCapabilities,
+    MultimodalOutputCapabilities,
+    MultimodalCapabilities,
+    ExecutionCapabilities,
+    HumanInTheLoopCapabilities,
+    AgentCapabilities,
 )
 
 __all__ = [
@@ -116,6 +139,9 @@ __all__ = [
     "ReasoningEncryptedValueEvent",
     "ReasoningEncryptedValueSubtype",
     "ReasoningMessageRole",
+    "RunFinishedOutcome",
+    "RunFinishedSuccessOutcome",
+    "RunFinishedInterruptOutcome",
     "Event",
     # Types
     "FunctionCall",
@@ -132,6 +158,9 @@ __all__ = [
     "Role",
     "Context",
     "Tool",
+    "Interrupt",
+    "ResumeEntry",
+    "ResumeStatus",
     "RunAgentInput",
     "State",
     "TextInputContent",
@@ -149,4 +178,19 @@ __all__ = [
     "BinaryInputContent",
     "InputContent",
     "InputContentPart",
+    # Capabilities
+    "SubAgentInfo",
+    "IdentityCapabilities",
+    "TransportCapabilities",
+    "ToolsCapabilities",
+    "OutputCapabilities",
+    "StateCapabilities",
+    "MultiAgentCapabilities",
+    "ReasoningCapabilities",
+    "MultimodalInputCapabilities",
+    "MultimodalOutputCapabilities",
+    "MultimodalCapabilities",
+    "ExecutionCapabilities",
+    "HumanInTheLoopCapabilities",
+    "AgentCapabilities",
 ]
