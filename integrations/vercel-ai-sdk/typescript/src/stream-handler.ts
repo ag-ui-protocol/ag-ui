@@ -371,10 +371,13 @@ export class StreamHandler {
       type: "function",
       function: { name: part.toolName, arguments: argsString },
     };
-    this.currentAssistantMessage.toolCalls = [
-      ...(this.currentAssistantMessage.toolCalls ?? []),
-      toolCall,
-    ];
+    // Defensive dedup: a misbehaving provider could emit the same tool-call
+    // twice; without this, the assistant message would carry duplicate entries
+    // with the same id and break the MESSAGES_SNAPSHOT for downstream clients.
+    const existingToolCalls = this.currentAssistantMessage.toolCalls ?? [];
+    if (!existingToolCalls.some((tc) => tc.id === part.toolCallId)) {
+      this.currentAssistantMessage.toolCalls = [...existingToolCalls, toolCall];
+    }
 
     // Note: invalid tool-calls are followed by a `tool-error` part in v6 —
     // letting that path emit TOOL_CALL_RESULT avoids duplicates. The

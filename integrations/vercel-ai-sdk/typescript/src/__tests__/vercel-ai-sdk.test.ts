@@ -67,7 +67,13 @@ describe("VercelAISDKAgent", () => {
 
   it("propagates abort on unsubscribe — does not emit RUN_ERROR to the consumer", async () => {
     // Custom delayed stream so the consumer can unsubscribe mid-stream.
+    // Deterministic timing: the stream blocks after the first delta until the
+    // test signals (after observing TEXT_MESSAGE_CONTENT and unsubscribing).
     const { MockLanguageModelV3 } = await import("ai/test");
+    let releaseStream!: () => void;
+    const blockedUntilUnsubscribe = new Promise<void>((r) => {
+      releaseStream = r;
+    });
     const model = new MockLanguageModelV3({
       doStream: async () =>
         ({
@@ -77,9 +83,7 @@ describe("VercelAISDKAgent", () => {
               controller.enqueue(responseMetadata());
               controller.enqueue({ type: "text-start", id: "t1" });
               controller.enqueue({ type: "text-delta", id: "t1", delta: "Partial" });
-              await new Promise((r) => setTimeout(r, 200));
-              controller.enqueue({ type: "text-end", id: "t1" });
-              controller.enqueue(finishStop());
+              await blockedUntilUnsubscribe;
               controller.close();
             },
           }),
@@ -88,21 +92,23 @@ describe("VercelAISDKAgent", () => {
     const agent = new VercelAISDKAgent({ model });
 
     const events: BaseEvent[] = [];
-    await new Promise<void>((resolve) => {
-      const sub = agent
-        .run(makeInput({ messages: [{ id: "u", role: "user", content: "Hi" }] }))
-        .subscribe({
-          next: (e) => {
-            events.push(e);
-            if (e.type === EventType.TEXT_MESSAGE_CONTENT) {
-              setTimeout(() => sub.unsubscribe(), 0);
-            }
-          },
-          complete: () => resolve(),
-          error: () => resolve(),
-        });
-      setTimeout(resolve, 1000);
-    });
+    const sub = agent
+      .run(makeInput({ messages: [{ id: "u", role: "user", content: "Hi" }] }))
+      .subscribe({
+        next: (e) => {
+          events.push(e);
+          if (e.type === EventType.TEXT_MESSAGE_CONTENT) {
+            sub.unsubscribe();
+            releaseStream();
+          }
+        },
+      });
+    // Wait for the stream's start() to return (after releaseStream resolves
+    // the awaited promise and controller.close() finishes).
+    await blockedUntilUnsubscribe;
+    // One microtask hop so any pending emit() guarded by subscriber.closed
+    // gets a chance to no-op cleanly.
+    await Promise.resolve();
 
     const errs = events.filter((e) => e.type === EventType.RUN_ERROR);
     expect(errs.length).toBe(0);
