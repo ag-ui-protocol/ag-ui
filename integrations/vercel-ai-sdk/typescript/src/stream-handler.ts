@@ -82,7 +82,6 @@ export class StreamHandler {
   private currentMessagePushed = false;
   private finalMessages: Message[];
   private stepIndex = 0;
-  private cancelled = false;
   private completed = false;
 
   private openTextIds = new Set<string>();
@@ -110,7 +109,7 @@ export class StreamHandler {
 
     try {
       for await (const part of stream) {
-        if (this.cancelled || this.subscriber.closed) break;
+        if (this.subscriber.closed) break;
         this.handlePart(part);
       }
     } catch (error) {
@@ -191,7 +190,15 @@ export class StreamHandler {
       case "finish-step":
         return this.onFinishStep();
       case "abort":
-        this.cancelled = true;
+        // RUN_ERROR + complete is terminal; mirrors the thrown-error path
+        // and prevents the cleanup phase from emitting a misleading
+        // RUN_FINISHED for an aborted run.
+        this.emit({
+          type: EventType.RUN_ERROR,
+          message: "Stream aborted",
+          code: "aborted",
+        });
+        this.complete();
         return;
       case "error":
         this.emit({
@@ -199,6 +206,7 @@ export class StreamHandler {
           message: getErrorMessage((part as { error: unknown }).error),
           code: "stream_error_part",
         });
+        this.complete();
         return;
       // Skip: AI SDK lifecycle parts that map onto RUN_*/STEP_* boundaries.
       case "start":

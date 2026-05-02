@@ -34,7 +34,7 @@ const weatherTool = {
 };
 
 describe("StreamHandler — error & cancel handling", () => {
-  it("treats a stream-internal `error` part as non-fatal: emits RUN_ERROR but completes with RUN_FINISHED", async () => {
+  it("treats a stream-internal `error` part as terminal: emits RUN_ERROR and completes (no RUN_FINISHED, no MESSAGES_SNAPSHOT)", async () => {
     const model = makeMockModel([
       streamStart,
       responseMetadata(),
@@ -54,10 +54,13 @@ describe("StreamHandler — error & cancel handling", () => {
     const errors = eventsOfType<RunErrorEvent>(events, EventType.RUN_ERROR);
     expect(errors).toHaveLength(1);
     expect(errors[0].message).toContain("simulated");
+    expect(errors[0].code).toBe("stream_error_part");
 
-    expect(events[events.length - 1].type).toBe(EventType.RUN_FINISHED);
-    const snapshot = events.find((e) => e.type === EventType.MESSAGES_SNAPSHOT);
-    expect(snapshot).toBeDefined();
+    // RUN_ERROR is terminal — no RUN_FINISHED, no MESSAGES_SNAPSHOT.
+    expect(events.find((e) => e.type === EventType.RUN_FINISHED)).toBeUndefined();
+    expect(events.find((e) => e.type === EventType.MESSAGES_SNAPSHOT)).toBeUndefined();
+    // Last event is RUN_ERROR.
+    expect(events[events.length - 1].type).toBe(EventType.RUN_ERROR);
   });
 
   it("invalid tool-call does NOT produce a duplicate TOOL_CALL_RESULT (lets v6's tool-error path emit it once)", async () => {
@@ -259,14 +262,15 @@ describe("StreamHandler — error & cancel handling", () => {
     expect(results).toHaveLength(0);
   });
 
-  it("aborts gracefully when the stream emits an `abort` part (no RUN_ERROR; ends with RUN_FINISHED)", async () => {
+  it("emits RUN_ERROR (code: 'aborted') and completes when the stream is aborted via abortSignal", async () => {
+    // Deterministic timing: the stream blocks after the first delta until the
+    // test signals (after observing TEXT_MESSAGE_CONTENT). No wall-clock racing.
     const abortController = new AbortController();
-    const model = makeMockModel(() => {
-      // Custom stream that yields a delta then awaits before continuing —
-      // gives the abort signal time to fire.
-      return [];
+    let releaseStream!: () => void;
+    const blockedUntilAbort = new Promise<void>((r) => {
+      releaseStream = r;
     });
-    // We need a custom model with a delaying stream
+
     const delayingModel = {
       specificationVersion: "v3",
       provider: "mock",
@@ -283,14 +287,7 @@ describe("StreamHandler — error & cancel handling", () => {
             });
             controller.enqueue({ type: "text-start", id: "ta" });
             controller.enqueue({ type: "text-delta", id: "ta", delta: "Hello " });
-            await new Promise((r) => setTimeout(r, 200));
-            controller.enqueue({ type: "text-delta", id: "ta", delta: "world" });
-            controller.enqueue({ type: "text-end", id: "ta" });
-            controller.enqueue({
-              type: "finish",
-              finishReason: "stop",
-              usage: { inputTokens: 5, outputTokens: 2, totalTokens: 7 },
-            });
+            await blockedUntilAbort;
             controller.close();
           },
         }),
@@ -302,12 +299,33 @@ describe("StreamHandler — error & cancel handling", () => {
       prompt: "hi",
       abortSignal: abortController.signal,
     });
-    setTimeout(() => abortController.abort(), 50);
 
-    const events = await collectEvents(result.fullStream);
-    expect(events.find((e) => e.type === EventType.RUN_ERROR)).toBeUndefined();
-    expect(events[events.length - 1].type).toBe(EventType.RUN_FINISHED);
-    // partial text still preserved
+    const events: BaseEvent[] = [];
+    await new Promise<void>((resolve) => {
+      const observable = new Observable<BaseEvent>((subscriber: Subscriber<BaseEvent>) => {
+        const handler = new StreamHandler(makeInput(), subscriber);
+        handler.process(result.fullStream).catch(() => {});
+      });
+      observable.subscribe({
+        next: (e) => {
+          events.push(e);
+          if (e.type === EventType.TEXT_MESSAGE_CONTENT && !abortController.signal.aborted) {
+            abortController.abort();
+            releaseStream();
+          }
+        },
+        complete: () => resolve(),
+        error: () => resolve(),
+      });
+    });
+
+    const errors = eventsOfType<RunErrorEvent>(events, EventType.RUN_ERROR);
+    expect(errors).toHaveLength(1);
+    expect(errors[0].code).toBe("aborted");
+    // RUN_ERROR is terminal — no RUN_FINISHED, no MESSAGES_SNAPSHOT.
+    expect(events.find((e) => e.type === EventType.RUN_FINISHED)).toBeUndefined();
+    expect(events.find((e) => e.type === EventType.MESSAGES_SNAPSHOT)).toBeUndefined();
+    // Partial text streamed before the abort is preserved.
     const contents = events.filter((e) => e.type === EventType.TEXT_MESSAGE_CONTENT);
     expect(contents.length).toBeGreaterThanOrEqual(1);
   });
