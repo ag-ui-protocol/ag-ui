@@ -1,26 +1,4 @@
-/*
- * MIT License
- *
- * Copyright (c) 2025 Perfect Aduh
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
 
 import AGUICore
 import Foundation
@@ -59,8 +37,16 @@ actor DefaultAgentSubscription: AgentSubscription {
 ///
 /// This actor maintains the list of active subscribers and provides
 /// methods to execute them in sequence with mutation chaining.
+///
+/// Subscribers are returned in **registration order** — the order in which
+/// `subscribe(_:)` was called. This is guaranteed even after interleaved
+/// `unsubscribe` calls. A parallel `insertionOrder` array tracks the sequence
+/// separately from the dictionary so that `Dictionary.values` (undefined order)
+/// is never used as an execution order.
 public actor SubscriberManager {
     private var subscribers: [UUID: any AgentSubscriber] = [:]
+    /// Tracks the order in which subscribers were registered.
+    private var insertionOrder: [UUID] = []
 
     public init() {}
 
@@ -71,6 +57,7 @@ public actor SubscriberManager {
     public func subscribe(_ subscriber: any AgentSubscriber) -> UUID {
         let id = UUID()
         subscribers[id] = subscriber
+        insertionOrder.append(id)
         return id
     }
 
@@ -79,13 +66,14 @@ public actor SubscriberManager {
     /// - Parameter id: The subscription ID to remove
     public func unsubscribe(_ id: UUID) {
         subscribers.removeValue(forKey: id)
+        insertionOrder.removeAll { $0 == id }
     }
 
-    /// Returns all active subscribers.
+    /// Returns all active subscribers in registration order.
     ///
-    /// - Returns: Array of all subscribers in registration order
+    /// - Returns: Array of all subscribers ordered by `subscribe(_:)` call sequence
     public func allSubscribers() -> [any AgentSubscriber] {
-        Array(subscribers.values)
+        insertionOrder.compactMap { subscribers[$0] }
     }
 }
 

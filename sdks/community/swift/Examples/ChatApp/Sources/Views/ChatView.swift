@@ -1,26 +1,4 @@
-/*
- * MIT License
- *
- * Copyright (c) 2025 Perfect Aduh
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
 
 import SwiftUI
 
@@ -232,26 +210,46 @@ private struct EmptyAgentView: View {
 // MARK: - Color + Hex
 
 extension Color {
-    /// Creates a `Color` from a 6-character (`RRGGBB`) or 8-character (`RRGGBBAA`) hex string.
+    /// Creates a `Color` from a hex string or a CSS color expression.
+    ///
+    /// Accepts:
+    /// - 6-character hex: `#RRGGBB` or `RRGGBB`
+    /// - 8-character hex: `#RRGGBBAA` or `RRGGBBAA`
+    /// - CSS gradients / expressions: extracts the first `#RRGGBB` hex found in the string
     init?(hex: String) {
-        let cleaned = hex
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "#", with: "")
-        guard let value = UInt64(cleaned, radix: 16) else { return nil }
-        switch cleaned.count {
-        case 6:
-            let r = Double((value & 0xFF0000) >> 16) / 255
-            let g = Double((value & 0x00FF00) >> 8) / 255
-            let b = Double(value & 0x0000FF) / 255
-            self.init(red: r, green: g, blue: b)
-        case 8:
-            let r = Double((value & 0xFF00_0000) >> 24) / 255
-            let g = Double((value & 0x00FF_0000) >> 16) / 255
-            let b = Double((value & 0x0000_FF00) >> 8) / 255
-            let a = Double(value & 0x0000_00FF) / 255
-            self.init(red: r, green: g, blue: b, opacity: a)
-        default:
-            return nil
+        let trimmed = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Fast path: plain hex string
+        let cleaned = trimmed.replacingOccurrences(of: "#", with: "")
+        if let value = UInt64(cleaned, radix: 16) {
+            switch cleaned.count {
+            case 6:
+                let r = Double((value & 0xFF0000) >> 16) / 255
+                let g = Double((value & 0x00FF00) >> 8) / 255
+                let b = Double(value & 0x0000FF) / 255
+                self.init(red: r, green: g, blue: b)
+                return
+            case 8:
+                let r = Double((value & 0xFF00_0000) >> 24) / 255
+                let g = Double((value & 0x00FF_0000) >> 16) / 255
+                let b = Double((value & 0x0000_FF00) >> 8) / 255
+                let a = Double(value & 0x0000_00FF) / 255
+                self.init(red: r, green: g, blue: b, opacity: a)
+                return
+            default:
+                break
+            }
         }
+
+        // Fallback: extract first #RRGGBB hex from a CSS gradient/expression
+        if let range = trimmed.range(of: #"#[0-9a-fA-F]{6}"#, options: .regularExpression) {
+            let extracted = String(trimmed[range])
+            if let color = Color(hex: extracted) {
+                self = color
+                return
+            }
+        }
+
+        return nil
     }
 }

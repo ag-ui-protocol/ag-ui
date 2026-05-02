@@ -1,26 +1,4 @@
-/*
- * MIT License
- *
- * Copyright (c) 2025 Perfect Aduh
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
 
 import AGUICore
 import Foundation
@@ -226,7 +204,7 @@ public actor DefaultToolRegistry: ToolRegistry {
         do {
             // Execute with timeout if specified
             if let maxTime = executor.maximumExecutionTime() {
-                result = try await withTimeout(maxTime) {
+                result = try await withTimeout(maxTime, toolName: toolName) {
                     try await executor.execute(context: context)
                 }
             } else {
@@ -255,8 +233,8 @@ public actor DefaultToolRegistry: ToolRegistry {
     }
 
     public func clearStats() async {
-        for (_, stat) in stats {
-            stat.clear()
+        for key in stats.keys {
+            stats[key]?.clear()
         }
     }
 
@@ -269,31 +247,30 @@ public actor DefaultToolRegistry: ToolRegistry {
 
 /// Mutable version of ToolExecutionStats for internal tracking.
 ///
-/// This class is used internally by the registry to track and update
-/// statistics efficiently. It provides methods for recording successes
-/// and failures while maintaining accurate averages.
-private final class MutableToolExecutionStats: @unchecked Sendable {
-    private var executionCount: Int = 0
-    private var successCount: Int = 0
-    private var failureCount: Int = 0
-    private var totalExecutionTime: Duration = .zero
-    private var averageExecutionTime: Duration = .zero
+/// Value type: all mutation happens through the `DefaultToolRegistry` actor's
+/// dictionary subscript (inout), which serialises access — no `@unchecked Sendable` needed.
+private struct MutableToolExecutionStats {
+    private(set) var executionCount: Int = 0
+    private(set) var successCount: Int = 0
+    private(set) var failureCount: Int = 0
+    private(set) var totalExecutionTime: Duration = .zero
+    private(set) var averageExecutionTime: Duration = .zero
 
-    func recordSuccess(duration: Duration) {
+    mutating func recordSuccess(duration: Duration) {
         executionCount += 1
         successCount += 1
         totalExecutionTime += duration
         averageExecutionTime = totalExecutionTime / executionCount
     }
 
-    func recordFailure(duration: Duration) {
+    mutating func recordFailure(duration: Duration) {
         executionCount += 1
         failureCount += 1
         totalExecutionTime += duration
         averageExecutionTime = totalExecutionTime / executionCount
     }
 
-    func clear() {
+    mutating func clear() {
         executionCount = 0
         successCount = 0
         failureCount = 0
@@ -323,6 +300,7 @@ private final class MutableToolExecutionStats: @unchecked Sendable {
 /// - Throws: ``ToolExecutionError/timeout(toolName:duration:)`` if timeout exceeded
 private func withTimeout<T>(
     _ duration: Duration,
+    toolName: String,
     operation: @escaping @Sendable () async throws -> T
 ) async throws -> T {
     try await withThrowingTaskGroup(of: T.self) { group in
@@ -332,7 +310,7 @@ private func withTimeout<T>(
 
         group.addTask {
             try await Task.sleep(for: duration)
-            throw ToolExecutionError.timeout(toolName: "unknown", duration: duration)
+            throw ToolExecutionError.timeout(toolName: toolName, duration: duration)
         }
 
         let result = try await group.next()!

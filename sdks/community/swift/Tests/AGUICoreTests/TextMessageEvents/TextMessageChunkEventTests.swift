@@ -1,26 +1,4 @@
-/*
- * MIT License
- *
- * Copyright (c) 2025 Perfect Aduh
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
 
 import XCTest
 @testable import AGUICore
@@ -231,5 +209,71 @@ final class TextMessageChunkEventTests: XCTestCase,
 
         // Then
         XCTAssertEqual(event1, event2)
+    }
+
+    // MARK: - Feature: name field (protocol spec)
+
+    func test_decodeTextMessageChunk_withName_populatesName() throws {
+        // Given
+        let data = jsonData("""
+        {
+          "type": "TEXT_MESSAGE_CHUNK",
+          "messageId": "\(EventTestData.messageId)",
+          "role": "assistant",
+          "name": "Alice",
+          "delta": "Hello"
+        }
+        """)
+        let decoder = makeStrictDecoder()
+
+        // When
+        let event = try XCTUnwrap(try decoder.decode(data) as? TextMessageChunkEvent)
+
+        // Then
+        XCTAssertEqual(event.name, "Alice")
+    }
+
+    func test_decodeTextMessageChunk_withoutName_nameIsNil() throws {
+        // Given — JSON with no "name" field
+        let data = jsonData("""
+        {
+          "type": "TEXT_MESSAGE_CHUNK",
+          "messageId": "\(EventTestData.messageId)",
+          "delta": "Hi"
+        }
+        """)
+        let event = try XCTUnwrap(try makeStrictDecoder().decode(data) as? TextMessageChunkEvent)
+
+        // Then
+        XCTAssertNil(event.name)
+    }
+
+    func test_textMessageChunkEvent_init_acceptsName() {
+        // Given
+        let event = TextMessageChunkEvent(
+            messageId: EventTestData.messageId,
+            role: "assistant",
+            name: "Carol",
+            delta: "Hi",
+            timestamp: nil,
+            rawEvent: nil
+        )
+
+        // Then
+        XCTAssertEqual(event.name, "Carol")
+    }
+
+    func test_textMessageChunkEvent_equalityDifferentNames_notEqual() {
+        let e1 = TextMessageChunkEvent(
+            messageId: EventTestData.messageId,
+            name: "Alice",
+            delta: "Hi"
+        )
+        let e2 = TextMessageChunkEvent(
+            messageId: EventTestData.messageId,
+            name: "Bob",
+            delta: "Hi"
+        )
+        XCTAssertNotEqual(e1, e2)
     }
 }

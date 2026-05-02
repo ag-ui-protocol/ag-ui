@@ -1,26 +1,4 @@
-/*
- * MIT License
- *
- * Copyright (c) 2025 Perfect Aduh
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
 
 import Foundation
 
@@ -30,6 +8,7 @@ struct UserMessageDTO {
     let content: String
     let name: String?
     let contentParts: [any InputContent]?
+    let encryptedValue: String?
 
     static func decode(from data: Data, decoder: JSONDecoder = JSONDecoder()) throws -> UserMessageDTO {
         guard let jsonObject = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] else {
@@ -45,8 +24,9 @@ struct UserMessageDTO {
         // Extract required fields
         let id = try MessageDecodingHelpers.extractRequiredString(from: jsonObject, key: "id")
 
-        // Extract optional name
+        // Extract optional fields
         let name = MessageDecodingHelpers.extractOptionalString(from: jsonObject, key: "name")
+        let encryptedValue = MessageDecodingHelpers.extractOptionalString(from: jsonObject, key: "encryptedValue")
 
         // Handle polymorphic content (String or Array of InputContent)
         guard let contentValue = jsonObject["content"] else {
@@ -77,7 +57,7 @@ struct UserMessageDTO {
             )
         }
 
-        return UserMessageDTO(id: id, content: content, name: name, contentParts: contentParts)
+        return UserMessageDTO(id: id, content: content, name: name, contentParts: contentParts, encryptedValue: encryptedValue)
     }
 
     /// Decodes an array of InputContent from JSON dictionaries using DTOs.
@@ -107,6 +87,18 @@ struct UserMessageDTO {
             case "binary":
                 let dto = try BinaryInputContentDTO.decode(from: itemData, decoder: decoder)
                 result.append(try dto.toDomain())
+            case "image":
+                let dto = try ImageInputContentDTO.decode(from: itemData, decoder: decoder)
+                result.append(dto.toDomain())
+            case "audio":
+                let dto = try AudioInputContentDTO.decode(from: itemData, decoder: decoder)
+                result.append(dto.toDomain())
+            case "video":
+                let dto = try VideoInputContentDTO.decode(from: itemData, decoder: decoder)
+                result.append(dto.toDomain())
+            case "document":
+                let dto = try DocumentInputContentDTO.decode(from: itemData, decoder: decoder)
+                result.append(dto.toDomain())
             default:
                 throw DecodingError.dataCorrupted(
                     DecodingError.Context(
@@ -122,9 +114,9 @@ struct UserMessageDTO {
 
     func toDomain() -> UserMessage {
         if let parts = contentParts {
-            return UserMessage.multimodal(id: id, parts: parts, name: name)
+            return UserMessage.multimodal(id: id, parts: parts, name: name, encryptedValue: encryptedValue)
         } else {
-            return UserMessage(id: id, content: content, name: name)
+            return UserMessage(id: id, content: content, name: name, encryptedValue: encryptedValue)
         }
     }
 

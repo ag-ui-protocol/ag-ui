@@ -1,26 +1,4 @@
-/*
- * MIT License
- *
- * Copyright (c) 2025 Perfect Aduh
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
 
 import Foundation
 
@@ -157,7 +135,7 @@ public struct MessageEncoder: Sendable {
 
     // MARK: - Default Registry
 
-    /// Returns the default registry with handlers for all 6 message types.
+    /// Returns the default registry with handlers for all 7 message types.
     ///
     /// The default registry includes:
     /// - `.developer` → Encodes `DeveloperMessage`
@@ -166,6 +144,7 @@ public struct MessageEncoder: Sendable {
     /// - `.assistant` → Encodes `AssistantMessage`
     /// - `.tool` → Encodes `ToolMessage`
     /// - `.activity` → Encodes `ActivityMessage`
+    /// - `.reasoning` → Encodes `ReasoningMessage`
     ///
     /// - Returns: Dictionary mapping each role to its encode handler
     public static func defaultRegistry() -> [Role: EncodeHandler] {
@@ -187,6 +166,9 @@ public struct MessageEncoder: Sendable {
             },
             .activity: { message, encoder in
                 try encodeActivityMessage(message, encoder: encoder)
+            },
+            .reasoning: { message, encoder in
+                try encodeReasoningMessage(message, encoder: encoder)
             }
         ]
     }
@@ -306,6 +288,33 @@ private func encodeUserMessage(_ message: any Message, encoder: JSONEncoder) thr
                     binaryDict["filename"] = filename
                 }
                 contentArray.append(binaryDict)
+            } else if let imagePart = part as? ImageInputContent {
+                var d: [String: Any] = ["type": "image"]
+                if let url = imagePart.url { d["url"] = url }
+                if let data = imagePart.data { d["data"] = data }
+                if let detail = imagePart.detail { d["detail"] = detail }
+                if let mimeType = imagePart.mimeType { d["mimeType"] = mimeType }
+                contentArray.append(d)
+            } else if let audioPart = part as? AudioInputContent {
+                var d: [String: Any] = ["type": "audio"]
+                if let url = audioPart.url { d["url"] = url }
+                if let data = audioPart.data { d["data"] = data }
+                if let format = audioPart.format { d["format"] = format }
+                if let mimeType = audioPart.mimeType { d["mimeType"] = mimeType }
+                contentArray.append(d)
+            } else if let videoPart = part as? VideoInputContent {
+                var d: [String: Any] = ["type": "video"]
+                if let url = videoPart.url { d["url"] = url }
+                if let data = videoPart.data { d["data"] = data }
+                if let mimeType = videoPart.mimeType { d["mimeType"] = mimeType }
+                contentArray.append(d)
+            } else if let docPart = part as? DocumentInputContent {
+                var d: [String: Any] = ["type": "document"]
+                if let url = docPart.url { d["url"] = url }
+                if let data = docPart.data { d["data"] = data }
+                if let mimeType = docPart.mimeType { d["mimeType"] = mimeType }
+                if let title = docPart.title { d["title"] = title }
+                contentArray.append(d)
             }
         }
         dict["content"] = contentArray
@@ -373,12 +382,31 @@ private func encodeActivityMessage(_ message: any Message, encoder: JSONEncoder)
         throw MessageEncodingError.invalidMessageType(.activity, String(describing: type(of: message)))
     }
 
-    let activityContentObj = try JSONSerialization.jsonObject(with: activityMsg.activityContent)
+    let activityContentObj = try JSONSerialization.jsonObject(with: activityMsg.content)
     let dict: [String: Any] = [
         "id": activityMsg.id,
         "role": activityMsg.role.rawValue,
         "activityType": activityMsg.activityType,
-        "activityContent": activityContentObj
+        "content": activityContentObj
     ]
+    return try JSONSerialization.data(withJSONObject: dict)
+}
+
+/// Encodes a ReasoningMessage to JSON data.
+private func encodeReasoningMessage(_ message: any Message, encoder: JSONEncoder) throws -> Data {
+    guard let reasoningMsg = message as? ReasoningMessage else {
+        throw MessageEncodingError.invalidMessageType(.reasoning, String(describing: type(of: message)))
+    }
+
+    var dict: [String: Any] = [
+        "id": reasoningMsg.id,
+        "role": reasoningMsg.role.rawValue
+    ]
+    if let content = reasoningMsg.content {
+        dict["content"] = content
+    }
+    if let encryptedValue = reasoningMsg.encryptedValue {
+        dict["encryptedValue"] = encryptedValue
+    }
     return try JSONSerialization.data(withJSONObject: dict)
 }

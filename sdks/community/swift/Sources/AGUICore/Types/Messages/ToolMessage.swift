@@ -1,26 +1,4 @@
-/*
- * MIT License
- *
- * Copyright (c) 2025 Perfect Aduh
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
 
 import Foundation
 
@@ -112,6 +90,12 @@ public struct ToolMessage: Message, Sendable, Hashable {
     /// should contain a user-friendly error description.
     public let error: String?
 
+    /// Optional encrypted value associated with this tool result.
+    ///
+    /// When present, carries a cryptographic value for verified tool execution
+    /// workflows (e.g., from a ``ReasoningEncryptedValueEvent`` with subtype `.toolCall`).
+    public let encryptedValue: String?
+
     /// Creates a new tool message.
     ///
     /// - Parameters:
@@ -120,12 +104,14 @@ public struct ToolMessage: Message, Sendable, Hashable {
     ///   - toolCallId: The ID of the tool call this message responds to
     ///   - name: Optional name of the tool that generated this message
     ///   - error: Optional error message if tool execution failed
+    ///   - encryptedValue: Optional encrypted value for verified tool execution
     public init(
         id: String,
         content: String,
         toolCallId: String,
         name: String? = nil,
-        error: String? = nil
+        error: String? = nil,
+        encryptedValue: String? = nil
     ) {
         self.id = id
         self.role = .tool
@@ -133,5 +119,6 @@ public struct ToolMessage: Message, Sendable, Hashable {
         self.toolCallId = toolCallId
         self.name = name
         self.error = error
+        self.encryptedValue = encryptedValue
     }
 }

@@ -1,26 +1,4 @@
-/*
- * MIT License
- *
- * Copyright (c) 2025 Perfect Aduh
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
 
 import Foundation
 
@@ -76,13 +54,6 @@ extension AsyncSequence where Self: Sendable, Element: Sendable {
                             case .dropNewest:
                                 // Drop the new element, keep buffer as-is
                                 continue
-                            case .suspend:
-                                // For suspend strategy, yield current buffer first
-                                // to apply natural backpressure
-                                while !buffer.isEmpty {
-                                    continuation.yield(buffer.removeFirst())
-                                }
-                                buffer.append(element)
                             }
                         } else {
                             buffer.append(element)
@@ -131,7 +102,9 @@ extension AsyncSequence where Self: Sendable {
     public func batched(count: Int) -> BatchedAsyncSequence<Self> {
         BatchedAsyncSequence(base: self, batchSize: count)
     }
+}
 
+extension AsyncSequence where Self: Sendable, Self.Element: Sendable {
     /// Batches elements by time window.
     ///
     /// Groups elements arriving within a time window. Emits batches
@@ -198,8 +171,83 @@ public struct BatchedAsyncSequence<Base: AsyncSequence>: AsyncSequence where Bas
     }
 }
 
+// MARK: - TimeBatchProducer
+
+/// Actor that buffers elements from a concurrent producer task so that a
+/// time-windowed consumer can safely collect them without races.
+///
+/// The producer task feeds elements into this actor as fast as the upstream
+/// allows. The consumer calls `dequeue()` at each window boundary to drain
+/// whatever arrived during that window. Because actor isolation serialises
+/// all reads and writes to the buffer, no element is ever lost at window
+/// edges — an element added after one `dequeue()` call simply appears in the
+/// next window's batch.
+fileprivate actor TimeBatchProducer<Element: Sendable> {
+    private var buffer: [Element] = []
+    private(set) var isExhausted = false
+    private var storedError: Error?
+
+    func enqueue(_ element: Element) {
+        buffer.append(element)
+    }
+
+    func markExhausted() {
+        isExhausted = true
+    }
+
+    func markFailed(_ error: Error) {
+        storedError = error
+        isExhausted = true
+    }
+
+    /// Drains the buffer and returns it with the exhaustion flag.
+    /// Throws if the upstream ended with an error.
+    func dequeue() throws -> ([Element], Bool) {
+        if let e = storedError { throw e }
+        let batch = buffer
+        buffer = []
+        return (batch, isExhausted)
+    }
+}
+
+/// Cancels its wrapped `Task` on deinit, ensuring the background producer is
+/// torn down if the `TimeBatchedAsyncSequence.AsyncIterator` is dropped before
+/// the upstream sequence is exhausted (e.g. `break` out of a `for await` loop).
+fileprivate final class ProducerTaskHandle: Sendable {
+    let task: Task<Void, Never>
+    init(_ task: Task<Void, Never>) { self.task = task }
+    deinit { task.cancel() }
+}
+
 /// Async sequence that batches elements by time window.
-public struct TimeBatchedAsyncSequence<Base: AsyncSequence>: AsyncSequence where Base: Sendable {
+///
+/// A dedicated producer task pulls from the upstream sequence as fast as it
+/// can, feeding every element into a `TimeBatchProducer` actor. The consumer
+/// (`next()`) sleeps for `timeWindow` seconds, then drains whatever arrived
+/// during that window and returns it as an array.
+///
+/// Because actor isolation serialises the producer's `enqueue` and the
+/// consumer's `dequeue`, no element can be lost at a window boundary: an
+/// element that arrives after one drain is simply included in the next.
+///
+/// Empty windows (upstream alive but idle) are silently skipped — the
+/// consumer starts a new window automatically and only yields once it has
+/// collected at least one element.
+///
+/// ## Example
+///
+/// ```swift
+/// let batched = textChunks.batched(timeWindow: 0.05) // 50 ms windows
+/// for try await batch in batched {
+///     await render(batch.joined())
+/// }
+/// ```
+///
+/// - Note: Requires `Base.Element: Sendable` because elements must cross
+///   the actor boundary between the producer task and the consumer.
+public struct TimeBatchedAsyncSequence<Base: AsyncSequence>: AsyncSequence
+    where Base: Sendable, Base.Element: Sendable
+{
     public typealias Element = [Base.Element]
 
     private let base: Base
@@ -211,49 +259,62 @@ public struct TimeBatchedAsyncSequence<Base: AsyncSequence>: AsyncSequence where
     }
 
     public func makeAsyncIterator() -> AsyncIterator {
-        AsyncIterator(base: base.makeAsyncIterator(), timeWindow: timeWindow)
+        let producer = TimeBatchProducer<Base.Element>()
+        let rawTask = Task { [base, producer] in
+            do {
+                for try await element in base {
+                    await producer.enqueue(element)
+                }
+                await producer.markExhausted()
+            } catch {
+                await producer.markFailed(error)
+            }
+        }
+        return AsyncIterator(
+            producer: producer,
+            handle: ProducerTaskHandle(rawTask),
+            timeWindow: timeWindow
+        )
     }
 
     public struct AsyncIterator: AsyncIteratorProtocol {
-        private var baseIterator: Base.AsyncIterator
+        private let producer: TimeBatchProducer<Base.Element>
+        /// Class reference so `deinit` cancels the producer when the iterator
+        /// is dropped (e.g. after a `break` in the consumer's `for await`).
+        private let handle: ProducerTaskHandle
         private let timeWindow: TimeInterval
-        private var buffer: [Base.Element] = []
-        private var isExhausted = false
+        private var isLocallyExhausted = false
 
-        init(base: Base.AsyncIterator, timeWindow: TimeInterval) {
-            self.baseIterator = base
+        fileprivate init(
+            producer: TimeBatchProducer<Base.Element>,
+            handle: ProducerTaskHandle,
+            timeWindow: TimeInterval
+        ) {
+            self.producer = producer
+            self.handle = handle
             self.timeWindow = timeWindow
         }
 
         public mutating func next() async throws -> [Base.Element]? {
-            guard !isExhausted else { return nil }
+            guard !isLocallyExhausted else { return nil }
 
-            var batch: [Base.Element] = []
-            let windowStart = Date()
-
-            // Collect elements for the time window
             while true {
-                // Check if window expired
-                let elapsed = Date().timeIntervalSince(windowStart)
-                if elapsed >= timeWindow {
-                    break
+                // Sleep for the full window duration before collecting.
+                try await Task.sleep(for: .seconds(timeWindow))
+
+                let (batch, exhausted) = try await producer.dequeue()
+
+                if exhausted {
+                    isLocallyExhausted = true
+                    handle.task.cancel()
+                    return batch.isEmpty ? nil : batch
                 }
 
-                // Try to get next element (non-blocking check)
-                if let element = try await baseIterator.next() {
-                    batch.append(element)
-
-                    // Small yield to allow other tasks to run
-                    await Task.yield()
-                } else {
-                    // End of sequence
-                    isExhausted = true
-                    break
+                if !batch.isEmpty {
+                    return batch
                 }
+                // Empty window — upstream is alive but idle. Start next window.
             }
-
-            // Return batch if we have elements
-            return batch.isEmpty ? nil : batch
         }
     }
 }

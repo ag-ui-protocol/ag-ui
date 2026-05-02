@@ -1,26 +1,4 @@
-/*
- * MIT License
- *
- * Copyright (c) 2025 Perfect Aduh
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
 
 import AGUICore
 @testable import AGUIClient
@@ -368,6 +346,88 @@ final class AgentSubscriberTests: XCTestCase {
         // Then: All should be registered
         let subscribers = await manager.allSubscribers()
         XCTAssertEqual(subscribers.count, 3)
+    }
+
+    func testSubscriberExecutionOrderMatchesRegistration() async throws {
+        // Given: A subscriber manager and an ordered recorder
+        let manager = SubscriberManager()
+
+        actor CallOrderTracker {
+            var order: [Int] = []
+            func record(_ index: Int) { order.append(index) }
+        }
+        let tracker = CallOrderTracker()
+
+        struct IndexedSubscriber: AgentSubscriber {
+            let index: Int
+            let tracker: CallOrderTracker
+
+            func onRunInitialized(params: AgentSubscriberParams) async -> AgentStateMutation? {
+                await tracker.record(index)
+                return nil
+            }
+        }
+
+        let testInput = try RunAgentInput.builder()
+            .threadId("order-thread")
+            .runId("order-run")
+            .build()
+
+        // When: 5 subscribers registered in order 0..4
+        for i in 0 ..< 5 {
+            _ = await manager.subscribe(IndexedSubscriber(index: i, tracker: tracker))
+        }
+
+        // Drive each subscriber in allSubscribers() order
+        let params = AgentSubscriberParams(messages: [], state: Data("{}".utf8), input: testInput)
+        for sub in await manager.allSubscribers() {
+            _ = await sub.onRunInitialized(params: params)
+        }
+
+        // Then: callbacks must arrive in registration order, not dict iteration order
+        let callOrder = await tracker.order
+        XCTAssertEqual(callOrder, [0, 1, 2, 3, 4])
+    }
+
+    func testUnsubscribePreservesRemainingOrder() async throws {
+        // Given: 4 subscribers registered in order 0..3
+        let manager = SubscriberManager()
+
+        actor CallOrderTracker {
+            var order: [Int] = []
+            func record(_ index: Int) { order.append(index) }
+        }
+        let tracker = CallOrderTracker()
+
+        struct IndexedSubscriber: AgentSubscriber {
+            let index: Int
+            let tracker: CallOrderTracker
+            func onRunInitialized(params: AgentSubscriberParams) async -> AgentStateMutation? {
+                await tracker.record(index)
+                return nil
+            }
+        }
+
+        let testInput = try RunAgentInput.builder()
+            .threadId("t").runId("r").build()
+
+        var ids: [UUID] = []
+        for i in 0 ..< 4 {
+            let id = await manager.subscribe(IndexedSubscriber(index: i, tracker: tracker))
+            ids.append(id)
+        }
+
+        // When: unsubscribe the second subscriber (index 1)
+        await manager.unsubscribe(ids[1])
+
+        let params = AgentSubscriberParams(messages: [], state: Data("{}".utf8), input: testInput)
+        for sub in await manager.allSubscribers() {
+            _ = await sub.onRunInitialized(params: params)
+        }
+
+        // Then: remaining subscribers fire in insertion order: [0, 2, 3]
+        let callOrder = await tracker.order
+        XCTAssertEqual(callOrder, [0, 2, 3])
     }
 
     func testSubscriptionHandle() async throws {

@@ -1,26 +1,4 @@
-/*
- * MIT License
- *
- * Copyright (c) 2025 Perfect Aduh
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
 
 import Foundation
 
@@ -139,12 +117,12 @@ extension KeyedEncodingContainer where K == JSONCodingKeys {
 
                 if let stringValue = value as? String {
                     try encode(stringValue, forKey: codingKey)
+                } else if let boolValue = value as? Bool {
+                    try encode(boolValue, forKey: codingKey)
                 } else if let intValue = value as? Int {
                     try encode(intValue, forKey: codingKey)
                 } else if let doubleValue = value as? Double {
                     try encode(doubleValue, forKey: codingKey)
-                } else if let boolValue = value as? Bool {
-                    try encode(boolValue, forKey: codingKey)
                 } else if value is NSNull {
                     try encodeNil(forKey: codingKey)
                 } else if let nestedDict = value as? [String: Any] {
@@ -171,12 +149,12 @@ extension UnkeyedEncodingContainer {
         for value in array {
             if let stringValue = value as? String {
                 try encode(stringValue)
+            } else if let boolValue = value as? Bool {
+                try encode(boolValue)
             } else if let intValue = value as? Int {
                 try encode(intValue)
             } else if let doubleValue = value as? Double {
                 try encode(doubleValue)
-            } else if let boolValue = value as? Bool {
-                try encode(boolValue)
             } else if value is NSNull {
                 try encodeNil()
             } else if let nestedDict = value as? [String: Any] {

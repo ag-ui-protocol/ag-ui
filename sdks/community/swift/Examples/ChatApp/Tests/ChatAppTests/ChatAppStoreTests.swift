@@ -1,26 +1,4 @@
-/*
- * MIT License
- *
- * Copyright (c) 2025 Perfect Aduh
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
 
 import AGUICore
 import XCTest
@@ -193,11 +171,7 @@ final class ChatAppStoreTests: XCTestCase {
         let store = makeStore()
         store.setupForTesting(agent: testConfig())
 
-        store.processEvent(RunErrorEvent(
-            threadId: "t1",
-            runId: "r1",
-            error: .init(code: "TIMEOUT", message: "Request timed out")
-        ))
+        store.processEvent(RunErrorEvent(message: "Request timed out", code: "TIMEOUT"))
 
         XCTAssertEqual(store.state.error, "Request timed out")
     }
@@ -205,11 +179,7 @@ final class ChatAppStoreTests: XCTestCase {
     func test_dismissError_clearsError() {
         let store = makeStore()
         store.setupForTesting(agent: testConfig())
-        store.processEvent(RunErrorEvent(
-            threadId: "t1",
-            runId: "r1",
-            error: .init(code: "ERR", message: "boom")
-        ))
+        store.processEvent(RunErrorEvent(message: "boom", code: "ERR"))
 
         store.dismissError()
 
@@ -238,11 +208,7 @@ final class ChatAppStoreTests: XCTestCase {
         store.setupForTesting(agent: testConfig())
         let initialCount = store.state.supplementalMessages.count
 
-        store.processEvent(RunErrorEvent(
-            threadId: "t1",
-            runId: "r1",
-            error: .init(code: "ERR", message: "Network failed")
-        ))
+        store.processEvent(RunErrorEvent(message: "Network failed", code: "ERR"))
 
         XCTAssertEqual(store.state.supplementalMessages.count, initialCount + 1)
         if case .error(let msg) = store.state.supplementalMessages.last?.kind {
@@ -270,11 +236,7 @@ final class ChatAppStoreTests: XCTestCase {
         store.setupForTesting(agent: testConfig())
 
         // Add a supplemental message
-        store.processEvent(RunErrorEvent(
-            threadId: "t1",
-            runId: "r1",
-            error: .init(code: "ERR", message: "Oops")
-        ))
+        store.processEvent(RunErrorEvent(message: "Oops", code: "ERR"))
         // Add an agent message after
         store.processEvent(TextMessageStartEvent(messageId: "m1", role: "assistant"))
         store.processEvent(TextMessageEndEvent(messageId: "m1"))
@@ -294,7 +256,7 @@ final class ChatAppStoreTests: XCTestCase {
         store.setupForTesting(agent: testConfig())
 
         let payload = try JSONSerialization.data(withJSONObject: ["hex": "FF5733"])
-        store.processEvent(CustomEvent(customType: "change_background", data: payload))
+        store.processEvent(CustomEvent(name: "change_background", value: payload))
 
         XCTAssertEqual(store.state.backgroundHex, "FF5733")
     }

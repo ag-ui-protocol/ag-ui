@@ -1,26 +1,4 @@
-/*
- * MIT License
- *
- * Copyright (c) 2025 Perfect Aduh
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
 
 import XCTest
 @testable import AGUICore
@@ -173,6 +151,107 @@ final class RunFinishedEventTests: XCTestCase,
         }
     }
 
+    // MARK: - Feature: Decode outcome field
+
+    func test_decodeRunFinished_withOutcomeCompleted_populatesOutcome() throws {
+        // Given
+        let data = jsonData("""
+        {
+          "type": "RUN_FINISHED",
+          "threadId": "\(EventTestData.threadId)",
+          "runId": "\(EventTestData.runId)",
+          "outcome": "COMPLETED"
+        }
+        """)
+        let decoder = makeStrictDecoder()
+
+        // When
+        let event = try decoder.decode(data)
+
+        // Then
+        let runFinished = try XCTUnwrap(event as? RunFinishedEvent)
+        XCTAssertEqual(runFinished.outcome, .completed)
+    }
+
+    func test_decodeRunFinished_withOutcomeCancelled_populatesOutcome() throws {
+        // Given
+        let data = jsonData("""
+        {
+          "type": "RUN_FINISHED",
+          "threadId": "\(EventTestData.threadId)",
+          "runId": "\(EventTestData.runId)",
+          "outcome": "CANCELLED"
+        }
+        """)
+        let decoder = makeStrictDecoder()
+
+        // When
+        let event = try decoder.decode(data)
+
+        // Then
+        let runFinished = try XCTUnwrap(event as? RunFinishedEvent)
+        XCTAssertEqual(runFinished.outcome, .cancelled)
+    }
+
+    func test_decodeRunFinished_withOutcomeMaxIterationsReached_populatesOutcome() throws {
+        // Given
+        let data = jsonData("""
+        {
+          "type": "RUN_FINISHED",
+          "threadId": "\(EventTestData.threadId)",
+          "runId": "\(EventTestData.runId)",
+          "outcome": "MAX_ITERATIONS_REACHED"
+        }
+        """)
+        let decoder = makeStrictDecoder()
+
+        // When
+        let event = try decoder.decode(data)
+
+        // Then
+        let runFinished = try XCTUnwrap(event as? RunFinishedEvent)
+        XCTAssertEqual(runFinished.outcome, .maxIterationsReached)
+    }
+
+    func test_decodeRunFinished_missingOutcome_defaultsToCompleted() throws {
+        // Given – no "outcome" key in JSON
+        let data = jsonData("""
+        {
+          "type": "RUN_FINISHED",
+          "threadId": "\(EventTestData.threadId)",
+          "runId": "\(EventTestData.runId)"
+        }
+        """)
+        let decoder = makeStrictDecoder()
+
+        // When
+        let event = try decoder.decode(data)
+
+        // Then
+        let runFinished = try XCTUnwrap(event as? RunFinishedEvent)
+        XCTAssertEqual(runFinished.outcome, .completed)
+    }
+
+    func test_decodeRunFinished_unknownOutcomeString_defaultsToCompleted() throws {
+        // Given – unrecognised outcome value from a future protocol version
+        let data = jsonData("""
+        {
+          "type": "RUN_FINISHED",
+          "threadId": "\(EventTestData.threadId)",
+          "runId": "\(EventTestData.runId)",
+          "outcome": "SUSPENDED"
+        }
+        """)
+        let decoder = makeStrictDecoder()
+
+        // When
+        let event = try decoder.decode(data)
+
+        // Then
+        let runFinished = try XCTUnwrap(event as? RunFinishedEvent)
+        XCTAssertEqual(runFinished.outcome, .completed)
+    }
+
     // MARK: - Feature: Model behaviors
 
     func test_runFinishedEvent_eventTypeIsAlwaysRunFinished() {
@@ -183,12 +262,45 @@ final class RunFinishedEventTests: XCTestCase,
         XCTAssertEqual(event.eventType, .runFinished)
     }
 
+    func test_runFinishedEvent_defaultOutcomeIsCompleted() {
+        // Given
+        let event = RunFinishedEvent(threadId: "t", runId: "r")
+
+        // Then
+        XCTAssertEqual(event.outcome, .completed)
+    }
+
+    func test_runFinishedEvent_outcomeCanBeSetToCancelled() {
+        // Given
+        let event = RunFinishedEvent(threadId: "t", runId: "r", outcome: .cancelled)
+
+        // Then
+        XCTAssertEqual(event.outcome, .cancelled)
+    }
+
+    func test_runFinishedEvent_outcomeCanBeSetToMaxIterationsReached() {
+        // Given
+        let event = RunFinishedEvent(threadId: "t", runId: "r", outcome: .maxIterationsReached)
+
+        // Then
+        XCTAssertEqual(event.outcome, .maxIterationsReached)
+    }
+
     func test_runFinishedEvent_equatable_sameFields_areEqual() {
         // Given
-        let event1 = RunFinishedEvent(threadId: "t", runId: "r", timestamp: 1, rawEvent: nil)
-        let event2 = RunFinishedEvent(threadId: "t", runId: "r", timestamp: 1, rawEvent: nil)
+        let event1 = RunFinishedEvent(threadId: "t", runId: "r", outcome: .completed, timestamp: 1, rawEvent: nil)
+        let event2 = RunFinishedEvent(threadId: "t", runId: "r", outcome: .completed, timestamp: 1, rawEvent: nil)
 
         // Then
         XCTAssertEqual(event1, event2)
+    }
+
+    func test_runFinishedEvent_equatable_differentOutcome_areNotEqual() {
+        // Given
+        let event1 = RunFinishedEvent(threadId: "t", runId: "r", outcome: .completed)
+        let event2 = RunFinishedEvent(threadId: "t", runId: "r", outcome: .cancelled)
+
+        // Then
+        XCTAssertNotEqual(event1, event2)
     }
 }

@@ -1,26 +1,4 @@
-/*
- * MIT License
- *
- * Copyright (c) 2025 Perfect Aduh
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
 
 import XCTest
 @testable import AGUICore
@@ -33,7 +11,7 @@ final class RawEventTests: XCTestCase,
 
     var validEventFieldsWithoutType: [String: Any] {
         [
-            "data": ["arbitrary": "content", "can": "be", "anything": 123]
+            "event": ["arbitrary": "content", "can": "be", "anything": 123]
         ]
     }
 
@@ -48,7 +26,7 @@ final class RawEventTests: XCTestCase,
         let data = jsonData("""
         {
           "type": "RAW",
-          "data": {
+          "event": {
             "customField": "value",
             "nested": {
               "prop": 123
@@ -80,7 +58,7 @@ final class RawEventTests: XCTestCase,
         let data = jsonData("""
         {
           "type": "RAW",
-          "data": [1, 2, 3, "four", true]
+          "event": [1, 2, 3, "four", true]
         }
         """)
         let decoder = makeStrictDecoder()
@@ -100,7 +78,7 @@ final class RawEventTests: XCTestCase,
         let data = jsonData("""
         {
           "type": "RAW",
-          "data": "simple string"
+          "event": "simple string"
         }
         """)
         let decoder = makeStrictDecoder()
@@ -119,7 +97,7 @@ final class RawEventTests: XCTestCase,
         let data = jsonData("""
         {
           "type": "RAW",
-          "data": 42
+          "event": 42
         }
         """)
         let decoder = makeStrictDecoder()
@@ -138,7 +116,7 @@ final class RawEventTests: XCTestCase,
         let data = jsonData("""
         {
           "type": "RAW",
-          "data": null
+          "event": null
         }
         """)
         let decoder = makeStrictDecoder()
@@ -157,7 +135,7 @@ final class RawEventTests: XCTestCase,
         let data = jsonData("""
         {
           "type": "RAW",
-          "data": { "value": 123 },
+          "event": { "value": 123 },
           "timestamp": \(EventTestData.timestamp)
         }
         """)
@@ -176,7 +154,7 @@ final class RawEventTests: XCTestCase,
         let data = jsonData("""
         {
           "type": "RAW",
-          "data": { "key": "value" },
+          "event": { "key": "value" },
           "timestamp": \(EventTestData.timestamp)
         }
         """)
@@ -195,7 +173,7 @@ final class RawEventTests: XCTestCase,
         let data = jsonData("""
         {
           "type": "RAW",
-          "data": { "key": "value" },
+          "event": { "key": "value" },
           "extraField": "ignored",
           "nested": { "x": 1 }
         }
@@ -228,7 +206,7 @@ final class RawEventTests: XCTestCase,
             guard case .decodingFailed(let message) = error as? EventDecodingError else {
                 return XCTFail("Expected decodingFailed, got \(error)")
             }
-            XCTAssertTrue(message.contains("data") || message.contains("Missing key"))
+            XCTAssertTrue(message.contains("event") || message.contains("Missing key"))
         }
     }
 
@@ -237,7 +215,7 @@ final class RawEventTests: XCTestCase,
         let data = jsonData("""
         {
           "type": "RAW",
-          "data": { "key": "value" },
+          "event": { "key": "value" },
           "timestamp": "not-a-number"
         }
         """)

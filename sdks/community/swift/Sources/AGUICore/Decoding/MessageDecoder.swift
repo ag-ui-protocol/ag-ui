@@ -1,26 +1,4 @@
-/*
- * MIT License
- *
- * Copyright (c) 2025 Perfect Aduh
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
 
 import Foundation
 
@@ -195,7 +173,7 @@ public struct MessageDecoder: Sendable {
 
     // MARK: - Default Registry
 
-    /// Returns the default registry with handlers for all 6 message types.
+    /// Returns the default registry with handlers for all 7 message types.
     ///
     /// The default registry includes:
     /// - `.developer` → `DeveloperMessage`
@@ -204,27 +182,31 @@ public struct MessageDecoder: Sendable {
     /// - `.assistant` → `AssistantMessage`
     /// - `.tool` → `ToolMessage`
     /// - `.activity` → `ActivityMessage`
+    /// - `.reasoning` → `ReasoningMessage`
     ///
     /// - Returns: Dictionary mapping each role to its decode handler
     public static func defaultRegistry() -> [Role: DecodeHandler] {
         [
             .developer: { data, decoder in
-                try DeveloperMessageDTO.decode(from: data, decoder: decoder).toDomain()
+                try decoder.decode(DeveloperMessage.self, from: data)
             },
             .system: { data, decoder in
-                try SystemMessageDTO.decode(from: data, decoder: decoder).toDomain()
+                try decoder.decode(SystemMessage.self, from: data)
             },
             .user: { data, decoder in
                 try UserMessageDTO.decode(from: data, decoder: decoder).toDomain()
             },
             .assistant: { data, decoder in
-                try AssistantMessageDTO.decode(from: data, decoder: decoder).toDomain()
+                try decoder.decode(AssistantMessage.self, from: data)
             },
             .tool: { data, decoder in
                 try ToolMessageDTO.decode(from: data, decoder: decoder).toDomain()
             },
             .activity: { data, decoder in
                 try ActivityMessageDTO.decode(from: data, decoder: decoder).toDomain()
+            },
+            .reasoning: { data, decoder in
+                try ReasoningMessageDTO.decode(from: data, decoder: decoder).toDomain()
             }
         ]
     }

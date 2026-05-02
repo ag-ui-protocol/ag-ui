@@ -47,7 +47,7 @@ let package = Package(
             dependencies: ["AGUIClient"]),
         .testTarget(
             name: "AGUIAgentSDKTests",
-            dependencies: ["AGUIAgentSDK", "AGUITools"]),
+            dependencies: ["AGUIAgentSDK", "AGUIClient", "AGUITools"]),
         .testTarget(
             name: "AGUIToolsTests",
             dependencies: ["AGUITools"]),

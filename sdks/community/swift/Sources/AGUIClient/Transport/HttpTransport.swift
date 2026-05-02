@@ -1,26 +1,4 @@
-/*
- * MIT License
- *
- * Copyright (c) 2025 Perfect Aduh
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
 
 import AGUICore
 import Foundation
@@ -99,8 +77,10 @@ public actor HttpTransport {
             sessionConfig.timeoutIntervalForRequest = max(configuration.timeout, 300)
             sessionConfig.timeoutIntervalForResource = max(configuration.timeout, 3600)
 
-            // Set additional headers
-            var headers = configuration.headers
+            // Merge auth + explicit headers, then add User-Agent.
+            // buildHeaders() unifies bearerToken, apiKey, and headers in one call
+            // so auth is always applied even when set after init.
+            var headers = configuration.buildHeaders()
             headers["User-Agent"] = "AGUISwift/1.0"
             sessionConfig.httpAdditionalHeaders = headers
 
@@ -114,6 +94,9 @@ public actor HttpTransport {
     /// - Parameters:
     ///   - endpoint: The endpoint path (e.g., "/run")
     ///   - input: The run agent input to send
+    ///   - lastEventId: When provided, sets the `Last-Event-ID` header so the server
+    ///     can resume the stream from the last processed event (SSE reconnection).
+    ///     Pass `nil` (the default) for a fresh stream with no resume cursor.
     /// - Returns: An async sequence of bytes from the server
     /// - Throws: `ClientError` if the request fails
     ///
@@ -125,6 +108,7 @@ public actor HttpTransport {
     /// - Headers:
     ///   - Content-Type: application/json
     ///   - Accept: text/event-stream
+    ///   - Last-Event-ID: `lastEventId` (when non-nil)
     /// - Body: JSON-encoded `RunAgentInput`
     ///
     /// ## Response Validation
@@ -136,14 +120,15 @@ public actor HttpTransport {
     /// ## Error Handling
     ///
     /// Throws `ClientError` for:
-    /// - Encoding failures → `.decodingError`
+    /// - Encoding failures → `.encodingError`
     /// - Non-2xx status codes → `.httpError(statusCode:)`
     /// - Invalid responses → `.invalidResponse`
     /// - Network errors → `.networkError`, `.timeout`, `.cancelled`
     public func execute(
         endpoint: String,
-        input: RunAgentInput
-    ) async throws -> URLSession.AsyncBytes {
+        input: RunAgentInput,
+        lastEventId: String? = nil
+    ) async throws -> AsyncThrowingStream<UInt8, Error> {
         // Construct URL
         let url = configuration.baseURL.appendingPathComponent(endpoint)
 
@@ -153,12 +138,17 @@ public actor HttpTransport {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
 
+        // SSE reconnection resume cursor — only set when the caller has a prior event id
+        if let lastEventId {
+            request.setValue(lastEventId, forHTTPHeaderField: "Last-Event-ID")
+        }
+
         // Encode RunAgentInput to JSON
         let encoder = JSONEncoder()
         do {
             request.httpBody = try encoder.encode(input)
         } catch {
-            throw ClientError.decodingError(error)
+            throw ClientError.encodingError(error)
         }
 
         // Execute request via injected HTTP client

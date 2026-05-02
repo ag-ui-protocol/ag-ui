@@ -1,26 +1,4 @@
-/*
- * MIT License
- *
- * Copyright (c) 2025 Perfect Aduh
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
 
 import AGUICore
 import Foundation
@@ -51,8 +29,6 @@ private final class EventVerifier {
     var activeMessages: [String: Bool] = [:]
     var activeToolCalls: [String: Bool] = [:]
     var activeSteps: [String: Bool] = [:]
-    var activeThinkingStep: Bool = false
-    var activeThinkingMessage: Bool = false
 
     let debug: Bool
 
@@ -70,8 +46,6 @@ private final class EventVerifier {
                 activeMessages.removeAll()
                 activeToolCalls.removeAll()
                 activeSteps.removeAll()
-                activeThinkingStep = false
-                activeThinkingMessage = false
                 runFinished = false
             }
             runStarted = true
@@ -176,30 +150,6 @@ private final class EventVerifier {
             }
             activeSteps.removeValue(forKey: name)
 
-        case is ThinkingStartEvent:
-            activeThinkingStep = true
-
-        case is ThinkingEndEvent:
-            activeThinkingStep = false
-            activeThinkingMessage = false
-
-        case is ThinkingTextMessageStartEvent:
-            guard activeThinkingStep else {
-                throw AGUIProtocolError(message: "No active thinking step found")
-            }
-            activeThinkingMessage = true
-
-        case is ThinkingTextMessageContentEvent:
-            guard activeThinkingStep else {
-                throw AGUIProtocolError(message: "No active thinking step found")
-            }
-
-        case is ThinkingTextMessageEndEvent:
-            guard activeThinkingStep else {
-                throw AGUIProtocolError(message: "No active thinking step found")
-            }
-            activeThinkingMessage = false
-
         case is RunFinishedEvent:
             if !activeMessages.isEmpty {
                 throw AGUIProtocolError(
@@ -249,7 +199,7 @@ extension AsyncSequence where Element == any AGUIEvent {
     /// - Returns: A throwing stream of verified events.
     public func verifyEvents(debug: Bool = false) -> AsyncThrowingStream<any AGUIEvent, Error> {
         AsyncThrowingStream { continuation in
-            Task {
+            let task = Task {
                 let verifier = EventVerifier(debug: debug)
                 do {
                     for try await event in self {
@@ -261,6 +211,7 @@ extension AsyncSequence where Element == any AGUIEvent {
                     continuation.finish(throwing: error)
                 }
             }
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
 }
