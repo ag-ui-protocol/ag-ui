@@ -1,26 +1,4 @@
-/*
- * MIT License
- *
- * Copyright (c) 2025 Perfect Aduh
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
 
 import Foundation
 
@@ -47,6 +25,11 @@ public struct TextMessageChunkEvent: AGUIEvent, Equatable, Hashable, Sendable {
     /// This field is typically only present in the first chunk of a message.
     public let role: String?
 
+    /// Optional display name for the message sender.
+    ///
+    /// Corresponds to the `name` field in the AG-UI TypeScript spec (events.ts:94).
+    public let name: String?
+
     /// The text content delta for this chunk.
     ///
     /// This contains the new text to append to the message. May be `nil` if
@@ -71,18 +54,21 @@ public struct TextMessageChunkEvent: AGUIEvent, Equatable, Hashable, Sendable {
     /// - Parameters:
     ///   - messageId: Optional identifier for the message (required for the first chunk)
     ///   - role: Optional role of the message sender (typically "assistant")
+    ///   - name: Optional display name for the message sender
     ///   - delta: Optional text content delta for this chunk
     ///   - timestamp: Optional timestamp in milliseconds since epoch
     ///   - rawEvent: Optional raw event data as received from the agent
     public init(
         messageId: String? = nil,
         role: String? = nil,
+        name: String? = nil,
         delta: String? = nil,
         timestamp: Int64? = nil,
         rawEvent: Data? = nil
     ) {
         self.messageId = messageId
         self.role = role
+        self.name = name
         self.delta = delta
         self.timestamp = timestamp
         self.rawEvent = rawEvent
@@ -98,6 +84,9 @@ extension TextMessageChunkEvent: CustomStringConvertible {
         }
         if let role = role {
             parts.append("role: \(role)")
+        }
+        if let name = name {
+            parts.append("name: \(name)")
         }
         if let delta = delta {
             let deltaPreview = delta.count > 50 ? String(delta.prefix(50)) + "..." : delta
@@ -117,6 +106,7 @@ extension TextMessageChunkEvent: CustomDebugStringConvertible {
         TextMessageChunkEvent {
             messageId: \(messageId.map { "\"\($0)\"" } ?? "nil")
             role: \(role.map { "\"\($0)\"" } ?? "nil")
+            name: \(name.map { "\"\($0)\"" } ?? "nil")
             delta: \(delta.map { "\"\($0)\"" } ?? "nil")
             timestamp: \(timestamp.map(String.init) ?? "nil")
             eventType: \(eventType.rawValue)

@@ -1,26 +1,4 @@
-/*
- * MIT License
- *
- * Copyright (c) 2025 Perfect Aduh
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
 
 import Foundation
 
@@ -63,7 +41,7 @@ import Foundation
 ///
 /// - `typeRaw`: The raw string value of the "type" field from the JSON
 /// - `rawEvent`: The complete original JSON data, preserved for inspection or forwarding
-/// - `eventType`: Always returns `.raw` to indicate this is an unknown event
+/// - `eventType`: Always returns `.unknown` — distinct from the genuine `.raw` wire event
 /// - `timestamp`: Always returns `nil` since unknown events cannot be parsed for timestamps
 ///
 /// ## Forward Compatibility
@@ -95,11 +73,13 @@ public struct UnknownEvent: AGUIEvent, Sendable {
     /// The data is guaranteed to be valid JSON (otherwise decoding would have failed earlier).
     public let rawEvent: Data?
 
-    /// The type of this event (always `.raw`).
+    /// The type of this event (always `.unknown`).
     ///
-    /// Unknown events are categorized as `.raw` to distinguish them from
-    /// properly decoded event types.
-    public var eventType: EventType { .raw }
+    /// Unknown events return the sentinel `.unknown` case, which is distinct from
+    /// the genuine `.raw` wire-format event type. This allows consumers to
+    /// differentiate between a real `RAW` event sent by an agent and an event
+    /// whose type string was not recognised by the decoder.
+    public var eventType: EventType { .unknown }
 
     /// Optional timestamp when the event occurred (always `nil`).
     ///

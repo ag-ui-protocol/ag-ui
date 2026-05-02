@@ -1,26 +1,4 @@
-/*
- * MIT License
- *
- * Copyright (c) 2025 Perfect Aduh
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
 
 import Foundation
 
@@ -95,20 +73,49 @@ public struct SystemMessage: Message, Sendable, Hashable {
     /// sets, or behavioral modes (e.g., "ProfessionalMode", "CasualAssistant").
     public let name: String?
 
+    /// Optional encrypted value associated with this message.
+    ///
+    /// When present, carries a cryptographic value produced by the agent's
+    /// reasoning process.
+    public let encryptedValue: String?
+
     /// Creates a new system message.
     ///
     /// - Parameters:
     ///   - id: Unique identifier for this message
     ///   - content: The system's instruction content (optional)
     ///   - name: Optional identifier for the system or instruction set
+    ///   - encryptedValue: Optional encrypted reasoning value
     public init(
         id: String,
         content: String? = nil,
-        name: String? = nil
+        name: String? = nil,
+        encryptedValue: String? = nil
     ) {
         self.id = id
         self.role = .system
         self.content = content
         self.name = name
+        self.encryptedValue = encryptedValue
+    }
+}
+
+// MARK: - Decodable
+
+extension SystemMessage: Decodable {
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case content
+        case name
+        case encryptedValue
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        role = .system
+        content = try container.decodeIfPresent(String.self, forKey: .content)
+        name = try container.decodeIfPresent(String.self, forKey: .name)
+        encryptedValue = try container.decodeIfPresent(String.self, forKey: .encryptedValue)
     }
 }

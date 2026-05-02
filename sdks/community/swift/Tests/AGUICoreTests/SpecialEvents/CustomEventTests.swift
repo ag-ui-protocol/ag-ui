@@ -1,26 +1,4 @@
-/*
- * MIT License
- *
- * Copyright (c) 2025 Perfect Aduh
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
 
 import XCTest
 @testable import AGUICore
@@ -71,7 +49,7 @@ final class CustomEventTests: XCTestCase,
             return XCTFail("Expected CustomEvent, got \(type(of: event))")
         }
         XCTAssertEqual(customEvent.eventType, .custom)
-        XCTAssertEqual(customEvent.customType, "com.example.userAction")
+        XCTAssertEqual(customEvent.name, "com.example.userAction")
         XCTAssertNil(customEvent.timestamp)
 
         // Verify data can be parsed
@@ -100,7 +78,7 @@ final class CustomEventTests: XCTestCase,
 
         // Then
         let customEvent = try XCTUnwrap(event as? CustomEvent)
-        XCTAssertEqual(customEvent.customType, "events.batch")
+        XCTAssertEqual(customEvent.name, "events.batch")
         let parsed = try customEvent.parsedData() as? [[String: Any]]
         XCTAssertNotNil(parsed)
         XCTAssertEqual(parsed?.count, 2)
@@ -122,7 +100,7 @@ final class CustomEventTests: XCTestCase,
 
         // Then
         let customEvent = try XCTUnwrap(event as? CustomEvent)
-        XCTAssertEqual(customEvent.customType, "simple.message")
+        XCTAssertEqual(customEvent.name,"simple.message")
         let parsed = try customEvent.parsedData() as? String
         XCTAssertEqual(parsed, "Hello, World!")
     }
@@ -143,7 +121,7 @@ final class CustomEventTests: XCTestCase,
 
         // Then
         let customEvent = try XCTUnwrap(event as? CustomEvent)
-        XCTAssertEqual(customEvent.customType, "void.event")
+        XCTAssertEqual(customEvent.name,"void.event")
         let parsed = try customEvent.parsedData()
         XCTAssertTrue(parsed is NSNull)
     }
@@ -164,7 +142,7 @@ final class CustomEventTests: XCTestCase,
 
         // Then
         let customEvent = try XCTUnwrap(event as? CustomEvent)
-        XCTAssertEqual(customEvent.customType, "com.myapp.analytics.pageView")
+        XCTAssertEqual(customEvent.name,"com.myapp.analytics.pageView")
     }
 
     func test_decodeCustom_withTimestamp_populatesTimestamp() throws {
@@ -266,7 +244,7 @@ final class CustomEventTests: XCTestCase,
 
         // Then
         let customEvent = try XCTUnwrap(event as? CustomEvent)
-        XCTAssertEqual(customEvent.customType, "test.event")
+        XCTAssertEqual(customEvent.name,"test.event")
         let parsed = try customEvent.parsedData() as? [String: Any]
         XCTAssertNotNil(parsed)
         XCTAssertTrue(parsed?.isEmpty == true)
@@ -318,7 +296,7 @@ final class CustomEventTests: XCTestCase,
     func test_customEvent_eventTypeIsAlwaysCustom() throws {
         // Given
         let eventData = try JSONSerialization.data(withJSONObject: ["key": "value"], options: [])
-        let event = CustomEvent(customType: "test.event", data: eventData, timestamp: nil, rawEvent: nil)
+        let event = CustomEvent(name: "test.event", value: eventData, timestamp: nil, rawEvent: nil)
 
         // Then
         XCTAssertEqual(event.eventType, .custom)
@@ -327,8 +305,8 @@ final class CustomEventTests: XCTestCase,
     func test_customEvent_equatable_sameCustomTypeAndData_areEqual() throws {
         // Given
         let eventData = try JSONSerialization.data(withJSONObject: ["key": "value"], options: [])
-        let event1 = CustomEvent(customType: "test.event", data: eventData, timestamp: EventTestData.timestamp, rawEvent: nil)
-        let event2 = CustomEvent(customType: "test.event", data: eventData, timestamp: EventTestData.timestamp, rawEvent: nil)
+        let event1 = CustomEvent(name: "test.event", value: eventData, timestamp: EventTestData.timestamp, rawEvent: nil)
+        let event2 = CustomEvent(name: "test.event", value: eventData, timestamp: EventTestData.timestamp, rawEvent: nil)
 
         // Then
         XCTAssertEqual(event1, event2)
@@ -337,8 +315,8 @@ final class CustomEventTests: XCTestCase,
     func test_customEvent_equatable_differentCustomTypes_areNotEqual() throws {
         // Given
         let eventData = try JSONSerialization.data(withJSONObject: ["key": "value"], options: [])
-        let event1 = CustomEvent(customType: "test.event1", data: eventData, timestamp: EventTestData.timestamp, rawEvent: nil)
-        let event2 = CustomEvent(customType: "test.event2", data: eventData, timestamp: EventTestData.timestamp, rawEvent: nil)
+        let event1 = CustomEvent(name: "test.event1", value: eventData, timestamp: EventTestData.timestamp, rawEvent: nil)
+        let event2 = CustomEvent(name: "test.event2", value: eventData, timestamp: EventTestData.timestamp, rawEvent: nil)
 
         // Then
         XCTAssertNotEqual(event1, event2)
@@ -348,8 +326,8 @@ final class CustomEventTests: XCTestCase,
         // Given
         let eventData1 = try JSONSerialization.data(withJSONObject: ["key": "value1"], options: [])
         let eventData2 = try JSONSerialization.data(withJSONObject: ["key": "value2"], options: [])
-        let event1 = CustomEvent(customType: "test.event", data: eventData1, timestamp: EventTestData.timestamp, rawEvent: nil)
-        let event2 = CustomEvent(customType: "test.event", data: eventData2, timestamp: EventTestData.timestamp, rawEvent: nil)
+        let event1 = CustomEvent(name: "test.event", value: eventData1, timestamp: EventTestData.timestamp, rawEvent: nil)
+        let event2 = CustomEvent(name: "test.event", value: eventData2, timestamp: EventTestData.timestamp, rawEvent: nil)
 
         // Then
         XCTAssertNotEqual(event1, event2)
@@ -358,8 +336,8 @@ final class CustomEventTests: XCTestCase,
     func test_customEvent_equatable_differentTimestamps_areNotEqual() throws {
         // Given
         let eventData = try JSONSerialization.data(withJSONObject: ["key": "value"], options: [])
-        let event1 = CustomEvent(customType: "test.event", data: eventData, timestamp: EventTestData.timestamp, rawEvent: nil)
-        let event2 = CustomEvent(customType: "test.event", data: eventData, timestamp: EventTestData.timestamp2, rawEvent: nil)
+        let event1 = CustomEvent(name: "test.event", value: eventData, timestamp: EventTestData.timestamp, rawEvent: nil)
+        let event2 = CustomEvent(name: "test.event", value: eventData, timestamp: EventTestData.timestamp2, rawEvent: nil)
 
         // Then
         XCTAssertNotEqual(event1, event2)
@@ -369,7 +347,7 @@ final class CustomEventTests: XCTestCase,
         // Given
         let originalObject: [String: Any] = ["action": "test", "count": 5]
         let eventData = try JSONSerialization.data(withJSONObject: originalObject, options: [])
-        let event = CustomEvent(customType: "test.event", data: eventData, timestamp: nil, rawEvent: nil)
+        let event = CustomEvent(name: "test.event", value: eventData, timestamp: nil, rawEvent: nil)
 
         // When
         let parsed = try event.parsedData() as? [String: Any]
@@ -383,7 +361,7 @@ final class CustomEventTests: XCTestCase,
     func test_customEvent_parsedData_withInvalidData_throws() throws {
         // Given
         let invalidData = Data("not json".utf8)
-        let event = CustomEvent(customType: "test.event", data: invalidData, timestamp: nil, rawEvent: nil)
+        let event = CustomEvent(name: "test.event", value: invalidData, timestamp: nil, rawEvent: nil)
 
         // When / Then
         XCTAssertThrowsError(try event.parsedData())
@@ -398,7 +376,7 @@ final class CustomEventTests: XCTestCase,
 
         let originalPayload = CustomPayload(action: "login", userId: 12345)
         let eventData = try JSONEncoder().encode(originalPayload)
-        let event = CustomEvent(customType: "user.action", data: eventData, timestamp: nil, rawEvent: nil)
+        let event = CustomEvent(name: "user.action", value: eventData, timestamp: nil, rawEvent: nil)
 
         // When
         let decoded = try event.parsedData(as: CustomPayload.self)
@@ -411,7 +389,7 @@ final class CustomEventTests: XCTestCase,
     func test_customEvent_description_containsKeyInformation() throws {
         // Given
         let eventData = try JSONSerialization.data(withJSONObject: ["key": "value"], options: [])
-        let event = CustomEvent(customType: "test.event", data: eventData, timestamp: EventTestData.timestamp, rawEvent: nil)
+        let event = CustomEvent(name: "test.event", value: eventData, timestamp: EventTestData.timestamp, rawEvent: nil)
 
         // Then
         let description = event.description
@@ -423,12 +401,12 @@ final class CustomEventTests: XCTestCase,
     func test_customEvent_debugDescription_containsDetailedInformation() throws {
         // Given
         let eventData = try JSONSerialization.data(withJSONObject: ["key": "value"], options: [])
-        let event = CustomEvent(customType: "test.event", data: eventData, timestamp: EventTestData.timestamp, rawEvent: nil)
+        let event = CustomEvent(name: "test.event", value: eventData, timestamp: EventTestData.timestamp, rawEvent: nil)
 
         // Then
         let debugDescription = event.debugDescription
         XCTAssertTrue(debugDescription.contains("CustomEvent"))
         XCTAssertTrue(debugDescription.contains("test.event"))
-        XCTAssertTrue(debugDescription.contains("data"))
+        XCTAssertTrue(debugDescription.contains("value"))
     }
 }

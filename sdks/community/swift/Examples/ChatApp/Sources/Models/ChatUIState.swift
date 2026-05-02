@@ -1,26 +1,4 @@
-/*
- * MIT License
- *
- * Copyright (c) 2025 Perfect Aduh
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
 
 import Foundation
 
@@ -46,6 +24,11 @@ struct ChatUIState: Sendable {
     /// Populated by `ActivitySnapshotEvent` and updated on each `ActivityDeltaEvent`.
     /// Surfaces are cleared when the active agent changes.
     var a2uiSurfaces: [String: Data]
+    /// Phase 5: Current position in the ClawgUI enterprise pairing state machine.
+    ///
+    /// Non-idle values cause `RootView` to present the pairing sheet.
+    /// Reset to `.idle` when the active agent changes or the user cancels.
+    var clawgUIPairingState: ClawgUIPairingState
 
     init(
         messages: [DisplayMessage] = [],
@@ -56,7 +39,8 @@ struct ChatUIState: Sendable {
         error: String? = nil,
         backgroundHex: String? = nil,
         activeAgent: AgentConfig? = nil,
-        a2uiSurfaces: [String: Data] = [:]
+        a2uiSurfaces: [String: Data] = [:],
+        clawgUIPairingState: ClawgUIPairingState = .idle
     ) {
         self.messages = messages
         self.ephemeralSlots = ephemeralSlots
@@ -67,6 +51,7 @@ struct ChatUIState: Sendable {
         self.backgroundHex = backgroundHex
         self.activeAgent = activeAgent
         self.a2uiSurfaces = a2uiSurfaces
+        self.clawgUIPairingState = clawgUIPairingState
     }
 
     /// Unified list of all rows shown in the chat message list.

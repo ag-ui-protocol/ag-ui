@@ -1,26 +1,4 @@
-/*
- * MIT License
- *
- * Copyright (c) 2025 Perfect Aduh
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
 
 import Foundation
 
@@ -103,21 +81,30 @@ public struct ToolCall: Sendable, Codable, Hashable {
     /// the call to the appropriate handler.
     public let function: FunctionCall
 
+    /// Optional encrypted value associated with this tool call.
+    ///
+    /// When present, carries a cryptographic value for verified tool-call
+    /// workflows (e.g., from a ``ReasoningEncryptedValueEvent`` with subtype `.toolCall`).
+    public let encryptedValue: String?
+
     /// Creates a new tool call.
     ///
     /// - Parameters:
     ///   - id: Unique identifier for this tool call
     ///   - function: The function call details including name and arguments
+    ///   - encryptedValue: Optional encrypted value for verified tool execution
     ///
     /// - Note: The `type` field is automatically set to "function" and does not
     ///   need to be specified.
     public init(
         id: String,
-        function: FunctionCall
+        function: FunctionCall,
+        encryptedValue: String? = nil
     ) {
         self.id = id
         self.type = "function"
         self.function = function
+        self.encryptedValue = encryptedValue
     }
 
     // MARK: - Codable
@@ -126,12 +113,14 @@ public struct ToolCall: Sendable, Codable, Hashable {
         case id
         case type
         case function
+        case encryptedValue
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
         function = try container.decode(FunctionCall.self, forKey: .function)
+        encryptedValue = try container.decodeIfPresent(String.self, forKey: .encryptedValue)
 
         // Type should always be "function", decode if present but default to "function"
         type = try container.decodeIfPresent(String.self, forKey: .type) ?? "function"
@@ -142,5 +131,6 @@ public struct ToolCall: Sendable, Codable, Hashable {
         try container.encode(id, forKey: .id)
         try container.encode(type, forKey: .type)
         try container.encode(function, forKey: .function)
+        try container.encodeIfPresent(encryptedValue, forKey: .encryptedValue)
     }
 }

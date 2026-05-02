@@ -1,26 +1,4 @@
-/*
- * MIT License
- *
- * Copyright (c) 2025 Perfect Aduh
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
 
 import XCTest
 @testable import AGUIClient
@@ -136,6 +114,61 @@ final class HttpAgentConfigurationTests: XCTestCase {
                 continuation.resume()
             }
         }
+    }
+
+    // MARK: - buildHeaders() Tests
+
+    func testBuildHeadersIncludesBearerToken() {
+        var config = HttpAgentConfiguration(baseURL: URL(string: "https://example.com")!)
+        config.bearerToken = "sk-test-token"
+        XCTAssertEqual(config.buildHeaders()["Authorization"], "Bearer sk-test-token")
+    }
+
+    func testBuildHeadersIncludesApiKey() {
+        var config = HttpAgentConfiguration(baseURL: URL(string: "https://example.com")!)
+        config.apiKey = "my-api-key"
+        XCTAssertEqual(config.buildHeaders()["X-API-Key"], "my-api-key")
+    }
+
+    func testBuildHeadersUsesCustomApiKeyHeader() {
+        var config = HttpAgentConfiguration(baseURL: URL(string: "https://example.com")!)
+        config.apiKeyHeader = "X-Custom-Key"
+        config.apiKey = "val"
+        XCTAssertEqual(config.buildHeaders()["X-Custom-Key"], "val")
+        XCTAssertNil(config.buildHeaders()["X-API-Key"])
+    }
+
+    func testBuildHeadersIncludesExplicitHeaders() {
+        var config = HttpAgentConfiguration(
+            baseURL: URL(string: "https://example.com")!,
+            headers: ["X-Trace": "abc123"]
+        )
+        XCTAssertEqual(config.buildHeaders()["X-Trace"], "abc123")
+    }
+
+    func testBearerTokenDoesNotSideEffectRawHeadersDict() {
+        // Setting bearerToken must NOT mutate the .headers dict directly —
+        // auth headers are only visible through buildHeaders().
+        var config = HttpAgentConfiguration(baseURL: URL(string: "https://example.com")!)
+        config.bearerToken = "sk-secret"
+        XCTAssertNil(config.headers["Authorization"],
+                     "bearerToken must not mutate headers via didSet; use buildHeaders()")
+    }
+
+    func testApiKeyDoesNotSideEffectRawHeadersDict() {
+        var config = HttpAgentConfiguration(baseURL: URL(string: "https://example.com")!)
+        config.apiKey = "key-secret"
+        XCTAssertNil(config.headers["X-API-Key"],
+                     "apiKey must not mutate headers via didSet; use buildHeaders()")
+    }
+
+    func testBuildHeadersMergesTokenOverApiKey() {
+        var config = HttpAgentConfiguration(baseURL: URL(string: "https://example.com")!)
+        config.bearerToken = "token"
+        config.apiKey = "key"
+        let built = config.buildHeaders()
+        XCTAssertEqual(built["Authorization"], "Bearer token")
+        XCTAssertEqual(built["X-API-Key"], "key")
     }
 
     // MARK: - URL Construction Tests

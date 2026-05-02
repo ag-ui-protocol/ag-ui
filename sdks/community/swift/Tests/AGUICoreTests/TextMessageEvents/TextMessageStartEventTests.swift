@@ -1,26 +1,4 @@
-/*
- * MIT License
- *
- * Copyright (c) 2025 Perfect Aduh
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
 
 import XCTest
 @testable import AGUICore
@@ -304,5 +282,73 @@ final class TextMessageStartEventTests: XCTestCase,
         // Then
         XCTAssertEqual(event.messageId, "")
         XCTAssertEqual(event.eventType, .textMessageStart)
+    }
+
+    // MARK: - Feature: name field (protocol spec)
+
+    func test_decodeTextMessageStart_withName_populatesName() throws {
+        // Given
+        let data = jsonData("""
+        {
+          "type": "TEXT_MESSAGE_START",
+          "messageId": "\(EventTestData.messageId)",
+          "role": "assistant",
+          "name": "Alice"
+        }
+        """)
+        let decoder = makeStrictDecoder()
+
+        // When
+        let event = try XCTUnwrap(try decoder.decode(data) as? TextMessageStartEvent)
+
+        // Then
+        XCTAssertEqual(event.name, "Alice")
+    }
+
+    func test_decodeTextMessageStart_withoutName_nameIsNil() throws {
+        // Given — JSON with no "name" field
+        let data = jsonData("""
+        {
+          "type": "TEXT_MESSAGE_START",
+          "messageId": "\(EventTestData.messageId)",
+          "role": "assistant"
+        }
+        """)
+        let event = try XCTUnwrap(try makeStrictDecoder().decode(data) as? TextMessageStartEvent)
+
+        // Then
+        XCTAssertNil(event.name)
+    }
+
+    func test_textMessageStartEvent_init_acceptsName() {
+        // Given
+        let event = TextMessageStartEvent(
+            messageId: EventTestData.messageId,
+            role: "assistant",
+            name: "Bob",
+            timestamp: nil,
+            rawEvent: nil
+        )
+
+        // Then
+        XCTAssertEqual(event.name, "Bob")
+    }
+
+    func test_textMessageStartEvent_equalityDifferentNames_notEqual() {
+        let e1 = TextMessageStartEvent(
+            messageId: EventTestData.messageId,
+            role: "assistant",
+            name: "Alice",
+            timestamp: nil,
+            rawEvent: nil
+        )
+        let e2 = TextMessageStartEvent(
+            messageId: EventTestData.messageId,
+            role: "assistant",
+            name: "Bob",
+            timestamp: nil,
+            rawEvent: nil
+        )
+        XCTAssertNotEqual(e1, e2)
     }
 }

@@ -1,26 +1,4 @@
-/*
- * MIT License
- *
- * Copyright (c) 2025 Perfect Aduh
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
 
 import Foundation
 
@@ -44,7 +22,7 @@ public struct CustomEvent: AGUIEvent, Equatable, Sendable {
 
     // MARK: - Properties
 
-    /// The custom event type identifier.
+    /// The custom event name, matching the AG-UI protocol `name` wire field.
     ///
     /// This string uniquely identifies the type of custom event. It's recommended
     /// to use reverse-domain notation for globally unique identifiers.
@@ -53,17 +31,17 @@ public struct CustomEvent: AGUIEvent, Equatable, Sendable {
     /// - "com.example.userAction"
     /// - "org.myapp.analytics.pageView"
     /// - "simple.message"
-    public let customType: String
+    public let name: String
 
-    /// The custom event data as raw JSON.
+    /// The custom event payload as raw JSON, matching the AG-UI protocol `value` wire field.
     ///
     /// This contains the event-specific payload in JSON format. The structure
     /// is determined by the custom event type and can be any valid JSON value
     /// (object, array, primitive, or null).
     ///
-    /// To access the parsed data, use `parsedData()` or parse the data
+    /// To access the parsed payload, use `parsedData()` or parse the data
     /// using `JSONSerialization.jsonObject(with:)`.
-    public let data: Data
+    public let value: Data
 
     /// Optional timestamp when the event was created.
     ///
@@ -81,18 +59,18 @@ public struct CustomEvent: AGUIEvent, Equatable, Sendable {
     /// Creates a new `CustomEvent`.
     ///
     /// - Parameters:
-    ///   - customType: The custom event type identifier (e.g., "com.example.userAction")
-    ///   - data: The custom event data as JSON bytes
+    ///   - name: The custom event name (e.g., "com.example.userAction"), matching the AG-UI `name` wire field
+    ///   - value: The custom event payload as JSON bytes, matching the AG-UI `value` wire field
     ///   - timestamp: Optional timestamp in milliseconds since epoch
     ///   - rawEvent: Optional raw event data as received from the agent
     public init(
-        customType: String,
-        data: Data,
+        name: String,
+        value: Data,
         timestamp: Int64? = nil,
         rawEvent: Data? = nil
     ) {
-        self.customType = customType
-        self.data = data
+        self.name = name
+        self.value = value
         self.timestamp = timestamp
         self.rawEvent = rawEvent
     }
@@ -111,7 +89,7 @@ public struct CustomEvent: AGUIEvent, Equatable, Sendable {
     /// - Returns: The parsed JSON object
     /// - Throws: An error if the data is not valid JSON
     public func parsedData() throws -> Any {
-        try JSONSerialization.jsonObject(with: data, options: .allowFragments)
+        try JSONSerialization.jsonObject(with: value, options: .allowFragments)
     }
 
     /// Parses the custom data JSON into a strongly-typed Swift object.
@@ -135,35 +113,35 @@ public struct CustomEvent: AGUIEvent, Equatable, Sendable {
     /// print("User \(payload.userId) performed: \(payload.action)")
     /// ```
     public func parsedData<T: Decodable>(as type: T.Type, decoder: JSONDecoder = JSONDecoder()) throws -> T {
-        try decoder.decode(type, from: data)
+        try decoder.decode(type, from: value)
     }
 }
 
 // MARK: - CustomStringConvertible
 extension CustomEvent: CustomStringConvertible {
     public var description: String {
-        let dataSize = data.count
+        let valueSize = value.count
         let timestampDesc = timestamp?.description ?? "nil"
-        return "CustomEvent(customType: \"\(customType)\", data: \(dataSize) bytes, timestamp: \(timestampDesc))"
+        return "CustomEvent(name: \"\(name)\", value: \(valueSize) bytes, timestamp: \(timestampDesc))"
     }
 }
 
 // MARK: - CustomDebugStringConvertible
 extension CustomEvent: CustomDebugStringConvertible {
     public var debugDescription: String {
-        let dataPreview: String
-        if let jsonString = String(data: data, encoding: .utf8) {
+        let valuePreview: String
+        if let jsonString = String(data: value, encoding: .utf8) {
             let preview = String(jsonString.prefix(100))
-            dataPreview = jsonString.count > 100 ? "\(preview)..." : preview
+            valuePreview = jsonString.count > 100 ? "\(preview)..." : preview
         } else {
-            dataPreview = "\(data.count) bytes (invalid UTF-8)"
+            valuePreview = "\(value.count) bytes (invalid UTF-8)"
         }
 
         return """
         CustomEvent {
-            customType: "\(customType)"
-            data: \(dataPreview)
-            dataSize: \(data.count) bytes
+            name: "\(name)"
+            value: \(valuePreview)
+            valueSize: \(value.count) bytes
             timestamp: \(timestamp.map(String.init) ?? "nil")
             eventType: \(eventType.rawValue)
         }

@@ -1,26 +1,4 @@
-/*
- * MIT License
- *
- * Copyright (c) 2025 Perfect Aduh
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
 
 import Foundation
 
@@ -40,6 +18,18 @@ public struct RunFinishedEvent: AGUIEvent, Equatable, Hashable, Sendable {
     /// The unique identifier for the completed run.
     public let runId: String
 
+    /// Why the run finished.
+    ///
+    /// Decoded from the `"outcome"` field in the AG-UI wire format.
+    /// Defaults to `.completed` when the field is absent or unrecognised.
+    public let outcome: RunFinishedOutcome
+
+    /// Optional run result as raw JSON.
+    ///
+    /// Corresponds to `result: z.any().optional()` in the AG-UI protocol.
+    /// Stored as opaque `Data` because the result schema is arbitrary JSON.
+    public let result: Data?
+
     /// Optional timestamp when the run finished.
     public let timestamp: Int64?
 
@@ -56,16 +46,22 @@ public struct RunFinishedEvent: AGUIEvent, Equatable, Hashable, Sendable {
     /// - Parameters:
     ///   - threadId: The conversation thread identifier
     ///   - runId: The unique run identifier
+    ///   - outcome: Why the run finished (defaults to `.completed`)
+    ///   - result: Optional run result as raw JSON data
     ///   - timestamp: Optional timestamp in milliseconds since epoch
     ///   - rawEvent: Optional raw event data as received from the agent
     public init(
         threadId: String,
         runId: String,
+        outcome: RunFinishedOutcome = .completed,
+        result: Data? = nil,
         timestamp: Int64? = nil,
         rawEvent: Data? = nil
     ) {
         self.threadId = threadId
         self.runId = runId
+        self.outcome = outcome
+        self.result = result
         self.timestamp = timestamp
         self.rawEvent = rawEvent
     }
@@ -76,6 +72,6 @@ public struct RunFinishedEvent: AGUIEvent, Equatable, Hashable, Sendable {
 extension RunFinishedEvent: CustomStringConvertible {
 
     public var description: String {
-        "RunFinishedEvent(threadId: \(threadId), runId: \(runId), timestamp: \(timestamp?.description ?? "nil"))"
+        "RunFinishedEvent(threadId: \(threadId), runId: \(runId), outcome: \(outcome.rawValue), timestamp: \(timestamp?.description ?? "nil"))"
     }
 }

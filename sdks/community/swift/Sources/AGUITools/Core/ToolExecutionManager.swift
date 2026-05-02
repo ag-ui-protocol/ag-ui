@@ -1,26 +1,4 @@
-/*
- * MIT License
- *
- * Copyright (c) 2025 Perfect Aduh
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
 
 import AGUICore
 import Foundation
@@ -59,6 +37,7 @@ public actor ToolExecutionManager {
 
     private let toolRegistry: any ToolRegistry
     private let responseHandler: any ToolResponseHandler
+    private let errorHandler: ToolErrorHandler
     private var activeExecutions: [String: Task<Void, Never>] = [:]
     private var toolCallBuffer: [String: ToolCallBuilder] = [:]
 
@@ -76,9 +55,17 @@ public actor ToolExecutionManager {
     /// - Parameters:
     ///   - toolRegistry: The registry used to look up and execute tools.
     ///   - responseHandler: The handler used to send tool results back to the agent.
-    public init(toolRegistry: any ToolRegistry, responseHandler: any ToolResponseHandler) {
+    ///   - errorHandler: Controls per-tool retry behaviour and circuit-breaker protection.
+    ///     Defaults to a shared handler with sensible defaults (3 retries, exponential jitter,
+    ///     circuit opens after 5 consecutive failures).
+    public init(
+        toolRegistry: any ToolRegistry,
+        responseHandler: any ToolResponseHandler,
+        errorHandler: ToolErrorHandler = ToolErrorHandler()
+    ) {
         self.toolRegistry = toolRegistry
         self.responseHandler = responseHandler
+        self.errorHandler = errorHandler
         var cont: AsyncStream<ToolExecutionEvent>.Continuation!
         self.executionEvents = AsyncStream { cont = $0 }
         self.eventsContinuation = cont
@@ -105,7 +92,7 @@ public actor ToolExecutionManager {
         runId: String?
     ) -> AsyncThrowingStream<any AGUIEvent, Error> where S.Element == any AGUIEvent {
         AsyncThrowingStream { continuation in
-            Task {
+            let task = Task {
                 do {
                     for try await event in events {
                         continuation.yield(event)
@@ -117,6 +104,7 @@ public actor ToolExecutionManager {
                     continuation.finish(throwing: error)
                 }
             }
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
 
@@ -172,51 +160,62 @@ public actor ToolExecutionManager {
 
         eventsContinuation?.yield(.executing(toolCallId: toolCallId, toolName: toolName))
 
-        do {
-            let context = ToolExecutionContext(
-                toolCall: toolCall,
-                threadId: threadId,
-                runId: runId
-            )
+        let context = ToolExecutionContext(toolCall: toolCall, threadId: threadId, runId: runId)
+        var attempt = 0
 
-            let result = try await toolRegistry.execute(context: context)
+        while true {
+            do {
+                let result = try await toolRegistry.execute(context: context)
+                await errorHandler.recordSuccess()
 
-            let content: String
-            if let data = result.result, let decoded = String(data: data, encoding: .utf8), !decoded.isEmpty {
-                content = decoded
-            } else if let msg = result.message, !msg.isEmpty {
-                content = msg
-            } else {
-                content = result.success ? "true" : "false"
+                let content: String
+                if let data = result.result, let decoded = String(data: data, encoding: .utf8), !decoded.isEmpty {
+                    content = decoded
+                } else if let msg = result.message, !msg.isEmpty {
+                    content = msg
+                } else {
+                    content = result.success ? "true" : "false"
+                }
+
+                let toolMessage = ToolMessage(
+                    id: "msg_\(UUID().uuidString)",
+                    content: content,
+                    toolCallId: toolCallId
+                )
+                try? await responseHandler.sendToolResponse(toolMessage, threadId: threadId, runId: runId)
+                eventsContinuation?.yield(.succeeded(toolCallId: toolCallId, toolName: toolName, result: result))
+                return
+
+            } catch {
+                let decision = await errorHandler.handleError(error: error, context: context, attempt: attempt)
+                switch decision {
+                case .retry(let delayNs):
+                    if delayNs > 0 {
+                        try? await Task.sleep(nanoseconds: delayNs)
+                    }
+                    attempt += 1
+
+                case .fail(let message):
+                    let errorMessage = ToolMessage(
+                        id: "msg_\(UUID().uuidString)",
+                        content: "Error: \(message)",
+                        toolCallId: toolCallId
+                    )
+                    try? await responseHandler.sendToolResponse(errorMessage, threadId: threadId, runId: runId)
+                    eventsContinuation?.yield(.failed(toolCallId: toolCallId, toolName: toolName, error: message))
+                    return
+
+                case .circuitOpen:
+                    let errorMessage = ToolMessage(
+                        id: "msg_\(UUID().uuidString)",
+                        content: "Error: Tool '\(toolName)' is temporarily unavailable",
+                        toolCallId: toolCallId
+                    )
+                    try? await responseHandler.sendToolResponse(errorMessage, threadId: threadId, runId: runId)
+                    eventsContinuation?.yield(.failed(toolCallId: toolCallId, toolName: toolName, error: "Circuit breaker open"))
+                    return
+                }
             }
-
-            let toolMessage = ToolMessage(
-                id: "msg_\(UUID().uuidString)",
-                content: content,
-                toolCallId: toolCallId
-            )
-
-            try await responseHandler.sendToolResponse(toolMessage, threadId: threadId, runId: runId)
-
-            eventsContinuation?.yield(.succeeded(toolCallId: toolCallId, toolName: toolName, result: result))
-
-        } catch let error as ToolRegistryError {
-            let errorMessage = ToolMessage(
-                id: "msg_\(UUID().uuidString)",
-                content: "Error: Tool '\(toolName)' is not available",
-                toolCallId: toolCallId
-            )
-            try? await responseHandler.sendToolResponse(errorMessage, threadId: threadId, runId: runId)
-            eventsContinuation?.yield(.failed(toolCallId: toolCallId, toolName: toolName, error: error.localizedDescription))
-
-        } catch {
-            let errorMessage = ToolMessage(
-                id: "msg_\(UUID().uuidString)",
-                content: "Error: Tool execution failed - \(error.localizedDescription)",
-                toolCallId: toolCallId
-            )
-            try? await responseHandler.sendToolResponse(errorMessage, threadId: threadId, runId: runId)
-            eventsContinuation?.yield(.failed(toolCallId: toolCallId, toolName: toolName, error: error.localizedDescription))
         }
     }
 
@@ -231,17 +230,19 @@ public actor ToolExecutionManager {
 // MARK: - ToolCallBuilder
 
 /// Builds a `ToolCall` from streaming events by accumulating argument deltas.
-private final class ToolCallBuilder: @unchecked Sendable {
+///
+/// Value type: all mutation happens inside the `ToolExecutionManager` actor,
+private struct ToolCallBuilder {
     let id: String
     let name: String
-    private var arguments: String = ""
+    private(set) var arguments: String = ""
 
     init(id: String, name: String) {
         self.id = id
         self.name = name
     }
 
-    func appendArguments(_ delta: String) {
+    mutating func appendArguments(_ delta: String) {
         arguments += delta
     }
 

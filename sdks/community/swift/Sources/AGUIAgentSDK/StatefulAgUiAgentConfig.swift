@@ -1,26 +1,4 @@
-/*
- * MIT License
- *
- * Copyright (c) 2025 Perfect Aduh
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
 
 import AGUIClient
 import AGUICore
@@ -105,17 +83,12 @@ public struct StatefulAgUiAgentConfig: Sendable {
 
     /// Bearer token for authentication.
     ///
-    /// When set, automatically adds an `Authorization: Bearer <token>` header
-    /// to every request.
+    /// When set, ``buildHeaders()`` includes `Authorization: Bearer <token>`.
+    /// This property does **not** mutate ``headers`` directly — use
+    /// ``buildHeaders()`` to get the merged dictionary for request construction.
     ///
     /// Default: `nil`
-    public var bearerToken: String? {
-        didSet {
-            if let token = bearerToken {
-                headers["Authorization"] = "Bearer \(token)"
-            }
-        }
-    }
+    public var bearerToken: String?
 
     /// API key value.
     ///
@@ -142,6 +115,31 @@ public struct StatefulAgUiAgentConfig: Sendable {
     ///
     /// Default: `"/run"`
     public var endpoint: String
+
+    // MARK: - Header builder
+
+    /// Returns the final HTTP header dictionary, merging ``bearerToken`` and
+    /// ``apiKey`` into ``headers``.
+    ///
+    /// Priority (highest → lowest):
+    /// 1. Entries already in ``headers``
+    /// 2. `bearerToken` → `Authorization: Bearer <token>`
+    /// 3. `apiKey` → `<apiKeyHeader>: <key>`
+    ///
+    /// - Returns: Merged header dictionary ready for `HttpAgentConfiguration`.
+    public func buildHeaders() -> [String: String] {
+        var result: [String: String] = [:]
+        if let key = apiKey {
+            result[apiKeyHeader] = key
+        }
+        if let token = bearerToken {
+            result["Authorization"] = "Bearer \(token)"
+        }
+        for (k, v) in headers {
+            result[k] = v
+        }
+        return result
+    }
 
     /// Creates a new stateful agent configuration.
     ///

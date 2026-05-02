@@ -1,26 +1,4 @@
-/*
- * MIT License
- *
- * Copyright (c) 2025 Perfect Aduh
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
 
 import AGUICore
 import Foundation
@@ -61,6 +39,12 @@ import Foundation
 /// - UTF-8 decoding errors are handled gracefully
 /// - Network errors propagate to the caller
 ///
+/// ## Last-Event-ID tracking
+///
+/// `lastEventId` exposes the most recent `id:` field seen in the SSE stream.
+/// It is updated as events arrive and can be read after a mid-stream failure
+/// to resume from the correct position on reconnect.
+///
 /// ## Thread Safety
 ///
 /// `EventStream` is Sendable and can be used across concurrency domains.
@@ -68,11 +52,44 @@ import Foundation
 public struct EventStream<Bytes: AsyncSequence>: AsyncSequence where Bytes.Element == UInt8 {
     public typealias Element = any AGUIEvent
 
+    // MARK: - Shared last-event-id box
+
+    /// Reference box that lets the iterator write the last SSE id back to the stream.
+    ///
+    /// Using a class (reference semantics) means every iterator created from the same
+    /// stream updates the same location, so callers can read `lastEventId` on the
+    /// stream value after an iterator throws.
+    ///
+    /// Declared as an `actor` so the compiler synthesises `Sendable` automatically
+    /// and serialises all reads and writes without manual locking.
+    actor LastEventIdBox {
+        var value: String?
+
+        func set(_ newValue: String?) {
+            value = newValue
+        }
+    }
+
+    // MARK: - Stored properties
+
     /// The source byte stream from HTTP response.
     private let bytes: Bytes
 
     /// The AG-UI event decoder.
     private let decoder: AGUIEventDecoder
+
+    /// Shared box updated by the iterator whenever a non-nil SSE `id:` field is seen.
+    private let lastEventIdBox = LastEventIdBox()
+
+    // MARK: - Public surface
+
+    /// The most recent SSE event `id:` field received, or `nil` if none has arrived yet.
+    ///
+    /// Read this after a mid-stream failure to obtain the resume cursor for
+    /// `Last-Event-ID` on reconnect.
+    public var lastEventId: String? { get async { await lastEventIdBox.value } }
+
+    // MARK: - Initialization
 
     /// Creates a new event stream.
     ///
@@ -86,7 +103,7 @@ public struct EventStream<Bytes: AsyncSequence>: AsyncSequence where Bytes.Eleme
 
     /// Creates an async iterator for streaming events.
     public func makeAsyncIterator() -> AsyncIterator {
-        AsyncIterator(bytes: bytes.makeAsyncIterator(), decoder: decoder)
+        AsyncIterator(bytes: bytes.makeAsyncIterator(), decoder: decoder, lastEventIdBox: lastEventIdBox)
     }
 
     /// Iterator that processes streaming bytes into AG-UI events.
@@ -95,6 +112,7 @@ public struct EventStream<Bytes: AsyncSequence>: AsyncSequence where Bytes.Eleme
     /// - UTF-8 byte accumulation
     /// - SSE event parsing
     /// - Event queue management
+    /// - Last-Event-ID tracking (via shared `LastEventIdBox`)
     public struct AsyncIterator: AsyncIteratorProtocol {
         /// Source byte iterator.
         private var bytesIterator: Bytes.AsyncIterator
@@ -111,14 +129,19 @@ public struct EventStream<Bytes: AsyncSequence>: AsyncSequence where Bytes.Eleme
         /// Buffer for accumulating UTF-8 bytes.
         private var utf8Buffer: [UInt8] = []
 
+        /// Shared reference that is updated with the most recent SSE `id:` value.
+        private let lastEventIdBox: LastEventIdBox
+
         /// Creates a new iterator.
         ///
         /// - Parameters:
         ///   - bytes: Source byte iterator
         ///   - decoder: AG-UI event decoder
-        init(bytes: Bytes.AsyncIterator, decoder: AGUIEventDecoder) {
+        ///   - lastEventIdBox: Shared box written to whenever a non-nil SSE id is seen
+        init(bytes: Bytes.AsyncIterator, decoder: AGUIEventDecoder, lastEventIdBox: LastEventIdBox) {
             self.bytesIterator = bytes
             self.decoder = decoder
+            self.lastEventIdBox = lastEventIdBox
         }
 
         /// Returns the next AG-UI event from the stream.
@@ -133,8 +156,14 @@ public struct EventStream<Bytes: AsyncSequence>: AsyncSequence where Bytes.Eleme
         /// - Returns: Next event, or nil when stream ends
         /// - Throws: Network errors or critical decoding failures
         public mutating func next() async throws -> (any AGUIEvent)? {
-            // Return queued events first
+            // Return queued events first.
+            // Yield before returning a buffered event so callers on the main actor
+            // give the run loop a chance to render UI between events. Without this,
+            // a burst of SSE data arriving in one network packet fills the queue and
+            // all events are consumed synchronously — SwiftUI never sees the
+            // intermediate streaming states (typing dots, streaming cursor).
             guard eventQueue.isEmpty else {
+                await Task.yield()
                 return eventQueue.removeFirst()
             }
 
@@ -152,6 +181,13 @@ public struct EventStream<Bytes: AsyncSequence>: AsyncSequence where Bytes.Eleme
 
                     // Decode AG-UI events from SSE data
                     for sseEvent in sseEvents {
+                        // Track the last-event-id for reconnection support.
+                        // The id is captured before decoding so it is available even
+                        // when the accompanying data fails to decode.
+                        if let id = sseEvent.id {
+                            await lastEventIdBox.set(id)
+                        }
+
                         guard let data = sseEvent.data.data(using: .utf8) else {
                             // Skip events with invalid UTF-8 data
                             continue

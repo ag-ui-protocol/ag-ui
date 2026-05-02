@@ -1,26 +1,4 @@
-/*
- * MIT License
- *
- * Copyright (c) 2025 Perfect Aduh
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
 
 import Foundation
 
@@ -110,7 +88,7 @@ import Foundation
 /// is immutable after initialization, and all configuration is `Sendable`.
 ///
 /// - SeeAlso: `AGUIEvent`, `EventType`, `EventDecodingError`, `UnknownEvent`
-public struct AGUIEventDecoder {
+public struct AGUIEventDecoder: Sendable {
 
     /// Handler function type for decoding a specific event type.
     ///
@@ -199,7 +177,11 @@ public struct AGUIEventDecoder {
     /// ```
     public init(
         config: Configuration = .init(),
-        makeDecoder: @escaping @Sendable () -> JSONDecoder = { JSONDecoder() },
+        makeDecoder: @escaping @Sendable () -> JSONDecoder = {
+            let d = JSONDecoder()
+            d.keyDecodingStrategy = .convertFromSnakeCase
+            return d
+        },
         registry: [EventType: DecodeHandler] = AGUIEventDecoder.defaultRegistry()
     ) {
         self.config = config
@@ -242,6 +224,15 @@ public struct AGUIEventDecoder {
 
         let disc = try decodeTypeDiscriminator(from: data, decoder: decoder)
 
+        // Transparent backward compat: remap legacy THINKING_* wire events to REASONING_*,
+        // mirroring the TypeScript SDK's BackwardCompatibility_0_0_45 middleware.
+        if let (remappedData, remappedType) = Self.remapThinkingEvent(data: data, typeRaw: disc.typeRaw) {
+            guard let handler = registry[remappedType] else {
+                return try handleMissingHandler(for: remappedType, typeRaw: disc.typeRaw, rawEvent: data)
+            }
+            return try executeHandler(handler, data: remappedData, decoder: decoder)
+        }
+
         guard let type = EventType(rawValue: disc.typeRaw) else {
             return try handleUnknownEventType(typeRaw: disc.typeRaw, rawEvent: data)
         }
@@ -251,6 +242,51 @@ public struct AGUIEventDecoder {
         }
 
         return try executeHandler(handler, data: data, decoder: decoder)
+    }
+
+    /// Rewrites a legacy `THINKING_*` wire event to its `REASONING_*` equivalent.
+    ///
+    /// Agents built against protocol versions prior to 0.0.46 emit `THINKING_*` events.
+    /// Rather than keeping deprecated event types in the public API, the decoder silently
+    /// upgrades them — matching how the TypeScript SDK's `BackwardCompatibility_0_0_45`
+    /// middleware handles the same transition.
+    ///
+    /// IDs are generated fresh per-event; the caller should not rely on cross-event ID
+    /// correlation for events originating from a `THINKING_*` stream.
+    ///
+    /// - Parameters:
+    ///   - data: Raw JSON bytes from the SSE stream.
+    ///   - typeRaw: The `"type"` discriminator string already extracted from `data`.
+    /// - Returns: Rewritten JSON + the target `EventType`, or `nil` if no remapping is needed.
+    private static func remapThinkingEvent(data: Data, typeRaw: String) -> (Data, EventType)? {
+        // Wire string → (target EventType, extra fields to inject)
+        let mapping: [String: (EventType, [String: Any])] = [
+            "THINKING_START": (.reasoningStart, ["messageId": UUID().uuidString]),
+            "THINKING_END": (.reasoningEnd, ["messageId": UUID().uuidString]),
+            "THINKING_TEXT_MESSAGE_START": (.reasoningMessageStart, [
+                "messageId": UUID().uuidString,
+                "role": "assistant",
+            ]),
+            "THINKING_TEXT_MESSAGE_CONTENT": (.reasoningMessageContent, ["messageId": UUID().uuidString]),
+            "THINKING_TEXT_MESSAGE_END": (.reasoningMessageEnd, ["messageId": UUID().uuidString]),
+        ]
+
+        guard let (targetType, extraFields) = mapping[typeRaw] else { return nil }
+
+        guard var jsonObject = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+
+        jsonObject["type"] = targetType.rawValue
+        for (key, value) in extraFields {
+            jsonObject[key] = value
+        }
+
+        guard let remappedData = try? JSONSerialization.data(withJSONObject: jsonObject) else {
+            return nil
+        }
+
+        return (remappedData, targetType)
     }
 
     private func decodeTypeDiscriminator(from data: Data, decoder: JSONDecoder) throws -> TypeDiscriminator {
@@ -329,7 +365,7 @@ public struct AGUIEventDecoder {
             ToolCallEventRegistry.registry(),
             StateEventRegistry.registry(),
             SpecialEventRegistry.registry(),
-            ThinkingEventRegistry.registry(),
+            ReasoningEventRegistry.registry(),
             ActivityEventRegistry.registry()
         )
     }

@@ -1,26 +1,4 @@
-/*
- * MIT License
- *
- * Copyright (c) 2025 Perfect Aduh
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
 
 import Foundation
 
@@ -38,9 +16,9 @@ import Foundation
 /// - **Status**: System status and state updates
 /// - **Custom**: Application-specific activity types
 ///
-/// ## Activity Content
+/// ## Content
 ///
-/// The `activityContent` field stores flexible JSON data as a `Data` object,
+/// The `content` field stores flexible JSON data as a `Data` object,
 /// allowing each activity type to define its own content structure.
 ///
 /// ## Usage Examples
@@ -59,7 +37,7 @@ import Foundation
 /// let progress = ActivityMessage(
 ///     id: "progress-1",
 ///     activityType: "progress",
-///     activityContent: progressContent
+///     content: progressContent
 /// )
 ///
 /// // Chart visualization
@@ -78,7 +56,7 @@ import Foundation
 /// let chart = ActivityMessage(
 ///     id: "viz-1",
 ///     activityType: "chart",
-///     activityContent: chartContent
+///     content: chartContent
 /// )
 ///
 /// // A2UI form surface
@@ -95,14 +73,14 @@ import Foundation
 /// let form = ActivityMessage(
 ///     id: "surface-1",
 ///     activityType: "a2ui-form",
-///     activityContent: formContent
+///     content: formContent
 /// )
 /// ```
 ///
 /// ## Message Protocol
 ///
-/// ActivityMessage conforms to the Message protocol, but `content` and `name`
-/// are always `nil` since activities use structured `activityContent` instead.
+/// ActivityMessage conforms to the Message protocol. `name` and `encryptedValue`
+/// are always `nil` since activities use structured JSON `content` instead.
 ///
 /// - SeeAlso: ``Message``, ``Role``
 public struct ActivityMessage: Message, Sendable, Hashable {
@@ -126,31 +104,30 @@ public struct ActivityMessage: Message, Sendable, Hashable {
     ///
     /// This field contains a JSON object with activity-specific data.
     /// The structure varies based on the `activityType`.
-    public let activityContent: Data
-
-    /// Text content (always `nil` for activity messages).
-    ///
-    /// ActivityMessage uses `activityContent` for structured data
-    /// instead of text content.
-    public let content: String? = nil
+    public let content: Data
 
     /// Optional sender name (always `nil` for activity messages).
     public let name: String? = nil
+
+    /// Encrypted value (always `nil` for activity messages).
+    ///
+    /// The AG-UI protocol does not define `encryptedValue` for activity messages.
+    public let encryptedValue: String? = nil
 
     /// Creates a new activity message.
     ///
     /// - Parameters:
     ///   - id: Unique identifier for the message
     ///   - activityType: The type of activity
-    ///   - activityContent: JSON data representing the activity content
+    ///   - content: JSON data representing the activity content
     public init(
         id: String,
         activityType: String,
-        activityContent: Data
+        content: Data
     ) {
         self.id = id
         self.role = .activity
         self.activityType = activityType
-        self.activityContent = activityContent
+        self.content = content
     }
 }

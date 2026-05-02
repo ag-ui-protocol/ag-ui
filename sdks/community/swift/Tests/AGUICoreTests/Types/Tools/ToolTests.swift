@@ -1,26 +1,4 @@
-/*
- * MIT License
- *
- * Copyright (c) 2025 Perfect Aduh
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
 
 import XCTest
 @testable import AGUICore
@@ -414,5 +392,106 @@ final class ToolTests: XCTestCase {
 
         XCTAssertEqual(pingTool.name, "ping")
         XCTAssertFalse(pingTool.parameters.isEmpty)
+    }
+
+    // MARK: - metadata: Data? Tests
+
+    func test_toolWithMetadata_init() {
+        let schema = Data("{}".utf8)
+        let metadata = Data("{\"category\":\"weather\"}".utf8)
+
+        let tool = Tool(
+            name: "get_weather",
+            description: "Get weather",
+            parameters: schema,
+            metadata: metadata
+        )
+
+        XCTAssertEqual(tool.metadata, metadata)
+    }
+
+    func test_toolWithoutMetadata_metadataIsNil() {
+        let tool = Tool(name: "ping", description: "Ping", parameters: Data("{}".utf8))
+        XCTAssertNil(tool.metadata)
+    }
+
+    func test_encodingWithMetadata_includesMetadataKey() throws {
+        let schema = Data("{}".utf8)
+        let metadata = Data("{\"category\":\"search\"}".utf8)
+        let tool = Tool(name: "search", description: "Search", parameters: schema, metadata: metadata)
+
+        let encoded = try JSONEncoder().encode(tool)
+        let json = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+
+        XCTAssertNotNil(json?["metadata"], "Encoded JSON must contain 'metadata' key")
+        let meta = json?["metadata"] as? [String: Any]
+        XCTAssertEqual(meta?["category"] as? String, "search")
+    }
+
+    func test_encodingWithoutMetadata_omitsMetadataKey() throws {
+        let tool = Tool(name: "ping", description: "Ping", parameters: Data("{}".utf8))
+
+        let encoded = try JSONEncoder().encode(tool)
+        let json = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+
+        XCTAssertNil(json?["metadata"], "Encoded JSON must NOT contain 'metadata' when nil")
+    }
+
+    func test_decodingWithMetadata_populatesMetadata() throws {
+        let json = """
+        {
+            "name": "search",
+            "description": "Search tool",
+            "parameters": {},
+            "metadata": {"category": "search", "version": 2}
+        }
+        """
+
+        let tool = try JSONDecoder().decode(Tool.self, from: Data(json.utf8))
+
+        XCTAssertNotNil(tool.metadata)
+        let meta = try JSONSerialization.jsonObject(with: tool.metadata!) as? [String: Any]
+        XCTAssertEqual(meta?["category"] as? String, "search")
+        XCTAssertEqual(meta?["version"] as? Int, 2)
+    }
+
+    func test_decodingWithoutMetadata_metadataIsNil() throws {
+        // Existing format without metadata — must remain backward compatible
+        let json = """
+        {
+            "name": "legacy_tool",
+            "description": "Legacy tool",
+            "parameters": {}
+        }
+        """
+
+        let tool = try JSONDecoder().decode(Tool.self, from: Data(json.utf8))
+        XCTAssertNil(tool.metadata)
+    }
+
+    func test_roundTripWithMetadata() throws {
+        let schema = Data("{}".utf8)
+        let metadata = Data("{\"category\":\"weather\",\"priority\":1}".utf8)
+        let original = Tool(name: "get_weather", description: "Weather", parameters: schema, metadata: metadata)
+
+        let encoded = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(Tool.self, from: encoded)
+
+        XCTAssertNotNil(decoded.metadata)
+        let origMeta = try JSONSerialization.jsonObject(with: original.metadata!) as? [String: Any]
+        let decodedMeta = try JSONSerialization.jsonObject(with: decoded.metadata!) as? [String: Any]
+        XCTAssertEqual(origMeta?["category"] as? String, decodedMeta?["category"] as? String)
+        XCTAssertEqual(origMeta?["priority"] as? Int, decodedMeta?["priority"] as? Int)
+    }
+
+    func test_equalityWithDifferentMetadata_notEqual() {
+        let schema = Data("{}".utf8)
+        let meta1 = Data("{\"v\":1}".utf8)
+        let meta2 = Data("{\"v\":2}".utf8)
+
+        let tool1 = Tool(name: "t", description: "d", parameters: schema, metadata: meta1)
+        let tool2 = Tool(name: "t", description: "d", parameters: schema, metadata: meta2)
+
+        XCTAssertNotEqual(tool1, tool2)
     }
 }

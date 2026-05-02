@@ -1,26 +1,4 @@
-/*
- * MIT License
- *
- * Copyright (c) 2025 Perfect Aduh
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
 
 import AGUICore
 import Foundation
@@ -65,10 +43,6 @@ extension AsyncSequence where Element == any AGUIEvent {
                 var currentState: State = input.state
                 var rawEvents: [RawEvent] = []
                 var customEvents: [CustomEvent] = []
-                var thinkingActive: Bool = false
-                var thinkingTitle: String? = nil
-                var thinkingMessages: [String] = []
-                var thinkingBuffer: String? = nil
                 var initialMessagesEmitted: Bool = false
 
                 do {
@@ -82,13 +56,8 @@ extension AsyncSequence where Element == any AGUIEvent {
                         }
 
                         switch event {
-                        case let e as RunStartedEvent:
-                            _ = e
-                            // Reset thinking state on new run
-                            thinkingActive = false
-                            thinkingTitle = nil
-                            thinkingMessages = []
-                            thinkingBuffer = nil
+                        case is RunStartedEvent:
+                            break
 
                         case let e as TextMessageStartEvent:
                             let newMessage = AssistantMessage(id: e.messageId, content: "")
@@ -188,51 +157,6 @@ extension AsyncSequence where Element == any AGUIEvent {
                         case let e as CustomEvent:
                             customEvents.append(e)
                             continuation.yield(AgentState(customEvents: customEvents))
-
-                        case let e as ThinkingStartEvent:
-                            thinkingActive = true
-                            thinkingTitle = e.title
-                            continuation.yield(AgentState(
-                                thinking: ThinkingTelemetryState(
-                                    isThinking: true,
-                                    title: thinkingTitle,
-                                    messages: thinkingMessages
-                                )
-                            ))
-
-                        case is ThinkingEndEvent:
-                            // Finalize any in-progress buffer
-                            if let buffer = thinkingBuffer {
-                                thinkingMessages.append(buffer)
-                                thinkingBuffer = nil
-                            }
-                            thinkingActive = false
-                            continuation.yield(AgentState(
-                                thinking: ThinkingTelemetryState(
-                                    isThinking: false,
-                                    title: thinkingTitle,
-                                    messages: thinkingMessages
-                                )
-                            ))
-
-                        case is ThinkingTextMessageStartEvent:
-                            thinkingBuffer = ""
-
-                        case let e as ThinkingTextMessageContentEvent:
-                            thinkingBuffer = (thinkingBuffer ?? "") + e.delta
-
-                        case is ThinkingTextMessageEndEvent:
-                            if let buffer = thinkingBuffer {
-                                thinkingMessages.append(buffer)
-                                thinkingBuffer = nil
-                                continuation.yield(AgentState(
-                                    thinking: ThinkingTelemetryState(
-                                        isThinking: thinkingActive,
-                                        title: thinkingTitle,
-                                        messages: thinkingMessages
-                                    )
-                                ))
-                            }
 
                         default:
                             break

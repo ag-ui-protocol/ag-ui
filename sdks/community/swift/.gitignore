@@ -101,6 +101,9 @@ docs/*
 # SwiftLint
 .swiftlintcache
 
+# Claude Code worktrees
+.claude/worktrees/
+
 # Local documentation (not for public repository)
 MEDIUM_ARTICLE.md
 docs-test/
