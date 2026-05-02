@@ -1,6 +1,6 @@
 {
   "name": "@ag-ui/vercel-ai-sdk",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
@@ -22,8 +22,8 @@
     "unlink:global": "pnpm unlink --global"
   },
   "peerDependencies": {
-    "@ag-ui/core": ">=0.0.37",
-    "@ag-ui/client": ">=0.0.40",
+    "@ag-ui/core": ">=0.0.44",
+    "@ag-ui/client": ">=0.0.44",
     "rxjs": "7.8.1"
   },
   "devDependencies": {
@@ -38,13 +38,13 @@
     "typescript": "^5.3.3"
   },
   "dependencies": {
-    "ai": "^4.3.16",
-    "zod": "^3.22.4"
+    "ai": "^6.0.97",
+    "zod": "^3.25.67"
   },
   "exports": {
     ".": {
-      "import": "./dist/index.mjs",
-      "require": "./dist/index.js"
+      "require": "./dist/index.js",
+      "import": "./dist/index.mjs"
     },
     "./package.json": "./package.json"
   }
