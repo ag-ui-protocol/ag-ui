@@ -31,10 +31,7 @@ import { openai } from "@ai-sdk/openai";
 
 const agent = new VercelAISDKAgent({
   model: openai("gpt-4o-mini"),
-});
-
-await agent.runAgent({
-  messages: [
+  initialMessages: [
     {
       id: "1",
       role: "user",
@@ -42,19 +39,21 @@ await agent.runAgent({
     },
   ],
 });
+
+await agent.runAgent();
 ```
 
 The run emits, in order:
 
 ```
 RUN_STARTED
-STEP_STARTED         stepName=step-0
+STEP_STARTED         stepName=step-1
 TEXT_MESSAGE_START   messageId=msg-1, role=assistant
 TEXT_MESSAGE_CONTENT delta="Hello"
 TEXT_MESSAGE_CONTENT delta=" / Bonjour"
 TEXT_MESSAGE_CONTENT delta=" / 你好"
 TEXT_MESSAGE_END     messageId=msg-1
-STEP_FINISHED        stepName=step-0
+STEP_FINISHED        stepName=step-1
 MESSAGES_SNAPSHOT    messages=[...]
 RUN_FINISHED
 ```
@@ -71,16 +70,16 @@ import { openai } from "@ai-sdk/openai";
 
 const agent = new VercelAISDKAgent({
   model: openai("gpt-4o-mini"),
-});
-
-await agent.runAgent({
-  messages: [
+  initialMessages: [
     {
       id: "1",
       role: "user",
       content: "What's the weather in Tokyo?",
     },
   ],
+});
+
+await agent.runAgent({
   tools: [
     {
       name: "get_weather",

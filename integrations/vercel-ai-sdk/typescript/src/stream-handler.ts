@@ -208,6 +208,9 @@ export class StreamHandler {
       case "raw":
         return;
       default:
+        console.warn(
+          `[VercelAISDKAgent] Unrecognized stream part type: ${(part as { type?: string }).type}`,
+        );
         return;
     }
   }

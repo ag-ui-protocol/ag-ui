@@ -60,7 +60,9 @@ export class VercelAISDKAgent extends AbstractAgent {
       });
 
       const handler = new StreamHandler(input, subscriber);
-      void handler.process(result.fullStream);
+      handler.process(result.fullStream).catch((err) => {
+        if (!subscriber.closed) subscriber.error(err);
+      });
 
       return () => {
         abortController.abort();
