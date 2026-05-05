@@ -28,7 +28,4 @@
 ### Servers
 - [Spring](./servers/spring/README.md) -> Spring Server SSE utilities
 
-### Integrations
-- [Spring AI](./integrations/spring-ai/README.md) -> Spring AI server Agent
-
 ## 🚀 Quick Start

@@ -21,7 +21,6 @@
         <module>clients/spring-client</module>
 
         <module>servers/spring</module>
-
     </modules>
 
     <properties>
