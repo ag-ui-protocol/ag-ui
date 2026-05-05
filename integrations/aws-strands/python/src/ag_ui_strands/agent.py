@@ -626,9 +626,25 @@ class StrandsAgent:
                     elif "tool_stream_event" in event:
                         tool_stream = event["tool_stream_event"]
                         stream_data = tool_stream.get("data", {})
+                        _tse_tool_use = tool_stream.get("tool_use", {})
+                        _tse_tool_name = _tse_tool_use.get("name", "")
+                        _tse_tool_use_id = _tse_tool_use.get("toolUseId", "")
+                        _tse_behavior = self.config.tool_behaviors.get(_tse_tool_name) if _tse_tool_name else None
 
-                        # Emit state snapshot if tool yielded state
-                        if isinstance(stream_data, dict) and "state" in stream_data:
+                        if _tse_behavior and _tse_behavior.tool_stream_event_handler:
+                            try:
+                                async for _tse_event in _tse_behavior.tool_stream_event_handler(
+                                    _tse_tool_use_id, stream_data
+                                ):
+                                    if _tse_event is not None:
+                                        yield _tse_event
+                            except Exception as _tse_exc:
+                                logger.warning(
+                                    f"tool_stream_event_handler failed for {_tse_tool_name}: {_tse_exc}",
+                                    exc_info=True,
+                                )
+                        elif isinstance(stream_data, dict) and "state" in stream_data:
+                            # Default behaviour: emit state snapshot when tool yields {"state": ...}
                             yield StateSnapshotEvent(
                                 type=EventType.STATE_SNAPSHOT,
                                 snapshot=stream_data["state"],
