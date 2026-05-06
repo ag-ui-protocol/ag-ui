@@ -1,367 +1,290 @@
-import { z } from "zod";
-import type { Interrupt } from "./types";
-import {
+import { EventType } from "./events";
+import type {
   ActivityDeltaEvent,
   ActivityDeltaEventProps,
-  ActivityDeltaEventSchema,
   ActivitySnapshotEvent,
   ActivitySnapshotEventProps,
-  ActivitySnapshotEventSchema,
   CustomEvent,
   CustomEventProps,
-  CustomEventSchema,
-  EventType,
   MessagesSnapshotEvent,
   MessagesSnapshotEventProps,
-  MessagesSnapshotEventSchema,
   RawEvent,
   RawEventProps,
-  RawEventSchema,
   RunErrorEvent,
   RunErrorEventProps,
-  RunErrorEventSchema,
   RunFinishedEvent,
   RunFinishedEventProps,
-  RunFinishedEventSchema,
   RunStartedEvent,
   RunStartedEventProps,
-  RunStartedEventSchema,
   StateDeltaEvent,
   StateDeltaEventProps,
-  StateDeltaEventSchema,
   StateSnapshotEvent,
   StateSnapshotEventProps,
-  StateSnapshotEventSchema,
   StepFinishedEvent,
   StepFinishedEventProps,
-  StepFinishedEventSchema,
   StepStartedEvent,
   StepStartedEventProps,
-  StepStartedEventSchema,
   TextMessageChunkEvent,
   TextMessageChunkEventProps,
-  TextMessageChunkEventSchema,
   TextMessageContentEvent,
   TextMessageContentEventProps,
-  TextMessageContentEventSchema,
   TextMessageEndEvent,
   TextMessageEndEventProps,
-  TextMessageEndEventSchema,
   TextMessageStartEvent,
   TextMessageStartEventProps,
-  TextMessageStartEventSchema,
   ThinkingEndEvent,
   ThinkingEndEventProps,
-  ThinkingEndEventSchema,
   ThinkingStartEvent,
   ThinkingStartEventProps,
-  ThinkingStartEventSchema,
   ThinkingTextMessageContentEvent,
   ThinkingTextMessageContentEventProps,
-  ThinkingTextMessageContentEventSchema,
   ThinkingTextMessageEndEvent,
   ThinkingTextMessageEndEventProps,
-  ThinkingTextMessageEndEventSchema,
   ThinkingTextMessageStartEvent,
   ThinkingTextMessageStartEventProps,
-  ThinkingTextMessageStartEventSchema,
   ToolCallArgsEvent,
   ToolCallArgsEventProps,
-  ToolCallArgsEventSchema,
   ToolCallChunkEvent,
   ToolCallChunkEventProps,
-  ToolCallChunkEventSchema,
   ToolCallEndEvent,
   ToolCallEndEventProps,
-  ToolCallEndEventSchema,
   ToolCallResultEvent,
   ToolCallResultEventProps,
-  ToolCallResultEventSchema,
   ToolCallStartEvent,
   ToolCallStartEventProps,
-  ToolCallStartEventSchema,
   ReasoningStartEvent,
   ReasoningStartEventProps,
-  ReasoningStartEventSchema,
   ReasoningMessageStartEvent,
   ReasoningMessageStartEventProps,
-  ReasoningMessageStartEventSchema,
   ReasoningMessageContentEvent,
   ReasoningMessageContentEventProps,
-  ReasoningMessageContentEventSchema,
   ReasoningMessageEndEvent,
   ReasoningMessageEndEventProps,
-  ReasoningMessageEndEventSchema,
   ReasoningMessageChunkEvent,
   ReasoningMessageChunkEventProps,
-  ReasoningMessageChunkEventSchema,
   ReasoningEndEvent,
   ReasoningEndEventProps,
-  ReasoningEndEventSchema,
   ReasoningEncryptedValueEvent,
   ReasoningEncryptedValueEventProps,
-  ReasoningEncryptedValueEventSchema,
-} from "./events";
+} from "./events-static";
+import type { Interrupt } from "./types-static";
 
-const buildEvent = <Schema extends z.ZodTypeAny>(
-  eventType: EventType,
-  schema: Schema,
-  props: Omit<z.input<Schema>, "type">,
-): z.infer<Schema> =>
-  schema.parse({
-    type: eventType,
-    ...props,
-  });
-
-/**
- * Creates a TEXT_MESSAGE_START event.
- */
+/** Creates a TEXT_MESSAGE_START event. `role` defaults to `"assistant"` when omitted. */
 export const createTextMessageStartEvent = (
   props: TextMessageStartEventProps,
-): TextMessageStartEvent =>
-  buildEvent(EventType.TEXT_MESSAGE_START, TextMessageStartEventSchema, props);
+): TextMessageStartEvent => ({
+  type: EventType.TEXT_MESSAGE_START,
+  ...props,
+  role: props.role ?? "assistant",
+});
 
-/**
- * Creates a TEXT_MESSAGE_CONTENT event.
- */
+/** Creates a TEXT_MESSAGE_CONTENT event. */
 export const createTextMessageContentEvent = (
   props: TextMessageContentEventProps,
-): TextMessageContentEvent =>
-  buildEvent(EventType.TEXT_MESSAGE_CONTENT, TextMessageContentEventSchema, props);
+): TextMessageContentEvent => ({ type: EventType.TEXT_MESSAGE_CONTENT, ...props });
 
-/**
- * Creates a TEXT_MESSAGE_END event.
- */
-export const createTextMessageEndEvent = (props: TextMessageEndEventProps): TextMessageEndEvent =>
-  buildEvent(EventType.TEXT_MESSAGE_END, TextMessageEndEventSchema, props);
+/** Creates a TEXT_MESSAGE_END event. */
+export const createTextMessageEndEvent = (
+  props: TextMessageEndEventProps,
+): TextMessageEndEvent => ({ type: EventType.TEXT_MESSAGE_END, ...props });
 
-/**
- * Creates a TEXT_MESSAGE_CHUNK event.
- */
+/** Creates a TEXT_MESSAGE_CHUNK event. */
 export const createTextMessageChunkEvent = (
   props: TextMessageChunkEventProps,
-): TextMessageChunkEvent =>
-  buildEvent(EventType.TEXT_MESSAGE_CHUNK, TextMessageChunkEventSchema, props);
+): TextMessageChunkEvent => ({ type: EventType.TEXT_MESSAGE_CHUNK, ...props });
 
-/**
- * Creates a THINKING_TEXT_MESSAGE_START event.
- */
+/** @deprecated Use `createReasoningMessageStartEvent` instead. Will be removed in 1.0.0. */
 export const createThinkingTextMessageStartEvent = (
   props: ThinkingTextMessageStartEventProps,
-): ThinkingTextMessageStartEvent =>
-  buildEvent(EventType.THINKING_TEXT_MESSAGE_START, ThinkingTextMessageStartEventSchema, props);
+): ThinkingTextMessageStartEvent => ({
+  type: EventType.THINKING_TEXT_MESSAGE_START,
+  ...props,
+});
 
-/**
- * Creates a THINKING_TEXT_MESSAGE_CONTENT event.
- */
+/** @deprecated Use `createReasoningMessageContentEvent` instead. Will be removed in 1.0.0. */
 export const createThinkingTextMessageContentEvent = (
   props: ThinkingTextMessageContentEventProps,
-): ThinkingTextMessageContentEvent =>
-  buildEvent(EventType.THINKING_TEXT_MESSAGE_CONTENT, ThinkingTextMessageContentEventSchema, props);
+): ThinkingTextMessageContentEvent => ({
+  type: EventType.THINKING_TEXT_MESSAGE_CONTENT,
+  ...props,
+});
 
-/**
- * Creates a THINKING_TEXT_MESSAGE_END event.
- */
+/** @deprecated Use `createReasoningMessageEndEvent` instead. Will be removed in 1.0.0. */
 export const createThinkingTextMessageEndEvent = (
   props: ThinkingTextMessageEndEventProps,
-): ThinkingTextMessageEndEvent =>
-  buildEvent(EventType.THINKING_TEXT_MESSAGE_END, ThinkingTextMessageEndEventSchema, props);
+): ThinkingTextMessageEndEvent => ({
+  type: EventType.THINKING_TEXT_MESSAGE_END,
+  ...props,
+});
 
-/**
- * Creates a TOOL_CALL_START event.
- */
-export const createToolCallStartEvent = (props: ToolCallStartEventProps): ToolCallStartEvent =>
-  buildEvent(EventType.TOOL_CALL_START, ToolCallStartEventSchema, props);
+/** Creates a TOOL_CALL_START event. */
+export const createToolCallStartEvent = (
+  props: ToolCallStartEventProps,
+): ToolCallStartEvent => ({ type: EventType.TOOL_CALL_START, ...props });
 
-/**
- * Creates a TOOL_CALL_ARGS event.
- */
-export const createToolCallArgsEvent = (props: ToolCallArgsEventProps): ToolCallArgsEvent =>
-  buildEvent(EventType.TOOL_CALL_ARGS, ToolCallArgsEventSchema, props);
+/** Creates a TOOL_CALL_ARGS event. */
+export const createToolCallArgsEvent = (
+  props: ToolCallArgsEventProps,
+): ToolCallArgsEvent => ({ type: EventType.TOOL_CALL_ARGS, ...props });
 
-/**
- * Creates a TOOL_CALL_END event.
- */
-export const createToolCallEndEvent = (props: ToolCallEndEventProps): ToolCallEndEvent =>
-  buildEvent(EventType.TOOL_CALL_END, ToolCallEndEventSchema, props);
+/** Creates a TOOL_CALL_END event. */
+export const createToolCallEndEvent = (
+  props: ToolCallEndEventProps,
+): ToolCallEndEvent => ({ type: EventType.TOOL_CALL_END, ...props });
 
-/**
- * Creates a TOOL_CALL_CHUNK event.
- */
-export const createToolCallChunkEvent = (props: ToolCallChunkEventProps): ToolCallChunkEvent =>
-  buildEvent(EventType.TOOL_CALL_CHUNK, ToolCallChunkEventSchema, props);
+/** Creates a TOOL_CALL_CHUNK event. */
+export const createToolCallChunkEvent = (
+  props: ToolCallChunkEventProps,
+): ToolCallChunkEvent => ({ type: EventType.TOOL_CALL_CHUNK, ...props });
 
-/**
- * Creates a TOOL_CALL_RESULT event.
- */
-export const createToolCallResultEvent = (props: ToolCallResultEventProps): ToolCallResultEvent =>
-  buildEvent(EventType.TOOL_CALL_RESULT, ToolCallResultEventSchema, props);
+/** Creates a TOOL_CALL_RESULT event. */
+export const createToolCallResultEvent = (
+  props: ToolCallResultEventProps,
+): ToolCallResultEvent => ({ type: EventType.TOOL_CALL_RESULT, ...props });
 
-/**
- * Creates a THINKING_START event.
- */
-export const createThinkingStartEvent = (props: ThinkingStartEventProps): ThinkingStartEvent =>
-  buildEvent(EventType.THINKING_START, ThinkingStartEventSchema, props);
+/** @deprecated Use `createReasoningStartEvent` instead. Will be removed in 1.0.0. */
+export const createThinkingStartEvent = (
+  props: ThinkingStartEventProps,
+): ThinkingStartEvent => ({ type: EventType.THINKING_START, ...props });
 
-/**
- * Creates a THINKING_END event.
- */
-export const createThinkingEndEvent = (props: ThinkingEndEventProps): ThinkingEndEvent =>
-  buildEvent(EventType.THINKING_END, ThinkingEndEventSchema, props);
+/** @deprecated Use `createReasoningEndEvent` instead. Will be removed in 1.0.0. */
+export const createThinkingEndEvent = (
+  props: ThinkingEndEventProps,
+): ThinkingEndEvent => ({ type: EventType.THINKING_END, ...props });
 
-/**
- * Creates a STATE_SNAPSHOT event.
- */
-export const createStateSnapshotEvent = (props: StateSnapshotEventProps): StateSnapshotEvent =>
-  buildEvent(EventType.STATE_SNAPSHOT, StateSnapshotEventSchema, props);
+/** Creates a STATE_SNAPSHOT event. */
+export const createStateSnapshotEvent = (
+  props: StateSnapshotEventProps,
+): StateSnapshotEvent => ({ type: EventType.STATE_SNAPSHOT, ...props });
 
-/**
- * Creates a STATE_DELTA event.
- */
-export const createStateDeltaEvent = (props: StateDeltaEventProps): StateDeltaEvent =>
-  buildEvent(EventType.STATE_DELTA, StateDeltaEventSchema, props);
+/** Creates a STATE_DELTA event. */
+export const createStateDeltaEvent = (
+  props: StateDeltaEventProps,
+): StateDeltaEvent => ({ type: EventType.STATE_DELTA, ...props });
 
-/**
- * Creates a MESSAGES_SNAPSHOT event.
- */
+/** Creates a MESSAGES_SNAPSHOT event. */
 export const createMessagesSnapshotEvent = (
   props: MessagesSnapshotEventProps,
-): MessagesSnapshotEvent =>
-  buildEvent(EventType.MESSAGES_SNAPSHOT, MessagesSnapshotEventSchema, props);
+): MessagesSnapshotEvent => ({ type: EventType.MESSAGES_SNAPSHOT, ...props });
 
-/**
- * Creates an ACTIVITY_SNAPSHOT event.
- */
+/** Creates an ACTIVITY_SNAPSHOT event. `replace` defaults to `true` when omitted. */
 export const createActivitySnapshotEvent = (
   props: ActivitySnapshotEventProps,
-): ActivitySnapshotEvent =>
-  buildEvent(EventType.ACTIVITY_SNAPSHOT, ActivitySnapshotEventSchema, props);
+): ActivitySnapshotEvent => ({
+  type: EventType.ACTIVITY_SNAPSHOT,
+  ...props,
+  replace: props.replace ?? true,
+});
+
+/** Creates an ACTIVITY_DELTA event. */
+export const createActivityDeltaEvent = (
+  props: ActivityDeltaEventProps,
+): ActivityDeltaEvent => ({ type: EventType.ACTIVITY_DELTA, ...props });
+
+/** Creates a RAW event. */
+export const createRawEvent = (props: RawEventProps): RawEvent => ({
+  type: EventType.RAW,
+  ...props,
+});
+
+/** Creates a CUSTOM event. */
+export const createCustomEvent = (props: CustomEventProps): CustomEvent => ({
+  type: EventType.CUSTOM,
+  ...props,
+});
+
+/** Creates a RUN_STARTED event. */
+export const createRunStartedEvent = (
+  props: RunStartedEventProps,
+): RunStartedEvent => ({ type: EventType.RUN_STARTED, ...props });
 
 /**
- * Creates an ACTIVITY_DELTA event.
- */
-export const createActivityDeltaEvent = (props: ActivityDeltaEventProps): ActivityDeltaEvent =>
-  buildEvent(EventType.ACTIVITY_DELTA, ActivityDeltaEventSchema, props);
-
-/**
- * Creates a RAW event.
- */
-export const createRawEvent = (props: RawEventProps): RawEvent =>
-  buildEvent(EventType.RAW, RawEventSchema, props);
-
-/**
- * Creates a CUSTOM event.
- */
-export const createCustomEvent = (props: CustomEventProps): CustomEvent =>
-  buildEvent(EventType.CUSTOM, CustomEventSchema, props);
-
-/**
- * Creates a RUN_STARTED event.
- */
-export const createRunStartedEvent = (props: RunStartedEventProps): RunStartedEvent =>
-  buildEvent(EventType.RUN_STARTED, RunStartedEventSchema, props);
-
-/**
- * Creates a RUN_FINISHED event.
+ * Creates a RUN_FINISHED event. `outcome` is optional; pass `{ type: "success" }` or
+ * `{ type: "interrupt", interrupts }` (or use the convenience helpers below).
  *
- * `outcome` is optional. Omit it for legacy/back-compat behavior, or set it
- * explicitly to `{ type: "success" }` or `{ type: "interrupt", interrupts }`
- * — see `createRunFinishedSuccessEvent` and `createRunFinishedInterruptEvent`
- * for convenience helpers.
+ * `outcome: null` is normalized to `outcome` being omitted.
  */
-export const createRunFinishedEvent = (props: RunFinishedEventProps): RunFinishedEvent =>
-  buildEvent(EventType.RUN_FINISHED, RunFinishedEventSchema, props);
+export const createRunFinishedEvent = (
+  props: RunFinishedEventProps,
+): RunFinishedEvent => {
+  const { outcome, ...rest } = props;
+  const event: RunFinishedEvent = { type: EventType.RUN_FINISHED, ...rest };
+  if (outcome !== null && outcome !== undefined) {
+    event.outcome = outcome;
+  }
+  return event;
+};
 
-/**
- * Creates a RUN_FINISHED event with `outcome: { type: "success" }`.
- */
+/** Creates a RUN_FINISHED event with `outcome: { type: "success" }`. */
 export const createRunFinishedSuccessEvent = (
   props: Omit<RunFinishedEventProps, "outcome">,
 ): RunFinishedEvent =>
-  buildEvent(EventType.RUN_FINISHED, RunFinishedEventSchema, {
-    ...props,
-    outcome: { type: "success" },
-  });
+  createRunFinishedEvent({ ...props, outcome: { type: "success" } });
 
 /**
  * Creates a RUN_FINISHED event with `outcome: { type: "interrupt", interrupts }`.
+ * Throws if `interrupts` is empty.
  */
 export const createRunFinishedInterruptEvent = (
   props: Omit<RunFinishedEventProps, "outcome"> & { interrupts: Interrupt[] },
 ): RunFinishedEvent => {
   const { interrupts, ...rest } = props;
-  return buildEvent(EventType.RUN_FINISHED, RunFinishedEventSchema, {
+  if (!interrupts || interrupts.length === 0) {
+    throw new Error("interrupts array must contain at least one element");
+  }
+  return createRunFinishedEvent({
     ...rest,
     outcome: { type: "interrupt", interrupts },
   });
 };
 
-/**
- * Creates a RUN_ERROR event.
- */
-export const createRunErrorEvent = (props: RunErrorEventProps): RunErrorEvent =>
-  buildEvent(EventType.RUN_ERROR, RunErrorEventSchema, props);
+/** Creates a RUN_ERROR event. */
+export const createRunErrorEvent = (props: RunErrorEventProps): RunErrorEvent => ({
+  type: EventType.RUN_ERROR,
+  ...props,
+});
 
-/**
- * Creates a STEP_STARTED event.
- */
-export const createStepStartedEvent = (props: StepStartedEventProps): StepStartedEvent =>
-  buildEvent(EventType.STEP_STARTED, StepStartedEventSchema, props);
+/** Creates a STEP_STARTED event. */
+export const createStepStartedEvent = (
+  props: StepStartedEventProps,
+): StepStartedEvent => ({ type: EventType.STEP_STARTED, ...props });
 
-/**
- * Creates a STEP_FINISHED event.
- */
-export const createStepFinishedEvent = (props: StepFinishedEventProps): StepFinishedEvent =>
-  buildEvent(EventType.STEP_FINISHED, StepFinishedEventSchema, props);
+/** Creates a STEP_FINISHED event. */
+export const createStepFinishedEvent = (
+  props: StepFinishedEventProps,
+): StepFinishedEvent => ({ type: EventType.STEP_FINISHED, ...props });
 
-/**
- * Creates a REASONING_START event.
- */
-export const createReasoningStartEvent = (props: ReasoningStartEventProps): ReasoningStartEvent =>
-  buildEvent(EventType.REASONING_START, ReasoningStartEventSchema, props);
+/** Creates a REASONING_START event. */
+export const createReasoningStartEvent = (
+  props: ReasoningStartEventProps,
+): ReasoningStartEvent => ({ type: EventType.REASONING_START, ...props });
 
-/**
- * Creates a REASONING_MESSAGE_START event.
- */
+/** Creates a REASONING_MESSAGE_START event. */
 export const createReasoningMessageStartEvent = (
   props: ReasoningMessageStartEventProps,
-): ReasoningMessageStartEvent =>
-  buildEvent(EventType.REASONING_MESSAGE_START, ReasoningMessageStartEventSchema, props);
+): ReasoningMessageStartEvent => ({ type: EventType.REASONING_MESSAGE_START, ...props });
 
-/**
- * Creates a REASONING_MESSAGE_CONTENT event.
- */
+/** Creates a REASONING_MESSAGE_CONTENT event. */
 export const createReasoningMessageContentEvent = (
   props: ReasoningMessageContentEventProps,
-): ReasoningMessageContentEvent =>
-  buildEvent(EventType.REASONING_MESSAGE_CONTENT, ReasoningMessageContentEventSchema, props);
+): ReasoningMessageContentEvent => ({ type: EventType.REASONING_MESSAGE_CONTENT, ...props });
 
-/**
- * Creates a REASONING_MESSAGE_END event.
- */
+/** Creates a REASONING_MESSAGE_END event. */
 export const createReasoningMessageEndEvent = (
   props: ReasoningMessageEndEventProps,
-): ReasoningMessageEndEvent =>
-  buildEvent(EventType.REASONING_MESSAGE_END, ReasoningMessageEndEventSchema, props);
+): ReasoningMessageEndEvent => ({ type: EventType.REASONING_MESSAGE_END, ...props });
 
-/**
- * Creates a REASONING_MESSAGE_CHUNK event.
- */
+/** Creates a REASONING_MESSAGE_CHUNK event. */
 export const createReasoningMessageChunkEvent = (
   props: ReasoningMessageChunkEventProps,
-): ReasoningMessageChunkEvent =>
-  buildEvent(EventType.REASONING_MESSAGE_CHUNK, ReasoningMessageChunkEventSchema, props);
+): ReasoningMessageChunkEvent => ({ type: EventType.REASONING_MESSAGE_CHUNK, ...props });
 
-/**
- * Creates a REASONING_END event.
- */
-export const createReasoningEndEvent = (props: ReasoningEndEventProps): ReasoningEndEvent =>
-  buildEvent(EventType.REASONING_END, ReasoningEndEventSchema, props);
+/** Creates a REASONING_END event. */
+export const createReasoningEndEvent = (
+  props: ReasoningEndEventProps,
+): ReasoningEndEvent => ({ type: EventType.REASONING_END, ...props });
 
-/**
- * Creates a REASONING_ENCRYPTED_VALUE event.
- */
+/** Creates a REASONING_ENCRYPTED_VALUE event. */
 export const createReasoningEncryptedValueEvent = (
   props: ReasoningEncryptedValueEventProps,
-): ReasoningEncryptedValueEvent =>
-  buildEvent(EventType.REASONING_ENCRYPTED_VALUE, ReasoningEncryptedValueEventSchema, props);
+): ReasoningEncryptedValueEvent => ({ type: EventType.REASONING_ENCRYPTED_VALUE, ...props });
