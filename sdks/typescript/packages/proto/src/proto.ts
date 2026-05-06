@@ -1,10 +1,10 @@
 import {
   BaseEvent,
   AGUIEvent,
-  EventSchemas,
   EventType,
   Message,
   RunFinishedOutcome,
+  defaultEventValidator,
 } from "@ag-ui/core";
 import * as protoEvents from "./generated/events";
 import * as protoPatch from "./generated/patch";
@@ -195,12 +195,13 @@ export function encode(event: BaseEvent): Uint8Array {
    * @author mikeryandev
    */
   let validatedEvent: AGUIEvent | BaseEvent;
-  try {
-    validatedEvent = EventSchemas.parse(event) as AGUIEvent;
-  } catch (err) {
+  const validation = defaultEventValidator.validateEvent(event);
+  if (validation.success) {
+    validatedEvent = validation.value as AGUIEvent;
+  } else {
     console.warn(
-      "[ag-ui][proto.encode] Malformed devent detected, falling back to unvalidated event",
-      err,
+      "[ag-ui][proto.encode] Malformed event detected, falling back to unvalidated event",
+      validation.issues,
       event,
     );
     validatedEvent = event;
@@ -352,5 +353,26 @@ export function decode(data: Uint8Array): BaseEvent {
     }
   });
 
-  return EventSchemas.parse(decoded);
+  // Strip undefined values from nested message objects so the decoded event
+  // matches what schema validation used to produce (zod stripped unknown/undefined
+  // fields deeply; defaultEventValidator only validates, does not strip).
+  if (decoded.type === EventType.MESSAGES_SNAPSHOT && Array.isArray((decoded as any).messages)) {
+    for (const message of (decoded as any).messages) {
+      Object.keys(message).forEach((key) => {
+        if (message[key] === undefined) {
+          delete message[key];
+        }
+      });
+      // contentParts has been converted to content above; remove the proto-only field
+      delete message.contentParts;
+    }
+  }
+
+  const validation = defaultEventValidator.validateEvent(decoded);
+  if (!validation.success) {
+    throw new Error(
+      `Invalid decoded protobuf event: ${validation.issues.map((i) => i.message).join("; ")}`,
+    );
+  }
+  return validation.value as AGUIEvent;
 }

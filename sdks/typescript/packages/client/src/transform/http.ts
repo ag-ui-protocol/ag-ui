@@ -1,10 +1,14 @@
-import { BaseEvent, EventSchemas } from "@ag-ui/core";
+import {
+  BaseEvent,
+  defaultEventValidator,
+  EventType,
+  type AgentValidator,
+} from "@ag-ui/core";
 import { Subject, ReplaySubject, Observable } from "rxjs";
 import { HttpEvent, HttpEventType } from "../run/http-request";
 import { parseSSEStream } from "./sse";
 import { parseProtoStream } from "./proto";
 import * as proto from "@ag-ui/proto";
-import { EventType } from "@ag-ui/core";
 import { type DebugLoggerInput, resolveDebugLogger } from "@/debug-logger";
 
 /**
@@ -13,6 +17,7 @@ import { type DebugLoggerInput, resolveDebugLogger } from "@/debug-logger";
 export const transformHttpEventStream = (
   source$: Observable<HttpEvent>,
   debugLogger?: DebugLoggerInput,
+  validator: AgentValidator = defaultEventValidator,
 ): Observable<BaseEvent> => {
   const log = resolveDebugLogger(debugLogger);
   const eventSubject = new Subject<BaseEvent>();
@@ -51,16 +56,20 @@ export const transformHttpEventStream = (
           // Use SSE JSON parser for all other cases
           parseSSEStream(bufferSubject, log).subscribe({
             next: (json) => {
-              try {
-                const parsedEvent = EventSchemas.parse(json);
-                log?.event("HTTP", "Event validated:", parsedEvent, {
-                  type: parsedEvent.type,
+              const result = validator.validateEvent(json);
+              if (result.success) {
+                log?.event("HTTP", "Event validated:", result.value, {
+                  type: result.value.type,
                   valid: true,
                 });
-                eventSubject.next(parsedEvent as BaseEvent);
-              } catch (err) {
-                log?.event("HTTP", "Event invalid:", { json, error: String(err) });
-                eventSubject.error(err);
+                eventSubject.next(result.value as BaseEvent);
+              } else {
+                log?.event("HTTP", "Event invalid:", { json, issues: result.issues });
+                eventSubject.error(
+                  new Error(
+                    `Invalid event: ${result.issues.map((i) => i.message).join("; ")}`,
+                  ),
+                );
               }
             },
             error: (err) => {
