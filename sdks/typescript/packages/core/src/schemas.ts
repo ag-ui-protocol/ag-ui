@@ -3,11 +3,54 @@
 // it explicitly if you import from this module. The schemas mirror the types
 // exported from the main `@ag-ui/core` entry.
 //
-// Cross-version note: written to work on zod >= 3.24.0. zod 4 should also work
-// for the simple cases used here, but pin to zod 3 if you encounter issues.
+// Cross-version note: written to work on zod >= 3.24.0 AND zod 4.x.
+// API used here is stable across both majors:
+//   - z.enum([...]) instead of z.nativeEnum() (removed in zod 4)
+//   - z.record(z.string(), X) instead of z.record(X) (two-arg form required in zod 4)
 
 import { z } from "zod";
 import { EventType } from "./events";
+
+// ---------------------------------------------------------------------------
+// EventType enum values as a z.enum tuple — works on zod 3.24+ and zod 4.
+// z.nativeEnum() was removed in zod 4, so we enumerate values explicitly.
+// ---------------------------------------------------------------------------
+
+export const EventTypeSchema = z.enum([
+  "TEXT_MESSAGE_START",
+  "TEXT_MESSAGE_CONTENT",
+  "TEXT_MESSAGE_END",
+  "TEXT_MESSAGE_CHUNK",
+  "TOOL_CALL_START",
+  "TOOL_CALL_ARGS",
+  "TOOL_CALL_END",
+  "TOOL_CALL_CHUNK",
+  "TOOL_CALL_RESULT",
+  "THINKING_START",
+  "THINKING_END",
+  "THINKING_TEXT_MESSAGE_START",
+  "THINKING_TEXT_MESSAGE_CONTENT",
+  "THINKING_TEXT_MESSAGE_END",
+  "STATE_SNAPSHOT",
+  "STATE_DELTA",
+  "MESSAGES_SNAPSHOT",
+  "ACTIVITY_SNAPSHOT",
+  "ACTIVITY_DELTA",
+  "RAW",
+  "CUSTOM",
+  "RUN_STARTED",
+  "RUN_FINISHED",
+  "RUN_ERROR",
+  "STEP_STARTED",
+  "STEP_FINISHED",
+  "REASONING_START",
+  "REASONING_MESSAGE_START",
+  "REASONING_MESSAGE_CONTENT",
+  "REASONING_MESSAGE_END",
+  "REASONING_MESSAGE_CHUNK",
+  "REASONING_END",
+  "REASONING_ENCRYPTED_VALUE",
+] as const);
 
 // ---------------------------------------------------------------------------
 // Base types (from types.ts)
@@ -161,7 +204,7 @@ export const ActivityMessageSchema = z.object({
   id: z.string(),
   role: z.literal("activity"),
   activityType: z.string(),
-  content: z.record(z.any()),
+  content: z.record(z.string(), z.any()),
 });
 
 export const ReasoningMessageSchema = z.object({
@@ -200,7 +243,7 @@ export const ToolSchema = z.object({
   name: z.string(),
   description: z.string(),
   parameters: z.any(),
-  metadata: z.record(z.any()).optional(),
+  metadata: z.record(z.string(), z.any()).optional(),
 });
 
 export const InterruptSchema = z.object({
@@ -208,9 +251,9 @@ export const InterruptSchema = z.object({
   reason: z.string(),
   message: z.string().optional(),
   toolCallId: z.string().optional(),
-  responseSchema: z.record(z.any()).optional(),
+  responseSchema: z.record(z.string(), z.any()).optional(),
   expiresAt: z.string().optional(),
-  metadata: z.record(z.any()).optional(),
+  metadata: z.record(z.string(), z.any()).optional(),
 });
 
 export const ResumeEntrySchema = z.object({
@@ -246,7 +289,7 @@ const TextMessageRoleSchema = z.union([
 
 export const BaseEventSchema = z
   .object({
-    type: z.nativeEnum(EventType),
+    type: EventTypeSchema,
     timestamp: z.number().optional(),
     rawEvent: z.any().optional(),
   })
@@ -368,7 +411,7 @@ export const ActivitySnapshotEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.ACTIVITY_SNAPSHOT),
   messageId: z.string(),
   activityType: z.string(),
-  content: z.record(z.any()),
+  content: z.record(z.string(), z.any()),
   replace: z.boolean().optional().default(true),
 });
 
@@ -551,7 +594,7 @@ export const IdentityCapabilitiesSchema = z.object({
   version: z.string().optional(),
   provider: z.string().optional(),
   documentationUrl: z.string().optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 /**
@@ -676,7 +719,7 @@ export const AgentCapabilitiesSchema = z.object({
   multimodal: MultimodalCapabilitiesSchema.optional(),
   execution: ExecutionCapabilitiesSchema.optional(),
   humanInTheLoop: HumanInTheLoopCapabilitiesSchema.optional(),
-  custom: z.record(z.unknown()).optional(),
+  custom: z.record(z.string(), z.unknown()).optional(),
 });
 
 // ---------------------------------------------------------------------------
