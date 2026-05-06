@@ -60,6 +60,7 @@ export interface BaseEvent {
   type: EventType;
   timestamp?: number;
   rawEvent?: any;
+  [k: string]: unknown;
 }
 
 // Alias kept for parity with events.ts
