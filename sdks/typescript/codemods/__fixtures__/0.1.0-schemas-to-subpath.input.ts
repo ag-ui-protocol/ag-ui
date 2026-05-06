@@ -23,10 +23,19 @@ import { EventType as ET } from "@ag-ui/core";
 import type { ToolSchema, ContextSchema } from "@ag-ui/core";
 
 // ── 7. Per-specifier type import mixed with value import ──────────────────────
+// RunInput is a local alias — it must survive dedup and appear in the output.
 import { type StateSchema, RunAgentInputSchema as RunInput } from "@ag-ui/core";
 
 // ── 8. Namespace import — must be warned about and left untouched ─────────────
 import * as core from "@ag-ui/core";
+
+// ── 9. Same schema imported twice with different aliases ─────────────────────
+import { RunAgentInputSchema as RunInputAlias } from "@ag-ui/core";
+
+// ── 10. Pre-existing type-only schemas import + value import from @ag-ui/core ──
+// The value spec must NOT be merged into the type-only declaration.
+import type { BaseEventSchema as BaseEvent } from "@ag-ui/core/schemas";
+import { ContextSchema as Ctx } from "@ag-ui/core";
 
 // ── Unrelated import — must not be touched ────────────────────────────────────
 import { z } from "zod";
@@ -44,3 +53,18 @@ export function useMessage(msg: Message) {
 }
 
 export { CoreMessage };
+
+// Case 7 usage — ensures RunInput alias is visible and would break if dropped
+export function checkRunInput(raw: unknown) {
+  return RunInput.safeParse(raw);
+}
+
+// Case 9 usage — both names must be usable after migration
+export function checkRunInputAliased(raw: unknown) {
+  return RunInputAlias.safeParse(raw);
+}
+
+// Case 10 usage — Ctx is a value import and must remain callable at runtime
+export function checkCtx(raw: unknown) {
+  return Ctx.safeParse(raw);
+}

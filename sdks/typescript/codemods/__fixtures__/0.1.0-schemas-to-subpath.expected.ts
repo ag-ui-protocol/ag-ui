@@ -11,6 +11,9 @@ import {
   EventSchemas,
   AgentCapabilitiesSchema,
   RunAgentInputSchema,
+  RunAgentInputSchema as RunInput,
+  RunAgentInputSchema as RunInputAlias,
+  ContextSchema as Ctx,
 } from "@ag-ui/core/schemas";
 
 // ── 5. Non-schema import that must stay on @ag-ui/core ───────────────────────
@@ -19,10 +22,12 @@ import { EventType as ET } from "@ag-ui/core";
 // ── 8. Namespace import — must be warned about and left untouched ─────────────
 import * as core from "@ag-ui/core";
 
+// ── 10. Pre-existing type-only schemas import + value import from @ag-ui/core ──
+// The value spec must NOT be merged into the type-only declaration.
+import type { BaseEventSchema as BaseEvent, ToolSchema, ContextSchema, StateSchema } from "@ag-ui/core/schemas";
+
 // ── Unrelated import — must not be touched ────────────────────────────────────
 import { z } from "zod";
-
-import type { ToolSchema, ContextSchema, StateSchema } from "@ag-ui/core/schemas";
 
 export function validate(raw: unknown) {
   return EventSchemas.safeParse(raw);
@@ -37,3 +42,18 @@ export function useMessage(msg: Message) {
 }
 
 export { CoreMessage };
+
+// Case 7 usage — ensures RunInput alias is visible and would break if dropped
+export function checkRunInput(raw: unknown) {
+  return RunInput.safeParse(raw);
+}
+
+// Case 9 usage — both names must be usable after migration
+export function checkRunInputAliased(raw: unknown) {
+  return RunInputAlias.safeParse(raw);
+}
+
+// Case 10 usage — Ctx is a value import and must remain callable at runtime
+export function checkCtx(raw: unknown) {
+  return Ctx.safeParse(raw);
+}
