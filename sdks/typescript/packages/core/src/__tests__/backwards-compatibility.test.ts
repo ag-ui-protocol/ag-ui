@@ -243,7 +243,9 @@ describe("Backwards Compatibility", () => {
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.messages.length).toBe(2);
-        expect(result.data.messages[1].toolCalls?.length).toBe(1);
+        const secondMsg = result.data.messages[1];
+        const toolCalls = secondMsg.role === "assistant" ? secondMsg.toolCalls : undefined;
+        expect(toolCalls?.length).toBe(1);
         expect(result.data.tools.length).toBe(1);
         expect(result.data.context.length).toBe(1);
       }
