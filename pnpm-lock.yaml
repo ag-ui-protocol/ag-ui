@@ -1268,10 +1268,6 @@ importers:
         version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@20.19.21)(jiti@2.6.1)(lightningcss@1.30.1)(tsx@4.20.6)(yaml@2.8.1)
 
   sdks/typescript/packages/core:
-    dependencies:
-      '@standard-schema/spec':
-        specifier: ^1.0.0
-        version: 1.1.0
     devDependencies:
       '@arethetypeswrong/cli':
         specifier: ^0.17.4
