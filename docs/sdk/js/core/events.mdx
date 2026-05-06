@@ -592,17 +592,18 @@ for detailed migration guidance.
 ## Event validation
 
 `@ag-ui/core` ships TypeScript types for every event but does not bundle a runtime
-schema validator. Consumers that need to validate untrusted event streams (for
-example, when parsing wire data over HTTP) plug in an `AgentValidator` — a pluggable
-interface based on [Standard Schema](https://github.com/standard-schema/standard-schema).
+schema validator in its main entry. Consumers that need to validate untrusted event
+streams (for example, when parsing wire data over HTTP) plug in an `AgentValidator` —
+a pluggable interface based on [Standard Schema](https://github.com/standard-schema/standard-schema).
 
-The package ships a minimal default validator that performs type-tag checking and
-applies the protocol's field defaults:
+The `@ag-ui/core/schemas` subpath exports a ready-made `zodValidator` backed by zod.
+Install zod explicitly to use it (zod is an optional peer dependency):
 
 ```typescript
-import { defaultEventValidator, EventType } from "@ag-ui/core";
+import { zodValidator } from "@ag-ui/core/schemas";
+import { EventType } from "@ag-ui/core";
 
-const result = defaultEventValidator.validateEvent({
+const result = zodValidator.validateEvent({
   type: EventType.TEXT_MESSAGE_START,
   messageId: "msg-1",
   // role defaults to "assistant" when omitted
@@ -616,8 +617,8 @@ if (result.success) {
 }
 ```
 
-For stricter validation you can supply your own validator backed by zod, valibot,
-arktype, or any library that implements the Standard Schema spec:
+For a custom validator backed by zod, valibot, arktype, or any library that implements
+the Standard Schema spec:
 
 ```typescript
 import { fromStandardSchema, type AgentValidator } from "@ag-ui/core";
@@ -631,8 +632,8 @@ const myValidator: AgentValidator = {
 ```
 
 The HTTP transform in `@ag-ui/client` and the protobuf decoder in `@ag-ui/proto`
-both accept an optional validator argument and fall back to `defaultEventValidator`
-when none is provided.
+both accept an optional validator argument and default to `zodValidator` from
+`@ag-ui/core/schemas`, preserving full runtime validation with no additional setup.
 
 ### ToolCallChunkEvent
 

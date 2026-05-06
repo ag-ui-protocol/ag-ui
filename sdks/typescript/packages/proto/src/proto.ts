@@ -4,8 +4,8 @@ import {
   EventType,
   Message,
   RunFinishedOutcome,
-  defaultEventValidator,
 } from "@ag-ui/core";
+import { zodValidator } from "@ag-ui/core/schemas";
 import * as protoEvents from "./generated/events";
 import * as protoPatch from "./generated/patch";
 
@@ -195,7 +195,7 @@ export function encode(event: BaseEvent): Uint8Array {
    * @author mikeryandev
    */
   let validatedEvent: AGUIEvent | BaseEvent;
-  const validation = defaultEventValidator.validateEvent(event);
+  const validation = zodValidator.validateEvent(event);
   if (validation.success) {
     validatedEvent = validation.value as AGUIEvent;
   } else {
@@ -371,7 +371,7 @@ export function decode(data: Uint8Array): BaseEvent {
     }
   }
 
-  const validation = defaultEventValidator.validateEvent(decoded);
+  const validation = zodValidator.validateEvent(decoded);
   if (!validation.success) {
     throw new Error(
       `Invalid decoded protobuf event: ${validation.issues

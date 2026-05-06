@@ -1,9 +1,5 @@
-import {
-  BaseEvent,
-  defaultEventValidator,
-  EventType,
-  type AgentValidator,
-} from "@ag-ui/core";
+import { BaseEvent, EventType, type AgentValidator } from "@ag-ui/core";
+import { zodValidator } from "@ag-ui/core/schemas";
 import { Subject, ReplaySubject, Observable } from "rxjs";
 import { HttpEvent, HttpEventType } from "../run/http-request";
 import { parseSSEStream } from "./sse";
@@ -17,7 +13,7 @@ import { type DebugLoggerInput, resolveDebugLogger } from "@/debug-logger";
 export const transformHttpEventStream = (
   source$: Observable<HttpEvent>,
   debugLogger?: DebugLoggerInput,
-  validator: AgentValidator = defaultEventValidator,
+  validator: AgentValidator = zodValidator,
 ): Observable<BaseEvent> => {
   const log = resolveDebugLogger(debugLogger);
   const eventSubject = new Subject<BaseEvent>();

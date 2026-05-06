@@ -10,9 +10,6 @@ export * from "./events";
 // Event factories
 export * from "./event-factories";
 
-// Standard Schema validator interface and default implementation
-export {
-  defaultEventValidator,
-  fromStandardSchema,
-} from "./validator";
+// Standard Schema validator interface and helper
+export { fromStandardSchema } from "./validator";
 export type { AgentValidator, ValidationResult } from "./validator";

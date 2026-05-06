@@ -34,7 +34,8 @@
     "@arethetypeswrong/cli": "^0.17.4",
     "tsdown": "^0.20.1",
     "typescript": "^5.3.3",
-    "vitest": "^4.0.18"
+    "vitest": "^4.0.18",
+    "zod": "^3.22.4"
   },
   "exports": {
     ".": {
