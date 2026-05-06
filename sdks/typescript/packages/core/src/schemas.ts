@@ -3,7 +3,7 @@
 // it explicitly if you import from this module. The schemas mirror the types
 // exported from the main `@ag-ui/core` entry.
 //
-// Cross-version note: written to work on zod >= 3.22.4. zod 4 should also work
+// Cross-version note: written to work on zod >= 3.24.0. zod 4 should also work
 // for the simple cases used here, but pin to zod 3 if you encounter issues.
 
 import { z } from "zod";
