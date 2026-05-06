@@ -5,7 +5,7 @@
  * diffs the result against the expected fixture. Exits 0 on success, 1 on mismatch.
  *
  * Usage:
- *   npx ts-node sdks/typescript/codemods/test.ts
+ *   npx ts-node codemods/test.ts
  */
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, copyFileSync } from "node:fs";

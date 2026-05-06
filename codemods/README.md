@@ -11,7 +11,7 @@ Automated transforms for upgrading code that depends on `@ag-ui/core`.
 **How to run it.**
 
 ```bash
-npx jscodeshift -t https://raw.githubusercontent.com/ag-ui-protocol/ag-ui/main/sdks/typescript/codemods/0.1.0-schemas-to-subpath.ts \
+npx jscodeshift -t https://raw.githubusercontent.com/ag-ui-protocol/ag-ui/main/codemods/0.1.0-schemas-to-subpath.ts \
   --parser=tsx \
   --extensions=ts,tsx \
   src/
@@ -21,7 +21,7 @@ To do a dry run (print changes without writing):
 
 ```bash
 npx jscodeshift --dry --print \
-  -t https://raw.githubusercontent.com/ag-ui-protocol/ag-ui/main/sdks/typescript/codemods/0.1.0-schemas-to-subpath.ts \
+  -t https://raw.githubusercontent.com/ag-ui-protocol/ag-ui/main/codemods/0.1.0-schemas-to-subpath.ts \
   --parser=tsx \
   --extensions=ts,tsx \
   src/

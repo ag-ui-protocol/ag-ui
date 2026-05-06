@@ -95,20 +95,20 @@ Prior versions shipped zod 3.x as a hard runtime dependency. Consumers running z
 ## Automated migration
 
 For codebases with many `*Schema` imports, a jscodeshift codemod is shipped in
-the `ag-ui` repo at `sdks/typescript/codemods/0.1.0-schemas-to-subpath.ts`. It
+the `ag-ui` repo at `codemods/0.1.0-schemas-to-subpath.ts`. It
 splits combined imports and redirects every `*Schema` import to `@ag-ui/core/schemas`.
 
 Run it from your project root:
 
 ```bash
-npx jscodeshift -t https://raw.githubusercontent.com/ag-ui-protocol/ag-ui/main/sdks/typescript/codemods/0.1.0-schemas-to-subpath.ts \
+npx jscodeshift -t https://raw.githubusercontent.com/ag-ui-protocol/ag-ui/main/codemods/0.1.0-schemas-to-subpath.ts \
   --parser=tsx \
   --extensions=ts,tsx \
   src/
 ```
 
 The transform is idempotent — running it twice has no extra effect. See
-[the codemod README](https://github.com/ag-ui-protocol/ag-ui/blob/main/sdks/typescript/codemods/README.md)
+[the codemod README](https://github.com/ag-ui-protocol/ag-ui/blob/main/codemods/README.md)
 for details and a list of recognized schemas.
 
 ## FAQ
