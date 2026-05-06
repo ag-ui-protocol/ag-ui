@@ -5,7 +5,7 @@ import {
   Message,
   RunFinishedOutcome,
 } from "@ag-ui/core";
-import { zodValidator } from "@ag-ui/core/schemas";
+import { EventSchemas } from "@ag-ui/core/schemas";
 import * as protoEvents from "./generated/events";
 import * as protoPatch from "./generated/patch";
 
@@ -195,13 +195,12 @@ export function encode(event: BaseEvent): Uint8Array {
    * @author mikeryandev
    */
   let validatedEvent: AGUIEvent | BaseEvent;
-  const validation = zodValidator.validateEvent(event);
-  if (validation.success) {
-    validatedEvent = validation.value as AGUIEvent;
-  } else {
+  try {
+    validatedEvent = EventSchemas.parse(event) as AGUIEvent;
+  } catch (err) {
     console.warn(
-      "[ag-ui][proto.encode] Malformed event detected, falling back to unvalidated event",
-      validation.issues,
+      "[ag-ui][proto.encode] Malformed devent detected, falling back to unvalidated event",
+      err,
       event,
     );
     validatedEvent = event;
@@ -353,31 +352,5 @@ export function decode(data: Uint8Array): BaseEvent {
     }
   });
 
-  // Strip undefined keys + the proto-only contentParts field from each message.
-  // NOTE: zod's previous .strip() mode normalized all nested objects deeply.
-  // We currently only handle messages here because proto decoding doesn't surface
-  // undefined fields elsewhere in practice. If a future proto schema change starts
-  // emitting undefined on other nested objects (e.g. RunStartedEvent.input,
-  // ToolCall sub-fields), extend this cleanup or move to a generic deep-strip pass.
-  if (decoded.type === EventType.MESSAGES_SNAPSHOT && Array.isArray((decoded as any).messages)) {
-    for (const message of (decoded as any).messages) {
-      Object.keys(message).forEach((key) => {
-        if (message[key] === undefined) {
-          delete message[key];
-        }
-      });
-      // contentParts has been converted to content above; remove the proto-only field
-      delete message.contentParts;
-    }
-  }
-
-  const validation = zodValidator.validateEvent(decoded);
-  if (!validation.success) {
-    throw new Error(
-      `Invalid decoded protobuf event: ${validation.issues
-        .map((i) => (i.path?.length ? `[${i.path.join(".")}] ${i.message}` : i.message))
-        .join("; ")}`,
-    );
-  }
-  return validation.value as AGUIEvent;
+  return EventSchemas.parse(decoded);
 }

@@ -21,9 +21,6 @@
     "link:global": "pnpm link --global",
     "unlink:global": "pnpm unlink --global"
   },
-  "dependencies": {
-    "@standard-schema/spec": "^1.0.0"
-  },
   "peerDependencies": {
     "zod": "^3.24.0 || ^4.0.0"
   },

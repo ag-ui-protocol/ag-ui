@@ -592,48 +592,29 @@ for detailed migration guidance.
 ## Event validation
 
 `@ag-ui/core` ships TypeScript types for every event but does not bundle a runtime
-schema validator in its main entry. Consumers that need to validate untrusted event
-streams (for example, when parsing wire data over HTTP) plug in an `AgentValidator` —
-a pluggable interface based on [Standard Schema](https://github.com/standard-schema/standard-schema).
-
-The `@ag-ui/core/schemas` subpath exports a ready-made `zodValidator` backed by zod.
-Install zod explicitly to use it (zod is an optional peer dependency):
+schema validator in its main entry. The zod schemas live on an opt-in subpath:
 
 ```typescript
-import { zodValidator } from "@ag-ui/core/schemas";
-import { EventType } from "@ag-ui/core";
+import { EventSchemas } from "@ag-ui/core/schemas";
 
-const result = zodValidator.validateEvent({
-  type: EventType.TEXT_MESSAGE_START,
-  messageId: "msg-1",
-  // role defaults to "assistant" when omitted
-});
-
+const result = EventSchemas.safeParse(incoming);
 if (result.success) {
-  // result.value is typed as { type: EventType; [k: string]: unknown }
-  console.log(result.value);
+  // result.data is typed as the discriminated AGUIEvent union
 } else {
-  console.error("Invalid event:", result.issues);
+  console.error(result.error);
 }
 ```
 
-For a custom validator backed by zod, valibot, arktype, or any library that implements
-the Standard Schema spec:
+zod is an optional peer dependency of `@ag-ui/core/schemas`. Install it explicitly
+if you import from this module:
 
-```typescript
-import { fromStandardSchema, type AgentValidator } from "@ag-ui/core";
-import { z } from "zod";
-
-const myEventSchema = z.object({ type: z.string() }).passthrough();
-
-const myValidator: AgentValidator = {
-  validateEvent: fromStandardSchema(myEventSchema),
-};
+```bash
+npm install zod
+# or pnpm/yarn — zod 3.24+ and zod 4 are both supported
 ```
 
-The HTTP transform in `@ag-ui/client` and the protobuf decoder in `@ag-ui/proto`
-both accept an optional validator argument and default to `zodValidator` from
-`@ag-ui/core/schemas`, preserving full runtime validation with no additional setup.
+If you'd rather use a different validation library, define your own schemas locally
+using your library of choice. The TypeScript types from `@ag-ui/core` are the contract.
 
 ### ToolCallChunkEvent
 

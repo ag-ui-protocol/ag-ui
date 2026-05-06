@@ -722,18 +722,3 @@ export const AgentCapabilitiesSchema = z.object({
   custom: z.record(z.string(), z.unknown()).optional(),
 });
 
-// ---------------------------------------------------------------------------
-// zodValidator — drop-in AgentValidator backed by EventSchemas
-// ---------------------------------------------------------------------------
-
-import type { AgentValidator } from "./validator";
-import { fromStandardSchema } from "./validator";
-
-/**
- * Standard Schema validator backed by `EventSchemas`. Drop-in default for
- * `transformHttpEventStream` (in `@ag-ui/client`) and the protobuf decoder
- * (in `@ag-ui/proto`). Implements `AgentValidator`.
- */
-export const zodValidator: AgentValidator = {
-  validateEvent: fromStandardSchema(EventSchemas) as AgentValidator["validateEvent"],
-};

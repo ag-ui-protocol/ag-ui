@@ -1,5 +1,6 @@
-import { BaseEvent, EventType, type AgentValidator } from "@ag-ui/core";
-import { zodValidator } from "@ag-ui/core/schemas";
+import type { BaseEvent } from "@ag-ui/core";
+import { EventType } from "@ag-ui/core";
+import { EventSchemas } from "@ag-ui/core/schemas";
 import { Subject, ReplaySubject, Observable } from "rxjs";
 import { HttpEvent, HttpEventType } from "../run/http-request";
 import { parseSSEStream } from "./sse";
@@ -13,7 +14,6 @@ import { type DebugLoggerInput, resolveDebugLogger } from "@/debug-logger";
 export const transformHttpEventStream = (
   source$: Observable<HttpEvent>,
   debugLogger?: DebugLoggerInput,
-  validator: AgentValidator = zodValidator,
 ): Observable<BaseEvent> => {
   const log = resolveDebugLogger(debugLogger);
   const eventSubject = new Subject<BaseEvent>();
@@ -52,22 +52,16 @@ export const transformHttpEventStream = (
           // Use SSE JSON parser for all other cases
           parseSSEStream(bufferSubject, log).subscribe({
             next: (json) => {
-              const result = validator.validateEvent(json);
-              if (result.success) {
-                log?.event("HTTP", "Event validated:", result.value, {
-                  type: result.value.type,
+              try {
+                const parsedEvent = EventSchemas.parse(json);
+                log?.event("HTTP", "Event validated:", parsedEvent, {
+                  type: parsedEvent.type,
                   valid: true,
                 });
-                eventSubject.next(result.value as BaseEvent);
-              } else {
-                log?.event("HTTP", "Event invalid:", { json, issues: result.issues });
-                eventSubject.error(
-                  new Error(
-                    `Invalid event: ${result.issues
-                      .map((i) => (i.path?.length ? `[${i.path.join(".")}] ${i.message}` : i.message))
-                      .join("; ")}`,
-                  ),
-                );
+                eventSubject.next(parsedEvent as BaseEvent);
+              } catch (err) {
+                log?.event("HTTP", "Event invalid:", { json, error: String(err) });
+                eventSubject.error(err);
               }
             },
             error: (err) => {
