@@ -1,42 +1,14 @@
-// Export all base types and schemas
+// Base types
 export * from "./types";
 
-// Export all capability-related types and schemas
-export {
-  SubAgentInfoSchema,
-  IdentityCapabilitiesSchema,
-  TransportCapabilitiesSchema,
-  ToolsCapabilitiesSchema,
-  OutputCapabilitiesSchema,
-  StateCapabilitiesSchema,
-  MultiAgentCapabilitiesSchema,
-  ReasoningCapabilitiesSchema,
-  MultimodalInputCapabilitiesSchema,
-  MultimodalOutputCapabilitiesSchema,
-  MultimodalCapabilitiesSchema,
-  ExecutionCapabilitiesSchema,
-  HumanInTheLoopCapabilitiesSchema,
-  AgentCapabilitiesSchema,
-} from "./capabilities";
-export type {
-  SubAgentInfo,
-  IdentityCapabilities,
-  TransportCapabilities,
-  ToolsCapabilities,
-  OutputCapabilities,
-  StateCapabilities,
-  MultiAgentCapabilities,
-  ReasoningCapabilities,
-  MultimodalInputCapabilities,
-  MultimodalOutputCapabilities,
-  MultimodalCapabilities,
-  ExecutionCapabilities,
-  HumanInTheLoopCapabilities,
-  AgentCapabilities,
-} from "./capabilities";
+// Capability types
+export * from "./capabilities";
 
-// Export all event-related types and schemas
+// Event types and EventType enum
 export * from "./events";
+
+// Event factories
+export * from "./event-factories";
 
 // Standard Schema validator interface and default implementation
 export {
