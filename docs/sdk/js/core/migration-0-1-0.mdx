@@ -1,0 +1,126 @@
+---
+title: "Migrating to @ag-ui/core 0.1.0"
+description: "Update your code from 0.0.x to 0.1.0: schemas moved to a subpath, zod is now an optional peer dependency."
+---
+
+# Migrating to @ag-ui/core 0.1.0
+
+`@ag-ui/core` 0.1.0 splits the package surface: TypeScript types stay on the main entry, zod schemas move to a new opt-in subpath `@ag-ui/core/schemas`, and zod becomes an optional peer dependency.
+
+If your code only imports types (`Message`, `Tool`, `EventType`, etc.) from `@ag-ui/core`, you don't need to change anything — just bump the version. If you import any `*Schema` constant (`UserMessageSchema`, `EventSchemas`, `AgentCapabilitiesSchema`, etc.), update the import path to `@ag-ui/core/schemas`.
+
+## Why this changed
+
+Prior versions shipped zod 3.x as a hard runtime dependency. Consumers running zod 4 in their app ended up with two zod copies in their dependency graph, which broke `instanceof ZodError` checks across module boundaries and inflated bundle size. Making zod a peer dependency (now accepting `^3.24.0 || ^4.0.0`) lets the consumer pick exactly one version. Moving schemas to an opt-in subpath means consumers who only use types pay no zod cost at all.
+
+<Callout type="info">
+**Do you need to migrate?**
+- **No** — if your code only imports types and value enums (`Message`, `EventType`, `AGUIError`, factory functions like `createTextMessageStartEvent`, etc.). Just bump the version.
+- **Yes** — if your code imports any `*Schema` constant from `@ag-ui/core` (e.g., `UserMessageSchema`, `EventSchemas`, `AgentCapabilitiesSchema`).
+</Callout>
+
+## Manual migration steps
+
+<Steps>
+  <Step title="Update @ag-ui/core in package.json">
+    Bump the version constraint to `^0.1.0`:
+
+    ```json
+    {
+      "dependencies": {
+        "@ag-ui/core": "^0.1.0"
+      }
+    }
+    ```
+  </Step>
+
+  <Step title="Install zod explicitly (schema consumers only)">
+    If you import anything from `@ag-ui/core/schemas`, install zod as a direct dependency. Both zod 3.24+ and zod 4 are supported:
+
+    ```bash
+    # Pick whichever major your project already uses
+    npm install zod          # latest (zod 4)
+    npm install zod@^3.24.0  # stay on zod 3
+    ```
+
+    The supported peer dependency range is `^3.24.0 || ^4.0.0`. If your project has no opinion on zod, installing the latest is fine.
+  </Step>
+
+  <Step title="Redirect *Schema imports to the new subpath">
+    Every schema that was exported from `@ag-ui/core` in 0.0.x is now exported from `@ag-ui/core/schemas`. Names are unchanged — only the import source changes.
+
+    <Tabs>
+      <Tab title="Schemas only">
+        ```ts
+        // Before
+        import { UserMessageSchema, EventSchemas } from "@ag-ui/core";
+
+        // After
+        import { UserMessageSchema, EventSchemas } from "@ag-ui/core/schemas";
+        ```
+      </Tab>
+      <Tab title="Mixed types and schemas">
+        ```ts
+        // Before
+        import { Message, UserMessageSchema } from "@ag-ui/core";
+
+        // After
+        import { Message } from "@ag-ui/core";
+        import { UserMessageSchema } from "@ag-ui/core/schemas";
+        ```
+      </Tab>
+      <Tab title="Types only (unchanged)">
+        ```ts
+        // Before — unchanged
+        import type { Message, Tool, EventType } from "@ag-ui/core";
+
+        // After — unchanged
+        import type { Message, Tool, EventType } from "@ag-ui/core";
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Verify">
+    Reinstall and rebuild to confirm everything resolves correctly:
+
+    ```bash
+    pnpm install && pnpm build
+    ```
+
+    If you're using npm or yarn, substitute the equivalent commands. The build should complete without unresolved-module or missing-peer errors.
+  </Step>
+</Steps>
+
+## Automated migration
+
+For codebases with many `*Schema` imports, a jscodeshift codemod is shipped in
+the `ag-ui` repo at `sdks/typescript/codemods/0.1.0-schemas-to-subpath.ts`. It
+splits combined imports and redirects every `*Schema` import to `@ag-ui/core/schemas`.
+
+Run it from your project root:
+
+```bash
+npx jscodeshift -t https://raw.githubusercontent.com/ag-ui-protocol/ag-ui/main/sdks/typescript/codemods/0.1.0-schemas-to-subpath.ts \
+  --parser=tsx \
+  --extensions=ts,tsx \
+  src/
+```
+
+The transform is idempotent — running it twice has no extra effect. See
+[the codemod README](https://github.com/ag-ui-protocol/ag-ui/blob/main/sdks/typescript/codemods/README.md)
+for details and a list of recognized schemas.
+
+## FAQ
+
+**Q: I'm on zod 4. Can I use AG-UI now?**
+
+Yes — `@ag-ui/core/schemas` declares `zod ^3.24.0 || ^4.0.0` as an optional peer dependency. Install whichever major you prefer; there's no longer a hard pin to zod 3.
+
+**Q: I don't want zod at all. Can I still use AG-UI?**
+
+Yes — the main `@ag-ui/core` entry has zero runtime dependencies. Use the TypeScript types directly and validate runtime data with whatever library you prefer (valibot, arktype, hand-written checks, or no validation at all).
+
+**Q: Where can I find the full list of `*Schema` exports that moved?**
+
+Every schema that was exported from `@ag-ui/core` in 0.0.x is now exported from `@ag-ui/core/schemas`. Names are unchanged. The complete list lives in [`schemas.ts` in the source](https://github.com/ag-ui-protocol/ag-ui/blob/main/sdks/typescript/packages/core/src/schemas.ts).
