@@ -589,43 +589,50 @@ The following event types are deprecated:
 See [Reasoning Migration](/concepts/reasoning#migration-from-thinking-events)
 for detailed migration guidance.
 
-## Event Schemas
+## Event validation
 
-The SDK uses Zod schemas to validate events:
+`@ag-ui/core` ships TypeScript types for every event but does not bundle a runtime
+schema validator. Consumers that need to validate untrusted event streams (for
+example, when parsing wire data over HTTP) plug in an `AgentValidator` — a pluggable
+interface based on [Standard Schema](https://github.com/standard-schema/standard-schema).
+
+The package ships a minimal default validator that performs type-tag checking and
+applies the protocol's field defaults:
 
 ```typescript
-const EventSchemas = z.discriminatedUnion("type", [
-  TextMessageStartEventSchema,
-  TextMessageContentEventSchema,
-  TextMessageEndEventSchema,
-  ToolCallStartEventSchema,
-  ToolCallArgsEventSchema,
-  ToolCallEndEventSchema,
-  ToolCallResultEventSchema,
-  StateSnapshotEventSchema,
-  StateDeltaEventSchema,
-  MessagesSnapshotEventSchema,
-  ActivitySnapshotEventSchema,
-  ActivityDeltaEventSchema,
-  RawEventSchema,
-  CustomEventSchema,
-  RunStartedEventSchema,
-  RunFinishedEventSchema,
-  RunErrorEventSchema,
-  StepStartedEventSchema,
-  StepFinishedEventSchema,
-  ReasoningStartEventSchema,
-  ReasoningMessageStartEventSchema,
-  ReasoningMessageContentEventSchema,
-  ReasoningMessageEndEventSchema,
-  ReasoningMessageChunkEventSchema,
-  ReasoningEndEventSchema,
-  ReasoningEncryptedValueEventSchema,
-])
+import { defaultEventValidator, EventType } from "@ag-ui/core";
+
+const result = defaultEventValidator.validateEvent({
+  type: EventType.TEXT_MESSAGE_START,
+  messageId: "msg-1",
+  // role defaults to "assistant" when omitted
+});
+
+if (result.success) {
+  // result.value is typed as { type: EventType; [k: string]: unknown }
+  console.log(result.value);
+} else {
+  console.error("Invalid event:", result.issues);
+}
 ```
 
-This allows for runtime validation of events and provides TypeScript type
-inference.
+For stricter validation you can supply your own validator backed by zod, valibot,
+arktype, or any library that implements the Standard Schema spec:
+
+```typescript
+import { fromStandardSchema, type AgentValidator } from "@ag-ui/core";
+import { z } from "zod";
+
+const myEventSchema = z.object({ type: z.string() }).passthrough();
+
+const myValidator: AgentValidator = {
+  validateEvent: fromStandardSchema(myEventSchema),
+};
+```
+
+The HTTP transform in `@ag-ui/client` and the protobuf decoder in `@ag-ui/proto`
+both accept an optional validator argument and fall back to `defaultEventValidator`
+when none is provided.
 
 ### ToolCallChunkEvent
 
