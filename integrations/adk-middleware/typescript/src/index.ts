@@ -56,9 +56,6 @@ export class ADKAgent extends HttpAgent {
         `Invalid capabilities response from ${url}: ${result.error.message}`,
       );
     }
-    // zod 3's addQuestionMarks makes required `z.any()` fields (e.g. Tool.parameters)
-    // optional in the inferred output type. The cast is safe: safeParse() already
-    // validated the data, so the runtime shape is correct.
-    return result.data as AgentCapabilities;
+    return result.data;
   }
 }

@@ -156,7 +156,7 @@ export interface Context {
 export interface Tool {
   name: string;
   description: string;
-  parameters: any;
+  parameters?: any;
   metadata?: Record<string, any>;
 }
 
@@ -182,11 +182,11 @@ export interface RunAgentInput {
   threadId: string;
   runId: string;
   parentRunId?: string;
-  state: any;
+  state?: any;
   messages: Message[];
   tools: Tool[];
   context: Context[];
-  forwardedProps: any;
+  forwardedProps?: any;
   resume?: ResumeEntry[];
 }
 

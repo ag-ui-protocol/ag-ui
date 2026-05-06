@@ -15,13 +15,12 @@
  *   type aliases — TypeScript must evaluate the complex generic before the
  *   constraint check, which is why the aliases are required.
  *
- * - Schemas with required `z.any()` fields (e.g. `Tool.parameters`, `RunAgentInput.state`)
- *   infer those fields as OPTIONAL in zod 3 because `addQuestionMarks` treats
- *   `undefined extends any` as true. The RUNTIME behaviour is correct; the
- *   hand-written type with a required field IS structurally assignable to the
- *   schema-inferred type with the optional field (`{ p: any }` satisfies
- *   `{ p?: any }`). We use `toExtend<z.infer<Schema>>()` on the hand-written
- *   type for these cases.
+ * - `StateSnapshotEvent.snapshot`, `RawEvent.event`, `CustomEvent.value` use
+ *   `z.any()` — same addQuestionMarks optionality quirk — so those event
+ *   tests use the reverse `AsObject<HandWritten>.toExtend<_ISchema>()` form.
+ *   The hand-written types for Tool, RunAgentInput, ToolsCapabilities, and
+ *   AgentCapabilities now declare those z.any() fields as optional, matching
+ *   the schema inference exactly, so they use strict `toEqualTypeOf`.
  */
 import { describe, it, expectTypeOf } from "vitest";
 import { z } from "zod";
@@ -235,11 +234,6 @@ type _IThinkingEndEvent = z.infer<typeof ThinkingEndEventSchema>;
 type _IThinkingTextMessageStartEvent = z.infer<typeof ThinkingTextMessageStartEventSchema>;
 type _IThinkingTextMessageContentEvent = z.infer<typeof ThinkingTextMessageContentEventSchema>;
 type _IThinkingTextMessageEndEvent = z.infer<typeof ThinkingTextMessageEndEventSchema>;
-// Pre-evaluated aliases for types with required z.any() fields
-type _ITool = z.infer<typeof ToolSchema>;
-type _IRunAgentInput = z.infer<typeof RunAgentInputSchema>;
-type _IToolsCapabilities = z.infer<typeof ToolsCapabilitiesSchema>;
-type _IAgentCapabilities = z.infer<typeof AgentCapabilitiesSchema>;
 
 // ==========================================================================
 // Types tests
@@ -277,12 +271,7 @@ describe("schema inferred types match hand-written types (types.ts)", () => {
     expectTypeOf<z.infer<typeof SystemMessageSchema>>().toEqualTypeOf<SystemMessage>();
   });
   it("Tool", () => {
-    // z.any() required fields become optional in zod 3 addQuestionMarks
-    // (`undefined extends any` is true). Check the forward direction only:
-    // the schema-inferred type has `parameters?: any`, but the hand-written
-    // Tool has `parameters: any` (required). `{ p: any } extends { p?: any }`
-    // holds, so we verify the hand-written type extends the inferred type.
-    expectTypeOf<Tool>().toExtend<_ITool>();
+    expectTypeOf<z.infer<typeof ToolSchema>>().toEqualTypeOf<Tool>();
   });
   it("Context", () => {
     expectTypeOf<z.infer<typeof ContextSchema>>().toEqualTypeOf<Context>();
@@ -294,9 +283,7 @@ describe("schema inferred types match hand-written types (types.ts)", () => {
     expectTypeOf<z.infer<typeof ResumeEntrySchema>>().toEqualTypeOf<ResumeEntry>();
   });
   it("RunAgentInput", () => {
-    // `state` and `forwardedProps` are required z.any() fields; same
-    // zod 3 addQuestionMarks optionality quirk as Tool.parameters above.
-    expectTypeOf<RunAgentInput>().toExtend<_IRunAgentInput>();
+    expectTypeOf<z.infer<typeof RunAgentInputSchema>>().toEqualTypeOf<RunAgentInput>();
   });
   it("Role", () => {
     expectTypeOf<z.infer<typeof RoleSchema>>().toEqualTypeOf<Role>();
@@ -469,8 +456,7 @@ describe("schema inferred types match hand-written types (capabilities.ts)", () 
     expectTypeOf<z.infer<typeof TransportCapabilitiesSchema>>().toEqualTypeOf<TransportCapabilities>();
   });
   it("ToolsCapabilities", () => {
-    // items?: Tool[] — same z.any() optionality quirk as Tool above.
-    expectTypeOf<ToolsCapabilities>().toExtend<_IToolsCapabilities>();
+    expectTypeOf<z.infer<typeof ToolsCapabilitiesSchema>>().toEqualTypeOf<ToolsCapabilities>();
   });
   it("OutputCapabilities", () => {
     expectTypeOf<z.infer<typeof OutputCapabilitiesSchema>>().toEqualTypeOf<OutputCapabilities>();
@@ -500,7 +486,6 @@ describe("schema inferred types match hand-written types (capabilities.ts)", () 
     expectTypeOf<z.infer<typeof HumanInTheLoopCapabilitiesSchema>>().toEqualTypeOf<HumanInTheLoopCapabilities>();
   });
   it("AgentCapabilities", () => {
-    // Transitively contains ToolsCapabilities -> Tool (same z.any() quirk).
-    expectTypeOf<AgentCapabilities>().toExtend<_IAgentCapabilities>();
+    expectTypeOf<z.infer<typeof AgentCapabilitiesSchema>>().toEqualTypeOf<AgentCapabilities>();
   });
 });
