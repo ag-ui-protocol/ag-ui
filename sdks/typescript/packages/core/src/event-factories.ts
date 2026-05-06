@@ -1,4 +1,5 @@
 import { EventType } from "./events";
+import { AGUIError } from "./types";
 import type {
   ActivityDeltaEvent,
   ActivityDeltaEventProps,
@@ -230,7 +231,7 @@ export const createRunFinishedInterruptEvent = (
 ): RunFinishedEvent => {
   const { interrupts, ...rest } = props;
   if (!interrupts || interrupts.length === 0) {
-    throw new Error("interrupts array must contain at least one element");
+    throw new AGUIError("interrupts array must contain at least one element");
   }
   return createRunFinishedEvent({
     ...rest,
