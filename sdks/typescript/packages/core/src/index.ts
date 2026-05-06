@@ -37,3 +37,10 @@ export type {
 
 // Export all event-related types and schemas
 export * from "./events";
+
+// Standard Schema validator interface and default implementation
+export {
+  defaultEventValidator,
+  fromStandardSchema,
+} from "./validator";
+export type { AgentValidator, ValidationResult } from "./validator";
