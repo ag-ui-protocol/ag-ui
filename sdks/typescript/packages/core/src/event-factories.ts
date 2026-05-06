@@ -67,8 +67,8 @@ import type {
   ReasoningEndEventProps,
   ReasoningEncryptedValueEvent,
   ReasoningEncryptedValueEventProps,
-} from "./events-static";
-import type { Interrupt } from "./types-static";
+} from "./events";
+import type { Interrupt } from "./types";
 
 /** Creates a TEXT_MESSAGE_START event. `role` defaults to `"assistant"` when omitted. */
 export const createTextMessageStartEvent = (
