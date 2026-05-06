@@ -1,3 +1,8 @@
+// Hand-written equivalents of the z.infer<...> types in types.ts.
+// This file will replace types.ts once zod is removed from @ag-ui/core (Task 8 of
+// the zod-extraction plan). Until then, both files coexist and equality between
+// them is verified via expectTypeOf assertions in __tests__/types-static.test.ts.
+
 export interface FunctionCall {
   name: string;
   arguments: string;
@@ -77,37 +82,31 @@ export type InputContent =
 
 export type InputContentPart = InputContent;
 
-export interface DeveloperMessage {
+interface BaseMessageFields {
   id: string;
+  name?: string;
+  encryptedValue?: string;
+}
+
+export interface DeveloperMessage extends BaseMessageFields {
   role: "developer";
   content: string;
-  name?: string;
-  encryptedValue?: string;
 }
 
-export interface SystemMessage {
-  id: string;
+export interface SystemMessage extends BaseMessageFields {
   role: "system";
   content: string;
-  name?: string;
-  encryptedValue?: string;
 }
 
-export interface AssistantMessage {
-  id: string;
+export interface AssistantMessage extends BaseMessageFields {
   role: "assistant";
   content?: string;
-  name?: string;
-  encryptedValue?: string;
   toolCalls?: ToolCall[];
 }
 
-export interface UserMessage {
-  id: string;
+export interface UserMessage extends BaseMessageFields {
   role: "user";
   content: string | InputContent[];
-  name?: string;
-  encryptedValue?: string;
 }
 
 export interface ToolMessage {
