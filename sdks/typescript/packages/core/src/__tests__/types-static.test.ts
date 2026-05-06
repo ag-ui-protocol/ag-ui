@@ -218,3 +218,53 @@ describe("static event types match z.infer event types", () => {
   it("ThinkingTextMessageContentEvent", () => { expectTypeOf<ThinkingTextMessageContentEventStatic>().toEqualTypeOf<ThinkingTextMessageContentEvent>(); });
   it("ThinkingTextMessageEndEvent", () => { expectTypeOf<ThinkingTextMessageEndEventStatic>().toEqualTypeOf<ThinkingTextMessageEndEvent>(); });
 });
+
+import type {
+  SubAgentInfo as SubAgentInfoStatic,
+  IdentityCapabilities as IdentityCapabilitiesStatic,
+  TransportCapabilities as TransportCapabilitiesStatic,
+  ToolsCapabilities as ToolsCapabilitiesStatic,
+  OutputCapabilities as OutputCapabilitiesStatic,
+  StateCapabilities as StateCapabilitiesStatic,
+  MultiAgentCapabilities as MultiAgentCapabilitiesStatic,
+  ReasoningCapabilities as ReasoningCapabilitiesStatic,
+  MultimodalInputCapabilities as MultimodalInputCapabilitiesStatic,
+  MultimodalOutputCapabilities as MultimodalOutputCapabilitiesStatic,
+  MultimodalCapabilities as MultimodalCapabilitiesStatic,
+  ExecutionCapabilities as ExecutionCapabilitiesStatic,
+  HumanInTheLoopCapabilities as HumanInTheLoopCapabilitiesStatic,
+  AgentCapabilities as AgentCapabilitiesStatic,
+} from "../capabilities-static";
+import type {
+  SubAgentInfo,
+  IdentityCapabilities,
+  TransportCapabilities,
+  ToolsCapabilities,
+  OutputCapabilities,
+  StateCapabilities,
+  MultiAgentCapabilities,
+  ReasoningCapabilities,
+  MultimodalInputCapabilities,
+  MultimodalOutputCapabilities,
+  MultimodalCapabilities,
+  ExecutionCapabilities,
+  HumanInTheLoopCapabilities,
+  AgentCapabilities,
+} from "../capabilities";
+
+describe("static capability types match z.infer capability types", () => {
+  it("SubAgentInfo", () => { expectTypeOf<SubAgentInfoStatic>().toEqualTypeOf<SubAgentInfo>(); });
+  it("IdentityCapabilities", () => { expectTypeOf<IdentityCapabilitiesStatic>().toEqualTypeOf<IdentityCapabilities>(); });
+  it("TransportCapabilities", () => { expectTypeOf<TransportCapabilitiesStatic>().toEqualTypeOf<TransportCapabilities>(); });
+  it("ToolsCapabilities", () => { expectTypeOf<ToolsCapabilitiesStatic>().toEqualTypeOf<ToolsCapabilities>(); });
+  it("OutputCapabilities", () => { expectTypeOf<OutputCapabilitiesStatic>().toEqualTypeOf<OutputCapabilities>(); });
+  it("StateCapabilities", () => { expectTypeOf<StateCapabilitiesStatic>().toEqualTypeOf<StateCapabilities>(); });
+  it("MultiAgentCapabilities", () => { expectTypeOf<MultiAgentCapabilitiesStatic>().toEqualTypeOf<MultiAgentCapabilities>(); });
+  it("ReasoningCapabilities", () => { expectTypeOf<ReasoningCapabilitiesStatic>().toEqualTypeOf<ReasoningCapabilities>(); });
+  it("MultimodalInputCapabilities", () => { expectTypeOf<MultimodalInputCapabilitiesStatic>().toEqualTypeOf<MultimodalInputCapabilities>(); });
+  it("MultimodalOutputCapabilities", () => { expectTypeOf<MultimodalOutputCapabilitiesStatic>().toEqualTypeOf<MultimodalOutputCapabilities>(); });
+  it("MultimodalCapabilities", () => { expectTypeOf<MultimodalCapabilitiesStatic>().toEqualTypeOf<MultimodalCapabilities>(); });
+  it("ExecutionCapabilities", () => { expectTypeOf<ExecutionCapabilitiesStatic>().toEqualTypeOf<ExecutionCapabilities>(); });
+  it("HumanInTheLoopCapabilities", () => { expectTypeOf<HumanInTheLoopCapabilitiesStatic>().toEqualTypeOf<HumanInTheLoopCapabilities>(); });
+  it("AgentCapabilities", () => { expectTypeOf<AgentCapabilitiesStatic>().toEqualTypeOf<AgentCapabilities>(); });
+});
