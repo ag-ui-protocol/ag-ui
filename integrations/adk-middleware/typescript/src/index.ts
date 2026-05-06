@@ -1,5 +1,17 @@
 import { HttpAgent } from "@ag-ui/client";
-import { AgentCapabilities, AgentCapabilitiesSchema } from "@ag-ui/core";
+import type { AgentCapabilities } from "@ag-ui/core";
+
+/**
+ * Lightweight runtime check that the server returned a plain object.
+ * All fields on AgentCapabilities are optional, so any non-null object is valid.
+ * Returns a safeParse-compatible result shape to keep the call-site unchanged.
+ */
+function parseAgentCapabilities(data: unknown): { success: true; data: AgentCapabilities } | { success: false; error: { message: string } } {
+  if (data !== null && typeof data === "object" && !Array.isArray(data)) {
+    return { success: true, data: data as AgentCapabilities };
+  }
+  return { success: false, error: { message: `Expected an object, got ${Array.isArray(data) ? "array" : String(data)}` } };
+}
 
 export class ADKAgent extends HttpAgent {
   /**
@@ -49,7 +61,7 @@ export class ADKAgent extends HttpAgent {
       );
     }
 
-    const result = AgentCapabilitiesSchema.safeParse(data);
+    const result = parseAgentCapabilities(data);
     if (!result.success) {
       throw new Error(
         `Invalid capabilities response from ${url}: ${result.error.message}`,
