@@ -3,10 +3,10 @@
  * `AgentResult` comes back with `stopReason === "interrupt"`, the adapter
  * emits the interrupt-variant `RUN_FINISHED` and records the interrupt IDs
  * on the thread so the follow-up `resume[]` request is recognised as known
- * (rather than falling into the UNKNOWN_INTERRUPT gate).
+ * (rather than falling into the UNKNOWN_INTERRUPT_ID gate).
  */
 import { describe, it, expect } from "vitest";
-import { EventType, type BaseEvent, type RunAgentInput } from "@ag-ui/core";
+import { EventType, type BaseEvent, type RunAgentInput, type Interrupt as AguiInterrupt } from "@ag-ui/core";
 import {
   AgentResult as StrandsAgentResult,
   InterruptResponseContent,
@@ -81,7 +81,7 @@ describe("StrandsAgent native interrupt bridge (Strands SDK 1.1.0+)", () => {
     // The interrupt is now pending on the thread.
     const pending = (
       sa as unknown as {
-        _pendingInterruptsByThread: Map<string, Set<string>>;
+        _pendingInterruptsByThread: Map<string, Map<string, AguiInterrupt>>;
       }
     )._pendingInterruptsByThread.get("thread-1");
     expect(pending?.has("int-1")).toBe(true);
@@ -112,9 +112,9 @@ describe("StrandsAgent native interrupt bridge (Strands SDK 1.1.0+)", () => {
     // Seed a pending interrupt on the thread so the gate accepts the resume.
     (
       sa as unknown as {
-        _pendingInterruptsByThread: Map<string, Set<string>>;
+        _pendingInterruptsByThread: Map<string, Map<string, AguiInterrupt>>;
       }
-    )._pendingInterruptsByThread.set("thread-1", new Set(["int-7"]));
+    )._pendingInterruptsByThread.set("thread-1", new Map([["int-7", { id: "int-7", reason: "tool_call" }]]));
     const input: RunAgentInput = minimalRunInput({
       resume: [
         {
@@ -139,7 +139,7 @@ describe("StrandsAgent native interrupt bridge (Strands SDK 1.1.0+)", () => {
     // The pending set was cleared once resume was accepted.
     const cleared = (
       sa as unknown as {
-        _pendingInterruptsByThread: Map<string, Set<string>>;
+        _pendingInterruptsByThread: Map<string, Map<string, AguiInterrupt>>;
       }
     )._pendingInterruptsByThread.get("thread-1");
     expect(cleared).toBeUndefined();
@@ -151,14 +151,17 @@ describe("StrandsAgent native interrupt bridge (Strands SDK 1.1.0+)", () => {
     // One pending interrupt, but the resume references a different id.
     (
       sa as unknown as {
-        _pendingInterruptsByThread: Map<string, Set<string>>;
+        _pendingInterruptsByThread: Map<string, Map<string, AguiInterrupt>>;
       }
-    )._pendingInterruptsByThread.set("thread-1", new Set(["known"]));
+    )._pendingInterruptsByThread.set("thread-1", new Map([["known", { id: "known", reason: "tool_call" }]]));
 
     const events = await collect(
       sa,
       minimalRunInput({
-        resume: [{ interruptId: "unknown-id", status: "resolved" }],
+        resume: [
+          { interruptId: "unknown-id", status: "resolved" },
+          { interruptId: "known", status: "resolved", payload: { approved: true } },
+        ],
       }),
     );
     expect(events.map((e) => e.type)).toEqual([
@@ -166,7 +169,7 @@ describe("StrandsAgent native interrupt bridge (Strands SDK 1.1.0+)", () => {
       EventType.RUN_ERROR,
     ]);
     const err = events[1] as unknown as { code: string; message: string };
-    expect(err.code).toBe("UNKNOWN_INTERRUPT");
+    expect(err.code).toBe("UNKNOWN_INTERRUPT_ID");
     expect(err.message).toContain("unknown-id");
   });
 
@@ -193,9 +196,9 @@ describe("StrandsAgent native interrupt bridge (Strands SDK 1.1.0+)", () => {
     )._agentsByThread.set("thread-1", stubAgent);
     (
       sa as unknown as {
-        _pendingInterruptsByThread: Map<string, Set<string>>;
+        _pendingInterruptsByThread: Map<string, Map<string, AguiInterrupt>>;
       }
-    )._pendingInterruptsByThread.set("thread-1", new Set(["ic"]));
+    )._pendingInterruptsByThread.set("thread-1", new Map([["ic", { id: "ic", reason: "tool_call" }]]));
 
     await collect(
       sa,
@@ -204,7 +207,7 @@ describe("StrandsAgent native interrupt bridge (Strands SDK 1.1.0+)", () => {
       }),
     );
 
-    const [first] = capturedArgs as InterruptResponseContent[];
-    expect(first.interruptResponse.response).toEqual({ status: "cancelled" });
+    // All cancelled → early return with RUN_FINISHED, Strands not invoked
+    expect(capturedArgs).toBeNull();
   });
 });

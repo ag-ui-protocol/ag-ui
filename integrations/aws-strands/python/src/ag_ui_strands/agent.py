@@ -5,10 +5,12 @@ Translates Strands streaming events into the AG-UI event protocol.
 
 import asyncio
 import base64
+import hashlib
 import inspect
 import json
 import logging
 import uuid
+from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Dict, List
 
 from strands import Agent as StrandsAgentCore
@@ -66,6 +68,7 @@ from ag_ui.core import (
     CustomEvent,
     EventType,
     FunctionCall,
+    Interrupt,
     MessagesSnapshotEvent,
     ReasoningEncryptedValueEvent,
     ReasoningEndEvent,
@@ -73,9 +76,12 @@ from ag_ui.core import (
     ReasoningMessageEndEvent,
     ReasoningMessageStartEvent,
     ReasoningStartEvent,
+    ResumeEntry,
     RunAgentInput,
     RunErrorEvent,
     RunFinishedEvent,
+    RunFinishedInterruptOutcome,
+    RunFinishedSuccessOutcome,
     RunStartedEvent,
     StateSnapshotEvent,
     StepFinishedEvent,
@@ -97,6 +103,7 @@ from .config import (
     StrandsAgentConfig,
     ToolCallContext,
     ToolResultContext,
+    ToolStreamEventContext,
     maybe_await,
     normalize_predict_state,
 )
@@ -256,6 +263,58 @@ def _build_strands_history(input_messages: List[Any]) -> List[Dict[str, Any]]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# Strands-native interrupt hook
+# ---------------------------------------------------------------------------
+
+class StrandsInterruptHook:
+    """Raises a Strands native interrupt for tools configured with ``interrupt_on_call=True``.
+
+    Registered automatically by :class:`StrandsAgent` when any entry in
+    ``config.tool_behaviors`` has ``interrupt_on_call=True``.
+
+    On the **first** call for a given tool the hook calls ``event.interrupt()``,
+    which raises ``InterruptException`` internally and suspends the Strands
+    agent loop.  On the **resume** call Strands has already written the human
+    response into the interrupt object, so ``event.interrupt()`` returns the
+    response string instead of raising.  The hook then enforces the decision:
+    if the response is not ``"y"`` it sets ``event.cancel_tool`` so the tool
+    is skipped.
+    """
+
+    def __init__(self, tool_behaviors: "Dict[str, ToolBehavior]") -> None:
+        self._tool_behaviors = tool_behaviors
+
+    def register_hooks(self, registry: Any, **kwargs: Any) -> None:
+        """Register the BeforeToolCallEvent callback."""
+        from strands.hooks.events import BeforeToolCallEvent as _BeforeToolCallEvent
+        registry.add_callback(_BeforeToolCallEvent, self._on_before_tool_call)
+
+    def _on_before_tool_call(self, event: Any) -> None:
+        """Interrupt or enforce approval for interrupt_on_call tools."""
+        tool_name = event.tool_use.get("name", "")
+        behavior = self._tool_behaviors.get(tool_name)
+        if not behavior or not behavior.interrupt_on_call:
+            return
+
+        # event.interrupt() either:
+        #   - raises InterruptException (first call, no response yet) → suspends loop
+        #   - returns the human response string (resume call) → enforce decision
+        response = event.interrupt(
+            f"ag_ui:tool_call:{tool_name}",
+            reason={
+                "tool_name": tool_name,
+                "tool_input": event.tool_use.get("input", {}),
+                "tool_use_id": event.tool_use.get("toolUseId"),
+            },
+        )
+        # If we reach here we are on the resume path.
+        # Deny the tool call unless the user explicitly approved.
+        if not (isinstance(response, dict) and response.get("approved", False)):
+            event.cancel_tool = f"User denied approval for '{tool_name}'."
+
+
+
 class StrandsAgent:
     """AWS Strands Agent wrapper for AG-UI integration."""
 
@@ -266,6 +325,7 @@ class StrandsAgent:
         description: str = "",
         config: "StrandsAgentConfig | None" = None,
         hooks: "list | None" = None,
+        agents_by_thread: "Dict[str, Any] | None" = None,
     ):
         # Store template agent configuration for creating fresh instances
         self._model = agent.model
@@ -294,6 +354,16 @@ class StrandsAgent:
         self.description = description
         self.config = config or StrandsAgentConfig()
 
+        # Auto-register StrandsInterruptHook when any tool has interrupt_on_call=True.
+        # Prepend so it fires before any caller-supplied hooks.
+        interrupt_tools = {
+            name: b
+            for name, b in self.config.tool_behaviors.items()
+            if b.interrupt_on_call
+        }
+        if interrupt_tools:
+            self._hooks = [StrandsInterruptHook(interrupt_tools), *self._hooks]
+
         # Detect the common footgun: session_manager set on the template Agent
         # (stored as `_session_manager` by Strands) with no per-thread provider.
         # Forwarding it would make every AG-UI thread share one session_id.
@@ -310,9 +380,13 @@ class StrandsAgent:
             )
 
         # Dictionary to store agent instances per thread
-        self._agents_by_thread: Dict[str, StrandsAgentCore] = {}
+        self._agents_by_thread: Dict[str, StrandsAgentCore] = agents_by_thread if agents_by_thread is not None else {}
         # Track proxy tool names registered per thread
         self._proxy_tool_names_by_thread: Dict[str, set] = {}
+        # Store full AG-UI Interrupt objects per thread for resume validation
+        self._pending_interrupts_by_thread: Dict[str, Dict[str, Interrupt]] = {}
+        # Fingerprint of last successfully-processed resume per thread (idempotency)
+        self._last_resume_fingerprint: Dict[str, str] = {}
         # Guards first-time thread initialization. The session_manager_provider
         # call introduces an async yield point between the "is this thread
         # new?" check and the dict assignment, so concurrent requests for the
@@ -399,6 +473,9 @@ class StrandsAgent:
                     core_kwargs = dict(self._agent_kwargs)
                     if self._hooks:
                         core_kwargs["hooks"] = list(self._hooks)
+                    # Ensure a stable agent_id so SessionManager can locate
+                    # snapshots after the in-memory cache is cleared.
+                    core_kwargs.setdefault("agent_id", self.name)
                     self._agents_by_thread[thread_id] = StrandsAgentCore(
                         model=self._model,
                         system_prompt=self._system_prompt,
@@ -452,6 +529,249 @@ class StrandsAgent:
             )
             self._proxy_tool_names_by_thread[thread_id] = set()
 
+        # ── Interrupt resume handling ──────────────────────────────────────
+        # If the client is resuming an interrupted run, validate the
+        # interrupt_id against the Strands _interrupt_state, build
+        # interruptResponse dicts, and pass them to stream_async() so Strands
+        # resumes from its checkpoint.  Cancelled resumes end the run cleanly.
+        _resume_prompt: list | None = None
+        _resumed_tool_call_ids: set = set()
+        resume_entries: list[ResumeEntry] = list(getattr(input_data, "resume", None) or [])
+        thread_id = input_data.thread_id
+
+        # Rule 4: pending interrupts block new input without resume.
+        # Per spec, clients must address all pending interrupts via resume[].
+        # To abandon interrupts, send resume with all entries status: "cancelled".
+        if not resume_entries:
+            interrupt_state = getattr(
+                strands_agent, "_interrupt_state", None
+            )
+            if interrupt_state and getattr(interrupt_state, "activated", False):
+                yield RunStartedEvent(
+                    type=EventType.RUN_STARTED,
+                    thread_id=input_data.thread_id,
+                    run_id=input_data.run_id,
+                )
+                yield RunErrorEvent(
+                    type=EventType.RUN_ERROR,
+                    message="Thread has pending interrupts. Include resume[] to address them.",
+                    code="PENDING_INTERRUPTS",
+                )
+                return
+
+        if resume_entries:
+            interrupt_state = getattr(strands_agent, "_interrupt_state", None)
+            is_activated = interrupt_state is not None and getattr(interrupt_state, "activated", False)
+
+            if not is_activated:
+                # Rule 5: idempotency — check if this is a replay
+                fingerprint = hashlib.md5(  # noqa: S324
+                    json.dumps(
+                        [(e.interrupt_id, e.status, e.payload) for e in resume_entries],
+                        sort_keys=True, default=str,
+                    ).encode(),
+                    usedforsecurity=False,
+                ).hexdigest()
+                if self._last_resume_fingerprint.get(thread_id) == fingerprint:
+                    yield RunStartedEvent(
+                        type=EventType.RUN_STARTED,
+                        thread_id=input_data.thread_id,
+                        run_id=input_data.run_id,
+                    )
+                    yield RunFinishedEvent(
+                        type=EventType.RUN_FINISHED,
+                        thread_id=input_data.thread_id,
+                        run_id=input_data.run_id,
+                        outcome=RunFinishedSuccessOutcome(type="success"),
+                    )
+                    return
+
+                if not self.config.session_manager_provider:
+                    yield RunStartedEvent(
+                        type=EventType.RUN_STARTED,
+                        thread_id=input_data.thread_id,
+                        run_id=input_data.run_id,
+                    )
+                    yield RunErrorEvent(
+                        type=EventType.RUN_ERROR,
+                        message="No pending interrupt for this thread.",
+                        code="UNKNOWN_INTERRUPT_ID",
+                    )
+                    return
+
+            pending_ids: set[str] = set(interrupt_state.interrupts.keys())
+            pending_ag_ui = self._pending_interrupts_by_thread.get(thread_id, {})
+            interrupt_responses: list[dict] = []
+
+            # Rule 2: reject unknown interrupt IDs
+            for entry in resume_entries:
+                if entry.interrupt_id not in pending_ids:
+                    yield RunStartedEvent(
+                        type=EventType.RUN_STARTED,
+                        thread_id=input_data.thread_id,
+                        run_id=input_data.run_id,
+                    )
+                    yield RunErrorEvent(
+                        type=EventType.RUN_ERROR,
+                        message=(
+                            f"Unknown interrupt_id '{entry.interrupt_id}': "
+                            "no matching pending interrupt for this thread."
+                        ),
+                        code="UNKNOWN_INTERRUPT_ID",
+                    )
+                    return
+
+            # Rule 3: all open interrupts must be addressed
+            resumed_ids = {e.interrupt_id for e in resume_entries}
+            missing_ids = pending_ids - resumed_ids
+            if missing_ids:
+                yield RunStartedEvent(
+                    type=EventType.RUN_STARTED,
+                    thread_id=input_data.thread_id,
+                    run_id=input_data.run_id,
+                )
+                yield RunErrorEvent(
+                    type=EventType.RUN_ERROR,
+                    message=(
+                        f"Partial resume: missing interrupt IDs "
+                        f"{sorted(missing_ids)}. All open interrupts must be addressed."
+                    ),
+                    code="PARTIAL_RESUME",
+                )
+                return
+
+            for entry in resume_entries:
+                ag_ui_interrupt = pending_ag_ui.get(entry.interrupt_id)
+
+                # Rule 7: expiresAt enforcement
+                if ag_ui_interrupt and getattr(ag_ui_interrupt, "expires_at", None):
+                    expiry = datetime.fromisoformat(ag_ui_interrupt.expires_at)
+                    if datetime.now(timezone.utc) > expiry:
+                        yield RunStartedEvent(
+                            type=EventType.RUN_STARTED,
+                            thread_id=input_data.thread_id,
+                            run_id=input_data.run_id,
+                        )
+                        yield RunErrorEvent(
+                            type=EventType.RUN_ERROR,
+                            message=f"Interrupt '{entry.interrupt_id}' has expired.",
+                            code="INTERRUPT_EXPIRED",
+                        )
+                        return
+
+                # Rule 6: basic payload validation against responseSchema
+                if (
+                    entry.status == "resolved"
+                    and ag_ui_interrupt
+                    and getattr(ag_ui_interrupt, "response_schema", None)
+                ):
+                    schema = ag_ui_interrupt.response_schema
+                    payload = entry.payload
+                    if schema.get("type") == "object":
+                        if not isinstance(payload, dict):
+                            yield RunStartedEvent(
+                                type=EventType.RUN_STARTED,
+                                thread_id=input_data.thread_id,
+                                run_id=input_data.run_id,
+                            )
+                            yield RunErrorEvent(
+                                type=EventType.RUN_ERROR,
+                                message=(
+                                    f"Invalid payload for interrupt '{entry.interrupt_id}': "
+                                    "expected an object."
+                                ),
+                                code="INVALID_PAYLOAD",
+                            )
+                            return
+                        required = schema.get("required", [])
+                        missing_keys = [k for k in required if k not in payload]
+                        if missing_keys:
+                            yield RunStartedEvent(
+                                type=EventType.RUN_STARTED,
+                                thread_id=input_data.thread_id,
+                                run_id=input_data.run_id,
+                            )
+                            yield RunErrorEvent(
+                                type=EventType.RUN_ERROR,
+                                message=(
+                                    f"Invalid payload for interrupt '{entry.interrupt_id}': "
+                                    f"missing required keys {missing_keys}."
+                                ),
+                                code="INVALID_PAYLOAD",
+                            )
+                            return
+
+                if entry.status == "cancelled":
+                    # Track tool_call_ids for cancelled tool-bound interrupts
+                    if ag_ui_interrupt and getattr(ag_ui_interrupt, "tool_call_id", None):
+                        _resumed_tool_call_ids.add(ag_ui_interrupt.tool_call_id)
+                    # Include a denial response so Strands marks this interrupt
+                    # as responded (prevents re-raising on resume).
+                    interrupt_responses.append({
+                        "interruptResponse": {
+                            "interruptId": entry.interrupt_id,
+                            "response": {"approved": False},
+                        }
+                    })
+                elif entry.status == "resolved":
+                    interrupt_responses.append({
+                        "interruptResponse": {
+                            "interruptId": entry.interrupt_id,
+                            "response": entry.payload,
+                        }
+                    })
+                    # Track tool_call_ids for resumed interrupts (suppress re-emission)
+                    if ag_ui_interrupt and getattr(ag_ui_interrupt, "tool_call_id", None):
+                        _resumed_tool_call_ids.add(ag_ui_interrupt.tool_call_id)
+
+            # Emit ToolCallResult for cancelled tool-bound interrupts
+            for entry in resume_entries:
+                if entry.status == "cancelled":
+                    intr = pending_ag_ui.get(entry.interrupt_id)
+                    if intr and getattr(intr, "tool_call_id", None):
+                        yield ToolCallResultEvent(
+                            type=EventType.TOOL_CALL_RESULT,
+                            message_id=str(uuid.uuid4()),
+                            tool_call_id=intr.tool_call_id,
+                            content="Tool call cancelled by user.",
+                        )
+
+            # If ALL entries are cancelled, finish immediately without invoking Strands
+            if all(e.status == "cancelled" for e in resume_entries):
+                interrupt_state.deactivate()
+                yield RunStartedEvent(
+                    type=EventType.RUN_STARTED,
+                    thread_id=input_data.thread_id,
+                    run_id=input_data.run_id,
+                )
+                yield RunFinishedEvent(
+                    type=EventType.RUN_FINISHED,
+                    thread_id=input_data.thread_id,
+                    run_id=input_data.run_id,
+                    outcome=RunFinishedSuccessOutcome(type="success"),
+                )
+                fingerprint = hashlib.md5(  # noqa: S324
+                    json.dumps(
+                        [(e.interrupt_id, e.status, e.payload) for e in resume_entries],
+                        sort_keys=True, default=str,
+                    ).encode(),
+                    usedforsecurity=False,
+                ).hexdigest()
+                self._last_resume_fingerprint[thread_id] = fingerprint
+                self._pending_interrupts_by_thread.pop(thread_id, None)
+                return
+
+            # Pass interruptResponse dicts as the prompt — Strands resumes from
+            # its checkpoint without replaying the full conversation.
+            logger.debug(
+                f"Resuming interrupted run: thread_id={input_data.thread_id}, "
+                f"interrupt_responses={interrupt_responses}"
+            )
+            _resume_prompt: list | None = interrupt_responses
+            # Fingerprint is stored after successful processing (below).
+            self._pending_interrupts_by_thread.pop(thread_id, None)
+
+        # ── Start run ─────────────────────────────────────────────────────
         # Start run
         yield RunStartedEvent(
             type=EventType.RUN_STARTED,
@@ -517,6 +837,11 @@ class StrandsAgent:
                     logger.debug(
                         f"Has pending tool results detected: tool_call_ids={pending_tool_result_ids}, thread_id={input_data.thread_id}"
                     )
+
+            # Rule 8: suppress ToolCallStart/Args/End for resumed tool-bound
+            # interrupts — only ToolCallResult should be emitted on resume.
+            if _resumed_tool_call_ids:
+                pending_tool_result_ids.update(_resumed_tool_call_ids)
 
             # Convert AG-UI messages to Strands format
             # Strands expects content as List[ContentBlock] for most messages
@@ -619,8 +944,12 @@ class StrandsAgent:
             # For continuation runs (has_pending_tool_result), derive a meaningful
             # message from the frontend tool that was just executed so the agent
             # understands the context and can generate a proper conclusion.
-            user_message = "Hello"
-            if pending_tool_result_ids and input_data.messages:
+            # Skip derivation on the interrupt resume path — _resume_prompt is used instead.
+            user_message: Any = "Hello"
+            if _resume_prompt is not None:
+                # Resume path: pass interruptResponse dicts directly to Strands.
+                user_message = _resume_prompt
+            elif pending_tool_result_ids and input_data.messages:
                 for msg in reversed(input_data.messages):
                     if msg.role == "tool" and hasattr(msg, "tool_call_id"):
                         tool_name = _tool_call_id_to_name.get(msg.tool_call_id)
@@ -674,6 +1003,7 @@ class StrandsAgent:
             stop_text_streaming = False
             halt_event_stream = False
             pending_halt = False
+            pending_interrupt_outcome: RunFinishedInterruptOutcome | None = None
 
             # Reasoning/thinking state tracking
             reasoning_started = False
@@ -695,37 +1025,43 @@ class StrandsAgent:
                 and getattr(strands_agent, "session_manager", None) is None
             )
             if replay_history:
-                native_history = _build_strands_history(input_data.messages)
-                # Apply ``state_context_builder`` to the last user-text
-                # message in the reconciled history rather than to the
-                # synthetic ``user_message`` string. This matches what the
-                # builder is actually trying to enrich (the prompt the LLM
-                # will see).
-                if self.config.state_context_builder and native_history:
-                    for native_msg in reversed(native_history):
-                        if (
-                            native_msg.get("role") == "user"
-                            and native_msg.get("content")
-                            and isinstance(native_msg["content"], list)
-                            and "text" in native_msg["content"][0]
-                        ):
-                            try:
-                                augmented = self.config.state_context_builder(
-                                    input_data, native_msg["content"][0]["text"]
-                                )
-                                if isinstance(augmented, str):
-                                    native_msg["content"][0]["text"] = augmented
-                            except Exception as e:
-                                logger.warning(
-                                    f"state_context_builder failed: {e}", exc_info=True
-                                )
-                            break
-                strands_agent.messages = native_history
-                # ``stream_async(None)`` tells Strands to use existing
-                # ``self.messages`` as-is. The LLM sees real tool results
-                # (including ones produced by the frontend) and emits a
-                # proper follow-up turn instead of re-calling the tool.
-                agent_stream = strands_agent.stream_async(None)
+                if _resume_prompt is not None:
+                    # Resume path: the cached agent already has messages from
+                    # the interrupted turn. Pass interruptResponse dicts so
+                    # Strands resumes from its checkpoint.
+                    agent_stream = strands_agent.stream_async(_resume_prompt)
+                else:
+                    native_history = _build_strands_history(input_data.messages)
+                    # Apply ``state_context_builder`` to the last user-text
+                    # message in the reconciled history rather than to the
+                    # synthetic ``user_message`` string. This matches what the
+                    # builder is actually trying to enrich (the prompt the LLM
+                    # will see).
+                    if self.config.state_context_builder and native_history:
+                        for native_msg in reversed(native_history):
+                            if (
+                                native_msg.get("role") == "user"
+                                and native_msg.get("content")
+                                and isinstance(native_msg["content"], list)
+                                and "text" in native_msg["content"][0]
+                            ):
+                                try:
+                                    augmented = self.config.state_context_builder(
+                                        input_data, native_msg["content"][0]["text"]
+                                    )
+                                    if isinstance(augmented, str):
+                                        native_msg["content"][0]["text"] = augmented
+                                except Exception as e:
+                                    logger.warning(
+                                        f"state_context_builder failed: {e}", exc_info=True
+                                    )
+                                break
+                    strands_agent.messages = native_history
+                    # ``stream_async(None)`` tells Strands to use existing
+                    # ``self.messages`` as-is. The LLM sees real tool results
+                    # (including ones produced by the frontend) and emits a
+                    # proper follow-up turn instead of re-calling the tool.
+                    agent_stream = strands_agent.stream_async(None)
             else:
                 # Legacy path: pass only the latest user message and trust
                 # Strands (via session_manager) to track history.
@@ -748,6 +1084,60 @@ class StrandsAgent:
                         )
                         # Generator will end naturally, no need to break
                         break
+
+                    # Handle AgentResult event — detect Strands native interrupts
+                    if "result" in event:
+                        result = event["result"]
+                        stop_reason = getattr(result, "stop_reason", None)
+                        if stop_reason == "interrupt":
+                            strands_interrupts = getattr(result, "interrupts", None) or []
+                            ag_ui_interrupts = []
+                            for si in strands_interrupts:
+                                tool_name_meta = (
+                                    si.reason.get("tool_name", "unknown")
+                                    if isinstance(si.reason, dict)
+                                    else "unknown"
+                                )
+                                tool_input_meta = (
+                                    si.reason.get("tool_input", {})
+                                    if isinstance(si.reason, dict)
+                                    else {}
+                                )
+                                tool_use_id_meta = (
+                                    si.reason.get("tool_use_id")
+                                    if isinstance(si.reason, dict)
+                                    else None
+                                )
+                                ag_ui_interrupts.append(Interrupt(
+                                    id=si.id,
+                                    reason="tool_call",
+                                    message=f"Approve call to {tool_name_meta}?",
+                                    tool_call_id=tool_use_id_meta,
+                                    response_schema={
+                                        "type": "object",
+                                        "properties": {"approved": {"type": "boolean"}},
+                                        "required": ["approved"],
+                                    },
+                                    metadata={
+                                        "tool_name": tool_name_meta,
+                                        "tool_input": tool_input_meta,
+                                    },
+                                ))
+                            if ag_ui_interrupts:
+                                pending_interrupt_outcome = RunFinishedInterruptOutcome(
+                                    type="interrupt",
+                                    interrupts=ag_ui_interrupts,
+                                )
+                                # Store full interrupt objects for resume validation
+                                self._pending_interrupts_by_thread[input_data.thread_id] = {
+                                    i.id: i for i in ag_ui_interrupts
+                                }
+                                self._last_resume_fingerprint.pop(input_data.thread_id, None)
+                                logger.debug(
+                                    f"Strands interrupt detected: thread_id={input_data.thread_id}, "
+                                    f"interrupt_ids={[i.id for i in ag_ui_interrupts]}"
+                                )
+                        continue  # never yield the raw result event
 
                     # Handle text streaming
                     if "data" in event and event["data"]:
@@ -874,13 +1264,40 @@ class StrandsAgent:
                     elif "tool_stream_event" in event:
                         tool_stream = event["tool_stream_event"]
                         stream_data = tool_stream.get("data", {})
+                        _tse_tool_use = tool_stream.get("tool_use", {})
+                        _tse_tool_name = _tse_tool_use.get("name", "")
+                        _tse_tool_use_id = _tse_tool_use.get("toolUseId")
 
-                        # Emit state snapshot if tool yielded state
-                        if isinstance(stream_data, dict) and "state" in stream_data:
-                            yield StateSnapshotEvent(
-                                type=EventType.STATE_SNAPSHOT,
-                                snapshot=stream_data["state"],
+                        if _tse_tool_use_id is None:
+                            logger.debug(
+                                "tool_stream_event missing toolUseId — skipping handler dispatch"
                             )
+                        else:
+                            _tse_behavior = self.config.tool_behaviors.get(_tse_tool_name) if _tse_tool_name else None
+
+                            if _tse_behavior and _tse_behavior.tool_stream_event_handler:
+                                _tse_ctx = ToolStreamEventContext(
+                                    tool_use_id=_tse_tool_use_id,
+                                    tool_name=_tse_tool_name,
+                                    stream_data=stream_data,
+                                )
+                                try:
+                                    async for _tse_event in _tse_behavior.tool_stream_event_handler(
+                                        _tse_ctx
+                                    ):
+                                        if _tse_event is not None:
+                                            yield _tse_event
+                                except Exception as _tse_exc:
+                                    logger.warning(
+                                        f"tool_stream_event_handler failed for {_tse_tool_name}: {_tse_exc}",
+                                        exc_info=True,
+                                    )
+                            elif isinstance(stream_data, dict) and "state" in stream_data:
+                                # Default behaviour: emit state snapshot when tool yields {"state": ...}
+                                yield StateSnapshotEvent(
+                                    type=EventType.STATE_SNAPSHOT,
+                                    snapshot=stream_data["state"],
+                                )
 
                     # Handle tool results from Strands for backend tool rendering
                     elif "message" in event and event["message"].get("role") == "user":
@@ -1607,11 +2024,30 @@ class StrandsAgent:
             )
 
             # Always finish the run - frontend handles keeping action executing
-            yield RunFinishedEvent(
-                type=EventType.RUN_FINISHED,
-                thread_id=input_data.thread_id,
-                run_id=input_data.run_id,
-            )
+            if pending_interrupt_outcome is not None:
+                yield RunFinishedEvent(
+                    type=EventType.RUN_FINISHED,
+                    thread_id=input_data.thread_id,
+                    run_id=input_data.run_id,
+                    outcome=pending_interrupt_outcome,
+                )
+            else:
+                # Store fingerprint for idempotency only after successful processing
+                if resume_entries:
+                    fp = hashlib.md5(  # noqa: S324
+                        json.dumps(
+                            [(e.interrupt_id, e.status, e.payload) for e in resume_entries],
+                            sort_keys=True, default=str,
+                        ).encode(),
+                        usedforsecurity=False,
+                    ).hexdigest()
+                    self._last_resume_fingerprint[thread_id] = fp
+                yield RunFinishedEvent(
+                    type=EventType.RUN_FINISHED,
+                    thread_id=input_data.thread_id,
+                    run_id=input_data.run_id,
+                    outcome=RunFinishedSuccessOutcome(type="success"),
+                )
 
         except Exception as e:
             import traceback
