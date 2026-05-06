@@ -119,6 +119,8 @@ import type {
   RunStartedEvent as RunStartedEventStatic,
   RunFinishedEvent as RunFinishedEventStatic,
   RunFinishedOutcome as RunFinishedOutcomeStatic,
+  RunFinishedSuccessOutcome as RunFinishedSuccessOutcomeStatic,
+  RunFinishedInterruptOutcome as RunFinishedInterruptOutcomeStatic,
   RunErrorEvent as RunErrorEventStatic,
   StepStartedEvent as StepStartedEventStatic,
   StepFinishedEvent as StepFinishedEventStatic,
@@ -157,6 +159,8 @@ import type {
   RunStartedEvent,
   RunFinishedEvent,
   RunFinishedOutcome,
+  RunFinishedSuccessOutcome,
+  RunFinishedInterruptOutcome,
   RunErrorEvent,
   StepStartedEvent,
   StepFinishedEvent,
@@ -196,6 +200,8 @@ describe("static event types match z.infer event types", () => {
   it("RunStartedEvent", () => { expectTypeOf<RunStartedEventStatic>().toEqualTypeOf<RunStartedEvent>(); });
   it("RunFinishedEvent", () => { expectTypeOf<RunFinishedEventStatic>().toEqualTypeOf<RunFinishedEvent>(); });
   it("RunFinishedOutcome", () => { expectTypeOf<RunFinishedOutcomeStatic>().toEqualTypeOf<RunFinishedOutcome>(); });
+  it("RunFinishedSuccessOutcome", () => { expectTypeOf<RunFinishedSuccessOutcomeStatic>().toEqualTypeOf<RunFinishedSuccessOutcome>(); });
+  it("RunFinishedInterruptOutcome", () => { expectTypeOf<RunFinishedInterruptOutcomeStatic>().toEqualTypeOf<RunFinishedInterruptOutcome>(); });
   it("RunErrorEvent", () => { expectTypeOf<RunErrorEventStatic>().toEqualTypeOf<RunErrorEvent>(); });
   it("StepStartedEvent", () => { expectTypeOf<StepStartedEventStatic>().toEqualTypeOf<StepStartedEvent>(); });
   it("StepFinishedEvent", () => { expectTypeOf<StepFinishedEventStatic>().toEqualTypeOf<StepFinishedEvent>(); });

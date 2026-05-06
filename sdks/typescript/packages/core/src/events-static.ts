@@ -201,7 +201,7 @@ export interface RunFinishedSuccessOutcome {
 
 export interface RunFinishedInterruptOutcome {
   type: "interrupt";
-  interrupts: [Interrupt, ...Interrupt[]];
+  interrupts: Interrupt[];
 }
 
 export type RunFinishedOutcome = RunFinishedSuccessOutcome | RunFinishedInterruptOutcome;
