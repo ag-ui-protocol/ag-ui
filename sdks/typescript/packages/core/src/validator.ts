@@ -39,7 +39,7 @@ export const fromStandardSchema =
     if (out instanceof Promise) {
       throw new Error("AgentValidator does not support async validators");
     }
-    if ("issues" in out && out.issues) {
+    if ("issues" in out && out.issues && out.issues.length > 0) {
       return {
         success: false,
         issues: out.issues.map((i) => ({
@@ -70,7 +70,7 @@ export const defaultEventValidator: AgentValidator = {
   validateEvent(
     input: unknown,
   ): ValidationResult<{ type: EventType; [k: string]: unknown }> {
-    if (input === null || typeof input !== "object") {
+    if (input === null || typeof input !== "object" || Array.isArray(input)) {
       return {
         success: false,
         issues: [{ message: "Event must be a non-null object" }],
