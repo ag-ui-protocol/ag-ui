@@ -73,6 +73,26 @@ describe("defaultEventValidator", () => {
       expect(result.issues[0]?.message).toMatch(/non-null object/i);
     }
   });
+
+  it("accepts events with unknown future fields (forward compatibility)", () => {
+    // The protocol contract is that AG-UI events tolerate unknown future fields.
+    // defaultEventValidator only checks the `type` tag; it must not reject events
+    // because of additional unrecognized properties.
+    const result = defaultEventValidator.validateEvent({
+      type: EventType.RUN_STARTED,
+      threadId: "t",
+      runId: "r",
+      // A field added by a hypothetical future protocol revision:
+      futureExtension: { somethingNew: 42 },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.value.type).toBe(EventType.RUN_STARTED);
+      expect((result.value as { futureExtension?: unknown }).futureExtension).toEqual({
+        somethingNew: 42,
+      });
+    }
+  });
 });
 
 const makeSchema = <T>(
