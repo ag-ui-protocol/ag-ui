@@ -35,7 +35,7 @@ describe("defaultEventValidator", () => {
     });
     expect(result.success).toBe(true);
     if (result.success && result.value.type === EventType.TEXT_MESSAGE_START) {
-      expect((result.value as { role: string }).role).toBe("assistant");
+      expect((result.value as unknown as { role: string }).role).toBe("assistant");
     }
   });
 
@@ -48,7 +48,7 @@ describe("defaultEventValidator", () => {
     });
     expect(result.success).toBe(true);
     if (result.success && result.value.type === EventType.ACTIVITY_SNAPSHOT) {
-      expect((result.value as { replace: boolean }).replace).toBe(true);
+      expect((result.value as unknown as { replace: boolean }).replace).toBe(true);
     }
   });
 
@@ -61,7 +61,7 @@ describe("defaultEventValidator", () => {
     });
     expect(result.success).toBe(true);
     if (result.success && result.value.type === EventType.RUN_FINISHED) {
-      expect((result.value as { outcome?: unknown }).outcome).toBeUndefined();
+      expect((result.value as unknown as { outcome?: unknown }).outcome).toBeUndefined();
     }
   });
 
