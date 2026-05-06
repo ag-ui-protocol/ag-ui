@@ -353,9 +353,12 @@ export function decode(data: Uint8Array): BaseEvent {
     }
   });
 
-  // Strip undefined values from nested message objects so the decoded event
-  // matches what schema validation used to produce (zod stripped unknown/undefined
-  // fields deeply; defaultEventValidator only validates, does not strip).
+  // Strip undefined keys + the proto-only contentParts field from each message.
+  // NOTE: zod's previous .strip() mode normalized all nested objects deeply.
+  // We currently only handle messages here because proto decoding doesn't surface
+  // undefined fields elsewhere in practice. If a future proto schema change starts
+  // emitting undefined on other nested objects (e.g. RunStartedEvent.input,
+  // ToolCall sub-fields), extend this cleanup or move to a generic deep-strip pass.
   if (decoded.type === EventType.MESSAGES_SNAPSHOT && Array.isArray((decoded as any).messages)) {
     for (const message of (decoded as any).messages) {
       Object.keys(message).forEach((key) => {
@@ -371,7 +374,9 @@ export function decode(data: Uint8Array): BaseEvent {
   const validation = defaultEventValidator.validateEvent(decoded);
   if (!validation.success) {
     throw new Error(
-      `Invalid decoded protobuf event: ${validation.issues.map((i) => i.message).join("; ")}`,
+      `Invalid decoded protobuf event: ${validation.issues
+        .map((i) => (i.path?.length ? `[${i.path.join(".")}] ${i.message}` : i.message))
+        .join("; ")}`,
     );
   }
   return validation.value as AGUIEvent;

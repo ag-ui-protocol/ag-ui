@@ -67,7 +67,9 @@ export const transformHttpEventStream = (
                 log?.event("HTTP", "Event invalid:", { json, issues: result.issues });
                 eventSubject.error(
                   new Error(
-                    `Invalid event: ${result.issues.map((i) => i.message).join("; ")}`,
+                    `Invalid event: ${result.issues
+                      .map((i) => (i.path?.length ? `[${i.path.join(".")}] ${i.message}` : i.message))
+                      .join("; ")}`,
                   ),
                 );
               }
