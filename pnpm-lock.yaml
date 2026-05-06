@@ -1269,9 +1269,6 @@ importers:
       '@standard-schema/spec':
         specifier: ^1.0.0
         version: 1.1.0
-      zod:
-        specifier: ^3.22.4
-        version: 3.25.76
     devDependencies:
       '@arethetypeswrong/cli':
         specifier: ^0.17.4
