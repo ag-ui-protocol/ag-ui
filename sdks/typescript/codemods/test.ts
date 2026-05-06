@@ -8,7 +8,7 @@
  *   npx ts-node sdks/typescript/codemods/test.ts
  */
 import { execFileSync } from "node:child_process";
-import { readFileSync, copyFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, copyFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -17,20 +17,20 @@ const INPUT = join(FIXTURES_DIR, "0.1.0-schemas-to-subpath.input.ts");
 const EXPECTED = join(FIXTURES_DIR, "0.1.0-schemas-to-subpath.expected.ts");
 const CODEMOD = resolve(__dirname, "0.1.0-schemas-to-subpath.ts");
 
-// Use os.tmpdir() so this works on Windows and Unix alike
-const TMP_DIR = join(tmpdir(), "codemod-test");
-mkdirSync(TMP_DIR, { recursive: true });
+// Use a unique temp directory per run so concurrent invocations don't race.
+const TMP_DIR = mkdtempSync(join(tmpdir(), "codemod-test-"));
 const TEMP = join(TMP_DIR, "codemod-test.ts");
 
 copyFileSync(INPUT, TEMP);
 
-// Use execFileSync (not exec/execSync) to avoid shell injection.
-// On Windows, the binary is npx.cmd — execFileSync does not do PATHEXT resolution.
-const npx = process.platform === "win32" ? "npx.cmd" : "npx";
+// `shell: true` lets us invoke npx via the shell — required on Windows where
+// the binary is `npx.cmd` and Node 24's execFileSync no longer performs
+// PATHEXT resolution. Args are static literals so shell injection is not a
+// concern; CODEMOD and TEMP are absolute paths derived from __dirname/tmpdir.
 execFileSync(
-  npx,
+  "npx",
   ["--yes", "jscodeshift", "-t", CODEMOD, "--parser=tsx", TEMP],
-  { stdio: "inherit" },
+  { stdio: "inherit", shell: true },
 );
 
 const actual = readFileSync(TEMP, "utf8");
