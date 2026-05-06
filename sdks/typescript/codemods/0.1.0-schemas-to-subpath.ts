@@ -208,9 +208,9 @@ const transform: Transform = (file, api) => {
 
   if (existingSchemasImports.length > 0) {
     // Merge into the first existing @ag-ui/core/schemas import
-    const firstSchemas = existingSchemasImports.at(0);
-    const existing = firstSchemas.node.specifiers ?? [];
-    firstSchemas.node.specifiers = [...existing, ...specsToMove];
+    const firstPath = existingSchemasImports.paths()[0];
+    const existing = firstPath.node.specifiers ?? [];
+    firstPath.node.specifiers = [...existing, ...specsToMove];
   } else {
     // Build a new import declaration and insert it after the last @ag-ui/core import
     // (or after the last import in the file if @ag-ui/core imports were removed).

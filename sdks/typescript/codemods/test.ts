@@ -1,52 +1,49 @@
 /**
  * Smoke-test for the 0.1.0-schemas-to-subpath codemod.
  *
- * Runs the transform against the input fixture and diffs the result against
- * the expected fixture. Exits 0 on success, 1 on mismatch.
+ * Runs the transform against the input fixture via jscodeshift subprocess and
+ * diffs the result against the expected fixture. Exits 0 on success, 1 on mismatch.
  *
  * Usage:
  *   npx ts-node sdks/typescript/codemods/test.ts
- *   # or, if ts-node is not available:
- *   npx jscodeshift --dry --print -t sdks/typescript/codemods/0.1.0-schemas-to-subpath.ts \
- *     sdks/typescript/codemods/__fixtures__/0.1.0-schemas-to-subpath.input.ts
  */
-import * as fs from "fs";
-import * as path from "path";
-import { createTransformer } from "jscodeshift/src/testUtils";
+import { execFileSync } from "node:child_process";
+import { readFileSync, copyFileSync, mkdirSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 
-const fixturesDir = path.join(__dirname, "__fixtures__");
-const inputPath = path.join(fixturesDir, "0.1.0-schemas-to-subpath.input.ts");
-const expectedPath = path.join(fixturesDir, "0.1.0-schemas-to-subpath.expected.ts");
-const transformPath = path.join(__dirname, "0.1.0-schemas-to-subpath.ts");
+const FIXTURES_DIR = join(__dirname, "__fixtures__");
+const INPUT = join(FIXTURES_DIR, "0.1.0-schemas-to-subpath.input.ts");
+const EXPECTED = join(FIXTURES_DIR, "0.1.0-schemas-to-subpath.expected.ts");
+const CODEMOD = resolve(__dirname, "0.1.0-schemas-to-subpath.ts");
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const transform = require(transformPath).default;
+// Use os.tmpdir() so this works on Windows and Unix alike
+const TMP_DIR = join(tmpdir(), "codemod-test");
+mkdirSync(TMP_DIR, { recursive: true });
+const TEMP = join(TMP_DIR, "codemod-test.ts");
 
-const input = fs.readFileSync(inputPath, "utf8");
-const expected = fs.readFileSync(expectedPath, "utf8");
+copyFileSync(INPUT, TEMP);
 
-// jscodeshift's test utility runs the transform as the CLI would
-const defineInlineTest = createTransformer(transform);
+// Use execFileSync (not exec/execSync) to avoid shell injection
+execFileSync(
+  "npx",
+  ["--yes", "jscodeshift", "-t", CODEMOD, "--parser=tsx", TEMP],
+  { stdio: "inherit" },
+);
 
-// Run the transform manually against the input source
-import jscodeshift from "jscodeshift";
-const jsWithParser = jscodeshift.withParser("tsx");
+const actual = readFileSync(TEMP, "utf8");
+const expected = readFileSync(EXPECTED, "utf8");
 
-const result = transform({ source: input, path: inputPath }, { jscodeshift: jsWithParser, stats: () => {} }, {});
-
-const actual = typeof result === "string" ? result : input;
-
-// Normalize trailing newlines for comparison
-const normalize = (s: string) => s.trimEnd() + "\n";
+// Normalize line endings and trailing whitespace for comparison
+const normalize = (s: string) => s.replace(/\r\n/g, "\n").trimEnd() + "\n";
 
 if (normalize(actual) === normalize(expected)) {
-  console.log("✓  Codemod output matches expected fixture.");
+  console.log("PASS — codemod output matches expected fixture.");
   process.exit(0);
 } else {
-  console.error("✗  Codemod output does NOT match expected fixture.\n");
-  // Simple unified-style diff
-  const actualLines = actual.split("\n");
-  const expectedLines = expected.split("\n");
+  console.error("FAIL — codemod output differs from expected.");
+  const actualLines = normalize(actual).split("\n");
+  const expectedLines = normalize(expected).split("\n");
   const maxLines = Math.max(actualLines.length, expectedLines.length);
   for (let i = 0; i < maxLines; i++) {
     const a = actualLines[i] ?? "<missing>";

@@ -1,17 +1,17 @@
-// Fixture: expected output for the 0.1.0-schemas-to-subpath codemod
-// Covers: pure schema import, pure type import, mixed import,
-//         existing @ag-ui/core/schemas import that should be merged into.
-
-// ── 1. Schemas only — declaration removed, specifiers merged into existing schemas import ──
-
 // ── 2. Pure type import (should be untouched) ─────────────────────────────────
 import type { Message, Tool, EventType } from "@ag-ui/core";
 
-// ── 3. Mixed types and schemas — only the non-schema name stays ───────────────
+// ── 3. Mixed types and schemas ────────────────────────────────────────────────
 import { Message as CoreMessage } from "@ag-ui/core";
 
-// ── 4. Already-present @ag-ui/core/schemas import (merged) ───────────────────
-import { BaseEventSchema, UserMessageSchema, EventSchemas, AgentCapabilitiesSchema, RunAgentInputSchema } from "@ag-ui/core/schemas";
+// ── 4. Already-present @ag-ui/core/schemas import (new specifiers should merge) ─
+import {
+  BaseEventSchema,
+  UserMessageSchema,
+  EventSchemas,
+  AgentCapabilitiesSchema,
+  RunAgentInputSchema,
+} from "@ag-ui/core/schemas";
 
 // ── 5. Non-schema import that must stay on @ag-ui/core ───────────────────────
 import { EventType as ET } from "@ag-ui/core";
