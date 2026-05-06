@@ -41,9 +41,13 @@ The transform uses two complementary heuristics:
 
 The curated list in `SCHEMA_NAMES` inside the transform source mirrors the full public schema surface of `@ag-ui/core/schemas`. Both heuristics are applied, so unknown future schema additions (if they follow the naming convention) are also covered.
 
+**Aliasing behavior.**
+
+**Aliased imports work correctly.** Detection uses the *imported* name (the name on the `@ag-ui/core` side), so `import { UserMessageSchema as Foo } from "@ag-ui/core"` is recognized regardless of the local alias. The alias is preserved in the moved declaration: `import { UserMessageSchema as Foo } from "@ag-ui/core/schemas"`.
+
 **Known limitations.**
 
-- **Aliased imports** — `import { UserMessageSchema as MyAlias } from "@ag-ui/core"` is handled correctly: the specifier is moved based on the *imported* name (`UserMessageSchema`), and the local alias (`MyAlias`) is preserved in the new declaration. However, if you alias a schema name to something that does *not* end with `"Schema"`, the heuristic will still catch it because the imported name is used for detection, not the local alias.
+- **Namespace imports** — `import * as core from "@ag-ui/core"` cannot be automatically migrated. The codemod will emit a warning to stderr and leave the import untouched. You must manually split `core.<SchemaName>` references into a named import from `@ag-ui/core/schemas` and update all usages.
 - **Re-exports** — `export { UserMessageSchema } from "@ag-ui/core"` is not handled; only `import` declarations are transformed. Re-export-from syntax will need to be updated manually.
 - **Dynamic imports** — `import("@ag-ui/core")` and `require("@ag-ui/core")` calls are not transformed; only static `import` declarations are handled.
 

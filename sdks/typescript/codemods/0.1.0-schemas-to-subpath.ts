@@ -7,7 +7,7 @@
  * Usage:
  *   npx jscodeshift -t 0.1.0-schemas-to-subpath.ts --parser=tsx --extensions=ts,tsx src/
  */
-import type { Transform, ImportSpecifier, ImportDefaultSpecifier, ImportNamespaceSpecifier } from "jscodeshift";
+import type { Transform, ImportSpecifier, ImportNamespaceSpecifier } from "jscodeshift";
 
 // ---------------------------------------------------------------------------
 // Curated list — the public *Schema exports from 0.0.x.
@@ -140,9 +140,14 @@ const transform: Transform = (file, api) => {
 
   // We may need to merge schema specifiers into an existing schemas import.
   // Build a set of names already imported from @ag-ui/core/schemas so we don't
-  // create duplicates.
+  // create duplicates. Track by name + whether it's a type-only import.
   const alreadyInSchemas = new Set<string>();
+  // Track whether the first existing schemas import is type-only (importKind === "type")
+  let existingSchemasIsTypeOnly = false;
   existingSchemasImports.forEach((path) => {
+    if (path.node.importKind === "type") {
+      existingSchemasIsTypeOnly = true;
+    }
     (path.node.specifiers ?? []).forEach((spec) => {
       if (spec.type === "ImportSpecifier") {
         alreadyInSchemas.add((spec as ImportSpecifier).imported.name);
@@ -150,11 +155,15 @@ const transform: Transform = (file, api) => {
     });
   });
 
-  // Specifiers to move to @ag-ui/core/schemas, accumulated across all @ag-ui/core imports
-  const specsToMove: ImportSpecifier[] = [];
+  // Specifiers to move to @ag-ui/core/schemas, accumulated across all @ag-ui/core imports.
+  // We separate value specs from type-only specs so we can emit correctly typed declarations.
+  const valueSpecsToMove: ImportSpecifier[] = [];
+  const typeSpecsToMove: ImportSpecifier[] = [];
 
   coreImports.forEach((path) => {
     const specifiers = path.node.specifiers ?? [];
+    // A whole-declaration `import type { ... }` makes all specifiers type-only.
+    const declIsTypeOnly = path.node.importKind === "type";
 
     // Partition: stay vs. move
     const staySpecs: typeof specifiers = [];
@@ -163,6 +172,11 @@ const transform: Transform = (file, api) => {
     for (const spec of specifiers) {
       if (spec.type !== "ImportSpecifier") {
         // Default or namespace imports — always stay on @ag-ui/core
+        if (spec.type === "ImportNamespaceSpecifier") {
+          console.warn(
+            `[codemod 0.1.0-schemas-to-subpath] ${file.path}: namespace import "import * as ${(spec as ImportNamespaceSpecifier).local.name} from "@ag-ui/core"" cannot be automatically migrated. Schema references via ${(spec as ImportNamespaceSpecifier).local.name}.<SchemaName> must be updated manually.`
+          );
+        }
         staySpecs.push(spec);
         continue;
       }
@@ -183,11 +197,25 @@ const transform: Transform = (file, api) => {
 
     dirty = true;
 
-    // Only add to specsToMove if not already present in @ag-ui/core/schemas
+    // Only add to specsToMove if not already present in @ag-ui/core/schemas.
+    // Preserve type-only intent: a specifier is type-only if the whole declaration
+    // is `import type { ... }` OR if the individual specifier has importKind "type".
     for (const spec of moveSpecs) {
       const importedName = spec.imported.name;
       if (!alreadyInSchemas.has(importedName)) {
-        specsToMove.push(spec);
+        const specIsTypeOnly = declIsTypeOnly || spec.importKind === "type";
+        if (specIsTypeOnly) {
+          // Clone spec without per-specifier importKind — the declaration itself
+          // will be emitted as `import type { ... }`, so the per-specifier marker
+          // is redundant and would produce `import type { type Foo }`.
+          const cloned = j.importSpecifier(
+            j.identifier(importedName),
+            j.identifier(spec.local.name),
+          );
+          typeSpecsToMove.push(cloned);
+        } else {
+          valueSpecsToMove.push(spec);
+        }
         alreadyInSchemas.add(importedName);
       }
     }
@@ -199,33 +227,62 @@ const transform: Transform = (file, api) => {
     } else {
       // Mutate the specifier list in-place
       path.node.specifiers = staySpecs;
+      // If the declaration was `import type` but we stripped all type-only specs
+      // and only non-schema (value) specifiers remain, the importKind stays "type"
+      // which is still correct since all remaining specifiers are type imports.
     }
   });
+
+  const specsToMove = [...valueSpecsToMove, ...typeSpecsToMove];
 
   if (!dirty || specsToMove.length === 0) {
     return dirty ? root.toSource({ quote: "double" }) : file.source;
   }
 
-  if (existingSchemasImports.length > 0) {
-    // Merge into the first existing @ag-ui/core/schemas import
-    const firstPath = existingSchemasImports.paths()[0];
-    const existing = firstPath.node.specifiers ?? [];
-    firstPath.node.specifiers = [...existing, ...specsToMove];
-  } else {
-    // Build a new import declaration and insert it after the last @ag-ui/core import
-    // (or after the last import in the file if @ag-ui/core imports were removed).
-    const newImport = j.importDeclaration(specsToMove, j.stringLiteral(SCHEMAS_SOURCE));
-
-    // Try to insert right after the last @ag-ui/core import that still exists.
-    // After removals, we look at all remaining import declarations.
+  // Helper to insert a new import declaration after the last remaining import.
+  const insertAfterLastImport = (newImport: ReturnType<typeof j.importDeclaration>) => {
     const allImports = root.find(j.ImportDeclaration);
     if (allImports.length > 0) {
       allImports.at(allImports.length - 1).insertAfter(newImport);
     } else {
-      // Edge case: the file had only @ag-ui/core imports and they were all
-      // removed. Insert at the top of the file body.
       const body = root.find(j.Program).get("body");
       body.value.unshift(newImport);
+    }
+  };
+
+  if (existingSchemasImports.length > 0) {
+    // Merge specifiers that match the existing declaration's type-only mode.
+    // If the existing import is a value import, only merge value specs into it.
+    // Type specs get a separate `import type` declaration.
+    const firstPath = existingSchemasImports.paths()[0];
+
+    if (existingSchemasIsTypeOnly) {
+      // Existing is `import type` — merge all (they're all type-only in this context)
+      const existing = firstPath.node.specifiers ?? [];
+      firstPath.node.specifiers = [...existing, ...specsToMove];
+    } else {
+      // Existing is a value import — only merge value specs
+      if (valueSpecsToMove.length > 0) {
+        const existing = firstPath.node.specifiers ?? [];
+        firstPath.node.specifiers = [...existing, ...valueSpecsToMove];
+      }
+      // Type-only specs need a separate declaration
+      if (typeSpecsToMove.length > 0) {
+        const typeImport = j.importDeclaration(typeSpecsToMove, j.stringLiteral(SCHEMAS_SOURCE));
+        typeImport.importKind = "type";
+        insertAfterLastImport(typeImport);
+      }
+    }
+  } else {
+    // No existing @ag-ui/core/schemas import. Emit value and type declarations separately.
+    if (valueSpecsToMove.length > 0) {
+      const newImport = j.importDeclaration(valueSpecsToMove, j.stringLiteral(SCHEMAS_SOURCE));
+      insertAfterLastImport(newImport);
+    }
+    if (typeSpecsToMove.length > 0) {
+      const typeImport = j.importDeclaration(typeSpecsToMove, j.stringLiteral(SCHEMAS_SOURCE));
+      typeImport.importKind = "type";
+      insertAfterLastImport(typeImport);
     }
   }
 

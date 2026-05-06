@@ -24,9 +24,11 @@ const TEMP = join(TMP_DIR, "codemod-test.ts");
 
 copyFileSync(INPUT, TEMP);
 
-// Use execFileSync (not exec/execSync) to avoid shell injection
+// Use execFileSync (not exec/execSync) to avoid shell injection.
+// On Windows, the binary is npx.cmd — execFileSync does not do PATHEXT resolution.
+const npx = process.platform === "win32" ? "npx.cmd" : "npx";
 execFileSync(
-  "npx",
+  npx,
   ["--yes", "jscodeshift", "-t", CODEMOD, "--parser=tsx", TEMP],
   { stdio: "inherit" },
 );

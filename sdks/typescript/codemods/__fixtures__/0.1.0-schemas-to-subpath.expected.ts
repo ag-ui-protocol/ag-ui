@@ -16,8 +16,13 @@ import {
 // ── 5. Non-schema import that must stay on @ag-ui/core ───────────────────────
 import { EventType as ET } from "@ag-ui/core";
 
+// ── 8. Namespace import — must be warned about and left untouched ─────────────
+import * as core from "@ag-ui/core";
+
 // ── Unrelated import — must not be touched ────────────────────────────────────
 import { z } from "zod";
+
+import type { ToolSchema, ContextSchema, StateSchema } from "@ag-ui/core/schemas";
 
 export function validate(raw: unknown) {
   return EventSchemas.safeParse(raw);
