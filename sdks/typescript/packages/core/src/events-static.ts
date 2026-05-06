@@ -1,7 +1,7 @@
-// Hand-written equivalents of the z.infer<...> event types in events.ts.
-// This file will replace the type definitions in events.ts once zod is removed
-// from @ag-ui/core. Until then, both files coexist and equality is verified
-// in __tests__/types-static.test.ts.
+// Hand-written TypeScript types for AG-UI events, props types, and the AGUIEvent union. This file is the source of
+// truth for the type surface; the public types are re-exported from events.ts.
+// (Historically these mirrored z.infer<...> types from the previous zod-based schemas;
+// the equivalence was proven via expectTypeOf assertions before zod was removed.)
 
 import type { Message, RunAgentInput, Interrupt } from "./types-static";
 import { EventType } from "./events";

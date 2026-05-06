@@ -1,7 +1,7 @@
-// Hand-written equivalents of the z.infer<...> types in types.ts.
-// This file will replace types.ts once zod is removed from @ag-ui/core (Task 8 of
-// the zod-extraction plan). Until then, both files coexist and equality between
-// them is verified via expectTypeOf assertions in __tests__/types-static.test.ts.
+// Hand-written TypeScript types for AG-UI messages, tools, run input, and other core types. This file is the source of
+// truth for the type surface; the public types are re-exported from types.ts.
+// (Historically these mirrored z.infer<...> types from the previous zod-based schemas;
+// the equivalence was proven via expectTypeOf assertions before zod was removed.)
 
 export interface FunctionCall {
   name: string;

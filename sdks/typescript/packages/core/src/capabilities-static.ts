@@ -1,7 +1,7 @@
-// Hand-written equivalents of the z.infer<...> capability types in capabilities.ts.
-// This file will replace capabilities.ts once zod is removed from @ag-ui/core
-// (Task 8 of the zod-extraction plan). Until then, both files coexist and
-// equality is verified via expectTypeOf assertions in __tests__/types-static.test.ts.
+// Hand-written TypeScript types for AG-UI agent capability declarations. This file is the source of
+// truth for the type surface; the public types are re-exported from capabilities.ts.
+// (Historically these mirrored z.infer<...> types from the previous zod-based schemas;
+// the equivalence was proven via expectTypeOf assertions before zod was removed.)
 
 import type { Tool } from "./types-static";
 
