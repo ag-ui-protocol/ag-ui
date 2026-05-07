@@ -6,7 +6,6 @@ import json
 import os
 import asyncio
 import random
-import uuid
 from typing import List, Dict, Any
 from pathlib import Path
 from dotenv import load_dotenv
@@ -17,11 +16,6 @@ from ag_ui.core import (
     EventType,
     StateSnapshotEvent,
     StateDeltaEvent,
-    TextMessageStartEvent,
-    TextMessageContentEvent,
-    TextMessageEndEvent,
-    MessagesSnapshotEvent,
-    AssistantMessage,
 )
 from ag_ui_strands import (
     StrandsAgent,
@@ -185,37 +179,6 @@ async def simulate_progress(context):
         snapshot={"steps": working_steps},
     )
 
-    # Emit a lightweight assistant confirmation so the UI always shows completion text
-    summary = result.get("task") or "your task"
-    message_id = str(uuid.uuid4())
-    text = f"The plan for {summary} has been completed successfully."
-
-    yield TextMessageStartEvent(
-        type=EventType.TEXT_MESSAGE_START,
-        message_id=message_id,
-        role="assistant",
-    )
-    yield TextMessageContentEvent(
-        type=EventType.TEXT_MESSAGE_CONTENT,
-        message_id=message_id,
-        delta=text + " ✅",
-    )
-    yield TextMessageEndEvent(
-        type=EventType.TEXT_MESSAGE_END,
-        message_id=message_id,
-    )
-
-    # Persist the summary in the timeline so the UI keeps it
-    assistant_msg = AssistantMessage(
-        id=message_id,
-        role="assistant",
-        content=text,
-    )
-    yield MessagesSnapshotEvent(
-        type=EventType.MESSAGES_SNAPSHOT,
-        messages=list(context.input_data.messages) + [assistant_msg],
-    )
-
 
 def build_state_context(input_data, user_message: str) -> str:
     """Augment the user message with existing plan context to discourage replanning."""
@@ -244,7 +207,6 @@ generative_ui_config = StrandsAgentConfig(
             ],
             state_from_result=steps_state_from_result,
             custom_result_handler=simulate_progress,
-            stop_streaming_after_result=True,
         )
     }
 )

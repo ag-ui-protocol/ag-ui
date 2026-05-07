@@ -1313,6 +1313,18 @@ class StrandsAgent:
                                             type=EventType.MESSAGES_SNAPSHOT,
                                             messages=list(snapshot_messages),
                                         )
+                                        # Rotate message_id so the next assistant
+                                        # entry (text or another tool call) gets a
+                                        # distinct id. Without this, back-to-back
+                                        # tool calls inside one ``run()`` (e.g.
+                                        # backend tool followed by frontend tool)
+                                        # produce two AssistantMessage snapshots
+                                        # sharing the same id; CopilotKit dedupes
+                                        # by id and drops the earlier entry,
+                                        # orphaning its tool result on the next
+                                        # turn (OpenAI 400: tool must follow
+                                        # tool_calls).
+                                        message_id = str(uuid.uuid4())
 
                                     if is_frontend_tool and not (
                                         behavior
