@@ -1039,6 +1039,7 @@ class StrandsAgent:
                         tool_use = event["current_tool_use"]
                         tool_name = tool_use.get("name")
                         strands_tool_id = tool_use.get("toolUseId")
+                        _raw_in = tool_use.get("input", "")
 
                         # Generate unique ID for frontend tools (to avoid ID conflicts across requests)
                         # Use Strands' ID for backend tools (so result lookup works)
@@ -1068,6 +1069,15 @@ class StrandsAgent:
                         # Update tool input as it streams in
                         tool_input_raw = tool_use.get("input", "")
 
+                        # Raw string form is what FE incrementally parses for
+                        # predict_state. Use it as-is for delta computation so
+                        # the wire stream matches what the LLM actually emitted.
+                        raw_str = (
+                            tool_input_raw
+                            if isinstance(tool_input_raw, str)
+                            else json.dumps(tool_input_raw, default=str)
+                        )
+
                         # Try to parse as JSON if it looks complete
                         tool_input = {}
                         if isinstance(tool_input_raw, str) and tool_input_raw:
@@ -1090,17 +1100,110 @@ class StrandsAgent:
                             tool_name and tool_use_id not in tool_calls_seen
                         )
                         if is_new_tool_call:
+                            is_pending_now = tool_use_id in pending_tool_result_ids
+                            behavior_now = self.config.tool_behaviors.get(tool_name)
+                            # Use the streaming path (emit ToolCallStart +
+                            # PredictState now, ToolCallArgs on each growth,
+                            # ToolCallEnd at contentBlockStop) unless the tool
+                            # is a continuation (already-resolved) or supplies
+                            # a custom args_streamer that wants to drive args
+                            # emission itself at contentBlockStop.
+                            use_streaming = not is_pending_now and not (
+                                behavior_now and behavior_now.args_streamer
+                            )
                             tool_calls_seen[tool_use_id] = {
                                 "name": tool_name,
                                 "args": args_str,
                                 "input": tool_input,
-                                "emitted": False,  # Track if we've emitted events
+                                "raw": raw_str,
+                                "emitted": False,  # legacy flag (still used by contentBlockStop scan)
+                                "start_emitted": False,
+                                "end_emitted": False,
+                                "last_emitted_raw_len": 0,
+                                "is_pending": is_pending_now,
+                                "is_frontend": is_frontend_tool,
+                                "use_streaming": use_streaming,
                                 "strands_tool_id": strands_tool_id,
                             }
+
+                            if use_streaming:
+                                # Close any open assistant text turn so the
+                                # snapshot order matches the wire-event order
+                                # and so message_id can rotate cleanly.
+                                if message_started:
+                                    yield TextMessageEndEvent(
+                                        type=EventType.TEXT_MESSAGE_END,
+                                        message_id=message_id,
+                                    )
+                                    if (
+                                        self.config.emit_messages_snapshot
+                                        and accumulated_text
+                                    ):
+                                        snapshot_messages.append(
+                                            AssistantMessage(
+                                                id=message_id,
+                                                role="assistant",
+                                                content=accumulated_text,
+                                            )
+                                        )
+                                        accumulated_text = ""
+                                        yield MessagesSnapshotEvent(
+                                            type=EventType.MESSAGES_SNAPSHOT,
+                                            messages=list(snapshot_messages),
+                                        )
+                                    message_started = False
+                                    message_id = str(uuid.uuid4())
+
+                                # PredictState mapping must reach the FE BEFORE
+                                # any args delta so the FE knows which tool
+                                # argument feeds which state key while parsing
+                                # incremental JSON.
+                                if behavior_now:
+                                    predict_state_payload = [
+                                        mapping.to_payload()
+                                        for mapping in normalize_predict_state(
+                                            behavior_now.predict_state
+                                        )
+                                    ]
+                                    if predict_state_payload:
+                                        yield CustomEvent(
+                                            type=EventType.CUSTOM,
+                                            name="PredictState",
+                                            value=predict_state_payload,
+                                        )
+
+                                yield ToolCallStartEvent(
+                                    type=EventType.TOOL_CALL_START,
+                                    tool_call_id=tool_use_id,
+                                    tool_call_name=tool_name,
+                                    parent_message_id=message_id,
+                                )
+                                tool_calls_seen[tool_use_id]["start_emitted"] = True
                         elif tool_name and tool_use_id in tool_calls_seen:
                             # Update the input and args as they stream in
                             tool_calls_seen[tool_use_id]["input"] = tool_input
                             tool_calls_seen[tool_use_id]["args"] = args_str
+                            tool_calls_seen[tool_use_id]["raw"] = raw_str
+
+                        # Stream incremental ToolCallArgs deltas as the LLM
+                        # produces more characters of the JSON args. The FE
+                        # uses these to drive predictive state updates per the
+                        # PredictState mapping that was just emitted.
+                        entry = tool_calls_seen.get(tool_use_id)
+                        if (
+                            entry
+                            and entry.get("start_emitted")
+                            and entry.get("use_streaming")
+                        ):
+                            new_len = len(raw_str)
+                            last_len = entry.get("last_emitted_raw_len", 0)
+                            if new_len > last_len:
+                                yield ToolCallArgsEvent(
+                                    type=EventType.TOOL_CALL_ARGS,
+                                    tool_call_id=tool_use_id,
+                                    delta=raw_str[last_len:new_len],
+                                )
+                                entry["last_emitted_raw_len"] = new_len
 
                     # Handle content block stop - this signals tool input is complete
                     elif "event" in event and isinstance(event.get("event"), dict):
@@ -1135,14 +1238,18 @@ class StrandsAgent:
 
                             # Only process if we found a tool to emit
                             if tool_name and tool_use_id:
-                                # Mark as emitted
-                                tool_calls_seen[tool_use_id]["emitted"] = True
+                                entry = tool_calls_seen[tool_use_id]
+                                # Mark as emitted (legacy compat)
+                                entry["emitted"] = True
+                                entry["end_emitted"] = True
 
-                                is_frontend_tool = tool_name in frontend_tool_names
+                                is_frontend_tool = entry.get("is_frontend", tool_name in frontend_tool_names)
                                 behavior = self.config.tool_behaviors.get(tool_name)
+                                is_pending = entry.get("is_pending", tool_use_id in pending_tool_result_ids)
+                                use_streaming = entry.get("use_streaming", False)
 
                                 logger.debug(
-                                    f"Processing tool call on contentBlockStop: tool_name={tool_name}, tool_use_id={tool_use_id}, is_frontend_tool={is_frontend_tool}, is_pending_result={tool_use_id in pending_tool_result_ids}, args_str={args_str}, thread_id={input_data.thread_id}"
+                                    f"contentBlockStop close: tool_name={tool_name}, tool_use_id={tool_use_id}, is_frontend_tool={is_frontend_tool}, is_pending={is_pending}, use_streaming={use_streaming}, thread_id={input_data.thread_id}"
                                 )
                                 call_context = ToolCallContext(
                                     input_data=input_data,
@@ -1152,125 +1259,55 @@ class StrandsAgent:
                                     args_str=args_str,
                                 )
 
-                                if behavior and behavior.state_from_args:
-                                    try:
-                                        snapshot = await maybe_await(
-                                            behavior.state_from_args(call_context)
-                                        )
-                                        if snapshot:
-                                            current_state.update(snapshot)
-                                            yield StateSnapshotEvent(
-                                                type=EventType.STATE_SNAPSHOT,
-                                                snapshot=snapshot,
-                                            )
-                                    except Exception as e:
-                                        logger.warning(
-                                            f"state_from_args failed for {tool_name}: {e}",
-                                            exc_info=True,
-                                        )
-
-                                if behavior:
-                                    predict_state_payload = [
-                                        mapping.to_payload()
-                                        for mapping in normalize_predict_state(
-                                            behavior.predict_state
-                                        )
-                                    ]
-                                    if predict_state_payload:
-                                        yield CustomEvent(
-                                            type=EventType.CUSTOM,
-                                            name="PredictState",
-                                            value=predict_state_payload,
-                                        )
-                                # Only suppress START for tool calls whose results are already
-                                # in the conversation history (pending_tool_result_ids).
-                                # New tool calls in this turn must still emit START events.
-                                is_pending = tool_use_id in pending_tool_result_ids
-                                if is_pending:
-                                    logger.debug(
-                                        f"Skipping tool call START event for already-resolved tool {tool_name} (tool_use_id={tool_use_id}, thread_id={input_data.thread_id})"
-                                    )
-
-                                if not is_pending:
-                                    # Close any open text message before starting a tool call
-                                    # so each segment has clean start/end boundaries.
-                                    if message_started:
-                                        yield TextMessageEndEvent(
-                                            type=EventType.TEXT_MESSAGE_END, message_id=message_id
-                                        )
-                                        # Commit the just-closed assistant
-                                        # text into the running snapshot
-                                        # under its own message_id, before
-                                        # we rotate ``message_id`` for the
-                                        # upcoming tool-call turn.
-                                        if (
-                                            self.config.emit_messages_snapshot
-                                            and accumulated_text
-                                        ):
-                                            snapshot_messages.append(
-                                                AssistantMessage(
-                                                    id=message_id,
-                                                    role="assistant",
-                                                    content=accumulated_text,
-                                                )
-                                            )
-                                            accumulated_text = ""
-                                            yield MessagesSnapshotEvent(
-                                                type=EventType.MESSAGES_SNAPSHOT,
-                                                messages=list(snapshot_messages),
-                                            )
-                                        message_started = False
-                                        message_id = str(uuid.uuid4())
-
-                                    logger.debug(
-                                        f"Emitting tool call events for {tool_name} (tool_use_id={tool_use_id}, thread_id={input_data.thread_id})"
-                                    )
-                                    yield ToolCallStartEvent(
-                                        type=EventType.TOOL_CALL_START,
-                                        tool_call_id=tool_use_id,
-                                        tool_call_name=tool_name,
-                                        parent_message_id=message_id,
-                                    )
-
-                                    if behavior and behavior.args_streamer:
-                                        try:
-                                            async for chunk in behavior.args_streamer(
-                                                call_context
-                                            ):
-                                                if chunk is None:
-                                                    continue
-                                                yield ToolCallArgsEvent(
-                                                    type=EventType.TOOL_CALL_ARGS,
-                                                    tool_call_id=tool_use_id,
-                                                    delta=str(chunk),
-                                                )
-                                        except Exception as e:
-                                            logger.warning(
-                                                f"args_streamer failed for {tool_name}, falling back to full args: {e}"
-                                            )
-                                            yield ToolCallArgsEvent(
-                                                type=EventType.TOOL_CALL_ARGS,
-                                                tool_call_id=tool_use_id,
-                                                delta=args_str,
-                                            )
-                                    else:
+                                if use_streaming:
+                                    # Streaming path: ToolCallStart, PredictState
+                                    # and the args deltas have already been
+                                    # emitted from the current_tool_use handler.
+                                    # Flush any final delta the LLM tacked on
+                                    # between the last current_tool_use update
+                                    # and contentBlockStop, then close the call.
+                                    raw_str = entry.get("raw", "") or ""
+                                    last_len = entry.get("last_emitted_raw_len", 0)
+                                    if len(raw_str) > last_len:
                                         yield ToolCallArgsEvent(
                                             type=EventType.TOOL_CALL_ARGS,
                                             tool_call_id=tool_use_id,
-                                            delta=args_str,
+                                            delta=raw_str[last_len:],
                                         )
+                                        entry["last_emitted_raw_len"] = len(raw_str)
+
+                                    # Emit ``state_from_args`` BEFORE
+                                    # ``ToolCallEnd``. CopilotKit v2 releases
+                                    # the predict_state buffer at ToolCallEnd;
+                                    # if the authoritative StateSnapshot lands
+                                    # after that, the FE momentarily reverts
+                                    # to the last server-confirmed state and
+                                    # re-applies, producing a "re-stream"
+                                    # animation. Delivering the snapshot first
+                                    # means the FE has the real state in hand
+                                    # at the moment prediction is released.
+                                    if behavior and behavior.state_from_args:
+                                        try:
+                                            snapshot = await maybe_await(
+                                                behavior.state_from_args(call_context)
+                                            )
+                                            if snapshot:
+                                                current_state.update(snapshot)
+                                                yield StateSnapshotEvent(
+                                                    type=EventType.STATE_SNAPSHOT,
+                                                    snapshot=snapshot,
+                                                )
+                                        except Exception as e:
+                                            logger.warning(
+                                                f"state_from_args failed for {tool_name}: {e}",
+                                                exc_info=True,
+                                            )
 
                                     yield ToolCallEndEvent(
                                         type=EventType.TOOL_CALL_END,
                                         tool_call_id=tool_use_id,
                                     )
 
-                                    # Splice point 2 of 4: append the
-                                    # AssistantMessage that carries this
-                                    # tool call into the running snapshot,
-                                    # then re-emit. CopilotKit v2 keys
-                                    # tool-call rendering off the message
-                                    # tree, not the raw TOOL_CALL_* events.
                                     if (
                                         self.config.emit_messages_snapshot
                                         and not (
@@ -1278,20 +1315,6 @@ class StrandsAgent:
                                             and behavior.skip_messages_snapshot
                                         )
                                     ):
-                                        # Close any open assistant text
-                                        # turn into the snapshot before
-                                        # appending the tool-call turn,
-                                        # so the snapshot's message order
-                                        # matches the wire-event order.
-                                        if message_started and accumulated_text:
-                                            snapshot_messages.append(
-                                                AssistantMessage(
-                                                    id=message_id,
-                                                    role="assistant",
-                                                    content=accumulated_text,
-                                                )
-                                            )
-                                            accumulated_text = ""
                                         snapshot_messages.append(
                                             AssistantMessage(
                                                 id=message_id,
@@ -1313,17 +1336,162 @@ class StrandsAgent:
                                             type=EventType.MESSAGES_SNAPSHOT,
                                             messages=list(snapshot_messages),
                                         )
-                                        # Rotate message_id so the next assistant
-                                        # entry (text or another tool call) gets a
-                                        # distinct id. Without this, back-to-back
-                                        # tool calls inside one ``run()`` (e.g.
-                                        # backend tool followed by frontend tool)
-                                        # produce two AssistantMessage snapshots
-                                        # sharing the same id; CopilotKit dedupes
-                                        # by id and drops the earlier entry,
-                                        # orphaning its tool result on the next
-                                        # turn (OpenAI 400: tool must follow
-                                        # tool_calls).
+                                        # Rotate so the next assistant message
+                                        # in the snapshot (text or another
+                                        # tool call) carries a distinct id —
+                                        # CopilotKit v2 dedupes by id.
+                                        message_id = str(uuid.uuid4())
+
+                                    if is_frontend_tool and not (
+                                        behavior
+                                        and behavior.continue_after_frontend_call
+                                    ):
+                                        logger.debug(
+                                            f"Deferring halt after frontend tool call: tool_name={tool_name}, tool_call_id={tool_use_id}, thread_id={input_data.thread_id}"
+                                        )
+                                        pending_halt = True
+                                elif is_pending:
+                                    # Continuation turn — tool already resolved
+                                    # in conversation history. Don't re-emit any
+                                    # wire events but still let state callbacks
+                                    # fire so derived state stays consistent.
+                                    if behavior and behavior.state_from_args:
+                                        try:
+                                            snapshot = await maybe_await(
+                                                behavior.state_from_args(call_context)
+                                            )
+                                            if snapshot:
+                                                current_state.update(snapshot)
+                                                yield StateSnapshotEvent(
+                                                    type=EventType.STATE_SNAPSHOT,
+                                                    snapshot=snapshot,
+                                                )
+                                        except Exception as e:
+                                            logger.warning(
+                                                f"state_from_args failed for {tool_name}: {e}",
+                                                exc_info=True,
+                                            )
+                                else:
+                                    # Legacy path: behavior.args_streamer is
+                                    # configured. Emit the full burst at
+                                    # contentBlockStop using the custom
+                                    # streamer so existing args_streamer
+                                    # consumers keep working.
+                                    if behavior and behavior.state_from_args:
+                                        try:
+                                            snapshot = await maybe_await(
+                                                behavior.state_from_args(call_context)
+                                            )
+                                            if snapshot:
+                                                current_state.update(snapshot)
+                                                yield StateSnapshotEvent(
+                                                    type=EventType.STATE_SNAPSHOT,
+                                                    snapshot=snapshot,
+                                                )
+                                        except Exception as e:
+                                            logger.warning(
+                                                f"state_from_args failed for {tool_name}: {e}",
+                                                exc_info=True,
+                                            )
+
+                                    if behavior:
+                                        predict_state_payload = [
+                                            mapping.to_payload()
+                                            for mapping in normalize_predict_state(
+                                                behavior.predict_state
+                                            )
+                                        ]
+                                        if predict_state_payload:
+                                            yield CustomEvent(
+                                                type=EventType.CUSTOM,
+                                                name="PredictState",
+                                                value=predict_state_payload,
+                                            )
+
+                                    if message_started:
+                                        yield TextMessageEndEvent(
+                                            type=EventType.TEXT_MESSAGE_END, message_id=message_id
+                                        )
+                                        if (
+                                            self.config.emit_messages_snapshot
+                                            and accumulated_text
+                                        ):
+                                            snapshot_messages.append(
+                                                AssistantMessage(
+                                                    id=message_id,
+                                                    role="assistant",
+                                                    content=accumulated_text,
+                                                )
+                                            )
+                                            accumulated_text = ""
+                                            yield MessagesSnapshotEvent(
+                                                type=EventType.MESSAGES_SNAPSHOT,
+                                                messages=list(snapshot_messages),
+                                            )
+                                        message_started = False
+                                        message_id = str(uuid.uuid4())
+
+                                    yield ToolCallStartEvent(
+                                        type=EventType.TOOL_CALL_START,
+                                        tool_call_id=tool_use_id,
+                                        tool_call_name=tool_name,
+                                        parent_message_id=message_id,
+                                    )
+
+                                    try:
+                                        async for chunk in behavior.args_streamer(
+                                            call_context
+                                        ):
+                                            if chunk is None:
+                                                continue
+                                            yield ToolCallArgsEvent(
+                                                type=EventType.TOOL_CALL_ARGS,
+                                                tool_call_id=tool_use_id,
+                                                delta=str(chunk),
+                                            )
+                                    except Exception as e:
+                                        logger.warning(
+                                            f"args_streamer failed for {tool_name}, falling back to full args: {e}"
+                                        )
+                                        yield ToolCallArgsEvent(
+                                            type=EventType.TOOL_CALL_ARGS,
+                                            tool_call_id=tool_use_id,
+                                            delta=args_str,
+                                        )
+
+                                    yield ToolCallEndEvent(
+                                        type=EventType.TOOL_CALL_END,
+                                        tool_call_id=tool_use_id,
+                                    )
+
+                                    if (
+                                        self.config.emit_messages_snapshot
+                                        and not (
+                                            behavior
+                                            and behavior.skip_messages_snapshot
+                                        )
+                                    ):
+                                        snapshot_messages.append(
+                                            AssistantMessage(
+                                                id=message_id,
+                                                role="assistant",
+                                                content="",
+                                                tool_calls=[
+                                                    ToolCall(
+                                                        id=tool_use_id,
+                                                        type="function",
+                                                        function=FunctionCall(
+                                                            name=tool_name or "unknown",
+                                                            arguments=args_str or "{}",
+                                                        ),
+                                                    )
+                                                ],
+                                            )
+                                        )
+                                        yield MessagesSnapshotEvent(
+                                            type=EventType.MESSAGES_SNAPSHOT,
+                                            messages=list(snapshot_messages),
+                                        )
                                         message_id = str(uuid.uuid4())
 
                                     if is_frontend_tool and not (
