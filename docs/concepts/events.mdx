@@ -748,44 +748,6 @@ A side-band annotation event that can occur anywhere in the stream.
 | `metaType` | Application-defined type (e.g., "thumbs_up", "tag") |
 | `payload`  | Application-defined payload                         |
 
-### Modified Lifecycle Events
-
-<span
-  style={{
-    backgroundColor: "#3b82f6",
-    color: "white",
-    padding: "2px 6px",
-    borderRadius: "4px",
-    fontSize: "0.75em",
-    fontWeight: "bold",
-  }}
->
-  DRAFT
-</span>
-[View Specification](/concepts/interrupts)
-
-Extensions to existing lifecycle events to support interrupts and branching.
-
-#### RunFinished (Extended)
-
-The `RunFinished` event gains new fields to support interrupt-aware workflows.
-
-| Property  | Description                                                                                                                       |
-| --------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `outcome` | Optional discriminated union: `{ type: "success" }` or `{ type: "interrupt", interrupts: [...] }`. Omitted on legacy producers.   |
-| `result`  | Optional. Free-form completion payload. Lives at the event root for back-compat with legacy producers; coexists with any outcome. |
-
-See [Serialization](/concepts/serialization) for lineage and input capture.
-
-#### RunStarted (Extended)
-
-The `RunStarted` event gains new fields to support branching and input tracking.
-
-| Property      | Description                                       |
-| ------------- | ------------------------------------------------- |
-| `parentRunId` | Optional: Parent run ID for branching/time travel |
-| `input`       | Optional: The exact agent input for this run      |
-
 ## Event Flow Patterns
 
 Events in the protocol typically follow specific patterns:
