@@ -144,3 +144,4 @@ vite.config.ts.timestamp-*
 
 # Mastra files
 .mastra
+.env.local

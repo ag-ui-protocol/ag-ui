@@ -134,6 +134,27 @@ class UserMessage(BaseMessage):
 | `content` | `Union[str, List["InputContent"]]` | Either a plain text string or an ordered list of multimodal fragments |
 | `name`    | `Optional[str]`                    | Optional name of the sender                                           |
 
+### InputContentSource
+
+Represents how a non-text part is supplied.
+
+```python
+InputContentSource = Annotated[
+    Union[InputContentDataSource, InputContentUrlSource],
+    Field(discriminator="type"),
+]
+
+class InputContentDataSource(ConfiguredBaseModel):
+    type: Literal["data"]
+    value: str
+    mime_type: str
+
+class InputContentUrlSource(ConfiguredBaseModel):
+    type: Literal["url"]
+    value: str
+    mime_type: Optional[str] = None
+```
+
 ### TextInputContent
 
 Represents a text fragment inside a multimodal user message.
@@ -173,6 +194,33 @@ class BinaryInputContent(ConfiguredBaseModel):
 | `filename`  | `Optional[str]`     | Optional filename hint                        |
 
 > **Validation:** At least one of `id`, `url`, or `data` must be provided.
+>
+> **Deprecated:** `BinaryInputContent` remains available as a temporary
+> compatibility model. Prefer modality-specific parts below.
+
+### ImageInputContent / AudioInputContent / VideoInputContent / DocumentInputContent
+
+```python
+class ImageInputContent(ConfiguredBaseModel):
+    type: Literal["image"]
+    source: InputContentSource
+    metadata: Optional[Any] = None
+
+class AudioInputContent(ConfiguredBaseModel):
+    type: Literal["audio"]
+    source: InputContentSource
+    metadata: Optional[Any] = None
+
+class VideoInputContent(ConfiguredBaseModel):
+    type: Literal["video"]
+    source: InputContentSource
+    metadata: Optional[Any] = None
+
+class DocumentInputContent(ConfiguredBaseModel):
+    type: Literal["document"]
+    source: InputContentSource
+    metadata: Optional[Any] = None
+```
 
 ### ToolMessage
 

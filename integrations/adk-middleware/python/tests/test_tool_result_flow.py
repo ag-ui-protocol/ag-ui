@@ -495,7 +495,7 @@ class TestToolResultFlow:
             )
 
         # Mock pending tool call check to return True so tool result is accepted
-        async def mock_has_pending_tool_calls(session_id):
+        async def mock_has_pending_tool_calls(*_args, **_kwargs):
             return True
 
         with patch.object(

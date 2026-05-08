@@ -2,13 +2,15 @@ import os
 import uvicorn
 from fastapi import FastAPI
 
-from .endpoint import add_crewai_flow_fastapi_endpoint
+from .endpoint import add_crewai_flow_fastapi_endpoint, add_crewai_crew_fastapi_endpoint
+from .examples.crew_chat import CrewChatCrew
 from .examples.agentic_chat import AgenticChatFlow
 from .examples.human_in_the_loop import HumanInTheLoopFlow
 from .examples.tool_based_generative_ui import ToolBasedGenerativeUIFlow
 from .examples.agentic_generative_ui import AgenticGenerativeUIFlow
 from .examples.shared_state import SharedStateFlow
 from .examples.predictive_state_updates import PredictiveStateUpdatesFlow
+from .examples.error_flow import ErrorFlow
 
 app = FastAPI(title="CrewAI Dojo Example Server")
 
@@ -46,6 +48,18 @@ add_crewai_flow_fastapi_endpoint(
     app=app,
     flow=PredictiveStateUpdatesFlow(),
     path="/predictive_state_updates",
+)
+
+add_crewai_crew_fastapi_endpoint(
+    app=app,
+    crew=CrewChatCrew(),
+    path="/crew_chat",
+)
+
+add_crewai_flow_fastapi_endpoint(
+    app=app,
+    flow=ErrorFlow(),
+    path="/error_flow",
 )
 
 def main():

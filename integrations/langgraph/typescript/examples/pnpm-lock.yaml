@@ -11,9 +11,15 @@ importers:
       '@copilotkit/sdk-js':
         specifier: 0.0.0-mme-ag-ui-0-0-46-20260227141603
         version: 0.0.0-mme-ag-ui-0-0-46-20260227141603(@ag-ui/core@0.0.42)(@langchain/community@0.0.53(openai@6.15.0(zod@3.25.76)))(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(@langchain/langgraph@1.0.7(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(zod-to-json-schema@3.24.6(zod@3.25.76))(zod@3.25.76))(langchain@1.2.8(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(openai@6.15.0(zod@3.25.76))(zod-to-json-schema@3.24.6(zod@3.25.76)))(typescript@5.8.3)(zod@3.25.76)
+      '@langchain/anthropic':
+        specifier: ^0.3.0
+        version: 0.3.34(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(zod@3.25.76)
       '@langchain/core':
         specifier: ^1.1.7
         version: 1.1.7(openai@6.15.0(zod@3.25.76))
+      '@langchain/google-genai':
+        specifier: ^0.2.0
+        version: 0.2.18(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))
       '@langchain/langgraph':
         specifier: ^1.0.7
         version: 1.0.7(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(zod-to-json-schema@3.24.6(zod@3.25.76))(zod@3.25.76)
@@ -45,6 +51,19 @@ packages:
   '@ag-ui/core@0.0.42':
     resolution: {integrity: sha512-C2hMg4Gs5oiUDgK9cA2RsTwSSmFZdIsqPklDrFw/Ue+quH6EU3vKp5YoOq7nuaQYO4pO8Em+Z+l5/M5PpcvP1g==}
 
+  '@anthropic-ai/sdk@0.65.0':
+    resolution: {integrity: sha512-zIdPOcrCVEI8t3Di40nH4z9EoeyGZfXbYSvWdDLsB/KkaSYMnEgC7gmcgWu83g2NTn1ZTpbMvpdttWDGGIk6zw==}
+    hasBin: true
+    peerDependencies:
+      zod: ^3.25.0 || ^4.0.0
+    peerDependenciesMeta:
+      zod:
+        optional: true
+
+  '@babel/runtime@7.29.2':
+    resolution: {integrity: sha512-JiDShH45zKHWyGe4ZNVRrCjBz8Nh9TMmZG1kh4QTK8hCBTWBi8Da+i7s1fJw7/lYpM4ccepSNfqzZ/QvABBi5g==}
+    engines: {node: '>=6.9.0'}
+
   '@cfworker/json-schema@4.1.1':
     resolution: {integrity: sha512-gAmrUZSGtKc3AiBL71iNWxDsyUC5uMaKKGdvzYsBoTW/xi42JQHl7eKV2OYzCUqvc+D2RCcf7EXY2iCyFIk6og==}
 
@@ -62,6 +81,16 @@ packages:
     resolution: {integrity: sha512-b29dZR67mDq85v9h4ritwJ3dUVek8UpR4MZ0SHuFgZF7BYzMOGoGleh96H/8Mj1s6hTiQ781NVAPEJ6OiY4FDA==}
     peerDependencies:
       '@ag-ui/core': ^0.0.46
+
+  '@google/generative-ai@0.24.1':
+    resolution: {integrity: sha512-MqO+MLfM6kjxcKoy0p1wRzG3b4ZZXtPI+z2IE26UogS2Cm/XHO+7gGRBh6gcJsOiIVoH93UwKvW4HdgiOZCy9Q==}
+    engines: {node: '>=18.0.0'}
+
+  '@langchain/anthropic@0.3.34':
+    resolution: {integrity: sha512-8bOW1A2VHRCjbzdYElrjxutKNs9NSIxYRGtR+OJWVzluMqoKKh2NmmFrpPizEyqCUEG2tTq5xt6XA1lwfqMJRA==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      '@langchain/core': '>=0.3.58 <0.4.0'
 
   '@langchain/community@0.0.53':
     resolution: {integrity: sha512-iFqZPt4MRssGYsQoKSXWJQaYTZCC7WNuilp2JCCs3wKmJK3l6mR0eV+PDrnT+TaDHUVxt/b0rwgM0sOiy0j2jA==}
@@ -353,6 +382,12 @@ packages:
     resolution: {integrity: sha512-NSZSi33+V/8RVv1szsUiX7u+jXVCDImr2VO74SiKgJrhyxXKdJcxa3HMPKwdU+tkgQ6T+R7wxVYQ1Cnd4Z48tA==}
     engines: {node: '>=20'}
 
+  '@langchain/google-genai@0.2.18':
+    resolution: {integrity: sha512-m9EiN3VKC01A7/625YQ6Q1Lqq8zueewADX4W5Tcme4RImN75zkg2Z7FYbD1Fo6Zwolc4wBNO6LUtbg3no4rv1Q==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      '@langchain/core': '>=0.3.58 <0.4.0'
+
   '@langchain/langgraph-checkpoint@1.0.0':
     resolution: {integrity: sha512-xrclBGvNCXDmi0Nz28t3vjpxSH6UYx6w5XAXSiiB1WEdc2xD2iY/a913I3x3a31XpInUW/GGfXXfePfaghV54A==}
     engines: {node: '>=18'}
@@ -531,6 +566,10 @@ packages:
   expr-eval@2.0.2:
     resolution: {integrity: sha512-4EMSHGOPSwAfBiibw3ndnP0AvjDWLsMvGOvWEZ2F96IGk0bIVdjQisOHxReSkE13mHcfbuCiXw+G4y0zv6N8Eg==}
 
+  fast-xml-parser@4.5.6:
+    resolution: {integrity: sha512-Yd4vkROfJf8AuJrDIVMVmYfULKmIJszVsMv7Vo71aocsKgFxpdlpSHXSaInvyYfgw2PRuObQSW2GFpVMUjxu9A==}
+    hasBin: true
+
   flat@5.0.2:
     resolution: {integrity: sha512-b6suED+5/3rTpUBdG1gupIl8MPFCAMA0QXwmljLhvCUKcUvdE4gWky9zpuGCcXHOsz4J9wPGNWq6OKpmIzz3hQ==}
     hasBin: true
@@ -595,6 +634,10 @@ packages:
 
   js-tiktoken@1.0.20:
     resolution: {integrity: sha512-Xlaqhhs8VfCd6Sh7a1cFkZHQbYTLCwVJJWiHVxBYzLPxW0XsoxBy1hitmjkdIjD3Aon5BXLHFwU5O8WUx6HH+A==}
+
+  json-schema-to-ts@3.1.1:
+    resolution: {integrity: sha512-+DWg8jCJG2TEnpy7kOm/7/AxaYoaRbjVB4LFZLySZlWn8exGs3A4OLJR966cVvU26N7X9TWxl+Jsw7dzAqKT6g==}
+    engines: {node: '>=16'}
 
   langchain@1.2.8:
     resolution: {integrity: sha512-d2WYSVBUK7d3rX1pfYoDBLANWpqgKlTPbc1zjQmJj1zsLPV5rUlF0jZXdy+fdxiqtG7vSaVuaX8H3cp26pWR5w==}
@@ -734,12 +777,18 @@ packages:
   simple-wcswidth@1.1.2:
     resolution: {integrity: sha512-j7piyCjAeTDSjzTSQ7DokZtMNwNlEAyxqSZeCS+CXH7fJ4jx3FuJ/mTW3mE+6JLs4VJBbcll0Kjn+KXI5t21Iw==}
 
+  strnum@1.1.2:
+    resolution: {integrity: sha512-vrN+B7DBIoTTZjnPNewwhx6cBA/H+IS7rfW68n7XxC1y7uoiGQBxaKzqucGUgavX15dJgiGztLJ8vxuEzwqBdA==}
+
   supports-color@7.2.0:
     resolution: {integrity: sha512-qpCAvRl9stuOHveKsn7HncJRvv501qIacKzQlO/+Lwxc9+0q2wLyv4Dfvt80/DPn2pqOBsJdDiogXGR9+OvwRw==}
     engines: {node: '>=8'}
 
   tr46@0.0.3:
     resolution: {integrity: sha512-N3WMsuqV66lT30CrXNbEjx4GEwlow3v6rr4mCcv6prnfwhS01rkgyFdjPNBYd9br7LpXV1+Emh01fHnq2Gdgrw==}
+
+  ts-algebra@2.0.0:
+    resolution: {integrity: sha512-FPAhNPFMrkwz76P7cdjdmiShwMynZYN6SgOujD1urY4oNm80Ou9oMdmbR45LotcKOXoy7wSmHkRFE6Mxbrhefw==}
 
   tslib@2.8.1:
     resolution: {integrity: sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==}
@@ -757,6 +806,10 @@ packages:
 
   uuid@10.0.0:
     resolution: {integrity: sha512-8XkAphELsDnEGrDxUOHB3RGvXz6TeuYSGEZBOjtTtPm2lwhGBjLgOzLHB63IUWfBpNucQjND6d3AOudO+H3RWQ==}
+    hasBin: true
+
+  uuid@11.1.0:
+    resolution: {integrity: sha512-0/A9rDy9P7cJ+8w1c9WD9V//9Wj15Ce2MPz8Ri6032usz+NfePxx5AcN3bN+r6ZL6jEo066/yNYB3tn4pQEx+A==}
     hasBin: true
 
   uuid@9.0.1:
@@ -788,6 +841,14 @@ snapshots:
       rxjs: 7.8.1
       zod: 3.25.76
 
+  '@anthropic-ai/sdk@0.65.0(zod@3.25.76)':
+    dependencies:
+      json-schema-to-ts: 3.1.1
+    optionalDependencies:
+      zod: 3.25.76
+
+  '@babel/runtime@7.29.2': {}
+
   '@cfworker/json-schema@4.1.1': {}
 
   '@copilotkit/sdk-js@0.0.0-mme-ag-ui-0-0-46-20260227141603(@ag-ui/core@0.0.42)(@langchain/community@0.0.53(openai@6.15.0(zod@3.25.76)))(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(@langchain/langgraph@1.0.7(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(zod-to-json-schema@3.24.6(zod@3.25.76))(zod@3.25.76))(langchain@1.2.8(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(openai@6.15.0(zod@3.25.76))(zod-to-json-schema@3.24.6(zod@3.25.76)))(typescript@5.8.3)(zod@3.25.76)':
@@ -813,6 +874,16 @@ snapshots:
       zod: 3.25.76
     transitivePeerDependencies:
       - encoding
+
+  '@google/generative-ai@0.24.1': {}
+
+  '@langchain/anthropic@0.3.34(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(zod@3.25.76)':
+    dependencies:
+      '@anthropic-ai/sdk': 0.65.0(zod@3.25.76)
+      '@langchain/core': 1.1.7(openai@6.15.0(zod@3.25.76))
+      fast-xml-parser: 4.5.6
+    transitivePeerDependencies:
+      - zod
 
   '@langchain/community@0.0.53(openai@6.15.0(zod@3.25.76))':
     dependencies:
@@ -879,6 +950,12 @@ snapshots:
       - '@opentelemetry/exporter-trace-otlp-proto'
       - '@opentelemetry/sdk-trace-base'
       - openai
+
+  '@langchain/google-genai@0.2.18(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))':
+    dependencies:
+      '@google/generative-ai': 0.24.1
+      '@langchain/core': 1.1.7(openai@6.15.0(zod@3.25.76))
+      uuid: 11.1.0
 
   '@langchain/langgraph-checkpoint@1.0.0(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))':
     dependencies:
@@ -1060,6 +1137,10 @@ snapshots:
 
   expr-eval@2.0.2: {}
 
+  fast-xml-parser@4.5.6:
+    dependencies:
+      strnum: 1.1.2
+
   flat@5.0.2: {}
 
   form-data-encoder@1.7.2: {}
@@ -1126,6 +1207,11 @@ snapshots:
   js-tiktoken@1.0.20:
     dependencies:
       base64-js: 1.5.1
+
+  json-schema-to-ts@3.1.1:
+    dependencies:
+      '@babel/runtime': 7.29.2
+      ts-algebra: 2.0.0
 
   langchain@1.2.8(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(openai@6.15.0(zod@3.25.76))(zod-to-json-schema@3.24.6(zod@3.25.76)):
     dependencies:
@@ -1262,11 +1348,15 @@ snapshots:
 
   simple-wcswidth@1.1.2: {}
 
+  strnum@1.1.2: {}
+
   supports-color@7.2.0:
     dependencies:
       has-flag: 4.0.0
 
   tr46@0.0.3: {}
+
+  ts-algebra@2.0.0: {}
 
   tslib@2.8.1: {}
 
@@ -1277,6 +1367,8 @@ snapshots:
   undici-types@6.21.0: {}
 
   uuid@10.0.0: {}
+
+  uuid@11.1.0: {}
 
   uuid@9.0.1: {}
 

@@ -1,0 +1,20 @@
+# ⚠️ Error Flow (RunErrorEvent Test)
+
+## What This Demo Shows
+
+This demo exercises the **error handling path** in the CrewAI endpoint. The
+backend flow intentionally raises a `RuntimeError` on every request, which
+triggers the `except Exception` handler in `endpoint.py` that emits a
+`RunErrorEvent` via SSE.
+
+## How to Interact
+
+Send any message — the flow will raise immediately and no successful assistant
+response will be generated.
+
+## Technical Details
+
+- `ErrorFlow` raises `RuntimeError` in its `@start()` method before any LLM call
+- The `event_generator` exception handler catches it and emits `RunErrorEvent`
+- This verifies that backend exceptions are properly surfaced to the client
+  rather than silently swallowed

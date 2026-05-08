@@ -1,4 +1,4 @@
-import type { InputContent, Message } from "@ag-ui/client";
+import type { InputContent, InputContentDataSource, InputContentUrlSource, Message } from "@ag-ui/client";
 import { AbstractAgent } from "@ag-ui/client";
 import { MastraClient } from "@mastra/client-js";
 import type { Mastra } from "@mastra/core";
@@ -6,6 +6,13 @@ import type { CoreMessage } from "@mastra/core/llm";
 import { Agent as LocalMastraAgent } from "@mastra/core/agent";
 import { RequestContext } from "@mastra/core/request-context";
 import { MastraAgent } from "./mastra";
+
+function mediaSourceToUrl(source: InputContentDataSource | InputContentUrlSource): string {
+  if (source.type === "data") {
+    return `data:${source.mimeType};base64,${source.value}`;
+  }
+  return source.value;
+}
 
 const toMastraTextContent = (content: Message["content"]): string => {
   if (!content) {
@@ -28,6 +35,73 @@ const toMastraTextContent = (content: Message["content"]): string => {
     .filter(Boolean);
 
   return textParts.join("\n");
+};
+
+const toMastraContent = (content: Message["content"]): string | any[] => {
+  if (!content) {
+    return "";
+  }
+
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  const hasNonTextParts = content.some((part) => part.type !== "text");
+
+  if (!hasNonTextParts) {
+    // Backwards compat: text-only arrays return a joined string
+    type TextInput = Extract<InputContent, { type: "text" }>;
+    const textParts = content
+      .filter((part): part is TextInput => part.type === "text")
+      .map((part: TextInput) => part.text.trim())
+      .filter(Boolean);
+    return textParts.join("\n");
+  }
+
+  // Structured content array with mixed types
+  const parts: any[] = [];
+  for (const part of content) {
+    switch (part.type) {
+      case "text":
+        parts.push({ type: "text", text: part.text });
+        break;
+      case "image":
+        parts.push({ type: "image", image: mediaSourceToUrl(part.source) });
+        break;
+      case "audio":
+      case "video":
+      case "document":
+        parts.push({
+          type: "file",
+          data: mediaSourceToUrl(part.source),
+          mimeType: part.source.mimeType ?? "application/octet-stream",
+        });
+        break;
+      case "binary": {
+        // Deprecated BinaryInputContent
+        const binaryPart = part as Extract<InputContent, { type: "binary" }>;
+        if (binaryPart.url) {
+          parts.push({ type: "image", image: binaryPart.url });
+        } else if (binaryPart.data && binaryPart.mimeType) {
+          parts.push({
+            type: "image",
+            image: `data:${binaryPart.mimeType};base64,${binaryPart.data}`,
+          });
+        } else {
+          console.warn("[toMastraContent] Dropping BinaryInputContent: no url or data provided");
+        }
+        break;
+      }
+      default:
+        console.warn(`[toMastraContent] Unknown content type "${part.type}"; skipping`);
+        break;
+    }
+  }
+  return parts;
 };
 
 export function convertAGUIMessagesToMastra(messages: Message[]): CoreMessage[] {
@@ -53,7 +127,7 @@ export function convertAGUIMessagesToMastra(messages: Message[]): CoreMessage[] 
         content: parts,
       });
     } else if (message.role === "user") {
-      const userContent = toMastraTextContent(message.content);
+      const userContent = toMastraContent(message.content);
       result.push({
         role: "user",
         content: userContent,

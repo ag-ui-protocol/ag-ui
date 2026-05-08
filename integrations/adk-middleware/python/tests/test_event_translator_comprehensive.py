@@ -766,7 +766,7 @@ class TestEventTranslatorComprehensive:
         assert events[0].tool_call_id == "call_123"
         assert events[0].tool_call_name == "test_function"
         assert events[1].tool_call_id == "call_123"
-        assert events[1].delta == '{"param1": "value1"}'
+        assert json.loads(events[1].delta) == {"param1": "value1"}
         assert events[2].tool_call_id == "call_123"
 
     @pytest.mark.asyncio
@@ -1358,11 +1358,11 @@ class TestThoughtHandling:
         return event
 
     @pytest.mark.asyncio
-    async def test_thought_parts_emit_thinking_events(self, translator, mock_adk_event):
-        """Test that parts with thought=True emit THINKING events."""
+    async def test_thought_parts_emit_reasoning_events(self, translator, mock_adk_event):
+        """Test that parts with thought=True emit REASONING events."""
         from ag_ui.core import (
-            ThinkingStartEvent, ThinkingTextMessageStartEvent,
-            ThinkingTextMessageContentEvent
+            ReasoningStartEvent, ReasoningMessageStartEvent,
+            ReasoningMessageContentEvent
         )
 
         # Create a part with thought=True
@@ -1370,6 +1370,7 @@ class TestThoughtHandling:
         mock_part = MagicMock()
         mock_part.text = "Let me think about this..."
         mock_part.thought = True  # Explicitly set to True
+        mock_part.thought_signature = None
         mock_content.parts = [mock_part]
         mock_adk_event.content = mock_content
 
@@ -1377,20 +1378,20 @@ class TestThoughtHandling:
         async for event in translator.translate(mock_adk_event, "thread_1", "run_1"):
             events.append(event)
 
-        # Should emit THINKING_START, THINKING_TEXT_MESSAGE_START, THINKING_TEXT_MESSAGE_CONTENT
+        # Should emit REASONING_START, REASONING_MESSAGE_START, REASONING_MESSAGE_CONTENT
         assert len(events) >= 3
-        assert isinstance(events[0], ThinkingStartEvent)
-        assert isinstance(events[1], ThinkingTextMessageStartEvent)
-        assert isinstance(events[2], ThinkingTextMessageContentEvent)
+        assert isinstance(events[0], ReasoningStartEvent)
+        assert isinstance(events[1], ReasoningMessageStartEvent)
+        assert isinstance(events[2], ReasoningMessageContentEvent)
         assert events[2].delta == "Let me think about this..."
 
     @pytest.mark.asyncio
     async def test_mixed_thought_and_text_parts(self, translator, mock_adk_event):
         """Test handling of mixed thought and regular text parts."""
         from ag_ui.core import (
-            ThinkingStartEvent, ThinkingTextMessageStartEvent,
-            ThinkingTextMessageContentEvent, ThinkingTextMessageEndEvent,
-            ThinkingEndEvent
+            ReasoningStartEvent, ReasoningMessageStartEvent,
+            ReasoningMessageContentEvent, ReasoningMessageEndEvent,
+            ReasoningEndEvent
         )
 
         # Create parts with both thought and regular text
@@ -1399,6 +1400,7 @@ class TestThoughtHandling:
         thought_part = MagicMock()
         thought_part.text = "Thinking..."
         thought_part.thought = True
+        thought_part.thought_signature = None
 
         text_part = MagicMock()
         text_part.text = "Here is my response."
@@ -1411,12 +1413,12 @@ class TestThoughtHandling:
         async for event in translator.translate(mock_adk_event, "thread_1", "run_1"):
             events.append(event)
 
-        # Should have thinking events, then thinking close events, then text events
+        # Should have reasoning events, then reasoning close events, then text events
         event_types = [type(e).__name__ for e in events]
 
-        # Verify thinking events come first
-        assert "ThinkingStartEvent" in event_types
-        assert "ThinkingTextMessageContentEvent" in event_types
+        # Verify reasoning events come first
+        assert "ReasoningStartEvent" in event_types
+        assert "ReasoningMessageContentEvent" in event_types
 
         # Verify text message events are present
         assert "TextMessageStartEvent" in event_types
@@ -1438,11 +1440,11 @@ class TestThoughtHandling:
         async for event in translator.translate(mock_adk_event, "thread_1", "run_1"):
             events.append(event)
 
-        # Should emit regular text events, not thinking events
+        # Should emit regular text events, not reasoning events
         event_types = [type(e).__name__ for e in events]
         assert "TextMessageStartEvent" in event_types
         assert "TextMessageContentEvent" in event_types
-        assert "ThinkingStartEvent" not in event_types
+        assert "ReasoningStartEvent" not in event_types
 
     @pytest.mark.asyncio
     async def test_thought_false_emits_text_events(self, translator, mock_adk_event):
@@ -1462,18 +1464,19 @@ class TestThoughtHandling:
         event_types = [type(e).__name__ for e in events]
         assert "TextMessageStartEvent" in event_types
         assert "TextMessageContentEvent" in event_types
-        assert "ThinkingStartEvent" not in event_types
+        assert "ReasoningStartEvent" not in event_types
 
     @pytest.mark.asyncio
-    async def test_thinking_stream_closed_on_final_response(self, translator, mock_adk_event):
-        """Test that thinking streams are properly closed on final response."""
-        from ag_ui.core import ThinkingEndEvent, ThinkingTextMessageEndEvent
+    async def test_reasoning_stream_closed_on_final_response(self, translator, mock_adk_event):
+        """Test that reasoning streams are properly closed on final response."""
+        from ag_ui.core import ReasoningEndEvent, ReasoningMessageEndEvent
 
-        # First, start a thinking stream
+        # First, start a reasoning stream
         mock_content = MagicMock()
         thought_part = MagicMock()
         thought_part.text = "Thinking..."
         thought_part.thought = True
+        thought_part.thought_signature = None
         mock_content.parts = [thought_part]
         mock_adk_event.content = mock_content
         mock_adk_event.partial = True  # Still streaming
@@ -1482,9 +1485,9 @@ class TestThoughtHandling:
         async for event in translator.translate(mock_adk_event, "thread_1", "run_1"):
             events.append(event)
 
-        # Verify thinking is active
-        assert translator._is_thinking is True
-        assert translator._is_streaming_thinking is True
+        # Verify reasoning is active
+        assert translator._is_reasoning is True
+        assert translator._is_streaming_reasoning is True
 
         # Now send final response
         mock_adk_event.is_final_response = MagicMock(return_value=True)
@@ -1501,29 +1504,29 @@ class TestThoughtHandling:
         async for event in translator.translate(mock_adk_event, "thread_1", "run_1"):
             events.append(event)
 
-        # Should have closed thinking stream
+        # Should have closed reasoning stream
         event_types = [type(e).__name__ for e in events]
-        assert "ThinkingTextMessageEndEvent" in event_types
-        assert "ThinkingEndEvent" in event_types
+        assert "ReasoningMessageEndEvent" in event_types
+        assert "ReasoningEndEvent" in event_types
 
-        # Verify thinking state is reset
-        assert translator._is_thinking is False
-        assert translator._is_streaming_thinking is False
+        # Verify reasoning state is reset
+        assert translator._is_reasoning is False
+        assert translator._is_streaming_reasoning is False
 
-    def test_reset_clears_thinking_state(self, translator):
-        """Test that reset() clears thinking state."""
-        # Set up some thinking state
-        translator._is_thinking = True
-        translator._is_streaming_thinking = True
-        translator._current_thinking_text = "Some thinking"
+    def test_reset_clears_reasoning_state(self, translator):
+        """Test that reset() clears reasoning state."""
+        # Set up some reasoning state
+        translator._is_reasoning = True
+        translator._is_streaming_reasoning = True
+        translator._current_reasoning_text = "Some thinking"
 
         # Reset
         translator.reset()
 
-        # Verify thinking state is cleared
-        assert translator._is_thinking is False
-        assert translator._is_streaming_thinking is False
-        assert translator._current_thinking_text == ""
+        # Verify reasoning state is cleared
+        assert translator._is_reasoning is False
+        assert translator._is_streaming_reasoning is False
+        assert translator._current_reasoning_text == ""
 
     @pytest.mark.asyncio
     async def test_fallback_when_thought_support_unavailable(self, translator, mock_adk_event):
@@ -1549,12 +1552,12 @@ class TestThoughtHandling:
             async for event in translator.translate(mock_adk_event, "thread_1", "run_1"):
                 events.append(event)
 
-        # Should emit regular text events, NOT thinking events
+        # Should emit regular text events, NOT reasoning events
         event_types = [type(e).__name__ for e in events]
         assert "TextMessageStartEvent" in event_types
         assert "TextMessageContentEvent" in event_types
-        assert "ThinkingStartEvent" not in event_types
-        assert "ThinkingTextMessageStartEvent" not in event_types
+        assert "ReasoningStartEvent" not in event_types
+        assert "ReasoningMessageStartEvent" not in event_types
 
     @pytest.mark.asyncio
     async def test_thought_support_check_caching(self):
@@ -1597,4 +1600,60 @@ class TestThoughtHandling:
         event_types = [type(e).__name__ for e in events]
         assert "TextMessageStartEvent" in event_types
         assert "TextMessageContentEvent" in event_types
-        assert "ThinkingStartEvent" not in event_types
+        assert "ReasoningStartEvent" not in event_types
+
+    @pytest.mark.asyncio
+    async def test_thought_signature_emits_encrypted_value(self, translator, mock_adk_event):
+        """Test that thought_signature on a part emits REASONING_ENCRYPTED_VALUE."""
+        from ag_ui.core import (
+            ReasoningStartEvent, ReasoningMessageStartEvent,
+            ReasoningMessageContentEvent, ReasoningEncryptedValueEvent,
+        )
+        import base64
+
+        # Create a part with thought=True and a thought_signature
+        mock_content = MagicMock()
+        mock_part = MagicMock()
+        mock_part.text = "Let me reason about this..."
+        mock_part.thought = True
+        mock_part.thought_signature = b"\x01\x02\x03\x04"  # Opaque signature bytes
+        mock_content.parts = [mock_part]
+        mock_adk_event.content = mock_content
+
+        events = []
+        async for event in translator.translate(mock_adk_event, "thread_1", "run_1"):
+            events.append(event)
+
+        event_types = [type(e).__name__ for e in events]
+
+        # Should have reasoning events
+        assert "ReasoningStartEvent" in event_types
+        assert "ReasoningMessageStartEvent" in event_types
+        assert "ReasoningMessageContentEvent" in event_types
+
+        # Should have encrypted value event
+        assert "ReasoningEncryptedValueEvent" in event_types
+        encrypted_event = [e for e in events if isinstance(e, ReasoningEncryptedValueEvent)][0]
+        assert encrypted_event.subtype == "message"
+        assert encrypted_event.encrypted_value == base64.b64encode(b"\x01\x02\x03\x04").decode("ascii")
+
+    @pytest.mark.asyncio
+    async def test_thought_signature_none_no_encrypted_value(self, translator, mock_adk_event):
+        """Test that thought_signature=None does NOT emit REASONING_ENCRYPTED_VALUE."""
+        from ag_ui.core import ReasoningEncryptedValueEvent
+
+        mock_content = MagicMock()
+        mock_part = MagicMock()
+        mock_part.text = "Thinking without signature..."
+        mock_part.thought = True
+        mock_part.thought_signature = None  # No signature
+        mock_content.parts = [mock_part]
+        mock_adk_event.content = mock_content
+
+        events = []
+        async for event in translator.translate(mock_adk_event, "thread_1", "run_1"):
+            events.append(event)
+
+        # Should NOT have encrypted value event
+        encrypted_events = [e for e in events if isinstance(e, ReasoningEncryptedValueEvent)]
+        assert len(encrypted_events) == 0

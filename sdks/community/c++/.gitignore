@@ -1,0 +1,31 @@
+# Build directories
+build/
+build_*/
+
+# C++ compiled objects and libraries
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# AI assistant files
+.claude/
+.qoder/
+
+# Environment files
+.env

@@ -11,6 +11,7 @@ from autogen.ag_ui import AGUIStream
 agent = ConversableAgent(
     name="haiku_bot",
     llm_config=LLMConfig({"model": "gpt-4o-mini", "stream": True}),
+    human_input_mode="NEVER",
 )
 
 stream = AGUIStream(agent)

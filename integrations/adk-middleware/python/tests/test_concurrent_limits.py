@@ -156,8 +156,8 @@ class TestConcurrentLimits:
         mock_execution2.cancel = AsyncMock()
 
         # Add to active executions
-        adk_middleware._active_executions["stale_thread_1"] = mock_execution1
-        adk_middleware._active_executions["stale_thread_2"] = mock_execution2
+        adk_middleware._active_executions[("stale_thread_1", "test_user")] = mock_execution1
+        adk_middleware._active_executions[("stale_thread_2", "test_user")] = mock_execution2
 
         # Should be at limit
         assert len(adk_middleware._active_executions) == 2
@@ -186,14 +186,14 @@ class TestConcurrentLimits:
         active_execution.is_stale.return_value = False
         active_execution.cancel = AsyncMock()
 
-        adk_middleware._active_executions["stale_thread"] = stale_execution
-        adk_middleware._active_executions["active_thread"] = active_execution
+        adk_middleware._active_executions[("stale_thread", "test_user")] = stale_execution
+        adk_middleware._active_executions[("active_thread", "test_user")] = active_execution
 
         await adk_middleware._cleanup_stale_executions()
 
         # Only stale should be removed
-        assert "stale_thread" not in adk_middleware._active_executions
-        assert "active_thread" in adk_middleware._active_executions
+        assert ("stale_thread", "test_user") not in adk_middleware._active_executions
+        assert ("active_thread", "test_user") in adk_middleware._active_executions
 
         # Only stale should be cancelled
         stale_execution.cancel.assert_called_once()
@@ -268,7 +268,7 @@ class TestConcurrentLimits:
         mock_execution.is_complete = True
         mock_execution.has_pending_tools.return_value = True  # Still has pending tools
 
-        adk_middleware._active_executions["thread_1"] = mock_execution
+        adk_middleware._active_executions[("thread_1", "test_user")] = mock_execution
 
         # Simulate end of _start_new_execution method
         # The finally block should not clean up executions with pending tools
@@ -279,14 +279,15 @@ class TestConcurrentLimits:
         )
 
         # Manually trigger the cleanup logic from the finally block
+        exec_key = (input_data.thread_id, "test_user")
         async with adk_middleware._execution_lock:
-            if input_data.thread_id in adk_middleware._active_executions:
-                execution = adk_middleware._active_executions[input_data.thread_id]
+            if exec_key in adk_middleware._active_executions:
+                execution = adk_middleware._active_executions[exec_key]
                 if execution.is_complete and not execution.has_pending_tools():
-                    del adk_middleware._active_executions[input_data.thread_id]
+                    del adk_middleware._active_executions[exec_key]
 
         # Should still be in active executions
-        assert "thread_1" in adk_middleware._active_executions
+        assert ("thread_1", "test_user") in adk_middleware._active_executions
 
     @pytest.mark.asyncio
     async def test_high_concurrent_limit(self):
@@ -307,7 +308,7 @@ class TestConcurrentLimits:
         for i in range(10):
             mock_execution = MagicMock()
             mock_execution.is_stale.return_value = False
-            high_limit_middleware._active_executions[f"thread_{i}"] = mock_execution
+            high_limit_middleware._active_executions[(f"thread_{i}", "test_user")] = mock_execution
 
         # Should not hit the limit
         assert len(high_limit_middleware._active_executions) == 10
@@ -332,7 +333,7 @@ class TestConcurrentLimits:
             # Make them stale by setting an old start time
             execution.start_time = time.time() - 1000  # 1000 seconds ago, definitely stale
             execution.cancel = AsyncMock()  # Mock the cancel method
-            adk_middleware._active_executions[f"stale_{i}"] = execution
+            adk_middleware._active_executions[(f"stale_{i}", "test_user")] = execution
 
         # Use lighter mocking - just mock the ADK background execution
         async def mock_run_adk_in_background(*args, **_kwargs):
@@ -358,5 +359,5 @@ class TestConcurrentLimits:
             assert isinstance(events[0], RunStartedEvent)
 
             # Old stale executions should be gone
-            assert "stale_0" not in adk_middleware._active_executions
-            assert "stale_1" not in adk_middleware._active_executions
+            assert ("stale_0", "test_user") not in adk_middleware._active_executions
+            assert ("stale_1", "test_user") not in adk_middleware._active_executions

@@ -13,27 +13,16 @@ os.environ["OTEL_SDK_DISABLED"] = "true"
 os.environ["OTEL_PYTHON_DISABLED_INSTRUMENTATIONS"] = "all"
 
 from strands import Agent, tool
-from strands.models.gemini import GeminiModel
 from ag_ui_strands import StrandsAgent, create_strands_app
+from server.model_factory import create_model
 
 # Load environment variables from .env file
 env_path = Path(__file__).parent.parent.parent / '.env'
 
 load_dotenv(dotenv_path=env_path)
 
-# Use Gemini model
-model = GeminiModel(
-    client_args={
-        "api_key": os.getenv("GOOGLE_API_KEY", "your-api-key-here"),
-    },
-    model_id="gemini-2.5-flash",
-    params={
-        "temperature": 0.7,
-        "max_output_tokens": 2048,
-        "top_p": 0.9,
-        "top_k": 40
-    }
-)
+# Create model from MODEL_PROVIDER env var (default: openai)
+model = create_model()
 
 # Define backend tools for demonstration
 @tool

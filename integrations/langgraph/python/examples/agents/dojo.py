@@ -13,14 +13,16 @@ from copilotkit import LangGraphAGUIAgent
 
 from .agentic_chat.agent import graph as agentic_chat_graph
 from .agentic_chat_reasoning.agent import graph as agentic_chat_reasoning_graph
+from .agentic_chat_multimodal.agent import graph as agentic_chat_multimodal_graph
 from .agentic_generative_ui.agent import graph as agentic_generative_ui_graph
 from .backend_tool_rendering.agent import graph as backend_tool_rendering_graph
 from .human_in_the_loop.agent import graph as human_in_the_loop_graph
 from .predictive_state_updates.agent import graph as predictive_state_updates_graph
 from .shared_state.agent import graph as shared_state_graph
 from .subgraphs.agent import graph as subgraphs_graph
-from .a2ui_chat.agent import graph as a2ui_chat_graph
 from .tool_based_generative_ui.agent import graph as tool_based_generative_ui_graph
+from .a2ui_fixed_schema.agent import graph as a2ui_fixed_schema_graph
+from .a2ui_dynamic_schema.agent import graph as a2ui_dynamic_schema_graph
 
 app = FastAPI(title="LangGraph Dojo Example Server")
 
@@ -66,15 +68,25 @@ agents = {
         description="An example for a reasoning chat.",
         graph=agentic_chat_reasoning_graph,
     ),
+    "agentic_chat_multimodal": LangGraphAgent(
+        name="agentic_chat_multimodal",
+        description="A multimodal agentic chat that can analyze images and other media.",
+        graph=agentic_chat_multimodal_graph,
+    ),
     "subgraphs": LangGraphAgent(
         name="subgraphs",
         description="A demo of LangGraph subgraphs using a Game Character Creator.",
         graph=subgraphs_graph,
     ),
-    "a2ui_chat": LangGraphAgent(
-        name="a2ui_chat",
-        description="An agent that can render A2UI surfaces.",
-        graph=a2ui_chat_graph,
+    "a2ui_fixed_schema": LangGraphAgent(
+        name="a2ui_fixed_schema",
+        description="Fixed-schema A2UI flight search (no streaming).",
+        graph=a2ui_fixed_schema_graph,
+    ),
+"a2ui_dynamic_schema": LangGraphAgent(
+        name="a2ui_dynamic_schema",
+        description="Dynamic A2UI with LLM-generated UI schema.",
+        graph=a2ui_dynamic_schema_graph,
     ),
 }
 
@@ -120,11 +132,22 @@ add_langgraph_fastapi_endpoint(
 )
 
 add_langgraph_fastapi_endpoint(
-    app=app, agent=agents["subgraphs"], path="/agent/subgraphs"
+    app=app,
+    agent=agents["agentic_chat_multimodal"],
+    path="/agent/agentic_chat_multimodal",
 )
 
 add_langgraph_fastapi_endpoint(
-    app=app, agent=agents["a2ui_chat"], path="/agent/a2ui_chat"
+    app=app, agent=agents["subgraphs"], path="/agent/subgraphs"
+)
+
+
+add_langgraph_fastapi_endpoint(
+    app=app, agent=agents["a2ui_fixed_schema"], path="/agent/a2ui_fixed_schema"
+)
+
+add_langgraph_fastapi_endpoint(
+    app=app, agent=agents["a2ui_dynamic_schema"], path="/agent/a2ui_dynamic_schema"
 )
 
 

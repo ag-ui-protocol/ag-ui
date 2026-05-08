@@ -7,9 +7,11 @@ from .human_in_the_loop import app as human_in_the_loop_app
 from .shared_state import app as shared_state_app
 from .predictive_state_updates import app as predictive_state_updates_app
 from .backend_tool_rendering import app as backend_tool_rendering_app
+from .agentic_chat_reasoning import app as agentic_chat_reasoning_app
 
 __all__ = [
     "agentic_chat_app",
+    "agentic_chat_reasoning_app",
     "agentic_generative_ui_app",
     "tool_based_generative_ui_app",
     "human_in_the_loop_app",

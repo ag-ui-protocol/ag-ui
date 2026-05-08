@@ -99,7 +99,7 @@ class TestToolErrorHandling:
         )
 
         # Add to active executions
-        adk_middleware._active_executions["test_thread"] = execution
+        adk_middleware._active_executions[("test_thread", "test_user")] = execution
 
         # Submit invalid JSON as tool result
         input_data = RunAgentInput(
@@ -147,7 +147,7 @@ class TestToolErrorHandling:
             event_queue=event_queue
         )
 
-        adk_middleware._active_executions["test_thread"] = execution
+        adk_middleware._active_executions[("test_thread", "test_user")] = execution
 
         # Submit tool result for non-existent call
         input_data = RunAgentInput(
@@ -265,7 +265,7 @@ class TestToolErrorHandling:
             event_queue=event_queue
         )
 
-        adk_middleware._active_executions["test_thread"] = execution
+        adk_middleware._active_executions[("test_thread", "test_user")] = execution
 
         # Submit results for both - one valid, one invalid
         input_data = RunAgentInput(
@@ -407,7 +407,7 @@ class TestToolErrorHandling:
             event_queue=event_queue
         )
 
-        adk_middleware._active_executions["test_thread"] = execution
+        adk_middleware._active_executions[("test_thread", "test_user")] = execution
 
         # Test concurrent execution state management
         # In the all-long-running architecture, we don't track individual tool futures
@@ -433,7 +433,7 @@ class TestToolErrorHandling:
             event_queue=event_queue
         )
 
-        adk_middleware._active_executions["test_thread"] = execution
+        adk_middleware._active_executions[("test_thread", "test_user")] = execution
 
         # Submit tool message with empty content (which should be handled gracefully)
         input_data = RunAgentInput(

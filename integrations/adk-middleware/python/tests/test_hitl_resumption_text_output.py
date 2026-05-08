@@ -98,6 +98,10 @@ class TestHITLResumptionTextOutput:
     """
 
     @pytest.fixture(autouse=True)
+    def setup_llmock(self, llmock_server):
+        """Ensure LLMock is running when no real API key is set."""
+
+    @pytest.fixture(autouse=True)
     def reset_session_manager(self):
         """Reset singleton SessionManager between tests."""
         SessionManager.reset_instance()
@@ -411,7 +415,7 @@ after receiving tool results.""",
         # Property 3: No duplicate FunctionResponse in session
         app_name = hitl_agent._get_app_name(run_input_2)
         user_id = hitl_agent._get_user_id(run_input_2)
-        backend_session_id = hitl_agent._get_backend_session_id(thread_id)
+        backend_session_id = hitl_agent._get_backend_session_id(thread_id, user_id)
 
         if backend_session_id:
             session = await hitl_agent._session_manager._session_service.get_session(

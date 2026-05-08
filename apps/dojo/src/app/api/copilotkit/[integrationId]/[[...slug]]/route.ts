@@ -9,6 +9,7 @@ import type { AbstractAgent } from "@ag-ui/client";
 
 import { agentsIntegrations } from "@/agents";
 import { IntegrationId } from "@/menu";
+import { getPostHogClient } from "@/lib/posthog-server";
 
 type RouteParams = {
   params: Promise<{
@@ -35,6 +36,9 @@ async function getHandler(integrationId: string) {
   const runtime = new CopilotRuntime({
     agents: agents as Record<string, AbstractAgent>,
     runner: new InMemoryAgentRunner(),
+    a2ui: {
+      agents: ["a2ui_fixed_schema", "a2ui_dynamic_schema", "a2ui_advanced"],
+    },
   });
 
   const app = createCopilotEndpointSingleRoute({
@@ -53,5 +57,14 @@ export async function POST(request: NextRequest, context: RouteParams) {
   if (!handler) {
     return new Response("Integration not found", { status: 404 });
   }
+  const distinctId = request.headers.get("x-posthog-distinct-id") || "anonymous";
+  const posthog = getPostHogClient();
+  posthog?.capture({
+    distinctId,
+    event: "agent_api_request",
+    properties: {
+      integration_id: integrationId,
+    },
+  });
   return handler(request);
 }

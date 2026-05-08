@@ -445,3 +445,279 @@ class TestSequentialAgentHitlResumption:
         # stored in the first place (no prior stored_invocation_id). The key
         # contract is: if stored, it must be cleared after a non-LRO run.
         # We verify this indirectly by the other tests.
+
+
+class TestLlmAgentWithSequentialSubAgentHitlResumption:
+    """Tests HITL resumption when root is LlmAgent with a SequentialAgent sub-agent.
+
+    This is the topology from issue #1444: an LlmAgent root delegates to a
+    SequentialAgent sub-agent. The SequentialAgent still needs invocation_id
+    to restore its internal state on resume, even though it's not the root.
+    """
+
+    @pytest.fixture(autouse=True)
+    def reset_session_manager(self):
+        SessionManager.reset_instance()
+        yield
+        SessionManager.reset_instance()
+
+    @pytest.fixture
+    def llm_root_with_sequential_sub(self):
+        """LlmAgent root with a SequentialAgent sub-agent."""
+        step1 = LlmAgent(
+            name="step1_agent",
+            model="gemini-2.0-flash",
+            instruction="Step 1: gather requirements.",
+        )
+        step2 = LlmAgent(
+            name="step2_agent",
+            model="gemini-2.0-flash",
+            instruction="Step 2: execute the plan.",
+        )
+        seq = SequentialAgent(
+            name="pipeline",
+            sub_agents=[step1, step2],
+        )
+        return LlmAgent(
+            name="router",
+            model="gemini-2.0-flash",
+            instruction="Route to the pipeline.",
+            sub_agents=[seq],
+        )
+
+    @pytest.fixture
+    def resumable_adk_agent(self, llm_root_with_sequential_sub):
+        app = App(
+            name="test_llm_seq_app",
+            root_agent=llm_root_with_sequential_sub,
+            resumability_config=ResumabilityConfig(is_resumable=True),
+        )
+        return ADKAgent.from_app(app, user_id="test_user")
+
+    @pytest.fixture
+    def hitl_tool(self):
+        return AGUITool(
+            name="approve_plan",
+            description="Get user approval for the plan",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "plan": {
+                        "type": "object",
+                        "properties": {"topic": {"type": "string"}},
+                    }
+                },
+                "required": ["plan"],
+            },
+        )
+
+    def test_root_agent_needs_invocation_id_detects_sequential_sub_agent(
+        self, resumable_adk_agent
+    ):
+        """_root_agent_needs_invocation_id returns True for LlmAgent with SequentialAgent sub."""
+        assert resumable_adk_agent._root_agent_needs_invocation_id() is True
+
+    @pytest.mark.asyncio
+    async def test_hitl_passes_invocation_id_with_sequential_sub_agent(
+        self, resumable_adk_agent, hitl_tool
+    ):
+        """Verify invocation_id is passed to run_async when LlmAgent root has SequentialAgent sub.
+
+        This is the core test for issue #1444. Without this fix, the stored
+        invocation_id was never passed on resume because the root is an LlmAgent,
+        causing the SequentialAgent sub-agent to lose its position state.
+        """
+        adk_agent = resumable_adk_agent
+        assert adk_agent._is_adk_resumable() is True
+
+        run_async_kwargs_capture = {}
+
+        async def mock_run_async(**kwargs):
+            run_async_kwargs_capture.update(kwargs)
+            yield _make_mock_event(
+                author="step1_agent",
+                text="Requirements gathered.",
+                partial=False,
+                invocation_id="inv_from_lro_pause",
+            )
+
+        stored_inv_id = "inv_from_lro_pause"
+
+        async def mock_get_state(session_id, app_name, user_id):
+            return {INVOCATION_ID_STATE_KEY: stored_inv_id}
+
+        input_data = RunAgentInput(
+            thread_id=f"test_{uuid.uuid4().hex[:8]}",
+            run_id=f"run_{uuid.uuid4().hex[:8]}",
+            messages=[UserMessage(id="msg1", content="Hello")],
+            state={},
+            tools=[hitl_tool],
+            context=[],
+            forwarded_props={},
+        )
+
+        with patch.object(
+            adk_agent._session_manager,
+            "update_session_state",
+            new_callable=AsyncMock,
+        ), patch.object(
+            adk_agent._session_manager,
+            "get_session_state",
+            side_effect=mock_get_state,
+        ), patch.object(adk_agent, "_create_runner") as mock_create_runner:
+            mock_runner = AsyncMock()
+            mock_runner.close = AsyncMock()
+            mock_runner.run_async = mock_run_async
+            mock_create_runner.return_value = mock_runner
+
+            events = [event async for event in adk_agent.run(input_data)]
+
+        assert "invocation_id" in run_async_kwargs_capture, (
+            "REGRESSION (issue #1444): run_async was NOT passed invocation_id "
+            "for LlmAgent root with SequentialAgent sub-agent. The "
+            "SequentialAgent cannot restore its position state without it. "
+            f"Got kwargs: {list(run_async_kwargs_capture.keys())}"
+        )
+        assert run_async_kwargs_capture["invocation_id"] == stored_inv_id
+
+    @pytest.mark.asyncio
+    async def test_stores_invocation_id_on_lro_pause(
+        self, resumable_adk_agent, hitl_tool
+    ):
+        """Verify invocation_id is stored when LRO pauses under LlmAgent+Sequential topology."""
+        adk_agent = resumable_adk_agent
+        update_calls = []
+
+        async def tracking_update_state(session_id, app_name, user_id, state):
+            update_calls.append({"state": dict(state) if state else {}})
+            return True
+
+        async def mock_run_async(**kwargs):
+            yield _make_mock_event(
+                author="step1_agent",
+                text="Gathering requirements...",
+                partial=True,
+                invocation_id="inv_initial_run",
+            )
+            yield _make_mock_event(
+                author="step1_agent",
+                text="",
+                partial=False,
+                invocation_id="inv_initial_run",
+                has_lro=True,
+                lro_tool_name="approve_plan",
+            )
+
+        input_data = RunAgentInput(
+            thread_id=f"test_{uuid.uuid4().hex[:8]}",
+            run_id=f"run_{uuid.uuid4().hex[:8]}",
+            messages=[UserMessage(id="msg1", content="Start pipeline")],
+            state={},
+            tools=[hitl_tool],
+            context=[],
+            forwarded_props={},
+        )
+
+        with patch.object(
+            adk_agent._session_manager,
+            "update_session_state",
+            side_effect=tracking_update_state,
+        ), patch.object(adk_agent, "_create_runner") as mock_create_runner:
+            mock_runner = AsyncMock()
+            mock_runner.close = AsyncMock()
+            mock_runner.run_async = mock_run_async
+            mock_create_runner.return_value = mock_runner
+
+            events = [event async for event in adk_agent.run(input_data)]
+
+        invocation_store_calls = [
+            c for c in update_calls
+            if INVOCATION_ID_STATE_KEY in c["state"]
+            and c["state"][INVOCATION_ID_STATE_KEY] is not None
+        ]
+        assert len(invocation_store_calls) >= 1, (
+            "invocation_id was not stored during LRO pause for "
+            "LlmAgent+SequentialAgent topology. "
+            f"All update_session_state calls: {update_calls}"
+        )
+
+
+class TestNestedCompositeSubAgentDetection:
+    """Tests that _root_agent_needs_invocation_id detects composite agents at any depth.
+
+    The check must be recursive: a topology like
+    LlmAgent → LlmAgent → SequentialAgent should still return True,
+    because the SequentialAgent needs invocation_id to restore its
+    position state regardless of how deeply it's nested.
+    """
+
+    @pytest.fixture(autouse=True)
+    def reset_session_manager(self):
+        SessionManager.reset_instance()
+        yield
+        SessionManager.reset_instance()
+
+    def test_detects_sequential_agent_two_levels_deep(self):
+        """LlmAgent → LlmAgent → SequentialAgent should need invocation_id."""
+        step1 = LlmAgent(name="step1", model="gemini-2.0-flash", instruction="Step 1")
+        step2 = LlmAgent(name="step2", model="gemini-2.0-flash", instruction="Step 2")
+        pipeline = SequentialAgent(name="pipeline", sub_agents=[step1, step2])
+        specialist = LlmAgent(
+            name="specialist", model="gemini-2.0-flash",
+            instruction="Run the pipeline.", sub_agents=[pipeline],
+        )
+        router = LlmAgent(
+            name="router", model="gemini-2.0-flash",
+            instruction="Route to specialist.", sub_agents=[specialist],
+        )
+        app = App(
+            name="test_nested", root_agent=router,
+            resumability_config=ResumabilityConfig(is_resumable=True),
+        )
+        agent = ADKAgent.from_app(app, user_id="test_user")
+        assert agent._root_agent_needs_invocation_id() is True
+
+    def test_standalone_llm_agents_still_return_false(self):
+        """LlmAgent → LlmAgent (no composite anywhere) should NOT need invocation_id."""
+        target = LlmAgent(
+            name="target", model="gemini-2.0-flash", instruction="Handle task.",
+        )
+        router = LlmAgent(
+            name="router", model="gemini-2.0-flash",
+            instruction="Route.", sub_agents=[target],
+        )
+        app = App(
+            name="test_no_composite", root_agent=router,
+            resumability_config=ResumabilityConfig(is_resumable=True),
+        )
+        agent = ADKAgent.from_app(app, user_id="test_user")
+        assert agent._root_agent_needs_invocation_id() is False
+
+    def test_detects_loop_agent_nested(self):
+        """LlmAgent → LoopAgent should need invocation_id."""
+        from google.adk.agents import LoopAgent
+
+        inner = LlmAgent(name="worker", model="gemini-2.0-flash", instruction="Work")
+        loop = LoopAgent(name="retry_loop", sub_agents=[inner], max_iterations=3)
+        root = LlmAgent(
+            name="root", model="gemini-2.0-flash",
+            instruction="Delegate.", sub_agents=[loop],
+        )
+        app = App(
+            name="test_loop_nested", root_agent=root,
+            resumability_config=ResumabilityConfig(is_resumable=True),
+        )
+        agent = ADKAgent.from_app(app, user_id="test_user")
+        assert agent._root_agent_needs_invocation_id() is True
+
+    def test_composite_root_still_detected(self):
+        """SequentialAgent as root should still return True (baseline)."""
+        step1 = LlmAgent(name="s1", model="gemini-2.0-flash", instruction="Step 1")
+        step2 = LlmAgent(name="s2", model="gemini-2.0-flash", instruction="Step 2")
+        root = SequentialAgent(name="seq_root", sub_agents=[step1, step2])
+        app = App(
+            name="test_composite_root", root_agent=root,
+            resumability_config=ResumabilityConfig(is_resumable=True),
+        )
+        agent = ADKAgent.from_app(app, user_id="test_user")
+        assert agent._root_agent_needs_invocation_id() is True

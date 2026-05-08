@@ -751,12 +751,9 @@ class TestAgentsStateEndpoint:
             assert data["threadId"] == "test-thread-123"
             assert data["threadExists"] is True
 
-            # State and messages should be JSON strings
-            state = json.loads(data["state"])
-            assert state == {"key": "value"}
-
-            messages = json.loads(data["messages"])
-            assert len(messages) == 2
+            # State and messages should be native objects (not double-encoded strings)
+            assert data["state"] == {"key": "value"}
+            assert len(data["messages"]) == 2
 
     def test_agents_state_handles_missing_session(self, app, mock_agent):
         """Should return threadExists=false for missing session."""
@@ -829,10 +826,9 @@ class TestAgentsStateEndpoint:
             assert data["threadExists"] is True
 
             # Verify messages are populated from the reloaded session
-            messages = json.loads(data["messages"])
-            assert len(messages) == 2
-            assert messages[0]["content"] == "Hello from cache miss"
-            assert messages[1]["content"] == "Response after reload"
+            assert len(data["messages"]) == 2
+            assert data["messages"][0]["content"] == "Hello from cache miss"
+            assert data["messages"][1]["content"] == "Response after reload"
 
             # Verify get_session was called to reload the session with events
             mock_session_service.get_session.assert_called_once_with(
@@ -870,8 +866,7 @@ class TestAgentsStateEndpoint:
 
             assert response.status_code == 200
             data = response.json()
-            messages = json.loads(data["messages"])
-            assert messages == []
+            assert data["messages"] == []
 
     def test_agents_state_handles_error(self, app, mock_agent):
         """Should return 500 error on exception."""
@@ -993,8 +988,8 @@ class TestMessageHistoryIntegration:
             assert data["threadExists"] is True
 
     @pytest.mark.asyncio
-    async def test_agents_state_returns_json_stringified_response(self, app, real_agent):
-        """Verify state and messages are JSON-stringified as expected."""
+    async def test_agents_state_returns_native_json_response(self, app, real_agent):
+        """Verify state and messages are native JSON objects (not double-encoded strings)."""
         add_adk_fastapi_endpoint(app, real_agent, path="/")
 
         async with AsyncClient(
@@ -1009,16 +1004,9 @@ class TestMessageHistoryIntegration:
             assert response.status_code == 200
             data = response.json()
 
-            # Verify these are strings (JSON-stringified)
-            assert isinstance(data["state"], str)
-            assert isinstance(data["messages"], str)
-
-            # Verify they can be parsed as JSON
-            parsed_state = json.loads(data["state"])
-            parsed_messages = json.loads(data["messages"])
-
-            assert isinstance(parsed_state, dict)
-            assert isinstance(parsed_messages, list)
+            # Verify these are native objects (not strings)
+            assert isinstance(data["state"], dict)
+            assert isinstance(data["messages"], list)
 
 
 # ============================================================================
@@ -1150,7 +1138,7 @@ class TestLiveServerIntegration:
         assert "messages" in data
 
     def test_live_server_agents_state_json_format(self, live_server):
-        """Verify JSON-stringified format on live server."""
+        """Verify state and messages are native JSON objects on live server."""
         response = httpx.post(
             f"{live_server.base_url}/agents/state",
             json={"threadId": "live-json-test-thread"},
@@ -1160,16 +1148,9 @@ class TestLiveServerIntegration:
         assert response.status_code == 200
         data = response.json()
 
-        # Verify state and messages are JSON strings
-        assert isinstance(data["state"], str)
-        assert isinstance(data["messages"], str)
-
-        # Verify they can be parsed
-        state = json.loads(data["state"])
-        messages = json.loads(data["messages"])
-
-        assert isinstance(state, dict)
-        assert isinstance(messages, list)
+        # Verify state and messages are native objects (not double-encoded strings)
+        assert isinstance(data["state"], dict)
+        assert isinstance(data["messages"], list)
 
     def test_live_server_agents_state_with_optional_fields(self, live_server):
         """Test /agents/state with optional name and properties fields."""

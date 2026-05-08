@@ -175,8 +175,9 @@ describe("HttpAgent", () => {
     // Execute the run function
     agent.run(input);
 
-    // Verify that transformHttpEventStream was called with the mock observable
-    expect(transformHttpEventStream).toHaveBeenCalledWith(mockObservable);
+    // Verify that transformHttpEventStream was called with the mock observable and debugLogger
+    // When debug is off (default), createDebugLogger returns undefined
+    expect(transformHttpEventStream).toHaveBeenCalledWith(mockObservable, undefined);
   });
 
   it("should process HTTP response data end-to-end", async () => {

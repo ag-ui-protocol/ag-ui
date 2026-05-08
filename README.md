@@ -1,6 +1,7 @@
 
 # <img src="https://github.com/user-attachments/assets/ebc0dd08-8732-4519-9b6c-452ce54d8058" alt="ag-ui Logo" width="22"/> AG-UI: The Agent-User Interaction Protocol
 
+
 AG-UI is an open, lightweight, event-based protocol that standardizes how AI agents connect to user-facing applications.
 Built for simplicity and flexibility, it enables seamless integration between AI agents, real time user context, and user interfaces.
 
@@ -16,8 +17,7 @@ Built for simplicity and flexibility, it enables seamless integration between AI
 
 <a href="https://discord.gg/Jd3FzfdJa8" target="_blank"> Join our Discord → </a> &nbsp;&nbsp;&nbsp; <a href="https://ag-ui.com/" target="_blank"> Read the Docs → </a> &nbsp;&nbsp;&nbsp; <a href="https://dojo.ag-ui.com/" target="_blank"> Go to the AG-UI Dojo → </a> &nbsp;&nbsp;&nbsp; <a href="https://x.com/CopilotKit" target="_blank"> Follow us → </a>
 
-
-<img width="1600" height="680" alt="1600x680" src="https://github.com/user-attachments/assets/cd0376f3-0a3d-4cc3-a931-2b166c4efe5e" />
+<img width="1600" height="680" alt="1600x680" src="https://github.com/user-attachments/assets/00ec7366-713e-443f-a8f0-8db52ad28ef4" />
 
 
 
@@ -114,6 +114,7 @@ AG-UI was born from CopilotKit's initial **partnership** with LangGraph and Crew
 ### 🌐 Community
 | Framework | Status | AG-UI Resources |
 | ---------- | ------- | ---------------- |
+| [Claude Agent SDK](https://github.com/ag-ui-protocol/ag-ui/tree/main/integrations/claude-agent-sdk) | ✅ Supported | 🎮 [Demos](https://dojo.ag-ui.com/claude-agent-sdk-python/feature/shared_state) |
 | [Langroid](https://github.com/ag-ui-protocol/ag-ui/tree/main/integrations/langroid) | ✅ Supported | 🎮 [Demos](https://dojo.ag-ui.com/langroid/feature/shared_state) |
 | [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) | 🛠️ In Progress | – |
 | [Cloudflare Agents](https://developers.cloudflare.com/agents/) | 🛠️ In Progress | – |
@@ -153,6 +154,7 @@ AG-UI was born from CopilotKit's initial **partnership** with LangGraph and Crew
 | [Java]() | ✅ Supported | ➡️ [Getting Started](https://github.com/ag-ui-protocol/ag-ui/blob/main/docs/sdk/java/overview.mdx) | Community |
 | [Rust]() | ✅ Supported | ➡️ [Getting Started](https://github.com/ag-ui-protocol/ag-ui/tree/main/sdks/community/rust/crates/ag-ui-client) | Community |
 | [Ruby]() | ✅ Supported | ➡️ [Getting Started](https://github.com/ag-ui-protocol/ag-ui/tree/main/sdks/community/ruby) | Community |
+| [C++]() | ✅ Supported | ➡️ [GitHub Source](https://github.com/ag-ui-protocol/ag-ui/tree/main/sdks/community/c%2B%2B) | Community |
 | [.NET]() | 🛠️ In Progress | ➡️ [PR](https://github.com/ag-ui-protocol/ag-ui/pull/38) | Community |
 | [Nim]() | 🛠️ In Progress | ➡️ [PR](https://github.com/ag-ui-protocol/ag-ui/pull/29) | Community |
 | [Flowise]() | 🛠️ In Progress | ➡️ [GitHub Source](https://github.com/ag-ui-protocol/ag-ui/issues/367) | Community |
