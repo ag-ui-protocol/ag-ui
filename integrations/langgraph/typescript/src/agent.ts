@@ -627,6 +627,19 @@ export class LangGraphAgent extends AbstractAgent {
           this.activeRun!.exitingNode = true;
         }
         if (this.activeRun!.exitingNode) {
+          // Persist manually-emitted keys into latestStateValues before clearing,
+          // so the next STATE_SNAPSHOT (which falls back to latestStateValues)
+          // doesn't lose the streamed-in fields if the graph's own values/Command
+          // chunk for those fields hasn't landed yet.
+          if (
+            this.activeRun!.manuallyEmittedState &&
+            typeof this.activeRun!.manuallyEmittedState === "object"
+          ) {
+            latestStateValues = {
+              ...latestStateValues,
+              ...this.activeRun!.manuallyEmittedState,
+            };
+          }
           this.activeRun!.manuallyEmittedState = null;
         }
 

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { MessageSchema, StateSchema, RunAgentInputSchema } from "./types";
+import { MessageSchema, StateSchema, RunAgentInputSchema, InterruptSchema } from "./types";
 
 // Text messages can have any role except "tool"
 const TextMessageRoleSchema = z.union([
@@ -217,11 +217,33 @@ export const RunStartedEventSchema = BaseEventSchema.extend({
   input: RunAgentInputSchema.optional(),
 });
 
+export const RunFinishedSuccessOutcomeSchema = z
+  .object({
+    type: z.literal("success"),
+  })
+  .strict();
+
+export const RunFinishedInterruptOutcomeSchema = z
+  .object({
+    type: z.literal("interrupt"),
+    interrupts: z.array(InterruptSchema).min(1),
+  })
+  .strict();
+
+export const RunFinishedOutcomeSchema = z.discriminatedUnion("type", [
+  RunFinishedSuccessOutcomeSchema,
+  RunFinishedInterruptOutcomeSchema,
+]);
+
 export const RunFinishedEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.RUN_FINISHED),
   threadId: z.string(),
   runId: z.string(),
   result: z.any().optional(),
+  // Accept `null` and treat it as omitted, so producers like the Pydantic-based
+  // Python SDK that serialize via `model_dump()` (without `exclude_none=True`)
+  // and emit `"outcome": null` for the legacy no-outcome case still validate.
+  outcome: RunFinishedOutcomeSchema.nullable().optional().transform((v) => v ?? undefined),
 });
 
 export const RunErrorEventSchema = BaseEventSchema.extend({
@@ -432,6 +454,9 @@ export type RawEvent = z.infer<typeof RawEventSchema>;
 export type CustomEvent = z.infer<typeof CustomEventSchema>;
 export type RunStartedEvent = z.infer<typeof RunStartedEventSchema>;
 export type RunFinishedEvent = z.infer<typeof RunFinishedEventSchema>;
+export type RunFinishedOutcome = z.infer<typeof RunFinishedOutcomeSchema>;
+export type RunFinishedSuccessOutcome = z.infer<typeof RunFinishedSuccessOutcomeSchema>;
+export type RunFinishedInterruptOutcome = z.infer<typeof RunFinishedInterruptOutcomeSchema>;
 export type RunErrorEvent = z.infer<typeof RunErrorEventSchema>;
 export type StepStartedEvent = z.infer<typeof StepStartedEventSchema>;
 export type StepFinishedEvent = z.infer<typeof StepFinishedEventSchema>;

@@ -5,12 +5,38 @@ This module contains the event types for the Agent User Interaction Protocol Pyt
 from enum import Enum
 from typing import Annotated, Any, List, Literal, Optional, Union
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
-from .types import ConfiguredBaseModel, Message, State, Role, RunAgentInput
+from .types import ConfiguredBaseModel, Message, State, Role, RunAgentInput, Interrupt
 
 # Text messages can have any role except "tool"
 TextMessageRole = Literal["developer", "system", "assistant", "user"]
+
+
+class RunFinishedSuccessOutcome(ConfiguredBaseModel):
+    """Outcome variant signalling that a run completed normally."""
+
+    type: Literal["success"] = "success"
+
+
+class RunFinishedInterruptOutcome(ConfiguredBaseModel):
+    """Outcome variant signalling that a run paused on one or more interrupts."""
+
+    type: Literal["interrupt"] = "interrupt"
+    interrupts: List[Interrupt]
+
+    @field_validator("interrupts")
+    @classmethod
+    def _interrupts_nonempty(cls, value: List[Interrupt]) -> List[Interrupt]:
+        if not value:
+            raise ValueError("outcome 'interrupt' requires at least one interrupt")
+        return value
+
+
+RunFinishedOutcome = Annotated[
+    Union[RunFinishedSuccessOutcome, RunFinishedInterruptOutcome],
+    Field(discriminator="type"),
+]
 
 
 class EventType(str, Enum):
@@ -250,11 +276,19 @@ class RunStartedEvent(BaseEvent):
 class RunFinishedEvent(BaseEvent):
     """
     Event indicating that a run has finished.
+
+    `outcome` is optional. Producers written before the interrupt-aware run
+    lifecycle simply omit it (legacy back-compat). Newer producers set it
+    explicitly to ``RunFinishedSuccessOutcome`` (``{"type": "success"}``) or
+    ``RunFinishedInterruptOutcome`` (``{"type": "interrupt", "interrupts": [...]}``).
+    The interrupt list lives inside the outcome so it travels with the variant
+    that uses it.
     """
     type: Literal[EventType.RUN_FINISHED] = EventType.RUN_FINISHED  # pyright: ignore[reportIncompatibleVariableOverride]
     thread_id: str
     run_id: str
     result: Optional[Any] = None
+    outcome: Optional[RunFinishedOutcome] = None
 
 
 class RunErrorEvent(BaseEvent):

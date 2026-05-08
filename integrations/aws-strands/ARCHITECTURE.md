@@ -45,11 +45,21 @@ This document explains how the AWS Strands integration inside `integrations/aws-
 - **Lifecycle framing**
   - Emits `RunStartedEvent` before touching Strands.
   - Always emits `RunFinishedEvent` unless an exception occurs, in which case it emits `RunErrorEvent` with `code="STRANDS_ERROR"`.
+- **Messages snapshot emission**
+  - Emits `MessagesSnapshotEvent` at four lifecycle boundaries so frontends (notably CopilotKit v2) can rebuild canonical message history rather than reconstructing it from streaming `TOOL_CALL_*` events alone:
+    1. After the initial `StateSnapshotEvent`, seeded from `RunAgentInput.messages`.
+    2. After each `ToolCallEndEvent`, with the new `AssistantMessage(tool_calls=[…])` appended.
+    3. After each `ToolCallResultEvent`, with the new `ToolMessage` appended.
+    4. After each terminal `TextMessageEndEvent`, with the new `AssistantMessage(content=…)` appended.
+  - Each snapshot carries the *complete* thread state as known so far. Toggle globally via `StrandsAgentConfig.emit_messages_snapshot` (default `True`); suppress per-tool with `ToolBehavior.skip_messages_snapshot=True`.
 - **State priming**
   - If `RunAgentInput.state` is provided, it immediately publishes a `StateSnapshotEvent`, filtering out any `messages` field so the frontend remains the source of truth for the timeline.
   - Optionally rewrites the outgoing user prompt via `StrandsAgentConfig.state_context_builder`.
-- **User message derivation**
-  - The adapter inspects `input_data.messages` from newest-to-oldest, picks the most recent `"user"` message, and defaults to `"Hello"` if none exist.
+- **History reconciliation**
+  - When the cached per-thread `StrandsAgentCore` has no `session_manager`, the adapter rebuilds Strands' internal `messages` list from `RunAgentInput.messages` before each `stream_async` call. Tool calls are rendered as `toolUse` ContentBlocks on assistant turns and tool results as `toolResult` blocks on user turns, matching Strands' native shape.
+  - This fixes the "frontend tool loops forever" symptom: without reconciliation, Strands re-fires the same tool every turn because the result the frontend produced never reaches the LLM context.
+  - With a `session_manager`, the adapter trusts the manager and falls back to passing only the latest user prompt as a string.
+  - Toggle via `StrandsAgentConfig.replay_history_into_strands` (default `True`).
 - **Streaming text**
   - When Strands yields events with a `"data"` field, the adapter opens a new `TextMessageStartEvent` (once per turn), forwards every chunk as `TextMessageContentEvent`, and closes with `TextMessageEndEvent` when the Strands stream completes or is halted.
   - `stop_text_streaming` is toggled when certain tool behaviors demand ending narration as soon as a backend tool result arrives.
@@ -64,7 +74,7 @@ This document explains how the AWS Strands integration inside `integrations/aws-
 - **Tool result handling**
   - Strands encodes tool results inside `"message"` events whose role is `"user"` and whose contents include `toolResult`. The adapter:
     - Parses the blob into Python objects, tolerating single quotes or malformed JSON.
-    - Reconstructs a short-lived pair of `AssistantMessage` (carrying the `tool_calls` array) and `ToolMessage`, then publishes a `MessagesSnapshotEvent` so the AG-UI timeline includes the function call and result (unless a pending backend tool result already exists or `skip_messages_snapshot` is set).
+    - Emits a `ToolCallResultEvent` (without a `role` field) so the frontend closes the tool-call card without inserting a duplicate `tool` message into its history, then immediately publishes a `MessagesSnapshotEvent` containing the corresponding `ToolMessage` (skipped when the per-tool `skip_messages_snapshot=True` is set).
     - Executes `ToolBehavior.state_from_result` to hydrate shared state and `custom_result_handler` to emit additional AG-UI events (e.g., simulated progress via `StateDeltaEvent` in the generative UI example).
     - Honors `stop_streaming_after_result` by closing any active text message and halting the Strands stream early.
 - **Frontend tool awareness**
@@ -98,7 +108,7 @@ This document explains how the AWS Strands integration inside `integrations/aws-
 
 `ToolBehavior` captures how the adapter should react:
 
-- `skip_messages_snapshot`: Prevents helper messages from being appended when the UI is already in sync.
+- `skip_messages_snapshot`: Suppresses the `MessagesSnapshotEvent` that would normally follow this tool's `TOOL_CALL_END` / `TOOL_CALL_RESULT` events. Use when `custom_result_handler` already emits its own snapshot and you want to avoid duplicates.
 - `continue_after_frontend_call`: Keeps the stream alive after emitting a frontend tool call.
 - `stop_streaming_after_result`: Cuts off text streaming when the backend produced a decisive result.
 - `predict_state`: Iterable of `PredictStateMapping` objects that inform the UI how to project tool arguments into shared state before results arrive.

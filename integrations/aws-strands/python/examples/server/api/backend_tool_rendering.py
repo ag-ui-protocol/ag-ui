@@ -1,8 +1,9 @@
 """Backend Tool Rendering example for AWS Strands.
 
-This example shows an agent with backend tool rendering capabilities.
-The change_background tool is registered here so the LLM knows about it,
-but the actual execution happens on the frontend via useFrontendTool.
+Backend ``@tool`` functions execute server-side; their results flow
+through Strands' normal tool-result event into the AG-UI message stream.
+The frontend renders the tool call + result for the user via the message
+snapshot — no frontend execution, no agent-side AG-UI event emission.
 """
 import os
 from pathlib import Path
