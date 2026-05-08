@@ -154,6 +154,7 @@ export class LangGraphAgent extends AbstractAgent {
     this.graphId = config.graphId;
     this.assistantConfig = config.assistantConfig;
     this.reasoningProcess = null;
+    this.useTransformer = true;
     this.useTransformer = config.useTransformer ?? false;
 
     // Default factory reads this.headers (set per-clone by CopilotKit Runtime)
@@ -433,7 +434,11 @@ export class LangGraphAgent extends AbstractAgent {
       (m) => m.role !== "system",
     ).length;
 
-    if (stateNonSystemCount > inputNonSystemCount) {
+    // HITL resume: server state holds the interrupted-run messages but
+    // the frontend's `messages` array may not yet contain them. Skip
+    // the regenerate branch in this case — the user is responding to
+    // an interrupt, not asking us to fork from an earlier checkpoint.
+    if (stateNonSystemCount > inputNonSystemCount && !forwardedProps?.command?.resume) {
       let lastUserMessage: LangGraphMessage | null = null;
       // Find the first user message by working backwards from the last message
       for (let i = messages.length - 1; i >= 0; i--) {
@@ -679,12 +684,60 @@ export class LangGraphAgent extends AbstractAgent {
         }
       });
 
-      const stream = await (streamingThread as any).submitRun({
-        ...payload,
-        input: sanitizedInput,
-        config: payload.config,
-        metadata: payload.metadata as Record<string, unknown>,
-      });
+      // Resume after interrupt: route via input.respond on the cached
+      // ThreadStream instead of submitRun. The interrupt's namespace
+      // and id are needed to correlate the response server-side.
+      // streamingThread.interrupts[] is populated by the lifecycle
+      // watcher; use the most recent unresolved interrupt. Fall back
+      // to scanning agentState.tasks for cold-start cases (server kept
+      // the interrupt but our ThreadStream cache was rebuilt).
+      const isResume =
+        forwardedProps?.command?.resume !== undefined &&
+        forwardedProps?.command?.resume !== null;
+      let pendingInterrupt:
+        | { interruptId: string; namespace: readonly string[] }
+        | undefined;
+      if (isResume) {
+        const live = (streamingThread as any).interrupts as
+          | Array<{ interruptId: string; namespace: readonly string[] }>
+          | undefined;
+        const last = live?.[live.length - 1];
+        if (last?.interruptId) {
+          pendingInterrupt = { interruptId: last.interruptId, namespace: last.namespace };
+        } else {
+          const fallback = (agentState.tasks ?? [])
+            .flatMap((t: any) =>
+              (t.interrupts ?? []).map((i: any) => ({ task: t, interrupt: i })),
+            )
+            .pop();
+          if (fallback?.interrupt?.id) {
+            pendingInterrupt = {
+              interruptId: fallback.interrupt.id,
+              namespace: fallback.task?.checkpoint?.checkpoint_ns?.split("|") ?? [],
+            };
+          }
+        }
+      }
+
+      let stream: { run_id?: string };
+      if (isResume && pendingInterrupt) {
+        await (streamingThread as any).respondInput({
+          namespace: pendingInterrupt.namespace,
+          interrupt_id: pendingInterrupt.interruptId,
+          response: forwardedProps!.command!.resume,
+        });
+        // respondInput resolves once the command is acked. The server
+        // assigns a fresh run_id we don't have yet; activeRun.id will
+        // be updated on the first event in the watcher if needed.
+        stream = {};
+      } else {
+        stream = await (streamingThread as any).submitRun({
+          ...payload,
+          input: sanitizedInput,
+          config: payload.config,
+          metadata: payload.metadata as Record<string, unknown>,
+        });
+      }
       this.activeRun!.id = stream.run_id ?? this.activeRun!.id;
 
       return {
@@ -727,6 +780,7 @@ export class LangGraphAgent extends AbstractAgent {
         if (rawEvent?.type === "RUN_ERROR") runErrorEmitted = true;
         this.dispatchEvent(rawEvent as ProcessedEvents);
       }
+
       if (!runErrorEmitted) {
         this.dispatchEvent({
           type: EventType.RUN_FINISHED,

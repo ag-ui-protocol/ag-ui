@@ -19,7 +19,7 @@ import {
   type StreamTransformer,
 } from "@langchain/langgraph";
 import { langchainMessagesToAgui } from "../utils";
-import { ProcessedEvents, State } from "../types";
+import { LangGraphEventTypes, ProcessedEvents, State } from "../types";
 import { EventType } from "@ag-ui/core";
 
 /**
@@ -55,6 +55,12 @@ export const aguiTransformer = (): StreamTransformer<{
   >();
   let activeMessageId: string | undefined;
 
+  // Per-run set of interrupt ids already converted into CUSTOM
+  // `OnInterrupt` pushes. Each `tasks` event carrying interrupts can
+  // fire multiple times during the run (input + result frames); dedup
+  // by interrupt id so the client only renders one prompt.
+  const emittedInterruptIds = new Set<string>();
+
   const push = (ev: ProcessedEvents) => {
     aguiChannel.push(ev);
   };
@@ -83,7 +89,12 @@ export const aguiTransformer = (): StreamTransformer<{
 
   const cacheState = (state: State) => {
     if (!state || typeof state !== "object") return;
-    latestState = state;
+    // Shallow-merge instead of replace. Subsequent root `values` events
+    // may carry only the keys that just changed (e.g. an interrupt
+    // update without `messages` rebroadcast); replacing wholesale would
+    // drop the unchanged keys and ship an empty MESSAGES_SNAPSHOT,
+    // which CopilotKit treats as "no messages" and resets the UI.
+    latestState = { ...(latestState ?? {}), ...state };
   };
 
   const flushSnapshots = () => {
@@ -143,15 +154,39 @@ export const aguiTransformer = (): StreamTransformer<{
           // INCOMPLETE_STREAM error.
           if (!isRootNamespace(event.params.namespace)) break;
           const status = (event.params.data as { event?: string } | undefined)?.event;
-          if (status === "completed") {
-            // Stable point: the run is done, the state we cached from the
-            // last `values` event is the final canonical shape. Flush the
-            // snapshots now so consumers get exactly one (per kind, per run).
+          if (status === "completed" || status === "interrupted") {
+            // Stable point: the run is paused (interrupted) or done
+            // (completed). The state we cached from the last `values`
+            // event reflects the canonical shape at this boundary.
+            // Flush snapshots so consumers see updated state at both
+            // run end and interrupt — HITL graphs land here on every
+            // interrupt() call.
             flushSnapshots();
           } else if (status === "failed") {
             const message = (event.params.data as { error?: string } | undefined)?.error;
             push({ type: EventType.RUN_ERROR, message: message ?? "Unknown error" });
           }
+          break;
+        }
+
+        case "input.requested": {
+          // The graph hit an interrupt(...) call. Forward as AG-UI
+          // CUSTOM `OnInterrupt`, matching the legacy contract so dojo
+          // (and other clients) can render the same prompt UI they
+          // already drive off the legacy translation.
+          const data = event.params?.data as
+            | { interrupt_id?: string; payload?: unknown }
+            | undefined;
+          if (!data) break;
+          const value =
+            typeof data.payload === "string"
+              ? data.payload
+              : JSON.stringify(data.payload);
+          push({
+            type: EventType.CUSTOM,
+            name: LangGraphEventTypes.OnInterrupt,
+            value,
+          } as ProcessedEvents);
           break;
         }
 
@@ -310,8 +345,39 @@ export const aguiTransformer = (): StreamTransformer<{
           break;
         }
 
-        // Tasks, custom, checkpoints, updates, input — handled in
-        // subsequent phases. Drop through.
+        case "tasks": {
+          // v3 protocol surfaces interrupt() calls as `tasks` events
+          // with an `interrupts: [...]` field on the task result —
+          // NOT as `input.requested` lifecycle events. The root
+          // lifecycle still terminates with `completed`. Scan tasks
+          // for interrupt entries and emit AG-UI CUSTOM `OnInterrupt`.
+          const data = event.params?.data as
+            | {
+                id?: string;
+                name?: string;
+                interrupts?: Array<{ id?: string; value?: unknown }>;
+              }
+            | undefined;
+          if (!data?.interrupts?.length) break;
+          for (const it of data.interrupts) {
+            if (!it?.id) continue;
+            if (emittedInterruptIds.has(it.id)) continue;
+            emittedInterruptIds.add(it.id);
+            const value =
+              typeof it.value === "string"
+                ? it.value
+                : JSON.stringify(it.value);
+            push({
+              type: EventType.CUSTOM,
+              name: LangGraphEventTypes.OnInterrupt,
+              value,
+            } as ProcessedEvents);
+          }
+          break;
+        }
+
+        // custom, checkpoints, updates, input — handled in subsequent
+        // phases. Drop through.
         default:
           break;
       }
