@@ -65,6 +65,8 @@ from ag_ui.core import (
     AssistantMessage,
     CustomEvent,
     EventType,
+    FunctionCall,
+    MessagesSnapshotEvent,
     ReasoningEncryptedValueEvent,
     ReasoningEndEvent,
     ReasoningMessageContentEvent,
@@ -87,6 +89,7 @@ from ag_ui.core import (
     ToolCallResultEvent,
     ToolCallStartEvent,
     ToolMessage,
+    UserMessage,
 )
 
 from .client_proxy_tool import sync_proxy_tools
@@ -98,6 +101,159 @@ from .config import (
     normalize_predict_state,
 )
 from .utils import convert_agui_content_to_strands, flatten_content_to_text
+
+
+def _coerce_text(content: Any) -> str:
+    """Best-effort string view of an AG-UI message content field."""
+    if isinstance(content, str):
+        return content
+    if content is None:
+        return ""
+    return str(content)
+
+
+def _coerce_id(value: Any) -> str:
+    """Return ``value`` if it is a non-empty string, else a fresh UUID."""
+    return value if isinstance(value, str) and value else str(uuid.uuid4())
+
+
+def _build_snapshot_messages(input_messages: List[Any]) -> List[Any]:
+    """Convert ``RunAgentInput.messages`` to AG-UI message objects.
+
+    Used to seed the running ``MessagesSnapshotEvent`` payload so each
+    snapshot carries the full thread history (prior turns + whatever
+    this turn produces).
+    """
+    out: List[Any] = []
+    for msg in input_messages or []:
+        role = getattr(msg, "role", None)
+        if role not in ("user", "assistant", "tool"):
+            continue
+        msg_id = _coerce_id(getattr(msg, "id", None))
+        if role == "user":
+            out.append(UserMessage(id=msg_id, role="user", content=_coerce_text(msg.content)))
+        elif role == "assistant":
+            tool_calls_list = None
+            raw_tool_calls = getattr(msg, "tool_calls", None)
+            if raw_tool_calls:
+                tool_calls_list = []
+                for tc in raw_tool_calls:
+                    fn = getattr(tc, "function", None)
+                    if isinstance(fn, dict):
+                        fn_name = fn.get("name") or "unknown"
+                        fn_args = fn.get("arguments") or "{}"
+                    else:
+                        fn_name = getattr(fn, "name", None) or "unknown"
+                        fn_args = getattr(fn, "arguments", None) or "{}"
+                    tc_id = _coerce_id(getattr(tc, "id", None))
+                    tool_calls_list.append(
+                        ToolCall(
+                            id=tc_id,
+                            type="function",
+                            function=FunctionCall(
+                                name=str(fn_name),
+                                arguments=str(fn_args),
+                            ),
+                        )
+                    )
+            out.append(
+                AssistantMessage(
+                    id=msg_id,
+                    role="assistant",
+                    content=_coerce_text(msg.content),
+                    tool_calls=tool_calls_list,
+                )
+            )
+        elif role == "tool":
+            tool_call_id = getattr(msg, "tool_call_id", "")
+            if not isinstance(tool_call_id, str):
+                tool_call_id = ""
+            out.append(
+                ToolMessage(
+                    id=msg_id,
+                    role="tool",
+                    content=_coerce_text(msg.content),
+                    tool_call_id=tool_call_id,
+                )
+            )
+    return out
+
+
+def _build_strands_history(input_messages: List[Any]) -> List[Dict[str, Any]]:
+    """Convert ``RunAgentInput.messages`` to Strands native ``Messages``.
+
+    Strands has only ``user`` and ``assistant`` roles; tool calls and
+    tool results live as ``toolUse`` / ``toolResult`` ContentBlocks.
+    Reconciling the cached agent's ``self.messages`` with this list
+    before invoking ``stream_async(None)`` ensures the LLM sees the
+    real conversation state — including frontend tool results — rather
+    than a fresh prompt that re-fires the same tool every turn.
+    """
+    out: List[Dict[str, Any]] = []
+    for msg in input_messages or []:
+        role = getattr(msg, "role", None)
+        if role == "user":
+            content = msg.content
+            if isinstance(content, list):
+                has_media = any(
+                    getattr(item, "type", None) in ("image", "audio", "video", "document")
+                    for item in content
+                )
+                if has_media:
+                    blocks = convert_agui_content_to_strands(content)
+                    if isinstance(blocks, list) and blocks:
+                        out.append({"role": "user", "content": blocks})
+                        continue
+                text = flatten_content_to_text(content) or ""
+                out.append({"role": "user", "content": [{"text": text}]})
+            else:
+                out.append({"role": "user", "content": [{"text": _coerce_text(content)}]})
+        elif role == "assistant":
+            blocks: List[Dict[str, Any]] = []
+            text = _coerce_text(msg.content)
+            if text:
+                blocks.append({"text": text})
+            raw_tool_calls = getattr(msg, "tool_calls", None) or []
+            for tc in raw_tool_calls:
+                fn = getattr(tc, "function", None)
+                if isinstance(fn, dict):
+                    name = fn.get("name") or "unknown"
+                    args = fn.get("arguments") or "{}"
+                else:
+                    name = getattr(fn, "name", None) or "unknown"
+                    args = getattr(fn, "arguments", None) or "{}"
+                try:
+                    parsed = json.loads(args) if isinstance(args, str) else (args or {})
+                except (json.JSONDecodeError, TypeError):
+                    parsed = {}
+                blocks.append(
+                    {
+                        "toolUse": {
+                            "toolUseId": tc.id,
+                            "name": name,
+                            "input": parsed if isinstance(parsed, dict) else {},
+                        }
+                    }
+                )
+            if not blocks:
+                blocks = [{"text": ""}]
+            out.append({"role": "assistant", "content": blocks})
+        elif role == "tool":
+            out.append(
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "toolResult": {
+                                "toolUseId": getattr(msg, "tool_call_id", "") or "",
+                                "content": [{"text": _coerce_text(msg.content)}],
+                                "status": "success",
+                            }
+                        }
+                    ],
+                }
+            )
+    return out
 
 
 class StrandsAgent:
@@ -277,6 +433,15 @@ class StrandsAgent:
         )
 
         try:
+            # Seed the running ``MessagesSnapshotEvent`` payload from the
+            # full conversation history sent by the client. Each emitted
+            # snapshot then carries prior turns + whatever this turn adds.
+            snapshot_messages: List[Any] = (
+                _build_snapshot_messages(input_data.messages)
+                if self.config.emit_messages_snapshot
+                else []
+            )
+
             # Emit state snapshot if provided
             if hasattr(input_data, "state") and input_data.state is not None:
                 # Filter out messages from state to avoid "Unknown message role" errors
@@ -286,6 +451,16 @@ class StrandsAgent:
                 }
                 yield StateSnapshotEvent(
                     type=EventType.STATE_SNAPSHOT, snapshot=state_snapshot
+                )
+
+            # Splice point 1 of 4: emit the initial messages snapshot right
+            # after ``RunStartedEvent`` / ``StateSnapshotEvent`` so the
+            # frontend can render the seeded thread before any new content
+            # streams in.
+            if self.config.emit_messages_snapshot and snapshot_messages:
+                yield MessagesSnapshotEvent(
+                    type=EventType.MESSAGES_SNAPSHOT,
+                    messages=list(snapshot_messages),
                 )
 
             # Extract frontend tool names from input_data.tools
@@ -466,6 +641,7 @@ class StrandsAgent:
             # Generate unique message ID
             message_id = str(uuid.uuid4())
             message_started = False
+            accumulated_text = ""
             tool_calls_seen = {}
             current_state = dict(input_data.state or {})  # Track state for final snapshot
             stop_text_streaming = False
@@ -480,9 +656,53 @@ class StrandsAgent:
                 f"Starting agent run: thread_id={input_data.thread_id}, run_id={input_data.run_id}, pending_tool_result_ids={pending_tool_result_ids}, message_count={len(input_data.messages)}, strands_message_count={len(strands_messages)}"
             )
 
-            # Stream from persistent Strands agent with only the new user message
-            # The agent maintains its own conversation history internally
-            agent_stream = strands_agent.stream_async(user_message)
+            # Reconcile Strands' internal conversation history with
+            # ``RunAgentInput.messages`` when no ``session_manager`` is wired.
+            # Without this, frontend tool results sent by the client never
+            # reach the LLM — Strands sees an open ``toolUse`` from the prior
+            # turn and the LLM re-fires the same tool every run, producing
+            # the "chart loops forever" symptom. With a session manager,
+            # Strands manages history itself, so we leave it alone.
+            replay_history = (
+                self.config.replay_history_into_strands
+                and getattr(strands_agent, "session_manager", None) is None
+            )
+            if replay_history:
+                native_history = _build_strands_history(input_data.messages)
+                # Apply ``state_context_builder`` to the last user-text
+                # message in the reconciled history rather than to the
+                # synthetic ``user_message`` string. This matches what the
+                # builder is actually trying to enrich (the prompt the LLM
+                # will see).
+                if self.config.state_context_builder and native_history:
+                    for native_msg in reversed(native_history):
+                        if (
+                            native_msg.get("role") == "user"
+                            and native_msg.get("content")
+                            and isinstance(native_msg["content"], list)
+                            and "text" in native_msg["content"][0]
+                        ):
+                            try:
+                                augmented = self.config.state_context_builder(
+                                    input_data, native_msg["content"][0]["text"]
+                                )
+                                if isinstance(augmented, str):
+                                    native_msg["content"][0]["text"] = augmented
+                            except Exception as e:
+                                logger.warning(
+                                    f"state_context_builder failed: {e}", exc_info=True
+                                )
+                            break
+                strands_agent.messages = native_history
+                # ``stream_async(None)`` tells Strands to use existing
+                # ``self.messages`` as-is. The LLM sees real tool results
+                # (including ones produced by the frontend) and emits a
+                # proper follow-up turn instead of re-calling the tool.
+                agent_stream = strands_agent.stream_async(None)
+            else:
+                # Legacy path: pass only the latest user message and trust
+                # Strands (via session_manager) to track history.
+                agent_stream = strands_agent.stream_async(user_message)
 
             try:
                 async for event in agent_stream:
@@ -516,6 +736,7 @@ class StrandsAgent:
                             message_started = True
 
                         text_chunk = str(event["data"])
+                        accumulated_text += text_chunk
                         yield TextMessageContentEvent(
                             type=EventType.TEXT_MESSAGE_CONTENT,
                             message_id=message_id,
@@ -704,14 +925,40 @@ class StrandsAgent:
                             # but prevent it from being added to conversation history.
                             # A fresh message ID is used so CopilotKit creates a proper standalone
                             # ToolMessage and closes the spinner correctly.
+                            tool_result_message_id = str(uuid.uuid4())
+                            tool_result_content = json.dumps(result_data)
                             yield ToolCallResultEvent(
                                 type=EventType.TOOL_CALL_RESULT,
                                 tool_call_id=result_tool_id,
-                                message_id=str(uuid.uuid4()),
-                                content=json.dumps(result_data),
+                                message_id=tool_result_message_id,
+                                content=tool_result_content,
                                 # role is intentionally omitted - without role="tool",
                                 # the frontend won't add this to conversation history
                             )
+
+                            # Splice point 3 of 4: append the ToolMessage
+                            # carrying the backend tool result to the
+                            # running snapshot so the frontend can pair
+                            # call + result in the message tree.
+                            if (
+                                self.config.emit_messages_snapshot
+                                and not (
+                                    behavior
+                                    and behavior.skip_messages_snapshot
+                                )
+                            ):
+                                snapshot_messages.append(
+                                    ToolMessage(
+                                        id=tool_result_message_id,
+                                        role="tool",
+                                        content=tool_result_content,
+                                        tool_call_id=result_tool_id,
+                                    )
+                                )
+                                yield MessagesSnapshotEvent(
+                                    type=EventType.MESSAGES_SNAPSHOT,
+                                    messages=list(snapshot_messages),
+                                )
 
                             result_context = ToolResultContext(
                                 input_data=input_data,
@@ -761,6 +1008,25 @@ class StrandsAgent:
                                         message_id=message_id,
                                     )
                                     message_started = False
+                                    # Splice point 4 of 4 (early-exit
+                                    # variant): commit any accumulated
+                                    # assistant text into the snapshot.
+                                    if (
+                                        self.config.emit_messages_snapshot
+                                        and accumulated_text
+                                    ):
+                                        snapshot_messages.append(
+                                            AssistantMessage(
+                                                id=message_id,
+                                                role="assistant",
+                                                content=accumulated_text,
+                                            )
+                                        )
+                                        accumulated_text = ""
+                                        yield MessagesSnapshotEvent(
+                                            type=EventType.MESSAGES_SNAPSHOT,
+                                            messages=list(snapshot_messages),
+                                        )
                                 halt_event_stream = True
                                 logger.debug(
                                     f"Breaking event stream: stop_streaming_after_result behavior triggered (thread_id={input_data.thread_id}, tool_name={tool_name})"
@@ -773,6 +1039,7 @@ class StrandsAgent:
                         tool_use = event["current_tool_use"]
                         tool_name = tool_use.get("name")
                         strands_tool_id = tool_use.get("toolUseId")
+                        _raw_in = tool_use.get("input", "")
 
                         # Generate unique ID for frontend tools (to avoid ID conflicts across requests)
                         # Use Strands' ID for backend tools (so result lookup works)
@@ -802,6 +1069,15 @@ class StrandsAgent:
                         # Update tool input as it streams in
                         tool_input_raw = tool_use.get("input", "")
 
+                        # Raw string form is what FE incrementally parses for
+                        # predict_state. Use it as-is for delta computation so
+                        # the wire stream matches what the LLM actually emitted.
+                        raw_str = (
+                            tool_input_raw
+                            if isinstance(tool_input_raw, str)
+                            else json.dumps(tool_input_raw, default=str)
+                        )
+
                         # Try to parse as JSON if it looks complete
                         tool_input = {}
                         if isinstance(tool_input_raw, str) and tool_input_raw:
@@ -824,17 +1100,110 @@ class StrandsAgent:
                             tool_name and tool_use_id not in tool_calls_seen
                         )
                         if is_new_tool_call:
+                            is_pending_now = tool_use_id in pending_tool_result_ids
+                            behavior_now = self.config.tool_behaviors.get(tool_name)
+                            # Use the streaming path (emit ToolCallStart +
+                            # PredictState now, ToolCallArgs on each growth,
+                            # ToolCallEnd at contentBlockStop) unless the tool
+                            # is a continuation (already-resolved) or supplies
+                            # a custom args_streamer that wants to drive args
+                            # emission itself at contentBlockStop.
+                            use_streaming = not is_pending_now and not (
+                                behavior_now and behavior_now.args_streamer
+                            )
                             tool_calls_seen[tool_use_id] = {
                                 "name": tool_name,
                                 "args": args_str,
                                 "input": tool_input,
-                                "emitted": False,  # Track if we've emitted events
+                                "raw": raw_str,
+                                "emitted": False,  # legacy flag (still used by contentBlockStop scan)
+                                "start_emitted": False,
+                                "end_emitted": False,
+                                "last_emitted_raw_len": 0,
+                                "is_pending": is_pending_now,
+                                "is_frontend": is_frontend_tool,
+                                "use_streaming": use_streaming,
                                 "strands_tool_id": strands_tool_id,
                             }
+
+                            if use_streaming:
+                                # Close any open assistant text turn so the
+                                # snapshot order matches the wire-event order
+                                # and so message_id can rotate cleanly.
+                                if message_started:
+                                    yield TextMessageEndEvent(
+                                        type=EventType.TEXT_MESSAGE_END,
+                                        message_id=message_id,
+                                    )
+                                    if (
+                                        self.config.emit_messages_snapshot
+                                        and accumulated_text
+                                    ):
+                                        snapshot_messages.append(
+                                            AssistantMessage(
+                                                id=message_id,
+                                                role="assistant",
+                                                content=accumulated_text,
+                                            )
+                                        )
+                                        accumulated_text = ""
+                                        yield MessagesSnapshotEvent(
+                                            type=EventType.MESSAGES_SNAPSHOT,
+                                            messages=list(snapshot_messages),
+                                        )
+                                    message_started = False
+                                    message_id = str(uuid.uuid4())
+
+                                # PredictState mapping must reach the FE BEFORE
+                                # any args delta so the FE knows which tool
+                                # argument feeds which state key while parsing
+                                # incremental JSON.
+                                if behavior_now:
+                                    predict_state_payload = [
+                                        mapping.to_payload()
+                                        for mapping in normalize_predict_state(
+                                            behavior_now.predict_state
+                                        )
+                                    ]
+                                    if predict_state_payload:
+                                        yield CustomEvent(
+                                            type=EventType.CUSTOM,
+                                            name="PredictState",
+                                            value=predict_state_payload,
+                                        )
+
+                                yield ToolCallStartEvent(
+                                    type=EventType.TOOL_CALL_START,
+                                    tool_call_id=tool_use_id,
+                                    tool_call_name=tool_name,
+                                    parent_message_id=message_id,
+                                )
+                                tool_calls_seen[tool_use_id]["start_emitted"] = True
                         elif tool_name and tool_use_id in tool_calls_seen:
                             # Update the input and args as they stream in
                             tool_calls_seen[tool_use_id]["input"] = tool_input
                             tool_calls_seen[tool_use_id]["args"] = args_str
+                            tool_calls_seen[tool_use_id]["raw"] = raw_str
+
+                        # Stream incremental ToolCallArgs deltas as the LLM
+                        # produces more characters of the JSON args. The FE
+                        # uses these to drive predictive state updates per the
+                        # PredictState mapping that was just emitted.
+                        entry = tool_calls_seen.get(tool_use_id)
+                        if (
+                            entry
+                            and entry.get("start_emitted")
+                            and entry.get("use_streaming")
+                        ):
+                            new_len = len(raw_str)
+                            last_len = entry.get("last_emitted_raw_len", 0)
+                            if new_len > last_len:
+                                yield ToolCallArgsEvent(
+                                    type=EventType.TOOL_CALL_ARGS,
+                                    tool_call_id=tool_use_id,
+                                    delta=raw_str[last_len:new_len],
+                                )
+                                entry["last_emitted_raw_len"] = new_len
 
                     # Handle content block stop - this signals tool input is complete
                     elif "event" in event and isinstance(event.get("event"), dict):
@@ -869,14 +1238,18 @@ class StrandsAgent:
 
                             # Only process if we found a tool to emit
                             if tool_name and tool_use_id:
-                                # Mark as emitted
-                                tool_calls_seen[tool_use_id]["emitted"] = True
+                                entry = tool_calls_seen[tool_use_id]
+                                # Mark as emitted (legacy compat)
+                                entry["emitted"] = True
+                                entry["end_emitted"] = True
 
-                                is_frontend_tool = tool_name in frontend_tool_names
+                                is_frontend_tool = entry.get("is_frontend", tool_name in frontend_tool_names)
                                 behavior = self.config.tool_behaviors.get(tool_name)
+                                is_pending = entry.get("is_pending", tool_use_id in pending_tool_result_ids)
+                                use_streaming = entry.get("use_streaming", False)
 
                                 logger.debug(
-                                    f"Processing tool call on contentBlockStop: tool_name={tool_name}, tool_use_id={tool_use_id}, is_frontend_tool={is_frontend_tool}, is_pending_result={tool_use_id in pending_tool_result_ids}, args_str={args_str}, thread_id={input_data.thread_id}"
+                                    f"contentBlockStop close: tool_name={tool_name}, tool_use_id={tool_use_id}, is_frontend_tool={is_frontend_tool}, is_pending={is_pending}, use_streaming={use_streaming}, thread_id={input_data.thread_id}"
                                 )
                                 call_context = ToolCallContext(
                                     input_data=input_data,
@@ -886,58 +1259,178 @@ class StrandsAgent:
                                     args_str=args_str,
                                 )
 
-                                if behavior and behavior.state_from_args:
-                                    try:
-                                        snapshot = await maybe_await(
-                                            behavior.state_from_args(call_context)
+                                if use_streaming:
+                                    # Streaming path: ToolCallStart, PredictState
+                                    # and the args deltas have already been
+                                    # emitted from the current_tool_use handler.
+                                    # Flush any final delta the LLM tacked on
+                                    # between the last current_tool_use update
+                                    # and contentBlockStop, then close the call.
+                                    raw_str = entry.get("raw", "") or ""
+                                    last_len = entry.get("last_emitted_raw_len", 0)
+                                    if len(raw_str) > last_len:
+                                        yield ToolCallArgsEvent(
+                                            type=EventType.TOOL_CALL_ARGS,
+                                            tool_call_id=tool_use_id,
+                                            delta=raw_str[last_len:],
                                         )
-                                        if snapshot:
-                                            current_state.update(snapshot)
-                                            yield StateSnapshotEvent(
-                                                type=EventType.STATE_SNAPSHOT,
-                                                snapshot=snapshot,
-                                            )
-                                    except Exception as e:
-                                        logger.warning(
-                                            f"state_from_args failed for {tool_name}: {e}",
-                                            exc_info=True,
-                                        )
+                                        entry["last_emitted_raw_len"] = len(raw_str)
 
-                                if behavior:
-                                    predict_state_payload = [
-                                        mapping.to_payload()
-                                        for mapping in normalize_predict_state(
-                                            behavior.predict_state
-                                        )
-                                    ]
-                                    if predict_state_payload:
-                                        yield CustomEvent(
-                                            type=EventType.CUSTOM,
-                                            name="PredictState",
-                                            value=predict_state_payload,
-                                        )
-                                # Only suppress START for tool calls whose results are already
-                                # in the conversation history (pending_tool_result_ids).
-                                # New tool calls in this turn must still emit START events.
-                                is_pending = tool_use_id in pending_tool_result_ids
-                                if is_pending:
-                                    logger.debug(
-                                        f"Skipping tool call START event for already-resolved tool {tool_name} (tool_use_id={tool_use_id}, thread_id={input_data.thread_id})"
+                                    # Emit ``state_from_args`` BEFORE
+                                    # ``ToolCallEnd``. CopilotKit v2 releases
+                                    # the predict_state buffer at ToolCallEnd;
+                                    # if the authoritative StateSnapshot lands
+                                    # after that, the FE momentarily reverts
+                                    # to the last server-confirmed state and
+                                    # re-applies, producing a "re-stream"
+                                    # animation. Delivering the snapshot first
+                                    # means the FE has the real state in hand
+                                    # at the moment prediction is released.
+                                    if behavior and behavior.state_from_args:
+                                        try:
+                                            snapshot = await maybe_await(
+                                                behavior.state_from_args(call_context)
+                                            )
+                                            if snapshot:
+                                                current_state.update(snapshot)
+                                                yield StateSnapshotEvent(
+                                                    type=EventType.STATE_SNAPSHOT,
+                                                    snapshot=snapshot,
+                                                )
+                                        except Exception as e:
+                                            logger.warning(
+                                                f"state_from_args failed for {tool_name}: {e}",
+                                                exc_info=True,
+                                            )
+
+                                    yield ToolCallEndEvent(
+                                        type=EventType.TOOL_CALL_END,
+                                        tool_call_id=tool_use_id,
                                     )
 
-                                if not is_pending:
-                                    # Close any open text message before starting a tool call
-                                    # so each segment has clean start/end boundaries.
+                                    if (
+                                        self.config.emit_messages_snapshot
+                                        and not (
+                                            behavior
+                                            and behavior.skip_messages_snapshot
+                                        )
+                                    ):
+                                        snapshot_messages.append(
+                                            AssistantMessage(
+                                                id=message_id,
+                                                role="assistant",
+                                                content="",
+                                                tool_calls=[
+                                                    ToolCall(
+                                                        id=tool_use_id,
+                                                        type="function",
+                                                        function=FunctionCall(
+                                                            name=tool_name or "unknown",
+                                                            arguments=args_str or "{}",
+                                                        ),
+                                                    )
+                                                ],
+                                            )
+                                        )
+                                        yield MessagesSnapshotEvent(
+                                            type=EventType.MESSAGES_SNAPSHOT,
+                                            messages=list(snapshot_messages),
+                                        )
+                                        # Rotate so the next assistant message
+                                        # in the snapshot (text or another
+                                        # tool call) carries a distinct id —
+                                        # CopilotKit v2 dedupes by id.
+                                        message_id = str(uuid.uuid4())
+
+                                    if is_frontend_tool and not (
+                                        behavior
+                                        and behavior.continue_after_frontend_call
+                                    ):
+                                        logger.debug(
+                                            f"Deferring halt after frontend tool call: tool_name={tool_name}, tool_call_id={tool_use_id}, thread_id={input_data.thread_id}"
+                                        )
+                                        pending_halt = True
+                                elif is_pending:
+                                    # Continuation turn — tool already resolved
+                                    # in conversation history. Don't re-emit any
+                                    # wire events but still let state callbacks
+                                    # fire so derived state stays consistent.
+                                    if behavior and behavior.state_from_args:
+                                        try:
+                                            snapshot = await maybe_await(
+                                                behavior.state_from_args(call_context)
+                                            )
+                                            if snapshot:
+                                                current_state.update(snapshot)
+                                                yield StateSnapshotEvent(
+                                                    type=EventType.STATE_SNAPSHOT,
+                                                    snapshot=snapshot,
+                                                )
+                                        except Exception as e:
+                                            logger.warning(
+                                                f"state_from_args failed for {tool_name}: {e}",
+                                                exc_info=True,
+                                            )
+                                else:
+                                    # Legacy path: behavior.args_streamer is
+                                    # configured. Emit the full burst at
+                                    # contentBlockStop using the custom
+                                    # streamer so existing args_streamer
+                                    # consumers keep working.
+                                    if behavior and behavior.state_from_args:
+                                        try:
+                                            snapshot = await maybe_await(
+                                                behavior.state_from_args(call_context)
+                                            )
+                                            if snapshot:
+                                                current_state.update(snapshot)
+                                                yield StateSnapshotEvent(
+                                                    type=EventType.STATE_SNAPSHOT,
+                                                    snapshot=snapshot,
+                                                )
+                                        except Exception as e:
+                                            logger.warning(
+                                                f"state_from_args failed for {tool_name}: {e}",
+                                                exc_info=True,
+                                            )
+
+                                    if behavior:
+                                        predict_state_payload = [
+                                            mapping.to_payload()
+                                            for mapping in normalize_predict_state(
+                                                behavior.predict_state
+                                            )
+                                        ]
+                                        if predict_state_payload:
+                                            yield CustomEvent(
+                                                type=EventType.CUSTOM,
+                                                name="PredictState",
+                                                value=predict_state_payload,
+                                            )
+
                                     if message_started:
                                         yield TextMessageEndEvent(
                                             type=EventType.TEXT_MESSAGE_END, message_id=message_id
                                         )
+                                        if (
+                                            self.config.emit_messages_snapshot
+                                            and accumulated_text
+                                        ):
+                                            snapshot_messages.append(
+                                                AssistantMessage(
+                                                    id=message_id,
+                                                    role="assistant",
+                                                    content=accumulated_text,
+                                                )
+                                            )
+                                            accumulated_text = ""
+                                            yield MessagesSnapshotEvent(
+                                                type=EventType.MESSAGES_SNAPSHOT,
+                                                messages=list(snapshot_messages),
+                                            )
                                         message_started = False
                                         message_id = str(uuid.uuid4())
 
-                                    logger.debug(
-                                        f"Emitting tool call events for {tool_name} (tool_use_id={tool_use_id}, thread_id={input_data.thread_id})"
-                                    )
                                     yield ToolCallStartEvent(
                                         type=EventType.TOOL_CALL_START,
                                         tool_call_id=tool_use_id,
@@ -945,28 +1438,21 @@ class StrandsAgent:
                                         parent_message_id=message_id,
                                     )
 
-                                    if behavior and behavior.args_streamer:
-                                        try:
-                                            async for chunk in behavior.args_streamer(
-                                                call_context
-                                            ):
-                                                if chunk is None:
-                                                    continue
-                                                yield ToolCallArgsEvent(
-                                                    type=EventType.TOOL_CALL_ARGS,
-                                                    tool_call_id=tool_use_id,
-                                                    delta=str(chunk),
-                                                )
-                                        except Exception as e:
-                                            logger.warning(
-                                                f"args_streamer failed for {tool_name}, falling back to full args: {e}"
-                                            )
+                                    try:
+                                        async for chunk in behavior.args_streamer(
+                                            call_context
+                                        ):
+                                            if chunk is None:
+                                                continue
                                             yield ToolCallArgsEvent(
                                                 type=EventType.TOOL_CALL_ARGS,
                                                 tool_call_id=tool_use_id,
-                                                delta=args_str,
+                                                delta=str(chunk),
                                             )
-                                    else:
+                                    except Exception as e:
+                                        logger.warning(
+                                            f"args_streamer failed for {tool_name}, falling back to full args: {e}"
+                                        )
                                         yield ToolCallArgsEvent(
                                             type=EventType.TOOL_CALL_ARGS,
                                             tool_call_id=tool_use_id,
@@ -977,6 +1463,36 @@ class StrandsAgent:
                                         type=EventType.TOOL_CALL_END,
                                         tool_call_id=tool_use_id,
                                     )
+
+                                    if (
+                                        self.config.emit_messages_snapshot
+                                        and not (
+                                            behavior
+                                            and behavior.skip_messages_snapshot
+                                        )
+                                    ):
+                                        snapshot_messages.append(
+                                            AssistantMessage(
+                                                id=message_id,
+                                                role="assistant",
+                                                content="",
+                                                tool_calls=[
+                                                    ToolCall(
+                                                        id=tool_use_id,
+                                                        type="function",
+                                                        function=FunctionCall(
+                                                            name=tool_name or "unknown",
+                                                            arguments=args_str or "{}",
+                                                        ),
+                                                    )
+                                                ],
+                                            )
+                                        )
+                                        yield MessagesSnapshotEvent(
+                                            type=EventType.MESSAGES_SNAPSHOT,
+                                            messages=list(snapshot_messages),
+                                        )
+                                        message_id = str(uuid.uuid4())
 
                                     if is_frontend_tool and not (
                                         behavior
@@ -1040,6 +1556,22 @@ class StrandsAgent:
                 yield TextMessageEndEvent(
                     type=EventType.TEXT_MESSAGE_END, message_id=message_id
                 )
+                # Splice point 4 of 4 (terminal): commit the final
+                # assistant text turn into the snapshot so the frontend
+                # has the closing message in canonical history.
+                if self.config.emit_messages_snapshot and accumulated_text:
+                    snapshot_messages.append(
+                        AssistantMessage(
+                            id=message_id,
+                            role="assistant",
+                            content=accumulated_text,
+                        )
+                    )
+                    accumulated_text = ""
+                    yield MessagesSnapshotEvent(
+                        type=EventType.MESSAGES_SNAPSHOT,
+                        messages=list(snapshot_messages),
+                    )
 
             # Final state snapshot before finishing
             yield StateSnapshotEvent(
