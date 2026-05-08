@@ -25,36 +25,14 @@ import {
   PredictStateTool,
   LangGraphReasoning,
   StateEnrichment,
-  LangGraphToolWithName,
+  LangGraphToolWithName, ProcessedEvents,
 } from "./types";
 import {
   AbstractAgent,
   AgentConfig,
-  CustomEvent,
   EventType,
-  MessagesSnapshotEvent,
-  RawEvent,
   RunAgentInput,
   RunErrorEvent,
-  RunFinishedEvent,
-  RunStartedEvent,
-  StateDeltaEvent,
-  StateSnapshotEvent,
-  StepFinishedEvent,
-  StepStartedEvent,
-  TextMessageContentEvent,
-  TextMessageEndEvent,
-  TextMessageStartEvent,
-  ToolCallArgsEvent,
-  ToolCallEndEvent,
-  ToolCallStartEvent,
-  ToolCallResultEvent,
-  ReasoningStartEvent,
-  ReasoningMessageStartEvent,
-  ReasoningMessageContentEvent,
-  ReasoningMessageEndEvent,
-  ReasoningEndEvent,
-  ReasoningEncryptedValueEvent,
 } from "@ag-ui/client";
 import { RunsStreamPayload } from "@langchain/langgraph-sdk/dist/types";
 import {
@@ -67,33 +45,7 @@ import {
   resolveReasoningContent,
   resolveEncryptedReasoningContent,
 } from "@/utils";
-import { ToolMessage } from "@langchain/core/messages";
 import { ToolMessageFieldsWithToolCallId } from "@langchain/core/dist/messages/tool";
-
-export type ProcessedEvents =
-  | TextMessageStartEvent
-  | TextMessageContentEvent
-  | TextMessageEndEvent
-  | ReasoningStartEvent
-  | ReasoningMessageStartEvent
-  | ReasoningMessageContentEvent
-  | ReasoningMessageEndEvent
-  | ReasoningEndEvent
-  | ReasoningEncryptedValueEvent
-  | ToolCallStartEvent
-  | ToolCallArgsEvent
-  | ToolCallEndEvent
-  | ToolCallResultEvent
-  | StateSnapshotEvent
-  | StateDeltaEvent
-  | MessagesSnapshotEvent
-  | RawEvent
-  | CustomEvent
-  | RunStartedEvent
-  | RunFinishedEvent
-  | RunErrorEvent
-  | StepStartedEvent
-  | StepFinishedEvent;
 
 type RunAgentExtendedInput<
   TStreamMode extends StreamMode | StreamMode[] = StreamMode,
@@ -139,6 +91,14 @@ export interface LangGraphAgentConfig extends AgentConfig {
    * variable that could be mutated by a different clone or request.
    */
   headerFactory?: () => Record<string, string>;
+  /**
+   * Opt into the v3-protocol transformer path. When true, the agent calls
+   * `client.threads.stream(...).run.start(...)` and forwards events from
+   * `thread.extensions.agui` instead of running the legacy translation.
+   * The graph must register the matching `aguiTransformer` at compile-time.
+   * Defaults to false (legacy translation).
+   */
+  useTransformer?: boolean;
 }
 
 const ROOT_SUBGRAPH_NAME = "root";
@@ -172,6 +132,19 @@ export class LangGraphAgent extends AbstractAgent {
   subscriber: Subscriber<ProcessedEvents>;
   constantSchemaKeys: string[] = DEFAULT_SCHEMA_KEYS;
   config: LangGraphAgentConfig;
+  useTransformer: boolean;
+  // Per-thread cache of (ThreadStream + custom:agui SubscriptionHandle).
+  // Shared across `clone()`s so each request reuses the same connection
+  // and the same persistent subscription. Reusing matters because:
+  //   - Server replays its per-thread `record.queuedEvents` to ANY new
+  //     SSE sink, with no `since` exposed by the SDK. A fresh sub on a
+  //     new ThreadStream therefore receives prior runs' events as replays.
+  //   - The persistent sub here was attached BEFORE the first run, so it
+  //     has nothing to replay; subsequent runs reuse it without
+  //     triggering a stream rotation, so no replay occurs.
+  // Pause/resume bracket each run: SDK's `submitRun` calls
+  // `#prepareForNextRun` which auto-resumes the sub.
+  transformerThreads: Map<string, { thread: any; aguiSub: any }> = new Map();
 
   constructor(config: LangGraphAgentConfig) {
     super(config);
@@ -181,6 +154,7 @@ export class LangGraphAgent extends AbstractAgent {
     this.graphId = config.graphId;
     this.assistantConfig = config.assistantConfig;
     this.reasoningProcess = null;
+    this.useTransformer = config.useTransformer ?? false;
 
     // Default factory reads this.headers (set per-clone by CopilotKit Runtime)
     const agent = this;
@@ -237,6 +211,9 @@ export class LangGraphAgent extends AbstractAgent {
       cancelSent: this.cancelSent,
       subgraphs: this.subgraphs ? new Set(this.subgraphs) : new Set(),
       currentSubgraph: ROOT_SUBGRAPH_NAME,
+      useTransformer: this.useTransformer,
+      // Share by reference — the cache lives across clones.
+      transformerThreads: this.transformerThreads,
     });
 
     // Rebuild client so onRequest captures the cloned agent's headers
@@ -318,13 +295,17 @@ export class LangGraphAgent extends AbstractAgent {
       return subscriber.error("No stream to regenerate");
     }
 
-    await this.handleStreamEvents(
+    if (this.useTransformer) {
+      await this.handleTransformerStreamEvents(preparedStream, threadId, subscriber, input);
+    } else {
+      await this.handleStreamEvents(
       preparedStream,
       threadId,
       subscriber,
       input,
       Array.isArray(streamMode) ? streamMode : [streamMode],
     );
+    }
   }
 
   async prepareRegenerateStream(
@@ -634,6 +615,89 @@ export class LangGraphAgent extends AbstractAgent {
       return this.subscriber.complete();
     }
 
+    if (this.useTransformer) {
+      // CopilotKit reconstructs assistant messages from TOOL_CALL_* events
+      // and stuffs tool_call blocks into `content`. langchain 1.4 → OpenAI
+      // rejects that shape. Strip tool_call blocks from `content` here; the
+      // same data already lives in `tool_calls` so nothing is lost. The
+      // transformer's MESSAGES_SNAPSHOT is the eventual source of truth, but
+      // CopilotKit's outbound input is built from event reconstruction, so
+      // this sanitization is the defensive backstop.
+      const sanitizedInput = payloadInput?.messages
+        ? {
+            ...payloadInput,
+            messages: payloadInput.messages.map((m: LangGraphMessage) => {
+              if (m?.type !== "ai" || !Array.isArray(m.content)) return m;
+              const remaining = m.content.filter(
+                  // @ts-expect-error -- TODO
+                (block) => block?.type !== "tool_call",
+              );
+              const nextContent =
+                remaining.length === 0
+                  ? ""
+                  : remaining.length === m.content.length
+                    ? m.content
+                    : remaining;
+              return { ...m, content: nextContent };
+            }),
+          }
+        : payloadInput;
+
+      // Get-or-create the per-thread cached entry. ThreadStream is
+      // intended to be durable per-thread (matches SDK design); we open
+      // ONE custom:agui subscription before any run so it never receives
+      // a server-replayed history.
+      let entry = this.transformerThreads.get(threadId);
+      if (!entry) {
+        const thread = this.client.threads.stream(threadId, {
+          assistantId: this.assistant.assistant_id,
+        });
+        // Array form so the SDK applies its `unwrapNamedCustom` transform —
+        // for-await yields raw payloads, matching extensions.agui's shape.
+        const aguiSub = await (thread as any).subscribe(["custom:agui"]);
+        entry = { thread, aguiSub };
+        this.transformerThreads.set(threadId, entry);
+      }
+      const { thread: streamingThread, aguiSub } = entry;
+
+      // Per-run terminal watcher: pause the persistent sub when the root
+      // lifecycle terminal for THIS run fires. Pause exits the for-await
+      // without closing the sub; submitRun's `#prepareForNextRun` resumes
+      // it on the next run. onEvent fires from the dedicated lifecycle
+      // watcher (separate SSE), and SDK's #seenEventIds dedup means a
+      // prior run's terminal event_id won't re-fire here.
+      const TERMINAL = new Set(["completed", "failed", "interrupted"]);
+      const unsubscribeOnEvent = (streamingThread as any).onEvent?.((event: any) => {
+        if (
+          event?.method === "lifecycle" &&
+          Array.isArray(event?.params?.namespace) &&
+          event.params.namespace.length === 0 &&
+          TERMINAL.has(event?.params?.data?.event)
+        ) {
+          (aguiSub as any)?.pause?.();
+          unsubscribeOnEvent?.();
+        }
+      });
+
+      const stream = await (streamingThread as any).submitRun({
+        ...payload,
+        input: sanitizedInput,
+        config: payload.config,
+        metadata: payload.metadata as Record<string, unknown>,
+      });
+      this.activeRun!.id = stream.run_id ?? this.activeRun!.id;
+
+      return {
+        streamResponse: aguiSub as any,
+        state: threadState as ThreadState<State>,
+        close: () => {
+          // Per-run cleanup only — DO NOT close the cached thread/sub.
+          // The next run on this thread reuses both.
+          unsubscribeOnEvent?.();
+        },
+      };
+    }
+
     return {
       // @ts-ignore
       streamResponse: this.client.runs.stream(
@@ -643,6 +707,49 @@ export class LangGraphAgent extends AbstractAgent {
       ),
       state: threadState as ThreadState<State>,
     };
+  }
+
+  async handleTransformerStreamEvents(
+    stream: Awaited<
+      ReturnType<typeof this.prepareStream> | ReturnType<typeof this.prepareRegenerateStream>
+    >,
+    threadId: string,
+    subscriber: Subscriber<ProcessedEvents>,
+  ) {
+    let runErrorEmitted = false;
+    try {
+      this.dispatchEvent({
+        type: EventType.RUN_STARTED,
+        threadId,
+        runId: this.activeRun!.id,
+      });
+      for await (const rawEvent of stream!.streamResponse as AsyncIterable<ProcessedEvents>) {
+        if (rawEvent?.type === "RUN_ERROR") runErrorEmitted = true;
+        this.dispatchEvent(rawEvent as ProcessedEvents);
+      }
+      if (!runErrorEmitted) {
+        this.dispatchEvent({
+          type: EventType.RUN_FINISHED,
+          threadId,
+          runId: this.activeRun!.id,
+        });
+      }
+      return subscriber.complete();
+    } catch (err) {
+      if (!runErrorEmitted) {
+        this.dispatchEvent({
+          type: EventType.RUN_ERROR,
+          message: err instanceof Error ? err.message : String(err ?? "Unknown error"),
+        } as RunErrorEvent);
+      }
+      return subscriber.complete();
+    } finally {
+      try {
+        await (stream as any)?.close?.();
+      } catch (_) {
+        // swallow — close is best-effort cleanup
+      }
+    }
   }
 
   async handleStreamEvents(

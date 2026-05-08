@@ -9,6 +9,7 @@
 import { createAgent } from "langchain";
 import { MemorySaver } from "@langchain/langgraph";
 import { copilotkitMiddleware } from "@copilotkit/sdk-js/langgraph";
+import { aguiTransformer } from "@ag-ui/langgraph/transformer";
 
 const checkpointer = new MemorySaver();
 
@@ -17,5 +18,6 @@ export const agenticChatGraph = createAgent({
   tools: [],  // Backend tools go here
   middleware: [copilotkitMiddleware],
   systemPrompt: "You are a helpful assistant.",
-  checkpointer
+  checkpointer,
+  streamTransformers: [aguiTransformer],
 });
