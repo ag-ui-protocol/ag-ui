@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-09
+
 ### Added
 - `StatefulAgUiAgent` records `TOOL_CALL_START` / `TOOL_CALL_ARGS` / `TOOL_CALL_END` and `TOOL_CALL_RESULT` events into per-thread conversation history. The next run's `RunAgentInput.messages` now carries assistant tool calls and matching tool results, which servers (e.g. `ag_ui_adk`) need to pair pending-tool-call bookkeeping across turns.
 

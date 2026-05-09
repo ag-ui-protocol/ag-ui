@@ -1,6 +1,6 @@
 [versions]
 activity-compose = "1.10.1"
-agui-core = "0.2.6"
+agui-core = "0.3.0"
 a2ui4k = "0.8.1"
 appcompat = "1.7.1"
 core = "1.6.1"
