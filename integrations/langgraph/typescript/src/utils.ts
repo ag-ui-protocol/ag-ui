@@ -219,7 +219,8 @@ export function langchainMessagesToAgui(messages: LangGraphMessage[]): Message[]
 }
 
 export function aguiMessagesToLangChain(messages: Message[]): LangGraphMessage[] {
-  return messages.map((message, index) => {
+  const result: LangGraphMessage[] = [];
+  for (const message of messages) {
     switch (message.role) {
       case "user":
         // Handle multimodal content
@@ -232,14 +233,15 @@ export function aguiMessagesToLangChain(messages: Message[]): LangGraphMessage[]
           content = String(message.content);
         }
 
-        return {
+        result.push({
           id: message.id,
           role: message.role,
           content,
           type: "human",
-        } as LangGraphMessage;
+        } as LangGraphMessage);
+        break;
       case "assistant":
-        return {
+        result.push({
           id: message.id,
           type: "ai",
           role: message.role,
@@ -250,27 +252,96 @@ export function aguiMessagesToLangChain(messages: Message[]): LangGraphMessage[]
             args: JSON.parse(tc.function.arguments),
             type: "tool_call",
           })),
-        };
+        } as LangGraphMessage);
+        break;
       case "system":
-        return {
+        result.push({
           id: message.id,
           role: message.role,
           content: message.content,
           type: "system",
-        };
+        } as LangGraphMessage);
+        break;
+      // OpenAI introduced "developer" as a role that supersedes "system" for
+      // newer models; in LangChain it still maps to a SystemMessage. Treating
+      // it as a system message preserves the prompt instead of throwing.
+      case "developer":
+        result.push({
+          id: message.id,
+          role: "system",
+          content: message.content,
+          type: "system",
+        } as LangGraphMessage);
+        break;
       case "tool":
-        return {
+        result.push({
           content: message.content,
           role: message.role,
           type: message.role,
           tool_call_id: message.toolCallId,
           id: message.id,
+        } as LangGraphMessage);
+        break;
+      // Reasoning messages preserve the agent's prior chain-of-thought across
+      // turns — the visible summary text plus an opaque `encryptedValue`
+      // (provider-specific encrypted reasoning state, e.g. OpenAI Responses
+      // API `encrypted_content` for caching, Anthropic extended-thinking
+      // `signature`). Dropping these would make the model "forget" what it
+      // was reasoning about on the previous turn.
+      //
+      // Forward them to LangGraph as a standalone AIMessage whose content
+      // carries an OpenAI Responses-API-shaped reasoning block.
+      // langchain-openai's `_construct_responses_api_input` recognizes
+      // `type: "reasoning"` content blocks and threads them through to the
+      // Responses API as reasoning input items, so the model sees its own
+      // prior reasoning state.
+      //
+      // Note: the original provider shape (Anthropic `thinking`, Bedrock
+      // `reasoning_content`, OpenAI `summary`) isn't preserved by AG-UI's
+      // event stream — only rendered text and `encryptedValue` survive.
+      // We emit the OpenAI summary shape because it's what
+      // langchain-openai's Responses-API path consumes; for Anthropic /
+      // Bedrock multi-turn reasoning continuity, additional plumbing
+      // would be needed (e.g. an AG-UI extension preserving the original
+      // block type).
+      case "reasoning": {
+        const reasoningBlock: Record<string, unknown> = {
+          type: "reasoning",
+          id: message.id,
+          summary: message.content
+            ? [{ type: "summary_text", text: message.content }]
+            : [],
         };
+        const encrypted = (message as { encryptedValue?: string }).encryptedValue;
+        if (encrypted) {
+          // OpenAI Responses API ships encrypted reasoning state under
+          // `encrypted_content`; langchain-openai forwards it verbatim.
+          // Anthropic uses `signature` on the thinking block. Set both so
+          // whichever path the provider takes, the state round-trips.
+          reasoningBlock.encrypted_content = encrypted;
+          reasoningBlock.signature = encrypted;
+        }
+        result.push({
+          id: message.id,
+          type: "ai",
+          role: "assistant",
+          content: [reasoningBlock],
+          tool_calls: [],
+        } as LangGraphMessage);
+        break;
+      }
+      // Activity messages are display-only progress events (status pills,
+      // streaming progress bars, etc.). They have no LLM-relevant content
+      // and no analogue in LangGraph's message types; skip rather than
+      // throw so multi-turn flows with activity history don't break.
+      case "activity":
+        break;
       default:
-        console.error(`Message role ${message.role} is not implemented`);
+        console.error(`Message role ${(message as { role: string }).role} is not implemented`);
         throw new Error("message role is not supported.");
     }
-  });
+  }
+  return result;
 }
 
 function stringifyIfNeeded(item: any) {

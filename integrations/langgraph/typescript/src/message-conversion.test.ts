@@ -65,6 +65,104 @@ describe("Message Conversion - All Types", () => {
       expect(() => aguiMessagesToLangChain([msg])).toThrow("not supported");
     });
 
+    // Regression test: the AG-UI message history accumulated by the frontend
+    // includes a `role: "reasoning"` message whenever the agent emits
+    // REASONING_MESSAGE_* events. On the next turn, the frontend sends the
+    // full history back; the converter previously threw on the unknown role
+    // and the runtime surfaced it as a `RUN_ERROR` toast
+    // ("message role is not supported." / code INCOMPLETE_STREAM).
+    //
+    // Reasoning carries provider-specific encrypted state in
+    // `encryptedValue` (OpenAI Responses API `encrypted_content`, Anthropic
+    // `signature`) that providers use to maintain reasoning continuity
+    // across turns. We forward reasoning as an AIMessage with a
+    // `type: "reasoning"` content block so langchain-openai's Responses-API
+    // path threads it back as a reasoning input item.
+    it("should forward reasoning messages as AI messages with reasoning content blocks", () => {
+      const msgs: Message[] = [
+        { id: "u1", role: "user", content: "Tokyo weather?" },
+        {
+          id: "r1",
+          role: "reasoning",
+          content: "I should call get_weather.",
+          encryptedValue: "rs_encrypted_signature_abc",
+        } as any,
+        { id: "a1", role: "assistant", content: "Looking it up." },
+      ];
+      const result = aguiMessagesToLangChain(msgs);
+      expect(result).toHaveLength(3);
+      expect(result[0].type).toBe("human");
+      expect(result[1].type).toBe("ai");
+      const reasoningMsg = result[1] as any;
+      expect(Array.isArray(reasoningMsg.content)).toBe(true);
+      expect(reasoningMsg.content).toHaveLength(1);
+      expect(reasoningMsg.content[0].type).toBe("reasoning");
+      expect(reasoningMsg.content[0].id).toBe("r1");
+      expect(reasoningMsg.content[0].summary).toEqual([
+        { type: "summary_text", text: "I should call get_weather." },
+      ]);
+      // Encrypted state surfaces under both encrypted_content (OpenAI) and
+      // signature (Anthropic) so whichever provider serializes the message
+      // can pick up the reasoning state.
+      expect(reasoningMsg.content[0].encrypted_content).toBe("rs_encrypted_signature_abc");
+      expect(reasoningMsg.content[0].signature).toBe("rs_encrypted_signature_abc");
+      expect(result[2].type).toBe("ai");
+      expect(result[2].content).toBe("Looking it up.");
+    });
+
+    it("should forward reasoning without encryptedValue (no signature key)", () => {
+      const msgs: Message[] = [
+        {
+          id: "r1",
+          role: "reasoning",
+          content: "Plain rendered summary.",
+        } as any,
+      ];
+      const result = aguiMessagesToLangChain(msgs);
+      expect(result).toHaveLength(1);
+      const block = (result[0] as any).content[0];
+      expect(block.type).toBe("reasoning");
+      expect(block.summary).toEqual([
+        { type: "summary_text", text: "Plain rendered summary." },
+      ]);
+      expect(block.encrypted_content).toBeUndefined();
+      expect(block.signature).toBeUndefined();
+    });
+
+    // Activity messages are display-only progress events (status pills,
+    // streaming progress bars, etc.) emitted via AG-UI events. They have
+    // no LLM-relevant content and no analogue in LangGraph's message
+    // types; skip rather than throw so multi-turn flows with activity
+    // history don't break.
+    it("should skip activity messages instead of throwing", () => {
+      const msgs: Message[] = [
+        { id: "u1", role: "user", content: "Run the search." },
+        {
+          id: "act1",
+          role: "activity",
+          activityType: "search-progress",
+          content: { phase: "running" },
+        } as any,
+        { id: "a1", role: "assistant", content: "Done." },
+      ];
+      const result = aguiMessagesToLangChain(msgs);
+      expect(result).toHaveLength(2);
+      expect(result[0].type).toBe("human");
+      expect(result[1].type).toBe("ai");
+    });
+
+    // OpenAI's "developer" role supersedes "system" on newer models; in
+    // LangChain it still maps to a SystemMessage. Map rather than throw so
+    // demo agents that set `role: "developer"` system prompts still work.
+    it("should convert developer message to system", () => {
+      const msg: Message = { id: "d1", role: "developer", content: "Be concise." } as any;
+      const result = aguiMessagesToLangChain([msg]);
+      expect(result).toHaveLength(1);
+      expect(result[0].type).toBe("system");
+      expect((result[0] as any).role).toBe("system");
+      expect(result[0].content).toBe("Be concise.");
+    });
+
     it("should preserve message ordering", () => {
       const msgs: Message[] = [
         { id: "1", role: "user", content: "Q" },
