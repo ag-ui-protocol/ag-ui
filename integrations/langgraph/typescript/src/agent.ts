@@ -520,18 +520,50 @@ export class LangGraphAgent extends AbstractAgent {
       });
     }
 
+    const forkedCheckpointId = (fork as { checkpoint: { checkpoint_id: string } })
+      .checkpoint.checkpoint_id;
+    const regenInput = this.langGraphDefaultMergeState(
+      timeTravelCheckpoint.values,
+      [messageCheckpoint],
+      input,
+    );
     const payload = {
       ...(input.forwardedProps ?? {}),
-      input: this.langGraphDefaultMergeState(
-        timeTravelCheckpoint.values,
-        [messageCheckpoint],
-        input,
-      ),
-      // @ts-ignore
-      checkpointId: fork.checkpoint.checkpoint_id!,
+      input: regenInput,
+      checkpointId: forkedCheckpointId,
       streamMode,
       config: payloadConfig,
     };
+
+    if (this.useTransformer) {
+      // Transformer-path regen: cached ThreadStream + persistent
+      // custom:agui sub, with the fork expressed via v3 `forkFrom` so
+      // the dev server roots the new run at the chosen checkpoint.
+      // Resume semantics don't apply on regen.
+      const sanitizedInput = sanitizeAssistantMessages(regenInput as Record<string, unknown>);
+      const { thread: streamingThread, aguiSub } =
+        await this.acquireTransformerThread(threadId);
+      const unsubscribeOnEvent = this.watchForRootTerminal(streamingThread, aguiSub);
+
+      const submitted = await streamingThread.submitRun({
+        ...(input.forwardedProps ?? {}),
+        input: sanitizedInput,
+        config: payloadConfig,
+        metadata: (input.forwardedProps as { metadata?: Record<string, unknown> })?.metadata,
+        forkFrom: { checkpointId: forkedCheckpointId },
+      });
+      this.activeRun!.id = submitted?.run_id ?? this.activeRun!.id;
+
+      return {
+        streamResponse: aguiSub,
+        state: timeTravelCheckpoint as ThreadState<State>,
+        streamMode,
+        close: () => {
+          unsubscribeOnEvent();
+        },
+      };
+    }
+
     return {
       streamResponse: this.client.runs.stream(
         threadId,
