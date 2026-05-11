@@ -4,9 +4,11 @@ const { execSync } = require("child_process");
 const path = require("path");
 const concurrently = require("concurrently");
 
-// Pinned: @langchain/langgraph-api@1.1.14 regressed schema extraction, causing
-// worker timeouts on CI runners. Re-evaluate when a newer version fixes the issue.
-const LANGGRAPH_CLI_VERSION = "1.1.13";
+// 1.2.1 ships the v3 thread-stream protocol (POST /threads/:tid/commands,
+// /stream/events, etc.) that the AG-UI transformer path depends on.
+// 1.1.13 returned 404 on those routes. Re-evaluate if the schema-extraction
+// regressions that prompted the original 1.1.13 pin resurface.
+const LANGGRAPH_CLI_VERSION = "1.2.1";
 
 // Parse command line arguments
 const args = process.argv.slice(2);
