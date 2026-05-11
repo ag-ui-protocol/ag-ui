@@ -3,6 +3,10 @@ name: release / pre
 # Mirrors CopilotKit's `release / pre` DX. Publishes a canary build directly
 # (no PR needed) with a timestamp or custom suffix. Run it multiple times
 # with the same suffix to canary a coherent cross-scope set together.
+#
+# SECURITY: Build and publish are split into separate jobs. Publishing
+# secrets (NPM_TOKEN, PYPI_API_TOKEN) are only available in the publish
+# job, never in the same process tree as build-time code execution.
 
 on:
   workflow_dispatch:
@@ -49,16 +53,19 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
-permissions:
-  contents: read
-
 env:
   NX_VERBOSE_LOGGING: true
 
 jobs:
-  prerelease:
+  build:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      ts_projects: ${{ steps.ts.outputs.projects }}
+      ts_count: ${{ steps.ts.outputs.count }}
+      has_py_packages: ${{ steps.py.outputs.has_packages }}
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -72,15 +79,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-          registry-url: https://registry.npmjs.org
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Configure npm auth
-        run: |
-          npm config set "//registry.npmjs.org/:_authToken" "${NPM_TOKEN}"
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Install protoc
         uses: arduino/setup-protoc@v3
@@ -137,6 +135,16 @@ jobs:
             echo "No TypeScript projects in scope — build/test/publish will be skipped"
           fi
 
+      - name: Check for Python packages
+        id: py
+        run: |
+          PY_COUNT=$(jq '[.packages[] | select(.ecosystem == "python")] | length' /tmp/bump-result.json)
+          if [ "$PY_COUNT" -gt 0 ]; then
+            echo "has_packages=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_packages=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build TypeScript packages in scope
         if: steps.ts.outputs.count != '0'
         run: npx nx run-many -t build --projects="${{ steps.ts.outputs.projects }}"
@@ -145,17 +153,122 @@ jobs:
         if: steps.ts.outputs.count != '0'
         run: npx nx run-many -t test --projects="${{ steps.ts.outputs.projects }}"
 
+      - name: Upload TypeScript build artifacts
+        if: steps.ts.outputs.count != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ts-canary-artifacts
+          path: |
+            sdks/typescript/packages/*/dist/
+            integrations/*/typescript/dist/
+            middlewares/*/dist/
+          retention-days: 1
+
+      - name: Build Python packages
+        if: steps.py.outputs.has_packages == 'true'
+        run: |
+          PY_PACKAGES=$(jq -c '[.packages[] | select(.ecosystem == "python")]' /tmp/bump-result.json)
+          while read -r pkg; do
+            FILE=$(echo "$pkg" | jq -r '.file')
+            DIR=$(dirname "$FILE")
+            BUILD_SYSTEM=$(echo "$pkg" | jq -r '.buildSystem // "uv"')
+            echo "Building Python canary from $DIR"
+            cd "$DIR"
+            if [ "$BUILD_SYSTEM" = "poetry" ]; then
+              poetry build
+            else
+              uv build
+            fi
+            cd "$GITHUB_WORKSPACE"
+          done < <(echo "$PY_PACKAGES" | jq -c '.[]')
+
+      - name: Upload Python build artifacts
+        if: steps.py.outputs.has_packages == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: py-canary-artifacts
+          path: |
+            sdks/python/dist/
+            integrations/*/python/dist/
+          retention-days: 1
+
+      - name: Upload bump result
+        uses: actions/upload-artifact@v4
+        with:
+          name: bump-result
+          path: /tmp/bump-result.json
+          retention-days: 1
+
+  publish:
+    needs: build
+    if: inputs.dry_run != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Download bump result
+        uses: actions/download-artifact@v4
+        with:
+          name: bump-result
+          path: /tmp/
+
+      # --- TypeScript publish ---
+      - name: Setup pnpm
+        if: needs.build.outputs.ts_count != '0'
+        uses: pnpm/action-setup@v4
+        with:
+          version: "10.13.1"
+
+      - name: Setup Node
+        if: needs.build.outputs.ts_count != '0'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Configure npm auth
+        if: needs.build.outputs.ts_count != '0'
+        run: |
+          npm config set "//registry.npmjs.org/:_authToken" "${NPM_TOKEN}"
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Download TypeScript build artifacts
+        if: needs.build.outputs.ts_count != '0'
+        uses: actions/download-artifact@v4
+        with:
+          name: ts-canary-artifacts
+
       - name: Publish TypeScript packages
-        if: steps.ts.outputs.count != '0' && inputs.dry_run != true
+        if: needs.build.outputs.ts_count != '0'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          echo "Publishing TypeScript canary: ${{ steps.ts.outputs.projects }}"
-          npx nx release publish --projects="${{ steps.ts.outputs.projects }}" --tag canary
+          echo "Publishing TypeScript canary: ${{ needs.build.outputs.ts_projects }}"
+          npx nx release publish --projects="${{ needs.build.outputs.ts_projects }}" --tag canary
+
+      # --- Python publish ---
+      - name: Install uv
+        if: needs.build.outputs.has_py_packages == 'true'
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: ">=0.8.0"
+
+      - name: Download Python build artifacts
+        if: needs.build.outputs.has_py_packages == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: py-canary-artifacts
 
       - name: Publish Python packages
-        if: inputs.dry_run != true
+        if: needs.build.outputs.has_py_packages == 'true'
         env:
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
         run: |
@@ -166,10 +279,11 @@ jobs:
             while read -r pkg; do
               FILE=$(echo "$pkg" | jq -r '.file')
               DIR=$(dirname "$FILE")
-              BUILD_SYSTEM=$(echo "$pkg" | jq -r '.buildSystem // "uv"')
               echo "Publishing Python canary from $DIR"
-              if ! bash scripts/release/publish-python-package.sh "$DIR" "$BUILD_SYSTEM"; then
-                echo "ERROR: Failed to publish Python canary from $DIR" >&2
+              if [ -d "${DIR}/dist" ]; then
+                uv publish "${DIR}/dist/*"
+              else
+                echo "WARNING: No dist/ found at ${DIR} — skipping"
                 FAILED=1
               fi
             done < <(echo "$PY_PACKAGES" | jq -c '.[]')
@@ -179,22 +293,24 @@ jobs:
             fi
           fi
 
-      - name: Dry-run summary
-        if: inputs.dry_run == true
-        run: |
-          {
-            echo ""
-            echo "**DRY RUN** — no packages were published"
-          } >> "$GITHUB_STEP_SUMMARY"
-
       - name: Publish summary
-        if: inputs.dry_run != true
         run: |
           {
             echo ""
             echo "Published canary versions."
             echo ""
-            echo "Install:"
             jq -r '.packages[] | select(.ecosystem == "typescript") | "```\nnpm install \(.name)@canary\n```"' /tmp/bump-result.json
             jq -r '.packages[] | select(.ecosystem == "python") | "```\npip install \(.name)==\(.newVersion)\n```"' /tmp/bump-result.json
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  dry-run-summary:
+    needs: build
+    if: inputs.dry_run == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dry-run summary
+        run: |
+          {
+            echo ""
+            echo "**DRY RUN** — no packages were published"
           } >> "$GITHUB_STEP_SUMMARY"

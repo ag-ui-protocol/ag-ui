@@ -14,6 +14,10 @@ name: release / publish
 #   "1.2.3"              → publishes to npm `latest` / PyPI normal
 #   "1.2.3-alpha.0"      → publishes to npm `alpha` / PyPI (pip needs --pre)
 #   "1.2.3a0" / "1.2.3b0" / "1.2.3rc0" → same, with PEP 440 prerelease tags
+#
+# SECURITY: Build and publish are split into separate jobs. Publishing
+# secrets (NPM_TOKEN, PYPI_API_TOKEN) are only available in the publish
+# job, never in the same process tree as build-time code execution.
 
 on:
   # Version bumps can only live in package.json or pyproject.toml, so we
@@ -39,28 +43,31 @@ concurrency:
   group: release-publish
   cancel-in-progress: false
 
-permissions:
-  contents: write
-  id-token: write
-
 env:
   NX_VERBOSE_LOGGING: true
 
 jobs:
-  publish:
+  build:
     # Fires on merged release PRs OR on manual dispatch (retry / forced publish).
     if: >
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      ts_packages: ${{ steps.detect_ts.outputs.packages }}
+      ts_count: ${{ steps.detect_ts.outputs.count }}
+      py_packages: ${{ steps.detect_py.outputs.packages }}
+      py_count: ${{ steps.detect_py.outputs.count }}
+      ts_groups_json: ${{ steps.save_groups.outputs.groups }}
     steps:
       - name: Checkout merged main
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           ref: main
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -71,15 +78,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-          registry-url: https://registry.npmjs.org
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Configure npm auth
-        run: |
-          npm config set "//registry.npmjs.org/:_authToken" "${NPM_TOKEN}"
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Install protoc
         uses: arduino/setup-protoc@v3
@@ -104,11 +102,10 @@ jobs:
         run: pip install packaging
 
       - name: Install dependencies
-        # Run before detection so detect-ts-version-changes.sh can
-        # `require('semver')` (a root devDependency). The paths filter
-        # above already scopes this workflow to PRs that touch a
-        # package.json/pyproject.toml, so paying the install cost here
-        # is bounded to runs that could actually publish.
+        # No cache — release builds must be hermetic (cold cache, clean install).
+        # This is a deliberate security measure: cached pnpm stores could be
+        # poisoned via a prior compromised build, breaking the supply chain
+        # regardless of job separation.
         run: pnpm install --frozen-lockfile
 
       - name: Detect TypeScript version changes vs npm
@@ -181,34 +178,149 @@ jobs:
           PYEOF
           cat /tmp/ts-groups.json
 
+      - name: Save groups to output
+        if: steps.detect_ts.outputs.count != '0'
+        id: save_groups
+        run: |
+          GROUPS=$(cat /tmp/ts-groups.json)
+          echo "groups=$GROUPS" >> "$GITHUB_OUTPUT"
+
+      - name: Upload TypeScript build artifacts
+        if: steps.detect_ts.outputs.count != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ts-build-artifacts
+          path: |
+            sdks/typescript/packages/*/dist/
+            integrations/*/typescript/dist/
+            middlewares/*/dist/
+          retention-days: 1
+
+      - name: Build Python packages
+        if: steps.detect_py.outputs.count != '0'
+        env:
+          PY_PACKAGES: ${{ steps.detect_py.outputs.packages }}
+        run: |
+          while read -r pkg; do
+            DIR=$(echo "$pkg" | jq -r '.dir')
+            BUILD_SYSTEM=$(echo "$pkg" | jq -r '.build_system')
+            NAME=$(echo "$pkg" | jq -r '.name')
+            echo "=== Building ${NAME} from ${DIR} (${BUILD_SYSTEM}) ==="
+            cd "$DIR"
+            if [ "$BUILD_SYSTEM" = "poetry" ]; then
+              poetry build
+            else
+              uv build
+            fi
+            cd "$GITHUB_WORKSPACE"
+          done < <(echo "$PY_PACKAGES" | jq -c '.[]')
+
+      - name: Upload Python build artifacts
+        if: steps.detect_py.outputs.count != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: py-build-artifacts
+          path: |
+            sdks/python/dist/
+            integrations/*/python/dist/
+          retention-days: 1
+
+  publish:
+    needs: build
+    if: >
+      (needs.build.outputs.ts_count != '0' || needs.build.outputs.py_count != '0') &&
+      (github.event_name == 'workflow_dispatch' && inputs.dry_run != true || github.event_name != 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Checkout merged main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # --- TypeScript publish ---
+      - name: Setup pnpm
+        if: needs.build.outputs.ts_count != '0'
+        uses: pnpm/action-setup@v4
+        with:
+          version: "10.13.1"
+
+      - name: Setup Node
+        if: needs.build.outputs.ts_count != '0'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Configure npm auth
+        if: needs.build.outputs.ts_count != '0'
+        run: |
+          npm config set "//registry.npmjs.org/:_authToken" "${NPM_TOKEN}"
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Download TypeScript build artifacts
+        if: needs.build.outputs.ts_count != '0'
+        uses: actions/download-artifact@v4
+        with:
+          name: ts-build-artifacts
+
+      # nx release publish needs the workspace context (package.json files)
+      # but we do NOT run pnpm install here — that would execute lifecycle
+      # scripts from repo package manifests in the same process tree as
+      # publishing secrets. The built dist/ artifacts are sufficient.
       - name: Publish TypeScript packages
-        if: steps.detect_ts.outputs.count != '0' && inputs.dry_run != true
+        if: needs.build.outputs.ts_count != '0'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          TS_GROUPS: ${{ needs.build.outputs.ts_groups_json }}
         run: |
+          echo "$TS_GROUPS" > /tmp/ts-groups.json
           for TAG in $(jq -r 'keys[]' /tmp/ts-groups.json); do
             PROJECTS=$(jq -r --arg t "$TAG" '.[$t] | join(",")' /tmp/ts-groups.json)
             echo "Publishing ${PROJECTS} with --tag ${TAG}"
             npx nx release publish --projects="$PROJECTS" --tag "$TAG"
           done
 
+      # --- Python publish ---
+      - name: Install uv
+        if: needs.build.outputs.py_count != '0'
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: ">=0.8.0"
+
+      - name: Download Python build artifacts
+        if: needs.build.outputs.py_count != '0'
+        uses: actions/download-artifact@v4
+        with:
+          name: py-build-artifacts
+
       - name: Publish Python packages
-        if: steps.detect_py.outputs.count != '0' && inputs.dry_run != true
+        if: needs.build.outputs.py_count != '0'
         env:
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
-          PY_PACKAGES: ${{ steps.detect_py.outputs.packages }}
+          PY_PACKAGES: ${{ needs.build.outputs.py_packages }}
         run: |
           FAILED=0
           while read -r pkg; do
             NAME=$(echo "$pkg" | jq -r '.name')
             VERSION=$(echo "$pkg" | jq -r '.version')
             DIR=$(echo "$pkg" | jq -r '.dir')
-            BUILD_SYSTEM=$(echo "$pkg" | jq -r '.build_system')
 
-            echo "=== Publishing ${NAME}@${VERSION} from ${DIR} (${BUILD_SYSTEM}) ==="
-            if ! bash scripts/release/publish-python-package.sh "$DIR" "$BUILD_SYSTEM"; then
-              echo "ERROR: Failed to publish ${NAME}@${VERSION}" >&2
+            echo "=== Publishing ${NAME}@${VERSION} from ${DIR} ==="
+            # Publish pre-built wheels/sdists directly — no pip install needed
+            if [ -d "${DIR}/dist" ]; then
+              uv publish "${DIR}/dist/*"
+            else
+              echo "WARNING: No dist/ found for ${NAME} at ${DIR} — skipping"
               FAILED=1
             fi
           done < <(echo "$PY_PACKAGES" | jq -c '.[]')
@@ -218,64 +330,63 @@ jobs:
             exit 1
           fi
 
+      # --- Git tags and GitHub Releases ---
       - name: Configure git
-        if: steps.detect_ts.outputs.count != '0' || steps.detect_py.outputs.count != '0'
         run: |
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git config --global user.name "github-actions[bot]"
 
       - name: Create and push per-package git tags (TypeScript)
-        if: steps.detect_ts.outputs.count != '0' && inputs.dry_run != true
+        if: needs.build.outputs.ts_count != '0'
         env:
-          TS_PACKAGES: ${{ steps.detect_ts.outputs.packages }}
+          TS_PACKAGES: ${{ needs.build.outputs.ts_packages }}
         run: bash scripts/release/create-tags.sh "$TS_PACKAGES"
 
       - name: Create and push per-package git tags (Python)
-        if: steps.detect_py.outputs.count != '0' && inputs.dry_run != true
+        if: needs.build.outputs.py_count != '0'
         env:
-          PY_PACKAGES: ${{ steps.detect_py.outputs.packages }}
+          PY_PACKAGES: ${{ needs.build.outputs.py_packages }}
         run: bash scripts/release/create-tags.sh "$PY_PACKAGES"
 
       - name: Create GitHub Release (TypeScript)
-        if: steps.detect_ts.outputs.count != '0' && inputs.dry_run != true
+        if: needs.build.outputs.ts_count != '0'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TS_PACKAGES: ${{ steps.detect_ts.outputs.packages }}
+          TS_PACKAGES: ${{ needs.build.outputs.ts_packages }}
         run: bash scripts/release/create-or-update-release.sh typescript "$TS_PACKAGES"
 
       - name: Create GitHub Release (Python)
-        if: steps.detect_py.outputs.count != '0' && inputs.dry_run != true
+        if: needs.build.outputs.py_count != '0'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PY_PACKAGES: ${{ steps.detect_py.outputs.packages }}
+          PY_PACKAGES: ${{ needs.build.outputs.py_packages }}
         run: bash scripts/release/create-or-update-release.sh python "$PY_PACKAGES"
 
       - name: Reconcile GitHub Release (TypeScript) — safety net for partial failures
-        if: steps.detect_ts.outputs.count != '0' && inputs.dry_run != true
+        if: needs.build.outputs.ts_count != '0'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TS_PACKAGES: ${{ steps.detect_ts.outputs.packages }}
+          TS_PACKAGES: ${{ needs.build.outputs.ts_packages }}
         run: bash scripts/release/reconcile-release.sh typescript "$TS_PACKAGES"
 
       - name: Reconcile GitHub Release (Python) — safety net for partial failures
-        if: steps.detect_py.outputs.count != '0' && inputs.dry_run != true
+        if: needs.build.outputs.py_count != '0'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PY_PACKAGES: ${{ steps.detect_py.outputs.packages }}
+          PY_PACKAGES: ${{ needs.build.outputs.py_packages }}
         run: bash scripts/release/reconcile-release.sh python "$PY_PACKAGES"
 
       - name: Delete release/next if that's what was merged
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'release/next' && inputs.dry_run != true
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'release/next'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git push origin --delete release/next 2>/dev/null || echo "Branch already gone"
 
       - name: Release summary
-        if: steps.detect_ts.outputs.count != '0' || steps.detect_py.outputs.count != '0'
         env:
-          TS_PACKAGES: ${{ steps.detect_ts.outputs.packages }}
-          PY_PACKAGES: ${{ steps.detect_py.outputs.packages }}
+          TS_PACKAGES: ${{ needs.build.outputs.ts_packages }}
+          PY_PACKAGES: ${{ needs.build.outputs.py_packages }}
         run: |
           {
             echo "## release / publish"

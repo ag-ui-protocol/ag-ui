@@ -4,9 +4,16 @@ on: [push, pull_request]
 concurrency:
   group: ${{ github.repository }}-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+# SECURITY: Build and publish are split into separate jobs. The build job
+# runs untrusted repo code (pnpm install, pnpm build) without any secrets.
+# The publish job only runs pkg-pr-new against pre-built artifacts.
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout code
@@ -25,6 +32,39 @@ jobs:
 
       - name: Build
         run: pnpm run build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pkg-pr-new-build
+          path: |
+            sdks/typescript/packages/*/dist/
+            integrations/*/typescript/dist/
+            middlewares/*/dist/
+          retention-days: 1
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - run: corepack enable
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: "package.json"
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: pkg-pr-new-build
 
       - name: Publish via pkg-pr-new
         run: |

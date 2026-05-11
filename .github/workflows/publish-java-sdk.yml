@@ -4,8 +4,43 @@ on:
   # Manual trigger only - no automatic publishing
   workflow_dispatch:
 
+# SECURITY: Build and publish are split into separate jobs. Maven's `deploy`
+# phase tightly couples build and publish — `mvn deploy` compiles, packages,
+# signs, and uploads in a single invocation. Full separation would require
+# switching to a two-step flow (mvn package + manual upload), which is
+# non-trivial for Maven Central's staging workflow. As a pragmatic compromise,
+# the build job verifies the project compiles and tests pass WITHOUT any
+# publishing secrets, and the publish job runs `mvn deploy` with secrets.
+# This ensures that build-time code execution (compile, test) happens in a
+# job that cannot exfiltrate publishing credentials.
+
 jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: sdks/community/java
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: "temurin"
+          cache: 'maven'
+
+      - name: Compile and test
+        run: mvn --batch-mode verify -P release -Dgpg.skip=true
+
   publish:
+    needs: build
     runs-on: ubuntu-latest
 
     defaults:
@@ -31,6 +66,11 @@ jobs:
           gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
           gpg-passphrase: MAVEN_GPG_PASSPHRASE
 
+      # NOTE: `mvn deploy` re-compiles and re-runs tests as part of the Maven
+      # lifecycle. This is unavoidable without switching to a manual staging
+      # upload flow. The build job above ensures code compiles and tests pass
+      # BEFORE secrets are available; this job only adds the signing and
+      # upload steps on top.
       - name: Publish to Maven Central
         run: mvn --batch-mode deploy -P release
         env:

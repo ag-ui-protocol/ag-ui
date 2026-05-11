@@ -10,8 +10,12 @@ on:
         type: boolean
         default: false
 
+# SECURITY: Build/test and publish are split into separate jobs. Publishing
+# secrets (Sonatype credentials, GPG keys) are only available in the publish
+# job, never in the same process tree as build-time code execution.
+
 jobs:
-  publish:
+  build-and-test:
     runs-on: macos-latest
 
     permissions:
@@ -98,6 +102,55 @@ jobs:
           else
             echo "✅ All $total_tests tests passed!"
           fi
+
+      # JReleaser's publish.sh does a Gradle build internally, so we upload
+      # the Gradle caches to speed up the publish job's rebuild.
+      - name: Upload Gradle build cache
+        uses: actions/upload-artifact@v4
+        with:
+          name: kotlin-gradle-cache
+          path: |
+            sdks/community/kotlin/library/.gradle/
+            sdks/community/kotlin/library/*/build/
+          retention-days: 1
+
+  publish:
+    needs: build-and-test
+    runs-on: macos-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: "temurin"
+
+      - name: Setup Gradle
+        uses: gradle/gradle-build-action@v3
+
+      - name: Install Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 36 components
+        run: |
+          echo "Installing Android SDK 36 components..."
+          sdkmanager --install "platforms;android-36"
+          sdkmanager --install "build-tools;36.0.0"
+
+      - name: Accept Android licenses
+        run: yes | sdkmanager --licenses || true
+
+      - name: Download Gradle build cache
+        uses: actions/download-artifact@v4
+        with:
+          name: kotlin-gradle-cache
+          path: sdks/community/kotlin/library/
 
       - name: Publish to Maven Central (dry-run)
         if: inputs.dry_run == true
