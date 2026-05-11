@@ -212,6 +212,14 @@ export const aguiTransformer = (): StreamTransformer<{
                 activeStepNames.delete(tracked);
                 push({ type: EventType.STEP_FINISHED, stepName: tracked });
               }
+              // Lock in state at every node/subgraph boundary. A
+              // subgraph (or any node) can mutate state across many
+              // intermediate `values` events; flushing here ships a
+              // single coherent STATE_SNAPSHOT + MESSAGES_SNAPSHOT at
+              // the point its contribution is committed to the parent
+              // checkpoint. Snapshot push is hash-deduped, so flushing
+              // at every boundary is cheap when nothing changed.
+              if (status === "completed") flushSnapshots();
             }
             break;
           }

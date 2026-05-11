@@ -17,6 +17,9 @@ import type { LangGraphAgentConfig } from "./agent";
 
 function makeConfig(): LangGraphAgentConfig {
   return {
+    // Legacy `handleStreamEvents` path — see subgraph-streaming.test.ts
+    // for the same opt-out rationale.
+    useTransformer: false,
     deploymentUrl: "http://localhost:2024",
     graphId: "test-graph",
     client: {

@@ -154,8 +154,7 @@ export class LangGraphAgent extends AbstractAgent {
     this.graphId = config.graphId;
     this.assistantConfig = config.assistantConfig;
     this.reasoningProcess = null;
-    this.useTransformer = true;
-    this.useTransformer = config.useTransformer ?? false;
+    this.useTransformer = config.useTransformer ?? true;
 
     // Default factory reads this.headers (set per-clone by CopilotKit Runtime)
     const agent = this;
@@ -169,7 +168,6 @@ export class LangGraphAgent extends AbstractAgent {
           "or wire headers into your custom client directly.",
       );
     }
-
     this.client =
       config?.client ??
       new LangGraphClient({
