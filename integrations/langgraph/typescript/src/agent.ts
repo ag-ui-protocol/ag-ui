@@ -10,6 +10,8 @@ import {
   Config,
   Interrupt,
   Thread,
+  ThreadStream,
+  SubscriptionHandle,
 } from "@langchain/langgraph-sdk";
 import { randomUUID } from "@ag-ui/client";
 import {
@@ -61,6 +63,19 @@ type RunAgentExtendedInput<
 
 interface RegenerateInput extends RunAgentExtendedInput {
   messageCheckpoint: LangGraphMessage;
+}
+
+/**
+ * Cached per-thread (ThreadStream, custom:agui subscription) pair.
+ *
+ * The agui subscription is opened once and reused across every run on a
+ * given thread, so server-side `record.queuedEvents` replay never lands
+ * on a fresh sink. `submitRun`'s `#prepareForNextRun` auto-resumes
+ * the sub between runs.
+ */
+export interface TransformerThreadEntry {
+  thread: ThreadStream;
+  aguiSub: SubscriptionHandle<any, ProcessedEvents>;
 }
 
 /**
@@ -208,7 +223,7 @@ export class LangGraphAgent extends AbstractAgent {
   //     triggering a stream rotation, so no replay occurs.
   // Pause/resume bracket each run: SDK's `submitRun` calls
   // `#prepareForNextRun` which auto-resumes the sub.
-  transformerThreads: Map<string, { thread: any; aguiSub: any }> = new Map();
+  transformerThreads: Map<string, TransformerThreadEntry> = new Map();
 
   constructor(config: LangGraphAgentConfig) {
     super(config);
@@ -331,7 +346,7 @@ export class LangGraphAgent extends AbstractAgent {
    */
   protected async acquireTransformerThread(
     threadId: string,
-  ): Promise<{ thread: any; aguiSub: any }> {
+  ): Promise<TransformerThreadEntry> {
     const cached = this.transformerThreads.get(threadId);
     if (cached) return cached;
     if (!this.assistant) {
@@ -342,8 +357,10 @@ export class LangGraphAgent extends AbstractAgent {
     });
     // Array form so the SDK applies its `unwrapNamedCustom` transform —
     // for-await yields raw payloads, matching extensions.agui's shape.
-    const aguiSub = await (thread as any).subscribe(["custom:agui"]);
-    const entry = { thread, aguiSub };
+    const aguiSub = (await thread.subscribe([
+      "custom:agui",
+    ])) as SubscriptionHandle<any, ProcessedEvents>;
+    const entry: TransformerThreadEntry = { thread, aguiSub };
     this.transformerThreads.set(threadId, entry);
     return entry;
   }
@@ -358,14 +375,13 @@ export class LangGraphAgent extends AbstractAgent {
    * Returns `undefined` when there's no resume to perform.
    */
   protected findPendingInterrupt(
-    streamingThread: any,
+    streamingThread: ThreadStream,
     agentState: ThreadState<State>,
     resumeRequested: boolean,
   ): { interruptId: string; namespace: readonly string[] } | undefined {
     if (!resumeRequested) return undefined;
-    const live = (streamingThread as any).interrupts as
-      | Array<{ interruptId: string; namespace: readonly string[] }>
-      | undefined;
+    const live = (streamingThread as { interrupts?: Array<{ interruptId: string; namespace: readonly string[] }> })
+      .interrupts;
     const last = live?.[live.length - 1];
     if (last?.interruptId) {
       return { interruptId: last.interruptId, namespace: last.namespace };
@@ -392,22 +408,26 @@ export class LangGraphAgent extends AbstractAgent {
    * lifetime of the cached ThreadStream.
    */
   protected watchForRootTerminal(
-    streamingThread: any,
-    aguiSub: any,
+    streamingThread: ThreadStream,
+    aguiSub: SubscriptionHandle<any, ProcessedEvents>,
   ): () => void {
     const TERMINAL = new Set(["completed", "failed", "interrupted"]);
-    const unsubscribe = (streamingThread as any).onEvent?.((event: any) => {
+    const unsubscribe = streamingThread.onEvent((event) => {
+      const ev = event as {
+        method?: string;
+        params?: { namespace?: unknown; data?: { event?: string } };
+      };
       if (
-        event?.method === "lifecycle" &&
-        Array.isArray(event?.params?.namespace) &&
-        event.params.namespace.length === 0 &&
-        TERMINAL.has(event?.params?.data?.event)
+        ev.method === "lifecycle" &&
+        Array.isArray(ev.params?.namespace) &&
+        ev.params!.namespace.length === 0 &&
+        TERMINAL.has(ev.params!.data?.event ?? "")
       ) {
-        (aguiSub as any)?.pause?.();
-        unsubscribe?.();
+        aguiSub.pause();
+        unsubscribe();
       }
     });
-    return unsubscribe ?? (() => {});
+    return unsubscribe;
   }
 
   async runAgentStream(
@@ -792,13 +812,13 @@ export class LangGraphAgent extends AbstractAgent {
         // ThreadStream. The server assigns a fresh run_id we don't
         // see in the response; activeRun.id stays stale until an
         // event with the new id flows through.
-        await (streamingThread as any).respondInput({
+        await streamingThread.respondInput({
           namespace: pendingInterrupt.namespace,
           interrupt_id: pendingInterrupt.interruptId,
           response: forwardedProps!.command!.resume,
         });
       } else {
-        const submitted = await (streamingThread as any).submitRun({
+        const submitted = await streamingThread.submitRun({
           ...payload,
           input: sanitizedInput,
           config: payload.config,
@@ -809,7 +829,7 @@ export class LangGraphAgent extends AbstractAgent {
       this.activeRun!.id = runId ?? this.activeRun!.id;
 
       return {
-        streamResponse: aguiSub as any,
+        streamResponse: aguiSub,
         state: threadState as ThreadState<State>,
         // Per-run cleanup only — the cached thread + sub live on for
         // the next request on this threadId.
@@ -866,10 +886,15 @@ export class LangGraphAgent extends AbstractAgent {
       }
       return subscriber.complete();
     } finally {
-      try {
-        await (stream as any)?.close?.();
-      } catch (_) {
-        // swallow — close is best-effort cleanup
+      // Per-run cleanup hook lives on the transformer-path preparedStream
+      // (the legacy runs.stream return doesn't expose one).
+      const closer = (stream as { close?: () => void | Promise<void> } | undefined)?.close;
+      if (typeof closer === "function") {
+        try {
+          await closer();
+        } catch (_) {
+          // swallow — close is best-effort cleanup
+        }
       }
     }
   }
