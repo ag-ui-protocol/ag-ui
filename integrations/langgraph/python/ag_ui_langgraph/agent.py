@@ -472,7 +472,16 @@ class LangGraphAgent:
                 if getattr(m, "id", None) and not isinstance(m, ToolMessage)
             }
             checkpoint_ids = {getattr(m, "id", None) for m in agent_state.values.get("messages", []) if getattr(m, "id", None)}
-            is_continuation = bool(incoming_non_tool_ids) and incoming_non_tool_ids.issubset(checkpoint_ids)
+            # Regenerate ends with a HumanMessage (subset of checkpoint); tool-call
+            # continuations end with an AI/Tool message. Use that to disambiguate.
+            last_incoming_is_human = (
+                bool(langchain_messages) and isinstance(langchain_messages[-1], HumanMessage)
+            )
+            is_continuation = (
+                bool(incoming_non_tool_ids)
+                and incoming_non_tool_ids.issubset(checkpoint_ids)
+                and not last_incoming_is_human
+            )
 
             if not is_continuation:
                 last_user_message: Optional[HumanMessage] = None
