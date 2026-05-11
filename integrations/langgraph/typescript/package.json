@@ -31,7 +31,7 @@
   },
   "dependencies": {
     "@langchain/core": "^1.1.45",
-    "@langchain/langgraph-sdk": "^1.9.1",
+    "@langchain/langgraph-sdk": "^1.9.2",
     "langchain": ">=1.2.0",
     "partial-json": "^0.1.7",
     "rxjs": "7.8.1"

@@ -203,7 +203,7 @@ export const agentsIntegrations = {
         // The agent then consumes thread.extensions.agui instead of running
         // legacy translation. Add a graphId here once its agent.ts wires
         // `streamTransformers: [aguiTransformer]`.
-        const transformerEnabled = new Set(["agentic_chat", "human_in_the_loop"]);
+        const transformerEnabled = new Set(["agentic_chat", "human_in_the_loop", "agentic_chat_reasoning"]);
         return new LangGraphAgent({
           deploymentUrl: envVars.langgraphTypescriptUrl,
           graphId,

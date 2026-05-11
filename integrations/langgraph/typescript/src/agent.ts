@@ -390,6 +390,7 @@ export class LangGraphAgent extends AbstractAgent {
     this.activeRun!.manuallyEmittedState = null;
 
     const nodeNameInput = forwardedProps?.nodeName;
+
     const threadId = inputThreadId ?? randomUUID();
 
     if (!this.assistant) {
@@ -632,18 +633,37 @@ export class LangGraphAgent extends AbstractAgent {
         ? {
             ...payloadInput,
             messages: payloadInput.messages.map((m: LangGraphMessage) => {
-              if (m?.type !== "ai" || !Array.isArray(m.content)) return m;
-              const remaining = m.content.filter(
-                  // @ts-expect-error -- TODO
-                (block) => block?.type !== "tool_call",
-              );
-              const nextContent =
-                remaining.length === 0
-                  ? ""
-                  : remaining.length === m.content.length
-                    ? m.content
-                    : remaining;
-              return { ...m, content: nextContent };
+              if (m?.type !== "ai") return m;
+              let next: any = m;
+              // Strip tool_call blocks from `content` — langchain 1.4 +
+              // OpenAI reject them on the wire; the same data lives
+              // on `tool_calls`.
+              if (Array.isArray(next.content)) {
+                const remaining = next.content.filter(
+                  (block: any) => block?.type !== "tool_call",
+                );
+                if (remaining.length !== next.content.length) {
+                  next = {
+                    ...next,
+                    content: remaining.length === 0 ? "" : remaining,
+                  };
+                }
+              }
+              // langchain-core's AIMessage v1 path (response_metadata
+              // output_version === "v1") moves `content` into a
+              // `contentBlocks` array which langchain-openai then
+              // re-serialises against OpenAI's Responses API. For
+              // assistant turns that path mistypes prior text blocks
+              // as `input_text` and OpenAI rejects them. Drop the
+              // v1 flag from re-sent messages so the legacy
+              // `content` array path is used, which the Responses
+              // API tolerates.
+              const rm: any = (next as any).response_metadata;
+              if (rm && typeof rm === "object" && "output_version" in rm) {
+                const { output_version: _ov, ...rest } = rm;
+                next = { ...next, response_metadata: rest };
+              }
+              return next as LangGraphMessage;
             }),
           }
         : payloadInput;

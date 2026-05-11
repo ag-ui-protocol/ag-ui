@@ -55,6 +55,18 @@ export const aguiTransformer = (): StreamTransformer<{
   >();
   let activeMessageId: string | undefined;
 
+  // Per-reasoning-block tracking. Keyed by content-block index. The
+  // standardized v3 format (per langgraph streaming-cookbook) emits
+  // reasoning content blocks with `type: "reasoning"` and an optional
+  // initial `reasoning` string on start; deltas use
+  // `type: "reasoning-delta"` with a `reasoning` field. Encrypted
+  // material from Anthropic surfaces as `redacted_thinking` blocks
+  // (with `data`) or as a `signature` field on a reasoning block.
+  const reasoningBlocks = new Map<
+    number,
+    { messageId: string; messageStarted: boolean }
+  >();
+
   // Per-run set of interrupt ids already converted into CUSTOM
   // `OnInterrupt` pushes. Each `tasks` event carrying interrupts can
   // fire multiple times during the run (input + result frames); dedup
@@ -128,9 +140,9 @@ export const aguiTransformer = (): StreamTransformer<{
 
     finalize() {
       // Lifecycle (RUN_*) is owned by agent.ts. Here we only close any
-      // text/tool blocks that didn't receive their `content-block-finish`
-      // before the run ended, so AG-UI verify doesn't reject the terminal
-      // event downstream.
+      // text/tool/reasoning blocks that didn't receive their
+      // `content-block-finish` before the run ended, so AG-UI verify
+      // doesn't reject the terminal event downstream.
       for (const [index, messageId] of textBlockMessageIds) {
         push({ type: EventType.TEXT_MESSAGE_END, messageId });
         textBlockMessageIds.delete(index);
@@ -138,6 +150,11 @@ export const aguiTransformer = (): StreamTransformer<{
       for (const [index, tool] of toolBlocks) {
         push({ type: EventType.TOOL_CALL_END, toolCallId: tool.toolCallId });
         toolBlocks.delete(index);
+      }
+      for (const [index, r] of reasoningBlocks) {
+        if (r.messageStarted) push({ type: EventType.REASONING_MESSAGE_END, messageId: r.messageId });
+        push({ type: EventType.REASONING_END, messageId: r.messageId });
+        reasoningBlocks.delete(index);
       }
     },
 
@@ -148,6 +165,7 @@ export const aguiTransformer = (): StreamTransformer<{
 
       switch (event.method) {
         case "lifecycle": {
+
           // Lifecycle bracketing (RUN_STARTED / RUN_FINISHED) is owned by
           // agent.ts. Here we only forward fatal failures so the client can
           // surface the underlying message instead of a generic
@@ -226,6 +244,57 @@ export const aguiTransformer = (): StreamTransformer<{
                   messageId: activeMessageId,
                   role: "assistant",
                 });
+              } else if (blockType === "reasoning" || blockType === "thinking") {
+                // Standardized v3 format ("reasoning") plus the older
+                // langchain-anthropic alias ("thinking"). Treat the
+                // content block as a single reasoning entity scoped to
+                // the current message + this content-block index.
+                if (!activeMessageId) break;
+                const reasoningId = `${activeMessageId}:r:${data.index}`;
+                reasoningBlocks.set(data.index, {
+                  messageId: reasoningId,
+                  messageStarted: false,
+                });
+                push({ type: EventType.REASONING_START, messageId: reasoningId });
+                const block = data.content as
+                  | { reasoning?: string; thinking?: string; signature?: string }
+                  | undefined;
+                const initial = block?.reasoning ?? block?.thinking ?? "";
+                if (initial.length > 0) {
+                  push({
+                    type: EventType.REASONING_MESSAGE_START,
+                    messageId: reasoningId,
+                    role: "reasoning",
+                  });
+                  reasoningBlocks.get(data.index)!.messageStarted = true;
+                  push({
+                    type: EventType.REASONING_MESSAGE_CONTENT,
+                    messageId: reasoningId,
+                    delta: initial,
+                  });
+                }
+                if (block?.signature) {
+                  push({
+                    type: EventType.REASONING_ENCRYPTED_VALUE,
+                    subtype: "message",
+                    entityId: reasoningId,
+                    encryptedValue: block.signature,
+                  } as ProcessedEvents);
+                }
+              } else if (blockType === "redacted_thinking") {
+                // Anthropic redacted_thinking carries opaque encrypted
+                // chain-of-thought. Surface as a standalone
+                // REASONING_ENCRYPTED_VALUE without opening a
+                // visible reasoning message.
+                const block = data.content as { data?: string } | undefined;
+                if (activeMessageId && block?.data) {
+                  push({
+                    type: EventType.REASONING_ENCRYPTED_VALUE,
+                    subtype: "message",
+                    entityId: activeMessageId,
+                    encryptedValue: block.data,
+                  } as ProcessedEvents);
+                }
               } else if (blockType === "tool_call_chunk" || blockType === "tool_call") {
                 const block = data.content as
                   | { id?: string | null; name?: string | null; args?: string | null }
@@ -259,12 +328,48 @@ export const aguiTransformer = (): StreamTransformer<{
               if (data.index == null) break;
               const deltaType = data.delta?.type;
               if (deltaType === "text-delta") {
-                const messageId = textBlockMessageIds.get(data.index);
+                // Server may emit text deltas at a content-block index
+                // already occupied by another type (e.g. reasoning at
+                // idx=0, then text deltas at idx=0 with no preceding
+                // text content-block-start). Treat that as an implicit
+                // open: mint a TEXT_MESSAGE_START on first delta. End
+                // is taken care of on message-finish (or finalize).
+                let messageId = textBlockMessageIds.get(data.index);
+                if (!messageId && activeMessageId) {
+                  messageId = activeMessageId;
+                  textBlockMessageIds.set(data.index, messageId);
+                  push({
+                    type: EventType.TEXT_MESSAGE_START,
+                    messageId,
+                    role: "assistant",
+                  });
+                }
                 if (!messageId) break;
                 push({
                   type: EventType.TEXT_MESSAGE_CONTENT,
                   messageId,
                   delta: data.delta?.text ?? "",
+                });
+              } else if (deltaType === "reasoning-delta" || deltaType === "thinking-delta") {
+                // Standardized v3 reasoning delta + older Anthropic
+                // thinking-delta alias.
+                const r = reasoningBlocks.get(data.index);
+                if (!r) break;
+                const delta = (data.delta as { reasoning?: string; thinking?: string } | undefined);
+                const text = delta?.reasoning ?? delta?.thinking ?? "";
+                if (text.length === 0) break;
+                if (!r.messageStarted) {
+                  push({
+                    type: EventType.REASONING_MESSAGE_START,
+                    messageId: r.messageId,
+                    role: "reasoning",
+                  });
+                  r.messageStarted = true;
+                }
+                push({
+                  type: EventType.REASONING_MESSAGE_CONTENT,
+                  messageId: r.messageId,
+                  delta: text,
                 });
               } else if (deltaType === "block-delta") {
                 // BlockDelta carries shallow-merge fields. For tool calls
@@ -307,21 +412,52 @@ export const aguiTransformer = (): StreamTransformer<{
 
             case "content-block-finish": {
               if (data.index == null) break;
-              const messageId = textBlockMessageIds.get(data.index);
-              if (messageId) {
-                push({ type: EventType.TEXT_MESSAGE_END, messageId });
-                textBlockMessageIds.delete(data.index);
-                break;
-              }
-              const tool = toolBlocks.get(data.index);
-              if (tool) {
-                push({ type: EventType.TOOL_CALL_END, toolCallId: tool.toolCallId });
-                toolBlocks.delete(data.index);
+              // Dispatch by the FINISHING block's type rather than by
+              // tracker-presence. Text and reasoning can share an
+              // index (server emits text deltas at the same idx as a
+              // reasoning block), so we can't infer the finish target
+              // from "first map that has this index".
+              const finishType = (data as any)?.content?.type;
+              if (finishType === "text") {
+                const messageId = textBlockMessageIds.get(data.index);
+                if (messageId) {
+                  push({ type: EventType.TEXT_MESSAGE_END, messageId });
+                  textBlockMessageIds.delete(data.index);
+                }
+              } else if (
+                finishType === "reasoning" ||
+                finishType === "thinking"
+              ) {
+                const r = reasoningBlocks.get(data.index);
+                if (r) {
+                  if (r.messageStarted) {
+                    push({ type: EventType.REASONING_MESSAGE_END, messageId: r.messageId });
+                  }
+                  push({ type: EventType.REASONING_END, messageId: r.messageId });
+                  reasoningBlocks.delete(data.index);
+                }
+              } else if (
+                finishType === "tool_call_chunk" ||
+                finishType === "tool_call"
+              ) {
+                const tool = toolBlocks.get(data.index);
+                if (tool) {
+                  push({ type: EventType.TOOL_CALL_END, toolCallId: tool.toolCallId });
+                  toolBlocks.delete(data.index);
+                }
               }
               break;
             }
 
             case "message-finish": {
+              // Close any text blocks still open on this message. The
+              // server omits `content-block-finish` for implicitly-opened
+              // text blocks (text deltas reusing a reasoning block's
+              // index), so we need to flush them here.
+              for (const [index, messageId] of textBlockMessageIds) {
+                push({ type: EventType.TEXT_MESSAGE_END, messageId });
+                textBlockMessageIds.delete(index);
+              }
               activeMessageId = undefined;
               break;
             }
