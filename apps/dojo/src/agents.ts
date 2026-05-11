@@ -199,15 +199,14 @@ export const agentsIntegrations = {
   "langgraph-typescript": async () =>
     mapAgents(
       (graphId) => {
-        // Demos whose graph compiles with the AG-UI streamTransformer.
-        // The agent then consumes thread.extensions.agui instead of running
-        // legacy translation. Add a graphId here once its agent.ts wires
-        // `streamTransformers: [aguiTransformer]`.
-        const transformerEnabled = new Set(["agentic_chat", "human_in_the_loop", "agentic_chat_reasoning"]);
+        // All TS demos register the AG-UI streamTransformer at compile;
+        // route every one through the transformer path. The legacy
+        // translation in agent.ts is preserved for non-langgraph
+        // deployments via `useTransformer: false`.
         return new LangGraphAgent({
           deploymentUrl: envVars.langgraphTypescriptUrl,
           graphId,
-          useTransformer: transformerEnabled.has(graphId),
+          useTransformer: true,
         });
       },
       {

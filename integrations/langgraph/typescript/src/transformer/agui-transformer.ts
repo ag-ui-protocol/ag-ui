@@ -19,7 +19,7 @@ import {
   type StreamTransformer,
 } from "@langchain/langgraph";
 import { langchainMessagesToAgui } from "../utils";
-import { LangGraphEventTypes, ProcessedEvents, State } from "../types";
+import { CustomEventNames, LangGraphEventTypes, ProcessedEvents, State } from "../types";
 import { EventType } from "@ag-ui/core";
 
 /**
@@ -549,8 +549,90 @@ export const aguiTransformer = (): StreamTransformer<{
           break;
         }
 
-        // custom, checkpoints, updates, input — handled in subsequent
-        // phases. Drop through.
+        case "custom": {
+          // Graph nodes can dispatch custom events to drive UI side
+          // channels (CopilotKit ManuallyEmit* helpers, app-specific
+          // notifications, etc.). v3 routes them through the generic
+          // `custom` channel with `data: { name, payload }`. The legacy
+          // translator expanded the three well-known ManuallyEmit*
+          // names into their concrete AG-UI events and passed through
+          // everything else as `CUSTOM`. Mirror that contract here.
+          const data = event.params?.data as
+            | { name?: string; payload?: any }
+            | undefined;
+          if (!data?.name) break;
+          const name = data.name;
+          const payload = data.payload;
+
+          if (name === CustomEventNames.ManuallyEmitMessage) {
+            const messageId = payload?.message_id;
+            const message = payload?.message;
+            if (messageId && typeof message === "string") {
+              push({
+                type: EventType.TEXT_MESSAGE_START,
+                messageId,
+                role: "assistant",
+              });
+              push({
+                type: EventType.TEXT_MESSAGE_CONTENT,
+                messageId,
+                delta: message,
+              });
+              push({ type: EventType.TEXT_MESSAGE_END, messageId });
+            }
+            break;
+          }
+
+          if (name === CustomEventNames.ManuallyEmitToolCall) {
+            const toolCallId = payload?.id;
+            const toolCallName = payload?.name;
+            const args = payload?.args;
+            if (toolCallId && toolCallName) {
+              push({
+                type: EventType.TOOL_CALL_START,
+                toolCallId,
+                toolCallName,
+                parentMessageId: toolCallId,
+              });
+              if (typeof args === "string" && args.length > 0) {
+                push({
+                  type: EventType.TOOL_CALL_ARGS,
+                  toolCallId,
+                  delta: args,
+                });
+              }
+              push({ type: EventType.TOOL_CALL_END, toolCallId });
+            }
+            break;
+          }
+
+          if (name === CustomEventNames.ManuallyEmitState) {
+            // Manually-emitted state is the source of truth for the
+            // following snapshot. Merge into our cache so the next
+            // root-terminal flush carries the updated values, AND
+            // ship an immediate STATE_SNAPSHOT so consumers can react
+            // before the run ends (matches legacy behaviour).
+            if (payload && typeof payload === "object") {
+              cacheState(payload as State);
+              const { messages: _m, ...stateOnly } = payload as any;
+              push({ type: EventType.STATE_SNAPSHOT, snapshot: stateOnly });
+            }
+            // Falls through to the generic CUSTOM passthrough below
+            // so application listeners that key off the event name
+            // still get it.
+          }
+
+          // Generic passthrough: forward the event verbatim as CUSTOM.
+          push({
+            type: EventType.CUSTOM,
+            name,
+            value: payload,
+          } as ProcessedEvents);
+          break;
+        }
+
+        // checkpoints, updates, input — handled in subsequent phases.
+        // Drop through.
         default:
           break;
       }
