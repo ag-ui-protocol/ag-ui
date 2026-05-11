@@ -73,12 +73,15 @@ export const aguiTransformer = (): StreamTransformer<{
   // by interrupt id so the client only renders one prompt.
   const emittedInterruptIds = new Set<string>();
 
-  // Active graph-node steps keyed by their full namespace path. The
-  // namespace's first segment is `nodeName:taskUuid`; we surface the
-  // node name as AG-UI STEP_STARTED / STEP_FINISHED. Tracking the
-  // namespace (not just the name) lets parallel tasks for the same
-  // node coexist without unbalanced pairs.
+  // Active graph-node steps keyed by full namespace path → stepName.
+  // The companion `activeStepNames` enforces AG-UI's name-uniqueness
+  // contract: at most one STEP_STARTED per stepName at a time. Inner
+  // subgraph nodes whose stripped head name collides with an already
+  // active step (e.g. an outer `experiences_agent` plus its inner
+  // graph also rooted under `experiences_agent`) are ignored so the
+  // outer STEP_FINISHED stays balanced.
   const activeSteps = new Map<string, string>();
+  const activeStepNames = new Set<string>();
 
   const push = (ev: ProcessedEvents) => {
     aguiChannel.push(ev);
@@ -166,6 +169,7 @@ export const aguiTransformer = (): StreamTransformer<{
       for (const [nsKey, stepName] of activeSteps) {
         push({ type: EventType.STEP_FINISHED, stepName });
         activeSteps.delete(nsKey);
+        activeStepNames.delete(stepName);
       }
     },
 
@@ -182,16 +186,22 @@ export const aguiTransformer = (): StreamTransformer<{
           // Translate them to AG-UI STEP_STARTED / STEP_FINISHED so
           // consumers can show progress on multi-node graphs. The
           // namespace head is `nodeName:uuid` — strip the uuid for a
-          // readable step name. We track active step names per
-          // namespace key to avoid emitting STEP_FINISHED without a
-          // matching START (AG-UI verify rejects unbalanced pairs).
+          // readable step name. AG-UI verify enforces a single active
+          // step per stepName, so we dedup by stepName and remember
+          // which namespace opened it; only that namespace's close
+          // emits STEP_FINISHED. Nested subgraph lifecycles whose
+          // stripped head name matches an already-active step (e.g.
+          // a subgraph node and an inner node both rooted under
+          // `experiences_agent`) are ignored — both ends would
+          // otherwise unbalance the pair.
           if (!isRootNamespace(event.params.namespace)) {
             const head = event.params.namespace[0];
             const nsKey = event.params.namespace.join("|");
             const stepName = typeof head === "string" ? head.split(":")[0] : "";
             if (!stepName) break;
             if (status === "started") {
-              if (!activeSteps.has(nsKey)) {
+              if (!activeStepNames.has(stepName)) {
+                activeStepNames.add(stepName);
                 activeSteps.set(nsKey, stepName);
                 push({ type: EventType.STEP_STARTED, stepName });
               }
@@ -199,6 +209,7 @@ export const aguiTransformer = (): StreamTransformer<{
               const tracked = activeSteps.get(nsKey);
               if (tracked) {
                 activeSteps.delete(nsKey);
+                activeStepNames.delete(tracked);
                 push({ type: EventType.STEP_FINISHED, stepName: tracked });
               }
             }
