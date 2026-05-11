@@ -322,6 +322,94 @@ export class LangGraphAgent extends AbstractAgent {
     });
   }
 
+  /**
+   * Get-or-create the cached `(ThreadStream, custom:agui subscription)`
+   * pair for a thread. Shared across `clone()` instances by reference
+   * (see `clone()`), so every request to a given threadId reuses the
+   * same SSE wire and never receives a server-side replay of prior
+   * runs' events.
+   */
+  protected async acquireTransformerThread(
+    threadId: string,
+  ): Promise<{ thread: any; aguiSub: any }> {
+    const cached = this.transformerThreads.get(threadId);
+    if (cached) return cached;
+    if (!this.assistant) {
+      this.assistant = await this.getAssistant();
+    }
+    const thread = this.client.threads.stream(threadId, {
+      assistantId: this.assistant.assistant_id,
+    });
+    // Array form so the SDK applies its `unwrapNamedCustom` transform —
+    // for-await yields raw payloads, matching extensions.agui's shape.
+    const aguiSub = await (thread as any).subscribe(["custom:agui"]);
+    const entry = { thread, aguiSub };
+    this.transformerThreads.set(threadId, entry);
+    return entry;
+  }
+
+  /**
+   * Resolve the interrupt to resume against, given a possibly-empty
+   * `streamingThread.interrupts` (populated live by the SDK's
+   * lifecycle watcher) and the server-side `agentState.tasks` array
+   * (a cold-start fallback in case our ThreadStream cache was rebuilt
+   * but the server still has the interrupt parked).
+   *
+   * Returns `undefined` when there's no resume to perform.
+   */
+  protected findPendingInterrupt(
+    streamingThread: any,
+    agentState: ThreadState<State>,
+    resumeRequested: boolean,
+  ): { interruptId: string; namespace: readonly string[] } | undefined {
+    if (!resumeRequested) return undefined;
+    const live = (streamingThread as any).interrupts as
+      | Array<{ interruptId: string; namespace: readonly string[] }>
+      | undefined;
+    const last = live?.[live.length - 1];
+    if (last?.interruptId) {
+      return { interruptId: last.interruptId, namespace: last.namespace };
+    }
+    const fallback = (agentState.tasks ?? [])
+      .flatMap((t: any) =>
+        (t.interrupts ?? []).map((i: any) => ({ task: t, interrupt: i })),
+      )
+      .pop();
+    if (fallback?.interrupt?.id) {
+      return {
+        interruptId: fallback.interrupt.id,
+        namespace: fallback.task?.checkpoint?.checkpoint_ns?.split("|") ?? [],
+      };
+    }
+    return undefined;
+  }
+
+  /**
+   * Register a one-shot listener that pauses the agui subscription when
+   * the run's root lifecycle terminates. `submitRun`'s
+   * `#prepareForNextRun` auto-resumes between runs, so pause is
+   * cheaper than close — the persistent sub stays alive across the
+   * lifetime of the cached ThreadStream.
+   */
+  protected watchForRootTerminal(
+    streamingThread: any,
+    aguiSub: any,
+  ): () => void {
+    const TERMINAL = new Set(["completed", "failed", "interrupted"]);
+    const unsubscribe = (streamingThread as any).onEvent?.((event: any) => {
+      if (
+        event?.method === "lifecycle" &&
+        Array.isArray(event?.params?.namespace) &&
+        event.params.namespace.length === 0 &&
+        TERMINAL.has(event?.params?.data?.event)
+      ) {
+        (aguiSub as any)?.pause?.();
+        unsubscribe?.();
+      }
+    });
+    return unsubscribe ?? (() => {});
+  }
+
   async runAgentStream(
     input: RunAgentExtendedInput,
     subscriber: Subscriber<ProcessedEvents>,
@@ -685,106 +773,48 @@ export class LangGraphAgent extends AbstractAgent {
 
     if (this.useTransformer) {
       const sanitizedInput = sanitizeAssistantMessages(payloadInput);
+      const { thread: streamingThread, aguiSub } =
+        await this.acquireTransformerThread(threadId);
+      const unsubscribeOnEvent = this.watchForRootTerminal(streamingThread, aguiSub);
 
-      // Get-or-create the per-thread cached entry. ThreadStream is
-      // intended to be durable per-thread (matches SDK design); we open
-      // ONE custom:agui subscription before any run so it never receives
-      // a server-replayed history.
-      let entry = this.transformerThreads.get(threadId);
-      if (!entry) {
-        const thread = this.client.threads.stream(threadId, {
-          assistantId: this.assistant.assistant_id,
-        });
-        // Array form so the SDK applies its `unwrapNamedCustom` transform —
-        // for-await yields raw payloads, matching extensions.agui's shape.
-        const aguiSub = await (thread as any).subscribe(["custom:agui"]);
-        entry = { thread, aguiSub };
-        this.transformerThreads.set(threadId, entry);
-      }
-      const { thread: streamingThread, aguiSub } = entry;
-
-      // Per-run terminal watcher: pause the persistent sub when the root
-      // lifecycle terminal for THIS run fires. Pause exits the for-await
-      // without closing the sub; submitRun's `#prepareForNextRun` resumes
-      // it on the next run. onEvent fires from the dedicated lifecycle
-      // watcher (separate SSE), and SDK's #seenEventIds dedup means a
-      // prior run's terminal event_id won't re-fire here.
-      const TERMINAL = new Set(["completed", "failed", "interrupted"]);
-      const unsubscribeOnEvent = (streamingThread as any).onEvent?.((event: any) => {
-        if (
-          event?.method === "lifecycle" &&
-          Array.isArray(event?.params?.namespace) &&
-          event.params.namespace.length === 0 &&
-          TERMINAL.has(event?.params?.data?.event)
-        ) {
-          (aguiSub as any)?.pause?.();
-          unsubscribeOnEvent?.();
-        }
-      });
-
-      // Resume after interrupt: route via input.respond on the cached
-      // ThreadStream instead of submitRun. The interrupt's namespace
-      // and id are needed to correlate the response server-side.
-      // streamingThread.interrupts[] is populated by the lifecycle
-      // watcher; use the most recent unresolved interrupt. Fall back
-      // to scanning agentState.tasks for cold-start cases (server kept
-      // the interrupt but our ThreadStream cache was rebuilt).
-      const isResume =
+      const resumeRequested =
         forwardedProps?.command?.resume !== undefined &&
         forwardedProps?.command?.resume !== null;
-      let pendingInterrupt:
-        | { interruptId: string; namespace: readonly string[] }
-        | undefined;
-      if (isResume) {
-        const live = (streamingThread as any).interrupts as
-          | Array<{ interruptId: string; namespace: readonly string[] }>
-          | undefined;
-        const last = live?.[live.length - 1];
-        if (last?.interruptId) {
-          pendingInterrupt = { interruptId: last.interruptId, namespace: last.namespace };
-        } else {
-          const fallback = (agentState.tasks ?? [])
-            .flatMap((t: any) =>
-              (t.interrupts ?? []).map((i: any) => ({ task: t, interrupt: i })),
-            )
-            .pop();
-          if (fallback?.interrupt?.id) {
-            pendingInterrupt = {
-              interruptId: fallback.interrupt.id,
-              namespace: fallback.task?.checkpoint?.checkpoint_ns?.split("|") ?? [],
-            };
-          }
-        }
-      }
+      const pendingInterrupt = this.findPendingInterrupt(
+        streamingThread,
+        agentState,
+        resumeRequested,
+      );
 
-      let stream: { run_id?: string };
-      if (isResume && pendingInterrupt) {
+      let runId: string | undefined;
+      if (resumeRequested && pendingInterrupt) {
+        // Resume routes through input.respond on the cached
+        // ThreadStream. The server assigns a fresh run_id we don't
+        // see in the response; activeRun.id stays stale until an
+        // event with the new id flows through.
         await (streamingThread as any).respondInput({
           namespace: pendingInterrupt.namespace,
           interrupt_id: pendingInterrupt.interruptId,
           response: forwardedProps!.command!.resume,
         });
-        // respondInput resolves once the command is acked. The server
-        // assigns a fresh run_id we don't have yet; activeRun.id will
-        // be updated on the first event in the watcher if needed.
-        stream = {};
       } else {
-        stream = await (streamingThread as any).submitRun({
+        const submitted = await (streamingThread as any).submitRun({
           ...payload,
           input: sanitizedInput,
           config: payload.config,
           metadata: payload.metadata as Record<string, unknown>,
         });
+        runId = submitted?.run_id;
       }
-      this.activeRun!.id = stream.run_id ?? this.activeRun!.id;
+      this.activeRun!.id = runId ?? this.activeRun!.id;
 
       return {
         streamResponse: aguiSub as any,
         state: threadState as ThreadState<State>,
+        // Per-run cleanup only — the cached thread + sub live on for
+        // the next request on this threadId.
         close: () => {
-          // Per-run cleanup only — DO NOT close the cached thread/sub.
-          // The next run on this thread reuses both.
-          unsubscribeOnEvent?.();
+          unsubscribeOnEvent();
         },
       };
     }
