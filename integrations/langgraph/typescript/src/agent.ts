@@ -63,6 +63,68 @@ interface RegenerateInput extends RunAgentExtendedInput {
   messageCheckpoint: LangGraphMessage;
 }
 
+/**
+ * AI message shape we care about in the sanitizer (the actual SDK type
+ * is a discriminated union over message roles).
+ */
+type AssistantContentBlock = { type?: string; [key: string]: unknown };
+type AssistantResponseMetadata = { output_version?: string; [key: string]: unknown };
+type AssistantMessageLike = LangGraphMessage & {
+  content?: string | AssistantContentBlock[];
+  response_metadata?: AssistantResponseMetadata;
+};
+
+/**
+ * Defensive cleanup for assistant messages being re-sent to the model.
+ *
+ * Two upstream issues we sidestep:
+ *
+ *  1. CopilotKit reconstructs assistant messages from TOOL_CALL_* events
+ *     and stuffs `tool_call` blocks back into the message `content`
+ *     array. langchain 1.4 + OpenAI reject that shape on the wire; the
+ *     same data already lives on `tool_calls`, so the blocks are pure
+ *     noise. Strip them. If only tool_call blocks remain, collapse
+ *     `content` to "" since an empty content array trips other validators.
+ *
+ *  2. langchain-core's AIMessage v1 path (`response_metadata.output_version
+ *     === "v1"`) routes `content` through a `contentBlocks` array that
+ *     langchain-openai's Responses serializer mistypes — prior assistant
+ *     text blocks come back as `input_text` and OpenAI returns a 400.
+ *     Drop the v1 flag from re-sent messages so the legacy content-array
+ *     path is used, which the Responses API accepts.
+ *
+ * Pure function — no side effects, no I/O.
+ */
+export function sanitizeAssistantMessages(
+  payloadInput: { messages?: LangGraphMessage[]; [key: string]: unknown } | null | undefined,
+): { messages?: LangGraphMessage[]; [key: string]: unknown } | null | undefined {
+  if (!payloadInput || !payloadInput.messages) return payloadInput;
+  return {
+    ...payloadInput,
+    messages: payloadInput.messages.map((raw) => {
+      if (raw?.type !== "ai") return raw;
+      let next = raw as AssistantMessageLike;
+      if (Array.isArray(next.content)) {
+        const remaining = next.content.filter(
+          (block) => block?.type !== "tool_call",
+        );
+        if (remaining.length !== next.content.length) {
+          next = {
+            ...next,
+            content: remaining.length === 0 ? "" : remaining,
+          };
+        }
+      }
+      const rm = next.response_metadata;
+      if (rm && typeof rm === "object" && "output_version" in rm) {
+        const { output_version: _ov, ...rest } = rm;
+        next = { ...next, response_metadata: rest };
+      }
+      return next as LangGraphMessage;
+    }),
+  };
+}
+
 export interface LangGraphAgentConfig extends AgentConfig {
   /**
    * Optional pre-constructed LangGraphClient. When provided, the agent uses
@@ -622,51 +684,7 @@ export class LangGraphAgent extends AbstractAgent {
     }
 
     if (this.useTransformer) {
-      // CopilotKit reconstructs assistant messages from TOOL_CALL_* events
-      // and stuffs tool_call blocks into `content`. langchain 1.4 → OpenAI
-      // rejects that shape. Strip tool_call blocks from `content` here; the
-      // same data already lives in `tool_calls` so nothing is lost. The
-      // transformer's MESSAGES_SNAPSHOT is the eventual source of truth, but
-      // CopilotKit's outbound input is built from event reconstruction, so
-      // this sanitization is the defensive backstop.
-      const sanitizedInput = payloadInput?.messages
-        ? {
-            ...payloadInput,
-            messages: payloadInput.messages.map((m: LangGraphMessage) => {
-              if (m?.type !== "ai") return m;
-              let next: any = m;
-              // Strip tool_call blocks from `content` — langchain 1.4 +
-              // OpenAI reject them on the wire; the same data lives
-              // on `tool_calls`.
-              if (Array.isArray(next.content)) {
-                const remaining = next.content.filter(
-                  (block: any) => block?.type !== "tool_call",
-                );
-                if (remaining.length !== next.content.length) {
-                  next = {
-                    ...next,
-                    content: remaining.length === 0 ? "" : remaining,
-                  };
-                }
-              }
-              // langchain-core's AIMessage v1 path (response_metadata
-              // output_version === "v1") moves `content` into a
-              // `contentBlocks` array which langchain-openai then
-              // re-serialises against OpenAI's Responses API. For
-              // assistant turns that path mistypes prior text blocks
-              // as `input_text` and OpenAI rejects them. Drop the
-              // v1 flag from re-sent messages so the legacy
-              // `content` array path is used, which the Responses
-              // API tolerates.
-              const rm: any = (next as any).response_metadata;
-              if (rm && typeof rm === "object" && "output_version" in rm) {
-                const { output_version: _ov, ...rest } = rm;
-                next = { ...next, response_metadata: rest };
-              }
-              return next as LangGraphMessage;
-            }),
-          }
-        : payloadInput;
+      const sanitizedInput = sanitizeAssistantMessages(payloadInput);
 
       // Get-or-create the per-thread cached entry. ThreadStream is
       // intended to be durable per-thread (matches SDK design); we open
