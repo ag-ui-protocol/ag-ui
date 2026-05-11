@@ -1,0 +1,96 @@
+name: "Security: Fork PR Alert"
+
+on:
+  pull_request:
+    types: [opened, synchronize, closed, reopened]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  fork-pr-monitor:
+    if: github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for suspicious patterns
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const alerts = [];
+
+            // 1. [skip ci] in commit messages from fork PRs
+            if (context.payload.action === 'opened' || context.payload.action === 'synchronize') {
+              const commits = await github.rest.pulls.listCommits({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pr.number,
+                per_page: 100
+              });
+              const skipCiCommits = commits.data.filter(c =>
+                /\[skip ci\]|\[ci skip\]|\[no ci\]/i.test(c.commit.message)
+              );
+              if (skipCiCommits.length > 0) {
+                alerts.push(`⚠️ **[skip ci] detected in fork PR** — ${skipCiCommits.length} commit(s) with CI skip directives: ${skipCiCommits.map(c => '\`' + c.sha.substring(0, 7) + '\`').join(', ')}`);
+              }
+            }
+
+            // 2. Force-push reducing changed files to 0 (evidence cleanup)
+            if (context.payload.action === 'synchronize') {
+              const prDetails = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pr.number
+              });
+              if (prDetails.data.changed_files === 0) {
+                alerts.push(`🚨 **Zero-file fork PR after force-push** — PR shows 0 changed files after update. This matches supply-chain attack cleanup patterns.`);
+              }
+            }
+
+            // 3. Rapid open-then-close (CI-trigger-only attack)
+            if (context.payload.action === 'closed' && !pr.merged) {
+              const created = new Date(pr.created_at);
+              const closed = new Date(pr.closed_at);
+              const minutesOpen = (closed - created) / (1000 * 60);
+              if (minutesOpen < 30) {
+                alerts.push(`🚨 **Fork PR closed rapidly** — opened and closed within ${Math.round(minutesOpen)} minutes without merging.`);
+              }
+            }
+
+            // 4. Large bundled files (>5000 lines added)
+            if (context.payload.action === 'opened' || context.payload.action === 'synchronize') {
+              const files = await github.rest.pulls.listFiles({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pr.number,
+                per_page: 100
+              });
+              const largeNewFiles = files.data.filter(f =>
+                f.status === 'added' && f.additions > 5000
+              );
+              if (largeNewFiles.length > 0) {
+                alerts.push(`⚠️ **Large files added** — ${largeNewFiles.map(f => '\`' + f.filename + '\` (' + f.additions + ' lines)').join(', ')}. Bundled payloads are a common attack vector.`);
+              }
+            }
+
+            if (alerts.length > 0) {
+              const body = [
+                '## 🔒 Supply Chain Security Alert',
+                '',
+                'This fork PR triggered security alerts:',
+                '',
+                ...alerts,
+                '',
+                '---',
+                '_Automated supply-chain security monitor._'
+              ].join('\n');
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                body
+              });
+              core.warning(alerts.join(' | '));
+            }
