@@ -48,20 +48,11 @@ function makeThreadStream() {
 
 function makeConfig(opts: { useTransformer: boolean }) {
   const threadStreams = new Map<string, ReturnType<typeof makeThreadStream>>();
+  // LangGraph's `threads.getHistory` returns checkpoints newest-first.
+  // `getCheckpointByMessage` reverses to walk oldest→newest and finds
+  // the FIRST checkpoint containing the target message — that's the
+  // one we regenerate from. Order this fixture the same way.
   const history = [
-    {
-      // Older checkpoint — includes the message we'll regenerate from.
-      values: {
-        messages: [
-          { id: "u1", type: "human", content: "first" } as LangGraphMessage,
-        ],
-      },
-      checkpoint: { checkpoint_id: "ck-old" },
-      parent_checkpoint: null,
-      next: ["model"],
-      tasks: [],
-      metadata: {},
-    },
     {
       // Newer checkpoint with a follow-up assistant message.
       values: {
@@ -73,6 +64,20 @@ function makeConfig(opts: { useTransformer: boolean }) {
       checkpoint: { checkpoint_id: "ck-new" },
       parent_checkpoint: { checkpoint_id: "ck-old", checkpoint_ns: "" },
       next: [],
+      tasks: [],
+      metadata: {},
+    },
+    {
+      // Older checkpoint — contains only the message we'll regenerate
+      // from; no `messagesAfter`, so the search terminates here.
+      values: {
+        messages: [
+          { id: "u1", type: "human", content: "first" } as LangGraphMessage,
+        ],
+      },
+      checkpoint: { checkpoint_id: "ck-old" },
+      parent_checkpoint: null,
+      next: ["model"],
       tasks: [],
       metadata: {},
     },
