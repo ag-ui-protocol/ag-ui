@@ -38,6 +38,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Built-in cache is fork-safe (fork PRs can't write to base repo cache)
       - uses: Swatinem/rust-cache@v2
 
       - name: Build

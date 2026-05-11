@@ -20,6 +20,7 @@ jobs:
     - uses: ruby/setup-ruby@v1
       with:
         ruby-version: '3.4'
+        # Built-in cache is fork-safe (fork PRs can't write to base repo cache)
         bundler-cache: true
         working-directory: sdks/community/ruby
     - run: bundle exec rake

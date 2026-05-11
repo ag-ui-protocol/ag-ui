@@ -29,6 +29,7 @@ jobs:
         with:
           distribution: "temurin"
           java-version: "17"
+          # Built-in cache is fork-safe (fork PRs can't write to base repo cache)
           cache: "maven"
 
       - name: Run tests

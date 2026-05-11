@@ -22,6 +22,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Detect fork PR
+        id: fork-check
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" && \
+                "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]]; then
+            echo "prefix=fork-" >> "$GITHUB_OUTPUT"
+          else
+            echo "prefix=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install uv
         uses: astral-sh/setup-uv@v4
         with:
@@ -32,7 +42,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: sdks/python/.venv
-          key: venv-${{ runner.os }}-${{ hashFiles('sdks/python/uv.lock') }}
+          key: ${{ steps.fork-check.outputs.prefix }}venv-${{ runner.os }}-${{ hashFiles('sdks/python/uv.lock') }}
 
       - name: Install dependencies
         working-directory: sdks/python
@@ -49,6 +59,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Detect fork PR
+        id: fork-check
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" && \
+                "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]]; then
+            echo "prefix=fork-" >> "$GITHUB_OUTPUT"
+          else
+            echo "prefix=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install uv
         uses: astral-sh/setup-uv@v4
         with:
@@ -59,7 +79,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: integrations/langgraph/python/.venv
-          key: venv-${{ runner.os }}-langgraph-${{ hashFiles('integrations/langgraph/python/uv.lock') }}
+          key: ${{ steps.fork-check.outputs.prefix }}venv-${{ runner.os }}-langgraph-${{ hashFiles('integrations/langgraph/python/uv.lock') }}
 
       - name: Install dependencies
         working-directory: integrations/langgraph/python
