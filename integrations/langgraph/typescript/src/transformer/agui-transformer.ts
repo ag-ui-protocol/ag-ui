@@ -73,6 +73,13 @@ export const aguiTransformer = (): StreamTransformer<{
   // by interrupt id so the client only renders one prompt.
   const emittedInterruptIds = new Set<string>();
 
+  // Active graph-node steps keyed by their full namespace path. The
+  // namespace's first segment is `nodeName:taskUuid`; we surface the
+  // node name as AG-UI STEP_STARTED / STEP_FINISHED. Tracking the
+  // namespace (not just the name) lets parallel tasks for the same
+  // node coexist without unbalanced pairs.
+  const activeSteps = new Map<string, string>();
+
   const push = (ev: ProcessedEvents) => {
     aguiChannel.push(ev);
   };
@@ -156,6 +163,10 @@ export const aguiTransformer = (): StreamTransformer<{
         push({ type: EventType.REASONING_END, messageId: r.messageId });
         reasoningBlocks.delete(index);
       }
+      for (const [nsKey, stepName] of activeSteps) {
+        push({ type: EventType.STEP_FINISHED, stepName });
+        activeSteps.delete(nsKey);
+      }
     },
 
     process(event: ProtocolEvent): boolean {
@@ -165,13 +176,39 @@ export const aguiTransformer = (): StreamTransformer<{
 
       switch (event.method) {
         case "lifecycle": {
+          const status = (event.params.data as { event?: string } | undefined)?.event;
+
+          // Non-root lifecycle events bracket individual graph nodes.
+          // Translate them to AG-UI STEP_STARTED / STEP_FINISHED so
+          // consumers can show progress on multi-node graphs. The
+          // namespace head is `nodeName:uuid` — strip the uuid for a
+          // readable step name. We track active step names per
+          // namespace key to avoid emitting STEP_FINISHED without a
+          // matching START (AG-UI verify rejects unbalanced pairs).
+          if (!isRootNamespace(event.params.namespace)) {
+            const head = event.params.namespace[0];
+            const nsKey = event.params.namespace.join("|");
+            const stepName = typeof head === "string" ? head.split(":")[0] : "";
+            if (!stepName) break;
+            if (status === "started") {
+              if (!activeSteps.has(nsKey)) {
+                activeSteps.set(nsKey, stepName);
+                push({ type: EventType.STEP_STARTED, stepName });
+              }
+            } else if (status === "completed" || status === "failed" || status === "interrupted") {
+              const tracked = activeSteps.get(nsKey);
+              if (tracked) {
+                activeSteps.delete(nsKey);
+                push({ type: EventType.STEP_FINISHED, stepName: tracked });
+              }
+            }
+            break;
+          }
 
           // Lifecycle bracketing (RUN_STARTED / RUN_FINISHED) is owned by
           // agent.ts. Here we only forward fatal failures so the client can
           // surface the underlying message instead of a generic
           // INCOMPLETE_STREAM error.
-          if (!isRootNamespace(event.params.namespace)) break;
-          const status = (event.params.data as { event?: string } | undefined)?.event;
           if (status === "completed" || status === "interrupted") {
             // Stable point: the run is paused (interrupted) or done
             // (completed). The state we cached from the last `values`
