@@ -2,15 +2,13 @@
  * AG-UI StreamTransformer.
  *
  * Wired into a graph at compile time via `streamTransformers: [aguiTransformer]`.
- * Exposes a named `agui` channel reached by SDK clients via `thread.extensions.agui`.
- *
- * Phase 3: per-event-family handlers. The transformer translates each
- * langgraph `ProtocolEvent` into one or more AG-UI events and pushes them
- * onto the `agui` channel. Phase 3.1 implements:
- *   - lifecycle  → RUN_STARTED / RUN_FINISHED / RUN_ERROR
- *   - messages   → TEXT_MESSAGE_START / _CONTENT / _END
- * Other families (tool calls, state snapshots, interrupts, reasoning, custom)
- * land in subsequent phases.
+ * Exposes a named `agui` channel reached by SDK clients via
+ * `thread.extensions.agui`. Translates langgraph `ProtocolEvent`s into AG-UI
+ * events across every family: lifecycle (RUN_*, STEP_*), messages (TEXT_*,
+ * TOOL_CALL_*, REASONING_*), state (STATE_SNAPSHOT / MESSAGES_SNAPSHOT),
+ * tasks (CUSTOM `OnInterrupt`), and custom (ManuallyEmit* + generic
+ * passthrough). RUN_STARTED / RUN_FINISHED are owned by `agent.ts`; this
+ * factory pushes everything in between.
  */
 
 import {
@@ -23,12 +21,6 @@ import { CustomEventNames, LangGraphEventTypes, ProcessedEvents, State } from ".
 import { EventType } from "@ag-ui/core";
 
 /**
- * Minimal AG-UI event shape. Loose dictionary so this module has no
- * cross-package import on `@ag-ui/core`. Tighten to the real `BaseEvent`
- * union once a shared transformer package exists.
- */
-
-/**
  * Factory returning the transformer instance. Each run gets a fresh remote
  * `agui` channel; SDK clients consume via `thread.extensions.agui`.
  */
@@ -37,7 +29,6 @@ export const aguiTransformer = (): StreamTransformer<{
 }> => {
   const aguiChannel = StreamChannel.remote<ProcessedEvents>("agui");
   let initialized = false;
-  let runStartedEmitted = false;
 
   // Per-message tracking for text streaming. Keyed by content-block index so
   // multi-block messages (e.g. text + tool call in one assistant turn) don't
@@ -87,15 +78,6 @@ export const aguiTransformer = (): StreamTransformer<{
     aguiChannel.push(ev);
   };
 
-  // langgraph delivers `lifecycle.started` before init() has run, so we
-  // would drop the event that maps to RUN_STARTED. Synthesise it lazily on
-  // the first post-init process call instead. AG-UI's verify enforces
-  // RUN_STARTED as the first event on the wire.
-  const ensureRunStarted = () => {
-    if (runStartedEmitted) return;
-    runStartedEmitted = true;
-  };
-
   const isRootNamespace = (ns: readonly string[]) => ns.length === 0;
 
   // Defer snapshot emission until the run reaches a stable point. Each
@@ -138,9 +120,6 @@ export const aguiTransformer = (): StreamTransformer<{
       push({ type: EventType.MESSAGES_SNAPSHOT, messages: aguiMessages });
     }
   };
-
-  let runFinishedEmitted = false;
-  let runErrorEmitted = false;
 
   return {
     init() {
