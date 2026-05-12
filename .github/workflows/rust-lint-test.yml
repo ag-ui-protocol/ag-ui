@@ -4,11 +4,11 @@ on:
   push:
     branches: [ "main" ]
     paths:
-      - "crates/**"
-      - ".github/workflows/rust.yml"
-      - "tests/**"
-      - "Cargo.toml"
-      - ".cargo/**"
+      - "sdks/community/rust/crates/**"
+      - ".github/workflows/rust-lint-test.yml"
+      - "sdks/community/rust/**/tests/**"
+      - "sdks/community/rust/Cargo.toml"
+      - "sdks/community/rust/.cargo/**"
   pull_request:
     branches: [ "main" ]
     paths:
@@ -20,7 +20,7 @@ on:
 
 defaults:
   run:
-    working-directory: ./rust
+    working-directory: ./sdks/community/rust
 
 jobs:
   rust:
@@ -40,6 +40,8 @@ jobs:
 
       # Built-in cache is fork-safe (fork PRs can't write to base repo cache)
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: sdks/community/rust
 
       - name: Build
         run: cargo build --verbose
