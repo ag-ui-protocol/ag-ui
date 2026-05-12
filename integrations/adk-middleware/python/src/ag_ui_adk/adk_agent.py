@@ -4,7 +4,7 @@
 from ag_ui_adk.agui_toolset import AGUIToolset
 
 import copy
-from typing import Optional, Dict, Callable, Any, AsyncGenerator, List, Iterable, TYPE_CHECKING, Tuple, Union
+from typing import Optional, Dict, Callable, Any, AsyncGenerator, List, Iterable, Set, TYPE_CHECKING, Tuple, Union
 
 if TYPE_CHECKING:
     from google.adk.apps import App
@@ -1708,27 +1708,48 @@ class ADKAgent:
                 # tool result to a different pod, and that pod sees an empty
                 # pending_tool_calls list because this pod hasn't written yet.
                 # See issue #1581.
+                #
+                # Only persist pending_tool_calls for *HITL* tool calls — i.e.
+                # those flagged in execution.long_running_tool_ids by the
+                # producer (ADK Event.long_running_tool_ids) or by
+                # ClientProxyTool. In-stream backend tools resolve on this same
+                # pod and never need the cross-pod handoff; writing to
+                # session.state for them just trips DatabaseSessionService's
+                # storage-update marker while the ADK Runner is mid-stream.
+                # See issue #1652.
                 if isinstance(event, ToolCallEndEvent):
-                    logger.info(f"Detected ToolCallEndEvent with id: {event.tool_call_id}")
-                    tool_call_ids.append(event.tool_call_id)
-                    await self._add_pending_tool_call_with_context(
-                        execution.thread_id, event.tool_call_id, app_name, user_id
+                    is_hitl = event.tool_call_id in execution.long_running_tool_ids
+                    logger.info(
+                        f"Detected ToolCallEndEvent with id: {event.tool_call_id} "
+                        f"(hitl={is_hitl})"
                     )
+                    if is_hitl:
+                        tool_call_ids.append(event.tool_call_id)
+                        await self._add_pending_tool_call_with_context(
+                            execution.thread_id, event.tool_call_id, app_name, user_id
+                        )
 
-                # Backend tools complete within the same stream and emit a
-                # ToolCallResultEvent — no client continuation is expected, so
-                # remove the just-registered ID from the pending list before
-                # yielding the result.
-                if isinstance(event, ToolCallResultEvent) and event.tool_call_id in tool_call_ids:
+                # Always mark tool_call_id as processed when its result is
+                # observed, so replay logic skips it on resumption (fixes #437
+                # replay bug). This is in-memory bookkeeping; it does NOT
+                # touch session.state or any DB marker.
+                if isinstance(event, ToolCallResultEvent):
                     logger.info(f"Detected ToolCallResultEvent with id: {event.tool_call_id}")
-                    tool_call_ids.remove(event.tool_call_id)
-                    await self._remove_pending_tool_call(
-                        execution.thread_id, event.tool_call_id, user_id
-                    )
-                    # Mark tool_call_id as processed so replay will skip it (fixes #437 replay bug)
                     self._session_manager.mark_messages_processed(
                         app_name, execution.thread_id, [event.tool_call_id]
                     )
+
+                    # Backend tools complete within the same stream and emit a
+                    # ToolCallResultEvent — no client continuation is expected,
+                    # so remove the just-registered ID from the pending list.
+                    # Only IDs we actually persisted above appear in
+                    # tool_call_ids, so this naturally skips backend tools that
+                    # never went through _add_pending_tool_call_with_context.
+                    if event.tool_call_id in tool_call_ids:
+                        tool_call_ids.remove(event.tool_call_id)
+                        await self._remove_pending_tool_call(
+                            execution.thread_id, event.tool_call_id, user_id
+                        )
 
                 logger.debug(f"Yielding event: {type(event).__name__}")
                 yield event
@@ -1927,6 +1948,15 @@ class ADKAgent:
 
         _update_agent_tools_recursive(adk_agent)
 
+        # Shared set of HITL (long-running) tool call IDs. Populated by the
+        # producer side (EventTranslator's LRO branch in _run_adk_in_background
+        # and ClientProxyTool) before TOOL_CALL_END is enqueued. The consumer
+        # in _run_new_execution reads it via ExecutionState to decide whether
+        # to persist pending_tool_calls to session.state — only HITL calls
+        # need the cross-pod handoff that pending_tool_calls provides.
+        # See issue #1652.
+        long_running_tool_ids: set[str] = set()
+
         # Create background task
         logger.debug(f"Creating background task for thread {input.thread_id}")
         run_kwargs = {
@@ -1936,6 +1966,7 @@ class ADKAgent:
             "app_name": app_name,
             "event_queue": event_queue,
             "client_proxy_toolsets": client_proxy_toolsets,
+            "long_running_tool_ids": long_running_tool_ids,
         }
 
         if tool_results is not None:
@@ -1946,11 +1977,12 @@ class ADKAgent:
 
         task = asyncio.create_task(self._run_adk_in_background(**run_kwargs))
         logger.debug(f"Background task created for thread {input.thread_id}: {task}")
-        
+
         return ExecutionState(
             task=task,
             thread_id=input.thread_id,
-            event_queue=event_queue
+            event_queue=event_queue,
+            long_running_tool_ids=long_running_tool_ids,
         )
     
     async def _run_adk_in_background(
@@ -1961,6 +1993,7 @@ class ADKAgent:
         app_name: str,
         event_queue: asyncio.Queue,
         client_proxy_toolsets: List[ClientProxyToolset],
+        long_running_tool_ids: Optional[Set[str]] = None,
         tool_results: Optional[List[Dict]] = None,
         message_batch: Optional[List[Any]] = None,
     ):
@@ -1972,7 +2005,15 @@ class ADKAgent:
             user_id: User ID
             app_name: App name
             event_queue: Queue for emitting events
+            long_running_tool_ids: Shared set of HITL tool call IDs. Populated
+                by this producer (from ADK Event.long_running_tool_ids) and by
+                ClientProxyTool before TOOL_CALL_END events are enqueued, so the
+                consumer can gate session.state writes on HITL membership.
+                See issue #1652.
         """
+        # Default for older call paths / tests that don't supply the set.
+        if long_running_tool_ids is None:
+            long_running_tool_ids = set()
         runner: Optional[Runner] = None
         backend_session_id: Optional[str] = None
         logger.debug(f"[BG_EXEC] _run_adk_in_background called for thread={input.thread_id}")
@@ -2292,6 +2333,12 @@ class ADKAgent:
             for toolset in client_proxy_toolsets:
                 toolset._emitted_tool_call_ids = client_emitted_ids
 
+            # Share the per-execution HITL tool-call set with proxy toolsets so
+            # ClientProxyTool can register IDs synchronously before its
+            # TOOL_CALL_START is enqueued. See issue #1652.
+            for toolset in client_proxy_toolsets:
+                toolset._long_running_tool_ids = long_running_tool_ids
+
             # Collect client-side tool names from proxy toolsets
             client_tool_names: set[str] = set()
             for toolset in client_proxy_toolsets:
@@ -2455,6 +2502,13 @@ class ADKAgent:
                 has_lro_function_call = False
                 try:
                     lro_ids = set(getattr(adk_event, 'long_running_tool_ids', []) or [])
+                    # Mark every LRO id from the ADK event as HITL on the
+                    # shared execution set. Synchronous mutation before any
+                    # downstream `await event_queue.put(...)` of this event's
+                    # TOOL_CALL_END, so the consumer's gate sees the id at
+                    # dequeue time. See issue #1652.
+                    if lro_ids:
+                        long_running_tool_ids.update(lro_ids)
                     if lro_ids and adk_event.content and getattr(adk_event.content, 'parts', None):
                         for part in adk_event.content.parts:
                             func = getattr(part, 'function_call', None)

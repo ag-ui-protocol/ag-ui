@@ -103,6 +103,11 @@ class TestMultiInstanceHITL:
 
         async def mock_run_a(*args, **kwargs):
             eq = kwargs["event_queue"]
+            # Real producers register HITL tool call IDs in the shared
+            # long_running_tool_ids set BEFORE enqueuing TOOL_CALL_END so the
+            # consumer's gate persists pending_tool_calls (issue #1652).
+            # This mock represents a HITL/client tool, so honor that contract.
+            kwargs["long_running_tool_ids"].add(tool_call_id)
             await eq.put(ToolCallStartEvent(
                 type=EventType.TOOL_CALL_START,
                 tool_call_id=tool_call_id,
@@ -281,6 +286,8 @@ class TestMultiInstanceHITL:
 
         async def mock_run_a(*args, **kwargs):
             eq = kwargs["event_queue"]
+            # See note in test_cross_instance_hitl_tool_result_flow above.
+            kwargs["long_running_tool_ids"].add(tool_call_id)
             await eq.put(ToolCallStartEvent(
                 type=EventType.TOOL_CALL_START,
                 tool_call_id=tool_call_id,

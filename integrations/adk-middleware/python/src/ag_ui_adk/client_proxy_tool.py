@@ -111,6 +111,7 @@ class ClientProxyTool(BaseTool):
         accumulated_predict_state: Optional[Dict[str, Any]] = None,
         emitted_tool_call_ids: Optional[Set[str]] = None,
         translator_emitted_tool_call_ids: Optional[Set[str]] = None,
+        long_running_tool_ids: Optional[Set[str]] = None,
     ):
         """Initialize the client proxy tool.
 
@@ -129,6 +130,10 @@ class ClientProxyTool(BaseTool):
                 suppress duplicate emissions from ADK confirmed/LRO events.
             translator_emitted_tool_call_ids: Shared set of tool call IDs already
                 emitted by EventTranslator. Checked before emitting to avoid duplicates.
+            long_running_tool_ids: Shared set of tool call IDs that represent
+                HITL (long-running) tool calls. Populated synchronously before
+                TOOL_CALL_START is enqueued so the consumer can persist
+                pending_tool_calls only for HITL IDs. See issue #1652.
         """
         # Initialize BaseTool with name and description
         # All client-side tools are long-running for architectural simplicity
@@ -145,6 +150,7 @@ class ClientProxyTool(BaseTool):
         self._accumulated_predict_state = accumulated_predict_state if accumulated_predict_state is not None else {}
         self._emitted_tool_call_ids = emitted_tool_call_ids if emitted_tool_call_ids is not None else set()
         self._translator_emitted_tool_call_ids = translator_emitted_tool_call_ids if translator_emitted_tool_call_ids is not None else set()
+        self._long_running_tool_ids = long_running_tool_ids if long_running_tool_ids is not None else set()
 
         # Create dynamic function with proper parameter signatures for ADK inspection
         # This allows ADK to extract parameters from user requests correctly
@@ -284,6 +290,12 @@ class ClientProxyTool(BaseTool):
                 await self.event_queue.put(predict_event)
                 self._emitted_predict_state.add(self.name)
                 logger.debug(f"Emitted PredictState CustomEvent for tool '{self.name}': {predict_state_payload}")
+
+            # Mark this tool call as HITL/long-running BEFORE enqueuing any
+            # TOOL_CALL_* event so the consumer's gate sees it when it later
+            # dequeues TOOL_CALL_END. All ClientProxyTool emissions are
+            # long-running (is_long_running=True at construction). See #1652.
+            self._long_running_tool_ids.add(tool_call_id)
 
             # Emit TOOL_CALL_START event
             start_event = ToolCallStartEvent(

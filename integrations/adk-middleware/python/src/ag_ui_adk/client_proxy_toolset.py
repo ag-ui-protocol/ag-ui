@@ -59,6 +59,13 @@ class ClientProxyToolset(BaseToolset):
         # Assigned externally after EventTranslator is created. Checked by
         # ClientProxyTool before emitting to avoid duplicates.
         self._translator_emitted_tool_call_ids: set[str] = set()
+        # Shared set of long-running (HITL) tool call IDs. ClientProxyTool
+        # populates this synchronously before emitting TOOL_CALL_START so the
+        # consumer can recognize HITL tool calls and persist them to
+        # session.state — while skipping persistence (and the
+        # DatabaseSessionService stale-marker race) for in-stream backend
+        # tool calls. Assigned externally; see issue #1652.
+        self._long_running_tool_ids: set[str] = set()
 
         logger.info(f"Initialized ClientProxyToolset with {len(ag_ui_tools)} tools (all long-running)")
 
@@ -93,6 +100,7 @@ class ClientProxyToolset(BaseToolset):
                     accumulated_predict_state=self._accumulated_predict_state,
                     emitted_tool_call_ids=self._emitted_tool_call_ids,
                     translator_emitted_tool_call_ids=self._translator_emitted_tool_call_ids,
+                    long_running_tool_ids=self._long_running_tool_ids,
                 )
                 proxy_tools.append(proxy_tool)
                 logger.info(f"[GET_TOOLS] Created proxy tool for '{ag_ui_tool.name}' (long-running)")
