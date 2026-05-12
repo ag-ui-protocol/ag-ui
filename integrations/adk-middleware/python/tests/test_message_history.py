@@ -922,6 +922,189 @@ class TestAgentsStateEndpoint:
 
 
 # ============================================================================
+# Regression Tests: /agents/state extract_state_from_request integration (#1646)
+# ============================================================================
+
+
+class TestAgentsStateExtractorIntegration:
+    """Regression tests for ag-ui-protocol/ag-ui#1646.
+
+    The /agents/state endpoint historically read ``userId``/``appName``
+    straight from the request body, bypassing ``extract_state_from_request``.
+    For deployments that use the extractor as an auth hook (e.g. minting
+    user_id from a session-provider JWT) this lets a client read another
+    user's session state and message history by supplying any ``userId`` in
+    the body.
+
+    These tests pin the fix: the extractor is invoked on /agents/state, its
+    output drives identity resolution, and the body fields fall back only
+    when no other source produces a value.
+    """
+
+    @pytest.fixture
+    def mock_agent(self):
+        """ADKAgent mock with no static identity and no agent-level extractors.
+
+        This isolates the extractor pipeline as the only identity source —
+        the precedence chain falls straight to the extractor-produced state
+        or to the body fallback, mirroring how a JWT-auth deployment is
+        configured.
+        """
+        mock_adk = MagicMock()
+        mock_adk.name = "test_agent"
+
+        agent = MagicMock(spec=ADKAgent)
+        agent._static_app_name = None
+        agent._static_user_id = None
+        agent._app_name_extractor = None
+        agent._user_id_extractor = None
+        agent._adk_agent = mock_adk
+        agent._session_manager = MagicMock()
+        agent._session_lookup_cache = {}
+
+        return agent
+
+    def _wire_session_lookup(self, mock_agent, expected_app_name, expected_user_id):
+        """Wire the session-lookup chain so the endpoint reaches a 200 response
+        and so the test can assert what app_name/user_id were used downstream."""
+        mock_session = MagicMock()
+        mock_session.id = "backend-session-id"
+        mock_session.events = []
+
+        mock_agent._get_session_metadata = MagicMock(return_value=None)
+        mock_agent._session_manager._find_session_by_thread_id = AsyncMock(
+            return_value=mock_session
+        )
+        mock_agent._session_manager._session_service = MagicMock()
+        mock_agent._session_manager._session_service.get_session = AsyncMock(
+            return_value=mock_session
+        )
+        mock_agent._session_manager.get_session_state = AsyncMock(return_value={})
+
+    def test_extract_state_fn_is_invoked(self, mock_agent):
+        """Regression: /agents/state must call extract_state_from_request."""
+        self._wire_session_lookup(mock_agent, "from-extractor", "from-extractor")
+
+        extract_state_fn = AsyncMock(
+            return_value={"app_name": "from-extractor", "user_id": "from-extractor"}
+        )
+
+        app = FastAPI()
+        add_adk_fastapi_endpoint(
+            app, mock_agent, path="/", extract_state_from_request=extract_state_fn
+        )
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/agents/state", json={"threadId": "thread-1"}
+            )
+
+        assert response.status_code == 200
+        extract_state_fn.assert_called_once()
+        # Second positional arg is the synthetic RunAgentInput.
+        synthetic_input = extract_state_fn.call_args.args[1]
+        assert isinstance(synthetic_input, RunAgentInput)
+        assert synthetic_input.thread_id == "thread-1"
+
+    def test_extractor_user_id_overrides_body(self, mock_agent):
+        """The bypass case: body userId is ignored when the extractor mints one.
+
+        Without the fix, a client posting ``userId: "victim"`` would read the
+        victim's session. With the fix, the extractor's ``user_id`` wins and
+        the spoofed value never reaches ``_session_manager``.
+        """
+        self._wire_session_lookup(mock_agent, "from-jwt-app", "from-jwt-user")
+
+        async def jwt_extractor(request, input_data):
+            return {"app_name": "from-jwt-app", "user_id": "from-jwt-user"}
+
+        app = FastAPI()
+        add_adk_fastapi_endpoint(
+            app, mock_agent, path="/", extract_state_from_request=jwt_extractor
+        )
+
+        with TestClient(app) as client:
+            with pytest.warns(DeprecationWarning, match="#1646"):
+                response = client.post(
+                    "/agents/state",
+                    json={
+                        "threadId": "thread-2",
+                        "userId": "victim-user-id",
+                        "appName": "victim-app",
+                    },
+                )
+
+        assert response.status_code == 200
+        # The downstream session lookup must have been called with the
+        # extractor-supplied identity, never the spoofed body values.
+        find_call = mock_agent._session_manager._find_session_by_thread_id.call_args
+        assert find_call.kwargs["user_id"] == "from-jwt-user"
+        assert find_call.kwargs["app_name"] == "from-jwt-app"
+        assert "victim" not in str(find_call)
+
+    def test_body_fallback_when_no_extractor(self, mock_agent):
+        """Backward compat: body userId still works when no extractor is set."""
+        self._wire_session_lookup(mock_agent, "body-app", "body-user")
+
+        app = FastAPI()
+        add_adk_fastapi_endpoint(app, mock_agent, path="/")
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/agents/state",
+                json={
+                    "threadId": "thread-3",
+                    "userId": "body-user",
+                    "appName": "body-app",
+                },
+            )
+
+        assert response.status_code == 200
+        find_call = mock_agent._session_manager._find_session_by_thread_id.call_args
+        assert find_call.kwargs["user_id"] == "body-user"
+        assert find_call.kwargs["app_name"] == "body-app"
+
+    def test_extract_headers_does_not_auto_protect_identity(self, mock_agent):
+        """Documentation test: legacy ``extract_headers`` parks values under
+        ``state.headers.*`` and so does NOT override identity. Deployments
+        wanting auth must either (a) write a custom ``extract_state_from_request``
+        that places the value at ``state["user_id"]``, or (b) configure an
+        ADKAgent-level ``user_id_extractor`` that reads ``input.state.headers``.
+        Pinned here so a future refactor doesn't silently change this contract.
+        """
+        from ag_ui_adk.endpoint import make_extract_headers
+
+        self._wire_session_lookup(mock_agent, "body-app", "body-user")
+
+        app = FastAPI()
+        add_adk_fastapi_endpoint(
+            app,
+            mock_agent,
+            path="/",
+            extract_state_from_request=make_extract_headers(["x-user-id"]),
+        )
+
+        with TestClient(app) as client:
+            with pytest.warns(DeprecationWarning, match="#1646"):
+                response = client.post(
+                    "/agents/state",
+                    headers={"x-user-id": "header-user"},
+                    json={
+                        "threadId": "thread-4",
+                        "userId": "body-user",
+                        "appName": "body-app",
+                    },
+                )
+
+        assert response.status_code == 200
+        # extract_headers writes to state.headers.user_id, not state.user_id, so
+        # identity falls through to the body fallback for both fields.
+        find_call = mock_agent._session_manager._find_session_by_thread_id.call_args
+        assert find_call.kwargs["user_id"] == "body-user"
+        assert find_call.kwargs["app_name"] == "body-app"
+
+
+# ============================================================================
 # Integration Tests: Full Flow with Live Endpoint
 # ============================================================================
 
