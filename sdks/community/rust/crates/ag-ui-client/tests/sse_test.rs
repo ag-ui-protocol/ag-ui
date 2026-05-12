@@ -4,6 +4,7 @@ use reqwest::Client;
 use serde::Deserialize;
 use std::time::Duration;
 
+#[ignore]
 #[tokio::test]
 async fn test_sse_with_httpbun() {
     // Create a reqwest client
