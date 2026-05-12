@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-05-12
+
 ### Security
 
 - **FIX**: `/agents/state` no longer bypasses `extract_state_from_request` (#1646)
