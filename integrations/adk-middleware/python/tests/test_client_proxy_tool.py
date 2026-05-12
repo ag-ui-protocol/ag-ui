@@ -613,6 +613,101 @@ class TestCleanSchemaForGenai:
     def test_handles_empty_list(self):
         assert _clean_schema_for_genai([]) == []
 
+    # --- Nested-required stripping (Gemini silent-failure workaround) ---
+
+    def test_preserves_top_level_required(self):
+        """Top-level `required` is preserved — Gemini accepts it there."""
+        schema = {
+            "type": "object",
+            "properties": {"x": {"type": "string"}, "y": {"type": "number"}},
+            "required": ["x", "y"],
+        }
+        result = _clean_schema_for_genai(schema)
+        assert result["required"] == ["x", "y"]
+
+    def test_strips_required_inside_array_items(self):
+        """`required` on object items of an array is dropped.
+
+        Gemini's function-calling API silently rejects function declarations
+        carrying `required` below the top level. This is the most common
+        shape produced by Zod's `z.array(z.object({...}))` and is the exact
+        schema the CopilotKit chart-rendering demo (and any similar
+        array-of-records pattern) uses.
+        """
+        schema = {
+            "type": "object",
+            "required": ["data"],
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "label": {"type": "string"},
+                            "value": {"type": "number"},
+                        },
+                        "required": ["label", "value"],
+                    },
+                }
+            },
+        }
+        result = _clean_schema_for_genai(schema)
+        # top-level required preserved
+        assert result["required"] == ["data"]
+        # nested required stripped
+        assert "required" not in result["properties"]["data"]["items"]
+        # but the nested properties themselves remain intact
+        items_props = result["properties"]["data"]["items"]["properties"]
+        assert items_props["label"]["type"] == "string"
+        assert items_props["value"]["type"] == "number"
+
+    def test_strips_required_inside_nested_object_property(self):
+        """`required` on a nested object property is dropped."""
+        schema = {
+            "type": "object",
+            "required": ["address"],
+            "properties": {
+                "address": {
+                    "type": "object",
+                    "properties": {
+                        "street": {"type": "string"},
+                        "city": {"type": "string"},
+                    },
+                    "required": ["street", "city"],
+                }
+            },
+        }
+        result = _clean_schema_for_genai(schema)
+        assert result["required"] == ["address"]
+        assert "required" not in result["properties"]["address"]
+
+    def test_strips_required_at_arbitrary_depth(self):
+        """`required` is stripped no matter how deep it's nested."""
+        schema = {
+            "type": "object",
+            "required": ["a"],
+            "properties": {
+                "a": {
+                    "type": "object",
+                    "properties": {
+                        "b": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {"c": {"type": "string"}},
+                                "required": ["c"],
+                            },
+                        }
+                    },
+                    "required": ["b"],
+                }
+            },
+        }
+        result = _clean_schema_for_genai(schema)
+        assert result["required"] == ["a"]
+        assert "required" not in result["properties"]["a"]
+        assert "required" not in result["properties"]["a"]["properties"]["b"]["items"]
+
 
 class TestGetDeclarationWithJsonSchemaMeta:
     """Test _get_declaration strips JSON Schema meta-fields (issue #1349)."""

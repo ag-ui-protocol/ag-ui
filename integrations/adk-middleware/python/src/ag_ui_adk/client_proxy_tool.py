@@ -46,16 +46,24 @@ except (ImportError, AttributeError):
     })
 
 
-def _clean_schema_for_genai(schema: Any) -> Any:
+def _clean_schema_for_genai(schema: Any, _top_level: bool = True) -> Any:
     """Recursively clean a JSON Schema dict for google.genai.types.Schema.
 
-    Three transformations:
+    Four transformations:
     1. Strip ``$``-prefixed keys (``$schema``, ``$id``, ``$ref``, ``$defs``,
        ``$comment``) — these are JSON Schema infrastructure, never in genai.
     2. Map ``examples`` → ``example`` (first element only) and
        ``const`` → ``enum`` (single-value list), preserving useful context.
     3. Filter remaining keys to only those accepted by ``types.Schema``,
        using an allowlist derived from ``types.Schema.model_fields``.
+    4. Drop ``required`` from any sub-schema (anything that is not the
+       outermost parameters object). Gemini's function-calling API silently
+       rejects function declarations whose parameter schema carries
+       ``required`` below the top level — e.g. on the ``items.properties``
+       of an array, or on a nested property's own ``properties``. The
+       model emits no error event and no content events, just
+       ``RUN_STARTED → RUN_FINISHED``, which surfaces as a frozen agent.
+       Top-level ``required`` is preserved (Gemini accepts it there).
     """
     if isinstance(schema, dict):
         result = {}
@@ -74,21 +82,25 @@ def _clean_schema_for_genai(schema: Any) -> Any:
             # Only keep keys that genai.types.Schema accepts
             if k not in _ALLOWED_SCHEMA_KEYS:
                 continue
+            # Drop `required` everywhere except the outermost parameters
+            # object. See transformation 4 in the docstring.
+            if k == "required" and not _top_level:
+                continue
             # "properties" and "defs" are dict-of-schemas — recurse into
             # values but preserve the user-defined keys (property names).
             if k in ("properties", "defs") and isinstance(v, dict):
                 result[k] = {
-                    prop_name: _clean_schema_for_genai(prop_schema)
+                    prop_name: _clean_schema_for_genai(prop_schema, _top_level=False)
                     for prop_name, prop_schema in v.items()
                 }
             # "default", "example", "enum" are opaque values — don't recurse
             elif k in ("default", "example", "enum"):
                 result[k] = v
             else:
-                result[k] = _clean_schema_for_genai(v)
+                result[k] = _clean_schema_for_genai(v, _top_level=False)
         return result
     if isinstance(schema, list):
-        return [_clean_schema_for_genai(item) for item in schema]
+        return [_clean_schema_for_genai(item, _top_level=False) for item in schema]
     return schema
 
 
