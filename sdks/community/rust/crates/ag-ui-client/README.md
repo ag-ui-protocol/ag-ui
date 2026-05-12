@@ -1,5 +1,9 @@
 # AG-UI Rust Client
 
+> **Status:** This is a community-contributed crate that is not actively maintained. The version
+> on crates.io (v0.1.0) is outdated and missing types required by the client. Build from source
+> against the [workspace](../../) in this repository instead.
+
 Rust client for working with the AG-UI protocol. The client API has been designed to mimic the Typescript client as 
 close as possible. However, a key difference is that state & messages are not yet an attribute of an implementation of 
 [`Agent`](src/agent.rs) because it would require `&mut self` for straightforward implementations. This is a work in 

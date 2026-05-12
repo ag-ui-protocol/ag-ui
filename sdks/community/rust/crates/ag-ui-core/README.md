@@ -1,5 +1,9 @@
 # AG-UI Core Types
 
+> **Status:** This is a community-contributed crate that is not actively maintained. The version
+> on crates.io (v0.1.0) is outdated and missing types required by `ag-ui-client`. Build from
+> source against the [workspace](../../) in this repository instead.
+
 This repo contains the Rust types needed to work with the AG-UI protocol. Implemented using `serde` to support
 (de)serialization. 
 
