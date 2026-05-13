@@ -9,6 +9,10 @@ import { RequestContext } from "@mastra/core/request-context";
 import { registerApiRoute } from "@mastra/core/server";
 import { MastraAgent } from "./mastra";
 
+type CopilotRuntimeParams = NonNullable<
+  ConstructorParameters<typeof CopilotRuntime>[0]
+>;
+
 /**
  * Registers a CopilotKit endpoint that exposes Mastra agents through the AG-UI protocol.
  * This function creates an API route that handles CopilotKit requests and forwards them to Mastra agents, enabling seamless integration between CopilotKit's UI components and Mastra's agent framework.
@@ -16,7 +20,9 @@ import { MastraAgent } from "./mastra";
  * @example
  * ```ts
  * registerCopilotKit({
- *   path: "/api/copilotkit"
+ *   path: "/api/copilotkit",
+ *   resourceId: "my-agent",
+ *   a2ui: { injectA2UITool: true },
  * });
  * ```
  */
@@ -28,6 +34,9 @@ export function registerCopilotKit<
   serviceAdapter = new ExperimentalEmptyAdapter(),
   agents,
   setContext,
+  a2ui,
+  mcpApps,
+  openGenerativeUI,
 }: {
   path: string;
   resourceId: string;
@@ -37,6 +46,9 @@ export function registerCopilotKit<
     c: any,
     requestContext: RequestContext<T>,
   ) => void | Promise<void>;
+  a2ui?: CopilotRuntimeParams["a2ui"];
+  mcpApps?: CopilotRuntimeParams["mcpApps"];
+  openGenerativeUI?: CopilotRuntimeParams["openGenerativeUI"];
 }) {
   return registerApiRoute(path, {
     method: `ALL`,
@@ -59,6 +71,9 @@ export function registerCopilotKit<
 
       const runtime = new CopilotRuntime({
         agents: aguiAgents as any,
+        a2ui,
+        mcpApps,
+        openGenerativeUI,
       });
 
       const handler = copilotRuntimeNodeHttpEndpoint({
