@@ -67,7 +67,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dedent": "^1.7.0",
-    "diff": "^7.0.0",
+    "diff": "^8.0.3",
     "embla-carousel-react": "^8.6.0",
     "express": "^4.21.2",
     "fast-json-patch": "^3.1.1",
