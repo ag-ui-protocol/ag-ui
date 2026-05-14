@@ -318,6 +318,9 @@ pub struct StepStartedEvent {
     pub base: BaseEvent,
     #[serde(rename = "stepName")]
     pub step_name: String,
+    /// Optional human-readable description of what this step does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 /// Event indicating that a step has finished.
@@ -328,6 +331,9 @@ pub struct StepFinishedEvent {
     pub base: BaseEvent,
     #[serde(rename = "stepName")]
     pub step_name: String,
+    /// Optional human-readable description of what this step does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 /// Union of all possible events in the Agent User Interaction Protocol.

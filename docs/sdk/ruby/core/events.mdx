@@ -167,11 +167,12 @@ event = AgUiProtocol::Core::Events::StepFinishedEvent.new(step_name: "s1")
 
 **@category** [] Lifecycle Events
 
-| Property    | Type                | Description                                                         |
-| ----------- | ------------------- | ------------------------------------------------------------------- |
-| `step_name` | `String`            | Name of the step                                                    |
-| `timestamp` | `Time` (optional)   | Timestamp when the event was created , Default: `nil`.              |
-| `raw_event` | `Object` (optional) | Original event data if this event was transformed , Default: `nil`. |
+| Property      | Type                | Description                                                              |
+| ------------- | ------------------- | ------------------------------------------------------------------------ |
+| `step_name`   | `String`            | Name of the step                                                         |
+| `description` | `String` (optional) | Human-readable description of what this step does , Default: `nil`.      |
+| `timestamp`   | `Time` (optional)   | Timestamp when the event was created , Default: `nil`.                   |
+| `raw_event`   | `Object` (optional) | Original event data if this event was transformed , Default: `nil`.      |
 
 ### StepStartedEvent
 
@@ -187,11 +188,12 @@ event = AgUiProtocol::Core::Events::StepStartedEvent.new(step_name: "s1")
 
 **@category** [] Lifecycle Events
 
-| Property    | Type                | Description                                                         |
-| ----------- | ------------------- | ------------------------------------------------------------------- |
-| `step_name` | `String`            | Name of the step                                                    |
-| `timestamp` | `Time` (optional)   | Timestamp when the event was created , Default: `nil`.              |
-| `raw_event` | `Object` (optional) | Original event data if this event was transformed , Default: `nil`. |
+| Property      | Type                | Description                                                              |
+| ------------- | ------------------- | ------------------------------------------------------------------------ |
+| `step_name`   | `String`            | Name of the step                                                         |
+| `description` | `String` (optional) | Human-readable description of what this step does , Default: `nil`.      |
+| `timestamp`   | `Time` (optional)   | Timestamp when the event was created , Default: `nil`.                   |
+| `raw_event`   | `Object` (optional) | Original event data if this event was transformed , Default: `nil`.      |
 
 ## Text Message Events
 

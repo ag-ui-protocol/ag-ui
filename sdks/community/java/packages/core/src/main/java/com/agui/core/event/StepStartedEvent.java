@@ -23,6 +23,7 @@ import com.agui.core.type.EventType;
 public class StepStartedEvent extends BaseEvent {
 
     private String stepName;
+    private String description;
 
     /**
      * Creates a new StepStartedEvent with type set to {@link EventType#STEP_STARTED}.
@@ -51,5 +52,23 @@ public class StepStartedEvent extends BaseEvent {
      */
     public String getStepName() {
         return this.stepName;
+    }
+
+    /**
+     * Sets an optional human-readable description of what this step does.
+     *
+     * @param description the step description. Can be null.
+     */
+    public void setDescription(final String description) {
+        this.description = description;
+    }
+
+    /**
+     * Returns the optional human-readable description of what this step does.
+     *
+     * @return the step description, can be null
+     */
+    public String getDescription() {
+        return this.description;
     }
 }

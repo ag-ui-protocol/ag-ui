@@ -11,7 +11,7 @@ For each example make sure to read the instructions on starting the associated A
 
 ### Basic 
 
-```rust
+```rust,no_run
 use std::error::Error;
 use ag_ui_client::{core::types::Message, Agent, HttpAgent, RunAgentParams};
 

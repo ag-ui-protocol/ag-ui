@@ -977,18 +977,25 @@ module AgUiProtocol
         sig { returns(String) }
         attr_reader :step_name
 
+        sig { returns(T.nilable(String)) }
+        attr_reader :description
+
         # @param step_name [String] Name of the step
+        # @param description [String, nil] Optional human-readable description of what this step does
         # @param timestamp [Time] Timestamp when the event was created
         # @param raw_event [Object] Original event data if this event was transformed
-        sig { params(step_name: String, timestamp: T.nilable(Time), raw_event: T.untyped).void }
-        def initialize(step_name:, timestamp: nil, raw_event: nil)
+        sig { params(step_name: String, description: T.nilable(String), timestamp: T.nilable(Time), raw_event: T.untyped).void }
+        def initialize(step_name:, description: nil, timestamp: nil, raw_event: nil)
           super(type: EventType::STEP_STARTED, timestamp: timestamp, raw_event: raw_event)
           @step_name = step_name
+          @description = description
         end
 
         sig { returns(T::Hash[Symbol, T.untyped]) }
         def to_h
-          super.merge(step_name: @step_name)
+          hash = super.merge(step_name: @step_name)
+          hash[:description] = @description unless @description.nil?
+          hash
         end
       end
 
@@ -1005,18 +1012,25 @@ module AgUiProtocol
         sig { returns(String) }
         attr_reader :step_name
 
+        sig { returns(T.nilable(String)) }
+        attr_reader :description
+
         # @param step_name [String] Name of the step
+        # @param description [String, nil] Optional human-readable description of what this step does
         # @param timestamp [Time] Timestamp when the event was created
         # @param raw_event [Object] Original event data if this event was transformed
-        sig { params(step_name: String, timestamp: T.nilable(Time), raw_event: T.untyped).void }
-        def initialize(step_name:, timestamp: nil, raw_event: nil)
+        sig { params(step_name: String, description: T.nilable(String), timestamp: T.nilable(Time), raw_event: T.untyped).void }
+        def initialize(step_name:, description: nil, timestamp: nil, raw_event: nil)
           super(type: EventType::STEP_FINISHED, timestamp: timestamp, raw_event: raw_event)
           @step_name = step_name
+          @description = description
         end
 
         sig { returns(T::Hash[Symbol, T.untyped]) }
         def to_h
-          super.merge(step_name: @step_name)
+          hash = super.merge(step_name: @step_name)
+          hash[:description] = @description unless @description.nil?
+          hash
         end
       end
     end

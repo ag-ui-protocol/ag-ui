@@ -141,11 +141,13 @@ Signals the start of a step within an agent run.
 class StepStartedEvent(BaseEvent):
     type: Literal[EventType.STEP_STARTED]
     step_name: str
+    description: Optional[str] = None
 ```
 
-| Property    | Type  | Description      |
-| ----------- | ----- | ---------------- |
-| `step_name` | `str` | Name of the step |
+| Property      | Type            | Description                                         |
+| ------------- | --------------- | --------------------------------------------------- |
+| `step_name`   | `str`           | Name of the step                                    |
+| `description` | `Optional[str]` | Human-readable description of what this step does   |
 
 ### StepFinishedEvent
 
@@ -157,11 +159,13 @@ Signals the completion of a step within an agent run.
 class StepFinishedEvent(BaseEvent):
     type: Literal[EventType.STEP_FINISHED]
     step_name: str
+    description: Optional[str] = None
 ```
 
-| Property    | Type  | Description      |
-| ----------- | ----- | ---------------- |
-| `step_name` | `str` | Name of the step |
+| Property      | Type            | Description                                         |
+| ------------- | --------------- | --------------------------------------------------- |
+| `step_name`   | `str`           | Name of the step                                    |
+| `description` | `Optional[str]` | Human-readable description of what this step does   |
 
 ## Text Message Events
 
