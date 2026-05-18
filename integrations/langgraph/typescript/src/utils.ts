@@ -184,6 +184,7 @@ export function langchainMessagesToAgui(messages: LangGraphMessage[]): Message[]
           role: "user",
           content: userContent,
         };
+      case "generic":
       case "ai":
         const aiContent = resolveMessageContent(message.content)
         return {

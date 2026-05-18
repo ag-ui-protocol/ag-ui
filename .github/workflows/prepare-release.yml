@@ -56,8 +56,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 env:
   NX_VERBOSE_LOGGING: true
@@ -67,10 +66,14 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    environment: npm
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - name: Find existing release/next PR (stacking target)
         id: existing
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7.1.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -94,24 +97,25 @@ jobs:
             }
 
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
           ref: main
+          persist-credentials: false
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1  # v4.3.0
         with:
-          version: "10.13.1"
+          version: "10.33.4"
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
         with:
           node-version: "22"
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
         with:
           python-version: "3.12"
 
@@ -120,8 +124,8 @@ jobs:
 
       - name: Configure git
         run: |
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git config --global user.name "github-actions[bot]"
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
 
       - name: Check out or create release/next
         if: inputs.dry_run != true
@@ -139,14 +143,18 @@ jobs:
 
       - name: Bump versions for scope
         id: bump
+        env:
+          INPUT_SCOPE: ${{ inputs.scope }}
+          INPUT_BUMP: ${{ inputs.bump }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
         run: |
           EXTRA_ARGS=()
-          if [ "${{ inputs.dry_run }}" = "true" ]; then
+          if [ "$INPUT_DRY_RUN" = "true" ]; then
             EXTRA_ARGS+=(--dry-run)
           fi
           RESULT=$(pnpm tsx scripts/release/prepare-release.ts \
-            --scope "${{ inputs.scope }}" \
-            --bump "${{ inputs.bump }}" \
+            --scope "$INPUT_SCOPE" \
+            --bump "$INPUT_BUMP" \
             "${EXTRA_ARGS[@]}")
 
           echo "$RESULT" > /tmp/bump-result.json
@@ -161,15 +169,24 @@ jobs:
 
       - name: Dry-run summary
         if: inputs.dry_run == true
+        env:
+          INPUT_SCOPE: ${{ inputs.scope }}
+          INPUT_BUMP: ${{ inputs.bump }}
         run: |
           {
             echo "## Dry Run — release / create-pr"
             echo ""
-            echo "**Scope:** \`${{ inputs.scope }}\` | **Bump:** \`${{ inputs.bump }}\`"
+            echo "**Scope:** \`${INPUT_SCOPE}\` | **Bump:** \`${INPUT_BUMP}\`"
             echo ""
             echo "### Would bump"
             jq -r '.packages[] | "- **\(.name)**: \(.oldVersion) → \(.newVersion)"' /tmp/bump-result.json
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Configure git credentials for push
+        if: inputs.dry_run != true && steps.bump.outputs.changed_count != '0'
+        run: git config --local url."https://x-access-token:$GITHUB_TOKEN@github.com/".insteadOf "https://github.com/"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Commit and push version bumps
         if: inputs.dry_run != true && steps.bump.outputs.changed_count != '0'
@@ -187,12 +204,14 @@ jobs:
       - name: Collect accumulated bumps
         id: notes
         if: inputs.dry_run != true && steps.bump.outputs.changed_count != '0'
+        env:
+          INPUT_SCOPE: ${{ inputs.scope }}
         run: |
           git fetch origin main
           python3 scripts/release/collect-accumulated-bumps.py origin/main HEAD > /tmp/accumulated.json
 
           SCOPES=$(jq -r '[.[].scope] | unique | join(" + ")' /tmp/accumulated.json)
-          [ -z "$SCOPES" ] || [ "$SCOPES" = "null" ] && SCOPES="${{ inputs.scope }}"
+          [ -z "$SCOPES" ] || [ "$SCOPES" = "null" ] && SCOPES="$INPUT_SCOPE"
           echo "title=release: ${SCOPES}" >> "$GITHUB_OUTPUT"
 
       - name: Build PR body
@@ -234,12 +253,14 @@ jobs:
 
       - name: Create or update release PR
         if: inputs.dry_run != true && steps.bump.outputs.changed_count != '0'
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7.1.0
         env:
           HAS_EXISTING: ${{ steps.existing.outputs.has_existing }}
           EXISTING_PR: ${{ steps.existing.outputs.pr_number }}
           PR_TITLE: ${{ steps.notes.outputs.title }}
           PR_BODY_PATH: ${{ steps.prbody.outputs.body_path }}
+          INPUT_SCOPE: ${{ inputs.scope }}
+          INPUT_BUMP: ${{ inputs.bump }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -248,6 +269,8 @@ jobs:
             const title = process.env.PR_TITLE;
             const body = fs.readFileSync(process.env.PR_BODY_PATH, "utf8");
             const hasExisting = process.env.HAS_EXISTING === "true";
+            const scope = process.env.INPUT_SCOPE;
+            const bump = process.env.INPUT_BUMP;
 
             let pr;
             if (hasExisting) {
@@ -269,15 +292,17 @@ jobs:
 
             await core.summary
               .addHeading("release / create-pr", 2)
-              .addRaw(`**Added scope:** \`${{ inputs.scope }}\` (\`${{ inputs.bump }}\`)\n\n`)
+              .addRaw(`**Added scope:** \`${scope}\` (\`${bump}\`)\n\n`)
               .addRaw(`**PR:** ${pr.html_url}\n`)
               .write();
 
       - name: No-op summary
         if: inputs.dry_run != true && steps.bump.outputs.changed_count == '0'
+        env:
+          INPUT_SCOPE: ${{ inputs.scope }}
         run: |
           {
             echo "## release / create-pr"
             echo ""
-            echo "Scope \`${{ inputs.scope }}\` is already bumped on \`release/next\` — nothing to add."
+            echo "Scope \`${INPUT_SCOPE}\` is already bumped on \`release/next\` — nothing to add."
           } >> "$GITHUB_STEP_SUMMARY"

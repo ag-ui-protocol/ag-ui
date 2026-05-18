@@ -141,6 +141,31 @@ describe("Message Conversion - All Types", () => {
       expect(result[0].toolCallId).toBe("tc1");
     });
 
+    it("should handle generic (ChatMessage) type as assistant", () => {
+      const msg = {
+        id: "g1",
+        type: "generic",
+        content: "hello from generic",
+        tool_calls: [{ id: "tc1", name: "search", args: { q: "weather" } }],
+      } as any as LangGraphMessage;
+      const result: any[] = langchainMessagesToAgui([msg]);
+      expect(result[0].role).toBe("assistant");
+      expect(result[0].content).toBe("hello from generic");
+      expect(result[0].toolCalls).toHaveLength(1);
+      expect(result[0].toolCalls[0].function.name).toBe("search");
+    });
+
+    it("should handle generic type with no tool calls", () => {
+      const msg = {
+        id: "g2",
+        type: "generic",
+        content: "plain generic message",
+      } as any as LangGraphMessage;
+      const result: any[] = langchainMessagesToAgui([msg]);
+      expect(result[0].role).toBe("assistant");
+      expect(result[0].content).toBe("plain generic message");
+    });
+
     it("should throw for unsupported type", () => {
       const msg = { id: "x", type: "unknown", content: "", role: "other" } as any;
       expect(() => langchainMessagesToAgui([msg])).toThrow("not supported");

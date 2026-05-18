@@ -5,16 +5,18 @@ on:
     types: [opened, synchronize, closed, reopened]
 
 permissions:
-  pull-requests: write
   contents: read
 
 jobs:
   fork-pr-monitor:
     if: github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - name: Check for suspicious patterns
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7.1.0
         with:
           script: |
             const pr = context.payload.pull_request;

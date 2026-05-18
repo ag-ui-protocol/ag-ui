@@ -46,6 +46,9 @@ concurrency:
 env:
   NX_VERBOSE_LOGGING: true
 
+permissions:
+  contents: read
+
 jobs:
   build:
     # Fires on merged release PRs OR on manual dispatch (retry / forced publish).
@@ -64,34 +67,35 @@ jobs:
       ts_groups_json: ${{ steps.save_groups.outputs.groups }}
     steps:
       - name: Checkout merged main
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
           fetch-depth: 0
           ref: main
+          persist-credentials: false
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1  # v4.3.0
         with:
-          version: "10.13.1"
+          version: "10.33.4"
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
         with:
           node-version: "22"
 
       - name: Install protoc
-        uses: arduino/setup-protoc@v3
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b  # v3.0.0
         with:
           version: "25.x"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # v8.1.0
         with:
           version: ">=0.8.0"
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
         with:
           python-version: "3.12"
 
@@ -151,11 +155,15 @@ jobs:
 
       - name: Build TypeScript packages in scope
         if: steps.detect_ts.outputs.count != '0'
-        run: npx nx run-many -t build --projects="${{ steps.ts_projects.outputs.projects }}"
+        run: npx nx run-many -t build --projects="${STEPS_TS_PROJECTS_OUTPUTS_PROJECTS}"
+        env:
+          STEPS_TS_PROJECTS_OUTPUTS_PROJECTS: ${{ steps.ts_projects.outputs.projects }}
 
       - name: Test TypeScript packages in scope
         if: steps.detect_ts.outputs.count != '0'
-        run: npx nx run-many -t test --projects="${{ steps.ts_projects.outputs.projects }}"
+        run: npx nx run-many -t test --projects="${STEPS_TS_PROJECTS_OUTPUTS_PROJECTS}"
+        env:
+          STEPS_TS_PROJECTS_OUTPUTS_PROJECTS: ${{ steps.ts_projects.outputs.projects }}
 
       - name: Group TypeScript packages by dist-tag
         if: steps.detect_ts.outputs.count != '0'
@@ -190,7 +198,7 @@ jobs:
 
       - name: Upload TypeScript build artifacts
         if: steps.detect_ts.outputs.count != '0'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: ts-build-artifacts
           path: |
@@ -220,7 +228,7 @@ jobs:
 
       - name: Upload Python build artifacts
         if: steps.detect_py.outputs.count != '0'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: py-build-artifacts
           path: |
@@ -235,27 +243,29 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.dry_run != true || github.event_name != 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    environment: npm
     permissions:
       contents: write
       id-token: write
     steps:
       - name: Checkout merged main
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
           fetch-depth: 0
           ref: main
           token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: false
 
       # --- TypeScript publish ---
       - name: Setup pnpm
         if: needs.build.outputs.ts_count != '0'
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1  # v4.3.0
         with:
-          version: "10.13.1"
+          version: "10.33.4"
 
       - name: Setup Node
         if: needs.build.outputs.ts_count != '0'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
         with:
           node-version: "22"
           registry-url: https://registry.npmjs.org
@@ -271,7 +281,7 @@ jobs:
 
       - name: Download TypeScript build artifacts
         if: needs.build.outputs.ts_count != '0'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
           name: ts-build-artifacts
 
@@ -310,13 +320,13 @@ jobs:
       # --- Python publish ---
       - name: Install uv
         if: needs.build.outputs.py_count != '0'
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # v8.1.0
         with:
           version: ">=0.8.0"
 
       - name: Download Python build artifacts
         if: needs.build.outputs.py_count != '0'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
           name: py-build-artifacts
 
@@ -353,8 +363,13 @@ jobs:
       # --- Git tags and GitHub Releases ---
       - name: Configure git
         run: |
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git config --global user.name "github-actions[bot]"
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+
+      - name: Configure git credentials for push
+        run: git config --local url."https://x-access-token:$GITHUB_TOKEN@github.com/".insteadOf "https://github.com/"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create and push per-package git tags (TypeScript)
         if: needs.build.outputs.ts_count != '0'

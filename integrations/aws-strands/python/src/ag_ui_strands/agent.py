@@ -408,6 +408,33 @@ class StrandsAgent:
                     )
         strands_agent = self._agents_by_thread[thread_id]
 
+        # Forward ``RunAgentInput.context`` to the per-thread Strands agent's
+        # state so user tools can read it (e.g. catalog/component schemas
+        # injected by the CopilotKit FE for A2UI rendering). Mirrors the
+        # langgraph integration where tools read ``runtime.state["copilotkit"]
+        # ["context"]``. Stored as a plain list of ``{description, value}``
+        # dicts to satisfy ``JSONSerializableDict`` validation.
+        agui_context = []
+        for ctx in (input_data.context or []):
+            if isinstance(ctx, dict):
+                agui_context.append(
+                    {
+                        "description": ctx.get("description", ""),
+                        "value": ctx.get("value", ""),
+                    }
+                )
+            else:
+                agui_context.append(
+                    {
+                        "description": getattr(ctx, "description", "") or "",
+                        "value": getattr(ctx, "value", "") or "",
+                    }
+                )
+        try:
+            strands_agent.state.set("agui_context", agui_context)
+        except Exception as e:
+            logger.warning(f"Failed to set agui_context on strands_agent.state: {e}")
+
         # Sync proxy tools from client-defined tools
         if input_data.tools:
             proxy_names = sync_proxy_tools(

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-05-16
+
+### Fixed
+
+- **FIX**: `FunctionResponse.name` now set to the called function name, not `tool_call_id` (#1682)
+  - `convert_ag_ui_messages_to_adk` was building `types.FunctionResponse` with `name=message.tool_call_id`, conflating the response's `name` field (meant to hold the called function's name, e.g. `get_weather`) with the correlation ID.
+  - Gemini's wire contract requires `FunctionResponse.name` to equal the originating `FunctionCall.name`. Using a UUID-shaped `tool_call_id` instead meant any downstream consumer that correlates calls by name (real Gemini's session correlator, aimock's gemini→openai translator, etc.) couldn't find a matching prior `FunctionCall.name`, silently breaking multi-leg round-trips (e.g. `tool-rendering-reasoning-chain` fixture chains failing on the second leg).
+  - The fix builds a `tool_call_id → function_name` lookup from all `AssistantMessage.tool_calls` in the same conversion batch before processing `ToolMessage`s. When a `ToolMessage` is encountered, `FunctionResponse.name` is set from the lookup; the old `tool_call_id` fallback is preserved for the edge case where no matching `AssistantMessage` is present in the same batch (malformed input), preventing crashes.
+  - `FunctionResponse.id` continues to carry the original `tool_call_id` so clients that key on the correlation ID are unaffected.
+  - **Contributor**: Reported and fixed by [@AlemTuzlak](https://github.com/AlemTuzlak) in [#1682](https://github.com/ag-ui-protocol/ag-ui/pull/1682). Thanks!
+
 ## [0.6.2] - 2026-05-12
 
 ### Security
