@@ -1077,6 +1077,27 @@ class TestADKAgent:
         assert root_agent.sub_agents[0].tools == original_child_tools
         assert all(isinstance(t, AGUIToolset) for t in root_agent.sub_agents[0].tools)
 
+    def test_shallow_copy_reparents_sub_agents(self):
+        """Copied sub-agents must point at the copied parent, not the original.
+
+        Regression for issue #1719: without re-parenting, ADK's
+        transfer_to_agent walks parent_agent up to the original tree whose
+        tools were never replaced, so the per-run copy is bypassed.
+        """
+        child = Agent(name="child", instruction="child")
+        root = Agent(name="root", instruction="root", sub_agents=[child])
+
+        assert child.parent_agent is root
+
+        copied_root = ADKAgent._shallow_copy_agent_tree(root)
+        copied_child = copied_root.sub_agents[0]
+
+        assert copied_root is not root
+        assert copied_child is not child
+        assert copied_child.parent_agent is copied_root
+        # Original tree must remain untouched.
+        assert child.parent_agent is root
+
 
 class TestSessionManagerDispatch:
     """Regression tests for session_manager / session_service dispatch (issue #1601)."""

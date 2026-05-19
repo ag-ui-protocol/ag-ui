@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **FIX**: `_shallow_copy_agent_tree` now re-parents copied sub-agents so `transfer_to_agent` resolves against the per-run copy (#1719)
+  - `ADKAgent._shallow_copy_agent_tree` recursively copies the agent tree before each run so that per-execution tool replacement (`AGUIToolset` → `ClientProxyToolset` via `_update_agent_tools_recursive`) doesn't mutate the originals. Pydantic's `model_copy(deep=False)` inherits every field by reference, including `parent_agent`, so each recursively-copied sub-agent still pointed at the **original** parent.
+  - ADK's `transfer_to_agent` resolves the target by walking `parent_agent` up to the root and searching the root's `sub_agents` registry. Because each copied sub-agent's `parent_agent` referenced the original (pre-copy) root — whose `tools` were never updated for this run — the transfer either failed to find the target or, where it did find one, escaped into the stale original tree whose `AGUIToolset` was never swapped for `ClientProxyToolset`. The transfer was silently dropped or executed against unwired tools.
+  - The fix re-parents each copied sub-agent to its copied parent after the recursive copy: `sub.parent_agent = copied`. A guard skips the early-return branch where `model_copy` raised `AttributeError` and the input was returned as-is (e.g. non-Pydantic test mocks), so the original tree's `parent_agent` is never mutated through the back door.
+  - New regression test `test_shallow_copy_reparents_sub_agents` in `tests/test_adk_agent.py` asserts (a) the copied child's `parent_agent is` the copied root (not the original), and (b) the original child's `parent_agent` still points at the original root — pinning the no-mutation invariant alongside the re-parenting fix.
+  - **Reporter**: [@jb-delafosse](https://github.com/jb-delafosse) filed [#1719](https://github.com/ag-ui-protocol/ag-ui/issues/1719) with a minimal repro, accurate root-cause analysis, and the proposed re-parenting fix this implementation is based on. Thanks!
+
 ## [0.6.3] - 2026-05-16
 
 ### Fixed
