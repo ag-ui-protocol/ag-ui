@@ -14,6 +14,7 @@ interface RunHttpAgentConfig extends RunAgentParameters {
 export class HttpAgent extends AbstractAgent {
   public url: string;
   public headers: Record<string, string>;
+  public credentials?: RequestCredentials;
   public abortController: AbortController = new AbortController();
 
   /**
@@ -32,6 +33,7 @@ export class HttpAgent extends AbstractAgent {
       },
       body: JSON.stringify(input),
       signal: this.abortController.signal,
+      credentials: this.credentials,
     };
   }
 
@@ -52,6 +54,7 @@ export class HttpAgent extends AbstractAgent {
     super(config);
     this.url = config.url;
     this.headers = structuredClone_(config.headers ?? {});
+    this.credentials = config.credentials;
   }
 
   run(input: RunAgentInput): Observable<BaseEvent> {
@@ -63,6 +66,7 @@ export class HttpAgent extends AbstractAgent {
     const cloned = super.clone() as HttpAgent;
     cloned.url = this.url;
     cloned.headers = structuredClone_(this.headers ?? {});
+    cloned.credentials = this.credentials;
 
     const newController = new AbortController();
     const originalSignal = this.abortController.signal as AbortSignal & { reason?: unknown };
