@@ -922,7 +922,17 @@ class LangGraphAgent:
                     for predict_tool in predict_state_metadata
                 )
 
-            is_tool_call_start_event = not has_current_stream and tool_call_data and tool_call_data.get("name")
+            is_text_to_tool_call_transition = (
+                has_current_stream
+                and not current_stream.get("tool_call_id")
+                and tool_call_data
+                and tool_call_data.get("name")
+            )
+            is_tool_call_start_event = (
+                (not has_current_stream or is_text_to_tool_call_transition)
+                and tool_call_data
+                and tool_call_data.get("name")
+            )
             is_tool_call_args_event = has_current_stream and current_stream.get("tool_call_id") and tool_call_data and tool_call_data.get("args")
             is_tool_call_end_event = has_current_stream and current_stream.get("tool_call_id") and not tool_call_data
 
@@ -1014,6 +1024,14 @@ class LangGraphAgent:
                 self.messages_in_process[self.active_run["id"]] = None
                 return
 
+            if is_text_to_tool_call_transition:
+                yield self._dispatch_event(
+                    TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=current_stream["id"], raw_event=event)
+                )
+                self.messages_in_process[self.active_run["id"]] = None
+                current_stream = None
+                has_current_stream = False
+                is_message_end_event = False
 
             if is_message_end_event:
                 yield self._dispatch_event(

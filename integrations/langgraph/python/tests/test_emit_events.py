@@ -182,3 +182,74 @@ class TestHandleSingleEventCustomEvents:
             events.append(ev)
 
         assert any(e.type == EventType.STATE_SNAPSHOT for e in events)
+
+    @pytest.mark.asyncio
+    async def test_text_to_tool_call_transition_emits_tool_events(self):
+        agent = self._make_agent()
+
+        async def collect(event):
+            events = []
+            async for ev in agent._handle_single_event(event, {}):
+                events.append(ev)
+            return events
+
+        text_chunk = {
+            "event": LangGraphEventTypes.OnChatModelStream.value,
+            "metadata": {},
+            "data": {
+                "chunk": {
+                    "id": "msg-1",
+                    "content": "Hello",
+                    "tool_call_chunks": [],
+                    "response_metadata": {},
+                }
+            },
+        }
+        transition_chunk = {
+            "event": LangGraphEventTypes.OnChatModelStream.value,
+            "metadata": {},
+            "data": {
+                "chunk": {
+                    "id": "msg-1",
+                    "content": "",
+                    "tool_call_chunks": [
+                        {"id": "call-1", "name": "render_ui", "args": "", "index": 0}
+                    ],
+                    "response_metadata": {},
+                }
+            },
+        }
+        args_chunk = {
+            "event": LangGraphEventTypes.OnChatModelStream.value,
+            "metadata": {},
+            "data": {
+                "chunk": {
+                    "id": "msg-1",
+                    "content": "",
+                    "tool_call_chunks": [
+                        {"id": None, "name": None, "args": '{"title":"ok"}', "index": 0}
+                    ],
+                    "response_metadata": {},
+                }
+            },
+        }
+        end_event = {
+            "event": LangGraphEventTypes.OnChatModelEnd.value,
+            "data": {},
+        }
+
+        events = []
+        for event in [text_chunk, transition_chunk, args_chunk, end_event]:
+            events.extend(await collect(event))
+
+        assert [event.type for event in events] == [
+            EventType.TEXT_MESSAGE_START,
+            EventType.TEXT_MESSAGE_CONTENT,
+            EventType.TEXT_MESSAGE_END,
+            EventType.TOOL_CALL_START,
+            EventType.TOOL_CALL_ARGS,
+            EventType.TOOL_CALL_END,
+        ]
+        assert events[3].tool_call_id == "call-1"
+        assert events[3].tool_call_name == "render_ui"
+        assert events[4].delta == '{"title":"ok"}'
