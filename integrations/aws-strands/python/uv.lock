@@ -16,7 +16,7 @@ wheels = [
 
 [[package]]
 name = "ag-ui-strands"
-version = "0.1.8"
+version = "0.1.9"
 source = { editable = "." }
 dependencies = [
     { name = "ag-ui-protocol" },

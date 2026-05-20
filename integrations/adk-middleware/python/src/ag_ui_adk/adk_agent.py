@@ -1827,7 +1827,18 @@ class ADKAgent:
 
         sub_agents = getattr(copied, 'sub_agents', None)
         if isinstance(sub_agents, (list, tuple)):
-            copied.sub_agents = [ADKAgent._shallow_copy_agent_tree(sa) for sa in sub_agents]
+            copied_subs = [ADKAgent._shallow_copy_agent_tree(sa) for sa in sub_agents]
+            # Re-parent each copied sub-agent so parent_agent points at the
+            # copied parent rather than the original.  Without this, ADK's
+            # transfer_to_agent walks parent_agent up to the original (stale)
+            # tree, escaping the per-run copy whose tools were replaced.
+            # Skip the early-return case where the sub-agent could not be
+            # copied and was returned as-is (e.g. non-Pydantic test mocks) —
+            # mutating its parent_agent would leak into the original tree.
+            for sub, original in zip(copied_subs, sub_agents):
+                if isinstance(sub, BaseAgent) and sub is not original:
+                    sub.parent_agent = copied
+            copied.sub_agents = copied_subs
 
         return copied
 

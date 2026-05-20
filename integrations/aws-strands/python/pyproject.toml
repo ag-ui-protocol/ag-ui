@@ -1,6 +1,6 @@
 [project]
 name = "ag_ui_strands"
-version = "0.1.8"
+version = "0.1.9"
 authors = [
     { name = "AG-UI Contributors" }
 ]
