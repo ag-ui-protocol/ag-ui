@@ -16,6 +16,7 @@ USER_ID_STATE_KEY = "_ag_ui_user_id"
 CONTEXT_STATE_KEY = "_ag_ui_context"
 INVOCATION_ID_STATE_KEY = "_ag_ui_invocation_id"
 
+# forwardedProps key that triggers a state/message sync without running the LLM.
 
 class SessionManager:
     """Session manager that wraps ADK's session service.
