@@ -1190,7 +1190,7 @@ class LangGraphAgent:
                                 type=EventType.TOOL_CALL_START,
                                 tool_call_id=tool_msg.tool_call_id,
                                 tool_call_name=tool_msg.name or event.get("name", ""),
-                                parent_message_id=tool_msg.id,
+                                parent_message_id=str(tool_msg.id or tool_msg.tool_call_id),
                                 raw_event=event,
                             )
                         )
@@ -1214,14 +1214,7 @@ class LangGraphAgent:
                         ToolCallResultEvent(
                             type=EventType.TOOL_CALL_RESULT,
                             tool_call_id=tool_msg.tool_call_id,
-                            # Use the ToolMessage's own id so the streamed
-                            # event matches the id the subsequent
-                            # MESSAGES_SNAPSHOT carries for the same message.
-                            # Falls back to tool_call_id when ToolMessage.id
-                            # is unset at this point (LangGraph's
-                            # add_messages reducer can assign it later, in
-                            # which case the stream and the snapshot would
-                            # diverge under a fresh uuid4()).
+                            # Match ToolMessage.id (or tool_call_id) so MESSAGES_SNAPSHOT merge works.
                             message_id=str(tool_msg.id or tool_msg.tool_call_id),
                             content=normalize_tool_content(tool_msg.content),
                             role="tool"
@@ -1249,7 +1242,7 @@ class LangGraphAgent:
                         type=EventType.TOOL_CALL_START,
                         tool_call_id=tool_call_output.tool_call_id,
                         tool_call_name=tool_call_output.name or event.get("name", ""),
-                        parent_message_id=tool_call_output.id,
+                        parent_message_id=str(tool_call_output.id or tool_call_output.tool_call_id),
                         raw_event=event,
                     )
                 )
@@ -1273,12 +1266,7 @@ class LangGraphAgent:
                 ToolCallResultEvent(
                     type=EventType.TOOL_CALL_RESULT,
                     tool_call_id=tool_call_output.tool_call_id,
-                    # Same rationale as the Command branch above: emit the
-                    # ToolMessage's own id (or its tool_call_id as a
-                    # fallback) so the streamed TOOL_CALL_RESULT and the
-                    # later MESSAGES_SNAPSHOT carry the same id for this
-                    # message. Otherwise the @ag-ui/client snapshot merge
-                    # treats them as different rows.
+                    # Match ToolMessage.id (or tool_call_id) so MESSAGES_SNAPSHOT merge works.
                     message_id=str(tool_call_output.id or tool_call_output.tool_call_id),
                     content=normalize_tool_content(tool_call_output.content),
                     role="tool"
