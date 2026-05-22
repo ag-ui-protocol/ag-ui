@@ -1,0 +1,15 @@
+exceptions:
+  - rule: hardcoded-secrets
+    file: publish-java-sdk.yml
+    reason: >
+      actions/setup-java's server-password parameter takes an env var NAME
+      (MAVEN_PASSWORD), not a credential value. The actual secret is injected
+      via the MAVEN_PASSWORD env var at lines 85-86 from secrets.SONATYPE_PASSWORD.
+
+  - rule: build-publish-same-job
+    file: publish-release.yml
+    reason: >
+      Build and publish are already split into separate jobs. The publish job's
+      pnpm install uses --ignore-scripts to prevent lifecycle script execution
+      with publishing credentials. The install is required for nx to resolve the
+      project graph and for pnpm publish to resolve workspace:* protocol deps.

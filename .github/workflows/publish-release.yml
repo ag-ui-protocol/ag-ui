@@ -356,21 +356,22 @@ jobs:
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
 
-      - name: Configure git credentials for push
-        run: git config --local url."https://x-access-token:$GITHUB_TOKEN@github.com/".insteadOf "https://github.com/"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Create and push per-package git tags (TypeScript)
         if: needs.build.outputs.ts_count != '0'
         env:
           TS_PACKAGES: ${{ needs.build.outputs.ts_packages }}
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: "url.https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/.insteadOf"
+          GIT_CONFIG_VALUE_0: "https://github.com/"
         run: bash scripts/release/create-tags.sh "$TS_PACKAGES"
 
       - name: Create and push per-package git tags (Python)
         if: needs.build.outputs.py_count != '0'
         env:
           PY_PACKAGES: ${{ needs.build.outputs.py_packages }}
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: "url.https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/.insteadOf"
+          GIT_CONFIG_VALUE_0: "https://github.com/"
         run: bash scripts/release/create-tags.sh "$PY_PACKAGES"
 
       - name: Create GitHub Release (TypeScript)
@@ -405,6 +406,9 @@ jobs:
         if: github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'release/next'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: "url.https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/.insteadOf"
+          GIT_CONFIG_VALUE_0: "https://github.com/"
         run: |
           git push origin --delete release/next 2>/dev/null || echo "Branch already gone"
 
