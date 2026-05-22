@@ -28,3 +28,4 @@ sdks/typescript/packages/client/tsdown.config.ts
 sdks/typescript/packages/core/tsdown.config.ts
 sdks/typescript/packages/encoder/tsdown.config.ts
 sdks/typescript/packages/proto/tsdown.config.ts
+integrations/community/cloudflare-agents/typescript/tsdown.config.ts
