@@ -78,6 +78,82 @@ from .utils.converters import convert_message_content_to_parts
 import logging
 logger = logging.getLogger(__name__)
 
+
+class _HitlDeferringQueue(asyncio.Queue):
+    """``asyncio.Queue`` that defers HITL ``ToolCallEndEvent``s.
+
+    Why: writing ``pending_tool_calls`` to ``session.state`` while ADK's
+    Runner still owns its in-memory session trips
+    ``DatabaseSessionService``'s OCC check on ADK >= 1.27 (issue #1732).
+    PR #1735 fixed that by making the consumer ``await execution.task``
+    before persisting, but that approach buffers every event after the
+    first HITL ``TOOL_CALL_END`` in ``event_queue`` until the producer
+    exits — losing streaming fidelity for non-HITL events that arrive
+    afterwards (parallel tool calls, post-LRO text, backend tool
+    results in resumable HITL).
+
+    This queue defers ONLY the HITL ``ToolCallEndEvent`` itself. All
+    other events stream live. The producer flushes the deferred TCEs
+    once it has persisted the matching IDs to ``session.state`` — see
+    ``_run_adk_in_background``. Putting the completion sentinel
+    (``None``) implicitly flushes any remaining deferred TCEs, so the
+    consumer sees them before the stream ends.
+
+    The release-on-result branch handles the edge case of a tool that
+    is marked HITL but resolves in-stream: when a ``ToolCallResultEvent``
+    for a deferred id arrives, the buffered TCE is released
+    immediately (preserving TCE→Result ordering on the wire) and
+    removed from the deferred set so it is not persisted at flush time.
+    """
+
+    def __init__(self, long_running_tool_ids: Set[str]) -> None:
+        super().__init__()
+        self._long_running_tool_ids = long_running_tool_ids
+        self._deferred_hitl_ends: Dict[str, "ToolCallEndEvent"] = {}
+
+    async def put(self, item):  # type: ignore[override]
+        # ``None`` is the completion sentinel; release any remaining
+        # deferred TCEs first so the consumer sees them before the
+        # stream ends.
+        if item is None:
+            await self.flush_deferred()
+            await super().put(item)
+            return
+
+        # Defer HITL TOOL_CALL_END events until the producer has
+        # persisted the corresponding ``pending_tool_calls`` entry.
+        if isinstance(item, ToolCallEndEvent) and (
+            item.tool_call_id in self._long_running_tool_ids
+        ):
+            self._deferred_hitl_ends[item.tool_call_id] = item
+            return
+
+        # Tools marked HITL but resolving in-stream: release the
+        # buffered TCE first so the client sees TCE→Result in order,
+        # and remove the id from the deferred set so it is not
+        # persisted at flush time (the result implies no client-side
+        # continuation, so the cross-pod handoff invariant from #1581
+        # is moot for this id).
+        if isinstance(item, ToolCallResultEvent) and (
+            item.tool_call_id in self._deferred_hitl_ends
+        ):
+            deferred_end = self._deferred_hitl_ends.pop(item.tool_call_id)
+            await super().put(deferred_end)
+
+        await super().put(item)
+
+    @property
+    def deferred_hitl_ids(self) -> List[str]:
+        """Tool call IDs still buffered (not yet released)."""
+        return list(self._deferred_hitl_ends.keys())
+
+    async def flush_deferred(self) -> None:
+        """Release all buffered HITL TCEs onto the underlying queue."""
+        for event in list(self._deferred_hitl_ends.values()):
+            await super().put(event)
+        self._deferred_hitl_ends.clear()
+
+
 class ADKAgent:
     """Middleware to bridge AG-UI Protocol with Google ADK agents.
     
@@ -612,6 +688,40 @@ class ADKAgent:
         # Use thread_id as default (assumes thread per user)
         return f"thread_user_{input.thread_id}"
     
+    async def _finalize_hitl_buffer(
+        self,
+        event_queue,
+        thread_id: str,
+        app_name: str,
+        user_id: str,
+    ) -> None:
+        """Persist any HITL pending_tool_calls IDs buffered in the queue.
+
+        Used by ``_run_adk_in_background`` to flush HITL persistence work
+        right before signalling completion or returning early. The matching
+        deferred ``ToolCallEndEvent`` instances stay in the queue's buffer
+        until a subsequent ``put(None)`` (or explicit ``flush_deferred``)
+        releases them onto the underlying queue — that ordering preserves
+        PR #1581's invariant ("persist before the client sees the event").
+
+        Idempotent: safe to call multiple times. No-op when ``event_queue``
+        is not a :class:`_HitlDeferringQueue` or has no deferred events.
+        See issue #1755.
+        """
+        if not isinstance(event_queue, _HitlDeferringQueue):
+            return
+        for hitl_tool_call_id in list(event_queue.deferred_hitl_ids):
+            try:
+                await self._add_pending_tool_call_with_context(
+                    thread_id, hitl_tool_call_id, app_name, user_id
+                )
+            except Exception as persist_error:
+                logger.error(
+                    f"Failed to persist HITL pending_tool_call "
+                    f"{hitl_tool_call_id} for thread {thread_id}: "
+                    f"{persist_error}"
+                )
+
     async def _add_pending_tool_call_with_context(self, thread_id: str, tool_call_id: str, app_name: str, user_id: str):
         """Add a tool call to the session's pending list for HITL tracking.
 
@@ -1698,36 +1808,17 @@ class ADKAgent:
             # Stream events and track tool calls
             logger.debug(f"Starting to stream events for execution {execution.thread_id}")
             app_name = self._get_app_name(input)
-            tool_call_ids: List[str] = []
 
             logger.debug(f"About to iterate over _stream_events for execution {execution.thread_id}")
             async for event in self._stream_events(execution):
-                # Register HITL tool calls in the backend session store BEFORE
-                # yielding ToolCallEndEvent. Otherwise a horizontally-scaled
-                # deployment can race: the client receives the event, posts the
-                # tool result to a different pod, and that pod sees an empty
-                # pending_tool_calls list because this pod hasn't written yet.
-                # See issue #1581.
-                #
-                # Only persist pending_tool_calls for *HITL* tool calls — i.e.
-                # those flagged in execution.long_running_tool_ids by the
-                # producer (ADK Event.long_running_tool_ids) or by
-                # ClientProxyTool. In-stream backend tools resolve on this same
-                # pod and never need the cross-pod handoff; writing to
-                # session.state for them just trips DatabaseSessionService's
-                # storage-update marker while the ADK Runner is mid-stream.
-                # See issue #1652.
-                if isinstance(event, ToolCallEndEvent):
-                    is_hitl = event.tool_call_id in execution.long_running_tool_ids
-                    logger.info(
-                        f"Detected ToolCallEndEvent with id: {event.tool_call_id} "
-                        f"(hitl={is_hitl})"
-                    )
-                    if is_hitl:
-                        tool_call_ids.append(event.tool_call_id)
-                        await self._add_pending_tool_call_with_context(
-                            execution.thread_id, event.tool_call_id, app_name, user_id
-                        )
+                # HITL pending_tool_calls persistence happens on the producer
+                # side via _HitlDeferringQueue: HITL TOOL_CALL_END events are
+                # buffered until the producer's persistence write completes
+                # after runner.run_async exits. By the time the consumer
+                # observes a ToolCallEndEvent here, the corresponding
+                # pending_tool_calls entry is already in session.state (or
+                # the event was a non-HITL TCE that doesn't need persistence
+                # at all). See issues #1581, #1652, #1732, and #1755.
 
                 # Always mark tool_call_id as processed when its result is
                 # observed, so replay logic skips it on resumption (fixes #437
@@ -1738,18 +1829,6 @@ class ADKAgent:
                     self._session_manager.mark_messages_processed(
                         app_name, execution.thread_id, [event.tool_call_id]
                     )
-
-                    # Backend tools complete within the same stream and emit a
-                    # ToolCallResultEvent — no client continuation is expected,
-                    # so remove the just-registered ID from the pending list.
-                    # Only IDs we actually persisted above appear in
-                    # tool_call_ids, so this naturally skips backend tools that
-                    # never went through _add_pending_tool_call_with_context.
-                    if event.tool_call_id in tool_call_ids:
-                        tool_call_ids.remove(event.tool_call_id)
-                        await self._remove_pending_tool_call(
-                            execution.thread_id, event.tool_call_id, user_id
-                        )
 
                 logger.debug(f"Yielding event: {type(event).__name__}")
                 yield event
@@ -1857,7 +1936,19 @@ class ADKAgent:
         Returns:
             ExecutionState tracking the background execution
         """
-        event_queue = asyncio.Queue()
+        # Shared set of HITL (long-running) tool call IDs. Populated by the
+        # producer side (EventTranslator's LRO branch in
+        # _run_adk_in_background and ClientProxyTool) BEFORE TOOL_CALL_END is
+        # enqueued, so the deferring queue (next line) can identify HITL
+        # ends at put time. See issues #1652 and #1755.
+        long_running_tool_ids: set[str] = set()
+
+        # Wrap the inner asyncio.Queue with _HitlDeferringQueue so HITL
+        # ToolCallEndEvents are held back until the producer has persisted
+        # the matching pending_tool_calls IDs. Non-HITL events stream
+        # through unblocked, restoring the streaming fidelity that PR
+        # #1735's consumer-side gate sacrificed. See issue #1755.
+        event_queue: _HitlDeferringQueue = _HitlDeferringQueue(long_running_tool_ids)
         logger.debug(f"Created event queue {id(event_queue)} for thread {input.thread_id}")
         # Extract necessary information
         user_id = self._get_user_id(input)
@@ -1959,15 +2050,6 @@ class ADKAgent:
 
         _update_agent_tools_recursive(adk_agent)
 
-        # Shared set of HITL (long-running) tool call IDs. Populated by the
-        # producer side (EventTranslator's LRO branch in _run_adk_in_background
-        # and ClientProxyTool) before TOOL_CALL_END is enqueued. The consumer
-        # in _run_new_execution reads it via ExecutionState to decide whether
-        # to persist pending_tool_calls to session.state — only HITL calls
-        # need the cross-pod handoff that pending_tool_calls provides.
-        # See issue #1652.
-        long_running_tool_ids: set[str] = set()
-
         # Create background task
         logger.debug(f"Creating background task for thread {input.thread_id}")
         run_kwargs = {
@@ -2027,6 +2109,13 @@ class ADKAgent:
             long_running_tool_ids = set()
         runner: Optional[Runner] = None
         backend_session_id: Optional[str] = None
+        # Buffer LRO ID remap updates discovered during the runner loop.
+        # Flushed once in the finally block AFTER runner.run_async has
+        # finished, so the mid-runner session-state write that would
+        # otherwise trip DatabaseSessionService's OCC check on ADK >= 1.27
+        # never happens. See issue #1754 (same shape as #1732, different
+        # writer that PR #1735's consumer-side fix can't reach).
+        pending_lro_id_remap: Dict[str, str] = {}
         logger.debug(f"[BG_EXEC] _run_adk_in_background called for thread={input.thread_id}")
         logger.debug(f"[BG_EXEC]   tool_results={len(tool_results) if tool_results else 0}, message_batch={len(message_batch) if message_batch else 0}")
         try:
@@ -2483,17 +2572,26 @@ class ADKAgent:
                     if not event_partial:
                         # Capture LRO ID remapping: the final (persisted) event
                         # may carry different function-call IDs than the partial
-                        # event we already emitted to the client.
+                        # event we already emitted to the client. Buffer here
+                        # and flush in finally; writing mid-runner would bump
+                        # the session row's storage marker and trip OCC on
+                        # ADK's next ``append_event`` (issue #1754).
                         lro_remap = self._extract_lro_id_remap(adk_event, event_translator)
                         if lro_remap:
-                            await self._store_lro_id_remap(
-                                lro_remap, backend_session_id, app_name, user_id
-                            )
+                            pending_lro_id_remap.update(lro_remap)
 
                         logger.info(
                             f"Received non-partial event during LRO drain, persistence complete "
                             f"(thread={input.thread_id})"
                         )
+                        # #1755: persist any buffered HITL pending_tool_calls
+                        # IDs, then signal completion so the deferring queue
+                        # flushes the deferred TCE(s) onto the underlying
+                        # queue before the consumer exits.
+                        await self._finalize_hitl_buffer(
+                            event_queue, input.thread_id, app_name, user_id
+                        )
+                        await event_queue.put(None)
                         return
                     else:
                         # Still partial, keep draining
@@ -2590,12 +2688,13 @@ class ADKAgent:
                     # Capture LRO ID remapping from non-partial events.
                     # The final (persisted) event may carry different function-call
                     # IDs than the partial event we already emitted to the client.
+                    # Buffer here and flush in finally; writing mid-runner would
+                    # bump the session row's storage marker and trip OCC on ADK's
+                    # next ``append_event`` (issue #1754).
                     if has_lro_function_call and not event_partial:
                         lro_remap = self._extract_lro_id_remap(adk_event, event_translator)
                         if lro_remap:
-                            await self._store_lro_id_remap(
-                                lro_remap, backend_session_id, app_name, user_id
-                            )
+                            pending_lro_id_remap.update(lro_remap)
 
                     # Hard stop the execution if we find any long running tool
                     # AND the agent is NOT using ADK's native resumability.
@@ -2641,6 +2740,17 @@ class ADKAgent:
                                 f"LRO detected with partial=False, persistence already complete "
                                 f"(thread={input.thread_id})"
                             )
+                            # #1755: persist any buffered HITL
+                            # pending_tool_calls IDs, then signal
+                            # completion so the deferring queue flushes
+                            # deferred TCE(s) before the consumer exits.
+                            await self._finalize_hitl_buffer(
+                                event_queue,
+                                input.thread_id,
+                                app_name,
+                                user_id,
+                            )
+                            await event_queue.put(None)
                             return
 
             # Force close any streaming messages
@@ -2741,7 +2851,14 @@ class ADKAgent:
                     )
                     logger.debug("Emitted post-confirm StateSnapshotEvent for timing separation")
 
-            # Signal completion - ADK execution is done
+            # Persist HITL pending_tool_calls IDs that the deferring queue
+            # has buffered, then signal completion. The put(None) below
+            # triggers an implicit flush via _HitlDeferringQueue.put so
+            # the consumer sees the deferred TCEs before the stream ends.
+            # See issue #1755.
+            await self._finalize_hitl_buffer(
+                event_queue, input.thread_id, app_name, user_id
+            )
             logger.debug(f"Background task sending completion signal for thread {input.thread_id}")
             await event_queue.put(None)
             logger.debug(f"Background task completion signal sent for thread {input.thread_id}")
@@ -2773,6 +2890,26 @@ class ADKAgent:
                             input.thread_id,
                             close_error,
                         )
+
+            # Flush any LRO ID remap captured during the runner loop. This
+            # runs after the runner has been closed, so the
+            # ``update_session_state`` write can't trip OCC against ADK's
+            # in-memory ``invocation_context.session``. See issue #1754.
+            if pending_lro_id_remap and backend_session_id is not None:
+                try:
+                    await self._store_lro_id_remap(
+                        pending_lro_id_remap,
+                        backend_session_id,
+                        app_name,
+                        user_id,
+                    )
+                except Exception as flush_error:
+                    logger.warning(
+                        "Failed to flush LRO ID remap on runner exit "
+                        "(thread=%s): %s",
+                        input.thread_id,
+                        flush_error,
+                    )
 
             # Drop any pending per-invocation `temp:` state so a later run on
             # the same session does not inherit stale values (e.g. a rotated

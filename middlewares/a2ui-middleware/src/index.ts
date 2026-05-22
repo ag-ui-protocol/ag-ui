@@ -267,6 +267,22 @@ export class A2UIMiddleware extends Middleware {
         dataEmitted: boolean;    // whether data model has been sent
       }>();
 
+      // Outer tool call context. Any non-A2UI tool call (e.g. ``generate_a2ui``
+      // wrapping a subagent that emits ``render_a2ui`` calls) is treated as
+      // the "outer" call. The outer id becomes the activity messageId
+      // discriminator so multiple inner ``render_a2ui`` attempts within the
+      // same outer call (e.g. validate-then-retry) supersede each other on
+      // the frontend instead of stacking as distinct chat entries.
+      //
+      // When no outer call is active (the agent calls ``render_a2ui``
+      // directly), behaviour falls back to the inner tool_call_id, matching
+      // the pre-existing scheme.
+      const nonOuterToolNames = new Set<string>([
+        ...a2uiToolNames,
+        LOG_A2UI_EVENT_TOOL_NAME,
+      ]);
+      let currentOuterCallId: string | null = null;
+
       const subscription = source.subscribe({
         next: (eventWithState) => {
           const event = eventWithState.event;
@@ -283,6 +299,10 @@ export class A2UIMiddleware extends Middleware {
                 schema: null, args: "", emittedCount: 0,
                 schemaEmitted: false, dataEmitted: false,
               });
+            } else if (!nonOuterToolNames.has(startEvent.toolCallName)) {
+              // Any other tool call becomes the active outer-call context.
+              // ``render_a2ui`` events that follow will dedup against this id.
+              currentOuterCallId = startEvent.toolCallId;
             }
           }
 
@@ -349,7 +369,7 @@ export class A2UIMiddleware extends Middleware {
                     const content: Record<string, unknown> = { [A2UI_OPERATIONS_KEY]: ops };
                     const snapshotEvent: ActivitySnapshotEvent = {
                       type: EventType.ACTIVITY_SNAPSHOT,
-                      messageId: `a2ui-surface-${surfaceId}-${argsEvent.toolCallId}`,
+                      messageId: `a2ui-surface-${surfaceId}-${currentOuterCallId ?? argsEvent.toolCallId}`,
                       activityType: A2UIActivityType,
                       content,
                       replace: true,
@@ -375,7 +395,7 @@ export class A2UIMiddleware extends Middleware {
                   const content: Record<string, unknown> = { [A2UI_OPERATIONS_KEY]: ops };
                   const snapshotEvent: ActivitySnapshotEvent = {
                     type: EventType.ACTIVITY_SNAPSHOT,
-                    messageId: `a2ui-surface-${surfaceId}-${argsEvent.toolCallId}`,
+                    messageId: `a2ui-surface-${surfaceId}-${currentOuterCallId ?? argsEvent.toolCallId}`,
                     activityType: A2UIActivityType,
                     content,
                     replace: true,
@@ -435,11 +455,16 @@ export class A2UIMiddleware extends Middleware {
                   // crash on unresolved path bindings before data exists.
                   for (const activityEvent of this.createA2UIActivityEvents(
                     parsed.operations,
-                    resultEvent.toolCallId,
+                    currentOuterCallId ?? resultEvent.toolCallId,
                   )) {
                     subscriber.next(activityEvent);
                   }
                 }
+              }
+
+              // Clear outer-call context when its TOOL_CALL_RESULT arrives.
+              if (currentOuterCallId === resultEvent.toolCallId) {
+                currentOuterCallId = null;
               }
             }
           }

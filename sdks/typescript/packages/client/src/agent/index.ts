@@ -4,6 +4,7 @@ export { HttpAgent } from "./http";
 export type {
   AgentConfig,
   HttpAgentConfig,
+  HttpAgentFetchFn,
   RunAgentParameters,
   AgentDebugConfig,
   ResolvedAgentDebugConfig,
