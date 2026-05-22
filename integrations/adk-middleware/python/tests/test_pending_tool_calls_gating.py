@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Regression tests for the pending_tool_calls HITL gating fix (issue #1652).
+"""Regression tests for the pending_tool_calls HITL gating fix (issues #1652, #1732).
 
 ag-ui-adk 0.6.1 began writing ``pending_tool_calls`` to ``session.state``
 mid-stream for *every* tool call (PR #1581), including backend tools that
@@ -10,10 +10,10 @@ is mid-``run_async``, surfacing as::
     ValueError: The session has been modified in storage since it was loaded.
     Please reload the session before appending more events.
 
-The fix gates the writes on ``execution.long_running_tool_ids`` — populated by
-the producer (ADK ``Event.long_running_tool_ids``) and by ``ClientProxyTool`` —
-so only HITL/client tools (which actually need the cross-pod handoff that
-``pending_tool_calls`` provides) are persisted.
+#1652 fixed the backend-tool variant by gating writes on
+``execution.long_running_tool_ids``. #1732 / PR #1735 fixed the HITL/client-tool
+variant by deferring the consumer's persistence call until the producer task
+has finished, so the runner no longer races its own session row.
 
 Tests cover:
 
@@ -23,8 +23,11 @@ Tests cover:
 2. End-to-end behavior with a scripted LLM and ``DatabaseSessionService``
    (sqlite+aiosqlite) — backend-only turn must complete cleanly *and* not
    pollute ``pending_tool_calls``.
-3. HITL turn with a client tool still writes ``pending_tool_calls`` (so
-   PR #1581's cross-pod handoff still works) and still completes cleanly.
+3. Synchronous smoke coverage for the HITL/client-tool path on
+   ``DatabaseSessionService`` (assertions on persistence + no errors).
+4. **Live LLM** integration coverage (#1732 reproducer): drives a HITL turn
+   with a real Gemini model so realistic streaming timing exposes the
+   producer/consumer race that PR #1735 fixed. Requires ``GOOGLE_API_KEY``.
 
 The DatabaseSessionService tests can be run against PostgreSQL by setting
 ``AGUI_DATABASE_URL`` (e.g.
@@ -52,16 +55,21 @@ from ag_ui.core import (
 )
 
 from ag_ui_adk import ADKAgent
+from ag_ui_adk.agui_toolset import AGUIToolset
 from ag_ui_adk.client_proxy_tool import ClientProxyTool
 from ag_ui_adk.client_proxy_toolset import ClientProxyToolset
 from ag_ui_adk.execution_state import ExecutionState
 from ag_ui_adk.session_manager import SessionManager
 
-from google.adk.agents import LlmAgent
+from google.adk.agents import Agent, LlmAgent
+from google.adk.apps import App, ResumabilityConfig
 from google.adk.models.base_llm import BaseLlm
 from google.adk.models.llm_response import LlmResponse
 from google.adk.sessions import DatabaseSessionService, InMemorySessionService
 from google.genai import types
+
+# Default model for live tests (Gemini Flash — cheap and fast).
+DEFAULT_MODEL = "gemini-2.0-flash"
 
 
 STALE_MARKER = "The session has been modified in storage since it was loaded"
@@ -433,6 +441,135 @@ class TestStaleSessionRegression:
         )
         assert not detector.tripped
 
+    @pytest.mark.asyncio
+    async def test_hitl_client_tool_with_database_session_service(
+        self, detector, reset_session_manager, tmp_path
+    ):
+        """Smoke coverage for the HITL/client-tool path on
+        ``DatabaseSessionService`` (companion to issue #1732 / PR #1735).
+
+        Drives a single HITL turn end-to-end with a scripted LLM and
+        verifies the path completes cleanly. Pins three post-fix
+        invariants:
+
+          1. No stale-session error is logged.
+          2. No ``RunErrorEvent`` reaches the client.
+          3. PR #1581's persistence guarantee holds — the HITL tool call
+             id is recorded in ``session.state['pending_tool_calls']`` by
+             the time the run finishes.
+
+        Note: this scripted-LLM test does NOT reproduce the specific
+        producer/consumer race PR #1735 fixed. A pure-HITL turn where the
+        tool returns ``None`` produces a single ADK ``append_event`` call
+        — no ``function_response`` is built for long-running tools (see
+        ``google.adk.flows.llm_flows.functions._execute_single_function_call_async``).
+        The race requires a *second* ADK ``append_event`` after the
+        middleware's mid-stream write, which only happens with realistic
+        LLM streaming. The live-LLM test in
+        :class:`TestStaleSessionRegressionLiveLLM` does reproduce the race
+        and gates on ``GOOGLE_API_KEY``. This synchronous test is the fast
+        always-runnable smoke check.
+        """
+        db_url = _make_db_url(tmp_path)
+        session_service = DatabaseSessionService(db_url=db_url)
+
+        frontend_tool = AGUITool(
+            name="frontend_action",
+            description="A frontend action that pauses for user input.",
+            parameters={"type": "object", "properties": {}},
+        )
+
+        adk = ADKAgent(
+            adk_agent=LlmAgent(
+                name="HITLAgent",
+                model=_ScriptedFunctionCallLlm(
+                    model="scripted", tool_name="frontend_action"
+                ),
+                # AGUIToolset() is the middleware's placeholder for the
+                # client tools that arrive via RunAgentInput.tools — it gets
+                # swapped for a ClientProxyToolset at run time, which marks
+                # every wrapped call as is_long_running=True. That is what
+                # routes the call through the HITL code path the PR fixed.
+                tools=[AGUIToolset()],
+                instruction="Call frontend_action when asked.",
+            ),
+            app_name="repro_1732",
+            user_id="user_1",
+            session_service=session_service,
+        )
+
+        thread_id = str(uuid.uuid4())
+        events = []
+        saw_run_error: bool = False
+        tool_call_ids: List[str] = []
+
+        async for event in adk.run(
+            RunAgentInput(
+                thread_id=thread_id,
+                run_id=str(uuid.uuid4()),
+                state={},
+                messages=[
+                    UserMessage(id=str(uuid.uuid4()), content="Please act")
+                ],
+                tools=[frontend_tool],
+                context=[],
+                forwarded_props={},
+            )
+        ):
+            events.append(event)
+            name = type(event).__name__
+            if name == "RunErrorEvent":
+                saw_run_error = True
+            if name == "ToolCallEndEvent":
+                tool_call_ids.append(event.tool_call_id)
+
+        # (1) The OCC race must not fire. This is the #1732 assertion: if
+        # any mid-runner write to session.state happens (including the
+        # pending_tool_calls write that PR #1735 deferred), the next ADK
+        # append_event raises ValueError and session_manager logs it.
+        assert not detector.tripped, (
+            f"Stale-session error logged during HITL turn: {detector.first}. "
+            f"This is the regression from issue #1732."
+        )
+
+        # (2) The run must complete cleanly — no RUN_ERROR surfaced to the
+        # client. If the OCC violation had propagated out of the consumer's
+        # try/except, this would fail.
+        assert not saw_run_error, (
+            "RunErrorEvent surfaced from HITL turn — regression from #1732."
+        )
+
+        type_names = {type(e).__name__ for e in events}
+        assert "RunStartedEvent" in type_names
+        assert "RunFinishedEvent" in type_names
+        assert "ToolCallEndEvent" in type_names, (
+            "Test setup error: HITL function call was never emitted as "
+            "ToolCallEndEvent — confirm AGUIToolset is swapped for "
+            "ClientProxyToolset and that the scripted LLM's tool_name "
+            "matches the AGUITool in RunAgentInput.tools."
+        )
+
+        # (3) PR #1581's persistence guarantee still holds: the HITL tool
+        # call id must be recorded in session.state['pending_tool_calls']
+        # by the time RUN_FINISHED reaches the client. Without this check,
+        # PR #1735 could silently regress to "never persist" and the
+        # OCC-safety test above would still pass.
+        metadata = adk._get_session_metadata(thread_id, "user_1")
+        assert metadata is not None, (
+            "session metadata should have been cached for this thread"
+        )
+        session_id, app_name, user_id = metadata
+        session = await session_service.get_session(
+            session_id=session_id, app_name=app_name, user_id=user_id
+        )
+        assert session is not None
+        pending = session.state.get("pending_tool_calls", [])
+        assert tool_call_ids and pending == tool_call_ids, (
+            f"HITL tool call id should be persisted in pending_tool_calls. "
+            f"Expected {tool_call_ids}, got {pending}. "
+            f"This is PR #1581's cross-pod-handoff invariant."
+        )
+
 
 class TestHitlClientToolStillPersisted:
     """Sanity check that PR #1581's original behavior is preserved for HITL
@@ -469,3 +606,189 @@ class TestHitlClientToolStillPersisted:
         await proxy._execute_proxy_tool({}, _Ctx())
 
         assert "hitl-call-1" in long_running
+
+
+# ---------------------------------------------------------------------------
+# Live LLM integration test for #1732
+# ---------------------------------------------------------------------------
+
+
+class TestStaleSessionRegressionLiveLLM:
+    """Live integration test for issue #1732.
+
+    The synchronous scripted-LLM tests in :class:`TestStaleSessionRegression`
+    cannot reproduce the #1732 race: a HITL fire-and-forget tool returning
+    ``None`` causes ADK to emit only one event (no function_response), so
+    there is no second ``append_event`` to race against the middleware's
+    ``pending_tool_calls`` write.
+
+    A real Gemini call produces realistic streaming timing and richer event
+    sequences (text alongside / preceding the function_call, async network
+    gaps that let the consumer interleave), which is what triggered the
+    bug in the reporter's environment. This class drives an HITL turn end
+    to end against a real model + ``DatabaseSessionService`` and asserts
+    the OCC error from #1732 is not logged.
+
+    Requires ``GOOGLE_API_KEY``. Falls back to ``llmock_server`` when no
+    real key is configured (via the autouse fixture below), though the
+    LLMock variant may not produce the same timing characteristics that
+    expose the race.
+    """
+
+    @pytest.fixture(autouse=True)
+    def setup_llmock(self, llmock_server):
+        """Start LLMock when no real GOOGLE_API_KEY is set (session-scoped)."""
+
+    @pytest.fixture(autouse=True)
+    def reset_session_manager(self):
+        SessionManager.reset_instance()
+        yield
+        SessionManager.reset_instance()
+
+    @pytest.fixture
+    def check_api_key(self):
+        """Skip when no API key (real or LLMock-injected) is available."""
+        if not os.getenv("GOOGLE_API_KEY"):
+            pytest.skip(
+                "GOOGLE_API_KEY not set and LLMock unavailable — skipping live test"
+            )
+
+    @pytest.mark.asyncio
+    async def test_hitl_client_tool_live_llm_with_database_session_service(
+        self, check_api_key, detector, tmp_path
+    ):
+        """End-to-end #1732 reproducer with a real Gemini model.
+
+        Drives a single HITL turn with:
+          - ``DatabaseSessionService`` (sqlite or Postgres via env override)
+          - ``ResumabilityConfig(is_resumable=True)`` — the resumable HITL
+            path keeps the runner alive after the LRO event, which is the
+            configuration the original reporter was on (ADK >= 1.27)
+          - A real ``gemini-2.0-flash`` model that will be prompted to
+            call ``approve_action`` (a client/frontend tool)
+
+        Assertions:
+          1. No stale-session error is logged (the #1732 regression).
+          2. No ``RunErrorEvent`` reaches the client.
+          3. The HITL tool call id is recorded in
+             ``session.state['pending_tool_calls']`` by the time the run
+             finishes (PR #1581's persistence guarantee).
+
+        Without PR #1735's fix, the middleware's mid-runner
+        ``pending_tool_calls`` write bumps the session row's storage marker
+        while ADK is mid-stream. ADK's next ``append_event`` then raises
+        ``ValueError: The session has been modified in storage since it
+        was loaded``, which propagates as ``RUN_ERROR`` via
+        ``_run_adk_in_background``'s ``except Exception``.
+        """
+        db_url = _make_db_url(tmp_path)
+        session_service = DatabaseSessionService(db_url=db_url)
+
+        approve_tool = AGUITool(
+            name="approve_action",
+            description="Ask the user to approve an action before proceeding.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": "The action to approve",
+                    }
+                },
+                "required": ["action"],
+            },
+        )
+
+        agent = Agent(
+            model=DEFAULT_MODEL,
+            name="hitl_stale_session_agent",
+            instruction=(
+                "You are a careful assistant. When asked to do anything, "
+                "ALWAYS call the approve_action tool first to confirm with "
+                "the user. Keep responses brief."
+            ),
+            tools=[AGUIToolset()],
+        )
+
+        # Resumable App so the runner exercises the post-LRO code paths
+        # that produce the additional ADK append_event the race depends on.
+        adk_app = App(
+            name="repro_1732_live",
+            root_agent=agent,
+            resumability_config=ResumabilityConfig(is_resumable=True),
+        )
+
+        adk = ADKAgent.from_app(
+            adk_app,
+            user_id="user_1",
+            session_service=session_service,
+        )
+
+        thread_id = str(uuid.uuid4())
+        events = []
+        saw_run_error: bool = False
+        tool_call_ids: List[str] = []
+
+        async for event in adk.run(
+            RunAgentInput(
+                thread_id=thread_id,
+                run_id=str(uuid.uuid4()),
+                state={},
+                messages=[
+                    UserMessage(
+                        id=str(uuid.uuid4()),
+                        content="Please archive the project files.",
+                    )
+                ],
+                tools=[approve_tool],
+                context=[],
+                forwarded_props={},
+            )
+        ):
+            events.append(event)
+            name = type(event).__name__
+            if name == "RunErrorEvent":
+                saw_run_error = True
+                logging.getLogger(__name__).error(
+                    f"RunErrorEvent: code={getattr(event, 'code', None)} "
+                    f"message={getattr(event, 'message', None)}"
+                )
+            if name == "ToolCallEndEvent":
+                tool_call_ids.append(event.tool_call_id)
+
+        # (1) The #1732 regression assertion.
+        assert not detector.tripped, (
+            f"Stale-session error logged during live HITL turn: "
+            f"{detector.first}. This is the regression from issue #1732."
+        )
+
+        # (2) No RUN_ERROR surfaces. (RUN_ERROR with code
+        # BACKGROUND_EXECUTION_ERROR is the exact failure mode the
+        # reporter saw on the SSE stream.)
+        assert not saw_run_error, (
+            "RunErrorEvent surfaced from live HITL turn — #1732 regression. "
+            "Check the test logs for the underlying ValueError message."
+        )
+
+        # If Gemini didn't call the tool (LLM behavior varies), skip the
+        # persistence assertion — we still got value from the OCC check.
+        # Otherwise the persistence guarantee from PR #1581 must hold.
+        if not tool_call_ids:
+            pytest.skip(
+                "Live model did not call approve_action in this run — "
+                "persistence assertion skipped (OCC assertion still applied)."
+            )
+
+        metadata = adk._get_session_metadata(thread_id, "user_1")
+        assert metadata is not None
+        session_id, app_name, user_id = metadata
+        session = await session_service.get_session(
+            session_id=session_id, app_name=app_name, user_id=user_id
+        )
+        assert session is not None
+        pending = session.state.get("pending_tool_calls", [])
+        assert pending == tool_call_ids, (
+            f"HITL tool call ids should be persisted in pending_tool_calls. "
+            f"Expected {tool_call_ids}, got {pending}. "
+            f"This is PR #1581's cross-pod-handoff invariant."
+        )

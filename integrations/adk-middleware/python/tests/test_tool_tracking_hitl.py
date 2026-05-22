@@ -113,6 +113,13 @@ class TestHITLToolTracking:
                 tool_call_id=tool_call_id
             ))
 
+            # Simulate the real producer's pre-None persistence step
+            # (#1755 moves this from the consumer to the producer).
+            for hitl_id in list(getattr(event_queue, "deferred_hitl_ids", [])):
+                await adk_middleware._add_pending_tool_call_with_context(
+                    "test_thread", hitl_id, "test_app", "test_user"
+                )
+
             # Signal completion
             await event_queue.put(None)
 
@@ -174,6 +181,12 @@ class TestHITLToolTracking:
                 tool_call_id=tool_call_id
             ))
 
+            # Simulate the real producer's pre-None persistence step (#1755).
+            for hitl_id in list(getattr(event_queue, "deferred_hitl_ids", [])):
+                await adk_middleware._add_pending_tool_call_with_context(
+                    "test_thread", hitl_id, "test_app", "test_user"
+                )
+
             # Signal completion
             await event_queue.put(None)
 
@@ -229,6 +242,12 @@ class TestHITLToolTracking:
                 type=EventType.TOOL_CALL_END,
                 tool_call_id=tool_call_id
             ))
+
+            # Simulate the real producer's pre-None persistence step (#1755).
+            for hitl_id in list(getattr(event_queue, "deferred_hitl_ids", [])):
+                await adk_middleware._add_pending_tool_call_with_context(
+                    "test_thread", hitl_id, "test_app", "test_user"
+                )
 
             # Signal completion
             await event_queue.put(None)
@@ -431,6 +450,11 @@ class TestHITLToolTracking:
                 type=EventType.TOOL_CALL_END,
                 tool_call_id="pending_tool_123"
             ))
+            # Simulate the real producer's pre-None persistence step (#1755).
+            for hitl_id in list(getattr(event_queue, "deferred_hitl_ids", [])):
+                await adk_middleware._add_pending_tool_call_with_context(
+                    "test_thread", hitl_id, "test_app", "test_user"
+                )
             await event_queue.put(None)
 
         with patch.object(adk_middleware, '_run_adk_in_background', side_effect=mock_run_adk_in_background):
@@ -489,6 +513,11 @@ class TestHITLToolTracking:
                 type=EventType.TOOL_CALL_END,
                 tool_call_id="pending_tool_456"
             ))
+            # Simulate the real producer's pre-None persistence step (#1755).
+            for hitl_id in list(getattr(event_queue, "deferred_hitl_ids", [])):
+                await adk_middleware._add_pending_tool_call_with_context(
+                    "test_thread", hitl_id, "test_app", "test_user"
+                )
             await event_queue.put(None)
 
         with patch.object(adk_middleware, '_run_adk_in_background', side_effect=mock_run_adk_in_background):
