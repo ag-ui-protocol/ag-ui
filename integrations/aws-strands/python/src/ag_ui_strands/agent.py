@@ -871,9 +871,14 @@ class StrandsAgent:
                     if event.get("init_event_loop") or event.get("start_event_loop"):
                         continue
                     if event.get("complete") or event.get("force_stop"):
-                        logger.debug(
-                            f"Breaking event stream: received complete or force_stop event (thread_id={input_data.thread_id}, complete={event.get('complete')}, force_stop={event.get('force_stop')})"
-                        )
+                        if event.get("force_stop"):
+                            logger.warning(
+                                f"Breaking event stream: force_stop received (thread_id={input_data.thread_id}, reason={event.get('force_stop')})"
+                            )
+                        else:
+                            logger.debug(
+                                f"Breaking event stream: complete received (thread_id={input_data.thread_id})"
+                            )
                         # If the agent stopped with no content (e.g. Bedrock
                         # ValidationException: input too long), surface an error
                         # message rather than silently emitting RUN_FINISHED.
