@@ -899,7 +899,10 @@ class StrandsAgent:
                                 type=EventType.TEXT_MESSAGE_END,
                                 message_id=err_id,
                             )
-                            message_started = True
+                            # Leave message_started = False: the error message is
+                            # fully closed above. Setting it True would cause the
+                            # post-loop cleanup to emit a spurious TextMessageEndEvent
+                            # with the original (never-started) message_id.
                         # Generator will end naturally, no need to break
                         break
 

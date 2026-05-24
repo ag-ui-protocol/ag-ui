@@ -63,6 +63,27 @@ async def test_force_stop_with_no_content_emits_error_message():
 
 
 @pytest.mark.asyncio
+async def test_force_stop_with_no_content_exactly_one_text_message():
+    """force_stop must not emit a duplicate TextMessageEndEvent.
+
+    A previous bug set message_started=True after the error sequence, causing
+    the post-loop cleanup to emit a second TextMessageEndEvent with the original
+    (never-started) message_id — triggering a client error.
+    """
+    agent = create_agent([{"force_stop": True}])
+    events = [e async for e in agent.run(make_input_data())]
+    types = [e.type for e in events]
+
+    assert types.count(EventType.TEXT_MESSAGE_START) == 1
+    assert types.count(EventType.TEXT_MESSAGE_END) == 1
+
+    # The single START and END must share the same message_id
+    start = next(e for e in events if e.type == EventType.TEXT_MESSAGE_START)
+    end = next(e for e in events if e.type == EventType.TEXT_MESSAGE_END)
+    assert start.message_id == end.message_id
+
+
+@pytest.mark.asyncio
 async def test_force_stop_with_no_content_error_text_mentions_history():
     """Generic force_stop (bool True) produces the 'history too long' hint."""
     agent = create_agent([{"force_stop": True}])
