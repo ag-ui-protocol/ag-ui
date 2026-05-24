@@ -874,6 +874,32 @@ class StrandsAgent:
                         logger.debug(
                             f"Breaking event stream: received complete or force_stop event (thread_id={input_data.thread_id}, complete={event.get('complete')}, force_stop={event.get('force_stop')})"
                         )
+                        # If the agent stopped with no content (e.g. Bedrock
+                        # ValidationException: input too long), surface an error
+                        # message rather than silently emitting RUN_FINISHED.
+                        if event.get("force_stop") and not message_started:
+                            err_id = str(uuid.uuid4())
+                            reason = event.get("force_stop")
+                            err_text = (
+                                f"The agent stopped unexpectedly: {reason}"
+                                if isinstance(reason, str) and reason not in (True, "True")
+                                else "I wasn't able to respond — the conversation history may be too long. Try starting a new chat."
+                            )
+                            yield TextMessageStartEvent(
+                                type=EventType.TEXT_MESSAGE_START,
+                                message_id=err_id,
+                                role="assistant",
+                            )
+                            yield TextMessageContentEvent(
+                                type=EventType.TEXT_MESSAGE_CONTENT,
+                                message_id=err_id,
+                                delta=err_text,
+                            )
+                            yield TextMessageEndEvent(
+                                type=EventType.TEXT_MESSAGE_END,
+                                message_id=err_id,
+                            )
+                            message_started = True
                         # Generator will end naturally, no need to break
                         break
 
