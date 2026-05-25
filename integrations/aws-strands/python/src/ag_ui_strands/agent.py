@@ -870,11 +870,37 @@ class StrandsAgent:
                     # Skip lifecycle events
                     if event.get("init_event_loop") or event.get("start_event_loop"):
                         continue
-                    if event.get("complete") or event.get("force_stop"):
+                    # Terminal events for the run. Three shapes:
+                    #   - "force_stop": Strands caught an exception mid-cycle
+                    #   - "result": AgentResultEvent — the model finished its
+                    #     turn normally; carries an AgentResult with stop_reason
+                    #     (end_turn / max_tokens / tool_use / ...). Introduced by
+                    #     the typed-events refactor (strands #745 / #755, Aug 2025)
+                    #     as the functional replacement for the old "complete"
+                    #     flag, which modern Strands no longer emits.
+                    #   - "complete": legacy terminator from pre-typed-events
+                    #     Strands. Kept for safety against older versions.
+                    if event.get("complete") or event.get("force_stop") or event.get("result"):
                         if event.get("force_stop"):
                             logger.warning(
                                 f"Breaking event stream: force_stop received (thread_id={input_data.thread_id}, reason={event.get('force_stop')})"
                             )
+                        elif event.get("result"):
+                            stop_reason = getattr(event["result"], "stop_reason", None)
+                            logger.info(
+                                "agent_result: thread_id=%s stop_reason=%s",
+                                input_data.thread_id,
+                                stop_reason,
+                            )
+                            # Surface non-normal stops to the client as a CustomEvent
+                            # so a UI can render a hint (truncated / filtered / etc.).
+                            # end_turn and tool_use are the normal stops — no event.
+                            if stop_reason in ("max_tokens", "guardrail_intervened", "content_filtered"):
+                                yield CustomEvent(
+                                    type=EventType.CUSTOM,
+                                    name="AgentStopped",
+                                    value={"stop_reason": stop_reason},
+                                )
                         else:
                             logger.debug(
                                 f"Breaking event stream: complete received (thread_id={input_data.thread_id})"
