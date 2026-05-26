@@ -1,7 +1,7 @@
 [project]
 name = "ag_ui_adk"
 description = "ADK Middleware for AG-UI Protocol"
-version = "0.6.3"
+version = "0.6.4"
 readme = "README.md"
 authors = [
     { name = "Mark Fogle", email = "mark@contextable.com" }
@@ -12,7 +12,23 @@ dependencies = [
     "aiohttp>=3.12.0",
     "asyncio>=3.4.3",
     "fastapi>=0.115.2",
-    "google-adk>=1.16.0,<2.0.0",
+    # Compatible with both google-adk 1.x and 2.x.
+    # ADK 2.0 (GA 2026-05-19) preserves the public surface this middleware touches:
+    #   - Runner.__init__ signature (adds optional `node`/`auto_create_session`; existing kwargs unchanged)
+    #   - Runner._resolve_invocation_id (same signature; still used for the #1534 workaround)
+    #   - Session/Event additive only (Event gains node_info, output; we read defensively)
+    #   - BasePlugin lifecycle hooks (all 12 preserved verbatim)
+    #   - LlmAgent / SequentialAgent / LoopAgent unchanged; Workflow is NEW (detected via topology check)
+    # 2.0-specific behavior differences handled in source:
+    #   - ag-ui#1389: AGUIToolset now binds to ClientProxyToolset (delegation pattern)
+    #                 instead of being replaced wholesale, so ADK 2.0's eager Runner-time
+    #                 get_tools() cache stays valid after the placeholder is bound.
+    #   - ag-ui#1669: Workflow roots receive FunctionResponse directly in new_message
+    #                 (the #1534 pre-append workaround now only applies to LlmAgent roots,
+    #                 because Workflow._run_impl rehydrates from new_message.parts only).
+    # NodeInterruptedError (2.0-only) is a BaseException subclass, NOT an Exception, so
+    # existing `except Exception:` blocks correctly let HITL interruption propagate.
+    "google-adk>=1.16.0,<3.0.0",
     "pydantic>=2.11.7",
     # Primary SSE response implementation. Used unconditionally so the FastAPI
     # floor stays at >=0.115.2 (rather than the >=0.135.0 jump that would be
@@ -50,4 +66,8 @@ dev = [
     "pytest-asyncio>=1.0.0",
     "pytest-cov>=6.2.1",
     "pytest-xdist>=3.8.0",
+    # SQLAlchemy's async engine (used by ADK's ``DatabaseSessionService`` in
+    # several test fixtures) requires greenlet. ``google-adk[db]`` 2.0 pulls
+    # aiosqlite but not greenlet, so we declare it explicitly here.
+    "greenlet>=3.0",
 ]
