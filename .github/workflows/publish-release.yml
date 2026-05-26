@@ -1,9 +1,9 @@
 name: release / publish
 
 # Mirrors CopilotKit's `release / publish` DX. Fires automatically on any
-# merged PR to main, and also supports manual dispatch (useful for retries
-# after a partial failure, or for forcing a publish of a version that's
-# already on main but not yet on the registries).
+# push to main (which includes merged PRs), and also supports manual
+# dispatch (useful for retries after a partial failure, or for forcing a
+# publish of a version that's already on main but not yet on the registries).
 #
 # We differ from CopilotKit in one way: we detect version changes by
 # diffing against the npm/PyPI registries (rather than parsing the merged
@@ -23,10 +23,17 @@ on:
   # Version bumps can only live in package.json or pyproject.toml, so we
   # gate the trigger on those paths. Combined with the release.config.json
   # allowlist in detect-ts-version-changes.sh this gives defense in depth:
-  # unrelated PRs don't even start the workflow, and any workflow run that
-  # does fire still filters to enrolled packages before touching a registry.
-  pull_request:
-    types: [closed]
+  # unrelated pushes don't even start the workflow, and any workflow run
+  # that does fire still filters to enrolled packages before touching a
+  # registry.
+  #
+  # IMPORTANT: We trigger on `push` (not `pull_request:closed`) because the
+  # npm trusted-publisher environment protection rules require the ref to be
+  # `refs/heads/main`. A `pull_request` event produces `refs/pull/N/merge`
+  # which is blocked by the environment's branch policy — causing every
+  # automated publish to fail before OIDC even starts. The `push` event
+  # fires after a PR merge lands on main, producing the correct ref.
+  push:
     branches: [main]
     paths:
       - "**/package.json"
@@ -51,10 +58,12 @@ permissions:
 
 jobs:
   build:
-    # Fires on merged release PRs OR on manual dispatch (retry / forced publish).
+    # Fires on pushes to main (which includes merged PRs) OR on manual dispatch
+    # (retry / forced publish). No merge guard needed: the push trigger only
+    # fires after commits land on main, so every run is post-merge by definition.
     if: >
       github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
+      github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -502,12 +511,20 @@ jobs:
           PY_PACKAGES: ${{ needs.build.outputs.py_packages }}
         run: bash scripts/release/reconcile-release.sh python "$PY_PACKAGES"
 
-      - name: Delete release/next if that's what was merged
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'release/next'
+      - name: Delete release/next if it was just merged
+        # With the push trigger we don't have pull_request context, so we
+        # check whether the branch still exists on the remote and clean it up.
+        # This is safe: release/next is an ephemeral branch created by the
+        # automated release PR flow, and if it exists at this point it means
+        # it was the branch that was just merged.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git push origin --delete release/next 2>/dev/null || echo "Branch already gone"
+          if git ls-remote --heads origin release/next | grep -q release/next; then
+            git push origin --delete release/next 2>/dev/null || echo "Branch already gone"
+          else
+            echo "release/next does not exist on remote — nothing to clean up"
+          fi
 
       - name: Release summary
         env:
