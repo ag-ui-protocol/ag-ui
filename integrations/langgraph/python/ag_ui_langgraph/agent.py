@@ -985,6 +985,8 @@ class LangGraphAgent:
             current_stream = self.get_message_in_progress(self.active_run["id"])
             has_current_stream = bool(current_stream and current_stream.get("id"))
             tool_call_data = tool_call_chunks_list[0] if tool_call_chunks_list else None
+            current_tool_call_id = current_stream.get("tool_call_id") if current_stream else None
+            incoming_tool_call_id = tool_call_data.get("id") if tool_call_data else None
             predict_state_metadata = (event.get("metadata") or {}).get("predict_state", [])
             tool_call_used_to_predict_state = False
             if tool_call_data and tool_call_data.get("name") and predict_state_metadata:
@@ -993,9 +995,27 @@ class LangGraphAgent:
                     for predict_tool in predict_state_metadata
                 )
 
-            is_tool_call_start_event = not has_current_stream and tool_call_data and tool_call_data.get("name")
-            is_tool_call_args_event = has_current_stream and current_stream.get("tool_call_id") and tool_call_data and tool_call_data.get("args")
-            is_tool_call_end_event = has_current_stream and current_stream.get("tool_call_id") and not tool_call_data
+            is_tool_call_boundary_event = (
+                has_current_stream
+                and current_tool_call_id
+                and tool_call_data
+                and tool_call_data.get("name")
+                and incoming_tool_call_id
+                and incoming_tool_call_id != current_tool_call_id
+            )
+            is_tool_call_start_event = (
+                (not has_current_stream or is_tool_call_boundary_event)
+                and tool_call_data
+                and tool_call_data.get("name")
+            )
+            is_tool_call_args_event = (
+                has_current_stream
+                and current_tool_call_id
+                and tool_call_data
+                and tool_call_data.get("args")
+                and not is_tool_call_boundary_event
+            )
+            is_tool_call_end_event = has_current_stream and current_tool_call_id and not tool_call_data
 
             if is_tool_call_start_event or is_tool_call_end_event or is_tool_call_args_event:
                 self.active_run["has_function_streaming"] = True
@@ -1077,6 +1097,14 @@ class LangGraphAgent:
                         raw_event=event
                     )
                 )
+
+            if is_tool_call_boundary_event:
+                yield self._dispatch_event(
+                    ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=current_tool_call_id, raw_event=event)
+                )
+                self.messages_in_process[self.active_run["id"]] = None
+                current_stream = None
+                has_current_stream = False
 
             if is_tool_call_end_event:
                 yield self._dispatch_event(
