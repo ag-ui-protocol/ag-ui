@@ -15,7 +15,8 @@ enum MessageRole {
   system('system'),
   assistant('assistant'),
   user('user'),
-  tool('tool');
+  tool('tool'),
+  activity('activity');
 
   final String value;
   const MessageRole(this.value);
@@ -70,6 +71,8 @@ sealed class Message extends AGUIModel with TypeDiscriminator {
         return UserMessage.fromJson(json);
       case MessageRole.tool:
         return ToolMessage.fromJson(json);
+      case MessageRole.activity:
+        return ActivityMessage.fromJson(json);
     }
   }
 
@@ -296,6 +299,53 @@ class ToolMessage extends Message {
       content: content ?? this.content,
       toolCallId: toolCallId ?? this.toolCallId,
       error: error ?? this.error,
+    );
+  }
+}
+
+/// Activity message carrying structured progress state.
+///
+/// `activityType` identifies the shape of `content`, a free-form map of
+/// activity-specific fields (e.g. `{progress: 0.5}` for an upload).
+/// Emitted by the backend alongside `ACTIVITY_SNAPSHOT` / `ACTIVITY_DELTA`
+/// events and included in `MESSAGES_SNAPSHOT` replays.
+class ActivityMessage extends Message {
+  final String activityType;
+  final Map<String, dynamic> activityContent;
+
+  const ActivityMessage({
+    required super.id,
+    required this.activityType,
+    required this.activityContent,
+  }) : super(role: MessageRole.activity);
+
+  factory ActivityMessage.fromJson(Map<String, dynamic> json) {
+    return ActivityMessage(
+      id: JsonDecoder.requireField<String>(json, 'id'),
+      activityType: JsonDecoder.requireField<String>(json, 'activityType'),
+      activityContent:
+          JsonDecoder.requireField<Map<String, dynamic>>(json, 'content'),
+    );
+  }
+
+  @override
+  Map<String, dynamic> toJson() => {
+    if (id != null) 'id': id,
+    'role': role.value,
+    'activityType': activityType,
+    'content': activityContent,
+  };
+
+  @override
+  ActivityMessage copyWith({
+    String? id,
+    String? activityType,
+    Map<String, dynamic>? activityContent,
+  }) {
+    return ActivityMessage(
+      id: id ?? this.id,
+      activityType: activityType ?? this.activityType,
+      activityContent: activityContent ?? this.activityContent,
     );
   }
 }

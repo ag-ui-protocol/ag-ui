@@ -41,7 +41,9 @@
   "version": "0.0.1",
   "pnpm": {
     "overrides": {
-      "langium": "3.2.0"
+      "langium": "3.2.0",
+      "@copilotkit/runtime>@langchain/core": "0.3.80",
+      "zod": "3.25.76"
     }
   }
 }

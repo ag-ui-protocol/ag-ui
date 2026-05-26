@@ -2,6 +2,7 @@ import logging
 import re
 import uuid
 import json
+from copy import deepcopy
 from typing import Optional, List, Any, Union, AsyncGenerator, Generator, Literal, Dict, TypedDict
 from typing_extensions import NotRequired, Self
 import inspect
@@ -200,14 +201,38 @@ class LangGraphAgent:
             config["configurable"] = {**(config.get('configurable', {})), "thread_id": thread_id}
 
             agent_state = await self.graph.aget_state(config)
-            resume_input = forwarded_props.get('command', {}).get('resume', None)
+            command_input = forwarded_props.get('command', {}) if forwarded_props else {}
+            has_resume_input = (
+                isinstance(command_input, dict)
+                and 'resume' in command_input
+                and command_input['resume'] is not None
+            )
+            # active_run was just reset to INITIAL_ACTIVE_RUN above, so
+            # active_run["node_name"] is always None here — the else branch
+            # was dead code. Resolve to None directly to make the intent
+            # explicit.
+            node_name_for_mode = node_name_input if (node_name_input and node_name_input != "__end__") else None
 
-            if resume_input is None and thread_id and self.active_run.get("node_name") != "__end__" and self.active_run.get("node_name"):
+            if not has_resume_input and thread_id and node_name_for_mode:
                 self.active_run["mode"] = "continue"
+                self.active_run["node_name"] = node_name_for_mode
             else:
                 self.active_run["mode"] = "start"
 
             prepared_stream_response = await self.prepare_stream(input=input, agent_state=agent_state, config=config)
+
+            state = prepared_stream_response["state"]
+            stream = prepared_stream_response["stream"]
+            config = prepared_stream_response["config"]
+            events_to_dispatch = prepared_stream_response.get('events_to_dispatch', None)
+
+            if events_to_dispatch is not None and len(events_to_dispatch) > 0:
+                for event in events_to_dispatch:
+                    yield self._dispatch_event(event)
+                return
+
+            if node_name_input and self.active_run.get("mode") == "continue":
+                self.active_run["node_name"] = None
 
             yield self._dispatch_event(
                 RunStartedEvent(type=EventType.RUN_STARTED, thread_id=thread_id, run_id=self.active_run["id"])
@@ -220,19 +245,9 @@ class LangGraphAgent:
                 yield ev
 
             # In case of resume (interrupt), re-start resumed step
-            if resume_input and self.active_run.get("node_name"):
+            if has_resume_input and self.active_run.get("node_name"):
                 for ev in self.handle_node_change(self.active_run.get("node_name")):
                     yield ev
-
-            state = prepared_stream_response["state"]
-            stream = prepared_stream_response["stream"]
-            config = prepared_stream_response["config"]
-            events_to_dispatch = prepared_stream_response.get('events_to_dispatch', None)
-
-            if events_to_dispatch is not None and len(events_to_dispatch) > 0:
-                for event in events_to_dispatch:
-                    yield self._dispatch_event(event)
-                return
 
             should_exit = False
             current_graph_state = state
@@ -452,47 +467,62 @@ class LangGraphAgent:
         config["configurable"]["thread_id"] = thread_id
         interrupts = self._collect_interrupts(agent_state.tasks)
         has_active_interrupts = len(interrupts) > 0
-        resume_input = forwarded_props.get('command', {}).get('resume', None)
+        command_input = forwarded_props.get('command', {})
+        resume_input = command_input.get('resume', None) if isinstance(command_input, dict) else None
+        has_resume_input = (
+            isinstance(command_input, dict)
+            and 'resume' in command_input
+            and resume_input is not None
+        )
 
         self.active_run["schema_keys"] = self.get_schema_keys(config)
 
-        non_system_messages = [msg for msg in langchain_messages if not isinstance(msg, SystemMessage)]
-        if len(agent_state.values.get("messages", [])) > len(non_system_messages):
-            # Only trigger time-travel regeneration if the incoming messages are NOT already
-            # in the checkpoint. If they are, this is a continuation (e.g. after CopilotKit
-            # intercepted a tool call), not a time-travel edit — regenerating would loop.
-            #
-            # We exclude ToolMessages from the ID comparison because CopilotKit assigns new
-            # IDs to tool results that won't match the placeholder IDs AgentCoreMemorySaver
-            # wrote to the checkpoint. Human and AI message IDs are stable across requests
-            # and are sufficient to distinguish continuation from time-travel.
-            incoming_non_tool_ids = {
-                getattr(m, "id", None)
-                for m in langchain_messages
-                if getattr(m, "id", None) and not isinstance(m, ToolMessage)
-            }
-            checkpoint_ids = {getattr(m, "id", None) for m in agent_state.values.get("messages", []) if getattr(m, "id", None)}
-            is_continuation = bool(incoming_non_tool_ids) and incoming_non_tool_ids.issubset(checkpoint_ids)
+        # Interrupt resume must be checked BEFORE the regenerate heuristic.
+        # When an interrupt is active the checkpoint contains an AI message
+        # (the tool call that triggered the interrupt) that the frontend
+        # never received. The message-count comparison below would see
+        # "checkpoint has more messages than frontend sent" and incorrectly
+        # enter the regenerate path instead of resuming. Treat only non-None
+        # resume values as present so falsy resume payloads remain valid while
+        # resume=None follows the no-resume interrupt path. Fixes #1743.
+        if not has_resume_input:
+            non_system_messages = [msg for msg in langchain_messages if not isinstance(msg, SystemMessage)]
+            if len(agent_state.values.get("messages", [])) > len(non_system_messages):
+                # Only trigger time-travel regeneration if the incoming messages are NOT already
+                # in the checkpoint. If they are, this is a continuation (e.g. after CopilotKit
+                # intercepted a tool call), not a time-travel edit — regenerating would loop.
+                #
+                # We exclude ToolMessages from the ID comparison because CopilotKit assigns new
+                # IDs to tool results that won't match the placeholder IDs AgentCoreMemorySaver
+                # wrote to the checkpoint. Human and AI message IDs are stable across requests
+                # and are sufficient to distinguish continuation from time-travel.
+                incoming_non_tool_ids = {
+                    getattr(m, "id", None)
+                    for m in langchain_messages
+                    if getattr(m, "id", None) and not isinstance(m, ToolMessage)
+                }
+                checkpoint_ids = {getattr(m, "id", None) for m in agent_state.values.get("messages", []) if getattr(m, "id", None)}
+                is_continuation = bool(incoming_non_tool_ids) and incoming_non_tool_ids.issubset(checkpoint_ids)
 
-            if not is_continuation:
-                last_user_message: Optional[HumanMessage] = None
-                for i in range(len(langchain_messages) - 1, -1, -1):
-                    candidate = langchain_messages[i]
-                    if isinstance(candidate, HumanMessage):
-                        last_user_message = candidate
-                        break
+                if not is_continuation:
+                    last_user_message: Optional[HumanMessage] = None
+                    for i in range(len(langchain_messages) - 1, -1, -1):
+                        candidate = langchain_messages[i]
+                        if isinstance(candidate, HumanMessage):
+                            last_user_message = candidate
+                            break
 
-                if last_user_message:
-                    last_user_id = last_user_message.id
-                    if last_user_id and last_user_id in checkpoint_ids:
-                        return await self.prepare_regenerate_stream(
-                            input=input,
-                            message_checkpoint=last_user_message,
-                            config=config
-                        )
+                    if last_user_message:
+                        last_user_id = last_user_message.id
+                        if last_user_id and last_user_id in checkpoint_ids:
+                            return await self.prepare_regenerate_stream(
+                                input=input,
+                                message_checkpoint=last_user_message,
+                                config=config
+                            )
 
         events_to_dispatch = []
-        if has_active_interrupts and not resume_input:
+        if has_active_interrupts and not has_resume_input:
             events_to_dispatch.append(
                 RunStartedEvent(type=EventType.RUN_STARTED, thread_id=thread_id, run_id=self.active_run["id"])
             )
@@ -520,15 +550,25 @@ class LangGraphAgent:
         if self.active_run["mode"] == "continue":
             await self.graph.aupdate_state(config, state, as_node=self.active_run.get("node_name"))
 
-        if resume_input:
+        if has_resume_input:
             if isinstance(resume_input, str):
+                # Contract: a string resume payload is forwarded raw to
+                # Command(resume=...) when not valid JSON. Callers may
+                # legitimately pass plain strings, but a malformed JSON
+                # *looking* string is almost always an integration bug —
+                # surface it at WARNING so it's visible without breaking
+                # the legitimate raw-string case.
+                raw_resume = resume_input
                 try:
-                    resume_input = json.loads(resume_input)
-                except json.JSONDecodeError:
-                    # Keep as string if not valid JSON — callers may legitimately
-                    # pass raw string resume payloads.
-                    logger.debug(
-                        "failed to parse resume_input as JSON, treating as string"
+                    resume_input = json.loads(raw_resume)
+                except json.JSONDecodeError as exc:
+                    logger.warning(
+                        "failed to parse resume_input as JSON, treating as string "
+                        "(thread_id=%r, run_id=%r, error=%s): %r",
+                        thread_id,
+                        self.active_run.get("id"),
+                        exc,
+                        raw_resume[:200],
                     )
             stream_input = Command(resume=resume_input)
         else:
@@ -702,28 +742,51 @@ class LangGraphAgent:
         # (HumanMessage / AIMessage / ToolMessage / SystemMessage) — not the
         # TypedDict LangGraphPlatformMessage wire-shape. Annotate accordingly
         # so downstream attribute access (``.tool_calls``, ``.content``) type-checks.
-        existing_messages: List[BaseMessage] = state.get("messages", [])
+        existing_messages: List[BaseMessage] = list(state.get("messages", []))
 
         # Fix tool_call args that are strings instead of dicts.
         # This happens when CopilotKit's after_agent restores frontend tool_calls
         # and the checkpoint saves them with string args. Bedrock Converse API
         # requires toolUse.input to be a JSON object (dict).
-        for msg in existing_messages:
-            if isinstance(msg, AIMessage) and getattr(msg, 'tool_calls', None):
-                for tc in msg.tool_calls:
-                    if isinstance(tc.get('args'), str):
-                        raw_args = tc['args']
-                        try:
-                            tc['args'] = json.loads(raw_args)
-                        except (json.JSONDecodeError, TypeError) as exc:
-                            logger.warning(
-                                "Resetting tool_call args after JSON decode failure "
-                                "(tool_call_id=%r, error=%s): %r",
-                                tc.get('id'),
-                                exc,
-                                raw_args,
-                            )
-                            tc['args'] = {}
+        repaired_ai_messages: List[AIMessage] = []
+        for idx, msg in enumerate(existing_messages):
+            # Only AIMessages with tool_calls can need repair. Skip the rest
+            # cheaply so we don't deepcopy every checkpoint message just to
+            # discover there was nothing to fix.
+            if not (isinstance(msg, AIMessage) and getattr(msg, 'tool_calls', None)):
+                continue
+            if not any(isinstance(tc.get('args'), str) for tc in msg.tool_calls):
+                continue
+
+            msg = deepcopy(msg)
+            existing_messages[idx] = msg
+            repaired_any = False
+            for tc in msg.tool_calls:
+                if isinstance(tc.get('args'), str):
+                    raw_args = tc['args']
+                    try:
+                        tc['args'] = json.loads(raw_args)
+                        repaired_any = True
+                    except (json.JSONDecodeError, TypeError) as exc:
+                        # Surface the failure loudly: this corrupts a tool
+                        # call's args, which downstream LLMs may silently
+                        # treat as an empty call. Include the tool_call_id
+                        # and a bounded excerpt so the cause is debuggable
+                        # without dumping unbounded payloads to logs.
+                        logger.error(
+                            "Resetting tool_call args after JSON decode failure "
+                            "(tool_call_id=%r, error=%s): %r",
+                            tc.get('id'),
+                            exc,
+                            raw_args[:200],
+                        )
+                        tc['args'] = {}
+            # Only return the repaired copy when at least one parse succeeded.
+            # Otherwise the checkpoint message stays authoritative; appending a
+            # repaired copy with empty args would duplicate the original tool
+            # call with corrupted arguments downstream.
+            if repaired_any:
+                repaired_ai_messages.append(msg)
 
         # Fix orphan ToolMessages injected by patch_orphan_tool_calls:
         # Find the real content from AG-UI messages and replace the fake content.
@@ -735,6 +798,7 @@ class LangGraphAgent:
             if isinstance(m, ToolMessage) and hasattr(m, 'tool_call_id')
         }
         replaced_tool_call_ids = set()
+        repaired_tool_messages: List[ToolMessage] = []
         if agui_tool_content:
             last_human_idx = -1
             for i in range(len(existing_messages) - 1, -1, -1):
@@ -751,19 +815,26 @@ class LangGraphAgent:
                             and hasattr(msg, 'tool_call_id')
                             and msg.tool_call_id in agui_tool_content
                     ):
+                        msg = deepcopy(msg)
                         msg.content = agui_tool_content[msg.tool_call_id]
+                        existing_messages[i] = msg
+                        repaired_tool_messages.append(msg)
                         replaced_tool_call_ids.add(msg.tool_call_id)
 
         existing_message_ids = {msg.id for msg in existing_messages}
 
         new_messages = [
-            msg for msg in messages
-            if msg.id not in existing_message_ids
-            and not (
-                isinstance(msg, ToolMessage)
-                and hasattr(msg, 'tool_call_id')
-                and msg.tool_call_id in replaced_tool_call_ids
-            )
+            *repaired_ai_messages,
+            *repaired_tool_messages,
+            *[
+                msg for msg in messages
+                if msg.id not in existing_message_ids
+                and not (
+                    isinstance(msg, ToolMessage)
+                    and hasattr(msg, 'tool_call_id')
+                    and msg.tool_call_id in replaced_tool_call_ids
+                )
+            ],
         ]
 
         tools = input.tools or []
