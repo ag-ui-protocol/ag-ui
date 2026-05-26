@@ -242,7 +242,15 @@ jobs:
       (needs.build.outputs.ts_count != '0' || needs.build.outputs.py_count != '0') &&
       (github.event_name == 'workflow_dispatch' && inputs.dry_run != true || github.event_name != 'workflow_dispatch')
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 30min covers worst-case 12-package release with 60s/package CDN verification budget
+    timeout-minutes: 30
+    # WARNING: npm trusted-publisher binding pins to:
+    #   repository: ag-ui-protocol/ag-ui
+    #   workflow_file_path: .github/workflows/publish-release.yml
+    #   environment_name: npm
+    # Renaming this file, this `environment:` value, or the workflow path
+    # breaks npm publishing for every @ag-ui/* package silently until the
+    # trusted-publisher config on npmjs.org is updated to match.
     environment: npm
     permissions:
       contents: write
@@ -276,29 +284,112 @@ jobs:
         with:
           name: ts-build-artifacts
 
-      # nx release publish needs the full pnpm workspace installed so that:
-      # 1. nx can resolve the project graph and find the nx-release-publish executor
-      # 2. pnpm publish can resolve workspace:* protocol deps to real versions
-      # We use --ignore-scripts to preserve the security boundary: no lifecycle
-      # scripts run in the same process tree as publishing secrets.
+      # pnpm pack needs the full workspace installed so that workspace:* protocol
+      # deps get rewritten to real versions in the published tarball.
+      # --ignore-scripts preserves the security boundary: no install-time lifecycle
+      # scripts run in the same process tree as the OIDC token.
+      # (pnpm pack itself does not support --ignore-scripts as of 10.33.4, so
+      # the security boundary is enforced at install time only — but `dist/`
+      # artifacts are downloaded from the build job, so prepack/prepublishOnly
+      # scripts have no work to do anyway.)
       - name: Install dependencies (no lifecycle scripts)
         if: needs.build.outputs.ts_count != '0'
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Publish TypeScript packages
         if: needs.build.outputs.ts_count != '0'
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # Empty string is required — any value here (even an expired token)
+          # makes npm fall back to token auth and silently skip OIDC. The
+          # workflow's `id-token: write` + the `environment: npm` trusted
+          # publisher config on npmjs.org are what authenticate the upload.
+          NODE_AUTH_TOKEN: ""
           TS_GROUPS: ${{ needs.build.outputs.ts_groups_json }}
+          TS_PACKAGES: ${{ needs.build.outputs.ts_packages }}
         run: |
           echo "$TS_GROUPS" > /tmp/ts-groups.json
+          echo "$TS_PACKAGES" > /tmp/ts-packages.json
           TS_FAILED=""
           for TAG in $(jq -r 'keys[]' /tmp/ts-groups.json); do
             for PROJECT in $(jq -r --arg t "$TAG" '.[$t][]' /tmp/ts-groups.json); do
-              echo "=== Publishing ${PROJECT} with --tag ${TAG} ==="
-              if ! npx nx release publish --projects="$PROJECT" --tag "$TAG"; then
-                echo "FAILED: ${PROJECT}"
+              PKG_PATH=$(jq -r --arg n "$PROJECT" '.[] | select(.name == $n) | .path' /tmp/ts-packages.json)
+              PKG_VERSION=$(jq -r --arg n "$PROJECT" '.[] | select(.name == $n) | .version' /tmp/ts-packages.json)
+              if [ -z "$PKG_PATH" ] || [ "$PKG_PATH" = "null" ]; then
+                echo "::error::Could not resolve path for ${PROJECT} from ts_packages output"
                 TS_FAILED="${TS_FAILED} ${PROJECT}"
+                continue
               fi
+              if [ -z "$PKG_VERSION" ] || [ "$PKG_VERSION" = "null" ]; then
+                echo "::error::Could not resolve version for ${PROJECT}"
+                TS_FAILED="${TS_FAILED} ${PROJECT}"
+                continue
+              fi
+              echo "=== Publishing ${PROJECT}@${PKG_VERSION} from ${PKG_PATH} with --tag ${TAG} ==="
+              # Use pnpm pack + npx npm@11 publish for OIDC trusted publisher flow.
+              # pnpm v10's `publish` does not speak OIDC; npm 11.5.1+ does. We
+              # stay on Node 22 and pull npm 11 via npx for this command only.
+              # pnpm pack still runs from the workspace so workspace:* protocol
+              # deps get rewritten to real versions in the tarball.
+              # Clean stale tarballs from prior runs/retries to prevent pnpm pack
+              # from bundling a previous tarball into the new one.
+              rm -f "$PKG_PATH"/*.tgz
+              if ! (cd "$PKG_PATH" && pnpm pack); then
+                echo "FAILED (pack): ${PROJECT}"
+                TS_FAILED="${TS_FAILED} ${PROJECT}"
+                continue
+              fi
+              TARBALL_NAME=$(echo "$PROJECT" | sed -e 's/^@//' -e 's|/|-|g')-${PKG_VERSION}.tgz
+              # Capture publish output so we can distinguish EPUBLISHCONFLICT
+              # (already-published; benign on retry) from real failures.
+              #
+              # We deliberately avoid `| tee` here: under `pipefail`, a tee
+              # failure (e.g. disk full mid-write) would return non-zero for
+              # the whole pipeline even if npm publish itself succeeded, which
+              # would route a successful publish into the FAILED branch and
+              # leave an orphan tarball on the registry with no git tag. The
+              # redirect-then-cat pattern is atomic from the script's POV: if
+              # the redirect itself fails, npm doesn't run.
+              PUBLISH_LOG=$(mktemp)
+              echo "Publishing tarball ${TARBALL_NAME}... (output buffered until command completes)"
+              if (cd "$PKG_PATH" && npx --yes npm@11.15.0 publish "$TARBALL_NAME" --tag "$TAG" --access public --provenance) >"$PUBLISH_LOG" 2>&1; then
+                cat "$PUBLISH_LOG"
+                # Verify publish actually landed on the registry. Catches the
+                # silent-OIDC-fallback failure mode (npm returns 0 but the
+                # version never propagated) and transient registry/CDN issues.
+                # 6 attempts × 10s = up to 60s of CDN propagation tolerance. npm CDN can lag 30-60s
+                # during peak hours; 15s was too aggressive and produced false-positive failures.
+                PUBLISH_VERIFIED=0
+                VIEW_STDERR=$(mktemp)
+                VIEW_STDOUT=$(mktemp)
+                for ATTEMPT in 1 2 3 4 5 6; do
+                  if npm view "${PROJECT}@${PKG_VERSION}" version --registry=https://registry.npmjs.org/ >"$VIEW_STDOUT" 2>"$VIEW_STDERR"; then
+                    PUBLISH_VERIFIED=1
+                    break
+                  fi
+                  if [ "$ATTEMPT" -lt 6 ]; then
+                    sleep 10
+                  fi
+                done
+                if [ "$PUBLISH_VERIFIED" -eq 1 ]; then
+                  echo "::notice::PUBLISHED: ${PROJECT}@${PKG_VERSION}"
+                else
+                  echo "::error::Publish returned 0 but ${PROJECT}@${PKG_VERSION} not visible on registry after 6 attempts (60s)"
+                  echo "::error::Last npm view stderr (may be empty if npm routed error to stdout):"
+                  if [ -s "$VIEW_STDERR" ]; then cat "$VIEW_STDERR"; else echo "  (empty)"; fi
+                  echo "::error::Last npm view stdout:"
+                  if [ -s "$VIEW_STDOUT" ]; then cat "$VIEW_STDOUT"; else echo "  (empty)"; fi
+                  TS_FAILED="${TS_FAILED} ${PROJECT}"
+                fi
+                rm -f "$VIEW_STDERR" "$VIEW_STDOUT"
+              else
+                cat "$PUBLISH_LOG"
+                if grep -qiE "EPUBLISHCONFLICT|cannot publish over|previously published" "$PUBLISH_LOG"; then
+                  echo "::notice::SKIPPED (already published): ${PROJECT}@${PKG_VERSION}"
+                else
+                  echo "FAILED (publish): ${PROJECT}"
+                  TS_FAILED="${TS_FAILED} ${PROJECT}"
+                fi
+              fi
+              rm -f "$PUBLISH_LOG"
             done
           done
           if [ -n "$TS_FAILED" ]; then
@@ -349,6 +440,16 @@ jobs:
             echo "::error::The following Python packages failed to publish:${PY_FAILED}"
             echo "PY_PUBLISH_FAILED=true" >> "$GITHUB_ENV"
           fi
+
+      # Fail loud BEFORE creating git tags / GitHub Releases. If publish failed
+      # partway through, we must NOT produce tags or releases for packages that
+      # never made it to the registry — that's the orphan-tag bug (e.g. an
+      # `@ag-ui/agno@0.0.4` git tag without a corresponding npm version).
+      - name: Fail if any packages failed to publish
+        if: env.TS_PUBLISH_FAILED == 'true' || env.PY_PUBLISH_FAILED == 'true'
+        run: |
+          echo "One or more packages failed to publish. See errors above."
+          exit 1
 
       # --- Git tags and GitHub Releases ---
       - name: Configure git
@@ -430,9 +531,3 @@ jobs:
               echo "$PY_PACKAGES" | jq -r '.[] | "- `\(.name)@\(.version)`"'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Fail if any packages failed to publish
-        if: env.TS_PUBLISH_FAILED == 'true' || env.PY_PUBLISH_FAILED == 'true'
-        run: |
-          echo "One or more packages failed to publish. See errors above."
-          exit 1

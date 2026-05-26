@@ -43,7 +43,10 @@
     "overrides": {
       "langium": "3.2.0",
       "@copilotkit/runtime>@langchain/core": "0.3.80",
-      "zod": "3.25.76"
+      "zod": "3.25.76",
+      "@strands-agents/sdk>zod": "^4.4.3",
+      "@ag-ui/aws-strands>zod": "^4.4.3",
+      "@ag-ui/aws-strands-examples>zod": "^4.4.3"
     }
   }
 }

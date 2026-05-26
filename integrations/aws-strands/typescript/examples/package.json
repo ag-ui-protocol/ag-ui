@@ -1,0 +1,35 @@
+{
+  "private": true,
+  "name": "@ag-ui/aws-strands-examples",
+  "version": "0.0.0",
+  "description": "Runnable AG-UI + Strands examples. Each file under server/api/ is a standalone server; server.ts mounts them all at once for the dojo.",
+  "scripts": {
+    "dojo": "tsx server/server.ts",
+    "agentic-chat": "tsx server/api/agentic-chat.ts",
+    "agentic-chat-multimodal": "tsx server/api/agentic-chat-multimodal.ts",
+    "agentic-chat-reasoning": "tsx server/api/agentic-chat-reasoning.ts",
+    "agentic-generative-ui": "tsx server/api/agentic-generative-ui.ts",
+    "backend-tool-rendering": "tsx server/api/backend-tool-rendering.ts",
+    "human-in-the-loop": "tsx server/api/human-in-the-loop.ts",
+    "shared-state": "tsx server/api/shared-state.ts",
+    "tool-based-generative-ui": "tsx server/api/tool-based-generative-ui.ts"
+  },
+  "dependencies": {
+    "@ag-ui/aws-strands": "workspace:*",
+    "@ag-ui/core": "workspace:*",
+    "@ag-ui/encoder": "workspace:*",
+    "@strands-agents/sdk": "^1.1.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "cors": "^2.8.5",
+    "express": "^5.0.0",
+    "openai": "^6.0.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/node": "^20.11.19",
+    "tsx": "^4.20.6",
+    "typescript": "^5.3.3"
+  }
+}

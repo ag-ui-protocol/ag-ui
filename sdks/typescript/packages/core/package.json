@@ -2,6 +2,10 @@
   "name": "@ag-ui/core",
   "author": "Markus Ecker <markus.ecker@gmail.com>",
   "version": "0.0.53",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ag-ui-protocol/ag-ui.git"
+  },
   "private": false,
   "publishConfig": {
     "access": "public"

@@ -346,6 +346,23 @@ const agentFilesMapper: Record<
       {},
     );
   },
+  "aws-strands-typescript": (agentKeys: string[]) => {
+    // TS example filenames use hyphens — map underscore keys (agentic_chat)
+    // to hyphenated filenames (agentic-chat.ts).
+    return agentKeys.reduce(
+      (acc, agentId) => ({
+        ...acc,
+        [agentId]: [
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/aws-strands/typescript/examples/server/api/${agentId.replace(/_/g, "-")}.ts`,
+          ),
+        ],
+      }),
+      {},
+    );
+  },
   "microsoft-agent-framework-python": (agentKeys: string[]) => {
     return agentKeys.reduce(
       (acc, agentId) => ({

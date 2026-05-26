@@ -175,6 +175,14 @@ const ALL_SERVICES = {
       env: { PORT: 8017 },
     },
   ],
+  "aws-strands-typescript": [
+    {
+      command: "pnpm run dojo",
+      name: "AWS Strands (TypeScript)",
+      cwd: path.join(integrationsRoot, "aws-strands/typescript/examples"),
+      env: { PORT: 8022 },
+    },
+  ],
   "adk-middleware": [
     {
       command: "uv run dev",
@@ -290,6 +298,7 @@ const ALL_SERVICES = {
         AGENT_FRAMEWORK_PYTHON_URL: "http://localhost:8015",
         AGENT_FRAMEWORK_DOTNET_URL: "http://localhost:8016",
         AWS_STRANDS_URL: "http://localhost:8017",
+        AWS_STRANDS_TYPESCRIPT_URL: "http://localhost:8022",
         CLAUDE_AGENT_SDK_PYTHON_URL: "http://localhost:8019",
         CLAUDE_AGENT_SDK_TYPESCRIPT_URL: "http://localhost:8020",
         LANGROID_URL: "http://localhost:8021",
@@ -324,6 +333,7 @@ const ALL_SERVICES = {
         AGENT_FRAMEWORK_PYTHON_URL: "http://localhost:8015",
         AGENT_FRAMEWORK_DOTNET_URL: "http://localhost:8016",
         AWS_STRANDS_URL: "http://localhost:8017",
+        AWS_STRANDS_TYPESCRIPT_URL: "http://localhost:8022",
         CLAUDE_AGENT_SDK_PYTHON_URL: "http://localhost:8019",
         CLAUDE_AGENT_SDK_TYPESCRIPT_URL: "http://localhost:8020",
         LANGROID_URL: "http://localhost:8021",

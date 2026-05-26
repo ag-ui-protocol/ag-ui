@@ -414,6 +414,33 @@ export const agentsIntegrations = {
     }),
   }),
 
+  "aws-strands-typescript": async () => ({
+    // TS example server mounts every endpoint on hyphenated paths (matching the
+    // Python reference server) so the same curl payloads drive both adapters.
+    // v1_agentic_chat reuses the agentic-chat endpoint — the dojo page renders
+    // the same agent via the v1 CopilotChat UI instead of the v2 shell.
+    ...mapAgents(
+      (path) =>
+        new AWSStrandsAgent({
+          url: `${envVars.awsStrandsTypescriptUrl}/${path}/`,
+        }),
+      {
+        agentic_chat: "agentic-chat",
+        agentic_chat_reasoning: "agentic-chat-reasoning",
+        agentic_chat_multimodal: "agentic-chat-multimodal",
+        v1_agentic_chat: "agentic-chat",
+        backend_tool_rendering: "backend-tool-rendering",
+        agentic_generative_ui: "agentic-generative-ui",
+        shared_state: "shared-state",
+        tool_based_generative_ui: "tool-based-generative-ui",
+      },
+    ),
+    human_in_the_loop: new AWSStrandsAgent({
+      url: `${envVars.awsStrandsTypescriptUrl}/human-in-the-loop`,
+      debug: true,
+    }),
+  }),
+
   ag2: async () =>
     mapAgents((path) => new Ag2Agent({ url: `${envVars.ag2Url}/${path}` }), {
       agentic_chat: "agentic_chat",

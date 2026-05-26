@@ -1,38 +1,41 @@
 # AWS Strands Integration Architecture
 
-This document explains how the AWS Strands integration inside `integrations/aws-strands/` is implemented today. It covers the Python adapter that speaks the AG-UI protocol and the FastAPI transport helpers.
+This document explains how the AWS Strands integration inside `integrations/aws-strands/` is implemented today. It covers the Python adapter (FastAPI) and the TypeScript adapter (Express), which share the same AG-UI event contract; the Python implementation is the reference, and the TypeScript adapter documents only what it does differently.
 
 ---
 
 ## System Overview
 
 ```
-┌─────────────┐      RunAgentInput        ┌──────────────────────────┐
-│  AG-UI UI   │ ────────────────► │ AG-UI HttpAgent (standard) │
-└─────────────┘   (messages,      │  e.g., @ag-ui/client       │
-                   tools, state)  └──────────────────────────┬──────┘
+┌─────────────┐      RunAgentInput        ┌────────────────────────────┐
+│  AG-UI UI   │ ────────────────────────► │ AG-UI HttpAgent (standard) │
+└─────────────┘   (messages,              │  e.g., @ag-ui/client       │
+                   tools, state)          └──────────────────┬─────────┘
                                                              │ HTTP(S) POST + SSE
                                                              ▼
                                                 ┌────────────────────────────┐
-                                                │ FastAPI endpoint (Python)  │
-                                                │ add_strands_fastapi_endpoint│
+                                                │ Transport endpoint         │
+                                                │ Python:     FastAPI        │
+                                                │ TypeScript: Express        │
                                                 └─────────────┬──────────────┘
                                                               │
                                                               ▼
                                                  ┌─────────────────────────┐
                                                  │ StrandsAgent adapter    │
-                                                 │ (src/ag_ui_strands/...) │
+                                                 │ python/src/ag_ui_strands│
+                                                 │ typescript/src          │
                                                  └─────────────┬───────────┘
                                                               │
                                                               ▼
-                                                strands.Agent.stream_async()
+                                        Python:     strands.Agent.stream_async()
+                                        TypeScript: Agent.stream() (async iterator)
 ```
 
 1. The browser (or any AG-UI client) instantiates the standard AG-UI `HttpAgent` (or equivalent) and targets the Strands endpoint URL; there is no Strands-specific SDK on the client.
 2. The client sends a `RunAgentInput` payload that contains the current thread state, previously executed tools, shared UI state, and the latest user message(s).
-3. `add_strands_fastapi_endpoint` (or `create_strands_app`) registers a POST route that deserializes `RunAgentInput`, instantiates an `EventEncoder`, and streams whatever the Python `StrandsAgent` yields.
-4. `StrandsAgent.run` wraps a concrete `strands.Agent` instance, forwards the derived user prompt into `stream_async`, and translates every event into AG-UI protocol events (text deltas, tool invocations, snapshots, etc.).
-5. The encoded stream is delivered back to the client over `text/event-stream` (or JSON chunked mode) and rendered by AG-UI without any Strands-specific code on the frontend.
+3. The transport layer (`add_strands_fastapi_endpoint` in Python, `addStrandsExpressEndpoint` in TypeScript) registers a POST route that deserializes `RunAgentInput`, instantiates an `EventEncoder`, and streams whatever the `StrandsAgent` yields.
+4. `StrandsAgent.run` wraps a concrete Strands `Agent` instance, forwards the derived user prompt into the streaming call, and translates every event into AG-UI protocol events (text deltas, tool invocations, snapshots, etc.).
+5. The encoded stream is delivered back to the client over `text/event-stream` (or binary protobuf) and rendered by AG-UI without any Strands-specific code on the frontend.
 
 ---
 
@@ -51,7 +54,7 @@ This document explains how the AWS Strands integration inside `integrations/aws-
     2. After each `ToolCallEndEvent`, with the new `AssistantMessage(tool_calls=[…])` appended.
     3. After each `ToolCallResultEvent`, with the new `ToolMessage` appended.
     4. After each terminal `TextMessageEndEvent`, with the new `AssistantMessage(content=…)` appended.
-  - Each snapshot carries the *complete* thread state as known so far. Toggle globally via `StrandsAgentConfig.emit_messages_snapshot` (default `True`); suppress per-tool with `ToolBehavior.skip_messages_snapshot=True`.
+  - Each snapshot carries the _complete_ thread state as known so far. Toggle globally via `StrandsAgentConfig.emit_messages_snapshot` (default `True`); suppress per-tool with `ToolBehavior.skip_messages_snapshot=True`.
 - **State priming**
   - If `RunAgentInput.state` is provided, it immediately publishes a `StateSnapshotEvent`, filtering out any `messages` field so the frontend remains the source of truth for the timeline.
   - Optionally rewrites the outgoing user prompt via `StrandsAgentConfig.state_context_builder`.
@@ -80,7 +83,7 @@ This document explains how the AWS Strands integration inside `integrations/aws-
 - **Frontend tool awareness**
   - `input_data.tools` supplies the frontend tool registry. Their names are used to (a) avoid double-invoking tool results that were literally produced by the UI, and (b) stop the Strands run after the LLM has issued a UI-only instruction.
 - **Reasoning streaming**
-  - When Strands yields events with `reasoningText` and `reasoning=true`, the adapter emits REASONING_* events.
+  - When Strands yields events with `reasoningText` and `reasoning=true`, the adapter emits REASONING\_\* events.
   - Emits `ReasoningStartEvent`, `ReasoningMessageStartEvent`, content events, then `ReasoningMessageEndEvent` and `ReasoningEndEvent`.
   - For encrypted/redacted reasoning content (`reasoningRedactedContent`), emits `ReasoningEncryptedValueEvent` with base64-encoded payload.
   - Reasoning events are automatically closed when a `contentBlockStop` event is received.
@@ -105,6 +108,9 @@ This document explains how the AWS Strands integration inside `integrations/aws-
 | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | `tool_behaviors: Dict[str, ToolBehavior]` | Per-tool overrides keyed by the Strands tool name.                                                                           |
 | `state_context_builder`                   | Callable that enriches the outgoing prompt with the current shared state (useful for reiterating plan steps, recipes, etc.). |
+| `session_manager_provider`                | Factory invoked once per thread to produce a per-thread `SessionManager`.                                                    |
+| `emit_messages_snapshot`                  | Global opt-out of the four-point `MESSAGES_SNAPSHOT` emission. Default `True`.                                               |
+| `replay_history_into_strands`             | Global opt-out of the per-run Strands history reconciliation. Default `True`.                                                |
 
 `ToolBehavior` captures how the adapter should react:
 
@@ -128,7 +134,7 @@ The transport layer is intentionally lightweight:
 
 - `add_strands_fastapi_endpoint(app, agent, path)` registers a POST route that:
   - Accepts a `RunAgentInput` body.
-  - Instantiates `EventEncoder` using the requester’s `Accept` header to choose between SSE (`text/event-stream`) and newline-delimited JSON.
+  - Instantiates `EventEncoder` using the requester's `Accept` header to choose between SSE (`text/event-stream`) and newline-delimited JSON.
   - Streams whatever `StrandsAgent.run` yields, automatically encoding every AG-UI event.
   - Sends a `RunErrorEvent` with `code="ENCODING_ERROR"` if serialization fails mid-stream.
 - `create_strands_app(agent, path="/")` bootstraps a FastAPI application, adds permissive CORS middleware (allowing any origin/method/header so AG-UI localhost builds can connect), and mounts the agent route.
@@ -147,21 +153,87 @@ This mirrors other AG-UI integrations (Agno, LangGraph, etc.), so documentation 
 
 ---
 
-## Example Entry Points (`python/examples/server/api/*.py`)
+## TypeScript Adapter (`typescript/src/`)
+
+The TypeScript adapter is a line-by-line port of the Python adapter — same splice points, same config primitives, same event emission order. Only the differences below matter; everything else in the Python section above applies unchanged (with camelCase substituted for snake_case, e.g. `stateFromArgs` ↔ `state_from_args`).
+
+### Module Layout
+
+```
+typescript/src/
+├── agent.ts              ← StrandsAgent (port of agent.py)
+├── client-proxy-tool.ts  ← sync of RunAgentInput.tools into Strands registry
+├── config.ts             ← StrandsAgentConfig, ToolBehavior, helpers
+├── endpoint.ts           ← Express route registration + capabilities endpoint
+├── logger.ts             ← injectable Logger interface + internal default
+├── types.ts              ← internal SeenToolCall bookkeeping
+├── utils.ts              ← content conversion + createStrandsApp factory
+└── index.ts              ← public exports
+```
+
+### SDK-Shape Differences
+
+These are forced by the upstream SDK and do not reflect behavioral divergence:
+
+- **Event dispatch**: Python matches on dict keys (`event.get("current_tool_use")`, `event.get("data")`, `"message" in event`); TypeScript matches on the typed event `.type` (`modelContentBlockDeltaEvent`, `toolUseInputDelta`, `afterToolCallEvent`). Outcomes map 1:1; each dispatch branch carries a `// Maps to Python's X branch` comment.
+- **Tool proxy**: Python uses `PythonAgentTool` + `tool.mark_dynamic()` + raw `tool_registry.registry[…]` dict access. TypeScript uses a plain object implementing the `Tool` interface + `toolRegistry.add()` / `remove()` / `get()`.
+- **Content blocks**: Python returns plain dicts from `convert_agui_content_to_strands`; TypeScript returns SDK class instances (`TextBlock`, `ImageBlock`, etc.) which the history replay path unwraps via `toJSON()`.
+- **History seeding**: Python mutates `strands_agent.messages` in place after construction. TypeScript consumes `AgentConfig.messages` at construction time, so `buildStrandsSeed` / `convertMessagesForStrandsSeed` produce the seed outside the per-thread init lock (to avoid serialising cold-cache starts behind one slow replay).
+- **Template agent cloning**: Python introspects `StrandsAgentCore.__init__` via `inspect.signature` to forward every caller-set kwarg into per-thread clones. TypeScript hardcodes the forwardable fields (`TemplateAgentCloneFields`) because the TS SDK doesn't expose a comparable introspection hook.
+
+### Additions Beyond the Python Adapter
+
+Behaviors the Python adapter does not currently implement, added to match TypeScript-ecosystem expectations or to close conformance gaps:
+
+- **Multi-agent orchestrator mode** (`_runOrchestrator`): accepts a Strands `Graph` or `Swarm` in place of a single `Agent` and drives its `.stream()` directly. Per-thread caching, session managers, and proxy-tool sync are bypassed because orchestrators are stateless per invocation.
+- **`THREAD_BUSY` guard**: `_activeRunsByThread` rejects concurrent runs on the same thread with `RUN_ERROR { code: "THREAD_BUSY" }`. The TS SDK throws `"Agent is already processing an invocation"` if this isn't caught up front; Python's SDK has no equivalent collision.
+- **`AbortController` wiring**: the Strands `.stream()` call receives a `cancelSignal`; the transport's disconnect listener fires it so Bedrock stops streaming when the HTTP client drops.
+- **Native interrupt bridge (Strands SDK 1.1.0+)**: when `AgentResult.stopReason === "interrupt"`, the adapter records the outstanding `Interrupt[]` on `_pendingInterruptsByThread` and emits `RUN_FINISHED { outcome: { type: "interrupt", interrupts: [...] } }` (interrupts.mdx "State at the interrupt boundary"). A follow-up `RunAgentInput.resume[]` is validated against the pending set: known IDs are converted to `InterruptResponseContent[]` and forwarded to `agent.stream()` as the invoke args (replacing the normal `messages` seed so Strands picks up from its own checkpoint); unknown IDs short-circuit with `RUN_ERROR { code: "UNKNOWN_INTERRUPT" }`. **Python conformance gap**: the Python adapter does not currently read `RunAgentInput.resume[]` at all (silently ignored), violating interrupts.mdx rule 4. Tracked for follow-up.
+- **Request-boundary validation** (`addStrandsExpressEndpoint`): returns `415` for non-JSON `Content-Type`, `400` for bodies that fail the shared Zod `RunAgentInputSchema`, and normalizes snake_case top-level keys (`thread_id`, `run_id`, `parent_run_id`, `forwarded_props`) into camelCase before validating. FastAPI's Pydantic layer handles the equivalent on the Python side.
+- **Client-disconnect handling**: HTTP/1.1 `res.close` and HTTP/2 `req.aborted` both trigger `iterator.return()`, firing the agent generator's `finally` so the `_activeRunsByThread` slot releases and the Bedrock stream aborts.
+- **Protobuf content negotiation**: only selected when `Accept` explicitly contains `application/vnd.ag-ui.event+proto`; `*/*` or omitted Accept falls back to SSE.
+- **Capabilities endpoint** (`addCapabilities`, `DEFAULT_CAPABILITIES`, `capabilitiesFor`): optional `GET /capabilities` returning a static matrix of supported event families, transports, and protocol features so frontends don't have to probe empirically.
+- **Chunk-event emission** (`emitChunkEvents`): optional flag that collapses explicit `*_START` / `*_CONTENT` / `*_END` triples into `TEXT_MESSAGE_CHUNK` / `TOOL_CALL_CHUNK` / `REASONING_MESSAGE_CHUNK` self-expanding chunks per `concepts/events.mdx`. Halves the event count on high-frequency deltas.
+- **`ToolCallContextExtras`** (`buildContextExtras`): `context` + `forwardedProps` are flattened onto every `ToolCallContext` / `ToolResultContext` and passed as a 3rd argument to `stateContextBuilder`, so hooks can read per-request auth tokens / locale without re-parsing `inputData`. Python passes `input_data` directly and callers pull these fields off themselves.
+- **Injectable logger** (`StrandsAgentConfig.logger`): matches Python's `logging.getLogger(__name__)` surface. Any `{ debug, warn, error }` record works — wire in pino / winston / bunyan / a silent stub directly. Debug message strings match the Python adapter field-for-field (modulo camelCase) so cross-SDK log diffs are straightforward.
+- **`AWSStrandsAgent extends HttpAgent`**: thin client-side shim re-export so AG-UI TypeScript clients can `new AWSStrandsAgent({ url })` instead of constructing a bare `HttpAgent`.
+
+### Transport Helpers
+
+- `addStrandsExpressEndpoint(app, agent, { path })` — Express analogue of `add_strands_fastapi_endpoint`.
+- `createStrandsApp(agent, { path, pingPath, capabilitiesPath, capabilities, corsOrigin })` — bootstraps an Express app with permissive CORS and optional ping / capabilities routes.
+- `addPing(app, path)` — `GET /ping` returning `{ status: "healthy" }`.
+- `addCapabilities(app, path, { agent, overrides })` — `GET /capabilities` returning the advertised matrix; derives chunk flags from the live agent's `emitChunkEvents`.
+
+---
+
+## Example Entry Points
+
+### Python (`python/examples/server/api/*.py`)
 
 The repository includes seven runnable FastAPI apps that showcase different features. Each example builds a Strands SDK agent, wraps it with `StrandsAgent`, and exposes it via `create_strands_app`:
 
-| Module                        | Focus                                                                   | Relevant Configuration                                                                                                               |
-| ----------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `agentic_chat.py`             | Baseline text generation with a frontend-only `change_background` tool. | No custom config; demonstrates automatic text streaming and frontend tool short-circuiting.                                          |
-| `agentic_chat_reasoning.py`   | Reasoning/thinking event streaming with extended thinking models.       | No custom config; demonstrates REASONING_* event emission.                                                                           |
-| `backend_tool_rendering.py`   | Backend-executed tools (`render_chart`, `get_weather`).                 | Shows how tool results become `ToolCallResultEvent`s and can be rendered directly in the UI.                                         |
-| `shared_state.py`             | Collaborative recipe editor that streams server-side state.             | Uses `state_context_builder`, `state_from_args`, and `state_from_result` to keep the UI’s recipe object synchronized.                |
-| `agentic_generative_ui.py`    | Predictive and reactive state updates for generative UI surfaces.       | Demonstrates `PredictStateMapping`, `custom_result_handler` emitting `StateDeltaEvent`s, and the `stop_streaming_after_result` flag. |
-| `agentic_chat_multimodal.py`  | Multimodal image/document analysis with vision-capable model.           | No custom config; demonstrates automatic multimodal content conversion.                                                              |
-| `human_in_the_loop.py`        | Human-in-the-loop confirmation flow with frontend tools.                | Demonstrates frontend tool invocation and confirmation actions.                                                                      |
+| Module                       | Focus                                                                   | Relevant Configuration                                                                                                               |
+| ---------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `agentic_chat.py`            | Baseline text generation with a frontend-only `change_background` tool. | No custom config; demonstrates automatic text streaming and frontend tool short-circuiting.                                          |
+| `agentic_chat_reasoning.py`  | Reasoning/thinking event streaming with extended thinking models.       | No custom config; demonstrates REASONING\_\* event emission.                                                                         |
+| `backend_tool_rendering.py`  | Backend-executed tools (`render_chart`, `get_weather`).                 | Shows how tool results become `ToolCallResultEvent`s and can be rendered directly in the UI.                                         |
+| `shared_state.py`            | Collaborative recipe editor that streams server-side state.             | Uses `state_context_builder`, `state_from_args`, and `state_from_result` to keep the UI's recipe object synchronized.                |
+| `agentic_generative_ui.py`   | Predictive and reactive state updates for generative UI surfaces.       | Demonstrates `PredictStateMapping`, `custom_result_handler` emitting `StateDeltaEvent`s, and the `stop_streaming_after_result` flag. |
+| `agentic_chat_multimodal.py` | Multimodal image/document analysis with vision-capable model.           | No custom config; demonstrates automatic multimodal content conversion.                                                              |
+| `human_in_the_loop.py`       | Human-in-the-loop confirmation flow with frontend tools.                | Demonstrates frontend tool invocation and confirmation actions.                                                                      |
 
-These examples double as integration tests: they exercise every built-in hook so regressions surface quickly during manual QA.
+### TypeScript (`typescript/examples/server/api/*.ts`)
+
+The TypeScript package ships the same seven Python examples under the matching filenames (`agentic-chat.ts`, `agentic-chat-reasoning.ts`, `agentic-chat-multimodal.ts`, `backend-tool-rendering.ts`, `shared-state.ts`, `agentic-generative-ui.ts`, `human-in-the-loop.ts`) plus one TypeScript-only addition:
+
+| Module                          | Focus                                                              |
+| ------------------------------- | ------------------------------------------------------------------ |
+| `tool-based-generative-ui.ts`   | Frontend-rendered tool (haiku card) auto-registered as a proxy tool — exercises the `TOOL_CALL_*` stream the dojo's `tool_based_generative_ui` page consumes. No Python equivalent. |
+
+Each file is self-contained and can be run standalone (`pnpm <name>` from `examples/`). `examples/server/server.ts` is a "dojo" that mounts all eight at the paths the Python reference server uses, so both implementations can be driven by the same curl payloads.
+
+Both example sets double as integration tests: they exercise every built-in hook so regressions surface quickly during manual QA.
 
 ---
 
@@ -170,7 +242,7 @@ These examples double as integration tests: they exercise every built-in hook so
 | Strands Signal                                                    | Adapter Reaction                                             | AG-UI Consumer Impact                                                                      |
 | ----------------------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
 | `stream_async` yields `{"data": ...}`                             | Emit text start/content/end                                  | Updates conversational transcript incrementally.                                           |
-| `stream_async` yields `{"reasoningText": ..., "reasoning": true}` | Emit REASONING_* events                                      | Displays model's reasoning/thinking process in UI.                                         |
+| `stream_async` yields `{"reasoningText": ..., "reasoning": true}` | Emit REASONING\_\* events                                    | Displays model's reasoning/thinking process in UI.                                         |
 | `stream_async` yields `{"reasoningRedactedContent": ...}`         | Emit `ReasoningEncryptedValueEvent` with base64 payload      | Handles encrypted reasoning content for models that redact thinking.                       |
 | `current_tool_use` announced                                      | Emit tool call events, optional PredictState/state snapshots | Shows tool invocation cards and, when configured, optimistic UI updates.                   |
 | `toolResult` packaged within `message.content[].toolResult`       | Emit `ToolCallResultEvent`, tool result hooks, optional halt | Renders backend tool outputs and state changes without additional frontend logic.          |
@@ -179,14 +251,17 @@ These examples double as integration tests: they exercise every built-in hook so
 | Stream sends `complete` or adapter decides to halt                | Close text/reasoning envelopes and emit `RunFinishedEvent`   | Signals the UI that the run ended; frontends may start follow-up runs or show idle states. |
 | Exceptions anywhere in the stack                                  | Emit `RunErrorEvent` with the exception message              | Frontend surfaces the failure and can offer retries.                                       |
 
+The TypeScript adapter maps the equivalent SDK-typed events (`modelContentBlockDeltaEvent`, `toolUseBlock`, `afterToolCallEvent`, `beforeNodeCallEvent`, `afterNodeCallEvent`, `multiAgentHandoffEvent`) to the same AG-UI events.
+
 ---
 
 ## Deployment & Runtime Characteristics
 
-- **HTTP/SSE transport**: The adapter currently supports only HTTP POST requests plus streaming responses. Longer-lived transports (WebSockets, queues) are not part of the implemented surface.
-- **Per-thread agent caching**: The transport layer is stateless (plain HTTP POST), but `StrandsAgent` caches `strands.Agent` instances per thread to preserve conversation context across requests.
-- **Model compatibility**: The examples use `strands.models.gemini.GeminiModel`, but `StrandsAgent` works with any `strands.Agent` configured with compatible tools and prompts because it only relies on `stream_async`.
+- **HTTP/SSE transport**: Both adapters support HTTP POST plus streaming responses. Longer-lived transports (WebSockets, queues) are not part of the implemented surface.
+- **Per-thread agent caching**: The transport layer is stateless (plain HTTP POST), but `StrandsAgent` caches Strands `Agent` instances per thread to preserve conversation context across requests.
+- **Model compatibility**: The examples use `strands.models.gemini.GeminiModel` (Python) and Bedrock (TypeScript), but `StrandsAgent` works with any Strands-compatible model because it only relies on the streaming interface.
 - **Error isolation**: Failures inside tool hooks (`state_from_args`, etc.) are swallowed so the main run can continue. Only uncaught exceptions in the core loop trigger `RunErrorEvent`.
+- **Amazon Bedrock AgentCore**: Both adapters support the AgentCore contract (`/invocations` POST + `/ping` GET on port 8080).
 
 ---
 
@@ -194,8 +269,8 @@ These examples double as integration tests: they exercise every built-in hook so
 
 The AWS Strands integration adapts the Strands SDK to the AG-UI protocol by:
 
-1. Wrapping `strands.Agent.stream_async` with `StrandsAgent`, which understands AG-UI events, tool semantics, and shared-state conventions.
-2. Exposing a trivial FastAPI transport layer that handles encoding and CORS while remaining stateless.
+1. Wrapping the Strands `Agent` streaming interface with `StrandsAgent`, which understands AG-UI events, tool semantics, and shared-state conventions.
+2. Exposing a trivial transport layer (FastAPI for Python, Express for TypeScript) that handles encoding and CORS while remaining stateless.
 3. Letting any existing AG-UI HTTP client connect directly to the endpoint—no Strands-specific frontend package is required.
 
-All current behavior lives in `integrations/aws-strands/python/src/ag_ui_strands`. There are no hidden services or background workers; what is described above is the complete, production-ready implementation that powers today’s Strands integration.
+All behavior lives in `integrations/aws-strands/python/src/ag_ui_strands` and `integrations/aws-strands/typescript/src`. There are no hidden services or background workers; what is described above is the complete, production-ready implementation that powers today's Strands integration.
