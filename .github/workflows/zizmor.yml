@@ -19,11 +19,9 @@ on:
     branches: [main]
     paths:
       - .github/workflows/**
-      - .github/dependabot.yml
   pull_request:
     paths:
       - .github/workflows/**
-      - .github/dependabot.yml
   schedule:
     - cron: "0 7 * * 1" # Mon 07:00 UTC
   workflow_dispatch:
