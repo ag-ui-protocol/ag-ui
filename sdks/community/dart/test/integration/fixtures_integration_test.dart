@@ -410,6 +410,11 @@ void main() {
           StateDeltaEvent(delta: [
             {'op': 'replace', 'path': '/count', 'value': 43},
           ]),
+          const ActivitySnapshotEvent(
+            messageId: 'rag:abc123',
+            activityType: 'skill_tool_call',
+            content: {'skill': 'rag', 'tool_name': 'search'},
+          ),
           RunFinishedEvent(threadId: 'thread_01', runId: 'run_01'),
         ];
         
@@ -439,6 +444,12 @@ void main() {
         final decodedSnapshot = decodedEvents[7] as StateSnapshotEvent;
         expect(decodedSnapshot.snapshot['count'], equals(42));
         expect(decodedSnapshot.snapshot['items'], equals(['a', 'b', 'c']));
+
+        final decodedActivity = decodedEvents[9] as ActivitySnapshotEvent;
+        expect(decodedActivity.messageId, equals('rag:abc123'));
+        expect(decodedActivity.activityType, equals('skill_tool_call'));
+        expect(decodedActivity.content, equals({'skill': 'rag', 'tool_name': 'search'}));
+        expect(decodedActivity.replace, isTrue);
       });
       
       test('handles protobuf content type negotiation', () {

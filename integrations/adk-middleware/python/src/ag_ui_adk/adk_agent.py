@@ -79,6 +79,29 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _unbind_agui_toolsets_recursive(agent: Any) -> None:
+    """Walk an agent tree and unbind every ``AGUIToolset`` placeholder.
+
+    Counterpart to ``_update_agent_tools_recursive`` (defined inside
+    ``ADKAgent._start_background_execution``). Run from
+    ``_run_adk_in_background``'s ``finally`` block so each run starts with
+    placeholders in their construction-time state, avoiding cross-run
+    delegate leakage.
+
+    Tolerant of non-LlmAgent nodes (skip silently) and agents without a
+    ``tools`` attribute. Catches per-toolset exceptions so one bad
+    placeholder doesn't break cleanup for the rest of the tree.
+    """
+    if isinstance(agent, LlmAgent) and hasattr(agent, "tools"):
+        for tool in agent.tools or []:
+            if isinstance(tool, AGUIToolset):
+                try:
+                    tool.unbind()
+                except Exception:
+                    # Best-effort cleanup; never raise out of unbind.
+                    pass
+    for sub_agent in getattr(agent, "sub_agents", None) or []:
+        _unbind_agui_toolsets_recursive(sub_agent)
 class _HitlDeferringQueue(asyncio.Queue):
     """``asyncio.Queue`` that defers HITL ``ToolCallEndEvent``s.
 
@@ -428,6 +451,39 @@ class ADKAgent:
         if resumability_config is None:
             return False
         return getattr(resumability_config, 'is_resumable', False)
+
+    def _root_agent_is_workflow(self) -> bool:
+        """Return True if the root agent is an ADK 2.0 ``Workflow``.
+
+        Workflows rehydrate from ``new_message.parts`` exclusively
+        (``Workflow._run_impl`` calls ``_extract_resume_inputs(new_message)``).
+        The #1534 pre-append workaround for LlmAgent roots — which replaces
+        ``new_message`` with an empty placeholder — strands Workflow roots
+        because there's no ``function_response`` in the placeholder for
+        the Workflow to resume from. See ag-ui#1669.
+
+        We detect the Workflow class by attribute lookup so this stays
+        compatible with ADK 1.x (where the class doesn't exist) without
+        importing it at module top level. The import is wrapped in
+        try/except so ADK 1.x continues to load.
+
+        Returns:
+            True iff the root agent (or App.root_agent) is an instance of
+            ``google.adk.workflow.Workflow``. False on ADK 1.x or any
+            non-Workflow root.
+        """
+        try:
+            from google.adk.workflow import Workflow  # type: ignore[import-not-found]
+        except ImportError:
+            # ADK 1.x has no workflow module — no Workflow roots possible.
+            return False
+
+        root = self._adk_agent
+        if root is None and self._app is not None:
+            root = getattr(self._app, 'root_agent', None)
+        if root is None:
+            return False
+        return isinstance(root, Workflow)
 
     def _root_agent_needs_invocation_id(self) -> bool:
         """Check if the agent topology requires invocation_id for HITL resumption.
@@ -2007,22 +2063,36 @@ class ADKAgent:
         client_proxy_toolsets: list[ClientProxyToolset] = []
 
         def _update_agent_tools_recursive(agent: Any) -> None:
-            """
-            Recursively replace AGUIToolset with ClientProxyToolset for an agent and its sub-agents.
+            """Bind a ``ClientProxyToolset`` to every ``AGUIToolset`` placeholder
+            in the agent tree.
+
+            Pre-2026-05 (ADK 1.x): we replaced the placeholder wholesale
+            (``agent.tools = [..., ClientProxyToolset(...)]``). ADK 1.x resolved
+            ``get_tools()`` lazily on each run so the replacement was visible.
+
+            Post-2026-05 (ADK 2.0, ag-ui#1389): ``Runner.__init__`` eagerly
+            caches ``get_tools()`` results, so replacing the toolset object
+            leaves the Runner pointing at the stale placeholder. We now keep
+            the placeholder instance and bind a fresh delegate to it via
+            ``AGUIToolset.bind(...)`` — same object identity, dynamic tool
+            list, compatible with both ADK majors.
+
             Args:
-                agent: Agent instance to process
+                agent: Agent instance to process recursively.
             """
             nonlocal client_proxy_toolsets
             logger.info(f"[TOOL_SETUP] Processing agent: {agent.name} (type: {type(agent).__name__})")
 
             if isinstance(agent, LlmAgent) and hasattr(agent, "tools"):
-                new_tools: list[ToolUnion] = []
-                original_tool_count = len(agent.tools) if agent.tools else 0
-                logger.info(f"[TOOL_SETUP] Agent {agent.name} has {original_tool_count} tools before replacement")
+                tool_count = len(agent.tools) if agent.tools else 0
+                logger.info(f"[TOOL_SETUP] Agent {agent.name} has {tool_count} tools before binding")
 
                 for tool in agent.tools:
                     if isinstance(tool, AGUIToolset):
-                        logger.info(f"[TOOL_SETUP] Agent {agent.name}: Found AGUIToolset with filter={tool.tool_filter}")
+                        logger.info(
+                            f"[TOOL_SETUP] Agent {agent.name}: Found AGUIToolset with "
+                            f"filter={tool.tool_filter}; binding ClientProxyToolset delegate"
+                        )
                         proxy_toolset = ClientProxyToolset(
                             ag_ui_tools=input.tools,
                             event_queue=event_queue,
@@ -2031,14 +2101,20 @@ class ADKAgent:
                             predict_state=self._predict_state,
                         )
                         client_proxy_toolsets.append(proxy_toolset)
-                        tool = proxy_toolset
+                        # Bind delegate to the placeholder. Object identity
+                        # of `tool` in agent.tools is preserved — critical
+                        # for ADK 2.0's eager Runner.__init__ tool cache
+                        # (ag-ui#1389). For ADK 1.x this is functionally
+                        # equivalent to the previous replace-the-object
+                        # approach: get_tools() forwards to the delegate
+                        # either way.
+                        tool.bind(proxy_toolset)
                         logger.info(
-                            f"[TOOL_SETUP] Replaced AGUIToolset with ClientProxyToolset for agent {agent.name}"
+                            f"[TOOL_SETUP] Bound ClientProxyToolset delegate to AGUIToolset "
+                            f"for agent {agent.name}"
                         )
-                    new_tools.append(tool)
 
-                agent.tools = new_tools
-                logger.info(f"[TOOL_SETUP] Agent {agent.name} now has {len(new_tools)} tools after replacement")
+                logger.info(f"[TOOL_SETUP] Agent {agent.name} tool binding complete")
 
             # Recursively process sub-agents if they exist
             # This handles SequentialAgent, LoopAgent, and other composite agents
@@ -2353,8 +2429,22 @@ class ADKAgent:
 
                 function_response_content = types.Content(parts=function_response_parts, role='user')
 
-                if _ADK_OVERRIDES_INVOCATION_ID and self._is_adk_resumable():
-                    # ADK with _resolve_invocation_id (~1.28+) routing:
+                # ag-ui#1669: the #1534 pre-append workaround is correct for
+                # LlmAgent roots (and composite orchestrators built from
+                # LlmAgent), but breaks ADK 2.0 ``Workflow`` roots. Workflows
+                # rehydrate from ``new_message.parts`` only — the empty-text
+                # placeholder we substitute below contains no
+                # ``function_response``, so ``Workflow._run_impl`` cannot
+                # resume from the interrupt and falls back to a fresh START.
+                # Skip the workaround for Workflow roots and pass the
+                # FunctionResponse directly in ``new_message`` (the ADK
+                # 1.x-style path), which Workflow consumes correctly.
+                if (
+                    _ADK_OVERRIDES_INVOCATION_ID
+                    and self._is_adk_resumable()
+                    and not self._root_agent_is_workflow()
+                ):
+                    # ADK with _resolve_invocation_id (~1.28+) routing, non-Workflow root:
                     #
                     # When new_message contains a FunctionResponse, Runner._resolve_invocation_id()
                     # looks up the matching FunctionCall event in session history and forces the
@@ -2372,6 +2462,10 @@ class ADKAgent:
                     # branch and preserves whatever invocation_id handling run_kwargs already
                     # encodes (new-invocation path for standalone LlmAgent; resume path with
                     # stored_invocation_id for composite orchestrators).
+                    #
+                    # Workflow roots are explicitly excluded from this branch (see #1669
+                    # comment above) — they take the else branch and receive the
+                    # FunctionResponse directly in new_message.
                     first_tool_call_id = active_tool_results[0]['message'].tool_call_id
                     first_tool_call_id = lro_id_remap.get(first_tool_call_id, first_tool_call_id)
                     fc_event_invocation_id = self._find_function_call_invocation_id(
@@ -2410,11 +2504,23 @@ class ADKAgent:
                     # standalone LlmAgents correctly take the new-invocation path.
                     tool_only_invocation_id = None
                 else:
-                    # ADK without _resolve_invocation_id (<1.28) or non-resumable apps:
-                    # Pass the FunctionResponse as new_message with the AG-UI run_id as the
-                    # invocation_id. Older ADK honors the caller-supplied invocation_id and
-                    # treats every tool submission as a fresh invocation, so the LLM is invoked
-                    # on the updated history. This preserves the #1074 fix (no duplicate
+                    # Direct-new_message path. Used in three cases:
+                    #
+                    # 1. ADK without _resolve_invocation_id (<1.28): older ADK
+                    #    honors the caller-supplied invocation_id and treats
+                    #    every tool submission as a fresh invocation, so the
+                    #    LLM is invoked on the updated history.
+                    # 2. Non-resumable apps (no ResumabilityConfig): same as
+                    #    above; we're not in the resume path.
+                    # 3. ADK 2.0 Workflow roots (ag-ui#1669): Workflow rehydrates
+                    #    from new_message.parts exclusively, so the
+                    #    FunctionResponse MUST land in new_message — otherwise
+                    #    Workflow._extract_resume_inputs returns None and the
+                    #    workflow restarts from START.
+                    #
+                    # In all three cases we pass the FunctionResponse as
+                    # new_message with the AG-UI run_id as the invocation_id.
+                    # This preserves the #1074 fix (no duplicate
                     # FunctionResponse events) by avoiding the pre-append.
                     new_message = function_response_content
                     tool_only_invocation_id = input.run_id
@@ -2891,6 +2997,21 @@ class ADKAgent:
                             close_error,
                         )
 
+            # Unbind every AGUIToolset in the agent tree so the next run on
+            # the same agent starts from a clean slate. Without this, a stale
+            # ClientProxyToolset (whose event_queue belongs to the previous
+            # run) would still satisfy AGUIToolset.get_tools() — usually
+            # harmless because the next run rebinds before tool invocation,
+            # but worth defensive cleanup to avoid surprising debug output
+            # if get_tools() is queried mid-cleanup.
+            try:
+                _unbind_agui_toolsets_recursive(adk_agent)
+            except Exception as unbind_error:
+                logger.debug(
+                    "Error while unbinding AGUIToolset for thread %s: %s",
+                    input.thread_id,
+                    unbind_error,
+                )
             # Flush any LRO ID remap captured during the runner loop. This
             # runs after the runner has been closed, so the
             # ``update_session_state`` write can't trip OCC against ADK's
