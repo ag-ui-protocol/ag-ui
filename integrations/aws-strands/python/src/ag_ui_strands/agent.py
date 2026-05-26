@@ -915,17 +915,27 @@ class StrandsAgent:
                             logger.debug(
                                 f"Breaking event stream: complete received (thread_id={input_data.thread_id})"
                             )
-                        # If the agent stopped with no content (e.g. Bedrock
-                        # ValidationException: input too long), surface an error
+                        # If the agent stopped with no content, surface an error
                         # message rather than silently emitting RUN_FINISHED.
+                        # The reason comes from `force_stop_reason` (str(exc));
+                        # `force_stop` itself is just a True flag.  Strip the
+                        # "ExceptionClass:" prefix and the first line is usually
+                        # the relevant Bedrock/API error text.  Don't guess at
+                        # "conversation too long" — Strands re-raises the real
+                        # context-overflow exceptions separately, so a
+                        # force_stop here is almost never that case.
                         if event.get("force_stop") and not message_started:
                             err_id = str(uuid.uuid4())
-                            reason = event.get("force_stop")
-                            err_text = (
-                                f"The agent stopped unexpectedly: {reason}"
-                                if isinstance(reason, str) and reason not in (True, "True")
-                                else "I wasn't able to respond — the conversation history may be too long. Try starting a new chat."
-                            )
+                            raw_reason = str(event.get("force_stop_reason", "")).strip()
+                            if raw_reason:
+                                summary = raw_reason.split("\n", 1)[0]
+                                if ": " in summary:
+                                    summary = summary.split(": ", 1)[1]
+                                if len(summary) > 240:
+                                    summary = summary[:237] + "…"
+                                err_text = f"The agent couldn't complete this request: {summary}"
+                            else:
+                                err_text = "The agent stopped unexpectedly. Please try again."
                             yield TextMessageStartEvent(
                                 type=EventType.TEXT_MESSAGE_START,
                                 message_id=err_id,

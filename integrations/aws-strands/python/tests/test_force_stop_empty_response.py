@@ -84,26 +84,36 @@ async def test_force_stop_with_no_content_exactly_one_text_message():
 
 
 @pytest.mark.asyncio
-async def test_force_stop_with_no_content_error_text_mentions_history():
-    """Generic force_stop (bool True) produces the 'history too long' hint."""
+async def test_force_stop_with_no_reason_uses_generic_message():
+    """Generic force_stop with no force_stop_reason emits a generic fallback."""
     agent = create_agent([{"force_stop": True}])
     events = [e async for e in agent.run(make_input_data())]
 
     content_events = [e for e in events if e.type == EventType.TEXT_MESSAGE_CONTENT]
     assert content_events, "Expected at least one TEXT_MESSAGE_CONTENT event"
-    assert "history" in content_events[0].delta.lower() or "respond" in content_events[0].delta.lower()
+    # No reason → generic "stopped unexpectedly" fallback.  Do NOT mention
+    # conversation history — Strands re-raises real context-overflow
+    # exceptions separately, so a force_stop almost never means that.
+    body = content_events[0].delta.lower()
+    assert "stopped unexpectedly" in body
+    assert "history" not in body
+    assert "too long" not in body
 
 
 @pytest.mark.asyncio
 async def test_force_stop_with_string_reason_includes_reason():
-    """force_stop with a string reason includes that reason in the message."""
-    reason = "Input is too long for requested model"
-    agent = create_agent([{"force_stop": reason}])
+    """ForceStopEvent shape is {force_stop: True, force_stop_reason: str(exc)} —
+    the adapter must surface force_stop_reason in the user-facing message."""
+    reason = "ValidationException: Tool use is not supported for this model"
+    agent = create_agent([{"force_stop": True, "force_stop_reason": reason}])
     events = [e async for e in agent.run(make_input_data())]
 
     content_events = [e for e in events if e.type == EventType.TEXT_MESSAGE_CONTENT]
     assert content_events
-    assert reason in content_events[0].delta
+    # The "ValidationException: " prefix is stripped for readability; the
+    # informative tail must survive.
+    assert "Tool use is not supported for this model" in content_events[0].delta
+    assert "ValidationException" not in content_events[0].delta
 
 
 @pytest.mark.asyncio
