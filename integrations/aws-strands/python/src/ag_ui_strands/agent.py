@@ -882,8 +882,18 @@ class StrandsAgent:
                     #     Strands. Kept for safety against older versions.
                     if event.get("complete") or event.get("force_stop") or event.get("result"):
                         if event.get("force_stop"):
+                            # ForceStopEvent carries `force_stop=True` plus
+                            # `force_stop_reason=str(exc)` — the latter is the
+                            # actual diagnostic; the boolean alone is useless.
+                            # Strands' own `logger.exception("cycle failed")`
+                            # is killed by GeneratorExit when we break the
+                            # loop, so without this log line the underlying
+                            # cause vanishes from CloudWatch entirely.
                             logger.warning(
-                                f"Breaking event stream: force_stop received (thread_id={input_data.thread_id}, reason={event.get('force_stop')})"
+                                "Breaking event stream: force_stop received "
+                                "(thread_id=%s, reason=%s)",
+                                input_data.thread_id,
+                                event.get("force_stop_reason", event.get("force_stop")),
                             )
                         elif event.get("result"):
                             stop_reason = getattr(event["result"], "stop_reason", None)
