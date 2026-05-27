@@ -172,6 +172,10 @@ jobs:
           #   test_path: tests/vercelAISdkTests
           #   services: ["dojo"]
           #   wait_on: http://localhost:9999
+          - suite: vercel-ai-sdk
+            test_path: tests/vercelAISdkTests
+            services: ["dojo"]
+            wait_on: http://localhost:9999
 
     steps:
       - name: Checkout code
