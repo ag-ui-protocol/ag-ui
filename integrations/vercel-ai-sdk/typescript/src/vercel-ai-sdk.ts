@@ -33,6 +33,10 @@ export class VercelAISDKAgent extends AbstractAgent {
   model: LanguageModel;
   maxSteps: number;
   toolChoice: ToolChoice<Record<string, unknown>>;
+  // Per-call HTTP headers forwarded to the AI SDK provider on every run.
+  // Mutable so consumers can swap test-only headers between runs (e.g.
+  // aimock context). Empty / undefined values are dropped in run().
+  public headers?: Record<string, string>;
 
   constructor(private config: VercelAISDKAgentConfig) {
     const { model, maxSteps, toolChoice, ...rest } = config;
@@ -43,7 +47,11 @@ export class VercelAISDKAgent extends AbstractAgent {
   }
 
   public clone() {
-    return new VercelAISDKAgent(this.config);
+    const cloned = new VercelAISDKAgent(this.config);
+    if (this.headers) {
+      cloned.headers = { ...this.headers };
+    }
+    return cloned;
   }
 
   run(input: RunAgentInput): Observable<BaseEvent> {
@@ -57,6 +65,9 @@ export class VercelAISDKAgent extends AbstractAgent {
         stopWhen: stepCountIs(this.maxSteps),
         toolChoice: this.toolChoice,
         abortSignal: abortController.signal,
+        ...(this.headers && Object.keys(this.headers).length > 0
+          ? { headers: this.headers }
+          : {}),
       });
 
       const handler = new StreamHandler(input, subscriber);
