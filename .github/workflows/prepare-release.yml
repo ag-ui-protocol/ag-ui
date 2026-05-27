@@ -73,7 +73,7 @@ jobs:
     steps:
       - name: Find existing release/next PR (stacking target)
         id: existing
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -115,7 +115,7 @@ jobs:
           node-version: "22"
 
       - name: Setup Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.12"
 
@@ -185,7 +185,7 @@ jobs:
       - name: Mint devops-bot token
         id: app-token
         if: inputs.dry_run != true && steps.bump.outputs.changed_count != '0'
-        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           app-id: "3877599"
           private-key: ${{ secrets.DEVOPS_BOT_PRIVATE_KEY }}
@@ -284,7 +284,7 @@ jobs:
 
       - name: Create or update release PR
         if: inputs.dry_run != true && steps.bump.outputs.changed_count != '0'
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           HAS_EXISTING: ${{ steps.existing.outputs.has_existing }}
           EXISTING_PR: ${{ steps.existing.outputs.pr_number }}
