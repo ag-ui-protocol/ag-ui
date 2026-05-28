@@ -61,6 +61,10 @@
       "require": "./dist/middlewares/index.js",
       "import": "./dist/middlewares/index.mjs"
     },
+    "./transformer": {
+      "require": "./dist/transformer/index.js",
+      "import": "./dist/transformer/index.mjs"
+    },
     "./package.json": "./package.json"
   }
 }
