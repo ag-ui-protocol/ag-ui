@@ -19,6 +19,7 @@ import {
   createTextMessageContentEvent,
   createTextMessageEndEvent,
   createMCPToolWithUI,
+  createMCPToolWithNestedUI,
   createMCPToolWithoutUI,
   createMCPToolWithEmptyMeta,
   createAssistantMessageWithToolCalls,
@@ -319,6 +320,25 @@ describe("MCPAppsMiddleware", () => {
       const enhancedTools = agent.runCalls[0].tools;
       expect(enhancedTools).toHaveLength(1);
       expect(enhancedTools[0].name).toBe("ui-tool");
+    });
+
+    it("accepts nested ui.resourceUri metadata", async () => {
+      mockListTools.mockResolvedValue({
+        tools: [
+          createMCPToolWithNestedUI("nested-ui-tool", "ui://server/nested"),
+          createMCPToolWithoutUI("non-ui-tool"),
+        ],
+      });
+
+      const middleware = new MCPAppsMiddleware({ mcpServers: [httpServerConfig] });
+      const agent = new MockAgent([createRunStartedEvent(), createRunFinishedEvent()]);
+
+      await collectEvents(middleware.run(createRunAgentInput(), agent));
+
+      const enhancedTools = agent.runCalls[0].tools;
+      expect(enhancedTools).toHaveLength(1);
+      expect(enhancedTools[0].name).toBe("nested-ui-tool");
+      expect(enhancedTools[0].description).toContain("[UI Resource: ui://server/nested]");
     });
 
     it("converts MCP tools to AG-UI Tool format correctly", async () => {
@@ -887,6 +907,25 @@ describe("MCPAppsMiddleware", () => {
       expect((activityEvent as any).content.resourceUri).toBe("ui://server/dashboard");
       // Should NOT have resource content (frontend fetches it)
       expect((activityEvent as any).content.resource).toBeUndefined();
+    });
+
+    it("uses nested resourceUri in activity snapshots", async () => {
+      const uiTool = createMCPToolWithNestedUI("ui-tool", "ui://server/nested-tool");
+      mockListTools.mockResolvedValue({ tools: [uiTool] });
+      mockCallTool.mockResolvedValue(createMCPToolCallResult([{ type: "text", text: "Result" }]));
+
+      const middleware = new MCPAppsMiddleware({ mcpServers: [httpServerConfig] });
+
+      const assistantMsg = createAssistantMessageWithToolCalls([{ name: "ui-tool", args: {}, id: "tc-1" }]);
+
+      const agent = new MockAgent([createRunStartedEvent(), createRunFinishedEvent()]);
+      const input = createRunAgentInput({ messages: [assistantMsg] });
+
+      const events = await collectEvents(middleware.run(input, agent));
+
+      const activityEvent = events.find((e) => e.type === EventType.ACTIVITY_SNAPSHOT);
+      expect(activityEvent).toBeDefined();
+      expect((activityEvent as any).content.resourceUri).toBe("ui://server/nested-tool");
     });
 
     it("does not call readResource during tool execution", async () => {

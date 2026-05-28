@@ -58,6 +58,19 @@ export function createMCPToolWithUI(
   };
 }
 
+export function createMCPToolWithNestedUI(
+  name: string,
+  resourceUri: string,
+  description?: string
+): MockMCPTool {
+  return {
+    name,
+    description: description || `Tool ${name}`,
+    inputSchema: { type: "object", properties: {} },
+    _meta: { ui: { resourceUri } },
+  };
+}
+
 /**
  * Create an MCP tool without UI resource
  */
