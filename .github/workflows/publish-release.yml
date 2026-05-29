@@ -218,10 +218,39 @@ jobs:
         id: detect_ts
         if: steps.meta.outputs.mode == 'stable'
         run: |
-          CHANGED=$(bash scripts/release/detect-ts-version-changes.sh 2>detect-ts.log || echo "[]")
+          set -euo pipefail
+          # Fail loud if the detect script itself errors. Previously this used
+          # `|| echo "[]"` which converted a SCRIPT failure (registry down,
+          # parser bug, jq missing, etc.) into "nothing to publish" — a release
+          # could silently no-op. Capture the script's exit code explicitly and
+          # surface its log on failure. An empty array from a SUCCESSFUL run is
+          # still valid and routes through the "nothing to publish" branch.
+          set +e
+          CHANGED=$(bash scripts/release/detect-ts-version-changes.sh 2>detect-ts.log)
+          RC=$?
+          set -e
+          if [ "$RC" -ne 0 ]; then
+            echo "::error::detect-ts-version-changes.sh exited with status $RC"
+            echo "::group::detect-ts.log"
+            cat detect-ts.log || true
+            echo "::endgroup::"
+            exit 1
+          fi
           cat detect-ts.log || true
           [ -z "$CHANGED" ] && CHANGED="[]"
           [ "$CHANGED" = "null" ] && CHANGED="[]"
+          # Validate that the script's stdout parses as JSON. Without this, a
+          # script that prints diagnostic text to stdout would flow into
+          # downstream `jq` calls and fail with confusing parse errors far from
+          # the source.
+          if ! echo "$CHANGED" | jq -e . >/dev/null 2>&1; then
+            echo "::error::detect-ts-version-changes.sh produced non-JSON stdout"
+            echo "::group::stdout (first 200 chars)"
+            printf '%s\n' "$CHANGED" | head -c 200
+            echo
+            echo "::endgroup::"
+            exit 1
+          fi
           echo "packages=$CHANGED" >> "$GITHUB_OUTPUT"
           COUNT=$(echo "$CHANGED" | jq 'length')
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
@@ -230,10 +259,39 @@ jobs:
         id: detect_py
         if: steps.meta.outputs.mode == 'stable'
         run: |
-          CHANGED=$(bash scripts/release/detect-py-version-changes.sh 2>detect-py.log || echo "[]")
+          set -euo pipefail
+          # Fail loud if the detect script itself errors. Previously this used
+          # `|| echo "[]"` which converted a SCRIPT failure (registry down,
+          # parser bug, jq missing, etc.) into "nothing to publish" — a release
+          # could silently no-op. Capture the script's exit code explicitly and
+          # surface its log on failure. An empty array from a SUCCESSFUL run is
+          # still valid and routes through the "nothing to publish" branch.
+          set +e
+          CHANGED=$(bash scripts/release/detect-py-version-changes.sh 2>detect-py.log)
+          RC=$?
+          set -e
+          if [ "$RC" -ne 0 ]; then
+            echo "::error::detect-py-version-changes.sh exited with status $RC"
+            echo "::group::detect-py.log"
+            cat detect-py.log || true
+            echo "::endgroup::"
+            exit 1
+          fi
           cat detect-py.log || true
           [ -z "$CHANGED" ] && CHANGED="[]"
           [ "$CHANGED" = "null" ] && CHANGED="[]"
+          # Validate that the script's stdout parses as JSON. Without this, a
+          # script that prints diagnostic text to stdout would flow into
+          # downstream `jq` calls and fail with confusing parse errors far from
+          # the source.
+          if ! echo "$CHANGED" | jq -e . >/dev/null 2>&1; then
+            echo "::error::detect-py-version-changes.sh produced non-JSON stdout"
+            echo "::group::stdout (first 200 chars)"
+            printf '%s\n' "$CHANGED" | head -c 200
+            echo
+            echo "::endgroup::"
+            exit 1
+          fi
           echo "packages=$CHANGED" >> "$GITHUB_OUTPUT"
           COUNT=$(echo "$CHANGED" | jq 'length')
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
@@ -664,7 +722,13 @@ jobs:
                 VIEW_STDERR=$(mktemp)
                 VIEW_STDOUT=$(mktemp)
                 for ATTEMPT in 1 2 3 4 5 6; do
-                  if npm view "${PROJECT}@${PKG_VERSION}" version --registry=https://registry.npmjs.org/ >"$VIEW_STDOUT" 2>"$VIEW_STDERR"; then
+                  # exit 0 alone is not sufficient — npm view can return 0 with
+                  # empty stdout (e.g. when the registry serves a stale doc that
+                  # lacks the new version under a dist-tag) or with a different
+                  # version string (cache inversion across CDN edges). Require
+                  # an exact line match against the version we just published.
+                  if npm view "${PROJECT}@${PKG_VERSION}" version --registry=https://registry.npmjs.org/ >"$VIEW_STDOUT" 2>"$VIEW_STDERR" \
+                    && grep -qxF "$PKG_VERSION" "$VIEW_STDOUT"; then
                     PUBLISH_VERIFIED=1
                     break
                   fi
@@ -685,7 +749,17 @@ jobs:
                 rm -f "$VIEW_STDERR" "$VIEW_STDOUT"
               else
                 cat "$PUBLISH_LOG"
-                if grep -qiE "EPUBLISHCONFLICT|cannot publish over|previously published" "$PUBLISH_LOG"; then
+                # Benign "already published" detection. npm 11 surfaces this
+                # in several shapes depending on the registry edge: the legacy
+                # `EPUBLISHCONFLICT` error code, the human-readable "cannot
+                # publish over the previously published versions" message, an
+                # HTTP `E409` conflict, or a `403 Forbidden` paired with the
+                # cannot-publish-over wording. Accept all of them as benign
+                # here — the stable loop is allowed to be a no-op on retry
+                # because the version is immutable on npm. Do NOT widen this
+                # in the CANARY publish loop: canary versions are unique per
+                # run, so a conflict there is a real bug.
+                if grep -qiE "EPUBLISHCONFLICT|E409|cannot publish over|previously published|you cannot publish over the previously published versions|403 Forbidden.*cannot publish over" "$PUBLISH_LOG"; then
                   echo "::notice::SKIPPED (already published): ${PROJECT}@${PKG_VERSION}"
                 else
                   echo "FAILED (publish): ${PROJECT}"
@@ -761,7 +835,13 @@ jobs:
               VIEW_STDERR=$(mktemp)
               VIEW_STDOUT=$(mktemp)
               for ATTEMPT in 1 2 3 4 5 6; do
-                if npm view "${PROJECT}@${PKG_VERSION}" version --registry=https://registry.npmjs.org/ >"$VIEW_STDOUT" 2>"$VIEW_STDERR"; then
+                # exit 0 alone is not sufficient — npm view can return 0 with
+                # empty stdout (e.g. when the registry serves a stale doc that
+                # lacks the new version under a dist-tag) or with a different
+                # version string (cache inversion across CDN edges). Require
+                # an exact line match against the version we just published.
+                if npm view "${PROJECT}@${PKG_VERSION}" version --registry=https://registry.npmjs.org/ >"$VIEW_STDOUT" 2>"$VIEW_STDERR" \
+                  && grep -qxF "$PKG_VERSION" "$VIEW_STDOUT"; then
                   PUBLISH_VERIFIED=1
                   break
                 fi
