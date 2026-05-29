@@ -10,6 +10,8 @@ import {
   Config,
   Interrupt,
   Thread,
+  ThreadStream,
+  SubscriptionHandle,
 } from "@langchain/langgraph-sdk";
 import { randomUUID } from "@ag-ui/client";
 import {
@@ -25,36 +27,14 @@ import {
   PredictStateTool,
   LangGraphReasoning,
   StateEnrichment,
-  LangGraphToolWithName,
+  LangGraphToolWithName, ProcessedEvents,
 } from "./types";
 import {
   AbstractAgent,
   AgentConfig,
-  CustomEvent,
   EventType,
-  MessagesSnapshotEvent,
-  RawEvent,
   RunAgentInput,
   RunErrorEvent,
-  RunFinishedEvent,
-  RunStartedEvent,
-  StateDeltaEvent,
-  StateSnapshotEvent,
-  StepFinishedEvent,
-  StepStartedEvent,
-  TextMessageContentEvent,
-  TextMessageEndEvent,
-  TextMessageStartEvent,
-  ToolCallArgsEvent,
-  ToolCallEndEvent,
-  ToolCallStartEvent,
-  ToolCallResultEvent,
-  ReasoningStartEvent,
-  ReasoningMessageStartEvent,
-  ReasoningMessageContentEvent,
-  ReasoningMessageEndEvent,
-  ReasoningEndEvent,
-  ReasoningEncryptedValueEvent,
 } from "@ag-ui/client";
 import { RunsStreamPayload } from "@langchain/langgraph-sdk/dist/types";
 import {
@@ -67,33 +47,9 @@ import {
   resolveReasoningContent,
   resolveEncryptedReasoningContent,
 } from "@/utils";
-import { ToolMessage } from "@langchain/core/messages";
-import { ToolMessageFieldsWithToolCallId } from "@langchain/core/dist/messages/tool";
-
-export type ProcessedEvents =
-  | TextMessageStartEvent
-  | TextMessageContentEvent
-  | TextMessageEndEvent
-  | ReasoningStartEvent
-  | ReasoningMessageStartEvent
-  | ReasoningMessageContentEvent
-  | ReasoningMessageEndEvent
-  | ReasoningEndEvent
-  | ReasoningEncryptedValueEvent
-  | ToolCallStartEvent
-  | ToolCallArgsEvent
-  | ToolCallEndEvent
-  | ToolCallResultEvent
-  | StateSnapshotEvent
-  | StateDeltaEvent
-  | MessagesSnapshotEvent
-  | RawEvent
-  | CustomEvent
-  | RunStartedEvent
-  | RunFinishedEvent
-  | RunErrorEvent
-  | StepStartedEvent
-  | StepFinishedEvent;
+// `ToolMessageFields` already carries `tool_call_id` — the older
+// `…WithToolCallId` alias was removed from `@langchain/core`.
+import type { ToolMessageFields } from "@langchain/core/dist/messages/tool";
 
 type RunAgentExtendedInput<
   TStreamMode extends StreamMode | StreamMode[] = StreamMode,
@@ -107,6 +63,81 @@ type RunAgentExtendedInput<
 
 interface RegenerateInput extends RunAgentExtendedInput {
   messageCheckpoint: LangGraphMessage;
+}
+
+/**
+ * Cached per-thread (ThreadStream, custom:agui subscription) pair.
+ *
+ * The agui subscription is opened once and reused across every run on a
+ * given thread, so server-side `record.queuedEvents` replay never lands
+ * on a fresh sink. `submitRun`'s `#prepareForNextRun` auto-resumes
+ * the sub between runs.
+ */
+export interface TransformerThreadEntry {
+  thread: ThreadStream;
+  aguiSub: SubscriptionHandle<any, ProcessedEvents>;
+}
+
+/**
+ * AI message shape we care about in the sanitizer (the actual SDK type
+ * is a discriminated union over message roles).
+ */
+type AssistantContentBlock = { type?: string; [key: string]: unknown };
+type AssistantResponseMetadata = { output_version?: string; [key: string]: unknown };
+type AssistantMessageLike = LangGraphMessage & {
+  content?: string | AssistantContentBlock[];
+  response_metadata?: AssistantResponseMetadata;
+};
+
+/**
+ * Defensive cleanup for assistant messages being re-sent to the model.
+ *
+ * Two upstream issues we sidestep:
+ *
+ *  1. CopilotKit reconstructs assistant messages from TOOL_CALL_* events
+ *     and stuffs `tool_call` blocks back into the message `content`
+ *     array. langchain 1.4 + OpenAI reject that shape on the wire; the
+ *     same data already lives on `tool_calls`, so the blocks are pure
+ *     noise. Strip them. If only tool_call blocks remain, collapse
+ *     `content` to "" since an empty content array trips other validators.
+ *
+ *  2. langchain-core's AIMessage v1 path (`response_metadata.output_version
+ *     === "v1"`) routes `content` through a `contentBlocks` array that
+ *     langchain-openai's Responses serializer mistypes — prior assistant
+ *     text blocks come back as `input_text` and OpenAI returns a 400.
+ *     Drop the v1 flag from re-sent messages so the legacy content-array
+ *     path is used, which the Responses API accepts.
+ *
+ * Pure function — no side effects, no I/O.
+ */
+export function sanitizeAssistantMessages(
+  payloadInput: { messages?: LangGraphMessage[]; [key: string]: unknown } | null | undefined,
+): { messages?: LangGraphMessage[]; [key: string]: unknown } | null | undefined {
+  if (!payloadInput || !payloadInput.messages) return payloadInput;
+  return {
+    ...payloadInput,
+    messages: payloadInput.messages.map((raw) => {
+      if (raw?.type !== "ai") return raw;
+      let next = raw as AssistantMessageLike;
+      if (Array.isArray(next.content)) {
+        const remaining = next.content.filter(
+          (block) => block?.type !== "tool_call",
+        );
+        if (remaining.length !== next.content.length) {
+          next = {
+            ...next,
+            content: remaining.length === 0 ? "" : remaining,
+          };
+        }
+      }
+      const rm = next.response_metadata;
+      if (rm && typeof rm === "object" && "output_version" in rm) {
+        const { output_version: _ov, ...rest } = rm;
+        next = { ...next, response_metadata: rest };
+      }
+      return next as LangGraphMessage;
+    }),
+  };
 }
 
 export interface LangGraphAgentConfig extends AgentConfig {
@@ -139,6 +170,14 @@ export interface LangGraphAgentConfig extends AgentConfig {
    * variable that could be mutated by a different clone or request.
    */
   headerFactory?: () => Record<string, string>;
+  /**
+   * Opt into the v3-protocol transformer path. When true, the agent calls
+   * `client.threads.stream(...).run.start(...)` and forwards events from
+   * `thread.extensions.agui` instead of running the legacy translation.
+   * The graph must register the matching `aguiTransformer` at compile-time.
+   * Defaults to false (legacy translation).
+   */
+  useTransformer?: boolean;
 }
 
 const ROOT_SUBGRAPH_NAME = "root";
@@ -172,6 +211,19 @@ export class LangGraphAgent extends AbstractAgent {
   subscriber: Subscriber<ProcessedEvents>;
   constantSchemaKeys: string[] = DEFAULT_SCHEMA_KEYS;
   config: LangGraphAgentConfig;
+  useTransformer: boolean;
+  // Per-thread cache of (ThreadStream + custom:agui SubscriptionHandle).
+  // Shared across `clone()`s so each request reuses the same connection
+  // and the same persistent subscription. Reusing matters because:
+  //   - Server replays its per-thread `record.queuedEvents` to ANY new
+  //     SSE sink, with no `since` exposed by the SDK. A fresh sub on a
+  //     new ThreadStream therefore receives prior runs' events as replays.
+  //   - The persistent sub here was attached BEFORE the first run, so it
+  //     has nothing to replay; subsequent runs reuse it without
+  //     triggering a stream rotation, so no replay occurs.
+  // Pause/resume bracket each run: SDK's `submitRun` calls
+  // `#prepareForNextRun` which auto-resumes the sub.
+  transformerThreads: Map<string, TransformerThreadEntry> = new Map();
 
   constructor(config: LangGraphAgentConfig) {
     super(config);
@@ -181,6 +233,7 @@ export class LangGraphAgent extends AbstractAgent {
     this.graphId = config.graphId;
     this.assistantConfig = config.assistantConfig;
     this.reasoningProcess = null;
+    this.useTransformer = config.useTransformer ?? true;
 
     // Default factory reads this.headers (set per-clone by CopilotKit Runtime)
     const agent = this;
@@ -194,7 +247,6 @@ export class LangGraphAgent extends AbstractAgent {
           "or wire headers into your custom client directly.",
       );
     }
-
     this.client =
       config?.client ??
       new LangGraphClient({
@@ -237,6 +289,9 @@ export class LangGraphAgent extends AbstractAgent {
       cancelSent: this.cancelSent,
       subgraphs: this.subgraphs ? new Set(this.subgraphs) : new Set(),
       currentSubgraph: ROOT_SUBGRAPH_NAME,
+      useTransformer: this.useTransformer,
+      // Share by reference — the cache lives across clones.
+      transformerThreads: this.transformerThreads,
     });
 
     // Rebuild client so onRequest captures the cloned agent's headers
@@ -282,6 +337,99 @@ export class LangGraphAgent extends AbstractAgent {
     });
   }
 
+  /**
+   * Get-or-create the cached `(ThreadStream, custom:agui subscription)`
+   * pair for a thread. Shared across `clone()` instances by reference
+   * (see `clone()`), so every request to a given threadId reuses the
+   * same SSE wire and never receives a server-side replay of prior
+   * runs' events.
+   */
+  protected async acquireTransformerThread(
+    threadId: string,
+  ): Promise<TransformerThreadEntry> {
+    const cached = this.transformerThreads.get(threadId);
+    if (cached) return cached;
+    if (!this.assistant) {
+      this.assistant = await this.getAssistant();
+    }
+    const thread = this.client.threads.stream(threadId, {
+      assistantId: this.assistant.assistant_id,
+    });
+    // Array form so the SDK applies its `unwrapNamedCustom` transform —
+    // for-await yields raw payloads, matching extensions.agui's shape.
+    const aguiSub = (await thread.subscribe([
+      "custom:agui",
+    ])) as SubscriptionHandle<any, ProcessedEvents>;
+    const entry: TransformerThreadEntry = { thread, aguiSub };
+    this.transformerThreads.set(threadId, entry);
+    return entry;
+  }
+
+  /**
+   * Resolve the interrupt to resume against, given a possibly-empty
+   * `streamingThread.interrupts` (populated live by the SDK's
+   * lifecycle watcher) and the server-side `agentState.tasks` array
+   * (a cold-start fallback in case our ThreadStream cache was rebuilt
+   * but the server still has the interrupt parked).
+   *
+   * Returns `undefined` when there's no resume to perform.
+   */
+  protected findPendingInterrupt(
+    streamingThread: ThreadStream,
+    agentState: ThreadState<State>,
+    resumeRequested: boolean,
+  ): { interruptId: string; namespace: readonly string[] } | undefined {
+    if (!resumeRequested) return undefined;
+    const live = (streamingThread as { interrupts?: Array<{ interruptId: string; namespace: readonly string[] }> })
+      .interrupts;
+    const last = live?.[live.length - 1];
+    if (last?.interruptId) {
+      return { interruptId: last.interruptId, namespace: last.namespace };
+    }
+    const fallback = (agentState.tasks ?? [])
+      .flatMap((t: any) =>
+        (t.interrupts ?? []).map((i: any) => ({ task: t, interrupt: i })),
+      )
+      .pop();
+    if (fallback?.interrupt?.id) {
+      return {
+        interruptId: fallback.interrupt.id,
+        namespace: fallback.task?.checkpoint?.checkpoint_ns?.split("|") ?? [],
+      };
+    }
+    return undefined;
+  }
+
+  /**
+   * Register a one-shot listener that pauses the agui subscription when
+   * the run's root lifecycle terminates. `submitRun`'s
+   * `#prepareForNextRun` auto-resumes between runs, so pause is
+   * cheaper than close — the persistent sub stays alive across the
+   * lifetime of the cached ThreadStream.
+   */
+  protected watchForRootTerminal(
+    streamingThread: ThreadStream,
+    aguiSub: SubscriptionHandle<any, ProcessedEvents>,
+  ): () => void {
+    const TERMINAL = new Set(["completed", "failed", "interrupted"]);
+    const unsubscribe = streamingThread.onEvent((event) => {
+      const ev = event as {
+        method?: string;
+        params?: { namespace?: unknown; data?: { event?: string } };
+      };
+      if (
+        ev.method === "lifecycle" &&
+        Array.isArray(ev.params?.namespace) &&
+        ev.params!.namespace.length === 0 &&
+        TERMINAL.has(ev.params!.data?.event ?? "")
+      ) {
+        aguiSub.pause();
+        unsubscribe();
+      }
+    });
+    return unsubscribe;
+  }
+
   async runAgentStream(
     input: RunAgentExtendedInput,
     subscriber: Subscriber<ProcessedEvents>,
@@ -318,13 +466,17 @@ export class LangGraphAgent extends AbstractAgent {
       return subscriber.error("No stream to regenerate");
     }
 
-    await this.handleStreamEvents(
+    if (this.useTransformer) {
+      await this.handleTransformerStreamEvents(preparedStream, threadId, subscriber, input);
+    } else {
+      await this.handleStreamEvents(
       preparedStream,
       threadId,
       subscriber,
       input,
       Array.isArray(streamMode) ? streamMode : [streamMode],
     );
+    }
   }
 
   async prepareRegenerateStream(
@@ -368,18 +520,50 @@ export class LangGraphAgent extends AbstractAgent {
       });
     }
 
+    const forkedCheckpointId = (fork as { checkpoint: { checkpoint_id: string } })
+      .checkpoint.checkpoint_id;
+    const regenInput = this.langGraphDefaultMergeState(
+      timeTravelCheckpoint.values,
+      [messageCheckpoint],
+      input,
+    );
     const payload = {
       ...(input.forwardedProps ?? {}),
-      input: this.langGraphDefaultMergeState(
-        timeTravelCheckpoint.values,
-        [messageCheckpoint],
-        input,
-      ),
-      // @ts-ignore
-      checkpointId: fork.checkpoint.checkpoint_id!,
+      input: regenInput,
+      checkpointId: forkedCheckpointId,
       streamMode,
       config: payloadConfig,
     };
+
+    if (this.useTransformer) {
+      // Transformer-path regen: cached ThreadStream + persistent
+      // custom:agui sub, with the fork expressed via v3 `forkFrom` so
+      // the dev server roots the new run at the chosen checkpoint.
+      // Resume semantics don't apply on regen.
+      const sanitizedInput = sanitizeAssistantMessages(regenInput as Record<string, unknown>);
+      const { thread: streamingThread, aguiSub } =
+        await this.acquireTransformerThread(threadId);
+      const unsubscribeOnEvent = this.watchForRootTerminal(streamingThread, aguiSub);
+
+      const submitted = await streamingThread.submitRun({
+        ...(input.forwardedProps ?? {}),
+        input: sanitizedInput,
+        config: payloadConfig,
+        metadata: (input.forwardedProps as { metadata?: Record<string, unknown> })?.metadata,
+        forkFrom: { checkpointId: forkedCheckpointId },
+      });
+      this.activeRun!.id = submitted?.run_id ?? this.activeRun!.id;
+
+      return {
+        streamResponse: aguiSub,
+        state: timeTravelCheckpoint as ThreadState<State>,
+        streamMode,
+        close: () => {
+          unsubscribeOnEvent();
+        },
+      };
+    }
+
     return {
       streamResponse: this.client.runs.stream(
         threadId,
@@ -408,6 +592,7 @@ export class LangGraphAgent extends AbstractAgent {
     this.activeRun!.manuallyEmittedState = null;
 
     const nodeNameInput = forwardedProps?.nodeName;
+
     const threadId = inputThreadId ?? randomUUID();
 
     if (!this.assistant) {
@@ -452,7 +637,11 @@ export class LangGraphAgent extends AbstractAgent {
       (m) => m.role !== "system",
     ).length;
 
-    if (stateNonSystemCount > inputNonSystemCount) {
+    // HITL resume: server state holds the interrupted-run messages but
+    // the frontend's `messages` array may not yet contain them. Skip
+    // the regenerate branch in this case — the user is responding to
+    // an interrupt, not asking us to fork from an earlier checkpoint.
+    if (stateNonSystemCount > inputNonSystemCount && !forwardedProps?.command?.resume) {
       let lastUserMessage: LangGraphMessage | null = null;
       // Find the first user message by working backwards from the last message
       for (let i = messages.length - 1; i >= 0; i--) {
@@ -660,6 +849,54 @@ export class LangGraphAgent extends AbstractAgent {
       return this.subscriber.complete();
     }
 
+    if (this.useTransformer) {
+      const sanitizedInput = sanitizeAssistantMessages(payloadInput);
+      const { thread: streamingThread, aguiSub } =
+        await this.acquireTransformerThread(threadId);
+      const unsubscribeOnEvent = this.watchForRootTerminal(streamingThread, aguiSub);
+
+      const resumeRequested =
+        forwardedProps?.command?.resume !== undefined &&
+        forwardedProps?.command?.resume !== null;
+      const pendingInterrupt = this.findPendingInterrupt(
+        streamingThread,
+        agentState,
+        resumeRequested,
+      );
+
+      let runId: string | undefined;
+      if (resumeRequested && pendingInterrupt) {
+        // Resume routes through input.respond on the cached
+        // ThreadStream. The server assigns a fresh run_id we don't
+        // see in the response; activeRun.id stays stale until an
+        // event with the new id flows through.
+        await streamingThread.respondInput({
+          namespace: pendingInterrupt.namespace,
+          interrupt_id: pendingInterrupt.interruptId,
+          response: forwardedProps!.command!.resume,
+        });
+      } else {
+        const submitted = await streamingThread.submitRun({
+          ...payload,
+          input: sanitizedInput,
+          config: payload.config,
+          metadata: payload.metadata as Record<string, unknown>,
+        });
+        runId = submitted?.run_id;
+      }
+      this.activeRun!.id = runId ?? this.activeRun!.id;
+
+      return {
+        streamResponse: aguiSub,
+        state: threadState as ThreadState<State>,
+        // Per-run cleanup only — the cached thread + sub live on for
+        // the next request on this threadId.
+        close: () => {
+          unsubscribeOnEvent();
+        },
+      };
+    }
+
     return {
       // @ts-ignore
       streamResponse: this.client.runs.stream(
@@ -669,6 +906,55 @@ export class LangGraphAgent extends AbstractAgent {
       ),
       state: threadState as ThreadState<State>,
     };
+  }
+
+  async handleTransformerStreamEvents(
+    stream: Awaited<
+      ReturnType<typeof this.prepareStream> | ReturnType<typeof this.prepareRegenerateStream>
+    >,
+    threadId: string,
+    subscriber: Subscriber<ProcessedEvents>,
+  ) {
+    let runErrorEmitted = false;
+    try {
+      this.dispatchEvent({
+        type: EventType.RUN_STARTED,
+        threadId,
+        runId: this.activeRun!.id,
+      });
+      for await (const rawEvent of stream!.streamResponse as AsyncIterable<ProcessedEvents>) {
+        if (rawEvent?.type === "RUN_ERROR") runErrorEmitted = true;
+        this.dispatchEvent(rawEvent as ProcessedEvents);
+      }
+
+      if (!runErrorEmitted) {
+        this.dispatchEvent({
+          type: EventType.RUN_FINISHED,
+          threadId,
+          runId: this.activeRun!.id,
+        });
+      }
+      return subscriber.complete();
+    } catch (err) {
+      if (!runErrorEmitted) {
+        this.dispatchEvent({
+          type: EventType.RUN_ERROR,
+          message: err instanceof Error ? err.message : String(err ?? "Unknown error"),
+        } as RunErrorEvent);
+      }
+      return subscriber.complete();
+    } finally {
+      // Per-run cleanup hook lives on the transformer-path preparedStream
+      // (the legacy runs.stream return doesn't expose one).
+      const closer = (stream as { close?: () => void | Promise<void> } | undefined)?.close;
+      if (typeof closer === "function") {
+        try {
+          await closer();
+        } catch (_) {
+          // swallow — close is best-effort cleanup
+        }
+      }
+    }
   }
 
   async handleStreamEvents(
@@ -1305,7 +1591,7 @@ export class LangGraphAgent extends AbstractAgent {
         }
 
         if (toolCallOutput && toolCallOutput.update?.messages?.length) {
-          type MessageFields = ToolMessageFieldsWithToolCallId & {
+          type MessageFields = ToolMessageFields & {
             type: string;
           };
           toolCallOutput.update?.messages

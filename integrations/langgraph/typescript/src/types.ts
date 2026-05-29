@@ -1,6 +1,31 @@
 import { AssistantGraph, Message as LangGraphMessage } from "@langchain/langgraph-sdk";
 import { MessageType } from "@langchain/core/messages";
-import { RunAgentInput } from "@ag-ui/core";
+import {
+  CustomEvent,
+  MessagesSnapshotEvent,
+  RawEvent,
+  RunAgentInput,
+  RunErrorEvent,
+  RunFinishedEvent,
+  RunStartedEvent,
+  StateDeltaEvent,
+  StateSnapshotEvent,
+  StepFinishedEvent,
+  StepStartedEvent,
+  TextMessageContentEvent,
+  TextMessageEndEvent,
+  TextMessageStartEvent,
+  ToolCallArgsEvent,
+  ToolCallEndEvent,
+  ToolCallStartEvent,
+  ToolCallResultEvent,
+  ReasoningStartEvent,
+  ReasoningMessageStartEvent,
+  ReasoningMessageContentEvent,
+  ReasoningMessageEndEvent,
+  ReasoningEndEvent,
+  ReasoningEncryptedValueEvent,
+} from "@ag-ui/client";
 
 export enum LangGraphEventTypes {
   OnChainStart = "on_chain_start",
@@ -135,3 +160,28 @@ export interface LangGraphReasoning {
   index: number;
   signature?: string;
 }
+
+export type ProcessedEvents =
+    | TextMessageStartEvent
+    | TextMessageContentEvent
+    | TextMessageEndEvent
+    | ReasoningStartEvent
+    | ReasoningMessageStartEvent
+    | ReasoningMessageContentEvent
+    | ReasoningMessageEndEvent
+    | ReasoningEndEvent
+    | ReasoningEncryptedValueEvent
+    | ToolCallStartEvent
+    | ToolCallArgsEvent
+    | ToolCallEndEvent
+    | ToolCallResultEvent
+    | StateSnapshotEvent
+    | StateDeltaEvent
+    | MessagesSnapshotEvent
+    | RawEvent
+    | CustomEvent
+    | RunStartedEvent
+    | RunFinishedEvent
+    | RunErrorEvent
+    | StepStartedEvent
+    | StepFinishedEvent;

@@ -15,7 +15,10 @@ function createAgent() {
   const agent = new LangGraphAgent({
     graphId: "test-graph",
     url: "http://localhost:8000",
-  });
+    // Legacy `handleSingleEvent` routing test — explicitly opt out
+    // of the transformer path.
+    useTransformer: false,
+  } as any);
 
   // Wire up a mock subscriber and activeRun so dispatchEvent works
   const events: any[] = [];
