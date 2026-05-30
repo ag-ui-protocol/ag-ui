@@ -1110,6 +1110,19 @@ class LangGraphAgent:
                     )
                 )
 
+            if is_message_end_event and tool_call_data and tool_call_data.get("name"):
+                yield self._dispatch_event(
+                    TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=current_stream["id"], raw_event=event)
+                )
+                self.messages_in_process[self.active_run["id"]] = None
+                current_stream = None
+                has_current_stream = False
+                is_message_end_event = False
+                is_tool_call_start_event = True
+                is_tool_call_args_event = False
+                is_tool_call_end_event = False
+                self.active_run["has_function_streaming"] = True
+
             if is_tool_call_end_event:
                 yield self._dispatch_event(
                     ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=current_stream["tool_call_id"], raw_event=event)
