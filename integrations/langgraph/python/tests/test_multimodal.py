@@ -135,6 +135,24 @@ class TestMultimodalConversion(unittest.TestCase):
         self.assertEqual(content[1]["type"], "image_url")
         self.assertEqual(content[1]["image_url"]["url"], "https://example.com/photo.jpg")
 
+    def test_agui_media_metadata_to_langchain(self):
+        content_list = [
+            ImageInputContent(
+                type="image",
+                source=InputContentUrlSource(
+                    type="url",
+                    value="https://example.com/photo.jpg",
+                ),
+                metadata={"filename": "photo.jpg", "source": "upload"},
+            ),
+        ]
+
+        lc_content = convert_agui_multimodal_to_langchain(content_list)
+
+        self.assertEqual(lc_content[0]["type"], "image_url")
+        self.assertEqual(lc_content[0]["image_url"]["url"], "https://example.com/photo.jpg")
+        self.assertEqual(lc_content[0]["metadata"], {"filename": "photo.jpg", "source": "upload"})
+
     def test_agui_image_data_source_to_langchain(self):
         """Test converting ImageInputContent with data source to LangChain."""
         agui_message = UserMessage(
