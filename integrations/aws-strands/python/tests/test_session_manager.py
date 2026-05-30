@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from strands.session import SessionManager
 
-from ag_ui.core import EventType, RunAgentInput
+from ag_ui.core import EventType, RunAgentInput, UserMessage
 from ag_ui_strands.agent import StrandsAgent
 from ag_ui_strands.config import StrandsAgentConfig
 
@@ -21,12 +21,16 @@ def _mock_session_manager() -> MagicMock:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_run_input(thread_id: str | None = "thread-1", run_id: str = "run-1") -> RunAgentInput:
+def _make_run_input(
+    thread_id: str | None = "thread-1",
+    run_id: str = "run-1",
+    messages: list | None = None,
+) -> RunAgentInput:
     return RunAgentInput(
         thread_id=thread_id,
         run_id=run_id,
         state={},
-        messages=[],
+        messages=[] if messages is None else messages,
         tools=[],
         context=[],
         forwarded_props={},
@@ -65,6 +69,20 @@ def _make_mock_instance():
     instance.tool_registry.registry = {}
     instance.stream_async = MagicMock(side_effect=lambda _: _empty_async_gen())
     return instance
+
+
+class _CoreWithPrivateSessionManager:
+    def __init__(self, session_manager):
+        self._session_manager = session_manager
+        self.state = MagicMock()
+        self.tool_registry = MagicMock()
+        self.tool_registry.registry = {}
+        self.stream_inputs = []
+
+    async def stream_async(self, message):
+        self.stream_inputs.append(message)
+        if False:
+            yield
 
 
 # ---------------------------------------------------------------------------
@@ -236,3 +254,21 @@ class TestSessionManagerProvider:
         event_types = [e.type for e in events]
         assert EventType.RUN_FINISHED in event_types
         assert any("returned None" in msg for msg in caplog.messages)
+
+    @pytest.mark.asyncio
+    async def test_private_session_manager_disables_history_replay(self):
+        """Strands Agent stores SessionManager on _session_manager."""
+        mock_session_manager = _mock_session_manager()
+        provider = MagicMock(return_value=mock_session_manager)
+        agent = _make_base_agent(session_manager_provider=provider)
+        input_data = _make_run_input(
+            thread_id="private-sm",
+            messages=[UserMessage(id="u1", content="hello")],
+        )
+        instance = _CoreWithPrivateSessionManager(mock_session_manager)
+
+        with patch("ag_ui_strands.agent.StrandsAgentCore", return_value=instance):
+            events = await _collect_events(agent, input_data)
+
+        assert EventType.RUN_FINISHED in [event.type for event in events]
+        assert instance.stream_inputs == ["hello"]

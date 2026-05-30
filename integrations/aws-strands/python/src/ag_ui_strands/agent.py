@@ -690,10 +690,11 @@ class StrandsAgent:
             # turn and the LLM re-fires the same tool every run, producing
             # the "chart loops forever" symptom. With a session manager,
             # Strands manages history itself, so we leave it alone.
-            replay_history = (
-                self.config.replay_history_into_strands
-                and getattr(strands_agent, "session_manager", None) is None
+            has_session_manager = (
+                getattr(strands_agent, "session_manager", None) is not None
+                or getattr(strands_agent, "_session_manager", None) is not None
             )
+            replay_history = self.config.replay_history_into_strands and not has_session_manager
             if replay_history:
                 native_history = _build_strands_history(input_data.messages)
                 # Apply ``state_context_builder`` to the last user-text
