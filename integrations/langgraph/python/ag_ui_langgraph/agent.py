@@ -303,7 +303,13 @@ class LangGraphAgent:
                 event_type = event.get("event")
                 event_run_id = event.get("run_id")
                 if isinstance(event_run_id, str) and event_run_id:
-                    self.active_run["id"] = event_run_id
+                    # LangGraph's internal chain run_id. Track it separately
+                    # rather than overwriting active_run["id"] (the
+                    # client-supplied run_id from RunAgentInput): clobbering it
+                    # made RUN_FINISHED carry the chain UUID while RUN_STARTED
+                    # carried the client id, so the two disagreed (#1582). The
+                    # client id is what the protocol must echo back.
+                    self.active_run["langgraph_run_id"] = event_run_id
                 elif event_run_id is not None:
                     # Shape mismatch: some upstream emitted a non-string run_id.
                     # Keep the existing id rather than corrupting it.
