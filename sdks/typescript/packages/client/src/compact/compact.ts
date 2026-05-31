@@ -47,6 +47,7 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
 
   // State compaction: collects state events, flushed at RUN_STARTED (pre-run/inter-run), RUN_FINISHED/RUN_ERROR (in-run), and at end (trailing)
   let stateEvents: (StateSnapshotEvent | StateDeltaEvent)[] = [];
+  let runningState: any = {};
 
   for (const event of events) {
     // Handle text message streaming events
@@ -138,21 +139,15 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
       pendingToolCalls.delete(toolCallId);
     } else if (event.type === EventType.RUN_STARTED) {
       // Flush any pre-run state events before starting a new run
-      flushState(stateEvents, compacted);
+      runningState = flushState(stateEvents, compacted, runningState);
       stateEvents = [];
       compacted.push(event);
-    } else if (
-      event.type === EventType.RUN_FINISHED ||
-      event.type === EventType.RUN_ERROR
-    ) {
+    } else if (event.type === EventType.RUN_FINISHED || event.type === EventType.RUN_ERROR) {
       // Flush compacted state into output before the run boundary event
-      flushState(stateEvents, compacted);
+      runningState = flushState(stateEvents, compacted, runningState);
       stateEvents = [];
       compacted.push(event);
-    } else if (
-      event.type === EventType.STATE_SNAPSHOT ||
-      event.type === EventType.STATE_DELTA
-    ) {
+    } else if (event.type === EventType.STATE_SNAPSHOT || event.type === EventType.STATE_DELTA) {
       // Collect state events for compaction
       stateEvents.push(event as StateSnapshotEvent | StateDeltaEvent);
     } else {
@@ -199,7 +194,7 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
   }
 
   // Flush any remaining state events (incomplete run or events outside runs)
-  flushState(stateEvents, compacted);
+  flushState(stateEvents, compacted, runningState);
 
   return compacted;
 }
@@ -285,12 +280,13 @@ function flushToolCall(
 function flushState(
   stateEvents: (StateSnapshotEvent | StateDeltaEvent)[],
   compacted: BaseEvent[],
-): void {
+  initialState: any = {},
+): any {
   if (stateEvents.length === 0) {
-    return;
+    return initialState;
   }
 
-  let state: any = {};
+  let state: any = structuredClone_(initialState);
 
   for (const event of stateEvents) {
     if (event.type === EventType.STATE_SNAPSHOT) {
@@ -307,4 +303,5 @@ function flushState(
   };
 
   compacted.push(compactedSnapshot);
+  return state;
 }
