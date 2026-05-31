@@ -10,10 +10,20 @@ resolution-markers = [
 overrides = [{ name = "langgraph", specifier = ">=1.1.3,<2" }]
 
 [[package]]
+name = "ag-ui-a2ui-toolkit"
+version = "0.0.1a3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f3/21/5002b22aa3a8e22edd7318661d370b020086d2b89f4265c4ec39511cd164/ag_ui_a2ui_toolkit-0.0.1a3.tar.gz", hash = "sha256:54a213b18ca9ecb1f556a49a5ded7bf4fdcff14b5aed09ba5f85eed97a4b73f7", size = 7314, upload-time = "2026-05-28T18:33:57.765Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f7/76/40b350a5e5e319e055b7fe8d2626d28171d8ee44dffda2f6122b797265d4/ag_ui_a2ui_toolkit-0.0.1a3-py3-none-any.whl", hash = "sha256:c97f4a3968016338065ed3eb2178f5522620ec014bb6dc90318124ba9cd8bdbf", size = 8379, upload-time = "2026-05-28T18:33:56.981Z" },
+]
+
+[[package]]
 name = "ag-ui-langgraph"
-version = "0.0.30"
-source = { directory = "../" }
+version = "0.0.36"
+source = { editable = "../" }
 dependencies = [
+    { name = "ag-ui-a2ui-toolkit" },
     { name = "ag-ui-protocol" },
     { name = "langchain" },
     { name = "langchain-core" },
@@ -28,7 +38,8 @@ fastapi = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ag-ui-protocol", specifier = ">=0.1.10" },
+    { name = "ag-ui-a2ui-toolkit", specifier = ">=0.0.1a0" },
+    { name = "ag-ui-protocol", specifier = ">=0.1.15" },
     { name = "fastapi", marker = "extra == 'fastapi'", specifier = ">=0.115.12" },
     { name = "langchain", specifier = ">=1.2.0" },
     { name = "langchain-core", specifier = ">=0.3.0" },
@@ -38,11 +49,16 @@ requires-dist = [
 provides-extras = ["fastapi"]
 
 [package.metadata.requires-dev]
-dev = [{ name = "fastapi", specifier = ">=0.115.12" }]
+dev = [
+    { name = "fastapi", specifier = ">=0.115.12" },
+    { name = "pytest", specifier = ">=9.0.2" },
+    { name = "pytest-asyncio", specifier = ">=1.3.0" },
+    { name = "pytest-cov", specifier = ">=7.1.0" },
+]
 
 [[package]]
 name = "ag-ui-protocol"
-version = "0.1.15"
+version = "0.1.18"
 source = { directory = "../../../../sdks/python" }
 dependencies = [
     { name = "pydantic" },
@@ -1135,7 +1151,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ag-ui-langgraph", directory = "../" },
+    { name = "ag-ui-langgraph", editable = "../" },
     { name = "ag-ui-protocol", directory = "../../../../sdks/python" },
     { name = "copilotkit", specifier = "==0.1.86" },
     { name = "dotenv", specifier = ">=0.9.9" },

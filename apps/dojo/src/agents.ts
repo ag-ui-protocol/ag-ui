@@ -162,6 +162,19 @@ export const agentsIntegrations = {
       agent.use(new A2UIMiddleware({ injectA2UITool: true }));
       return agent;
     })(),
+    a2ui_dynamic_schema: new LangGraphAgent({
+      deploymentUrl: envVars.langgraphPythonUrl,
+      graphId: "a2ui_dynamic_schema",
+    }),
+    a2ui_fixed_schema: new LangGraphAgent({
+      deploymentUrl: envVars.langgraphPythonUrl,
+      graphId: "a2ui_fixed_schema",
+    }),
+    // Advanced: same backend agent, frontend adds custom progress renderer + action handlers
+    a2ui_advanced: new LangGraphAgent({
+      deploymentUrl: envVars.langgraphPythonUrl,
+      graphId: "a2ui_dynamic_schema",
+    }),
   }),
 
   "langgraph-fastapi": async () => ({
@@ -195,8 +208,8 @@ export const agentsIntegrations = {
     }),
   }),
 
-  "langgraph-typescript": async () =>
-    mapAgents(
+  "langgraph-typescript": async () => ({
+    ...mapAgents(
       (graphId) => {
         return new LangGraphAgent({
           deploymentUrl: envVars.langgraphTypescriptUrl,
@@ -216,6 +229,20 @@ export const agentsIntegrations = {
         subgraphs: "subgraphs",
       },
     ),
+    a2ui_dynamic_schema: new LangGraphAgent({
+      deploymentUrl: envVars.langgraphTypescriptUrl,
+      graphId: "a2ui_dynamic_schema",
+    }),
+    a2ui_fixed_schema: new LangGraphAgent({
+      deploymentUrl: envVars.langgraphTypescriptUrl,
+      graphId: "a2ui_fixed_schema",
+    }),
+    // Advanced: same backend agent, frontend adds custom progress renderer + action handlers
+    a2ui_advanced: new LangGraphAgent({
+      deploymentUrl: envVars.langgraphTypescriptUrl,
+      graphId: "a2ui_dynamic_schema",
+    }),
+  }),
 
   // TODO: @ranst91 Enable `langchain` integration in apps/dojo/src/menu.ts once ready
   langchain: async () => {

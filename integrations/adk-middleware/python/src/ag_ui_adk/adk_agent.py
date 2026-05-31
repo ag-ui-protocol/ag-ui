@@ -79,29 +79,6 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def _unbind_agui_toolsets_recursive(agent: Any) -> None:
-    """Walk an agent tree and unbind every ``AGUIToolset`` placeholder.
-
-    Counterpart to ``_update_agent_tools_recursive`` (defined inside
-    ``ADKAgent._start_background_execution``). Run from
-    ``_run_adk_in_background``'s ``finally`` block so each run starts with
-    placeholders in their construction-time state, avoiding cross-run
-    delegate leakage.
-
-    Tolerant of non-LlmAgent nodes (skip silently) and agents without a
-    ``tools`` attribute. Catches per-toolset exceptions so one bad
-    placeholder doesn't break cleanup for the rest of the tree.
-    """
-    if isinstance(agent, LlmAgent) and hasattr(agent, "tools"):
-        for tool in agent.tools or []:
-            if isinstance(tool, AGUIToolset):
-                try:
-                    tool.unbind()
-                except Exception:
-                    # Best-effort cleanup; never raise out of unbind.
-                    pass
-    for sub_agent in getattr(agent, "sub_agents", None) or []:
-        _unbind_agui_toolsets_recursive(sub_agent)
 class _HitlDeferringQueue(asyncio.Queue):
     """``asyncio.Queue`` that defers HITL ``ToolCallEndEvent``s.
 
@@ -2063,19 +2040,20 @@ class ADKAgent:
         client_proxy_toolsets: list[ClientProxyToolset] = []
 
         def _update_agent_tools_recursive(agent: Any) -> None:
-            """Bind a ``ClientProxyToolset`` to every ``AGUIToolset`` placeholder
-            in the agent tree.
+            """Replace every ``AGUIToolset`` placeholder with a per-run
+            ``ClientProxyToolset`` in the agent tree.
 
-            Pre-2026-05 (ADK 1.x): we replaced the placeholder wholesale
-            (``agent.tools = [..., ClientProxyToolset(...)]``). ADK 1.x resolved
-            ``get_tools()`` lazily on each run so the replacement was visible.
-
-            Post-2026-05 (ADK 2.0, ag-ui#1389): ``Runner.__init__`` eagerly
-            caches ``get_tools()`` results, so replacing the toolset object
-            leaves the Runner pointing at the stale placeholder. We now keep
-            the placeholder instance and bind a fresh delegate to it via
-            ``AGUIToolset.bind(...)`` — same object identity, dynamic tool
-            list, compatible with both ADK majors.
+            The placeholder carries no client info; this builds a concrete
+            ``ClientProxyToolset`` from ``input.tools`` (with this run's
+            ``event_queue``) and swaps it into the per-run agent's ``tools``
+            list. Because ``_shallow_copy_agent_tree`` gave this agent its own
+            ``tools`` list and the construction-time placeholder is never
+            mutated, concurrent runs are fully isolated. (An earlier
+            ``AGUIToolset.bind()`` delegation stored the per-run toolset on the
+            shared placeholder and was not concurrency-safe; replacement restores
+            per-run isolation. ADK 2.0 GA reads ``agent.tools`` fresh per
+            invocation, so the swap is picked up — see
+            ``tests/test_agui_toolset_concurrency.py``.)
 
             Args:
                 agent: Agent instance to process recursively.
@@ -2085,13 +2063,14 @@ class ADKAgent:
 
             if isinstance(agent, LlmAgent) and hasattr(agent, "tools"):
                 tool_count = len(agent.tools) if agent.tools else 0
-                logger.info(f"[TOOL_SETUP] Agent {agent.name} has {tool_count} tools before binding")
+                logger.info(f"[TOOL_SETUP] Agent {agent.name} has {tool_count} tools before replacement")
 
+                new_tools: list[ToolUnion] = []
                 for tool in agent.tools:
                     if isinstance(tool, AGUIToolset):
                         logger.info(
                             f"[TOOL_SETUP] Agent {agent.name}: Found AGUIToolset with "
-                            f"filter={tool.tool_filter}; binding ClientProxyToolset delegate"
+                            f"filter={tool.tool_filter}; replacing with per-run ClientProxyToolset"
                         )
                         proxy_toolset = ClientProxyToolset(
                             ag_ui_tools=input.tools,
@@ -2101,20 +2080,17 @@ class ADKAgent:
                             predict_state=self._predict_state,
                         )
                         client_proxy_toolsets.append(proxy_toolset)
-                        # Bind delegate to the placeholder. Object identity
-                        # of `tool` in agent.tools is preserved — critical
-                        # for ADK 2.0's eager Runner.__init__ tool cache
-                        # (ag-ui#1389). For ADK 1.x this is functionally
-                        # equivalent to the previous replace-the-object
-                        # approach: get_tools() forwards to the delegate
-                        # either way.
-                        tool.bind(proxy_toolset)
-                        logger.info(
-                            f"[TOOL_SETUP] Bound ClientProxyToolset delegate to AGUIToolset "
-                            f"for agent {agent.name}"
-                        )
+                        # Swap the placeholder for a fresh per-run
+                        # ClientProxyToolset in THIS run's tools list.
+                        # _shallow_copy_agent_tree gave this agent its own list,
+                        # so concurrent runs never share a proxy (each carries
+                        # its own input.tools + event_queue) and the
+                        # construction-time AGUIToolset is never mutated.
+                        tool = proxy_toolset
+                    new_tools.append(tool)
 
-                logger.info(f"[TOOL_SETUP] Agent {agent.name} tool binding complete")
+                agent.tools = new_tools
+                logger.info(f"[TOOL_SETUP] Agent {agent.name} now has {len(new_tools)} tools after replacement")
 
             # Recursively process sub-agents if they exist
             # This handles SequentialAgent, LoopAgent, and other composite agents
@@ -2997,21 +2973,6 @@ class ADKAgent:
                             close_error,
                         )
 
-            # Unbind every AGUIToolset in the agent tree so the next run on
-            # the same agent starts from a clean slate. Without this, a stale
-            # ClientProxyToolset (whose event_queue belongs to the previous
-            # run) would still satisfy AGUIToolset.get_tools() — usually
-            # harmless because the next run rebinds before tool invocation,
-            # but worth defensive cleanup to avoid surprising debug output
-            # if get_tools() is queried mid-cleanup.
-            try:
-                _unbind_agui_toolsets_recursive(adk_agent)
-            except Exception as unbind_error:
-                logger.debug(
-                    "Error while unbinding AGUIToolset for thread %s: %s",
-                    input.thread_id,
-                    unbind_error,
-                )
             # Flush any LRO ID remap captured during the runner loop. This
             # runs after the runner has been closed, so the
             # ``update_session_state`` write can't trip OCC against ADK's

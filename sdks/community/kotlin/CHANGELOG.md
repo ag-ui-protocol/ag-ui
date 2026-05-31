@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Interrupts** ([AG-UI spec](https://docs.ag-ui.com/concepts/interrupts)). The Kotlin SDK now models the interrupt protocol that the TypeScript and Python SDKs already ship. Without this change a Kotlin client connected to an interrupt-aware server would either fail polymorphic deserialization of `outcome` or silently drop the interrupt payload on a `RUN_FINISHED` event.
+  - New types in `com.agui.core.types`:
+    - `Interrupt(id, reason, message?, toolCallId?, responseSchema?, expiresAt?, metadata?)`
+    - `ResumeStatus` enum (`RESOLVED` → `"resolved"`, `CANCELLED` → `"cancelled"`)
+    - `ResumeEntry(interruptId, status, payload?)`
+    - Sealed `RunFinishedOutcome` with `@JsonClassDiscriminator("type")`:
+      - `RunFinishedSuccessOutcome` (`{"type":"success"}`)
+      - `RunFinishedInterruptOutcome(interrupts)` (`{"type":"interrupt","interrupts":[…]}`) — `interrupts` is validated non-empty at construction.
+  - `RunAgentInput` gains an optional `resume: List<ResumeEntry>?` field for resuming a previously interrupted run on the same `threadId`.
+  - `RunFinishedEvent` gains optional `result: JsonElement?` and `outcome: RunFinishedOutcome?` fields. Both default to `null`; legacy producers that omit them continue to decode unchanged, and Python `exclude_none=False` callers that emit explicit JSON `null` also decode to `null`.
+  - `AgUiSerializersModule` registers the two `RunFinishedOutcome` subclasses for polymorphic serialization.
+  - 13 new tests in `InterruptSerializationTest` covering minimal/full `Interrupt` round-trips, `ResumeEntry` status enum mapping and rejection of unknown statuses, object payloads, `RunAgentInput.resume` omit/round-trip, `RunFinishedInterruptOutcome` non-empty validation, and `RunFinishedEvent` round-trips for the legacy shape, the success outcome, the interrupt outcome (including a server-produced JSON shape), and explicit `null` outcome/result.
+
 ### Examples
 - Chatapp surfaces `REASONING_*` events as a transient "💭 Reasoning…" bubble (new `MessageRole.REASONING` + `EphemeralType.REASONING`), mirroring the existing tool-call / step ephemeral pattern. Clears on `RUN_FINISHED`, run cancel, or run error. Handles `REASONING_START` / `REASONING_END`, `REASONING_MESSAGE_START` / `REASONING_MESSAGE_CONTENT` / `REASONING_MESSAGE_END`, and `REASONING_MESSAGE_CHUNK`.
 - Bump all Kotlin sample apps (chatapp, chatapp-java, chatapp-wearos, chatapp-swiftui, tools) from `agui-core 0.3.0` to `0.4.0` and consume the published artefacts from Maven by removing the `includeBuild("../../library")` + dependencySubstitution blocks from the four chatapp variants' settings files.

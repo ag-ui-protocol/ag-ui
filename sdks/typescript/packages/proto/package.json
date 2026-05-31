@@ -1,7 +1,7 @@
 {
   "name": "@ag-ui/proto",
   "author": "Markus Ecker <markus.ecker@gmail.com>",
-  "version": "0.0.53",
+  "version": "0.0.54",
   "repository": {
     "type": "git",
     "url": "https://github.com/ag-ui-protocol/ag-ui.git"
@@ -22,7 +22,7 @@
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "test:exports": "publint --strict && attw --pack",
-    "generate": "mkdir -p ./src/generated && npx protoc --plugin=./node_modules/.bin/protoc-gen-ts_proto.CMD --ts_proto_out=./src/generated --ts_proto_opt=esModuleInterop=true,outputJsonMethods=false,outputClientImpl=false -I ./src/proto ./src/proto/*.proto",
+    "generate": "node ./scripts/generate.mjs",
     "link:global": "pnpm link --global",
     "unlink:global": "pnpm unlink --global"
   },

@@ -22,9 +22,13 @@ require "ag_ui_protocol"
 Core data structures that represent the building blocks of the system:
 
 - [RunAgentInput](/sdk/ruby/core/types#runagentinput) - Input parameters for running agents
-- [Message types](/sdk/ruby/core/types#message-types) - User assistant communication and tool usage
+- [Message types](/sdk/ruby/core/types#message-types) - User and assistant message communication with tool usage
 - [Context](/sdk/ruby/core/types#context) - Contextual information provided to agents
 - [Tool](/sdk/ruby/core/types#tool) - Defines functions that agents can call
+- [FunctionCall](/sdk/ruby/core/types#functioncall) - Tool invocation payload (name and JSON-encoded arguments)
+- [Interrupt and Resume](/sdk/ruby/core/types#interrupt) - Human-in-the-loop workflow support
+- [Multimodal Input Types](/sdk/ruby/core/types#imageinputcontent) - Image, audio, video, and document content fragments
+- [ReasoningMessage](/sdk/ruby/core/types#reasoningmessage) - Chain-of-thought reasoning messages
 - [State](/sdk/ruby/core/types#state) - Agent state management
 
 <Card
@@ -44,6 +48,7 @@ Events that power communication between agents and frontends:
 - [Lifecycle Events](/sdk/ruby/core/events#lifecycle-events) - Run and step tracking
 - [Text Message Events](/sdk/ruby/core/events#text-message-events) - Assistant message streaming
 - [Tool Call Events](/sdk/ruby/core/events#tool-call-events) - Function call lifecycle
+- [Reasoning Events](/sdk/ruby/core/events#reasoning-events) - Chain-of-thought streaming events
 - [State Management Events](/sdk/ruby/core/events#state-management-events) - Agent state updates
 - [Special Events](/sdk/ruby/core/events#special-events) - Raw and custom events
 
@@ -55,4 +60,32 @@ Events that power communication between agents and frontends:
   iconType="solid"
 >
   Complete documentation of all events in the AgUiProtocol::Core::Events namespace
+</Card>
+
+## Capabilities
+
+Agent capability declarations that define what an agent can do:
+
+- [AgentCapabilities](/sdk/ruby/core/capabilities#agentcapabilities) - Top-level categorized snapshot of an agent's capabilities
+- [IdentityCapabilities](/sdk/ruby/core/capabilities#identitycapabilities) - Agent name, type, version, provider, and documentation metadata
+- [TransportCapabilities](/sdk/ruby/core/capabilities#transportcapabilities) - Streaming, WebSocket, HTTP binary, push notifications, and resumable streams
+- [ToolsCapabilities](/sdk/ruby/core/capabilities#toolscapabilities) - Agent-provided tools, parallel calls, and client-provided tool support
+- [OutputCapabilities](/sdk/ruby/core/capabilities#outputcapabilities) - Structured output and supported MIME types
+- [StateCapabilities](/sdk/ruby/core/capabilities#statecapabilities) - Snapshots, deltas, long-term memory, and persistent state
+- [MultiAgentCapabilities](/sdk/ruby/core/capabilities#multiagentcapabilities) - Delegation, handoffs, and sub-agent discovery
+- [ReasoningCapabilities](/sdk/ruby/core/capabilities#reasoningcapabilities) - Reasoning support, streaming, and encrypted (zero-data-retention) thinking
+- [MultimodalCapabilities](/sdk/ruby/core/capabilities#multimodalcapabilities) - Multimodal input and output support
+- [MultimodalInputCapabilities](/sdk/ruby/core/capabilities#multimodalinputcapabilities) - Image, audio, video, PDF, and file inputs
+- [MultimodalOutputCapabilities](/sdk/ruby/core/capabilities#multimodaloutputcapabilities) - Image and audio outputs
+- [ExecutionCapabilities](/sdk/ruby/core/capabilities#executioncapabilities) - Code execution, sandboxing, max iterations, and max execution time
+- [HumanInTheLoopCapabilities](/sdk/ruby/core/capabilities#humanintheloopcapabilities) - Approvals, interventions, feedback, and the interrupt/resume protocol
+
+<Card
+  title="Capabilities Reference"
+  icon="cube"
+  href="/sdk/ruby/core/capabilities"
+  color="#3B82F6"
+  iconType="solid"
+>
+  Complete documentation of all capabilities in the AgUiProtocol::Core::Capabilities namespace
 </Card>

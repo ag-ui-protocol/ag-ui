@@ -25,6 +25,7 @@ from ag_ui.core import (
     BaseEvent,
     FunctionCall,
     RunStartedEvent,
+    Tool,
     ToolCall,
     ToolMessage,
     UserMessage,
@@ -45,123 +46,48 @@ from ag_ui_adk.session_manager import SessionManager
 # ---------------------------------------------------------------------------
 
 
-class TestAGUIToolsetDelegation:
-    """Verify the bind/unbind pattern that fixes ag-ui#1389 in ADK 2.0."""
+class TestAGUIToolsetReplacement:
+    """Verify the per-run replacement pattern (ag-ui#1746 follow-up: replaces the
+    bind/unbind delegation, which stored per-run state on a shared instance and
+    was not concurrency-safe)."""
 
     def test_construction_initializes_baseToolset_state(self) -> None:
-        """ag-ui#1389 sub-fix: AGUIToolset.__init__ MUST call
-        ``super().__init__()`` so ADK 2.0's ``_use_invocation_cache``
-        attribute is set. Without this, ADK 2.0's ``llm_agent.py:185``
-        ``getattr(toolset, '_use_invocation_cache')`` raises
-        AttributeError and the toolset is silently dropped from the LLM
-        tool list."""
+        """AGUIToolset.__init__ calls ``super().__init__()`` so ADK 2.0's
+        ``BaseToolset`` cache attributes (``_use_invocation_cache`` et al.) are
+        initialized and the placeholder is a well-formed toolset."""
         toolset = AGUIToolset(tool_filter=['x'], tool_name_prefix='pfx_')
-        # On ADK 2.0 these attrs must exist; on ADK 1.x calling
-        # super().__init__ is a no-op so the absence is also OK there.
-        # We assert the 2.0 invariant — the test will be a no-op on 1.x.
+        # On ADK 2.0 these attrs must exist; on ADK 1.x super().__init__ is a
+        # no-op so the absence is also OK there.
         if hasattr(ADKBaseToolset, '_use_invocation_cache') or any(
             'invocation_cache' in name
             for name in dir(toolset)
         ):
             assert hasattr(toolset, '_use_invocation_cache')
 
-    def test_unbound_get_tools_returns_empty_list(self) -> None:
-        """Before bind() is called, ``get_tools()`` returns ``[]`` rather
-        than raising. This lets ADK 2.0's eager ``Runner.__init__`` walk
-        the toolset without crashing — actual tool list is supplied by
-        the run-time ``bind()`` call in ``_update_agent_tools_recursive``.
-        """
+    def test_placeholder_get_tools_raises(self) -> None:
+        """The placeholder is replaced per-run before use; calling
+        ``get_tools()`` on it directly means the substitution didn't happen
+        (misconfiguration), so it raises."""
         toolset = AGUIToolset()
-        result = asyncio.run(toolset.get_tools())
-        assert result == []
-
-    def test_unbound_get_tools_raises_when_explicit(self) -> None:
-        """Legacy 1.x ``NotImplementedError`` behavior is preserved when
-        a test explicitly opts in via ``_unbound_raises = True``."""
-        toolset = AGUIToolset()
-        toolset._unbound_raises = True
         with pytest.raises(NotImplementedError, match="placeholder"):
             asyncio.run(toolset.get_tools())
 
-    def test_bind_then_get_tools_forwards_to_delegate(self) -> None:
-        """Once a delegate is bound, ``get_tools()`` forwards to it."""
-        toolset = AGUIToolset(tool_filter=['x'])
-        delegate = MagicMock(spec=ClientProxyToolset)
-
-        async def mock_get_tools(readonly_context=None):
-            return ['mock_tool_1', 'mock_tool_2']
-
-        delegate.get_tools = mock_get_tools
-        toolset.bind(delegate)
-        result = asyncio.run(toolset.get_tools())
-        assert result == ['mock_tool_1', 'mock_tool_2']
-
-    def test_unbind_resets_to_empty(self) -> None:
-        """``unbind()`` detaches the delegate so a subsequent ``get_tools()``
-        falls back to the unbound branch."""
-        toolset = AGUIToolset()
-        delegate = MagicMock(spec=ClientProxyToolset)
-
-        async def mock_get_tools(readonly_context=None):
-            return ['delegate_tool']
-
-        delegate.get_tools = mock_get_tools
-        toolset.bind(delegate)
-        toolset.unbind()
-        result = asyncio.run(toolset.get_tools())
-        assert result == []
-        assert toolset._delegate is None
-
-    def test_rebind_overwrites_previous_delegate(self) -> None:
-        """Successive ``bind()`` calls replace the binding — supports
-        multi-turn runs where each turn supplies a different
-        ``input.tools`` and therefore a different ``ClientProxyToolset``.
-        """
-        toolset = AGUIToolset()
-
-        delegate_a = MagicMock(spec=ClientProxyToolset)
-        delegate_b = MagicMock(spec=ClientProxyToolset)
-
-        async def get_a(readonly_context=None):
-            return ['a']
-
-        async def get_b(readonly_context=None):
-            return ['b']
-
-        delegate_a.get_tools = get_a
-        delegate_b.get_tools = get_b
-
-        toolset.bind(delegate_a)
-        assert asyncio.run(toolset.get_tools()) == ['a']
-
-        toolset.bind(delegate_b)
-        assert asyncio.run(toolset.get_tools()) == ['b']
-
     @pytest.mark.asyncio
-    async def test_object_identity_preserved_across_run(self) -> None:
-        """The original ``AGUIToolset`` instance is reused across the
-        run — critical for ADK 2.0 because ``Runner.__init__`` caches a
-        reference to it during eager ``get_tools()`` resolution.
-
-        Test: declare an ``AGUIToolset`` on an agent, capture its id,
-        run the agent, and verify the same id is in ``agent.tools`` after
-        ``_update_agent_tools_recursive`` has bound a delegate.
-        """
+    async def test_placeholder_replaced_per_run(self) -> None:
+        """``ADKAgent`` replaces the ``AGUIToolset`` placeholder with a per-run
+        ``ClientProxyToolset`` in the per-run agent copy, leaving the
+        construction-time placeholder untouched — so concurrent runs stay
+        isolated (no shared mutable delegate)."""
         agui = AGUIToolset(tool_filter=['probe_tool'])
-        original_id = id(agui)
-        root_agent = Agent(
-            name="probe_agent",
-            instruction="probe",
-            tools=[agui],
-        )
+        root_agent = Agent(name="probe_agent", instruction="probe", tools=[agui])
 
-        with patch.object(ADKAgent, "_run_adk_in_background") as bg_mock:
+        captured: dict = {}
 
-            async def empty_gen() -> AsyncGenerator[BaseEvent, None]:
-                if False:
-                    yield
-                return
+        async def _noop(self, **kwargs):
+            captured.update(kwargs)
+            return None
 
+        with patch.object(ADKAgent, "_run_adk_in_background", _noop):
             adk_agent = ADKAgent(
                 adk_agent=root_agent,
                 app_name="probe_app",
@@ -171,26 +97,94 @@ class TestAGUIToolsetDelegation:
             run_input = RunAgentInput(
                 thread_id="probe_thread",
                 run_id="probe_run",
-                messages=[
-                    UserMessage(id="m1", role="user", content="hi")
-                ],
+                messages=[UserMessage(id="m1", role="user", content="hi")],
                 context=[],
                 state={},
-                tools=[],
+                tools=[Tool(
+                    name="probe_tool",
+                    description="probe tool",
+                    parameters={"type": "object", "properties": {}},
+                )],
                 forwarded_props={},
             )
-            async for ev in adk_agent.run(run_input):
-                if not isinstance(ev, RunStartedEvent):
-                    break
+            exec_state = await adk_agent._start_background_execution(run_input)
+            await asyncio.gather(exec_state.task, return_exceptions=True)
 
-            captured_agent = bg_mock.call_args.kwargs['adk_agent']
-            captured_toolset = captured_agent.tools[0]
-            # Object identity preserved → ADK 2.0 Runner cache stays valid
-            assert id(captured_toolset) == original_id
-            assert isinstance(captured_toolset, AGUIToolset)
-            # And a delegate is bound
-            assert captured_toolset._delegate is not None
-            assert isinstance(captured_toolset._delegate, ClientProxyToolset)
+        per_run_agent = captured["adk_agent"]
+        replaced = per_run_agent.tools[0]
+        # Placeholder was replaced with a per-run ClientProxyToolset carrying
+        # this run's filter.
+        assert isinstance(replaced, ClientProxyToolset)
+        assert replaced.tool_filter == ['probe_tool']
+        # Construction-time placeholder untouched (not mutated, not shared in).
+        assert root_agent.tools[0] is agui
+        assert isinstance(root_agent.tools[0], AGUIToolset)
+
+    @pytest.mark.asyncio
+    async def test_swapped_in_toolset_resolves_nonempty_via_get_tools_with_prefix(self) -> None:
+        """#1389 regression guard (replaces the removed object-identity test).
+
+        The actual #1389 failure was an *empty* tool list: in ADK 2.x a toolset
+        that is not a well-formed ``BaseToolset`` (no ``super().__init__()`` ->
+        missing ``_use_invocation_cache``) is silently dropped to ``[]`` by
+        ``llm_agent._convert_tool_union_to_tools``'s ``try/except``. Assert the
+        per-run ``ClientProxyToolset`` the middleware swaps in resolves
+        *non-empty* tools through ``get_tools_with_prefix`` (the ADK path that
+        reads ``_use_invocation_cache``), and that the agent's
+        ``canonical_tools`` still exposes the frontend tool -- so we cannot
+        silently regress to the empty-tool-list symptom.
+        """
+        agui = AGUIToolset()  # no filter -> every frontend tool passes through
+        root_agent = Agent(
+            name="probe_agent",
+            model="gemini-2.5-flash",
+            instruction="probe",
+            tools=[agui],
+        )
+
+        captured: dict = {}
+
+        async def _noop(self, **kwargs):
+            captured.update(kwargs)
+            return None
+
+        with patch.object(ADKAgent, "_run_adk_in_background", _noop):
+            adk_agent = ADKAgent(
+                adk_agent=root_agent,
+                app_name="probe_app",
+                user_id="probe_user",
+                use_in_memory_services=True,
+            )
+            run_input = RunAgentInput(
+                thread_id="probe_thread",
+                run_id="probe_run",
+                messages=[UserMessage(id="m1", role="user", content="hi")],
+                context=[],
+                state={},
+                tools=[Tool(
+                    name="frontend_tool",
+                    description="a frontend tool",
+                    parameters={"type": "object", "properties": {}},
+                )],
+                forwarded_props={},
+            )
+            exec_state = await adk_agent._start_background_execution(run_input)
+            await asyncio.gather(exec_state.task, return_exceptions=True)
+
+        swapped_in = captured["adk_agent"].tools[0]
+        assert isinstance(swapped_in, ClientProxyToolset)
+
+        # The #1389 failure mode was *empty* tools through this exact path
+        # (get_tools_with_prefix reads _use_invocation_cache on ADK 2.x). A
+        # well-formed toolset resolves the frontend tool rather than [].
+        resolved = await swapped_in.get_tools_with_prefix()
+        assert resolved, "swapped-in ClientProxyToolset resolved no tools (#1389 regression)"
+        assert [t.name for t in resolved] == ["frontend_tool"]
+
+        # End-to-end: the agent's real resolution entrypoint (which would drop a
+        # malformed toolset to [] via try/except) still exposes the tool.
+        canonical = await captured["adk_agent"].canonical_tools()
+        assert "frontend_tool" in [t.name for t in canonical]
 
 
 # ---------------------------------------------------------------------------

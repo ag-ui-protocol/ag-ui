@@ -469,6 +469,110 @@ describe("header forwarding via onRequest hook", () => {
   });
 });
 
+// ─── Part C: forwarded-headers payload injection ─────────────────────────────
+//
+// CopilotKit Runtime writes per-request x-* headers (correlation IDs, x-aimock-context,
+// etc.) onto `agent.headers`. The Python LangGraph middleware reads them out of
+// payload.config.configurable.copilotkit_forwarded_headers (see
+// _extract_forwarded_headers_from_config in copilotkit_lg_middleware.py). The TS
+// adapter must serialize agent.headers into that exact path or downstream
+// extraction returns {}.
+//
+
+describe("forwarded headers injected into payload.config.configurable", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("test 15: x-* headers from agent.headers land in config.configurable.copilotkit_forwarded_headers", async () => {
+    const { agent, capturedPayload } = buildMockedAgent();
+    agent.headers = {
+      "x-aimock-context": "langgraph-typescript",
+      "x-correlation-id": "abc-123",
+      "x-request-id": "req-xyz",
+    };
+
+    await runPrepareStream(agent);
+
+    const payload = capturedPayload.value!;
+    expect(payload.config).toBeDefined();
+    const configurable = (payload.config as any)?.configurable;
+    expect(configurable).toBeDefined();
+    expect(configurable.copilotkit_forwarded_headers).toEqual({
+      "x-aimock-context": "langgraph-typescript",
+      "x-correlation-id": "abc-123",
+      "x-request-id": "req-xyz",
+    });
+  });
+
+  it("test 16: non-x-* headers are filtered out of copilotkit_forwarded_headers", async () => {
+    const { agent, capturedPayload } = buildMockedAgent();
+    agent.headers = {
+      "x-aimock-context": "langgraph-typescript",
+      authorization: "Bearer secret",
+      "content-type": "application/json",
+    };
+
+    await runPrepareStream(agent);
+
+    const payload = capturedPayload.value!;
+    const forwarded = (payload.config as any)?.configurable
+      ?.copilotkit_forwarded_headers;
+    expect(forwarded).toEqual({
+      "x-aimock-context": "langgraph-typescript",
+    });
+    expect(forwarded).not.toHaveProperty("authorization");
+    expect(forwarded).not.toHaveProperty("content-type");
+  });
+
+  it("test 17: empty agent.headers does not add copilotkit_forwarded_headers", async () => {
+    const { agent, capturedPayload } = buildMockedAgent();
+    agent.headers = {};
+
+    await runPrepareStream(agent);
+
+    const payload = capturedPayload.value!;
+    const configurable = (payload.config as any)?.configurable;
+    if (configurable) {
+      expect(configurable).not.toHaveProperty("copilotkit_forwarded_headers");
+    }
+  });
+
+  it("test 18: forwarded headers survive context-wins path (configurable stripped)", async () => {
+    // Scenario: context_schema present and assistantConfig populates a context
+    // key. The partition strips configurable in favor of context. The forwarded
+    // headers MUST still ride along — they are infrastructure metadata, not
+    // graph-context, and the Python middleware reads them from config.configurable.
+    const { agent, capturedPayload } = buildMockedAgent(
+      {
+        assistantConfig: {
+          configurable: { my_app_key: "val" },
+        },
+      },
+      { config: ["my_app_key"], context: ["my_app_key"] },
+    );
+    agent.headers = {
+      "x-aimock-context": "langgraph-typescript",
+    };
+
+    // Silence the data-loss warning that fires when context wins
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await runPrepareStream(agent);
+
+    const payload = capturedPayload.value!;
+    expect(payload.context).toEqual({ my_app_key: "val" });
+    // configurable should still exist solely to carry forwarded headers
+    const configurable = (payload.config as any)?.configurable;
+    expect(configurable).toBeDefined();
+    expect(configurable.copilotkit_forwarded_headers).toEqual({
+      "x-aimock-context": "langgraph-typescript",
+    });
+    // The graph-context key must NOT leak back into configurable
+    expect(configurable).not.toHaveProperty("my_app_key");
+  });
+});
+
 // ─── Integration tests (skipped without LANGGRAPH_API_URL) ───────────────────
 
 describe("integration tests (require LANGGRAPH_API_URL)", () => {

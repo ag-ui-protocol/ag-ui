@@ -62,6 +62,22 @@ export interface A2UIMiddlewareConfig {
    */
   a2uiToolNames?: string[];
 
+  /**
+   * Catalog id used when the middleware creates a surface from a STREAMED
+   * render tool call.
+   *
+   * The streamed `render_a2ui` args no longer carry a catalogId — catalog
+   * choice belongs to the host/factory, not the subagent (the subagent must
+   * not be able to invent a catalog the frontend hasn't registered). Since
+   * the streaming `createSurface` op is emitted before the factory's final
+   * envelope is available, the middleware needs the catalog id up front.
+   *
+   * Set this to the same catalog id the factory's `defaultCatalogId` uses.
+   * When omitted, the middleware falls back to any catalogId present in the
+   * streamed args, then to the v0.9 basic catalog.
+   */
+  defaultCatalogId?: string;
+
 }
 
 /**

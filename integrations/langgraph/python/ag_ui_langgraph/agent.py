@@ -186,6 +186,7 @@ class LangGraphAgent:
             "reasoning_process": None,
             "node_name": None,
             "has_function_streaming": False,
+            "streamed_tool_call_ids": set(),
             "model_made_tool_call": False,
             "state_reliable": True,
         }
@@ -997,6 +998,37 @@ class LangGraphAgent:
             is_tool_call_args_event = has_current_stream and current_stream.get("tool_call_id") and tool_call_data and tool_call_data.get("args")
             is_tool_call_end_event = has_current_stream and current_stream.get("tool_call_id") and not tool_call_data
 
+            # Boundary transition: a new tool_call begins while another is
+            # mid-stream. Happens when an LLM streams *parallel* tool_calls
+            # sequentially — tool A's chunks arrive, then tool B's chunks
+            # arrive without an intervening empty-chunk terminator. Without
+            # this detection, B's args event (below) would route deltas to
+            # A's tool_call_id, producing concatenated JSON like
+            # ``{"x":1}{"x":2}`` in the persisted assistant history and
+            # leaving B with no Start/End at all.
+            if (
+                has_current_stream
+                and current_stream.get("tool_call_id")
+                and tool_call_data
+                and tool_call_data.get("name")
+                and tool_call_data.get("id")
+                and tool_call_data["id"] != current_stream["tool_call_id"]
+            ):
+                yield self._dispatch_event(
+                    ToolCallEndEvent(
+                        type=EventType.TOOL_CALL_END,
+                        tool_call_id=current_stream["tool_call_id"],
+                        raw_event=event,
+                    )
+                )
+                self.messages_in_process[self.active_run["id"]] = None
+                current_stream = None
+                has_current_stream = False
+                # Re-evaluate the booleans against the now-closed stream.
+                is_tool_call_start_event = bool(tool_call_data.get("name"))
+                is_tool_call_args_event = False
+                is_tool_call_end_event = False
+
             if is_tool_call_start_event or is_tool_call_end_event or is_tool_call_args_event:
                 self.active_run["has_function_streaming"] = True
 
@@ -1093,20 +1125,28 @@ class LangGraphAgent:
                 self.messages_in_process[self.active_run["id"]] = None
                 return
 
-            if is_tool_call_start_event and should_emit_tool_calls:
-                yield self._dispatch_event(
-                    ToolCallStartEvent(
-                        type=EventType.TOOL_CALL_START,
-                        tool_call_id=tool_call_data["id"],
-                        tool_call_name=tool_call_data["name"],
-                        parent_message_id=chunk_id,
-                        raw_event=event,
+            if is_tool_call_start_event:
+                # Record this tool_call_id as "already streamed" regardless of
+                # ``should_emit_tool_calls``. OnToolEnd uses this set to decide
+                # whether to re-emit Start/Args/End for the same id. Adding the
+                # id even when emission is suppressed preserves the prior
+                # behaviour where ``has_function_streaming=True`` blocked the
+                # OnToolEnd re-emit for opted-out tool calls.
+                self.active_run["streamed_tool_call_ids"].add(tool_call_data["id"])
+                if should_emit_tool_calls:
+                    yield self._dispatch_event(
+                        ToolCallStartEvent(
+                            type=EventType.TOOL_CALL_START,
+                            tool_call_id=tool_call_data["id"],
+                            tool_call_name=tool_call_data["name"],
+                            parent_message_id=chunk_id,
+                            raw_event=event,
+                        )
                     )
-                )
-                self.set_message_in_progress(
-                    self.active_run["id"],
-                    MessageInProgress(id=chunk_id, tool_call_id=tool_call_data["id"], tool_call_name=tool_call_data["name"])
-                )
+                    self.set_message_in_progress(
+                        self.active_run["id"],
+                        MessageInProgress(id=chunk_id, tool_call_id=tool_call_data["id"], tool_call_name=tool_call_data["name"])
+                    )
                 return
 
             if is_tool_call_args_event and should_emit_tool_calls:
@@ -1253,9 +1293,15 @@ class LangGraphAgent:
                             type(m).__name__,
                         )
 
-                # Process each tool message
+                # Process each tool message. Re-emit Start/Args/End only for
+                # tool_call_ids that did NOT already stream them through
+                # OnChatModelStream — checked per-id so nested tool execution
+                # (deepagents ``task`` -> subagent) doesn't cause the outer
+                # tool's Args to be emitted twice when the inner tool's
+                # OnToolEnd fires first.
                 for tool_msg in tool_messages:
-                    if not self.active_run["has_function_streaming"]:
+                    already_streamed = tool_msg.tool_call_id in self.active_run["streamed_tool_call_ids"]
+                    if not already_streamed:
                         yield self._dispatch_event(
                             ToolCallStartEvent(
                                 type=EventType.TOOL_CALL_START,
@@ -1280,6 +1326,7 @@ class LangGraphAgent:
                                 raw_event=event
                             )
                         )
+                    self.active_run["streamed_tool_call_ids"].discard(tool_msg.tool_call_id)
 
                     yield self._dispatch_event(
                         ToolCallResultEvent(
@@ -1306,7 +1353,8 @@ class LangGraphAgent:
                 )
                 return
 
-            if not self.active_run["has_function_streaming"]:
+            already_streamed = tool_call_output.tool_call_id in self.active_run["streamed_tool_call_ids"]
+            if not already_streamed:
                 yield self._dispatch_event(
                     ToolCallStartEvent(
                         type=EventType.TOOL_CALL_START,
@@ -1331,6 +1379,7 @@ class LangGraphAgent:
                         raw_event=event
                     )
                 )
+            self.active_run["streamed_tool_call_ids"].discard(tool_call_output.tool_call_id)
 
             yield self._dispatch_event(
                 ToolCallResultEvent(

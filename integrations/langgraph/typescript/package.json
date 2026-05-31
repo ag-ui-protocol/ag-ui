@@ -1,6 +1,6 @@
 {
   "name": "@ag-ui/langgraph",
-  "version": "0.0.33",
+  "version": "0.0.35",
   "repository": {
     "type": "git",
     "url": "https://github.com/ag-ui-protocol/ag-ui.git"
@@ -30,6 +30,7 @@
     "unlink:global": "pnpm unlink --global"
   },
   "dependencies": {
+    "@ag-ui/a2ui-toolkit": "workspace:*",
     "@langchain/core": "^1.1.40",
     "@langchain/langgraph-sdk": "^1.8.8",
     "langchain": ">=1.2.0",

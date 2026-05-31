@@ -581,7 +581,7 @@ export class LangGraphAgent extends AbstractAgent {
 
     // Strip configurable cleanly using destructuring to avoid leaving an
     // explicit `configurable: undefined` key in the serialized payload.
-    const configForPayload = (() => {
+    const configForPayloadBase = (() => {
       if (!finalConfig) return undefined;
       if (hasConfigurable && !hasContext) return finalConfig; // old-style: configurable only
       const { configurable: _stripped, ...configSansConfigurable } =
@@ -590,6 +590,32 @@ export class LangGraphAgent extends AbstractAgent {
         ? configSansConfigurable
         : undefined;
     })();
+
+    // Forward x-* request headers into payload.config.configurable so the
+    // Python middleware can extract them via _extract_forwarded_headers_from_config.
+    // This is infrastructure metadata (correlation IDs, x-aimock-context, etc.),
+    // NOT graph context, so it must ride in configurable regardless of whether
+    // context_schema wins. Only x-* headers are forwarded; auth/content-type
+    // headers stay on the HTTP wire via the onRequest hook.
+    const forwardedHeaders = Object.fromEntries(
+      Object.entries(this.headers ?? {}).filter(([k]) =>
+        k.toLowerCase().startsWith("x-"),
+      ),
+    );
+    const configForPayload =
+      Object.keys(forwardedHeaders).length > 0
+        ? {
+            ...(configForPayloadBase ?? {}),
+            configurable: {
+              ...((
+                configForPayloadBase as {
+                  configurable?: Record<string, unknown>;
+                }
+              )?.configurable ?? {}),
+              copilotkit_forwarded_headers: forwardedHeaders,
+            },
+          }
+        : configForPayloadBase;
 
     const payload: Record<string, unknown> = {
       ...restProps,
