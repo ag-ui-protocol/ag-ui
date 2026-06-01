@@ -38,6 +38,11 @@ async function getHandler(integrationId: string) {
     runner: new InMemoryAgentRunner(),
     a2ui: {
       agents: ["a2ui_fixed_schema", "a2ui_dynamic_schema", "a2ui_advanced"],
+      // Catalog used when creating a surface from a STREAMED render_a2ui call.
+      // Only the dynamic (subagent) agents stream; fixed_schema uses direct
+      // tools that carry their own catalog in the result envelope, so a single
+      // catalog id here is correct for every streaming agent.
+      defaultCatalogId: "https://a2ui.org/demos/dojo/dynamic_catalog.json",
     },
   });
 

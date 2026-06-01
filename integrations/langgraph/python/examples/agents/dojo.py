@@ -83,7 +83,7 @@ agents = {
         description="Fixed-schema A2UI flight search (no streaming).",
         graph=a2ui_fixed_schema_graph,
     ),
-"a2ui_dynamic_schema": LangGraphAgent(
+    "a2ui_dynamic_schema": LangGraphAgent(
         name="a2ui_dynamic_schema",
         description="Dynamic A2UI with LLM-generated UI schema.",
         graph=a2ui_dynamic_schema_graph,
@@ -154,4 +154,4 @@ add_langgraph_fastapi_endpoint(
 def main():
     """Run the uvicorn server."""
     port = int(os.getenv("PORT", "8000"))
-    uvicorn.run("agents.dojo:app", host="0.0.0.0", port=port, reload=True)
+    uvicorn.run("agents.dojo:app", host="0.0.0.0", port=port, reload=True, reload_dirs=[".", "../ag_ui_langgraph"])

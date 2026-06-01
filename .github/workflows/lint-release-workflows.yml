@@ -1,10 +1,11 @@
 name: Lint Release Workflows
 
-# Runs actionlint + shellcheck against the release / create-pr, release / publish,
-# and release / pre pipelines and the scripts they call. Keeps these critical,
-# retry-sensitive files from silently regressing on shell or action-syntax bugs.
+# Runs actionlint + shellcheck against the release / create-pr and
+# release / publish pipelines and the scripts they call. Keeps these
+# critical, retry-sensitive files from silently regressing on shell or
+# action-syntax bugs.
 #
-# Scope is intentionally narrow: only the three release workflows and
+# Scope is intentionally narrow: only the release workflows and
 # scripts/release/*. Expanding later is cheap; starting narrow avoids
 # drowning unrelated changes in pre-existing lint noise.
 
@@ -14,7 +15,6 @@ on:
     paths:
       - ".github/workflows/prepare-release.yml"
       - ".github/workflows/publish-release.yml"
-      - ".github/workflows/prerelease.yml"
       - ".github/workflows/lint-release-workflows.yml"
       - "scripts/release/**"
       - "nx.json"
@@ -22,7 +22,6 @@ on:
     paths:
       - ".github/workflows/prepare-release.yml"
       - ".github/workflows/publish-release.yml"
-      - ".github/workflows/prerelease.yml"
       - ".github/workflows/lint-release-workflows.yml"
       - "scripts/release/**"
       - "nx.json"
@@ -46,7 +45,6 @@ jobs:
           actionlint_flags: >-
             .github/workflows/prepare-release.yml
             .github/workflows/publish-release.yml
-            .github/workflows/prerelease.yml
             .github/workflows/lint-release-workflows.yml
 
   shellcheck:

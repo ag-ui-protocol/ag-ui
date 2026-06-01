@@ -21,7 +21,9 @@ import httpx
 from ag_ui.core import (
     RunAgentInput, UserMessage, AssistantMessage, ToolMessage,
     ReasoningMessage,
-    EventType, MessagesSnapshotEvent, ToolCall, FunctionCall
+    EventType, MessagesSnapshotEvent, ToolCall, FunctionCall,
+    ImageInputContent, AudioInputContent, VideoInputContent,
+    DocumentInputContent, InputContentUrlSource, TextInputContent,
 )
 
 from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint, adk_events_to_messages
@@ -51,11 +53,13 @@ def create_mock_adk_event(
     if text:
         part = MagicMock()
         part.text = text
+        part.file_data = None
         event.content.parts = [part]
     elif function_calls or function_responses:
         # For function calls/responses, create empty parts but content exists
         part = MagicMock()
         part.text = None
+        part.file_data = None
         event.content.parts = [part]
     else:
         event.content = None
@@ -93,6 +97,7 @@ def create_mock_adk_event_with_parts(
             part = MagicMock()
             part.text = p.get("text")
             part.thought = p.get("thought", False)
+            part.file_data = None
             mock_parts.append(part)
         event.content.parts = mock_parts
     else:
@@ -102,6 +107,40 @@ def create_mock_adk_event_with_parts(
     event.get_function_responses = MagicMock(return_value=function_responses or [])
 
     return event
+
+
+def create_mock_adk_event_with_file(
+    event_id: str = None,
+    author: str = "user",
+    text: str = "check this file",
+    file_uri: str = "https://storage.googleapis.com/bucket/file.png",
+    mime_type: str = "image/png",
+):
+    """Create a mock ADK user event with a text part and a file_data part."""
+    event = MagicMock()
+    event.id = event_id or str(uuid.uuid4())
+    event.author = author
+    event.partial = False
+
+    text_part = MagicMock()
+    text_part.text = text
+    text_part.file_data = None
+
+    file_part = MagicMock()
+    file_part.text = None
+    file_part.file_data = MagicMock()
+    file_part.file_data.file_uri = file_uri
+    file_part.file_data.mime_type = mime_type
+
+    event.content = MagicMock()
+    event.content.parts = [text_part, file_part]
+    event.get_function_calls = MagicMock(return_value=[])
+    event.get_function_responses = MagicMock(return_value=[])
+    return event
+
+
+# Keep old name as alias so any external callers still work
+create_mock_adk_event_with_image = create_mock_adk_event_with_file
 
 
 def create_mock_function_call(name: str, args: dict = None, fc_id: str = None):
@@ -148,6 +187,128 @@ class TestAdkEventsToMessages:
         assert messages[0].id == "user-1"
         assert messages[0].role == "user"
         assert messages[0].content == "Hello, how are you?"
+
+    def test_user_message_with_image_attachment(self):
+        """User event with text + image file_data → content list with text and image."""
+        event = create_mock_adk_event_with_file(
+            event_id="user-img-1",
+            text="describe this image",
+            file_uri="https://storage.googleapis.com/bucket/photo.png",
+            mime_type="image/png",
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 1
+        msg = messages[0]
+        assert isinstance(msg, UserMessage)
+        assert isinstance(msg.content, list)
+        assert len(msg.content) == 2
+
+        text_part = msg.content[0]
+        assert isinstance(text_part, TextInputContent)
+        assert text_part.text == "describe this image"
+
+        img_part = msg.content[1]
+        assert isinstance(img_part, ImageInputContent)
+        assert isinstance(img_part.source, InputContentUrlSource)
+        assert img_part.source.value == "https://storage.googleapis.com/bucket/photo.png"
+        assert img_part.source.mime_type == "image/png"
+
+    def test_user_message_with_audio_attachment(self):
+        """User event with text + audio file_data → AudioInputContent."""
+        event = create_mock_adk_event_with_file(
+            event_id="user-audio-1",
+            text="transcribe this",
+            file_uri="https://storage.googleapis.com/bucket/clip.mp3",
+            mime_type="audio/mpeg",
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 1
+        msg = messages[0]
+        assert isinstance(msg.content, list)
+        audio_part = msg.content[1]
+        assert isinstance(audio_part, AudioInputContent)
+        assert audio_part.source.value == "https://storage.googleapis.com/bucket/clip.mp3"
+        assert audio_part.source.mime_type == "audio/mpeg"
+
+    def test_user_message_with_video_attachment(self):
+        """User event with text + video file_data → VideoInputContent."""
+        event = create_mock_adk_event_with_file(
+            event_id="user-video-1",
+            text="summarize this video",
+            file_uri="https://storage.googleapis.com/bucket/recording.mp4",
+            mime_type="video/mp4",
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 1
+        msg = messages[0]
+        assert isinstance(msg.content, list)
+        video_part = msg.content[1]
+        assert isinstance(video_part, VideoInputContent)
+        assert video_part.source.value == (
+            "https://storage.googleapis.com/bucket/recording.mp4"
+        )
+        assert video_part.source.mime_type == "video/mp4"
+
+    def test_user_message_with_document_attachment(self):
+        """User event with text + document file_data → DocumentInputContent."""
+        event = create_mock_adk_event_with_file(
+            event_id="user-doc-1",
+            text="summarize this document",
+            file_uri="https://storage.googleapis.com/bucket/report.docx",
+            mime_type=(
+                "application/vnd.openxmlformats-officedocument"
+                ".wordprocessingml.document"
+            ),
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 1
+        msg = messages[0]
+        assert isinstance(msg.content, list)
+        doc_part = msg.content[1]
+        assert isinstance(doc_part, DocumentInputContent)
+        assert doc_part.source.value == (
+            "https://storage.googleapis.com/bucket/report.docx"
+        )
+
+    def test_user_message_file_data_without_uri_is_skipped(self):
+        """file_data parts with no file_uri are filtered out; content stays a string."""
+        event = create_mock_adk_event_with_file(
+            event_id="user-no-uri",
+            text="text only please",
+            file_uri=None,
+            mime_type="image/png",
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 1
+        msg = messages[0]
+        assert isinstance(msg, UserMessage)
+        # No valid media parts → content collapses back to a plain string
+        assert msg.content == "text only please"
+
+    def test_user_message_without_image_stays_string(self):
+        """User event with text only → content remains a plain string (backward compat)."""
+        event = create_mock_adk_event(
+            event_id="user-text-1",
+            author="user",
+            text="just text, no image",
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 1
+        msg = messages[0]
+        assert isinstance(msg, UserMessage)
+        assert msg.content == "just text, no image"
 
     def test_assistant_message_conversion(self):
         """Should convert model events to AssistantMessage."""

@@ -10,7 +10,7 @@ describe("convertAGUIMessagesToMastra", () => {
 
       const result = convertAGUIMessagesToMastra(messages);
 
-      expect(result).toEqual([{ role: "user", content: "Hello world" }]);
+      expect(result).toEqual([{ id: "1", role: "user", content: "Hello world" }]);
     });
 
     it("converts array content with text parts", () => {
@@ -29,6 +29,7 @@ describe("convertAGUIMessagesToMastra", () => {
 
       expect(result).toEqual([
         {
+          id: "1",
           role: "user",
           content: [
             { type: "text", text: "First part" },
@@ -53,6 +54,7 @@ describe("convertAGUIMessagesToMastra", () => {
 
       expect(result).toEqual([
         {
+          id: "1",
           role: "user",
           content: [
             { type: "text", text: "Single part" },
@@ -74,6 +76,7 @@ describe("convertAGUIMessagesToMastra", () => {
 
       expect(result).toEqual([
         {
+          id: "1",
           role: "user",
           content: [],
         },
@@ -87,7 +90,7 @@ describe("convertAGUIMessagesToMastra", () => {
 
       const result = convertAGUIMessagesToMastra(messages);
 
-      expect(result).toEqual([{ role: "user", content: "" }]);
+      expect(result).toEqual([{ id: "1", role: "user", content: "" }]);
     });
 
     it("preserves non-text parts as structured content", () => {
@@ -109,6 +112,7 @@ describe("convertAGUIMessagesToMastra", () => {
 
       expect(result).toEqual([
         {
+          id: "1",
           role: "user",
           content: [
             { type: "text", text: "Keep this" },
@@ -135,6 +139,7 @@ describe("convertAGUIMessagesToMastra", () => {
 
       expect(result).toEqual([
         {
+          id: "1",
           role: "user",
           content: [
             { type: "text", text: "  hello  " },
@@ -168,6 +173,7 @@ describe("convertAGUIMessagesToMastra", () => {
 
       expect(result).toEqual([
         {
+          id: "1",
           role: "user",
           content: [
             { type: "image", image: "https://example.com/photo.jpg" },
@@ -198,6 +204,7 @@ describe("convertAGUIMessagesToMastra", () => {
 
       expect(result).toEqual([
         {
+          id: "1",
           role: "user",
           content: [
             { type: "image", image: "data:image/png;base64,abc123" },
@@ -228,6 +235,7 @@ describe("convertAGUIMessagesToMastra", () => {
 
       expect(result).toEqual([
         {
+          id: "1",
           role: "user",
           content: [
             {
@@ -262,6 +270,7 @@ describe("convertAGUIMessagesToMastra", () => {
 
       expect(result).toEqual([
         {
+          id: "1",
           role: "user",
           content: [
             {
@@ -282,7 +291,7 @@ describe("convertAGUIMessagesToMastra", () => {
       const result = convertAGUIMessagesToMastra(messages);
 
       expect(result).toEqual([
-        { role: "user", content: "Just a string" },
+        { id: "1", role: "user", content: "Just a string" },
       ]);
     });
 
@@ -333,6 +342,7 @@ describe("convertAGUIMessagesToMastra", () => {
 
       expect(result).toEqual([
         {
+          id: "1",
           role: "user",
           content: [
             { type: "text", text: "Look at this image:" },
@@ -354,6 +364,7 @@ describe("convertAGUIMessagesToMastra", () => {
 
       expect(result).toEqual([
         {
+          id: "1",
           role: "assistant",
           content: [{ type: "text", text: "I can help with that" }],
         },
@@ -383,6 +394,7 @@ describe("convertAGUIMessagesToMastra", () => {
 
       expect(result).toEqual([
         {
+          id: "1",
           role: "assistant",
           content: [
             {
@@ -419,6 +431,7 @@ describe("convertAGUIMessagesToMastra", () => {
 
       expect(result).toEqual([
         {
+          id: "1",
           role: "assistant",
           content: [
             { type: "text", text: "Let me check" },
@@ -495,6 +508,7 @@ describe("convertAGUIMessagesToMastra", () => {
       const result = convertAGUIMessagesToMastra(messages);
 
       expect(result[1]).toEqual({
+        id: "2",
         role: "tool",
         content: [
           {
@@ -520,6 +534,7 @@ describe("convertAGUIMessagesToMastra", () => {
       const result = convertAGUIMessagesToMastra(messages);
 
       expect(result[0]).toEqual({
+        id: "1",
         role: "tool",
         content: [
           {
@@ -576,6 +591,57 @@ describe("convertAGUIMessagesToMastra", () => {
 
     it("returns empty array for empty messages", () => {
       expect(convertAGUIMessagesToMastra([])).toEqual([]);
+    });
+
+    it("preserves message id for all roles (issue #1659)", () => {
+      const messages: Message[] = [
+        { id: "user-id", role: "user", content: "hello" },
+        {
+          id: "assistant-id",
+          role: "assistant",
+          content: "hi",
+          toolCalls: [],
+        },
+        {
+          id: "tool-id",
+          role: "tool",
+          content: "result",
+          toolCallId: "tc-1",
+        },
+      ];
+
+      const result = convertAGUIMessagesToMastra(messages);
+
+      expect((result[0] as any).id).toBe("user-id");
+      expect((result[1] as any).id).toBe("assistant-id");
+      expect((result[2] as any).id).toBe("tool-id");
+    });
+
+    it("omits id key entirely when message.id is undefined for all roles (issue #1659)", () => {
+      // Mastra's inputToMastraDBMessage uses `"id" in message` at runtime.
+      // For `{ id: undefined, ... }`, that check returns true, defeating the
+      // intended fix. The id key must be absent, not present-with-undefined.
+      const messages: Message[] = [
+        { id: undefined as any, role: "user", content: "hello" },
+        {
+          id: undefined as any,
+          role: "assistant",
+          content: "hi",
+          toolCalls: [],
+        },
+        {
+          id: undefined as any,
+          role: "tool",
+          content: "result",
+          toolCallId: "tc-1",
+        },
+      ];
+
+      const result = convertAGUIMessagesToMastra(messages);
+
+      expect("id" in result[0]).toBe(false);
+      expect("id" in result[1]).toBe(false);
+      expect("id" in result[2]).toBe(false);
     });
   });
 });

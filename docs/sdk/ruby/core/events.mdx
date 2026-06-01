@@ -13,7 +13,7 @@ and the frontend. This section documents the event types and their properties.
 
 `AgUiProtocol::Core::Events::EventType`
 
-The `EventType` module defines all possible event types in the system
+The `EventType` module defines all possible event types in the system.
 
 ```ruby
 AgUiProtocol::Core::Events::EventType::ACTIVITY_DELTA
@@ -21,6 +21,13 @@ AgUiProtocol::Core::Events::EventType::ACTIVITY_SNAPSHOT
 AgUiProtocol::Core::Events::EventType::CUSTOM
 AgUiProtocol::Core::Events::EventType::MESSAGES_SNAPSHOT
 AgUiProtocol::Core::Events::EventType::RAW
+AgUiProtocol::Core::Events::EventType::REASONING_ENCRYPTED_VALUE
+AgUiProtocol::Core::Events::EventType::REASONING_END
+AgUiProtocol::Core::Events::EventType::REASONING_MESSAGE_CHUNK
+AgUiProtocol::Core::Events::EventType::REASONING_MESSAGE_CONTENT
+AgUiProtocol::Core::Events::EventType::REASONING_MESSAGE_END
+AgUiProtocol::Core::Events::EventType::REASONING_MESSAGE_START
+AgUiProtocol::Core::Events::EventType::REASONING_START
 AgUiProtocol::Core::Events::EventType::RUN_ERROR
 AgUiProtocol::Core::Events::EventType::RUN_FINISHED
 AgUiProtocol::Core::Events::EventType::RUN_STARTED
@@ -48,8 +55,12 @@ AgUiProtocol::Core::Events::EventType::TOOL_CALL_START
 
 `AgUiProtocol::Core::Events::BaseEvent`
 
-All events inherit from the `BaseEvent` class, which provides common
-properties shared across all event types. ```ruby
+All event classes inherit from `BaseEvent`, which provides common properties
+shared across all event types. Value types in this module
+(RunFinishedSuccessOutcome, RunFinishedInterruptOutcome) inherit directly from
+`Model` — they are payload types referenced by events, not events themselves.
+
+```ruby
 
 event = AgUiProtocol::Core::Events::BaseEvent.new(
     type: AgUiProtocol::Core::Events::EventType::RAW,
@@ -60,11 +71,11 @@ event = AgUiProtocol::Core::Events::BaseEvent.new(
 
 ```
 
-| Property    | Type                | Description                                                         |
-| ----------- | ------------------- | ------------------------------------------------------------------- |
-| `type`      | `String`            | The type of event                                                   |
-| `timestamp` | `Time` (optional)   | Timestamp when the event was created , Default: `nil`.              |
-| `raw_event` | `Object` (optional) | Original event data if this event was transformed , Default: `nil`. |
+| Property    | Type                | Description                                                        |
+| ----------- | ------------------- | ------------------------------------------------------------------ |
+| `type`      | `String`            | The type of event                                                  |
+| `timestamp` | `Time` (optional)   | Timestamp when the event was created. Default: `nil`.              |
+| `raw_event` | `Object` (optional) | Original event data if this event was transformed. Default: `nil`. |
 
 ## Lifecycle Events
 
@@ -83,20 +94,21 @@ occurred", code: "RUN_ERROR")
 
 ```
 
-**@category** [] Lifecycle Events
-
-| Property    | Type                | Description                                                         |
-| ----------- | ------------------- | ------------------------------------------------------------------- |
-| `message`   | `String`            | Error message                                                       |
-| `code`      | `String` (optional) | Error code , Default: `nil`.                                        |
-| `timestamp` | `Time` (optional)   | Timestamp when the event was created , Default: `nil`.              |
-| `raw_event` | `Object` (optional) | Original event data if this event was transformed , Default: `nil`. |
+| Property    | Type                | Description                                                        |
+| ----------- | ------------------- | ------------------------------------------------------------------ |
+| `message`   | `String`            | Error message                                                      |
+| `code`      | `String` (optional) | Error code. Default: `nil`.                                        |
+| `timestamp` | `Time` (optional)   | Timestamp when the event was created. Default: `nil`.              |
+| `raw_event` | `Object` (optional) | Original event data if this event was transformed. Default: `nil`. |
 
 ### RunFinishedEvent
 
 `AgUiProtocol::Core::Events::RunFinishedEvent`
 
-Signals the successful completion of an agent run.
+Signals the completion of an agent run. The `outcome` field discriminates
+between success and interrupt: provide either a `RunFinishedSuccessOutcome` or
+`RunFinishedInterruptOutcome` (or use the legacy `result` field; the two are
+mutually exclusive).
 
 ```ruby
 
@@ -105,15 +117,14 @@ run_id: "r1", result: { "a" => 1 })
 
 ```
 
-**@category** [] Lifecycle Events
-
-| Property    | Type                | Description                                                         |
-| ----------- | ------------------- | ------------------------------------------------------------------- |
-| `thread_id` | `String`            | ID of the conversation thread                                       |
-| `run_id`    | `String`            | ID of the run                                                       |
-| `result`    | `Object` (optional) | Result data from the agent run , Default: `nil`.                    |
-| `timestamp` | `Time` (optional)   | Timestamp when the event was created , Default: `nil`.              |
-| `raw_event` | `Object` (optional) | Original event data if this event was transformed , Default: `nil`. |
+| Property    | Type                                                                | Description                                                                        |
+| ----------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `thread_id` | `String`                                                            | ID of the conversation thread                                                      |
+| `run_id`    | `String`                                                            | ID of the run                                                                      |
+| `result`    | `Object` (optional)                                                 | Result data from the agent run. Mutually exclusive with `outcome`. Default: `nil`. |
+| `outcome`   | `RunFinishedSuccessOutcome, RunFinishedInterruptOutcome` (optional) | Outcome of the run. Mutually exclusive with `result`. Default: `nil`.              |
+| `timestamp` | `Time` (optional)                                                   | Timestamp when the event was created. Default: `nil`.                              |
+| `raw_event` | `Object` (optional)                                                 | Original event data if this event was transformed. Default: `nil`.                 |
 
 ### RunStartedEvent
 
@@ -144,14 +155,14 @@ event = AgUiProtocol::Core::Events::RunStartedEvent.new(
 
 ```
 
-**@category** [] Lifecycle Events
-
-| Property        | Type                | Description                                                                                                           |
-| --------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `thread_id`     | `String`            | ID of the conversation thread                                                                                         |
-| `run_id`        | `String`            | ID of the run                                                                                                         |
-| `parent_run_id` | `String` (optional) | Lineage pointer for branching/time travel. If present, refers to a prior run within the same thread , Default: `nil`. |
-| `input`         | `Object` (optional) | The exact agent input payload sent to the agent for this run. May omit messages already in history , Default: `nil`.  |
+| Property        | Type                | Description                                                                                                          |
+| --------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `thread_id`     | `String`            | ID of the conversation thread                                                                                        |
+| `run_id`        | `String`            | ID of the run                                                                                                        |
+| `parent_run_id` | `String` (optional) | Lineage pointer for branching/time travel. If present, refers to a prior run within the same thread. Default: `nil`. |
+| `input`         | `Object` (optional) | The exact agent input payload sent to the agent for this run. May omit messages already in history. Default: `nil`.  |
+| `timestamp`     | `Time` (optional)   | Timestamp when the event was created. Default: `nil`.                                                                |
+| `raw_event`     | `Object` (optional) | Original event data if this event was transformed. Default: `nil`.                                                   |
 
 ### StepFinishedEvent
 
@@ -165,13 +176,11 @@ event = AgUiProtocol::Core::Events::StepFinishedEvent.new(step_name: "s1")
 
 ```
 
-**@category** [] Lifecycle Events
-
-| Property    | Type                | Description                                                         |
-| ----------- | ------------------- | ------------------------------------------------------------------- |
-| `step_name` | `String`            | Name of the step                                                    |
-| `timestamp` | `Time` (optional)   | Timestamp when the event was created , Default: `nil`.              |
-| `raw_event` | `Object` (optional) | Original event data if this event was transformed , Default: `nil`. |
+| Property    | Type                | Description                                                        |
+| ----------- | ------------------- | ------------------------------------------------------------------ |
+| `step_name` | `String`            | Name of the step                                                   |
+| `timestamp` | `Time` (optional)   | Timestamp when the event was created. Default: `nil`.              |
+| `raw_event` | `Object` (optional) | Original event data if this event was transformed. Default: `nil`. |
 
 ### StepStartedEvent
 
@@ -185,13 +194,11 @@ event = AgUiProtocol::Core::Events::StepStartedEvent.new(step_name: "s1")
 
 ```
 
-**@category** [] Lifecycle Events
-
-| Property    | Type                | Description                                                         |
-| ----------- | ------------------- | ------------------------------------------------------------------- |
-| `step_name` | `String`            | Name of the step                                                    |
-| `timestamp` | `Time` (optional)   | Timestamp when the event was created , Default: `nil`.              |
-| `raw_event` | `Object` (optional) | Original event data if this event was transformed , Default: `nil`. |
+| Property    | Type                | Description                                                        |
+| ----------- | ------------------- | ------------------------------------------------------------------ |
+| `step_name` | `String`            | Name of the step                                                   |
+| `timestamp` | `Time` (optional)   | Timestamp when the event was created. Default: `nil`.              |
+| `raw_event` | `Object` (optional) | Original event data if this event was transformed. Default: `nil`. |
 
 ## Text Message Events
 
@@ -204,7 +211,8 @@ These events represent the lifecycle of text messages in a conversation.
 Convenience event for complete text messages without manually emitting
 `TextMessageStart`/`TextMessageEnd`.
 
-```ruby event = AgUiProtocol::Core::Events::TextMessageChunkEvent.new(
+```ruby
+event = AgUiProtocol::Core::Events::TextMessageChunkEvent.new(
     message_id: "m1",
     delta: "Hello"
 
@@ -222,15 +230,13 @@ Behavior:
     content pieces; completion triggers an implied end in clients that perform
     expansion.
 
-**@category** [] Text Message Events
-
-| Property     | Type                | Description                                                         |
-| ------------ | ------------------- | ------------------------------------------------------------------- |
-| `message_id` | `String` (optional) | required on first chunk for a message , Default: `nil`.             |
-| `role`       | `String` (optional) | must be one of TEXT_MESSAGE_ROLE_VALUES , Default: `nil`.           |
-| `delta`      | `String` (optional) | Text content chunk , Default: `nil`.                                |
-| `timestamp`  | `Time` (optional)   | Timestamp when the event was created , Default: `nil`.              |
-| `raw_event`  | `Object` (optional) | Original event data if this event was transformed , Default: `nil`. |
+| Property     | Type                | Description                                                        |
+| ------------ | ------------------- | ------------------------------------------------------------------ |
+| `message_id` | `String` (optional) | required on first chunk for a message. Default: `nil`.             |
+| `role`       | `String` (optional) | must be one of TEXT_MESSAGE_ROLE_VALUES. Default: `nil`.           |
+| `delta`      | `String` (optional) | Text content chunk. Default: `nil`.                                |
+| `timestamp`  | `Time` (optional)   | Timestamp when the event was created. Default: `nil`.              |
+| `raw_event`  | `Object` (optional) | Original event data if this event was transformed. Default: `nil`. |
 
 ### TextMessageContentEvent
 
@@ -248,14 +254,12 @@ event = AgUiProtocol::Core::Events::TextMessageContentEvent.new(
 
 ```
 
-**@category** [] Text Message Events
-
-| Property     | Type                | Description                                                         |
-| ------------ | ------------------- | ------------------------------------------------------------------- |
-| `message_id` | `String`            | Matches the ID from TextMessageStartEvent                           |
-| `delta`      | `String`            | Text content chunk (non-empty)                                      |
-| `timestamp`  | `Time` (optional)   | Timestamp when the event was created , Default: `nil`.              |
-| `raw_event`  | `Object` (optional) | Original event data if this event was transformed , Default: `nil`. |
+| Property     | Type                | Description                                                        |
+| ------------ | ------------------- | ------------------------------------------------------------------ |
+| `message_id` | `String`            | Matches the ID from TextMessageStartEvent                          |
+| `delta`      | `String`            | Text content chunk (non-empty)                                     |
+| `timestamp`  | `Time` (optional)   | Timestamp when the event was created. Default: `nil`.              |
+| `raw_event`  | `Object` (optional) | Original event data if this event was transformed. Default: `nil`. |
 
 ### TextMessageEndEvent
 
@@ -269,13 +273,11 @@ event = AgUiProtocol::Core::Events::TextMessageEndEvent.new(message_id: "m1")
 
 ```
 
-**@category** [] Text Message Events
-
-| Property     | Type                | Description                                                         |
-| ------------ | ------------------- | ------------------------------------------------------------------- |
-| `message_id` | `String`            | Matches the ID from TextMessageStartEvent                           |
-| `timestamp`  | `Time` (optional)   | Timestamp when the event was created , Default: `nil`.              |
-| `raw_event`  | `Object` (optional) | Original event data if this event was transformed , Default: `nil`. |
+| Property     | Type                | Description                                                        |
+| ------------ | ------------------- | ------------------------------------------------------------------ |
+| `message_id` | `String`            | Matches the ID from TextMessageStartEvent                          |
+| `timestamp`  | `Time` (optional)   | Timestamp when the event was created. Default: `nil`.              |
+| `raw_event`  | `Object` (optional) | Original event data if this event was transformed. Default: `nil`. |
 
 ### TextMessageStartEvent
 
@@ -292,79 +294,12 @@ event = AgUiProtocol::Core::Events::TextMessageStartEvent.new(
 
 ```
 
-**@category** [] Text Message Events
-
-| Property     | Type                | Description                                                         |
-| ------------ | ------------------- | ------------------------------------------------------------------- |
-| `message_id` | `String`            | Unique identifier for the message                                   |
-| `timestamp`  | `Time` (optional)   | Timestamp when the event was created , Default: `nil`.              |
-| `raw_event`  | `Object` (optional) | Original event data if this event was transformed , Default: `nil`. |
-
-### ThinkingEndEvent
-
-`AgUiProtocol::Core::Events::ThinkingEndEvent`
-
-Event indicating the end of a thinking step event.
-
-```ruby event = AgUiProtocol::Core::Events::ThinkingEndEvent.new ```
-
-**@category** [] Thinking Events
-
-| Property    | Type                | Description                                                         |
-| ----------- | ------------------- | ------------------------------------------------------------------- |
-| `timestamp` | `Time` (optional)   | Timestamp when the event was created , Default: `nil`.              |
-| `raw_event` | `Object` (optional) | Original event data if this event was transformed , Default: `nil`. |
-
-### ThinkingStartEvent
-
-`AgUiProtocol::Core::Events::ThinkingStartEvent`
-
-Event indicating the start of a thinking step event.
-
-```ruby event = AgUiProtocol::Core::Events::ThinkingStartEvent.new(title:
-"step") ```
-
-**@category** [] Thinking Events
-
-| Property    | Type                | Description                                                         |
-| ----------- | ------------------- | ------------------------------------------------------------------- |
-| `title`     | `String` (optional) | Title of the thinking step , Default: `nil`.                        |
-| `timestamp` | `Time` (optional)   | Timestamp when the event was created , Default: `nil`.              |
-| `raw_event` | `Object` (optional) | Original event data if this event was transformed , Default: `nil`. |
-
-### ThinkingTextMessageContentEvent
-
-`AgUiProtocol::Core::Events::ThinkingTextMessageContentEvent`
-
-Event indicating a piece of a thinking text message.
-
-| Property    | Type                | Description                                                         |
-| ----------- | ------------------- | ------------------------------------------------------------------- |
-| `delta`     | `String`            | Text content                                                        |
-| `timestamp` | `Time` (optional)   | Timestamp when the event was created , Default: `nil`.              |
-| `raw_event` | `Object` (optional) | Original event data if this event was transformed , Default: `nil`. |
-
-### ThinkingTextMessageEndEvent
-
-`AgUiProtocol::Core::Events::ThinkingTextMessageEndEvent`
-
-Event indicating the end of a thinking text message.
-
-| Property    | Type                | Description                                                         |
-| ----------- | ------------------- | ------------------------------------------------------------------- |
-| `timestamp` | `Time` (optional)   | Timestamp when the event was created , Default: `nil`.              |
-| `raw_event` | `Object` (optional) | Original event data if this event was transformed , Default: `nil`. |
-
-### ThinkingTextMessageStartEvent
-
-`AgUiProtocol::Core::Events::ThinkingTextMessageStartEvent`
-
-Event indicating the start of a thinking text message.
-
-| Property    | Type                | Description                                                         |
-| ----------- | ------------------- | ------------------------------------------------------------------- |
-| `timestamp` | `Time` (optional)   | Timestamp when the event was created , Default: `nil`.              |
-| `raw_event` | `Object` (optional) | Original event data if this event was transformed , Default: `nil`. |
+| Property     | Type                | Description                                                                               |
+| ------------ | ------------------- | ----------------------------------------------------------------------------------------- |
+| `message_id` | `String`            | Unique identifier for the message                                                         |
+| `role`       | `String` (optional) | Must be one of TEXT_MESSAGE_ROLE_VALUES; defaults to "assistant". Default: `"assistant"`. |
+| `timestamp`  | `Time` (optional)   | Timestamp when the event was created. Default: `nil`.                                     |
+| `raw_event`  | `Object` (optional) | Original event data if this event was transformed. Default: `nil`.                        |
 
 ## Tool Call Events
 
@@ -386,14 +321,12 @@ event = AgUiProtocol::Core::Events::ToolCallArgsEvent.new(
 
 ```
 
-**@category** [] Tool Call Events
-
-| Property       | Type                | Description                                                         |
-| -------------- | ------------------- | ------------------------------------------------------------------- |
-| `tool_call_id` | `String`            | Matches the ID from ToolCallStartEvent                              |
-| `delta`        | `String`            | Argument data chunk                                                 |
-| `timestamp`    | `Time` (optional)   | Timestamp when the event was created , Default: `nil`.              |
-| `raw_event`    | `Object` (optional) | Original event data if this event was transformed , Default: `nil`. |
+| Property       | Type                | Description                                                        |
+| -------------- | ------------------- | ------------------------------------------------------------------ |
+| `tool_call_id` | `String`            | Matches the ID from ToolCallStartEvent                             |
+| `delta`        | `String`            | Argument data chunk                                                |
+| `timestamp`    | `Time` (optional)   | Timestamp when the event was created. Default: `nil`.              |
+| `raw_event`    | `Object` (optional) | Original event data if this event was transformed. Default: `nil`. |
 
 ### ToolCallChunkEvent
 
@@ -422,16 +355,14 @@ Behavior:
     args pieces; completion triggers an implied end in clients that perform
     expansion.
 
-**@category** [] Tool Call Events
-
-| Property            | Type                | Description                                                         |
-| ------------------- | ------------------- | ------------------------------------------------------------------- |
-| `tool_call_id`      | `String` (optional) | Matches the ID from ToolCallStartEvent , Default: `nil`.            |
-| `tool_call_name`    | `String` (optional) | Name of the tool being called , Default: `nil`.                     |
-| `parent_message_id` | `String` (optional) | ID of the parent message , Default: `nil`.                          |
-| `delta`             | `String` (optional) | Argument data chunk , Default: `nil`.                               |
-| `timestamp`         | `Time` (optional)   | Timestamp when the event was created , Default: `nil`.              |
-| `raw_event`         | `Object` (optional) | Original event data if this event was transformed , Default: `nil`. |
+| Property            | Type                | Description                                                        |
+| ------------------- | ------------------- | ------------------------------------------------------------------ |
+| `tool_call_id`      | `String` (optional) | Matches the ID from ToolCallStartEvent. Default: `nil`.            |
+| `tool_call_name`    | `String` (optional) | Name of the tool being called. Default: `nil`.                     |
+| `parent_message_id` | `String` (optional) | ID of the parent message. Default: `nil`.                          |
+| `delta`             | `String` (optional) | Argument data chunk. Default: `nil`.                               |
+| `timestamp`         | `Time` (optional)   | Timestamp when the event was created. Default: `nil`.              |
+| `raw_event`         | `Object` (optional) | Original event data if this event was transformed. Default: `nil`. |
 
 ### ToolCallEndEvent
 
@@ -445,13 +376,11 @@ event = AgUiProtocol::Core::Events::ToolCallEndEvent.new(tool_call_id: "tc1")
 
 ```
 
-**@category** [] Tool Call Events
-
-| Property       | Type                | Description                                                         |
-| -------------- | ------------------- | ------------------------------------------------------------------- |
-| `tool_call_id` | `String`            | Matches the ID from ToolCallStartEvent                              |
-| `timestamp`    | `Time` (optional)   | Timestamp when the event was created , Default: `nil`.              |
-| `raw_event`    | `Object` (optional) | Original event data if this event was transformed , Default: `nil`. |
+| Property       | Type                | Description                                                        |
+| -------------- | ------------------- | ------------------------------------------------------------------ |
+| `tool_call_id` | `String`            | Matches the ID from ToolCallStartEvent                             |
+| `timestamp`    | `Time` (optional)   | Timestamp when the event was created. Default: `nil`.              |
+| `raw_event`    | `Object` (optional) | Original event data if this event was transformed. Default: `nil`. |
 
 ### ToolCallResultEvent
 
@@ -470,16 +399,14 @@ event = AgUiProtocol::Core::Events::ToolCallResultEvent.new(
 
 ```
 
-**@category** [] Tool Call Events
-
-| Property       | Type                | Description                                                                   |
-| -------------- | ------------------- | ----------------------------------------------------------------------------- |
-| `message_id`   | `String`            | ID of the conversation message this result belongs to                         |
-| `tool_call_id` | `String`            | Matches the ID from the corresponding ToolCallStartEvent                      |
-| `content`      | `String`            | The actual result/output content from the tool execution                      |
-| `role`         | `String` (optional) | Optional role identifier, typically "tool" for tool results , Default: `nil`. |
-| `timestamp`    | `Time` (optional)   | Timestamp when the event was created , Default: `nil`.                        |
-| `raw_event`    | `Object` (optional) | Original event data if this event was transformed , Default: `nil`.           |
+| Property       | Type                | Description                                                                  |
+| -------------- | ------------------- | ---------------------------------------------------------------------------- |
+| `message_id`   | `String`            | ID of the conversation message this result belongs to                        |
+| `tool_call_id` | `String`            | Matches the ID from the corresponding ToolCallStartEvent                     |
+| `content`      | `String`            | The actual result/output content from the tool execution                     |
+| `role`         | `String` (optional) | Optional role identifier, typically "tool" for tool results. Default: `nil`. |
+| `timestamp`    | `Time` (optional)   | Timestamp when the event was created. Default: `nil`.                        |
+| `raw_event`    | `Object` (optional) | Original event data if this event was transformed. Default: `nil`.           |
 
 ### ToolCallStartEvent
 
@@ -498,15 +425,228 @@ event = AgUiProtocol::Core::Events::ToolCallStartEvent.new(
 
 ```
 
-**@category** [] Tool Call Events
+| Property            | Type                | Description                                                        |
+| ------------------- | ------------------- | ------------------------------------------------------------------ |
+| `tool_call_id`      | `String`            | Unique identifier for the tool call                                |
+| `tool_call_name`    | `String`            | Name of the tool being called                                      |
+| `parent_message_id` | `String` (optional) | ID of the parent message. Default: `nil`.                          |
+| `timestamp`         | `Time` (optional)   | Timestamp when the event was created. Default: `nil`.              |
+| `raw_event`         | `Object` (optional) | Original event data if this event was transformed. Default: `nil`. |
 
-| Property            | Type                | Description                                                         |
-| ------------------- | ------------------- | ------------------------------------------------------------------- |
-| `tool_call_id`      | `String`            | Unique identifier for the tool call                                 |
-| `tool_call_name`    | `String`            | Name of the tool being called                                       |
-| `parent_message_id` | `String` (optional) | ID of the parent message , Default: `nil`.                          |
-| `timestamp`         | `Time` (optional)   | Timestamp when the event was created , Default: `nil`.              |
-| `raw_event`         | `Object` (optional) | Original event data if this event was transformed , Default: `nil`. |
+## Thinking Events
+
+These events represent the lifecycle of an agent's thinking steps, conveying
+intermediate reasoning to the frontend without contributing to the final
+message.
+
+### ThinkingEndEvent
+
+`AgUiProtocol::Core::Events::ThinkingEndEvent`
+
+Event indicating the end of a thinking step event.
+
+```ruby
+event = AgUiProtocol::Core::Events::ThinkingEndEvent.new 
+```
+
+| Property    | Type                | Description                                                        |
+| ----------- | ------------------- | ------------------------------------------------------------------ |
+| `timestamp` | `Time` (optional)   | Timestamp when the event was created. Default: `nil`.              |
+| `raw_event` | `Object` (optional) | Original event data if this event was transformed. Default: `nil`. |
+
+### ThinkingStartEvent
+
+`AgUiProtocol::Core::Events::ThinkingStartEvent`
+
+Event indicating the start of a thinking step event.
+
+```ruby
+event = AgUiProtocol::Core::Events::ThinkingStartEvent.new(title:
+"step") 
+```
+
+| Property    | Type                | Description                                                        |
+| ----------- | ------------------- | ------------------------------------------------------------------ |
+| `title`     | `String` (optional) | Title of the thinking step. Default: `nil`.                        |
+| `timestamp` | `Time` (optional)   | Timestamp when the event was created. Default: `nil`.              |
+| `raw_event` | `Object` (optional) | Original event data if this event was transformed. Default: `nil`. |
+
+### ThinkingTextMessageContentEvent
+
+`AgUiProtocol::Core::Events::ThinkingTextMessageContentEvent`
+
+Event indicating a piece of a thinking text message.
+
+| Property    | Type                | Description                                                        |
+| ----------- | ------------------- | ------------------------------------------------------------------ |
+| `delta`     | `String`            | Text content                                                       |
+| `timestamp` | `Time` (optional)   | Timestamp when the event was created. Default: `nil`.              |
+| `raw_event` | `Object` (optional) | Original event data if this event was transformed. Default: `nil`. |
+
+### ThinkingTextMessageEndEvent
+
+`AgUiProtocol::Core::Events::ThinkingTextMessageEndEvent`
+
+Event indicating the end of a thinking text message.
+
+| Property    | Type                | Description                                                        |
+| ----------- | ------------------- | ------------------------------------------------------------------ |
+| `timestamp` | `Time` (optional)   | Timestamp when the event was created. Default: `nil`.              |
+| `raw_event` | `Object` (optional) | Original event data if this event was transformed. Default: `nil`. |
+
+### ThinkingTextMessageStartEvent
+
+`AgUiProtocol::Core::Events::ThinkingTextMessageStartEvent`
+
+Event indicating the start of a thinking text message.
+
+| Property    | Type                | Description                                                        |
+| ----------- | ------------------- | ------------------------------------------------------------------ |
+| `timestamp` | `Time` (optional)   | Timestamp when the event was created. Default: `nil`.              |
+| `raw_event` | `Object` (optional) | Original event data if this event was transformed. Default: `nil`. |
+
+## Reasoning Events
+
+These events convey structured reasoning blocks emitted by an agent, including
+streaming reasoning messages and encrypted reasoning values.
+
+### ReasoningEncryptedValueEvent
+
+`AgUiProtocol::Core::Events::ReasoningEncryptedValueEvent`
+
+Event containing an encrypted value within a reasoning block.
+
+```ruby
+event = AgUiProtocol::Core::Events::ReasoningEncryptedValueEvent.new(
+    subtype: "tool-call",
+    entity_id: "tc_1",
+    encrypted_value: "encrypted..."
+
+) 
+```
+
+| Property          | Type                | Description                                                                                 |
+| ----------------- | ------------------- | ------------------------------------------------------------------------------------------- |
+| `subtype`         | `String`            | free-form string; protocol values are "tool-call" or "message" but not enforced by this SDK |
+| `entity_id`       | `String`            | ID of the entity being encrypted                                                            |
+| `encrypted_value` | `String`            | The encrypted value                                                                         |
+| `timestamp`       | `Time` (optional)   | Timestamp when the event was created. Default: `nil`.                                       |
+| `raw_event`       | `Object` (optional) | Original event data if this event was transformed. Default: `nil`.                          |
+
+### ReasoningEndEvent
+
+`AgUiProtocol::Core::Events::ReasoningEndEvent`
+
+Signals the end of a reasoning block.
+
+```ruby
+event = AgUiProtocol::Core::Events::ReasoningEndEvent.new(message_id:
+"reason_1") 
+```
+
+| Property     | Type                | Description                                                        |
+| ------------ | ------------------- | ------------------------------------------------------------------ |
+| `message_id` | `String`            | Matches the ID from ReasoningStartEvent                            |
+| `timestamp`  | `Time` (optional)   | Timestamp when the event was created. Default: `nil`.              |
+| `raw_event`  | `Object` (optional) | Original event data if this event was transformed. Default: `nil`. |
+
+### ReasoningMessageChunkEvent
+
+`AgUiProtocol::Core::Events::ReasoningMessageChunkEvent`
+
+Convenience event for reasoning messages without manually emitting start/end.
+
+```ruby
+event = AgUiProtocol::Core::Events::ReasoningMessageChunkEvent.new(
+    message_id: "reason_msg_1",
+    delta: "step 1..."
+
+) 
+```
+
+| Property     | Type                | Description                                                        |
+| ------------ | ------------------- | ------------------------------------------------------------------ |
+| `message_id` | `String` (optional) | Optional on first chunk. Default: `nil`.                           |
+| `delta`      | `String` (optional) | Optional reasoning content chunk. Default: `nil`.                  |
+| `timestamp`  | `Time` (optional)   | Timestamp when the event was created. Default: `nil`.              |
+| `raw_event`  | `Object` (optional) | Original event data if this event was transformed. Default: `nil`. |
+
+### ReasoningMessageContentEvent
+
+`AgUiProtocol::Core::Events::ReasoningMessageContentEvent`
+
+Represents a chunk of content in a streaming reasoning message.
+
+```ruby
+event =
+AgUiProtocol::Core::Events::ReasoningMessageContentEvent.new(message_id:
+"reason_msg_1", delta: "step 1...") 
+```
+
+| Property     | Type                | Description                                                        |
+| ------------ | ------------------- | ------------------------------------------------------------------ |
+| `message_id` | `String`            | Matches the ID from ReasoningMessageStartEvent                     |
+| `delta`      | `String`            | Reasoning content chunk                                            |
+| `timestamp`  | `Time` (optional)   | Timestamp when the event was created. Default: `nil`.              |
+| `raw_event`  | `Object` (optional) | Original event data if this event was transformed. Default: `nil`. |
+
+### ReasoningMessageEndEvent
+
+`AgUiProtocol::Core::Events::ReasoningMessageEndEvent`
+
+Signals the end of a reasoning message.
+
+```ruby
+event =
+AgUiProtocol::Core::Events::ReasoningMessageEndEvent.new(message_id:
+"reason_msg_1") 
+```
+
+| Property     | Type                | Description                                                        |
+| ------------ | ------------------- | ------------------------------------------------------------------ |
+| `message_id` | `String`            | Matches the ID from ReasoningMessageStartEvent                     |
+| `timestamp`  | `Time` (optional)   | Timestamp when the event was created. Default: `nil`.              |
+| `raw_event`  | `Object` (optional) | Original event data if this event was transformed. Default: `nil`. |
+
+### ReasoningMessageStartEvent
+
+`AgUiProtocol::Core::Events::ReasoningMessageStartEvent`
+
+Signals the start of a reasoning message within a reasoning block.
+
+The `role` is always "reasoning" (enforced). The optional <code>role:</code>
+kwarg exists to support round-trip deserialization from `to_h` output (which
+emits `role: "reasoning"`); supplying any other value raises ArgumentError.
+
+```ruby
+event =
+AgUiProtocol::Core::Events::ReasoningMessageStartEvent.new(message_id:
+"reason_msg_1") 
+```
+
+| Property     | Type                | Description                                                                                                                                                         |
+| ------------ | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `message_id` | `String`            | Unique identifier                                                                                                                                                   |
+| `role`       | `String` (optional) | Optional. Must be "reasoning" if provided. Always stored as "reasoning"; the kwarg exists to support round-trip deserialization from `to_h` output. Default: `nil`. |
+| `timestamp`  | `Time` (optional)   | Timestamp when the event was created. Default: `nil`.                                                                                                               |
+| `raw_event`  | `Object` (optional) | Original event data if this event was transformed. Default: `nil`.                                                                                                  |
+
+### ReasoningStartEvent
+
+`AgUiProtocol::Core::Events::ReasoningStartEvent`
+
+Signals the start of a reasoning block.
+
+```ruby
+event =
+AgUiProtocol::Core::Events::ReasoningStartEvent.new(message_id: "reason_1")
+```
+
+| Property     | Type                | Description                                                        |
+| ------------ | ------------------- | ------------------------------------------------------------------ |
+| `message_id` | `String`            | Unique identifier for the reasoning message                        |
+| `timestamp`  | `Time` (optional)   | Timestamp when the event was created. Default: `nil`.              |
+| `raw_event`  | `Object` (optional) | Original event data if this event was transformed. Default: `nil`. |
 
 ## State Management Events
 
@@ -518,19 +658,19 @@ These events are used to manage agent state.
 
 Provides incremental updates to an activity snapshot using JSON Patch.
 
-```ruby event = AgUiProtocol::Core::Events::ActivityDeltaEvent.new(message_id:
+```ruby
+event = AgUiProtocol::Core::Events::ActivityDeltaEvent.new(message_id:
 "m1", activity_type: "PLAN", patch: [{ "op" => "replace", "path" => "/a",
-"value" => 2 }]) ```
+"value" => 2 }]) 
+```
 
-**@category** [] State Management Events
-
-| Property        | Type                | Description                                                         |
-| --------------- | ------------------- | ------------------------------------------------------------------- |
-| `message_id`    | `String`            | Identifier for the target `ActivityMessage`                         |
-| `activity_type` | `String`            | Activity discriminator mirroring the most recent snapshot           |
-| `patch`         | `Array<Object>`     | JSON Patch operations applied to the structured activity content    |
-| `timestamp`     | `Time` (optional)   | Timestamp when the event was created , Default: `nil`.              |
-| `raw_event`     | `Object` (optional) | Original event data if this event was transformed , Default: `nil`. |
+| Property        | Type                | Description                                                        |
+| --------------- | ------------------- | ------------------------------------------------------------------ |
+| `message_id`    | `String`            | Identifier for the target `ActivityMessage`                        |
+| `activity_type` | `String`            | Activity discriminator mirroring the most recent snapshot          |
+| `patch`         | `Array<Object>`     | JSON Patch operations applied to the structured activity content   |
+| `timestamp`     | `Time` (optional)   | Timestamp when the event was created. Default: `nil`.              |
+| `raw_event`     | `Object` (optional) | Original event data if this event was transformed. Default: `nil`. |
 
 ### ActivitySnapshotEvent
 
@@ -538,20 +678,20 @@ Provides incremental updates to an activity snapshot using JSON Patch.
 
 Delivers a complete snapshot of an activity message.
 
-```ruby event =
+```ruby
+event =
 AgUiProtocol::Core::Events::ActivitySnapshotEvent.new(message_id: "m1",
-activity_type: "PLAN", content: { "a" => 1 }) ```
+activity_type: "PLAN", content: { "a" => 1 }) 
+```
 
-**@category** [] State Management Events
-
-| Property        | Type                 | Description                                                                                           |
-| --------------- | -------------------- | ----------------------------------------------------------------------------------------------------- |
-| `message_id`    | `String`             | Identifier for the target `ActivityMessage`                                                           |
-| `activity_type` | `String`             | Activity discriminator such as `"PLAN"` or `"SEARCH"`                                                 |
-| `content`       | `Object`             | Structured payload describing the full activity state                                                 |
-| `replace`       | `Boolean` (optional) | When `false`, the snapshot is ignored if a message with the same ID already exists , Default: `true`. |
-| `timestamp`     | `Time` (optional)    | Timestamp when the event was created , Default: `nil`.                                                |
-| `raw_event`     | `Object` (optional)  | Original event data if this event was transformed , Default: `nil`.                                   |
+| Property        | Type                 | Description                                                                                          |
+| --------------- | -------------------- | ---------------------------------------------------------------------------------------------------- |
+| `message_id`    | `String`             | Identifier for the target `ActivityMessage`                                                          |
+| `activity_type` | `String`             | Activity discriminator such as `"PLAN"` or `"SEARCH"`                                                |
+| `content`       | `Object`             | Structured payload describing the full activity state                                                |
+| `replace`       | `Boolean` (optional) | When `false`, the snapshot is ignored if a message with the same ID already exists. Default: `true`. |
+| `timestamp`     | `Time` (optional)    | Timestamp when the event was created. Default: `nil`.                                                |
+| `raw_event`     | `Object` (optional)  | Original event data if this event was transformed. Default: `nil`.                                   |
 
 ### MessagesSnapshotEvent
 
@@ -559,17 +699,18 @@ activity_type: "PLAN", content: { "a" => 1 }) ```
 
 Provides a snapshot of all messages in a conversation.
 
-```ruby event =
-AgUiProtocol::Core::Events::MessagesSnapshotEvent.new(messages: [{ "id" =>
-"m1", "content" => "hi" }]) ```
+```ruby
+event = AgUiProtocol::Core::Events::MessagesSnapshotEvent.new(
+    messages: [AgUiProtocol::Core::Types::UserMessage.new(id: "m1", content: "hi")]
 
-**@category** [] State Management Events
+) 
+```
 
-| Property    | Type                                            | Description                                                         |
-| ----------- | ----------------------------------------------- | ------------------------------------------------------------------- |
-| `messages`  | `Array<AgUiProtocol::Core::Types::BaseMessage>` | Array of message objects                                            |
-| `timestamp` | `Time` (optional)                               | Timestamp when the event was created , Default: `nil`.              |
-| `raw_event` | `Object` (optional)                             | Original event data if this event was transformed , Default: `nil`. |
+| Property    | Type                                                                                        | Description                                                                                                      |
+| ----------- | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `messages`  | `Array<AgUiProtocol::Core::Types::BaseMessage, AgUiProtocol::Core::Types::ActivityMessage>` | Array of message objects. Accepts both BaseMessage subclasses and ActivityMessage for parity with RunAgentInput. |
+| `timestamp` | `Time` (optional)                                                                           | Timestamp when the event was created. Default: `nil`.                                                            |
+| `raw_event` | `Object` (optional)                                                                         | Original event data if this event was transformed. Default: `nil`.                                               |
 
 ### StateDeltaEvent
 
@@ -577,16 +718,16 @@ AgUiProtocol::Core::Events::MessagesSnapshotEvent.new(messages: [{ "id" =>
 
 Provides a partial update to an agent's state using JSON Patch.
 
-```ruby event = AgUiProtocol::Core::Events::StateDeltaEvent.new(delta: [{ "op"
-=> "replace", "path" => "/a", "value" => 2 }]) ```
+```ruby
+event = AgUiProtocol::Core::Events::StateDeltaEvent.new(delta: [{ "op"
+=> "replace", "path" => "/a", "value" => 2 }]) 
+```
 
-**@category** [] State Management Events
-
-| Property    | Type                | Description                                                         |
-| ----------- | ------------------- | ------------------------------------------------------------------- |
-| `delta`     | `Array<Object>`     | Array of JSON Patch operations                                      |
-| `timestamp` | `Time` (optional)   | Timestamp when the event was created , Default: `nil`.              |
-| `raw_event` | `Object` (optional) | Original event data if this event was transformed , Default: `nil`. |
+| Property    | Type                | Description                                                        |
+| ----------- | ------------------- | ------------------------------------------------------------------ |
+| `delta`     | `Array<Object>`     | Array of JSON Patch operations                                     |
+| `timestamp` | `Time` (optional)   | Timestamp when the event was created. Default: `nil`.              |
+| `raw_event` | `Object` (optional) | Original event data if this event was transformed. Default: `nil`. |
 
 ### StateSnapshotEvent
 
@@ -594,16 +735,16 @@ Provides a partial update to an agent's state using JSON Patch.
 
 Provides a complete snapshot of an agent's state.
 
-```ruby event = AgUiProtocol::Core::Events::StateSnapshotEvent.new(snapshot: {
-"a" => 1 }) ```
+```ruby
+event = AgUiProtocol::Core::Events::StateSnapshotEvent.new(snapshot: {
+"a" => 1 }) 
+```
 
-**@category** [] State Management Events
-
-| Property    | Type                | Description                                                         |
-| ----------- | ------------------- | ------------------------------------------------------------------- |
-| `snapshot`  | `Object`            | Complete state snapshot                                             |
-| `timestamp` | `Time` (optional)   | Timestamp when the event was created , Default: `nil`.              |
-| `raw_event` | `Object` (optional) | Original event data if this event was transformed , Default: `nil`. |
+| Property    | Type                | Description                                                        |
+| ----------- | ------------------- | ------------------------------------------------------------------ |
+| `snapshot`  | `Object`            | Complete state snapshot                                            |
+| `timestamp` | `Time` (optional)   | Timestamp when the event was created. Default: `nil`.              |
+| `raw_event` | `Object` (optional) | Original event data if this event was transformed. Default: `nil`. |
 
 ## Special Events
 
@@ -613,17 +754,17 @@ Provides a complete snapshot of an agent's state.
 
 Used for application-specific custom events.
 
-```ruby event = AgUiProtocol::Core::Events::CustomEvent.new(name: "my_event",
-value: { "a" => 1 }) ```
+```ruby
+event = AgUiProtocol::Core::Events::CustomEvent.new(name: "my_event",
+value: { "a" => 1 }) 
+```
 
-**@category** [] Special Events
-
-| Property    | Type                | Description                                                         |
-| ----------- | ------------------- | ------------------------------------------------------------------- |
-| `name`      | `String`            | Name of the custom event                                            |
-| `value`     | `Object`            | Value of the custom event                                           |
-| `timestamp` | `Time` (optional)   | Timestamp when the event was created , Default: `nil`.              |
-| `raw_event` | `Object` (optional) | Original event data if this event was transformed , Default: `nil`. |
+| Property    | Type                | Description                                                        |
+| ----------- | ------------------- | ------------------------------------------------------------------ |
+| `name`      | `String`            | Name of the custom event                                           |
+| `value`     | `Object`            | Value of the custom event                                          |
+| `timestamp` | `Time` (optional)   | Timestamp when the event was created. Default: `nil`.              |
+| `raw_event` | `Object` (optional) | Original event data if this event was transformed. Default: `nil`. |
 
 ### RawEvent
 
@@ -631,15 +772,58 @@ value: { "a" => 1 }) ```
 
 Used to pass through events from external systems.
 
-```ruby event = AgUiProtocol::Core::Events::RawEvent.new(event: { "type" =>
-"my_event", "data" => { "a" => 1 } }, source: "my_source") ```
+```ruby
+event = AgUiProtocol::Core::Events::RawEvent.new(event: { "type" =>
+"my_event", "data" => { "a" => 1 } }, source: "my_source") 
+```
 
-**@category** [] Special Events
+| Property    | Type                | Description                                                        |
+| ----------- | ------------------- | ------------------------------------------------------------------ |
+| `event`     | `Object`            | Original event data                                                |
+| `source`    | `String` (optional) | Source of the event. Default: `nil`.                               |
+| `timestamp` | `Time` (optional)   | Timestamp when the event was created. Default: `nil`.              |
+| `raw_event` | `Object` (optional) | Original event data if this event was transformed. Default: `nil`. |
 
-| Property    | Type                | Description                                                         |
-| ----------- | ------------------- | ------------------------------------------------------------------- |
-| `event`     | `Object`            | Original event data                                                 |
-| `source`    | `String` (optional) | Source of the event , Default: `nil`.                               |
-| `timestamp` | `Time` (optional)   | Timestamp when the event was created , Default: `nil`.              |
-| `raw_event` | `Object` (optional) | Original event data if this event was transformed , Default: `nil`. |
+## Run Outcome Types
+
+Value types referenced by `RunFinishedEvent.outcome`.
+
+### RunFinishedInterruptOutcome
+
+`AgUiProtocol::Core::Events::RunFinishedInterruptOutcome`
+
+Represents an interrupt outcome for a run.
+
+```ruby
+outcome = AgUiProtocol::Core::Events::RunFinishedInterruptOutcome.new(
+    interrupts: [
+      AgUiProtocol::Core::Types::Interrupt.new(id: "int_1", reason: "input_required")
+    ]
+
+) 
+```
+
+| Property     | Type                                          | Description                                                                                                                                                         |
+| ------------ | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `interrupts` | `Array<AgUiProtocol::Core::Types::Interrupt>` | List of interrupts                                                                                                                                                  |
+| `type`       | `String` (optional)                           | Optional. Must be "interrupt" if provided. Always stored as "interrupt"; the kwarg exists to support round-trip deserialization from `to_h` output. Default: `nil`. |
+
+### RunFinishedSuccessOutcome
+
+`AgUiProtocol::Core::Events::RunFinishedSuccessOutcome`
+
+Represents a successful outcome for a run.
+
+The `type` discriminator is enforced — only "success" is accepted (or nil for
+default). The optional <code>type:</code> kwarg exists to support round-trip
+deserialization from `to_h` output (which emits `type: "success"`); supplying
+any other value raises ArgumentError.
+
+```ruby
+outcome = AgUiProtocol::Core::Events::RunFinishedSuccessOutcome.new
+```
+
+| Property | Type                | Description                                                                                                                                                     |
+| -------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `type`   | `String` (optional) | Optional. Must be "success" if provided. Always stored as "success"; the kwarg exists to support round-trip deserialization from `to_h` output. Default: `nil`. |
 
