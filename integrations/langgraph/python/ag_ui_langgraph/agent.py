@@ -1609,9 +1609,15 @@ class LangGraphAgent:
             version=version,
         )
 
-        # Only add context if supported
+        # Only add context if supported. ``astream_events`` accepts ``context``
+        # via ``**kwargs`` (VAR_KEYWORD) rather than as a named parameter, so
+        # detect keyword-arg passthrough instead of looking for a literal
+        # ``context`` parameter (which is never present).
         sig = inspect.signature(self.graph.astream_events)
-        if 'context' in sig.parameters:
+        supports_context = 'context' in sig.parameters or any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        )
+        if supports_context:
             base_context = {}
             if isinstance(config, dict) and 'configurable' in config and isinstance(config['configurable'], dict):
                 base_context.update(config['configurable'])
