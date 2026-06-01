@@ -73,7 +73,7 @@ jobs:
     steps:
       - name: Find existing release/next PR (stacking target)
         id: existing
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7.1.0
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -97,7 +97,7 @@ jobs:
             }
 
       - name: Checkout repo
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -105,17 +105,17 @@ jobs:
           persist-credentials: false
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1  # v4.3.0
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
         with:
           version: "10.33.4"
 
       - name: Setup Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
 
       - name: Setup Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
 
@@ -182,11 +182,22 @@ jobs:
             jq -r '.packages[] | "- **\(.name)**: \(.oldVersion) → \(.newVersion)"' /tmp/bump-result.json
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Mint devops-bot token
+        id: app-token
+        if: inputs.dry_run != true && steps.bump.outputs.changed_count != '0'
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: "3877599"
+          private-key: ${{ secrets.DEVOPS_BOT_PRIVATE_KEY }}
+
       - name: Configure git credentials for push
         if: inputs.dry_run != true && steps.bump.outputs.changed_count != '0'
-        run: git config --local url."https://x-access-token:$GITHUB_TOKEN@github.com/".insteadOf "https://github.com/"
+        run: |
+          git config user.name "ag-ui-devops-bot[bot]"
+          git config user.email "3877599+ag-ui-devops-bot[bot]@users.noreply.github.com"
+          git config --local url."https://x-access-token:${GH_APP_TOKEN}@github.com/".insteadOf "https://github.com/"
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_APP_TOKEN: ${{ steps.app-token.outputs.token }}
 
       - name: Commit and push version bumps
         if: inputs.dry_run != true && steps.bump.outputs.changed_count != '0'
@@ -214,6 +225,17 @@ jobs:
           [ -z "$SCOPES" ] || [ "$SCOPES" = "null" ] && SCOPES="$INPUT_SCOPE"
           echo "title=release: ${SCOPES}" >> "$GITHUB_OUTPUT"
 
+      - name: Generate AI release notes
+        id: ai_notes
+        if: inputs.dry_run != true && steps.bump.outputs.changed_count != '0'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          pnpm tsx scripts/release/generate-ai-release-notes.ts \
+            --accumulated /tmp/accumulated.json \
+            --output /tmp/ai-notes.md \
+            || echo "AI notes generation failed; falling back to table-only body"
+
       - name: Build PR body
         id: prbody
         if: inputs.dry_run != true && steps.bump.outputs.changed_count != '0'
@@ -229,6 +251,15 @@ jobs:
             echo ""
             echo "---"
             echo ""
+            if [ -s /tmp/ai-notes.md ]; then
+              {
+                echo ""
+                echo "## What's in this release"
+                echo ""
+                cat /tmp/ai-notes.md
+                echo ""
+              }
+            fi
             echo "### How this release process works"
             echo ""
             echo "1. **This PR was created automatically** by the \`release / create-pr\` workflow."
@@ -253,7 +284,7 @@ jobs:
 
       - name: Create or update release PR
         if: inputs.dry_run != true && steps.bump.outputs.changed_count != '0'
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7.1.0
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         env:
           HAS_EXISTING: ${{ steps.existing.outputs.has_existing }}
           EXISTING_PR: ${{ steps.existing.outputs.pr_number }}
@@ -262,7 +293,7 @@ jobs:
           INPUT_SCOPE: ${{ inputs.scope }}
           INPUT_BUMP: ${{ inputs.bump }}
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ steps.app-token.outputs.token }}
           script: |
             const fs = require("fs");
             const { owner, repo } = context.repo;

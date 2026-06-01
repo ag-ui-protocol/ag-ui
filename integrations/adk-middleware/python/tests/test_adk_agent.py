@@ -949,23 +949,30 @@ class TestADKAgent:
             assert agent_under_test.tools == []
             assert len(agent_under_test.sub_agents) == 2
 
-            # assert that the hello_agent has only the hello_tool via ClientProxyToolset
+            # AGUIToolset placeholders are replaced per-run by a
+            # ClientProxyToolset carrying the declared tool_filter, on the
+            # per-run agent copy (the originals are left untouched).
+
+            # hello_agent: AGUIToolset(hello_tool) -> ClientProxyToolset(hello_tool)
             assert agent_under_test.sub_agents[0].name == "hello_agent"
             assert len(agent_under_test.sub_agents[0].tools) == 1
-            assert isinstance(agent_under_test.sub_agents[0].tools[0], ClientProxyToolset)
-            assert agent_under_test.sub_agents[0].tools[0].tool_filter == ['hello_tool']
+            hello_toolset = agent_under_test.sub_agents[0].tools[0]
+            assert isinstance(hello_toolset, ClientProxyToolset)
+            assert hello_toolset.tool_filter == ['hello_tool']
 
-            # assert that the deep_agent has only the deep_tool via ClientProxyToolset
+            # deep_agent: AGUIToolset(deep_tool) -> ClientProxyToolset(deep_tool)
             assert agent_under_test.sub_agents[0].sub_agents[0].name == "deep_agent"
             assert len(agent_under_test.sub_agents[0].sub_agents[0].tools) == 1
-            assert isinstance(agent_under_test.sub_agents[0].sub_agents[0].tools[0], ClientProxyToolset)
-            assert agent_under_test.sub_agents[0].sub_agents[0].tools[0].tool_filter == ['deep_tool']
+            deep_toolset = agent_under_test.sub_agents[0].sub_agents[0].tools[0]
+            assert isinstance(deep_toolset, ClientProxyToolset)
+            assert deep_toolset.tool_filter == ['deep_tool']
 
-            # assert that the goodbye_agent has only the goodbye_tool via ClientProxyToolset
+            # goodbye_agent: AGUIToolset(goodbye_tool) -> ClientProxyToolset(goodbye_tool)
             assert agent_under_test.sub_agents[1].name == "goodbye_agent"
             assert len(agent_under_test.sub_agents[1].tools) == 1
-            assert isinstance(agent_under_test.sub_agents[1].tools[0], ClientProxyToolset)
-            assert agent_under_test.sub_agents[1].tools[0].tool_filter == ['goodbye_tool']
+            goodbye_toolset = agent_under_test.sub_agents[1].tools[0]
+            assert isinstance(goodbye_toolset, ClientProxyToolset)
+            assert goodbye_toolset.tool_filter == ['goodbye_tool']
 
     @pytest.mark.asyncio
     async def test_non_deepcopyable_tool_does_not_crash(self):
@@ -1019,14 +1026,24 @@ class TestADKAgent:
             submethod_mocked.assert_called_once()
             agent_under_test = submethod_mocked.call_args.kwargs['adk_agent']
 
-            # The unpicklable toolset should be preserved (shared by reference)
-            non_proxy_tools = [
+            # The AGUIToolset is replaced per-run by a ClientProxyToolset; the
+            # unpicklable toolset is preserved by reference (shared, not copied),
+            # so both tools are present and no pickling occurred.
+            assert len(agent_under_test.tools) == 2
+            assert not any(isinstance(t, AGUIToolset) for t in agent_under_test.tools)
+
+            proxies = [
+                t for t in agent_under_test.tools if isinstance(t, ClientProxyToolset)
+            ]
+            assert len(proxies) == 1
+
+            others = [
                 t for t in agent_under_test.tools
                 if not isinstance(t, ClientProxyToolset)
             ]
-            assert len(non_proxy_tools) == 1
-            assert non_proxy_tools[0] is unpicklable
-            assert non_proxy_tools[0].errlog is sys.stderr
+            assert len(others) == 1
+            assert others[0] is unpicklable
+            assert others[0].errlog is sys.stderr
 
     @pytest.mark.asyncio
     async def test_original_agent_not_mutated_after_run(self):

@@ -274,6 +274,237 @@ void main() {
       });
     });
 
+    group('ReasoningEvents', () {
+      test('round-trips ReasoningStartEvent', () {
+        final event = ReasoningStartEvent(messageId: 'reas_1');
+        final decoded = ReasoningStartEvent.fromJson(event.toJson());
+        expect(decoded.messageId, 'reas_1');
+      });
+
+      test('round-trips ReasoningMessageContentEvent', () {
+        final event = ReasoningMessageContentEvent(
+          messageId: 'reas_1',
+          delta: 'thinking step',
+        );
+        final decoded = ReasoningMessageContentEvent.fromJson(event.toJson());
+        expect(decoded.delta, 'thinking step');
+      });
+
+      test('ReasoningMessageContentEvent rejects empty delta', () {
+        expect(
+          () => ReasoningMessageContentEvent.fromJson({
+            'type': 'REASONING_MESSAGE_CONTENT',
+            'messageId': 'reas_1',
+            'delta': '',
+          }),
+          throwsA(isA<AGUIValidationError>()),
+        );
+      });
+
+      test('round-trips ReasoningEncryptedValueEvent', () {
+        final event = ReasoningEncryptedValueEvent(
+          subtype: ReasoningEncryptedValueSubtype.message,
+          entityId: 'reas_1',
+          encryptedValue: 'ENC',
+        );
+        final json = event.toJson();
+        expect(json['subtype'], 'message');
+        final decoded = ReasoningEncryptedValueEvent.fromJson(json);
+        expect(decoded.subtype, ReasoningEncryptedValueSubtype.message);
+      });
+
+      test('round-trips ReasoningEndEvent', () {
+        final event = ReasoningEndEvent(messageId: 'reas_1');
+        final decoded = ReasoningEndEvent.fromJson(event.toJson());
+        expect(decoded.messageId, 'reas_1');
+      });
+
+      test('round-trips ReasoningMessageStartEvent', () {
+        final event = ReasoningMessageStartEvent(messageId: 'reas_1');
+        final json = event.toJson();
+        expect(json['role'], 'reasoning');
+        final decoded = ReasoningMessageStartEvent.fromJson(json);
+        expect(decoded.messageId, 'reas_1');
+      });
+
+      test('round-trips ReasoningMessageEndEvent', () {
+        final event = ReasoningMessageEndEvent(messageId: 'reas_1');
+        final decoded = ReasoningMessageEndEvent.fromJson(event.toJson());
+        expect(decoded.messageId, 'reas_1');
+      });
+
+      test('round-trips ReasoningMessageChunkEvent with fields', () {
+        final event = ReasoningMessageChunkEvent(
+          messageId: 'reas_1',
+          delta: 'chunk',
+        );
+        final decoded = ReasoningMessageChunkEvent.fromJson(event.toJson());
+        expect(decoded.messageId, 'reas_1');
+        expect(decoded.delta, 'chunk');
+      });
+
+      test('round-trips ReasoningMessageChunkEvent with null fields', () {
+        final event = ReasoningMessageChunkEvent();
+        final json = event.toJson();
+        expect(json.containsKey('messageId'), isFalse);
+        expect(json.containsKey('delta'), isFalse);
+        final decoded = ReasoningMessageChunkEvent.fromJson(json);
+        expect(decoded.messageId, isNull);
+        expect(decoded.delta, isNull);
+      });
+
+      test('ReasoningEncryptedValueSubtype.fromString rejects unknown value',
+          () {
+        expect(
+          () => ReasoningEncryptedValueSubtype.fromString('bogus'),
+          throwsA(isA<AGUIValidationError>()),
+        );
+      });
+
+      test('BaseEvent.fromJson routes all REASONING_* events', () {
+        expect(
+          BaseEvent.fromJson({'type': 'REASONING_START', 'messageId': 'r'}),
+          isA<ReasoningStartEvent>(),
+        );
+        expect(
+          BaseEvent.fromJson({'type': 'REASONING_END', 'messageId': 'r'}),
+          isA<ReasoningEndEvent>(),
+        );
+        expect(
+          BaseEvent.fromJson(
+              {'type': 'REASONING_MESSAGE_START', 'messageId': 'r'}),
+          isA<ReasoningMessageStartEvent>(),
+        );
+        expect(
+          BaseEvent.fromJson({
+            'type': 'REASONING_MESSAGE_CONTENT',
+            'messageId': 'r',
+            'delta': 'd',
+          }),
+          isA<ReasoningMessageContentEvent>(),
+        );
+        expect(
+          BaseEvent.fromJson(
+              {'type': 'REASONING_MESSAGE_END', 'messageId': 'r'}),
+          isA<ReasoningMessageEndEvent>(),
+        );
+        expect(
+          BaseEvent.fromJson({'type': 'REASONING_MESSAGE_CHUNK'}),
+          isA<ReasoningMessageChunkEvent>(),
+        );
+        expect(
+          BaseEvent.fromJson({
+            'type': 'REASONING_ENCRYPTED_VALUE',
+            'subtype': 'tool-call',
+            'entityId': 'e',
+            'encryptedValue': 'v',
+          }),
+          isA<ReasoningEncryptedValueEvent>(),
+        );
+      });
+
+      test('copyWith overrides fields on each reasoning event', () {
+        final start = ReasoningStartEvent(messageId: 'a', timestamp: 1)
+            .copyWith(messageId: 'b', timestamp: 2);
+        expect(start.messageId, 'b');
+        expect(start.timestamp, 2);
+
+        final end = ReasoningEndEvent(messageId: 'a').copyWith(messageId: 'b');
+        expect(end.messageId, 'b');
+
+        final msgStart = ReasoningMessageStartEvent(messageId: 'a')
+            .copyWith(messageId: 'b');
+        expect(msgStart.messageId, 'b');
+
+        final msgContent = ReasoningMessageContentEvent(
+          messageId: 'a',
+          delta: 'x',
+        ).copyWith(messageId: 'b', delta: 'y');
+        expect(msgContent.messageId, 'b');
+        expect(msgContent.delta, 'y');
+
+        final msgEnd = ReasoningMessageEndEvent(messageId: 'a')
+            .copyWith(messageId: 'b');
+        expect(msgEnd.messageId, 'b');
+
+        final chunk = ReasoningMessageChunkEvent(messageId: 'a', delta: 'x')
+            .copyWith(messageId: 'b', delta: 'y');
+        expect(chunk.messageId, 'b');
+        expect(chunk.delta, 'y');
+
+        final enc = ReasoningEncryptedValueEvent(
+          subtype: ReasoningEncryptedValueSubtype.toolCall,
+          entityId: 'a',
+          encryptedValue: 'x',
+        ).copyWith(
+          subtype: ReasoningEncryptedValueSubtype.message,
+          entityId: 'b',
+          encryptedValue: 'y',
+        );
+        expect(enc.subtype, ReasoningEncryptedValueSubtype.message);
+        expect(enc.entityId, 'b');
+        expect(enc.encryptedValue, 'y');
+      });
+
+      test('copyWith preserves fields when no overrides given', () {
+        final original = ReasoningMessageContentEvent(
+          messageId: 'a',
+          delta: 'x',
+          timestamp: 1,
+        );
+        final copy = original.copyWith();
+        expect(copy.messageId, 'a');
+        expect(copy.delta, 'x');
+        expect(copy.timestamp, 1);
+      });
+    });
+
+    group('ActivityDeltaEvent', () {
+      test('round-trips patch array', () {
+        final event = ActivityDeltaEvent(
+          messageId: 'act_1',
+          activityType: 'upload',
+          patch: [
+            {'op': 'replace', 'path': '/progress', 'value': 0.75},
+          ],
+        );
+        final decoded = ActivityDeltaEvent.fromJson(event.toJson());
+        expect(decoded.patch, hasLength(1));
+        expect(decoded.activityType, 'upload');
+      });
+
+      test('BaseEvent.fromJson routes ACTIVITY_DELTA', () {
+        final event = BaseEvent.fromJson({
+          'type': 'ACTIVITY_DELTA',
+          'messageId': 'act_1',
+          'activityType': 'upload',
+          'patch': [],
+        });
+        expect(event, isA<ActivityDeltaEvent>());
+      });
+
+      test('copyWith overrides fields', () {
+        final original = ActivityDeltaEvent(
+          messageId: 'a',
+          activityType: 'upload',
+          patch: [],
+          timestamp: 1,
+        );
+        final copy = original.copyWith(
+          messageId: 'b',
+          activityType: 'download',
+          patch: [
+            {'op': 'add', 'path': '/x', 'value': 1},
+          ],
+          timestamp: 2,
+        );
+        expect(copy.messageId, 'b');
+        expect(copy.activityType, 'download');
+        expect(copy.patch, hasLength(1));
+        expect(copy.timestamp, 2);
+      });
+    });
+
     group('ThinkingEvents', () {
       test('ThinkingStartEvent with title', () {
         final event = ThinkingStartEvent(title: 'Processing request');
@@ -338,6 +569,164 @@ void main() {
         final decoded = CustomEvent.fromJson(json);
         expect(decoded.name, 'ui_config_change');
         expect(decoded.value, customValue);
+      });
+    });
+
+    group('ActivityEvents', () {
+      test('ActivitySnapshotEvent serialization with spec fields', () {
+        final content = {'skill': 'rag', 'tool_name': 'search'};
+        final event = ActivitySnapshotEvent(
+          messageId: 'rag:abc123',
+          activityType: 'skill_tool_call',
+          content: content,
+        );
+
+        final json = event.toJson();
+        expect(json['type'], 'ACTIVITY_SNAPSHOT');
+        expect(json['messageId'], 'rag:abc123');
+        expect(json['activityType'], 'skill_tool_call');
+        expect(json['content'], content);
+        expect(json['replace'], true);
+
+        final decoded = ActivitySnapshotEvent.fromJson(json);
+        expect(decoded.messageId, 'rag:abc123');
+        expect(decoded.activityType, 'skill_tool_call');
+        expect(decoded.content, content);
+        expect(decoded.replace, true);
+      });
+
+      test('ActivitySnapshotEvent replace can be set to false', () {
+        const event = ActivitySnapshotEvent(
+          messageId: 'msg-1',
+          activityType: 'test',
+          content: {},
+          replace: false,
+        );
+        expect(event.replace, false);
+
+        final json = event.toJson();
+        expect(json['replace'], false);
+
+        final decoded = ActivitySnapshotEvent.fromJson(json);
+        expect(decoded.replace, false);
+      });
+
+      test('ActivitySnapshotEvent fromJson with missing optional replace', () {
+        final json = {
+          'type': 'ACTIVITY_SNAPSHOT',
+          'messageId': 'msg-1',
+          'activityType': 'test',
+          'content': {'key': 'value'},
+        };
+
+        final event = ActivitySnapshotEvent.fromJson(json);
+        expect(event.messageId, 'msg-1');
+        expect(event.activityType, 'test');
+        expect(event.content, {'key': 'value'});
+        expect(event.replace, true);
+      });
+
+      test('ActivitySnapshotEvent fromJson throws on missing messageId', () {
+        final json = {
+          'type': 'ACTIVITY_SNAPSHOT',
+          'activityType': 'test',
+          'content': {'key': 'value'},
+        };
+
+        expect(
+          () => ActivitySnapshotEvent.fromJson(json),
+          throwsA(isA<AGUIValidationError>()),
+        );
+      });
+
+      test('ActivitySnapshotEvent fromJson throws on missing activityType', () {
+        final json = {
+          'type': 'ACTIVITY_SNAPSHOT',
+          'messageId': 'msg-1',
+          'content': {'key': 'value'},
+        };
+
+        expect(
+          () => ActivitySnapshotEvent.fromJson(json),
+          throwsA(isA<AGUIValidationError>()),
+        );
+      });
+
+      test('ActivitySnapshotEvent fromJson throws on missing content', () {
+        final json = {
+          'type': 'ACTIVITY_SNAPSHOT',
+          'messageId': 'msg-1',
+          'activityType': 'test',
+        };
+
+        expect(
+          () => ActivitySnapshotEvent.fromJson(json),
+          throwsA(isA<AGUIValidationError>()),
+        );
+      });
+
+      test('ActivitySnapshotEvent copyWith preserves unchanged fields', () {
+        const event = ActivitySnapshotEvent(
+          messageId: 'msg-1',
+          activityType: 'test',
+          content: {'a': 1},
+          replace: false,
+          timestamp: 1000,
+        );
+
+        final withMessageId = event.copyWith(messageId: 'msg-2');
+        expect(withMessageId.messageId, 'msg-2');
+        expect(withMessageId.activityType, 'test');
+        expect(withMessageId.content, {'a': 1});
+        expect(withMessageId.replace, false);
+        expect(withMessageId.timestamp, 1000);
+
+        final withActivityType = event.copyWith(activityType: 'updated');
+        expect(withActivityType.messageId, 'msg-1');
+        expect(withActivityType.activityType, 'updated');
+
+        final withContent = event.copyWith(content: {'b': 2});
+        expect(withContent.content, {'b': 2});
+        expect(withContent.messageId, 'msg-1');
+
+        final withReplace = event.copyWith(replace: true);
+        expect(withReplace.replace, true);
+        expect(withReplace.messageId, 'msg-1');
+
+        final withTimestamp = event.copyWith(timestamp: 2000);
+        expect(withTimestamp.timestamp, 2000);
+        expect(withTimestamp.messageId, 'msg-1');
+      });
+
+      test('ActivitySnapshotEvent timestamp survives serialization', () {
+        const event = ActivitySnapshotEvent(
+          messageId: 'msg-1',
+          activityType: 'test',
+          content: {'key': 'value'},
+          timestamp: 1710000000,
+        );
+
+        final json = event.toJson();
+        expect(json['timestamp'], 1710000000);
+
+        final decoded = ActivitySnapshotEvent.fromJson(json);
+        expect(decoded.timestamp, 1710000000);
+      });
+
+      test('ActivitySnapshotEvent via BaseEvent.fromJson factory', () {
+        final json = {
+          'type': 'ACTIVITY_SNAPSHOT',
+          'messageId': 'rag:abc123',
+          'activityType': 'skill_tool_call',
+          'content': {'skill': 'rag'},
+          'replace': true,
+        };
+
+        final event = BaseEvent.fromJson(json);
+        expect(event, isA<ActivitySnapshotEvent>());
+        final activity = event as ActivitySnapshotEvent;
+        expect(activity.messageId, 'rag:abc123');
+        expect(activity.activityType, 'skill_tool_call');
       });
     });
   });

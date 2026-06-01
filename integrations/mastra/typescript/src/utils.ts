@@ -7,6 +7,15 @@ import { Agent as LocalMastraAgent } from "@mastra/core/agent";
 import { RequestContext } from "@mastra/core/request-context";
 import { MastraAgent } from "./mastra";
 
+/**
+ * CoreMessage extended with an optional `id` field.
+ * Mastra's `inputToMastraDBMessage` checks `"id" in message` at runtime
+ * and preserves it when present, but the upstream AI SDK type doesn't
+ * declare the field. This type makes the pass-through explicit.
+ * Ref: https://github.com/mastra-ai/mastra/blob/13f46064564fc4aee14aa11878f9352d79f4efc4/packages/core/src/agent/message-list/conversion/input-converter.ts#L79
+ */
+type CoreMessageWithId = CoreMessage & { id?: string };
+
 function mediaSourceToUrl(source: InputContentDataSource | InputContentUrlSource): string {
   if (source.type === "data") {
     return `data:${source.mimeType};base64,${source.value}`;
@@ -92,8 +101,8 @@ const toMastraContent = (content: Message["content"]): string | any[] => {
   return parts;
 };
 
-export function convertAGUIMessagesToMastra(messages: Message[]): CoreMessage[] {
-  const result: CoreMessage[] = [];
+export function convertAGUIMessagesToMastra(messages: Message[]): CoreMessageWithId[] {
+  const result: CoreMessageWithId[] = [];
 
   for (const message of messages) {
     if (message.role === "assistant") {
@@ -111,12 +120,14 @@ export function convertAGUIMessagesToMastra(messages: Message[]): CoreMessage[] 
         });
       }
       result.push({
+        ...(message.id !== undefined ? { id: message.id } : {}),
         role: "assistant",
         content: parts,
       });
     } else if (message.role === "user") {
       const userContent = toMastraContent(message.content);
       result.push({
+        ...(message.id !== undefined ? { id: message.id } : {}),
         role: "user",
         content: userContent,
       });
@@ -133,6 +144,7 @@ export function convertAGUIMessagesToMastra(messages: Message[]): CoreMessage[] 
         }
       }
       result.push({
+        ...(message.id !== undefined ? { id: message.id } : {}),
         role: "tool",
         content: [
           {

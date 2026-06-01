@@ -23,6 +23,7 @@ middlewares/event-throttle-middleware/tsdown.config.ts
 middlewares/mcp-apps-middleware/tsdown.config.ts
 middlewares/middleware-starter/tsdown.config.ts
 sdks/community/java/examples/copilot-app/next.config.ts
+sdks/typescript/packages/a2ui-toolkit/tsdown.config.ts
 sdks/typescript/packages/cli/tsdown.config.ts
 sdks/typescript/packages/client/tsdown.config.ts
 sdks/typescript/packages/core/tsdown.config.ts

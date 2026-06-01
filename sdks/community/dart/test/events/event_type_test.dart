@@ -91,7 +91,7 @@ void main() {
     });
 
     test('values list contains all event types', () {
-      expect(EventType.values.length, equals(25));
+      expect(EventType.values.length, equals(34));
 
       // Verify specific important event types are included
       expect(EventType.values, contains(EventType.textMessageStart));

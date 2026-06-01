@@ -1,7 +1,11 @@
 {
   "name": "@ag-ui/agno",
   "author": "Manu Hortet <manu@agno.com>",
-  "version": "0.0.4",
+  "version": "0.0.5",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ag-ui-protocol/ag-ui.git"
+  },
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",

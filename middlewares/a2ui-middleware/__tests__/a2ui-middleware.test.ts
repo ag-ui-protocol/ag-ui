@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   AbstractAgent,
   BaseEvent,
@@ -303,13 +303,332 @@ describe("A2UIMiddleware", () => {
       const input = createRunAgentInput();
       const events = await collectEvents(middleware.run(input, mockAgent));
 
-      const activityEvent = events.find(
+      const activitySnapshots = events.filter(
         (e) => e.type === EventType.ACTIVITY_SNAPSHOT
       );
-      expect(activityEvent).toBeDefined();
-      // Should have the surface ops
-      const ops = (activityEvent as any).content.a2ui_operations;
-      expect(ops.length).toBeGreaterThanOrEqual(2);
+      expect(activitySnapshots.length).toBeGreaterThanOrEqual(1);
+
+      // createSurface is emitted early — the first snapshot creates the surface
+      // (so the frontend can paint a skeleton before components finish).
+      const firstOps = (activitySnapshots[0] as any).content.a2ui_operations;
+      expect(firstOps.some((op: any) => op.createSurface)).toBe(true);
+
+      // By the final snapshot, components have landed (createSurface + updateComponents).
+      const lastOps = (activitySnapshots[activitySnapshots.length - 1] as any).content
+        .a2ui_operations;
+      expect(lastOps.some((op: any) => op.updateComponents)).toBe(true);
+      expect(lastOps.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it("streams data items incrementally for a repeated-template surface", async () => {
+      const middleware = new A2UIMiddleware();
+      const toolCallId = "tc-stream-items";
+
+      // List surface: Row root repeats one card template over /items.
+      const fullArgs = JSON.stringify({
+        surfaceId: "hotels",
+        components: [
+          { id: "root", component: "Row", children: { componentId: "card", path: "/items" } },
+          { id: "card", component: "HotelCard", name: { path: "name" } },
+        ],
+        data: {
+          items: [
+            { name: "Alpha" },
+            { name: "Bravo" },
+            { name: "Charlie" },
+          ],
+        },
+      });
+
+      // Slice into many small deltas so item boundaries land on separate chunks.
+      const deltas: BaseEvent[] = [];
+      const chunk = 12;
+      for (let i = 0; i < fullArgs.length; i += chunk) {
+        deltas.push({
+          type: EventType.TOOL_CALL_ARGS,
+          toolCallId,
+          delta: fullArgs.substring(i, i + chunk),
+        } as BaseEvent);
+      }
+
+      const mockAgent = new MockAgent([
+        { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
+        { type: EventType.TOOL_CALL_START, toolCallId, toolCallName: "render_a2ui" },
+        ...deltas,
+        { type: EventType.TOOL_CALL_END, toolCallId },
+        { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
+      ]);
+
+      const input = createRunAgentInput();
+      const events = await collectEvents(middleware.run(input, mockAgent));
+      const snapshots = events.filter((e) => e.type === EventType.ACTIVITY_SNAPSHOT);
+
+      // Never emit a component without a `component` type (would throw in web_core).
+      for (const snap of snapshots) {
+        const ops = (snap as any).content.a2ui_operations as any[];
+        for (const op of ops) {
+          if (op.updateComponents) {
+            for (const c of op.updateComponents.components) {
+              expect(typeof c.component).toBe("string");
+            }
+          }
+        }
+      }
+
+      // The data-model item count should grow across snapshots (progressive
+      // hydration), reaching the full 3 items by the end.
+      const itemCounts = snapshots
+        .map((s) => {
+          const ops = (s as any).content.a2ui_operations as any[];
+          const dm = ops.find((op) => op.updateDataModel);
+          return dm ? (dm.updateDataModel.value.items?.length ?? 0) : -1;
+        })
+        .filter((n) => n >= 0);
+
+      expect(itemCounts.length).toBeGreaterThanOrEqual(2); // multiple data emits
+      expect(Math.max(...itemCounts)).toBe(3); // ends fully hydrated
+      // Monotonic non-decreasing growth.
+      for (let i = 1; i < itemCounts.length; i++) {
+        expect(itemCounts[i]).toBeGreaterThanOrEqual(itemCounts[i - 1]);
+      }
+      // TEETH: at least one PARTIAL data emit (fewer than the full 3 items)
+      // must have been observed. This is the assertion that fails if streaming
+      // is reverted to atomic data emission — atomic mode only ever emits the
+      // full array, so every count would equal 3 and min would not be < 3.
+      expect(Math.min(...itemCounts)).toBeLessThan(3);
+
+      // updateComponents emitted exactly once-worth (atomic): the components
+      // array is identical across every snapshot that carries it.
+      const componentSets = snapshots
+        .map((s) => {
+          const ops = (s as any).content.a2ui_operations as any[];
+          const uc = ops.find((op) => op.updateComponents);
+          return uc ? JSON.stringify(uc.updateComponents.components) : null;
+        })
+        .filter((x): x is string => x !== null);
+      expect(new Set(componentSets).size).toBe(1);
+    });
+
+    it("never emits an empty surface (createSurface always rides with components)", async () => {
+      const middleware = new A2UIMiddleware();
+      const toolCallId = "tc-early-surface";
+
+      const fullArgs = JSON.stringify({
+        surfaceId: "early",
+        components: [
+          { id: "root", component: "Row", children: { componentId: "card", path: "/items" } },
+          { id: "card", component: "HotelCard", name: { path: "name" } },
+        ],
+        data: { items: [{ name: "A" }] },
+      });
+
+      const deltas: BaseEvent[] = [];
+      const chunk = 8;
+      for (let i = 0; i < fullArgs.length; i += chunk) {
+        deltas.push({
+          type: EventType.TOOL_CALL_ARGS,
+          toolCallId,
+          delta: fullArgs.substring(i, i + chunk),
+        } as BaseEvent);
+      }
+
+      const mockAgent = new MockAgent([
+        { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
+        { type: EventType.TOOL_CALL_START, toolCallId, toolCallName: "render_a2ui" },
+        ...deltas,
+        { type: EventType.TOOL_CALL_END, toolCallId },
+        { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
+      ]);
+
+      const events = await collectEvents(middleware.run(createRunAgentInput(), mockAgent));
+      const snapshots = events.filter((e) => e.type === EventType.ACTIVITY_SNAPSHOT);
+
+      // Every snapshot that carries createSurface must also carry components in
+      // the same payload — an empty surface would make the renderer throw
+      // "Component not found: root" before components arrive (a visible flash).
+      for (const snap of snapshots) {
+        const ops = (snap as any).content.a2ui_operations as any[];
+        if (ops.some((op) => op.createSurface)) {
+          expect(ops.some((op) => op.updateComponents)).toBe(true);
+        }
+      }
+      // And the very first snapshot already includes components.
+      const firstOps = (snapshots[0] as any).content.a2ui_operations as any[];
+      expect(firstOps.some((op) => op.updateComponents)).toBe(true);
+    });
+
+    it("treats an empty-string defaultCatalogId as unset (no createSurface with catalogId='')", async () => {
+      const middleware = new A2UIMiddleware({ defaultCatalogId: "" });
+      const toolCallId = "tc-empty-catalog";
+
+      const fullArgs = JSON.stringify({
+        surfaceId: "s-empty",
+        components: [
+          { id: "root", component: "Row", children: { componentId: "card", path: "/items" } },
+          { id: "card", component: "HotelCard", name: { path: "name" } },
+        ],
+        data: { items: [{ name: "A" }] },
+      });
+
+      const mockAgent = new MockAgent([
+        { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
+        { type: EventType.TOOL_CALL_START, toolCallId, toolCallName: "render_a2ui" },
+        { type: EventType.TOOL_CALL_ARGS, toolCallId, delta: fullArgs } as BaseEvent,
+        { type: EventType.TOOL_CALL_END, toolCallId },
+        { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
+      ]);
+
+      const events = await collectEvents(middleware.run(createRunAgentInput(), mockAgent));
+      const snapshots = events.filter((e) => e.type === EventType.ACTIVITY_SNAPSHOT);
+      // The createSurface op's catalogId must never be the empty string the
+      // host accidentally configured — fall through to the basic catalog
+      // (which the renderer can at least surface as a real, recognizable error).
+      for (const snap of snapshots) {
+        const ops = (snap as any).content.a2ui_operations as any[];
+        for (const op of ops) {
+          if (op.createSurface) {
+            expect(op.createSurface.catalogId).not.toBe("");
+            expect(typeof op.createSurface.catalogId).toBe("string");
+            expect((op.createSurface.catalogId as string).length).toBeGreaterThan(0);
+          }
+        }
+      }
+    });
+
+    it("streaming intercept fires for a custom injectA2UITool name", async () => {
+      // When the middleware injects the render tool under a non-default name,
+      // the streaming intercept must recognize that name — otherwise the
+      // progressive-render path silently downgrades to result-only.
+      const middleware = new A2UIMiddleware({ injectA2UITool: "custom_render" });
+      const toolCallId = "tc-custom-name";
+
+      const fullArgs = JSON.stringify({
+        surfaceId: "s-custom",
+        components: [
+          { id: "root", component: "Row", children: { componentId: "card", path: "/items" } },
+          { id: "card", component: "HotelCard", name: { path: "name" } },
+        ],
+        data: { items: [{ name: "X" }] },
+      });
+
+      const mockAgent = new MockAgent([
+        { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
+        { type: EventType.TOOL_CALL_START, toolCallId, toolCallName: "custom_render" },
+        { type: EventType.TOOL_CALL_ARGS, toolCallId, delta: fullArgs } as BaseEvent,
+        { type: EventType.TOOL_CALL_END, toolCallId },
+        { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
+      ]);
+
+      const events = await collectEvents(middleware.run(createRunAgentInput(), mockAgent));
+      const snapshots = events.filter((e) => e.type === EventType.ACTIVITY_SNAPSHOT);
+      // The custom-named tool's args must produce streaming ACTIVITY_SNAPSHOTs.
+      expect(snapshots.length).toBeGreaterThan(0);
+      const hasCreate = snapshots.some((s) =>
+        (s as any).content.a2ui_operations.some((op: any) => op.createSurface?.surfaceId === "s-custom"),
+      );
+      expect(hasCreate).toBe(true);
+    });
+
+    it("streaming intercept fires with injectA2UITool:true even when a2uiToolNames is overridden", async () => {
+      // Regression: a host that overrides `a2uiToolNames` (e.g. to add an extra
+      // recognized name) while keeping `injectA2UITool: true` would previously
+      // lose the default RENDER_A2UI_TOOL_NAME from the intercept set, because
+      // the conditional only added a custom *string* name. The injected tool —
+      // still named "render_a2ui" — would never open a streaming entry and
+      // the progressive-render path would silently degrade to result-only.
+      const middleware = new A2UIMiddleware({
+        injectA2UITool: true,
+        a2uiToolNames: ["some_other_extra_tool"],
+      });
+      const toolCallId = "tc-default-name-override";
+
+      const fullArgs = JSON.stringify({
+        surfaceId: "s-default",
+        components: [
+          { id: "root", component: "Row", children: { componentId: "card", path: "/items" } },
+          { id: "card", component: "HotelCard", name: { path: "name" } },
+        ],
+        data: { items: [{ name: "Y" }] },
+      });
+
+      const mockAgent = new MockAgent([
+        { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
+        { type: EventType.TOOL_CALL_START, toolCallId, toolCallName: "render_a2ui" },
+        { type: EventType.TOOL_CALL_ARGS, toolCallId, delta: fullArgs } as BaseEvent,
+        { type: EventType.TOOL_CALL_END, toolCallId },
+        { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
+      ]);
+
+      const events = await collectEvents(middleware.run(createRunAgentInput(), mockAgent));
+      const snapshots = events.filter((e) => e.type === EventType.ACTIVITY_SNAPSHOT);
+      expect(snapshots.length).toBeGreaterThan(0);
+      const hasCreate = snapshots.some((s) =>
+        (s as any).content.a2ui_operations.some(
+          (op: any) => op.createSurface?.surfaceId === "s-default",
+        ),
+      );
+      expect(hasCreate).toBe(true);
+    });
+
+    it("does not suppress a second unrelated tool's a2ui_operations result after an earlier render streamed", async () => {
+      // Earlier behaviour: any streaming entry with componentsEmitted=true
+      // blanket-suppressed every subsequent a2ui_operations result in the
+      // same run, even from an unrelated outer tool with a different
+      // surface. Convergence fix: dedup is scoped to the outer call id.
+      const middleware = new A2UIMiddleware();
+
+      // 1. Inner render streams surface "s-first" inside outer call "outer-1".
+      const innerCallId = "tc-inner";
+      const outer1 = "outer-1";
+      const innerArgs = JSON.stringify({
+        surfaceId: "s-first",
+        components: [
+          { id: "root", component: "Row", children: { componentId: "card", path: "/items" } },
+          { id: "card", component: "HotelCard", name: { path: "name" } },
+        ],
+        data: { items: [{ name: "A" }] },
+      });
+
+      // 2. An unrelated outer tool "outer-2" returns a full a2ui_operations envelope
+      //    for a different surface "s-second". The middleware must NOT swallow it.
+      const outer2 = "outer-2";
+      const secondEnvelope = JSON.stringify({
+        a2ui_operations: [
+          { version: "v0.9", createSurface: { surfaceId: "s-second", catalogId: "https://a2ui.org/specification/v0_9/basic_catalog.json" } },
+          { version: "v0.9", updateComponents: { surfaceId: "s-second", components: [{ id: "root", component: "Text", text: "hi" }] } },
+        ],
+      });
+
+      const mockAgent = new MockAgent([
+        { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
+        // Outer call 1 opens.
+        { type: EventType.TOOL_CALL_START, toolCallId: outer1, toolCallName: "generate_a2ui" },
+        // Inner render_a2ui inside outer-1.
+        { type: EventType.TOOL_CALL_START, toolCallId: innerCallId, toolCallName: "render_a2ui" },
+        { type: EventType.TOOL_CALL_ARGS, toolCallId: innerCallId, delta: innerArgs } as BaseEvent,
+        { type: EventType.TOOL_CALL_END, toolCallId: innerCallId },
+        { type: EventType.TOOL_CALL_RESULT, toolCallId: outer1, content: JSON.stringify({ ok: true }) } as BaseEvent,
+        // Outer call 2 opens — completely unrelated tool that legitimately
+        // returns a different a2ui surface in its result content.
+        { type: EventType.TOOL_CALL_START, toolCallId: outer2, toolCallName: "some_other_tool" },
+        { type: EventType.TOOL_CALL_RESULT, toolCallId: outer2, content: secondEnvelope } as BaseEvent,
+        { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
+      ]);
+
+      const events = await collectEvents(middleware.run(createRunAgentInput(), mockAgent));
+      const snapshots = events.filter((e) => e.type === EventType.ACTIVITY_SNAPSHOT);
+      const surfaceIds = new Set<string>();
+      for (const snap of snapshots) {
+        const ops = (snap as any).content.a2ui_operations as any[];
+        for (const op of ops) {
+          if (op.createSurface) surfaceIds.add(op.createSurface.surfaceId);
+          if (op.updateComponents) surfaceIds.add(op.updateComponents.surfaceId);
+        }
+      }
+      expect(surfaceIds.has("s-first")).toBe(true);
+      // Bucket (a) regression guard: dedup must not blanket-suppress
+      // unrelated subsequent surfaces in the same run.
+      expect(surfaceIds.has("s-second")).toBe(true);
     });
 
     it("should produce distinct messageIds for different render_a2ui calls with the same surfaceId", async () => {
@@ -448,10 +767,17 @@ describe("A2UIMiddleware", () => {
 });
 
 describe("A2UI auto-detection in tool results", () => {
+  // Silence console.warn from auto-detect best-effort paths (e.g. non-A2UI
+  // strings that happen to look JSON-ish) so the test output stays clean.
+  // Restored after each test so the spy doesn't leak into unrelated suites.
   let consoleWarnSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleWarnSpy.mockRestore();
   });
 
   it("should emit ACTIVITY_SNAPSHOT when TOOL_CALL_RESULT contains a2ui_operations container", async () => {

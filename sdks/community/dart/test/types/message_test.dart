@@ -170,6 +170,70 @@ void main() {
       });
     });
 
+    group('ActivityMessage', () {
+      test('MessageRole.fromString("activity") returns activity role', () {
+        expect(MessageRole.fromString('activity'), MessageRole.activity);
+      });
+
+      test('round-trips activityType and content', () {
+        final message = ActivityMessage(
+          id: 'act_001',
+          activityType: 'file_upload',
+          activityContent: {'progress': 0.5, 'filename': 'data.csv'},
+        );
+
+        final json = message.toJson();
+        expect(json['id'], 'act_001');
+        expect(json['role'], 'activity');
+        expect(json['activityType'], 'file_upload');
+        expect(json['content'], {'progress': 0.5, 'filename': 'data.csv'});
+
+        final decoded = ActivityMessage.fromJson(json);
+        expect(decoded.id, 'act_001');
+        expect(decoded.activityType, 'file_upload');
+        expect(decoded.activityContent,
+            {'progress': 0.5, 'filename': 'data.csv'});
+      });
+
+      test('Message.fromJson routes role=activity to ActivityMessage', () {
+        final decoded = Message.fromJson({
+          'id': 'act_002',
+          'role': 'activity',
+          'activityType': 'thinking',
+          'content': <String, dynamic>{'note': 'x'},
+        });
+        expect(decoded, isA<ActivityMessage>());
+      });
+
+      test('copyWith overrides fields', () {
+        final original = ActivityMessage(
+          id: 'act_1',
+          activityType: 'upload',
+          activityContent: const {'progress': 0.1},
+        );
+        final copy = original.copyWith(
+          id: 'act_2',
+          activityType: 'download',
+          activityContent: const {'progress': 0.9},
+        );
+        expect(copy.id, 'act_2');
+        expect(copy.activityType, 'download');
+        expect(copy.activityContent, {'progress': 0.9});
+      });
+
+      test('copyWith preserves fields when no overrides given', () {
+        final original = ActivityMessage(
+          id: 'act_1',
+          activityType: 'upload',
+          activityContent: const {'progress': 0.1},
+        );
+        final copy = original.copyWith();
+        expect(copy.id, 'act_1');
+        expect(copy.activityType, 'upload');
+        expect(copy.activityContent, {'progress': 0.1});
+      });
+    });
+
     group('Unknown field tolerance', () {
       test('should ignore unknown fields in JSON', () {
         final json = {

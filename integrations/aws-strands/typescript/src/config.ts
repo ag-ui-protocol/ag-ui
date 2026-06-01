@@ -1,0 +1,239 @@
+/** Configuration primitives for customizing Strands agent behavior. */
+
+import type { RunAgentInput, BaseEvent } from "@ag-ui/core";
+import type { SessionManager } from "@strands-agents/sdk";
+
+import type { Logger } from "./logger";
+
+export type StatePayload = Record<string, unknown>;
+
+/**
+ * Free-form key/value map carried on `RunAgentInput.context[]` and
+ * `RunAgentInput.forwardedProps`. Exposed on hook contexts so behaviors can
+ * react to e.g. per-request auth tokens or locale without re-parsing
+ * `inputData`.
+ *
+ * TypeScript-only: the Python adapter passes `input_data` directly to hooks
+ * and callers pull these fields off themselves.
+ */
+export interface ToolCallContextExtras {
+  /**
+   * `RunAgentInput.context[]` flattened by `description` → `value`.
+   * Duplicates: later entries overwrite earlier ones. Keys `__proto__`,
+   * `constructor`, and `prototype` are dropped to prevent prototype-pollution
+   * surprises in downstream `Object.assign(target, ctx.context)` usage.
+   */
+  context: Readonly<Record<string, string>>;
+  /**
+   * `RunAgentInput.forwardedProps` as an opaque record. Shape is defined by
+   * the frontend; the adapter does not introspect it.
+   */
+  forwardedProps: Readonly<Record<string, unknown>>;
+}
+
+/** Context passed to tool call hooks. */
+export interface ToolCallContext extends ToolCallContextExtras {
+  inputData: RunAgentInput;
+  toolName: string;
+  toolUseId: string;
+  toolInput: unknown;
+  argsStr: string;
+}
+
+/** Context passed to tool result hooks. */
+export interface ToolResultContext extends ToolCallContext {
+  resultData: unknown;
+  messageId: string;
+}
+
+export type MaybePromise<T> = T | Promise<T>;
+
+export type ArgsStreamer = (ctx: ToolCallContext) => AsyncIterable<string>;
+export type StateFromArgs = (
+  ctx: ToolCallContext,
+) => MaybePromise<StatePayload | null | undefined>;
+export type StateFromResult = (
+  ctx: ToolResultContext,
+) => MaybePromise<StatePayload | null | undefined>;
+export type CustomResultHandler = (
+  ctx: ToolResultContext,
+) => AsyncIterable<BaseEvent | null | undefined>;
+export type StateContextBuilder = (
+  inputData: RunAgentInput,
+  prompt: string,
+  /** Convenience view over `inputData.context[]` + `inputData.forwardedProps`. */
+  extras?: ToolCallContextExtras,
+) => string;
+export type SessionManagerProvider = (
+  inputData: RunAgentInput,
+) => MaybePromise<SessionManager | null | undefined>;
+
+/** Declarative mapping telling the UI how to predict state from tool args. */
+export interface PredictStateMapping {
+  stateKey: string;
+  tool: string;
+  toolArgument: string;
+}
+
+export function predictStateMappingToPayload(m: PredictStateMapping): {
+  state_key: string;
+  tool: string;
+  tool_argument: string;
+} {
+  return {
+    state_key: m.stateKey,
+    tool: m.tool,
+    tool_argument: m.toolArgument,
+  };
+}
+
+/** Declarative configuration for tool-specific handling. */
+export interface ToolBehavior {
+  /**
+   * Suppress the `MessagesSnapshotEvent` that would normally follow this
+   * tool's `TOOL_CALL_END` / `TOOL_CALL_RESULT`. Useful when
+   * `customResultHandler` emits its own snapshot.
+   */
+  skipMessagesSnapshot?: boolean;
+  /** Keep the stream alive after emitting a frontend tool call. */
+  continueAfterFrontendCall?: boolean;
+  /** Close text streaming and halt the agent after a tool result arrives. */
+  stopStreamingAfterResult?: boolean;
+  /** `PredictStateMapping[]` that inform the UI how to project tool args into state. */
+  predictState?: PredictStateMapping | Iterable<PredictStateMapping>;
+  /** Async generator controlling how tool arguments are streamed to the frontend. */
+  argsStreamer?: ArgsStreamer;
+  /** Derive a `StateSnapshotEvent` from the tool call arguments. */
+  stateFromArgs?: StateFromArgs;
+  /** Derive a `StateSnapshotEvent` from the tool result. */
+  stateFromResult?: StateFromResult;
+  /** Async iterator that can emit arbitrary AG-UI events in response to a result. */
+  customResultHandler?: CustomResultHandler;
+}
+
+/** Top-level configuration for the Strands agent adapter. */
+export interface StrandsAgentConfig {
+  /** Per-tool overrides keyed by the Strands tool name. */
+  toolBehaviors?: Record<string, ToolBehavior>;
+  /** Callable that enriches the outgoing prompt with the current shared state. */
+  stateContextBuilder?: StateContextBuilder;
+  /**
+   * Optional factory for creating per-thread `SessionManager` instances.
+   *
+   * Called exactly once per `threadId` the first time that thread is seen.
+   * Subsequent requests on the same thread reuse the cached agent (and its
+   * SessionManager). If the provider depends on per-request data (e.g. auth
+   * tokens in `forwardedProps`), only the first request's data is used.
+   *
+   * If the provider throws, the run yields `RUN_ERROR` and returns early;
+   * the thread is NOT cached so the provider will be retried on the next
+   * request.
+   *
+   * If the provider returns `null` or `undefined`, a warning is logged and
+   * the agent runs without session persistence; the thread IS cached.
+   */
+  sessionManagerProvider?: SessionManagerProvider;
+  /**
+   * Emit `MessagesSnapshotEvent` at lifecycle boundaries (after the initial
+   * `STATE_SNAPSHOT`, after each `TOOL_CALL_END` / `TOOL_CALL_RESULT`, and
+   * after each terminal `TEXT_MESSAGE_END`).
+   *
+   * Required for CopilotKit v2 frontends; set to `false` for raw AG-UI
+   * consumers that reconstruct messages themselves. Default: `true`.
+   */
+  emitMessagesSnapshot?: boolean;
+  /**
+   * When `true` (and the cached Strands agent has no `sessionManager`),
+   * reconcile the per-thread `Agent.messages` list with
+   * `RunAgentInput.messages` before invoking `stream()`.
+   *
+   * Prevents the LLM from re-firing frontend tools every turn because
+   * Strands' internal history was missing the tool result the frontend
+   * produced. Disable only if you manage Strands history yourself.
+   * Default: `true`.
+   */
+  replayHistoryIntoStrands?: boolean;
+  /**
+   * Emit the self-expanding AG-UI chunk events (`TEXT_MESSAGE_CHUNK`,
+   * `TOOL_CALL_CHUNK`, `REASONING_MESSAGE_CHUNK`) instead of the explicit
+   * `*_START` / `*_CONTENT` / `*_END` triples. Halves the event count on
+   * high-frequency deltas; useful for bandwidth-constrained transports.
+   * TypeScript-only. Default: `false`.
+   */
+  emitChunkEvents?: boolean;
+  /**
+   * Optional injectable logger. Mirrors the Python adapter's
+   * `logging.getLogger("ag_ui_strands")`: the default surfaces `warn` / `error`
+   * via the `console` and drops `debug`, matching Python's stdlib default
+   * (WARNING-and-up to stderr). Pass `{ debug: console.debug, warn:
+   * console.warn, error: console.error }` to enable verbose traces, `{ debug()
+   * {}, warn() {}, error() {} }` to silence everything, or wire in pino /
+   * winston / bunyan directly — the `Logger` shape matches the `console`
+   * methods.
+   *
+   * Debug messages match the Python adapter's message strings field-for-field
+   * (modulo camelCase / snake_case) so cross-SDK log diffs are straightforward.
+   */
+  logger?: Logger;
+}
+
+// Prototype-pollution guard for keys flattened from `context[]`. Plain
+// `Object.create(null)` maps have no prototype chain, so `__proto__` becomes
+// a regular string key; `constructor` and `prototype` are likewise unfiltered.
+const UNSAFE_CONTEXT_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
+function isPredictStateMapping(v: unknown): v is PredictStateMapping {
+  return (
+    typeof v === "object" &&
+    v !== null &&
+    "stateKey" in v &&
+    "tool" in v &&
+    "toolArgument" in v
+  );
+}
+
+/**
+ * Flatten `RunAgentInput.context[]` into a plain key/value record and ensure
+ * `forwardedProps` is a record. Exported so hook implementations can call it
+ * when they have an `inputData` but not a fully-populated hook context.
+ */
+export function buildContextExtras(
+  inputData: RunAgentInput,
+): ToolCallContextExtras {
+  const context = Object.create(null) as Record<string, string>;
+  const rawContext = (inputData as { context?: unknown }).context;
+  if (Array.isArray(rawContext)) {
+    for (const entry of rawContext) {
+      if (!entry || typeof entry !== "object") continue;
+      const e = entry as { description?: unknown; value?: unknown };
+      if (typeof e.description !== "string" || e.description.length === 0)
+        continue;
+      if (UNSAFE_CONTEXT_KEYS.has(e.description)) continue;
+      context[e.description] =
+        typeof e.value === "string" ? e.value : String(e.value ?? "");
+    }
+  }
+  const rawForwarded = (inputData as { forwardedProps?: unknown })
+    .forwardedProps;
+  const forwardedProps: Record<string, unknown> =
+    rawForwarded &&
+    typeof rawForwarded === "object" &&
+    !Array.isArray(rawForwarded)
+      ? (rawForwarded as Record<string, unknown>)
+      : {};
+  return { context, forwardedProps };
+}
+
+/** Resolve promise-like values produced by hook callables. */
+export async function maybeAwait<T>(value: MaybePromise<T>): Promise<T> {
+  return await Promise.resolve(value);
+}
+
+/** Normalize predict-state config into a concrete list. */
+export function normalizePredictState(
+  value: PredictStateMapping | Iterable<PredictStateMapping> | undefined,
+): PredictStateMapping[] {
+  if (value === undefined) return [];
+  if (isPredictStateMapping(value)) return [value];
+  return Array.from(value);
+}
