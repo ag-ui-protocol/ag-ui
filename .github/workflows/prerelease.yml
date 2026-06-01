@@ -36,6 +36,7 @@ on:
           - integration-spring-ai
           - middleware-a2a
           - middleware-a2ui
+          - middleware-mcp
           - middleware-mcp-apps
           - sdk-py
           - sdk-ts
