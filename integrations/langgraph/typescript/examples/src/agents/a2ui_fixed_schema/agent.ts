@@ -7,7 +7,6 @@
  */
 
 import { createAgent } from "langchain";
-import { MemorySaver } from "@langchain/langgraph";
 import { copilotkitMiddleware } from "@copilotkit/sdk-js/langgraph";
 import { tool } from "@langchain/core/tools";
 
@@ -166,8 +165,6 @@ const searchHotels = tool(
   },
 );
 
-const checkpointer = new MemorySaver();
-
 export const a2uiFixedSchemaGraph = createAgent({
   model: "openai:gpt-4o",
   tools: [searchFlights, searchHotels],
@@ -184,5 +181,4 @@ date, departureTime, arrivalTime, duration, status, and price.
 For hotels, each needs: id, name, location, rating (float 0-5), and price (per night).
 
 Generate 3-5 realistic results.`,
-  checkpointer,
 });
