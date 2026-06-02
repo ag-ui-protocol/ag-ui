@@ -1110,6 +1110,46 @@ class LangGraphAgent:
                     )
                 )
 
+            if tool_call_data and tool_call_data.get("name") and message_content is not None:
+                text_stream_id = None
+                if current_stream and current_stream.get("id") and not current_stream.get("tool_call_id"):
+                    text_stream_id = current_stream["id"]
+                elif message_content != "":
+                    text_stream_id = chunk_id
+                    if should_emit_messages:
+                        yield self._dispatch_event(
+                            TextMessageStartEvent(
+                                type=EventType.TEXT_MESSAGE_START,
+                                role="assistant",
+                                message_id=text_stream_id,
+                                raw_event=event,
+                            )
+                        )
+
+                if text_stream_id and should_emit_messages:
+                    if message_content != "":
+                        yield self._dispatch_event(
+                            TextMessageContentEvent(
+                                type=EventType.TEXT_MESSAGE_CONTENT,
+                                message_id=text_stream_id,
+                                delta=message_content,
+                                raw_event=event,
+                            )
+                        )
+                    yield self._dispatch_event(
+                        TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=text_stream_id, raw_event=event)
+                    )
+
+                if text_stream_id:
+                    self.messages_in_process[self.active_run["id"]] = None
+                    current_stream = None
+                    has_current_stream = False
+                is_message_end_event = False
+                is_tool_call_start_event = True
+                is_tool_call_args_event = False
+                is_tool_call_end_event = False
+                self.active_run["has_function_streaming"] = True
+
             if is_message_end_event and tool_call_data and tool_call_data.get("name"):
                 yield self._dispatch_event(
                     TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=current_stream["id"], raw_event=event)
