@@ -8,7 +8,6 @@
  */
 
 import { createAgent } from "langchain";
-import { MemorySaver } from "@langchain/langgraph";
 import { copilotkitMiddleware } from "@copilotkit/sdk-js/langgraph";
 import { ChatOpenAI } from "@langchain/openai";
 import { getA2UITools } from "@ag-ui/langgraph";
@@ -62,8 +61,6 @@ const a2uiTool = getA2UITools(new ChatOpenAI({ model: "gpt-4o" }), {
   compositionGuide: COMPOSITION_GUIDE,
 });
 
-const checkpointer = new MemorySaver();
-
 export const a2uiDynamicSchemaGraph = createAgent({
   model: "openai:gpt-4o",
   // Cast: tool returned by `getA2UITools` is typed against `@ag-ui/langgraph`'s
@@ -75,5 +72,4 @@ export const a2uiDynamicSchemaGraph = createAgent({
 When the user asks for visual content (product comparisons, dashboards, lists, cards, etc.),
 use the generate_a2ui tool to create a dynamic A2UI surface.
 IMPORTANT: After calling the tool, do NOT repeat the data in your text response. The tool renders UI automatically. Just confirm what was rendered.`,
-  checkpointer,
 });
