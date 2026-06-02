@@ -6,7 +6,7 @@
   "packageManager": "pnpm@10.33.4",
   "scripts": {
     "build": "tsc",
-    "dev": "pnpx @langchain/langgraph-cli@1.1.13 dev",
+    "dev": "pnpx @langchain/langgraph-cli@1.2.3 dev",
     "start": "node dist/index.js"
   },
   "dependencies": {
