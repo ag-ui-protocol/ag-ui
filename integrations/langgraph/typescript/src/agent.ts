@@ -452,7 +452,12 @@ export class LangGraphAgent extends AbstractAgent {
       (m) => m.role !== "system",
     ).length;
 
-    if (stateNonSystemCount > inputNonSystemCount) {
+    // Skip regeneration detection when command.resume is set — a resume from
+    // interrupt is explicitly NOT a regeneration. On the second interrupt-resume
+    // cycle the LangGraph thread state has accumulated tool/AI messages from the
+    // first interrupt while the frontend's input.messages hasn't, which would
+    // otherwise trigger the regeneration path and ignore the resume.
+    if (!forwardedProps?.command?.resume && stateNonSystemCount > inputNonSystemCount) {
       let lastUserMessage: LangGraphMessage | null = null;
       // Find the first user message by working backwards from the last message
       for (let i = messages.length - 1; i >= 0; i--) {
