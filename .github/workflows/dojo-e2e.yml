@@ -40,12 +40,12 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.4.0
         with:
           node-version: "22"
 
       - name: Install pnpm
-        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1  # v4.3.0
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093  # v6.0.8
         with:
           version: 10.33.4
 
@@ -193,12 +193,12 @@ jobs:
           GITHUB_EVENT_PULL_REQUEST_HEAD_REPO_FULL_NAME: ${{ github.event.pull_request.head.repo.full_name }}
 
       - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.4.0
         with:
           node-version: "22"
 
       - name: Install pnpm
-        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1  # v4.3.0
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093  # v6.0.8
         with:
           version: 10.33.4
 
@@ -248,7 +248,7 @@ jobs:
 
       - name: Set up .NET SDK
         if: ${{ contains(join(matrix.services, ','), 'microsoft-agent-framework-dotnet') }}
-        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9  # v4.3.1
+        uses: actions/setup-dotnet@9a946fdbd5fb07b82b2f5a4466058b876ab72bb2  # v5.3.0
         with:
           dotnet-version: "9.0.x"
 
