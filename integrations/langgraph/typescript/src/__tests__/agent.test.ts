@@ -575,6 +575,47 @@ describe("forwarded headers injected into payload.config.configurable", () => {
 
 // ─── Integration tests (skipped without LANGGRAPH_API_URL) ───────────────────
 
+describe("langGraphDefaultMergeState forwards props into ag-ui state", () => {
+  // Forwarded props that must surface into ag-ui state, keyed by the
+  // forwardedProps key mapped to [ag-ui state key, sample value]. To wire a new
+  // forwarded prop into ag-ui state, add it here AND in
+  // langGraphDefaultMergeState — both assertions below then cover it.
+  const FORWARDED_PROPS_TO_AGUI: Record<string, [string, unknown]> = {
+    injectA2UITool: ["inject_a2ui_tool", "render_a2ui"],
+  };
+
+  function mergeWith(forwardedProps: Record<string, unknown>) {
+    const { agent } = buildMockedAgent();
+    const input = {
+      threadId: "t1",
+      runId: "r1",
+      state: {},
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps,
+    } as any;
+    return (agent as any).langGraphDefaultMergeState({ messages: [] }, [], input);
+  }
+
+  it("surfaces each configured forwarded prop under its ag-ui state key", () => {
+    const forwarded = Object.fromEntries(
+      Object.entries(FORWARDED_PROPS_TO_AGUI).map(([fp, [, sample]]) => [fp, sample]),
+    );
+    const result = mergeWith(forwarded);
+    for (const [aguiKey, sample] of Object.values(FORWARDED_PROPS_TO_AGUI)) {
+      expect(result["ag-ui"][aguiKey]).toEqual(sample);
+    }
+  });
+
+  it("omits the ag-ui keys when no forwarded props are present", () => {
+    const result = mergeWith({});
+    for (const [aguiKey] of Object.values(FORWARDED_PROPS_TO_AGUI)) {
+      expect(result["ag-ui"]).not.toHaveProperty(aguiKey);
+    }
+  });
+});
+
 describe("integration tests (require LANGGRAPH_API_URL)", () => {
   it.todo(
     "test 13: successful stream against langgraph-api >= 0.7.x — integration test (gated on LANGGRAPH_API_URL)",

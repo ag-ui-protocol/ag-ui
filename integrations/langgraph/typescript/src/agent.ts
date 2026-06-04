@@ -102,6 +102,9 @@ type RunAgentExtendedInput<
   forwardedProps?: Omit<RunsStreamPayload<TStreamMode, TSubgraphs>, "input"> & {
     nodeName?: string;
     threadMetadata?: Record<string, any>;
+    // A2UI tool-injection flag set by the A2UI middleware. Surfaced into
+    // ag-ui state so graphs/tools can read it directly.
+    injectA2UITool?: boolean | string;
   };
 };
 
@@ -1842,14 +1845,24 @@ export class LangGraphAgent extends AbstractAgent {
       return [...acc, mappedTool];
     }, []);
 
+    // Surface the A2UI tool-injection flag (set by the A2UI middleware via
+    // forwardedProps.injectA2UITool) into ag-ui state so graphs/tools can read
+    // it directly from state regardless of run mode. TS forwardedProps keys are
+    // not snake-cased, so the original camelCase key is used as-is.
+    const injectA2UITool = input.forwardedProps?.injectA2UITool;
+    const agUiState: StateEnrichment["ag-ui"] = {
+      tools: langGraphTools,
+      context: input.context,
+    };
+    if (injectA2UITool !== undefined) {
+      agUiState.inject_a2ui_tool = injectA2UITool;
+    }
+
     return {
       ...state,
       messages: newMessages,
       tools: langGraphTools,
-      "ag-ui": {
-        tools: langGraphTools,
-        context: input.context,
-      },
+      "ag-ui": agUiState,
       copilotkit: {
         ...(state as any).copilotkit,
         actions: langGraphTools,

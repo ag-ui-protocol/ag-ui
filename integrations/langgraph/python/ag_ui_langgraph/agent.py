@@ -896,6 +896,18 @@ class LangGraphAgent:
         if a2ui_schema_value is not None:
             ag_ui_state["a2ui_schema"] = a2ui_schema_value
 
+        # Surface the A2UI tool-injection flag (set by the A2UI middleware via
+        # forwardedProps.injectA2UITool) into ag-ui state so graphs/tools can
+        # read it directly from state regardless of run mode. forwarded_props
+        # keys are snake-cased in run() (camel_to_snake turns "injectA2UITool"
+        # into "inject_a2_u_i_tool"), so check the converted key first and fall
+        # back to the raw camelCase form for safety.
+        forwarded = input.forwarded_props or {}
+        if "inject_a2_u_i_tool" in forwarded:
+            ag_ui_state["inject_a2ui_tool"] = forwarded["inject_a2_u_i_tool"]
+        elif "injectA2UITool" in forwarded:
+            ag_ui_state["inject_a2ui_tool"] = forwarded["injectA2UITool"]
+
         return {
             **state,
             "messages": new_messages,

@@ -178,3 +178,31 @@ class TestLanggraphDefaultMergeState:
         assert "ag-ui" in result
         assert result["ag-ui"]["tools"] == result["tools"]
         assert result["ag-ui"]["context"] == ctx
+
+    # Forwarded props that must be surfaced into ag-ui state, keyed by the
+    # forwarded_props key (as it arrives after run()'s camel->snake conversion)
+    # mapped to (the ag-ui state key it lands under, a sample value).
+    # To wire a new forwarded prop into ag-ui state, add it here AND in
+    # langgraph_default_merge_state — both the test and the absence check below
+    # then cover it automatically.
+    FORWARDED_PROPS_TO_AGUI = {
+        # injectA2UITool -> camel_to_snake -> inject_a2_u_i_tool (A2UI middleware)
+        "inject_a2_u_i_tool": ("inject_a2ui_tool", "render_a2ui"),
+    }
+
+    def test_forwarded_props_surface_into_ag_ui_state(self):
+        """Each configured forwarded prop lands under its ag-ui state key."""
+        agent = make_agent()
+        forwarded = {fp: sample for fp, (_, sample) in self.FORWARDED_PROPS_TO_AGUI.items()}
+        result = agent.langgraph_default_merge_state(
+            {"messages": []}, [], make_input(forwarded_props=forwarded)
+        )
+        for _, (agui_key, sample) in self.FORWARDED_PROPS_TO_AGUI.items():
+            assert result["ag-ui"][agui_key] == sample
+
+    def test_forwarded_props_absent_by_default(self):
+        """With no forwarded props, none of the ag-ui state keys are present."""
+        agent = make_agent()
+        result = agent.langgraph_default_merge_state({"messages": []}, [], make_input())
+        for _, (agui_key, _sample) in self.FORWARDED_PROPS_TO_AGUI.items():
+            assert agui_key not in result["ag-ui"]

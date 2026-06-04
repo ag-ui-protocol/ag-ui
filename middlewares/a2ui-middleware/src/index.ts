@@ -100,7 +100,7 @@ export class A2UIMiddleware extends Middleware {
 
     // Conditionally inject the render_a2ui tool and its usage guidelines
     const finalInput = this.config.injectA2UITool
-      ? this.injectToolGuidelines(this.injectTool(withSchema))
+      ? this.injectToolGuidelines(this.injectToolAndFlag(withSchema))
       : withSchema;
 
     // Process the event stream using runNextWithState for automatic message tracking
@@ -216,11 +216,11 @@ export class A2UIMiddleware extends Middleware {
   }
 
   /**
-   * Inject the A2UI rendering tool into the input.
+   * Inject the A2UI rendering tool + the "injectA2UITool" flag into the input.
    * Uses the configured name from `injectA2UITool` (string) or defaults to "render_a2ui".
    * Always replaces the tool if it already exists to ensure the correct parameter schema.
    */
-  private injectTool(input: RunAgentInput): RunAgentInput {
+  private injectToolAndFlag(input: RunAgentInput): RunAgentInput {
     const toolName = typeof this.config.injectA2UITool === "string"
       ? this.config.injectA2UITool
       : RENDER_A2UI_TOOL_NAME;
@@ -229,6 +229,10 @@ export class A2UIMiddleware extends Middleware {
     const filteredTools = (input.tools ?? []).filter((t) => t.name !== toolName);
     return {
       ...input,
+      forwardedProps: {
+        ...input.forwardedProps,
+        injectA2UITool: this.config.injectA2UITool,
+      },
       tools: [...filteredTools, tool],
     };
   }
