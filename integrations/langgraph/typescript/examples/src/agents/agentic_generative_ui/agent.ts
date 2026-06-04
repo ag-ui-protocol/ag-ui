@@ -176,5 +176,5 @@ const workflow = new StateGraph(AgentStateAnnotation)
 
 // Compile the graph
 export const agenticGenerativeUiGraph = workflow.compile({
-  transformers: [aguiTransformer],
+  // transformers: [aguiTransformer],
 });

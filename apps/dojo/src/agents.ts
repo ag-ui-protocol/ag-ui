@@ -199,14 +199,12 @@ export const agentsIntegrations = {
   "langgraph-typescript": async () =>
     mapAgents(
       (graphId) => {
-        // All TS demos register the AG-UI streamTransformer at compile;
-        // route every one through the transformer path. The legacy
-        // translation in agent.ts is preserved for non-langgraph
-        // deployments via `useTransformer: false`.
+        // Protocol (v3 vs legacy) is auto-detected at run time via an
+        // OPTIONS probe of the server's `/threads/:id/stream/events`
+        // route — no per-agent opt-in needed.
         return new LangGraphAgent({
           deploymentUrl: envVars.langgraphTypescriptUrl,
           graphId,
-          useTransformer: true,
         });
       },
       {
