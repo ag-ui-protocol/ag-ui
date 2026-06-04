@@ -17,7 +17,6 @@ function createAgent() {
     url: "http://localhost:8000",
     // Legacy `handleSingleEvent` routing test — explicitly opt out
     // of the transformer path.
-    useTransformer: false,
   } as any);
 
   // Wire up a mock subscriber and activeRun so dispatchEvent works
@@ -48,7 +47,7 @@ describe("messages-tuple stream mode", () => {
         {},
       ];
 
-      agent.handleSingleEvent(chunk);
+      agent.handleSingleEventV2(chunk);
 
       expect(events.length).toBeGreaterThan(0);
       expect(events[0].type).toBe(EventType.TEXT_MESSAGE_START);
@@ -58,7 +57,7 @@ describe("messages-tuple stream mode", () => {
       const { agent, events } = createAgent();
 
       // Simulate events mode producing data
-      agent.handleSingleEvent({
+      agent.handleSingleEventV2({
         event: "on_chat_model_stream",
         metadata: { "emit-messages": true, "emit-tool-calls": true },
         data: {
@@ -72,7 +71,7 @@ describe("messages-tuple stream mode", () => {
       const eventCountAfterEventsMode = events.length;
 
       // Now a messages-tuple array should be skipped
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         { type: "AIMessageChunk", id: "msg-1", content: "Hello", response_metadata: {} },
         {},
       ]);
@@ -84,7 +83,7 @@ describe("messages-tuple stream mode", () => {
       const { agent, events } = createAgent();
 
       // A regular events-mode event should work normally
-      agent.handleSingleEvent({
+      agent.handleSingleEventV2({
         event: "on_chat_model_stream",
         metadata: { "emit-messages": true, "emit-tool-calls": true },
         data: {
@@ -104,7 +103,7 @@ describe("messages-tuple stream mode", () => {
     it("emits TEXT_MESSAGE_START + CONTENT for first text chunk", () => {
       const { agent, events } = createAgent();
 
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: "AIMessageChunk",
           id: "msg-1",
@@ -131,12 +130,12 @@ describe("messages-tuple stream mode", () => {
       const { agent, events } = createAgent();
 
       // First chunk starts the message
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         { type: "AIMessageChunk", id: "msg-1", content: "Hello", response_metadata: {} },
         {},
       ]);
       // Second chunk continues
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         { type: "AIMessageChunk", id: "msg-1", content: " world", response_metadata: {} },
         {},
       ]);
@@ -151,11 +150,11 @@ describe("messages-tuple stream mode", () => {
     it("emits TEXT_MESSAGE_END on finish", () => {
       const { agent, events } = createAgent();
 
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         { type: "AIMessageChunk", id: "msg-1", content: "Hello", response_metadata: {} },
         {},
       ]);
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: "AIMessageChunk",
           id: "msg-1",
@@ -176,7 +175,7 @@ describe("messages-tuple stream mode", () => {
       const { agent, events } = createAgent();
 
       // Tool call start
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: "AIMessageChunk",
           id: "msg-1",
@@ -194,7 +193,7 @@ describe("messages-tuple stream mode", () => {
       });
 
       // Tool call args
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: "AIMessageChunk",
           id: "msg-1",
@@ -215,7 +214,7 @@ describe("messages-tuple stream mode", () => {
     it("emits TOOL_CALL_END on finish after tool call", () => {
       const { agent, events } = createAgent();
 
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: "AIMessageChunk",
           id: "msg-1",
@@ -225,7 +224,7 @@ describe("messages-tuple stream mode", () => {
         },
         {},
       ]);
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: "AIMessageChunk",
           id: "msg-1",
@@ -245,7 +244,7 @@ describe("messages-tuple stream mode", () => {
     it("skips non-AI chunks", () => {
       const { agent, events } = createAgent();
 
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         { type: "HumanMessage", id: "msg-1", content: "Hello" },
         {},
       ]);
@@ -256,7 +255,7 @@ describe("messages-tuple stream mode", () => {
     it("skips empty initialization chunks", () => {
       const { agent, events } = createAgent();
 
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: "AIMessageChunk",
           id: "msg-1",
@@ -272,7 +271,7 @@ describe("messages-tuple stream mode", () => {
     it("handles content as array with text block", () => {
       const { agent, events } = createAgent();
 
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: "AIMessageChunk",
           id: "msg-1",
@@ -292,13 +291,13 @@ describe("messages-tuple stream mode", () => {
       const { agent, events } = createAgent();
 
       // Start text
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         { type: "AIMessageChunk", id: "msg-1", content: "Let me search", response_metadata: {} },
         {},
       ]);
 
       // Tool call starts — should end the text message first
-      agent.handleSingleEvent([
+      agent.handleSingleEventV2([
         {
           type: "AIMessageChunk",
           id: "msg-1",

@@ -34,7 +34,6 @@ function makeConfig(): LangGraphAgentConfig {
     // — they synthesise events-mode chunks. The transformer path
     // consumes a different stream shape (`thread.extensions.agui`),
     // so opt out explicitly.
-    useTransformer: false,
     deploymentUrl: "http://localhost:2024",
     graphId: "test-graph",
     client: {

@@ -23,10 +23,23 @@
  *     normal `submitRun(payload)` path runs.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Message as LangGraphMessage } from "@langchain/langgraph-sdk";
 import { LangGraphAgent } from "./agent";
 import type { LangGraphAgentConfig } from "./agent";
+
+// prepareStream now decides v2-vs-v3 via an OPTIONS probe of the server's
+// /threads/:id/stream/events route (supportsV3). Stub fetch with a
+// non-404 so these tests exercise the v3 ThreadStream path.
+beforeEach(() => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue({ status: 200 } as Response),
+  );
+});
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -123,7 +136,6 @@ function makeConfig(opts?: {
   };
 
   const config: LangGraphAgentConfig = {
-    useTransformer: true,
     deploymentUrl: "http://localhost:2024",
     graphId: "test-graph",
     client,
@@ -308,10 +320,15 @@ describe("transformerThreads cache (acquireThreadStream)", () => {
     );
     expect(streamCalls).toHaveLength(1);
 
-    // And only one subscribe(["custom:agui"]) on that stream.
+    // And only one subscribe(...) on that stream. The v3 path subscribes
+    // to the raw protocol channels (DEFAULT_STREAM_MODES), not the
+    // compile-time `custom:agui` channel.
     const entry = threadStreams.get("thread-1")!;
     expect(entry.thread.subscribe).toHaveBeenCalledTimes(1);
-    expect(entry.thread.subscribe).toHaveBeenCalledWith(["custom:agui"]);
+    const subArg = entry.thread.subscribe.mock.calls[0][0];
+    expect(Array.isArray(subArg)).toBe(true);
+    expect(subArg).toContain("messages");
+    expect(subArg).toContain("custom");
   });
 
   it("clone() shares the cache with its parent — second run via clone reuses subscription", async () => {

@@ -1,30 +1,25 @@
 /**
- * Failing tests describing the target shape of `prepareRegenerateStream`
- * after the upcoming refactor.
+ * `prepareRegenerateStream` routes by the auto-detected protocol
+ * (supportsV3 OPTIONS probe), not a config flag:
  *
- * Today, `prepareRegenerateStream` unconditionally goes through
- * `this.client.runs.stream(...)`, even when `useTransformer: true`. That
- * means a regenerate doesn't get the AG-UI transformer's `custom:agui`
- * channel and skips the cached per-thread ThreadStream entirely — so
- * regen events round-trip through the legacy translator instead of the
- * transformer.
- *
- * After the refactor:
- *
- *  - When `useTransformer: true` AND a ThreadStream can be acquired
- *    (existing cache entry or a fresh one) for the threadId, regen calls
+ *  - v3 server (probe non-404): regen acquires the cached per-thread
+ *    ThreadStream and calls
  *    `streamingThread.submitRun({ ..., forkFrom: { checkpointId } })`
- *    against the cached `custom:agui` subscription. `forkFrom.checkpointId`
+ *    against the shared raw-channel subscription. `forkFrom.checkpointId`
  *    points at the forked checkpoint produced by `threads.updateState`.
  *
- *  - When `useTransformer: false`, behavior is unchanged: regen uses
+ *  - legacy server (probe 404): regen uses
  *    `this.client.runs.stream(threadId, assistantId, payload)`.
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import type { Message as LangGraphMessage } from "@langchain/langgraph-sdk";
 import { LangGraphAgent } from "./agent";
 import type { LangGraphAgentConfig } from "./agent";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -46,7 +41,15 @@ function makeThreadStream() {
   return { thread, aguiSub };
 }
 
-function makeConfig(opts: { useTransformer: boolean }) {
+function makeConfig(opts: { v3: boolean }) {
+  // Protocol is auto-detected via an OPTIONS probe of
+  // /threads/:id/stream/events (supportsV3). Stub fetch: a non-404 routes
+  // regen through the v3 ThreadStream path; a 404 falls back to legacy
+  // client.runs.stream.
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue({ status: opts.v3 ? 200 : 404 } as Response),
+  );
   const threadStreams = new Map<string, ReturnType<typeof makeThreadStream>>();
   // LangGraph's `threads.getHistory` returns checkpoints newest-first.
   // `getCheckpointByMessage` reverses to walk oldest→newest and finds
@@ -130,7 +133,6 @@ function makeConfig(opts: { useTransformer: boolean }) {
   };
 
   const config: LangGraphAgentConfig = {
-    useTransformer: opts.useTransformer,
     deploymentUrl: "http://localhost:2024",
     graphId: "test-graph",
     client,
@@ -173,8 +175,8 @@ const regenInput = {
 // ---------------------------------------------------------------------------
 
 describe("prepareRegenerateStream — transformer parity", () => {
-  it("useTransformer: true → routes regen through cached ThreadStream's submitRun with forkFrom.checkpointId", async () => {
-    const { config, client, threadStreams } = makeConfig({ useTransformer: true });
+  it("v3 server → routes regen through cached ThreadStream's submitRun with forkFrom.checkpointId", async () => {
+    const { config, client, threadStreams } = makeConfig({ v3: true });
     const agent = makeAgent(config);
 
     await agent.prepareRegenerateStream(regenInput as any, ["events", "values"]);
@@ -194,21 +196,25 @@ describe("prepareRegenerateStream — transformer parity", () => {
     );
   });
 
-  it("useTransformer: true → opens / reuses the same custom:agui subscription as prepareStream", async () => {
-    const { config, threadStreams } = makeConfig({ useTransformer: true });
+  it("v3 server → opens / reuses the same raw-channel subscription as prepareStream", async () => {
+    const { config, threadStreams } = makeConfig({ v3: true });
     const agent = makeAgent(config);
 
     await agent.prepareRegenerateStream(regenInput as any, ["events", "values"]);
     const entry = threadStreams.get("thread-1");
     expect(entry).toBeDefined();
     // Exactly one subscription was opened — the SAME shared-cache rule
-    // prepareStream uses.
+    // prepareStream uses. The v3 path subscribes to the raw protocol
+    // channels (DEFAULT_STREAM_MODES), not the compile-time custom:agui.
     expect(entry!.thread.subscribe).toHaveBeenCalledTimes(1);
-    expect(entry!.thread.subscribe).toHaveBeenCalledWith(["custom:agui"]);
+    const subArg = entry!.thread.subscribe.mock.calls[0][0];
+    expect(Array.isArray(subArg)).toBe(true);
+    expect(subArg).toContain("messages");
+    expect(subArg).toContain("custom");
   });
 
-  it("useTransformer: false → falls back to client.runs.stream (legacy behavior preserved)", async () => {
-    const { config, client, threadStreams } = makeConfig({ useTransformer: false });
+  it("legacy server → falls back to client.runs.stream (legacy behavior preserved)", async () => {
+    const { config, client, threadStreams } = makeConfig({ v3: false });
     const agent = makeAgent(config);
 
     await agent.prepareRegenerateStream(regenInput as any, ["events", "values"]);
