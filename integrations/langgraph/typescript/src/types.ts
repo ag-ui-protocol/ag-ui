@@ -74,6 +74,7 @@ export type MessageInProgress = {
   id: string;
   toolCallId?: string | null;
   toolCallName?: string | null;
+  textMessage?: boolean;
 };
 
 export type ReasoningInProgress = {
@@ -81,6 +82,24 @@ export type ReasoningInProgress = {
   type?: LangGraphReasoning['type'];
   messageId: string;
   signature?: string;
+}
+
+// Per-content-block tracking for v3 messages-channel translation.
+// Lives on RunMetadata so it resets cleanly between runs (activeRun is
+// replaced wholesale on each runAgentStream).
+export interface TextBlockState {
+  messageId: string;
+}
+
+export interface ToolBlockState {
+  toolCallId: string;
+  toolCallName: string;
+  argsSoFar: string;
+}
+
+export interface ReasoningBlockState {
+  messageId: string;
+  messageStarted: boolean;
 }
 
 export interface RunMetadata {
@@ -100,6 +119,78 @@ export interface RunMetadata {
   // execution; cleared in OnToolEnd/OnToolError. While set, STATE_SNAPSHOT
   // emission is suppressed so optimistic UI state is not overwritten.
   modelMadeToolCall?: boolean;
+  // True when the connected server speaks the v3 streaming protocol
+  // (the `/threads/:id/stream/events` route exists). Decided once per
+  // run via an OPTIONS probe and used to route between the v3 and
+  // legacy event bundles. Undefined until probed.
+  isV3?: boolean;
+  // v3 messages-channel translation state.
+  // Indexed by content-block index inside the LangGraph protocol message.
+  activeMessageId?: string;
+  textBlockMessageIds: Map<number, string>;
+  toolBlocks: Map<number, ToolBlockState>;
+  reasoningBlocks: Map<number, ReasoningBlockState>;
+}
+
+// v3 messages-channel event payload. Shape mirrors what
+// `aguiTransformer` consumes from `event.params.data` on the
+// "messages" channel. Fields are optional because the same envelope
+// carries every sub-event ("message-start" / "content-block-start" /
+// "content-block-delta" / "content-block-finish" / "message-finish" /
+// "message-error" / "usage").
+export interface V3MessageEventContentBlock {
+  type?: string;
+  reasoning?: string;
+  thinking?: string;
+  signature?: string;
+  data?: string;
+  id?: string;
+  name?: string;
+  args?: string;
+}
+
+export interface V3MessageEventDelta {
+  type?: string;
+  text?: string;
+  reasoning?: string;
+  thinking?: string;
+  fields?: {
+    name?: string;
+    args?: string;
+  };
+}
+
+export interface V3MessageEvent {
+  event:
+    | "message-start"
+    | "content-block-start"
+    | "content-block-delta"
+    | "content-block-finish"
+    | "message-finish"
+    | "message-error"
+    | "usage";
+  role?: string;
+  id?: string;
+  index?: number;
+  content?: V3MessageEventContentBlock;
+  delta?: V3MessageEventDelta;
+}
+
+// v3 `tools`-channel event payload (params.data). The langgraph runtime
+// normalises tool execution lifecycle into this discriminated shape
+// (see the SDK's convertToolsPayload). Fields are per-discriminant:
+//   tool-started      → tool_name, input
+//   tool-output-delta → delta
+//   tool-finished     → output
+//   tool-error        → message
+export interface V3ToolsEvent {
+  event: "tool-started" | "tool-output-delta" | "tool-finished" | "tool-error";
+  tool_call_id: string;
+  tool_name?: string;
+  input?: unknown;
+  delta?: string;
+  output?: unknown;
+  message?: string;
 }
 
 export type MessagesInProgressRecord = Record<string, MessageInProgress | null>;
