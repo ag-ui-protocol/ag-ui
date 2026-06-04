@@ -101,6 +101,7 @@ on:
           - integration-watsonx-ts
           - middleware-a2a
           - middleware-a2ui
+          - middleware-mcp
           - middleware-mcp-apps
           - sdk-py
           - sdk-ts
@@ -373,6 +374,7 @@ jobs:
           path: |
             sdks/typescript/packages/*/dist/
             integrations/*/typescript/dist/
+            integrations/**/typescript/dist/
             middlewares/*/dist/
           retention-days: 1
 
@@ -507,9 +509,11 @@ jobs:
           path: |
             sdks/typescript/packages/*/dist/
             integrations/*/typescript/dist/
+            integrations/**/typescript/dist/
             middlewares/*/dist/
             sdks/typescript/packages/*/package.json
             integrations/*/typescript/package.json
+            integrations/**/typescript/package.json
             middlewares/*/package.json
           retention-days: 1
 
@@ -1094,6 +1098,230 @@ jobs:
               fi
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # Post-release #engr Slack notification. Ported from CopilotKit's `notify`
+  # job. Runs after build AND publish via always() so it fires on success,
+  # failure, OR a skipped publish — the pure builder
+  # (scripts/release/build-release-notification.ts) decides what (if anything)
+  # to post from the job results + the event-derived release intent.
+  #
+  # DIVERGENCE FROM CPK: ag-ui publishes BOTH npm and PyPI from the SINGLE
+  # `publish` job (CPK split them into `publish` + `publish-python`). So the
+  # npm-lane and PyPI-lane RESULT signals both read the shared
+  # needs.publish.result / needs.build.result; the two lanes are distinguished
+  # downstream by their published-package SETS (ts_packages vs py_packages),
+  # which the build job emits per-ecosystem. A publish-job failure pages
+  # whichever lane the event intended (npm and/or PyPI) — acceptable because
+  # both lanes share one publish process here.
+  notify:
+    needs: [build, publish]
+    # Run on every real-release context: a push-to-main (merged release PR /
+    # version-bump) or a non-dry-run workflow_dispatch. Skipped on dry-run
+    # dispatches (the builder also suppresses dry-run, but gating the job off
+    # avoids a needless runner). always() ensures we still notify when build
+    # or publish FAILED (the whole point of the failure arms).
+    if: >
+      always() &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'workflow_dispatch' && inputs.dry_run != true))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    # SLACK_WEBHOOK MUST live at JOB level: GitHub Actions does NOT expose a
+    # step's own `env:` to that step's `if:` expression — only workflow- and
+    # job-level env is visible there. The `Post to #engr` and `Notifier
+    # self-watchdog` steps gate on `env.SLACK_WEBHOOK != ''`, so a step-level
+    # definition would make that guard ALWAYS false and the steps would never
+    # run, even with the secret set.
+    env:
+      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_ENGR }}
+    steps:
+      # Compute the event-derived release intent FIRST, before checkout/install,
+      # so its outputs survive an infra failure in a later step (this ordering
+      # was a fix on the CPK side: a checkout/install failure must not blind the
+      # failure arms). For a push we diff the compare-range; for a dispatch we
+      # derive intent from the mode/scope inputs.
+      - name: Compute release intent
+        id: intent
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          SHA_BEFORE: ${{ github.event.before }}
+          SHA_AFTER: ${{ github.event.after }}
+          INPUT_SCOPE: ${{ inputs.scope }}
+        run: |
+          set -uo pipefail
+          NPM_INTENDED=false
+          PY_INTENDED=false
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            # A stable dispatch intends the scope's lane. With no scope (full
+            # stable run) intend BOTH lanes. A prerelease dispatch is canary —
+            # canary (prerelease) is FULLY suppressed by the builder (mode ==
+            # "prerelease" → no post on EITHER lane). Intent is computed
+            # uniformly here regardless of mode, but a prerelease produces no
+            # notification on either lane. (INPUT_MODE is not read here: the
+            # builder applies the canary/stable suppression from MODE; this step
+            # only computes per-lane FAILURE intent.)
+            SCOPE="${INPUT_SCOPE:-}"
+            if [ -z "$SCOPE" ]; then
+              NPM_INTENDED=true
+              PY_INTENDED=true
+            else
+              # Map the dispatch scope to its ecosystem. The *-py glob catches
+              # the sdk-py / integration-*-py PyPI scopes; the explicit names
+              # cover the PyPI scopes that do NOT end in -py. Everything else is
+              # npm. This only affects FAILURE paging — success arms use the
+              # real published-package sets, not this heuristic.
+              case "$SCOPE" in
+                integration-adk|integration-agent-spec|integration-aws-strands|integration-langroid)
+                  PY_INTENDED=true ;;
+                *-py)
+                  PY_INTENDED=true ;;
+                *)
+                  NPM_INTENDED=true ;;
+              esac
+            fi
+          else
+            # push event: diff the compare-range for changed manifest files.
+            # Fail TOWARD paging (intended=true + ::warning::) on any API error
+            # so an outage never silently swallows a real release failure.
+            FILES=""
+            if [ -n "$SHA_BEFORE" ] && [ -n "$SHA_AFTER" ]; then
+              if ! FILES=$(gh api "repos/${REPO}/compare/${SHA_BEFORE}...${SHA_AFTER}" --jq '.files[].filename' 2>/dev/null); then
+                echo "::warning::Could not resolve changed files for ${SHA_BEFORE}...${SHA_AFTER} — failing toward paging (both lanes intended)."
+                NPM_INTENDED=true
+                PY_INTENDED=true
+                FILES=""
+              fi
+            else
+              echo "::warning::Missing before/after SHAs on push event — failing toward paging (both lanes intended)."
+              NPM_INTENDED=true
+              PY_INTENDED=true
+            fi
+            # Intent here means "the compare-range TOUCHED a package.json /
+            # pyproject.toml", NOT "a version was actually bumped". This signal
+            # is now the BUILD-FAILURE FALLBACK for the builder's failure arms,
+            # NOT the primary failure gate: the builder keys each failure arm off
+            # the DETECTED PACKAGE SET (ts_packages / py_packages) — the
+            # authoritative "this lane actually attempted a release" signal — and
+            # consults this intent ONLY when the build failed before detection
+            # could populate that set (so an early build failure on an intended
+            # release still pages, never toward silence). Because the success
+            # path and the primary failure path both key off the detected set,
+            # the old "manifest touched but version not bumped" false-positive
+            # (e.g. a dependabot dependency bump) no longer pages on a SUCCESSFUL
+            # build that detected no packages; it can only contribute via this
+            # fallback when the build itself failed.
+            if [ -n "$FILES" ]; then
+              # The GitHub compare endpoint returns AT MOST 300 files in .files
+              # and does NOT paginate them. On a large merge where a bumped
+              # package.json / pyproject.toml falls beyond file #300 it would be
+              # absent from this list, the grep would find nothing, and intent
+              # would compute false — which (combined with an early build failure
+              # before detection) could swallow a real release-failure page. So
+              # when the list is truncated (>= 300 filenames) fail TOWARD paging:
+              # intend BOTH lanes and warn, rather than trust an incomplete list.
+              FILE_COUNT=$(printf '%s\n' "$FILES" | grep -c .)
+              if [ "$FILE_COUNT" -ge 300 ]; then
+                echo "::warning::Compare response for ${SHA_BEFORE}...${SHA_AFTER} returned ${FILE_COUNT} files (>= the 300-file compare-API cap, which does not paginate) — failing toward paging (both lanes intended) since a manifest bump may be truncated out of the list."
+                NPM_INTENDED=true
+                PY_INTENDED=true
+              else
+                if echo "$FILES" | grep -qE '(^|/)package\.json$'; then
+                  NPM_INTENDED=true
+                fi
+                if echo "$FILES" | grep -qE '(^|/)pyproject\.toml$'; then
+                  PY_INTENDED=true
+                fi
+              fi
+            fi
+          fi
+
+          echo "npm_intended=$NPM_INTENDED" >> "$GITHUB_OUTPUT"
+          echo "py_intended=$PY_INTENDED" >> "$GITHUB_OUTPUT"
+          echo "npm_intended=$NPM_INTENDED py_intended=$PY_INTENDED"
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: "10.33.4"
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+
+      - name: Install dependencies (no lifecycle scripts)
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Build release notification message
+        id: build_message
+        env:
+          MODE: ${{ needs.build.outputs.mode }}
+          NPM_RESULT: ${{ needs.publish.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          NPM_INTENDED: ${{ steps.intent.outputs.npm_intended }}
+          TS_PACKAGES: ${{ needs.build.outputs.ts_packages }}
+          TS_GROUPS: ${{ needs.build.outputs.ts_groups_json }}
+          PY_INTENDED: ${{ steps.intent.outputs.py_intended }}
+          PY_RESULT: ${{ needs.publish.result }}
+          PY_BUILD_RESULT: ${{ needs.build.result }}
+          PY_PACKAGES: ${{ needs.build.outputs.py_packages }}
+          SCOPE: ${{ needs.build.outputs.scope }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          NPM_ORG_URL: https://www.npmjs.com/org/ag-ui
+          PY_BASE_URL: https://pypi.org/project
+        run: pnpm tsx scripts/release/build-release-notification.ts
+
+      - name: Post to #engr
+        # Guard so an unset webhook is a clean no-op rather than a failure: the
+        # secret is unset until the #engr incoming webhook is provisioned, and a
+        # release must not go red merely because alerting isn't wired yet.
+        if: steps.build_message.outputs.should_post == 'true' && env.SLACK_WEBHOOK != ''
+        uses: slackapi/slack-github-action@b0fa283ad8fea605de13dc3f449259339835fc52 # v2.1.0
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_ENGR }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": ${{ toJSON(steps.build_message.outputs.message) }}
+            }
+
+      # Self-watchdog: if the notify job ITSELF failed (e.g. the message build
+      # or install step errored) on a real release attempt, best-effort ping
+      # #engr so a broken notifier doesn't fail silently. Gated off dry-run and
+      # only fires when the event intended a release on either lane.
+      - name: Notifier self-watchdog (best-effort)
+        # Fires unless intent is explicitly false on BOTH lanes, so an
+        # intent-step crash (empty outputs) still pages — never toward silence.
+        # Canary (prerelease) runs are FULLY suppressed on BOTH lanes — including
+        # this watchdog — so a notify-job failure during a prerelease dispatch
+        # never pings "notifier failed" on a canary run.
+        if: >
+          failure() &&
+          inputs.dry_run != true &&
+          needs.build.outputs.mode != 'prerelease' &&
+          (steps.intent.outputs.npm_intended != 'false' ||
+           steps.intent.outputs.py_intended != 'false') &&
+          env.SLACK_WEBHOOK != ''
+        continue-on-error: true
+        uses: slackapi/slack-github-action@b0fa283ad8fea605de13dc3f449259339835fc52 # v2.1.0
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_ENGR }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": "⚠️ *ag-ui release notifier failed* — could not determine release status. Check the run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }
 
   # Dry-run summary — surfaces what WOULD have been published. Runs only
   # when dry_run=true on workflow_dispatch (stable detection still runs, but

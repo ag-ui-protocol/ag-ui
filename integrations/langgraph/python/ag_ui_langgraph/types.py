@@ -46,6 +46,10 @@ MessageInProgress = TypedDict("MessageInProgress", {
 RunMetadata = TypedDict("RunMetadata", {
     # Identification
     "id": str,
+    # LangGraph's internal chain run_id, tracked separately so it never
+    # overwrites the client-supplied "id" used for the protocol RUN_STARTED /
+    # RUN_FINISHED events (#1582).
+    "langgraph_run_id": NotRequired[Optional[str]],
     "thread_id": NotRequired[Optional[str]],
     # Run mode/flow
     "mode": NotRequired[Literal["start", "continue"]],

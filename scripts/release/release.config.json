@@ -173,6 +173,13 @@
       "packages": [
         { "name": "@ag-ui/mcp-apps-middleware", "path": "middlewares/mcp-apps-middleware", "ecosystem": "typescript" }
       ]
+    },
+    "middleware-mcp": {
+      "description": "MCP Middleware (TypeScript)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "@ag-ui/mcp-middleware", "path": "middlewares/mcp-middleware", "ecosystem": "typescript" }
+      ]
     }
   }
 }

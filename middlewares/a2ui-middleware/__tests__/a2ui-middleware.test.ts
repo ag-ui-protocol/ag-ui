@@ -84,6 +84,23 @@ describe("A2UIMiddleware", () => {
       expect(mockAgent.runCalls).toHaveLength(1);
       const tools = mockAgent.runCalls[0].tools;
       expect(tools.some((t) => t.name === RENDER_A2UI_TOOL_NAME)).toBe(true);
+      // The flag is forwarded so downstream (e.g. LangGraph) can surface it into state.
+      expect(mockAgent.runCalls[0].forwardedProps?.injectA2UITool).toBe(true);
+    });
+
+    it("should forward a custom injectA2UITool tool name as the flag", async () => {
+      const middleware = new A2UIMiddleware({ injectA2UITool: "custom_render" });
+      const mockAgent = new MockAgent([
+        { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
+        { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
+      ]);
+
+      const input = createRunAgentInput();
+      await collectEvents(middleware.run(input, mockAgent));
+
+      const tools = mockAgent.runCalls[0].tools;
+      expect(tools.some((t) => t.name === "custom_render")).toBe(true);
+      expect(mockAgent.runCalls[0].forwardedProps?.injectA2UITool).toBe("custom_render");
     });
 
     it("should not inject tool by default", async () => {
@@ -99,6 +116,8 @@ describe("A2UIMiddleware", () => {
       expect(mockAgent.runCalls).toHaveLength(1);
       const tools = mockAgent.runCalls[0].tools;
       expect(tools.some((t) => t.name === RENDER_A2UI_TOOL_NAME)).toBe(false);
+      // No injection -> flag must not be forwarded.
+      expect(mockAgent.runCalls[0].forwardedProps?.injectA2UITool).toBeUndefined();
     });
 
     it("should not duplicate tool if already present", async () => {
