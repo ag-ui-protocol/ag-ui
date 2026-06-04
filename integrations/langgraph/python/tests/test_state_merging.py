@@ -206,3 +206,31 @@ class TestLanggraphDefaultMergeState:
         result = agent.langgraph_default_merge_state({"messages": []}, [], make_input())
         for _, (agui_key, _sample) in self.FORWARDED_PROPS_TO_AGUI.items():
             assert agui_key not in result["ag-ui"]
+
+    # Must stay byte-identical to the A2UI middleware's exported
+    # A2UI_SCHEMA_CONTEXT_DESCRIPTION (middlewares/a2ui-middleware/src/index.ts).
+    # The connector matches the schema context entry by exact string equality, so
+    # any drift silently routes the schema into the system prompt instead of state.
+    A2UI_SCHEMA_CONTEXT_DESCRIPTION = (
+        "A2UI Component Schema — available components for generating UI surfaces. "
+        "Use these component names and properties when creating A2UI operations."
+    )
+
+    def test_a2ui_schema_context_routed_into_ag_ui_state(self):
+        """A context entry carrying the middleware's schema description is lifted into
+        ag-ui.a2ui_schema and removed from the regular context list."""
+        agent = make_agent()
+        schema_value = '{"components": ["Card", "Button"]}'
+        ctx = [
+            Context(description="unrelated", value="keep me"),
+            Context(description=self.A2UI_SCHEMA_CONTEXT_DESCRIPTION, value=schema_value),
+        ]
+        result = agent.langgraph_default_merge_state({"messages": []}, [], make_input(context=ctx))
+        assert result["ag-ui"]["a2ui_schema"] == schema_value
+        # The schema entry must NOT remain in regular context.
+        descriptions = [
+            c.description if hasattr(c, "description") else c.get("description")
+            for c in result["ag-ui"]["context"]
+        ]
+        assert self.A2UI_SCHEMA_CONTEXT_DESCRIPTION not in descriptions
+        assert "unrelated" in descriptions

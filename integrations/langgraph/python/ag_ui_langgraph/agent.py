@@ -877,7 +877,12 @@ class LangGraphAgent:
         # The A2UI schema goes into state["ag-ui"]["a2ui_schema"] so agents
         # can read it directly from state (e.g., for the generate_a2ui tool),
         # instead of it being dumped into the system prompt with all other context.
-        A2UI_SCHEMA_CONTEXT_DESCRIPTION = "A2UI Component Schema \u2014 available components for generating UI surfaces. Use these component names and props when creating A2UI operations."
+        # This string MUST stay byte-identical to the A2UI middleware's exported
+        # A2UI_SCHEMA_CONTEXT_DESCRIPTION (middlewares/a2ui-middleware/src/index.ts).
+        # The match below is exact-equality, so any drift silently routes the schema
+        # into the system prompt instead of state. Covered by
+        # test_a2ui_schema_context_routed_into_ag_ui_state.
+        A2UI_SCHEMA_CONTEXT_DESCRIPTION = "A2UI Component Schema \u2014 available components for generating UI surfaces. Use these component names and properties when creating A2UI operations."
 
         all_context = input.context or []
         a2ui_schema_value = None
