@@ -903,10 +903,13 @@ class LangGraphAgent:
 
         # Surface the A2UI tool-injection flag (set by the A2UI middleware via
         # forwardedProps.injectA2UITool) into ag-ui state so graphs/tools can
-        # read it directly from state regardless of run mode. forwarded_props
-        # keys are snake-cased in run() (camel_to_snake turns "injectA2UITool"
-        # into "inject_a2_u_i_tool"), so check the converted key first and fall
-        # back to the raw camelCase form for safety.
+        # read it directly from state. It is written here whenever the merged
+        # state is built (start/continue runs) and then persists in the
+        # checkpoint, so resumed runs still see it. forwarded_props keys are
+        # snake-cased in run() (camel_to_snake turns "injectA2UITool" into
+        # "inject_a2_u_i_tool" — pinned by test_camel_to_snake_key_contract),
+        # so check the converted key first and fall back to the raw camelCase
+        # form for safety.
         forwarded = input.forwarded_props or {}
         if "inject_a2_u_i_tool" in forwarded:
             ag_ui_state["inject_a2ui_tool"] = forwarded["inject_a2_u_i_tool"]

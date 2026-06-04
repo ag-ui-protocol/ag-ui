@@ -190,6 +190,16 @@ class TestLanggraphDefaultMergeState:
         "inject_a2_u_i_tool": ("inject_a2ui_tool", "render_a2ui"),
     }
 
+    def test_camel_to_snake_key_contract(self):
+        """Pin the load-bearing wire-key conversion. run() snake-cases forwarded_props
+        keys, so the merge step keys off the CONVERTED name. The tests below feed the
+        converted key directly; this test guarantees the conversion actually produces
+        that key from the real camelCase wire name. If camel_to_snake ever changed
+        (e.g. collapsing the capital run to "inject_a2ui_tool"), the feature would break
+        silently while the table-driven tests still passed — this assertion catches it."""
+        from ag_ui_langgraph.utils import camel_to_snake
+        assert camel_to_snake("injectA2UITool") == "inject_a2_u_i_tool"
+
     def test_forwarded_props_surface_into_ag_ui_state(self):
         """Each configured forwarded prop lands under its ag-ui state key."""
         agent = make_agent()
