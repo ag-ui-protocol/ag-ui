@@ -230,7 +230,7 @@ export class A2UIMiddleware extends Middleware {
     return {
       ...input,
       forwardedProps: {
-        ...input.forwardedProps,
+        ...(input.forwardedProps ?? {}),
         injectA2UITool: this.config.injectA2UITool,
       },
       tools: [...filteredTools, tool],
