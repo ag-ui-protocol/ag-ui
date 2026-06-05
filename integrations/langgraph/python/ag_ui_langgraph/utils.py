@@ -16,6 +16,7 @@ from ag_ui.core import (
     AssistantMessage as AGUIAssistantMessage,
     SystemMessage as AGUISystemMessage,
     ToolMessage as AGUIToolMessage,
+    ReasoningMessage as AGUIReasoningMessage,
     ToolCall as AGUIToolCall,
     FunctionCall as AGUIFunctionCall,
     TextInputContent,
@@ -112,6 +113,79 @@ def convert_langchain_multimodal_to_agui(content: List[Dict[str, Any]]) -> List[
                     ))
     return agui_content
 
+def _reasoning_block_summary_text(block: Dict[str, Any]) -> str:
+    """Extract the human-readable reasoning text from a LangChain reasoning
+    content block (OpenAI Responses ``responses/v1`` shape)."""
+    summary = block.get("summary")
+    if isinstance(summary, list):
+        parts = [
+            s.get("text", "")
+            for s in summary
+            if isinstance(s, dict) and s.get("text")
+        ]
+        if parts:
+            # Join multi-part summaries with a newline so the parts stay
+            # legible instead of being mashed together ("A\nB", not "AB").
+            return "\n".join(parts)
+    # Fallbacks for non-OpenAI shapes that still carry a flat text field.
+    for key in ("reasoning", "text"):
+        val = block.get(key)
+        if isinstance(val, str) and val:
+            return val
+    return ""
+
+
+def _reasoning_block_to_agui_message(
+    block: Dict[str, Any], assistant_id: str, index: int = 0
+) -> "AGUIReasoningMessage | None":
+    """Turn a LangChain reasoning content block into an AG-UI
+    ReasoningMessage, preserving the block id (so it round-trips back to the
+    provider as the same reasoning item) and any encrypted content (needed when
+    the provider is run statelessly with ``store=False``).
+
+    Returns ``None`` for a block with neither text nor encrypted content — there
+    is nothing the client could render or round-trip.
+    """
+    text = _reasoning_block_summary_text(block)
+    encrypted = block.get("encrypted_content")
+    block_id = block.get("id")
+    # The provider id (e.g. OpenAI ``rs_…``) is the round-trip handle: under
+    # ``store=True`` the summary/encrypted content are empty and the id alone is
+    # what lets the next request reference the stored reasoning. So emit whenever
+    # we have an id, text, or encrypted content; only a wholly empty block is
+    # dropped (nothing to render or round-trip).
+    if not block_id and not text and not encrypted:
+        return None
+    # Fall back to a deterministic id derived from the owning assistant message
+    # when the provider didn't supply one. Include the block index so multiple
+    # id-less reasoning blocks on one message don't collide on the same id.
+    block_id = block_id or f"{assistant_id}-reasoning-{index}"
+    return AGUIReasoningMessage(
+        id=str(block_id),
+        role="reasoning",
+        content=text,
+        encrypted_value=encrypted,
+    )
+
+
+def _agui_reasoning_message_to_block(message: AGUIReasoningMessage) -> Dict[str, Any]:
+    """Rebuild the LangChain reasoning content block from an AG-UI
+    ReasoningMessage so it can be re-attached to the adjacent assistant message
+    (the inverse of :func:`_reasoning_block_to_agui_message`)."""
+    block: Dict[str, Any] = {
+        "type": "reasoning",
+        "id": message.id,
+        "summary": (
+            [{"type": "summary_text", "text": message.content}]
+            if message.content
+            else []
+        ),
+    }
+    if getattr(message, "encrypted_value", None):
+        block["encrypted_content"] = message.encrypted_value
+    return block
+
+
 def langchain_messages_to_agui(messages: List[BaseMessage]) -> List[AGUIMessage]:
     agui_messages: List[AGUIMessage] = []
     for message in messages:
@@ -129,6 +203,19 @@ def langchain_messages_to_agui(messages: List[BaseMessage]) -> List[AGUIMessage]
                 name=message.name,
             ))
         elif isinstance(message, AIMessage):
+            # Surface reasoning content blocks as standalone
+            # ReasoningMessages placed BEFORE the assistant message (matching
+            # streaming-event ordering), so a client with no persistent
+            # checkpoint can round-trip them back to the model.
+            if isinstance(message.content, list):
+                for index, block in enumerate(message.content):
+                    if isinstance(block, dict) and block.get("type") == "reasoning":
+                        reasoning_msg = _reasoning_block_to_agui_message(
+                            block, str(message.id), index
+                        )
+                        if reasoning_msg is not None:
+                            agui_messages.append(reasoning_msg)
+
             tool_calls = None
             if message.tool_calls:
                 tool_calls = [
@@ -233,17 +320,32 @@ def convert_agui_multimodal_to_langchain(content: List[AGUIContentItem]) -> List
 
 def agui_messages_to_langchain(messages: List[AGUIMessage]) -> List[BaseMessage]:
     langchain_messages = []
+    # Reasoning AG-UI messages are display-only at the AG-UI layer, but
+    # at the LangChain layer reasoning lives as a content block ON the assistant
+    # AIMessage. To round-trip reasoning without loss (so a stateless client can
+    # hand the model back its own chain-of-thought), buffer each reasoning message and
+    # re-attach it as a content block on the assistant message that follows it
+    # (matching the order reasoning is streamed: reasoning first, then text).
+    # Developer messages stay dropped — they are configured on the agent itself.
+    #
+    # Reasoning that is NOT immediately followed by an assistant message (a
+    # trailing reasoning message, or one followed by a user/tool/system message)
+    # is intentionally discarded: there is no assistant to attach it to, and
+    # re-materializing it as a standalone message causes exponential message
+    # duplication and tool-call loops under the add_messages reducer. The
+    # snapshot side (langchain_messages_to_agui) only ever emits reasoning
+    # immediately before its assistant, so this drop never affects a real
+    # round-trip — only hand-crafted/ partial inputs.
+    pending_reasoning: list = []
     for message in messages:
         role = message.role
-        # Reasoning + developer AG-UI messages are display-only / handled
-        # elsewhere; their content is already represented in adjacent AIMessage
-        # content blocks (reasoning) or in the agent's configured system prompt
-        # (developer). Re-materializing them as standalone LangChain messages
-        # duplicates context on every turn and can drive the model into a
-        # tool-call loop.
-        if role in ("reasoning", "developer"):
+        if role == "reasoning":
+            pending_reasoning.append(_agui_reasoning_message_to_block(message))
+            continue
+        if role == "developer":
             continue
         if role == "user":
+            pending_reasoning = []
             # Handle multimodal content
             if isinstance(message.content, str):
                 content = message.content
@@ -267,19 +369,29 @@ def agui_messages_to_langchain(messages: List[AGUIMessage]) -> List[BaseMessage]
                         "args": json.loads(tc.function.arguments) if hasattr(tc, "function") and tc.function.arguments else {},
                         "type": "tool_call",
                     })
+            # Fold any buffered reasoning blocks onto this assistant message.
+            if pending_reasoning:
+                content = list(pending_reasoning)
+                if message.content:
+                    content.append({"type": "text", "text": message.content})
+                pending_reasoning = []
+            else:
+                content = message.content or ""
             langchain_messages.append(AIMessage(
                 id=message.id,
-                content=message.content or "",
+                content=content,
                 tool_calls=tool_calls,
                 name=message.name,
             ))
         elif role == "system":
+            pending_reasoning = []
             langchain_messages.append(SystemMessage(
                 id=message.id,
                 content=message.content,
                 name=message.name,
             ))
         elif role == "tool":
+            pending_reasoning = []
             langchain_messages.append(ToolMessage(
                 id=message.id,
                 content=message.content,
