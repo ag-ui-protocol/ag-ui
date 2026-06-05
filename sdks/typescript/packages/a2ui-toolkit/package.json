@@ -1,6 +1,10 @@
 {
   "name": "@ag-ui/a2ui-toolkit",
   "version": "0.0.1",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ag-ui-protocol/ag-ui.git"
+  },
   "description": "Framework-agnostic helpers for building A2UI subagent tools — op builders, prompt assembly, history walkers, and request/envelope orchestration shared across framework adapters.",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
