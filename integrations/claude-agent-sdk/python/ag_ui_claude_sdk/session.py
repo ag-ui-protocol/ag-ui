@@ -45,6 +45,16 @@ class SessionWorker:
             self._run(), name=f"session-worker-{self.thread_id}"
         )
 
+    def is_alive(self) -> bool:
+        """Return True if the background task is running and able to serve queries.
+
+        A worker whose ``_run`` task has finished (e.g. ``client.connect()``
+        failed and the task fell through its ``finally``) can no longer drain
+        the input queue, so reusing it would hang the next ``query()`` forever.
+        Callers must treat a non-alive worker as dead and create a fresh one.
+        """
+        return self._task is not None and not self._task.done()
+
     async def _run(self) -> None:
         """Main loop — runs entirely inside one stable async context."""
         from claude_agent_sdk import ClaudeSDKClient, SystemMessage

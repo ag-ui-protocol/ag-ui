@@ -81,12 +81,16 @@ on:
         type: choice
         options:
           - integration-a2a
-          - integration-adk
+          - integration-adk-py
+          - integration-adk-ts
           - integration-ag2
           - integration-agent-spec
           - integration-agno
-          - integration-aws-strands
+          - integration-aws-strands-py
+          - integration-aws-strands-ts
+          - integration-claude-agent-sdk-py
           - integration-claude-agent-sdk-ts
+          - integration-cloudflare-agents
           - integration-crewai-py
           - integration-crewai-ts
           - integration-langchain
@@ -104,7 +108,9 @@ on:
           - middleware-mcp
           - middleware-mcp-apps
           - sdk-py
+          - sdk-py-a2ui-toolkit
           - sdk-ts
+          - sdk-ts-a2ui-toolkit
       suffix:
         description: "Prerelease suffix (e.g. 'fix-user-issue'); blank = unix timestamp. Allowed: [a-zA-Z0-9._-]+. Ignored when mode=stable."
         required: false
@@ -1175,8 +1181,14 @@ jobs:
               # cover the PyPI scopes that do NOT end in -py. Everything else is
               # npm. This only affects FAILURE paging — success arms use the
               # real published-package sets, not this heuristic.
+              #
+              # This step runs BEFORE checkout (see the job comment above), so
+              # release.config.json is NOT on disk here and cannot be consulted
+              # at runtime — the python scopes are projected statically below.
+              # verify-release-scope-dropdowns.sh asserts this list maps every
+              # config scope to the correct ecosystem, so it cannot drift.
               case "$SCOPE" in
-                integration-adk|integration-agent-spec|integration-aws-strands|integration-langroid)
+                integration-agent-spec|integration-langroid|sdk-py-a2ui-toolkit)
                   PY_INTENDED=true ;;
                 *-py)
                   PY_INTENDED=true ;;
