@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 def fix_surrogates(s: str) -> str:
     """Re-assemble lone UTF-16 surrogate pairs into proper Unicode codepoints.
 
-    LLMock (JavaScript) chunks JSON via ``String.slice()`` which operates on
+    Streamed JSON chunked in JavaScript via ``String.slice()`` operates on
     16-bit code units.  Emoji outside the BMP (e.g. U+1F35D 🍝) are two code
     units in JS (a surrogate pair), and ``slice`` can split them.  When the
     chunks are reassembled in Python the string contains *paired* surrogates
@@ -356,18 +356,26 @@ def build_agui_assistant_message(
     Returns:
         AG-UI AssistantMessage, or None if no user-visible content.
     """
+    from claude_agent_sdk.types import TextBlock, ToolUseBlock
+
     content_blocks = getattr(sdk_message, "content", []) or []
 
     text_content = ""
     tool_calls: List[ToolCall] = []
 
     for block in content_blocks:
+        # Dispatch on the real SDK block classes. The genuine
+        # claude_agent_sdk TextBlock/ToolUseBlock dataclasses do NOT expose a
+        # ``.type`` attribute, so keying off ``getattr(block, "type", None)``
+        # silently dropped every real block. We keep a ``.type`` string
+        # fallback so dict-shaped / mock blocks that carry an explicit type
+        # still work.
         block_type = getattr(block, "type", None)
 
-        if block_type == "text":
+        if isinstance(block, TextBlock) or block_type == "text":
             text_content += getattr(block, "text", "")
 
-        elif block_type == "tool_use":
+        elif isinstance(block, ToolUseBlock) or block_type == "tool_use":
             raw_name = getattr(block, "name", "unknown")
 
             # Skip internal state management tool — not conversation history

@@ -94,7 +94,8 @@ class ClaudeAgentAdapter:
         self._max_workers = max_workers
         self._worker_ttl_seconds = worker_ttl_seconds
         self._query_timeout_seconds = query_timeout_seconds
-        self._workers: Dict[str, Dict] = {}  # changed from Dict[str, SessionWorker]
+        # thread_id -> {"worker": SessionWorker, "last_used": datetime, "active": bool}
+        self._workers: Dict[str, Dict] = {}
         self._state_locks: Dict[str, asyncio.Lock] = {}
         self._per_thread_state: Dict[str, Any] = {}  # thread_id -> current state
         self._per_thread_result: Dict[str, Any] = {}  # thread_id -> last result data
@@ -140,6 +141,8 @@ class ClaudeAgentAdapter:
             task = asyncio.create_task(entry["worker"].stop())
             task.add_done_callback(lambda t: t.exception() and logger.warning(f"Worker eviction error: {t.exception()}"))
             self._state_locks.pop(oldest_tid, None)
+            self._per_thread_state.pop(oldest_tid, None)
+            self._per_thread_result.pop(oldest_tid, None)
 
     async def clear_session(self, thread_id: str) -> None:
         """Stop and remove the session worker for a thread."""
@@ -147,6 +150,8 @@ class ClaudeAgentAdapter:
         if entry:
             await entry["worker"].stop()
         self._state_locks.pop(thread_id, None)
+        self._per_thread_state.pop(thread_id, None)
+        self._per_thread_result.pop(thread_id, None)
 
     async def run(self, input_data: RunAgentInput) -> AsyncIterator[BaseEvent]:
         """Run the agent and yield AG-UI events."""
@@ -159,8 +164,22 @@ class ClaudeAgentAdapter:
         self._per_thread_result[thread_id] = None
         
         try:
-            # Get or create worker for this thread
+            # Get or create worker for this thread.
+            # Guard against a poisoned cache entry: if a previously-cached
+            # worker's background task has died (e.g. client.connect() failed),
+            # reusing it would hang forever on a queue nothing drains. Evict the
+            # dead worker and fall through to creating a fresh one.
             entry = self._workers.get(thread_id)
+            if entry is not None and not entry["worker"].is_alive():
+                logger.warning(
+                    f"Evicting dead worker for thread={thread_id} (task terminated); creating fresh worker"
+                )
+                dead_entry = self._workers.pop(thread_id, None)
+                if dead_entry is not None:
+                    await dead_entry["worker"].stop()
+                self._state_locks.pop(thread_id, None)
+                entry = None
+
             if entry is None:
                 options = self.build_options(input_data, thread_id=thread_id)
                 worker = SessionWorker(thread_id, options)
@@ -250,6 +269,8 @@ class ClaudeAgentAdapter:
             if broken_entry:
                 await broken_entry["worker"].stop()
             self._state_locks.pop(thread_id, None)
+            self._per_thread_state.pop(thread_id, None)
+            self._per_thread_result.pop(thread_id, None)
             yield RunErrorEvent(
                 type=EventType.RUN_ERROR,
                 thread_id=thread_id,
@@ -735,7 +756,8 @@ class ClaudeAgentAdapter:
                         if tool_id and tool_id in processed_tool_ids:
                             continue
                         updated_state, tool_events = await handle_tool_use_block(
-                            block, message, thread_id, run_id, self._per_thread_state.get(thread_id)
+                            block, message, thread_id, run_id, self._per_thread_state.get(thread_id),
+                            parent_message_id=current_message_id,
                         )
                         if tool_id:
                             processed_tool_ids.add(tool_id)
