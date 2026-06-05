@@ -1,5 +1,9 @@
 {
   "name": "@ag-ui/vercel-ai-sdk",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ag-ui-protocol/ag-ui.git"
+  },
   "version": "0.0.2",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",

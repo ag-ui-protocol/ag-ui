@@ -1,5 +1,9 @@
 {
   "name": "@ag-ui/event-throttle-middleware",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ag-ui-protocol/ag-ui.git"
+  },
   "version": "0.0.1",
   "publishConfig": {
     "access": "public"
