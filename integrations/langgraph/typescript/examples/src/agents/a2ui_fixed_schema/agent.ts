@@ -165,7 +165,7 @@ const searchHotels = tool(
   },
 );
 
-export const a2uiFixedSchemaGraph = createAgent({
+const a2uiFixedSchemaAgent = createAgent({
   model: "openai:gpt-4o",
   tools: [searchFlights, searchHotels],
   middleware: [copilotkitMiddleware],
@@ -182,3 +182,8 @@ For hotels, each needs: id, name, location, rating (float 0-5), and price (per n
 
 Generate 3-5 realistic results.`,
 });
+
+// Export the inner graph, not the ReactAgent wrapper, so LangGraph Platform can
+// inject its managed checkpointer (the wrapper swallows the injection —
+// langchainjs#10144 — causing MISSING_CHECKPOINTER on the 2nd turn deployed).
+export const a2uiFixedSchemaGraph = a2uiFixedSchemaAgent.graph;

@@ -9,8 +9,9 @@
     "dev": "pnpx @langchain/langgraph-cli@1.2.3 dev",
     "start": "node dist/index.js"
   },
+  "//oss-162-temp": "TEMPORARY (OSS-162): '@ag-ui/langgraph' points to link:.. (the local adapter at ../, i.e. integrations/langgraph/typescript) ONLY so the dojo runs the LOCAL adapter, which carries the A2UI recovery loop. This package is a DELIBERATELY ISOLATED nested pnpm workspace (own pnpm-lock.yaml + pnpm-workspace.yaml) that pins @langchain/langgraph@1.3.0 — required by langgraph-cli@1.2.3's API server (imports STREAM_EVENTS_V3_MODES). Do NOT add it to the root pnpm-workspace.yaml: that dedupes langgraph to 1.2.2 and breaks `pnpm dev`. REVERT to a published version (e.g. 0.0.36+) once @ag-ui/langgraph ships the recovery loop; langgraph-cli deploys read published versions, so link:.. must NOT ship. See memory: project_oss-162-examples-workspace-temp.",
   "dependencies": {
-    "@ag-ui/langgraph": "0.0.35",
+    "@ag-ui/langgraph": "link:..",
     "@copilotkit/sdk-js": "1.57.1",
     "@langchain/core": "^1.1.44",
     "@langchain/anthropic": "^0.3.0",

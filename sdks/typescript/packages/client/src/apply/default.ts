@@ -463,7 +463,30 @@ export const defaultApplyEvents = (
               content: content,
             };
 
-            messages.push(toolMessage);
+            // Place the tool result immediately after the assistant message that
+            // issued the matching tool call — not at the end. A result event can
+            // arrive after a trailing assistant text message (e.g. a
+            // chat -> tool -> chat loop streams the follow-up text before the
+            // result is recorded). Appending would leave the history as
+            // assistant(tool_call) -> text -> tool, which violates the provider
+            // contract that an assistant tool_call is immediately followed by its
+            // tool result and surfaces downstream as a 400. Skip past any tool
+            // results already recorded for the same assistant so parallel results
+            // keep their order. Fall back to append when no owner is found.
+            const ownerIndex = messages.findIndex(
+              (m) =>
+                m.role === "assistant" &&
+                (m as AssistantMessage).toolCalls?.some((tc) => tc.id === toolCallId),
+            );
+            if (ownerIndex === -1) {
+              messages.push(toolMessage);
+            } else {
+              let insertAt = ownerIndex + 1;
+              while (insertAt < messages.length && messages[insertAt].role === "tool") {
+                insertAt++;
+              }
+              messages.splice(insertAt, 0, toolMessage);
+            }
 
             await Promise.all(
               subscribers.map((subscriber) => {
@@ -575,8 +598,7 @@ export const defaultApplyEvents = (
             // Step 1 + 2: Keep activity/reasoning messages as-is, keep messages
             // present in the snapshot (replaced with snapshot version), drop
             // everything else.
-            const isClientOnlyRole = (role: string) =>
-              role === "activity" || role === "reasoning";
+            const isClientOnlyRole = (role: string) => role === "activity" || role === "reasoning";
             messages = messages
               .filter((m) => isClientOnlyRole(m.role) || snapshotMap.has(m.id))
               .map((m) => (isClientOnlyRole(m.role) ? m : snapshotMap.get(m.id)!));
@@ -837,9 +859,7 @@ export const defaultApplyEvents = (
           // can't mutate the agent's tracked state through array aliasing.
           if (mutation.stopPropagation !== true) {
             agent.pendingInterrupts =
-              finishedParams.outcome === "interrupt"
-                ? [...finishedParams.interrupts]
-                : [];
+              finishedParams.outcome === "interrupt" ? [...finishedParams.interrupts] : [];
           }
 
           return emitUpdates();

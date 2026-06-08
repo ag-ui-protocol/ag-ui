@@ -242,6 +242,12 @@ export const agentsIntegrations = {
       deploymentUrl: envVars.langgraphTypescriptUrl,
       graphId: "a2ui_dynamic_schema",
     }),
+    // OSS-162: A2UI error-recovery showcase (sub-agent emits a structural error,
+    // then recovers). Rides the runtime a2ui middleware like the others.
+    a2ui_recovery: new LangGraphAgent({
+      deploymentUrl: envVars.langgraphTypescriptUrl,
+      graphId: "a2ui_recovery",
+    }),
   }),
 
   // TODO: @ranst91 Enable `langchain` integration in apps/dojo/src/menu.ts once ready

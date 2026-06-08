@@ -20,7 +20,7 @@ const createAgent = (messages: Message[] = []) =>
   ({
     messages: messages.map((message) => ({ ...message })),
     state: {},
-  } as unknown as AbstractAgent);
+  }) as unknown as AbstractAgent;
 
 describe("defaultApplyEvents with tool calls", () => {
   it("should handle a single tool call correctly", async () => {
@@ -112,6 +112,78 @@ describe("defaultApplyEvents with tool calls", () => {
     expect(
       (stateUpdates[3].messages?.[0] as AssistantMessage).toolCalls?.[0]?.function?.arguments,
     ).toBe('{"query": "test search"}');
+  });
+
+  it("places a tool result immediately after its tool call even when the result arrives after a trailing assistant text", async () => {
+    // Reproduces the chat -> tool -> chat ordering hazard: the follow-up
+    // assistant text streams before the tool result is recorded. Appending the
+    // result would yield assistant(tool_call) -> text -> tool, which violates the
+    // provider contract (assistant tool_call must be immediately followed by its
+    // tool result) and surfaces as a 400 on the next turn.
+    const events$ = new Subject<BaseEvent>();
+    const initialState = {
+      messages: [],
+      state: {},
+      threadId: "test-thread",
+      runId: "test-run",
+      tools: [],
+      context: [],
+    };
+
+    const agent = createAgent(initialState.messages);
+    const result$ = defaultApplyEvents(initialState, events$, agent, []);
+    const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
+
+    events$.next({ type: EventType.RUN_STARTED } as RunStartedEvent);
+    // 1. assistant message with the tool call
+    events$.next({
+      type: EventType.TOOL_CALL_START,
+      toolCallId: "tool1",
+      toolCallName: "get_weather",
+    } as ToolCallStartEvent);
+    events$.next({
+      type: EventType.TOOL_CALL_END,
+      toolCallId: "tool1",
+    } as ToolCallEndEvent);
+    // 2. trailing assistant text streams BEFORE the result is recorded
+    events$.next({
+      type: EventType.TEXT_MESSAGE_START,
+      messageId: "text1",
+      role: "assistant",
+    } as any);
+    events$.next({
+      type: EventType.TEXT_MESSAGE_CONTENT,
+      messageId: "text1",
+      delta: "Here is the weather.",
+    } as any);
+    events$.next({
+      type: EventType.TEXT_MESSAGE_END,
+      messageId: "text1",
+    } as any);
+    // 3. tool result arrives last
+    events$.next({
+      type: EventType.TOOL_CALL_RESULT,
+      messageId: "res1",
+      toolCallId: "tool1",
+      content: "sunny",
+    } as ToolCallResultEvent);
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    events$.complete();
+
+    const stateUpdates = await stateUpdatesPromise;
+    const finalMessages = stateUpdates[stateUpdates.length - 1].messages ?? [];
+
+    // Order must be assistant(tool_call) -> tool -> assistant(text)
+    expect(finalMessages.map((m) => m.role)).toEqual(["assistant", "tool", "assistant"]);
+
+    const ownerIndex = finalMessages.findIndex((m) =>
+      (m as AssistantMessage).toolCalls?.some((tc) => tc.id === "tool1"),
+    );
+    expect(ownerIndex).toBe(0);
+    // tool result sits directly after its owning assistant message
+    expect(finalMessages[ownerIndex + 1]?.role).toBe("tool");
+    expect((finalMessages[ownerIndex + 1] as any).toolCallId).toBe("tool1");
   });
 
   it("should handle multiple tool calls correctly", async () => {
@@ -502,7 +574,9 @@ describe("defaultApplyEvents with tool calls", () => {
     // Should have exactly 2 messages: one assistant (with both tool calls) and one tool result
     expect(finalState.messages?.length).toBe(2);
 
-    const assistantMsg = finalState.messages?.find((m) => m.role === "assistant") as AssistantMessage;
+    const assistantMsg = finalState.messages?.find(
+      (m) => m.role === "assistant",
+    ) as AssistantMessage;
     const toolMsg = finalState.messages?.find((m) => m.role === "tool");
 
     expect(assistantMsg).toBeDefined();
@@ -594,7 +668,9 @@ describe("defaultApplyEvents with tool calls", () => {
     // Should have 3 messages: 1 assistant (with both tool calls) + 2 tool results
     expect(finalState.messages?.length).toBe(3);
 
-    const assistantMsg = finalState.messages?.find((m) => m.role === "assistant") as AssistantMessage;
+    const assistantMsg = finalState.messages?.find(
+      (m) => m.role === "assistant",
+    ) as AssistantMessage;
     expect(assistantMsg).toBeDefined();
     expect(assistantMsg.id).toBe(parentMessageId);
     expect(assistantMsg.toolCalls?.length).toBe(2);
@@ -633,7 +709,7 @@ describe("defaultApplyEvents with tool calls", () => {
     events$.next({
       type: EventType.TOOL_CALL_ARGS,
       toolCallId: "tc-setup",
-      delta: '{}',
+      delta: "{}",
     } as ToolCallArgsEvent);
     events$.next({
       type: EventType.TOOL_CALL_END,
@@ -675,7 +751,9 @@ describe("defaultApplyEvents with tool calls", () => {
     expect(toolMsg?.id).toBe(collidingId);
 
     // The new assistant message should have fallen back to toolCallId, not collidingId
-    const assistantMsgs = finalState.messages?.filter((m) => m.role === "assistant") as AssistantMessage[];
+    const assistantMsgs = finalState.messages?.filter(
+      (m) => m.role === "assistant",
+    ) as AssistantMessage[];
     const collidingAssistant = assistantMsgs.find((m) =>
       m.toolCalls?.some((tc) => tc.id === "tc-collide"),
     );

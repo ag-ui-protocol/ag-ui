@@ -541,3 +541,10 @@ export function buildA2UIEnvelope(input: BuildA2UIEnvelopeInput): string {
 
   return wrapAsOperationsEnvelope(ops);
 }
+
+// ---------------------------------------------------------------------------
+// Error-recovery loop (OSS-162) — semantic validation + validate→retry loop,
+// shared so the middleware (paint gate) and adapters (retry driver) agree.
+// ---------------------------------------------------------------------------
+export * from "./validate";
+export * from "./recovery";

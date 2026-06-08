@@ -102,6 +102,9 @@ type RunAgentExtendedInput<
   forwardedProps?: Omit<RunsStreamPayload<TStreamMode, TSubgraphs>, "input"> & {
     nodeName?: string;
     threadMetadata?: Record<string, any>;
+    // A2UI tool-injection flag set by the A2UI middleware. Surfaced into
+    // ag-ui state so graphs/tools can read it directly.
+    injectA2UITool?: boolean | string;
   };
 };
 
@@ -452,7 +455,12 @@ export class LangGraphAgent extends AbstractAgent {
       (m) => m.role !== "system",
     ).length;
 
-    if (stateNonSystemCount > inputNonSystemCount) {
+    // Skip regeneration detection when command.resume is set — a resume from
+    // interrupt is explicitly NOT a regeneration. On the second interrupt-resume
+    // cycle the LangGraph thread state has accumulated tool/AI messages from the
+    // first interrupt while the frontend's input.messages hasn't, which would
+    // otherwise trigger the regeneration path and ignore the resume.
+    if (!forwardedProps?.command?.resume && stateNonSystemCount > inputNonSystemCount) {
       let lastUserMessage: LangGraphMessage | null = null;
       // Find the first user message by working backwards from the last message
       for (let i = messages.length - 1; i >= 0; i--) {
@@ -1837,14 +1845,24 @@ export class LangGraphAgent extends AbstractAgent {
       return [...acc, mappedTool];
     }, []);
 
+    // Surface the A2UI tool-injection flag (set by the A2UI middleware via
+    // forwardedProps.injectA2UITool) into ag-ui state so graphs/tools can read
+    // it directly from state regardless of run mode. TS forwardedProps keys are
+    // not snake-cased, so the original camelCase key is used as-is.
+    const injectA2UITool = input.forwardedProps?.injectA2UITool;
+    const agUiState: StateEnrichment["ag-ui"] = {
+      tools: langGraphTools,
+      context: input.context,
+    };
+    if (injectA2UITool !== undefined) {
+      agUiState.inject_a2ui_tool = injectA2UITool;
+    }
+
     return {
       ...state,
       messages: newMessages,
       tools: langGraphTools,
-      "ag-ui": {
-        tools: langGraphTools,
-        context: input.context,
-      },
+      "ag-ui": agUiState,
       copilotkit: {
         ...(state as any).copilotkit,
         actions: langGraphTools,

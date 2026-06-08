@@ -61,7 +61,7 @@ const a2uiTool = getA2UITools(new ChatOpenAI({ model: "gpt-4o" }), {
   compositionGuide: COMPOSITION_GUIDE,
 });
 
-export const a2uiDynamicSchemaGraph = createAgent({
+const a2uiDynamicSchemaAgent = createAgent({
   model: "openai:gpt-4o",
   // Cast: tool returned by `getA2UITools` is typed against `@ag-ui/langgraph`'s
   // own `@langchain/core` peer, which can skew vs. the consumer's pin.
@@ -73,3 +73,8 @@ When the user asks for visual content (product comparisons, dashboards, lists, c
 use the generate_a2ui tool to create a dynamic A2UI surface.
 IMPORTANT: After calling the tool, do NOT repeat the data in your text response. The tool renders UI automatically. Just confirm what was rendered.`,
 });
+
+// Export the inner graph, not the ReactAgent wrapper, so LangGraph Platform can
+// inject its managed checkpointer (the wrapper swallows the injection —
+// langchainjs#10144 — causing MISSING_CHECKPOINTER on the 2nd turn deployed).
+export const a2uiDynamicSchemaGraph = a2uiDynamicSchemaAgent.graph;

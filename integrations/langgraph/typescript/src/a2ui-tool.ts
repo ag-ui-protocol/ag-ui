@@ -32,6 +32,10 @@ import {
   buildA2UIEnvelope,
   prepareA2UIRequest,
   wrapErrorEnvelope,
+  runA2UIGenerationWithRecovery,
+  type A2UIRecoveryConfig,
+  type A2UIValidationCatalog,
+  type A2UIAttemptRecord,
 } from "@ag-ui/a2ui-toolkit";
 
 /**
@@ -60,6 +64,18 @@ export interface A2UISubagentToolOptions {
   toolName?: string;
   /** Description shown to the main agent's planner. */
   toolDescription?: string;
+  /**
+   * Inline catalog (component name → JSON Schema with `required`) enabling
+   * catalog-aware recovery (unknown-component / missing-required-prop). Pass the
+   * SAME catalog the host gives `@ag-ui/a2ui-middleware` so the retry decision
+   * (here) and the paint gate (middleware) agree. Omit for structural-only
+   * recovery (malformed JSON, missing root, broken refs/bindings).
+   */
+  catalog?: A2UIValidationCatalog;
+  /** Recovery loop config: attempt cap, retry-UI threshold, debug exposure. */
+  recovery?: A2UIRecoveryConfig;
+  /** Per-attempt hook for emitting recovery status / dev logs (non-disruptive). */
+  onA2UIAttempt?: (record: A2UIAttemptRecord) => void;
 }
 
 /** Tool arguments exposed to the main agent's planner. */
@@ -101,6 +117,9 @@ export function getA2UITools(
     defaultCatalogId: defaultCatalogIdOpt,
     toolName: toolNameOpt,
     toolDescription: toolDescriptionOpt,
+    catalog,
+    recovery,
+    onA2UIAttempt,
   } = options;
   const defaultSurfaceId = defaultSurfaceIdOpt || DEFAULT_SURFACE_ID;
   const defaultCatalogId = defaultCatalogIdOpt || BASIC_CATALOG_ID;
@@ -112,7 +131,10 @@ export function getA2UITools(
       input: GenerateA2UIArgs,
       runtime: ToolRuntime<Record<string, unknown>, unknown>,
     ): Promise<string> => {
-      const state = runtime.state as Record<string, unknown>;
+      // Defensive: a custom state schema (or a non-graph invocation) may not
+      // preseed `state`/`messages` — mirror the Python adapter's graceful
+      // degrade (`state.get("messages", [])`) instead of throwing mid-tool.
+      const state = (runtime.state ?? {}) as Record<string, unknown>;
       const allMessages = (state.messages as Array<any>) ?? [];
       // Strip current (unbalanced) tool call from history.
       const messages = allMessages.slice(0, -1);
@@ -128,33 +150,44 @@ export function getA2UITools(
       });
       if (prep.error) return wrapErrorEnvelope(prep.error);
 
-      // Glue: bind the structured-output tool and invoke the subagent.
+      // Glue: bind the structured-output tool.
       if (!model.bindTools) {
         return wrapErrorEnvelope("Provided model does not support bindTools");
       }
       const modelWithTool = model.bindTools([RENDER_A2UI_TOOL_DEF], {
         tool_choice: { type: "function", function: { name: "render_a2ui" } },
       });
-      const response: any = await modelWithTool.invoke([
-        new SystemMessage(prep.prompt),
-        ...messages,
-      ] as any);
 
-      const toolCalls: Array<{ args?: Record<string, unknown> }> =
-        response.tool_calls ?? [];
-      if (toolCalls.length === 0) {
-        return wrapErrorEnvelope("LLM did not call render_a2ui");
-      }
-
-      // Shared: assemble the final operations envelope.
-      return buildA2UIEnvelope({
-        args: toolCalls[0].args ?? {},
-        isUpdate: prep.isUpdate,
-        targetSurfaceId: input.target_surface_id,
-        prior: prep.prior,
-        defaultSurfaceId,
-        defaultCatalogId,
+      // Shared: validate→retry loop. On each retry the prompt is re-augmented
+      // with the prior attempt's structured errors; only a validated surface is
+      // committed (the middleware gate suppresses any unvalidated attempt, so a
+      // rejected attempt never paints). Returns a structured hard-failure
+      // envelope once the attempt cap is hit.
+      const { envelope } = await runA2UIGenerationWithRecovery({
+        basePrompt: prep.prompt,
+        catalog,
+        config: recovery,
+        onAttempt: onA2UIAttempt,
+        invokeSubagent: async (prompt) => {
+          const response: any = await modelWithTool.invoke([
+            new SystemMessage(prompt),
+            ...messages,
+          ] as any);
+          const toolCalls: Array<{ args?: Record<string, unknown> }> =
+            response.tool_calls ?? [];
+          return toolCalls.length ? (toolCalls[0].args ?? {}) : null;
+        },
+        buildEnvelope: (args) =>
+          buildA2UIEnvelope({
+            args,
+            isUpdate: prep.isUpdate,
+            targetSurfaceId: input.target_surface_id,
+            prior: prep.prior,
+            defaultSurfaceId,
+            defaultCatalogId,
+          }),
       });
+      return envelope;
     },
     {
       name: toolName,

@@ -1,6 +1,6 @@
 [project]
 name = "ag-ui-langgraph"
-version = "0.0.37"
+version = "0.0.40"
 description = "Implementation of the AG-UI protocol for LangGraph."
 authors = [
     { name = "Ran Shem Tov", email = "ran@copilotkit.ai" }
@@ -9,7 +9,7 @@ readme = "README.md"
 requires-python = ">=3.10,<3.15"
 dependencies = [
     "ag-ui-protocol>=0.1.15",
-    "ag-ui-a2ui-toolkit>=0.0.1a0",
+    "ag-ui-a2ui-toolkit>=0.0.2",
     "langchain>=1.2.0",
     "langchain-core>=0.3.0",
     "langgraph>=0.3.25,<2",
@@ -18,6 +18,13 @@ dependencies = [
 
 [project.optional-dependencies]
 fastapi = ["fastapi>=0.115.12"]
+
+# Dev-only: resolve the sibling A2UI toolkit from local source so monorepo
+# changes (e.g. the OSS-162 recovery loop) are picked up without publishing.
+# uv strips [tool.uv.sources] from the built wheel, so the published package
+# still depends on `ag-ui-a2ui-toolkit>=0.0.1a0` from PyPI.
+[tool.uv.sources]
+ag-ui-a2ui-toolkit = { path = "../../../sdks/python/a2ui_toolkit", editable = true }
 
 [tool.ag-ui.scripts]
 test = "python -m unittest discover tests"

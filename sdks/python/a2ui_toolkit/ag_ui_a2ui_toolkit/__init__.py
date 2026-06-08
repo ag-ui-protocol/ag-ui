@@ -36,7 +36,31 @@ __all__ = [
     "PriorSurface",
     "EditContext",
     "PreparedA2UIRequest",
+    # Error-recovery loop (OSS-162)
+    "validate_a2ui_components",
+    "A2UIValidationError",
+    "ValidateA2UIResult",
+    "MAX_A2UI_ATTEMPTS",
+    "A2UI_RECOVERY_ACTIVITY_TYPE",
+    "format_validation_errors",
+    "augment_prompt_with_validation_errors",
+    "run_a2ui_generation_with_recovery",
 ]
+
+# Error-recovery loop (OSS-162) — semantic validation + validate→retry loop,
+# shared so the middleware (paint gate) and adapters (retry driver) agree.
+from .validate import (  # noqa: E402
+    validate_a2ui_components,
+    A2UIValidationError,
+    ValidateA2UIResult,
+)
+from .recovery import (  # noqa: E402
+    MAX_A2UI_ATTEMPTS,
+    A2UI_RECOVERY_ACTIVITY_TYPE,
+    format_validation_errors,
+    augment_prompt_with_validation_errors,
+    run_a2ui_generation_with_recovery,
+)
 
 
 A2UI_OPERATIONS_KEY = "a2ui_operations"

@@ -37,6 +37,7 @@ from ag_ui_a2ui_toolkit import (
     build_a2ui_envelope,
     prepare_a2ui_request,
     wrap_error_envelope,
+    run_a2ui_generation_with_recovery,
 )
 
 
@@ -57,6 +58,9 @@ def get_a2ui_tools(
     default_catalog_id: str = BASIC_CATALOG_ID,
     tool_name: str = GENERATE_A2UI_TOOL_NAME,
     tool_description: Optional[str] = None,
+    catalog: Optional[dict] = None,
+    recovery: Optional[dict] = None,
+    on_a2ui_attempt: Optional[Any] = None,
 ):
     """Build a LangGraph tool that delegates A2UI surface generation to a subagent.
 
@@ -115,24 +119,42 @@ def get_a2ui_tools(
         if prep.get("error"):
             return wrap_error_envelope(prep["error"])
 
-        # Glue: bind the structured-output tool and invoke the subagent.
+        # Glue: bind the structured-output tool.
         model_with_tool = model.bind_tools(
             [RENDER_A2UI_TOOL_DEF], tool_choice="render_a2ui"
         )
-        response = model_with_tool.invoke(
-            [SystemMessage(content=prep["prompt"]), *messages]
-        )
-        if not response.tool_calls:
-            return wrap_error_envelope("LLM did not call render_a2ui")
 
-        # Shared: assemble the final operations envelope.
-        return build_a2ui_envelope(
-            args=response.tool_calls[0]["args"],
-            is_update=prep["is_update"],
-            target_surface_id=target_surface_id,
-            prior=prep["prior"],
-            default_surface_id=default_surface_id,
-            default_catalog_id=default_catalog_id,
+        def _invoke_subagent(prompt, _attempt):
+            response = model_with_tool.invoke(
+                [SystemMessage(content=prompt), *messages]
+            )
+            if not response.tool_calls:
+                return None
+            return response.tool_calls[0]["args"]
+
+        def _build_envelope(args):
+            return build_a2ui_envelope(
+                args=args,
+                is_update=prep["is_update"],
+                target_surface_id=target_surface_id,
+                prior=prep["prior"],
+                default_surface_id=default_surface_id,
+                default_catalog_id=default_catalog_id,
+            )
+
+        # Shared: validate->retry loop (mirrors the TS adapter). On each retry the
+        # prompt is re-augmented with the prior attempt's structured errors; only a
+        # validated surface is committed (the middleware gate suppresses any
+        # unvalidated attempt, so a rejected one never paints). Returns a structured
+        # hard-failure envelope once the attempt cap is hit.
+        result = run_a2ui_generation_with_recovery(
+            base_prompt=prep["prompt"],
+            catalog=catalog,
+            config=recovery,
+            invoke_subagent=_invoke_subagent,
+            build_envelope=_build_envelope,
+            on_attempt=on_a2ui_attempt,
         )
+        return result["envelope"]
 
     return generate_a2ui
