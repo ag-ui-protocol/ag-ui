@@ -18,7 +18,7 @@ from ag_ui.core import (
     RunAgentInput, BaseEvent, EventType,
     RunStartedEvent, RunFinishedEvent, RunErrorEvent,
     ToolCallEndEvent, SystemMessage, ToolCallResultEvent,
-    MessagesSnapshotEvent
+    MessagesSnapshotEvent, StateSnapshotEvent,
 )
 
 from google.adk import Runner
@@ -1123,6 +1123,69 @@ class ADKAgent:
                 **service_kwargs,
             )
     
+    async def _run_sync_only(
+        self, input: RunAgentInput
+    ) -> AsyncGenerator[BaseEvent, None]:
+        """Emit STATE_SNAPSHOT + MESSAGES_SNAPSHOT without invoking the LLM.
+
+        Triggered when ``input.messages`` is empty — covers both framework
+        "connect" calls (e.g. CopilotKit connectAgent) and explicit
+        history-restore triggers on thread switches.
+        """
+        user_id = self._get_user_id(input)
+        app_name = self._get_app_name(input)
+
+        yield RunStartedEvent(
+            type=EventType.RUN_STARTED,
+            thread_id=input.thread_id,
+            run_id=input.run_id,
+        )
+
+        try:
+            session, backend_session_id = (
+                await self._session_manager.get_or_create_session(
+                    thread_id=input.thread_id,
+                    app_name=app_name,
+                    user_id=user_id,
+                )
+            )
+
+            if session:
+                # Emit filtered state snapshot (strip internal ag-ui keys).
+                state = {
+                    k: v for k, v in (session.state or {}).items()
+                    if k not in _INTERNAL_STATE_KEYS
+                }
+                if state:
+                    yield StateSnapshotEvent(
+                        type=EventType.STATE_SNAPSHOT,
+                        snapshot=state,
+                    )
+
+                # Emit messages snapshot when the flag is enabled.
+                if self._emit_messages_snapshot and hasattr(session, "events") and session.events:
+                    messages = adk_events_to_messages(session.events)
+                    if messages:
+                        yield MessagesSnapshotEvent(
+                            type=EventType.MESSAGES_SNAPSHOT,
+                            messages=messages,
+                        )
+                        logger.debug(
+                            "Sync-only: emitted %d messages for thread %s",
+                            len(messages), input.thread_id,
+                        )
+
+        except Exception:
+            logger.exception(
+                "Sync-only run failed for thread %s", input.thread_id
+            )
+
+        yield RunFinishedEvent(
+            type=EventType.RUN_FINISHED,
+            thread_id=input.thread_id,
+            run_id=input.run_id,
+        )
+
     async def run(self, input: RunAgentInput) -> AsyncGenerator[BaseEvent, None]:
         """Run the ADK agent with client-side tool support.
 
@@ -1136,6 +1199,15 @@ class ADKAgent:
         Yields:
             AG-UI protocol events
         """
+
+        # Sync-only: restore frontend state/messages without running the LLM.
+        # Any run with an empty message list short-circuits here — this covers
+        # both framework "connect" calls (e.g. CopilotKit connectAgent) and
+        # explicit history-restore triggers that fire on thread switches.
+        if not input.messages:
+            async for event in self._run_sync_only(input):
+                yield event
+            return
 
         # Multi-instance: hydrate in-memory session cache from DB on startup/switch.
         # Ensures pending tool calls are detected across load-balanced instances

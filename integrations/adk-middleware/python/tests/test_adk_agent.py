@@ -1507,7 +1507,9 @@ class TestThreadIdSessionIdMapping:
             def __init__(self, thread_id):
                 self.thread_id = thread_id
                 self.run_id = "run1"
-                self.messages = []
+                # Non-empty so the sync-only gate is bypassed; hydration logic
+                # runs in the normal path which is what this test exercises.
+                self.messages = ["placeholder"]
 
         inp = Input("thread-123")
 
@@ -1545,7 +1547,8 @@ class TestThreadIdSessionIdMapping:
             def __init__(self):
                 self.thread_id = "new-thread"
                 self.run_id = "run1"
-                self.messages = []
+                # Non-empty so the sync-only gate is bypassed.
+                self.messages = ["placeholder"]
 
         inp = Input()
 
