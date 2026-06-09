@@ -379,7 +379,14 @@ export abstract class AbstractAgent {
 
   protected prepareRunAgentInput(parameters?: RunAgentParameters): RunAgentInput {
     const clonedMessages = structuredClone_(this.messages) as Message[];
-    const messagesWithoutActivity = clonedMessages.filter((message) => message.role !== "activity");
+    const messagesWithoutActivity = clonedMessages
+      .filter((message) => message.role !== "activity")
+      .map((message) => {
+        // `renderId` is a client-only stable render identity — strip it before
+        // sending so it never crosses the wire to the agent.
+        delete (message as { renderId?: string }).renderId;
+        return message;
+      });
 
     return {
       threadId: this.threadId,
