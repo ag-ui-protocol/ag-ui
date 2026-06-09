@@ -612,7 +612,7 @@ class ADKAgent:
 
             app = App(
                 name="my_assistant",
-                root_agent=Agent(name="assistant", model="gemini-2.5-flash", ...),
+                root_agent=Agent(name="assistant", model="gemini-3.5-flash", ...),
                 plugins=[LoggingPlugin()],
             )
             agent = ADKAgent.from_app(app, user_id="demo_user")
