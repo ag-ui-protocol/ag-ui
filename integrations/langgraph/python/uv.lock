@@ -4,12 +4,8 @@ requires-python = ">=3.10, <3.15"
 
 [[package]]
 name = "ag-ui-a2ui-toolkit"
-version = "0.0.2"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/fc/1e/82ce4d32e7710be30cb942c7a3ea13386b1c8e50fff4c642eef399d7f21c/ag_ui_a2ui_toolkit-0.0.2.tar.gz", hash = "sha256:5908fa7a9cf474fa26d8821ac15b135bdca2c1cfddce0b7c580c6382d1f0bfd9", size = 10379, upload-time = "2026-06-05T15:56:43.259Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/8d/bb/f8c6fb7b0fae34f802fcf9af8fe66e193137245dfc888fd8d9c119146cfd/ag_ui_a2ui_toolkit-0.0.2-py3-none-any.whl", hash = "sha256:028e497dfa2c9ca716143248dee14712d5c1055615a1bd91efa95f85e0a467ef", size = 12479, upload-time = "2026-06-05T15:56:42.404Z" },
-]
+version = "0.0.3"
+source = { editable = "../../../sdks/python/a2ui_toolkit" }
 
 [[package]]
 name = "ag-ui-langgraph"
@@ -39,7 +35,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ag-ui-a2ui-toolkit", specifier = ">=0.0.2" },
+    { name = "ag-ui-a2ui-toolkit", editable = "../../../sdks/python/a2ui_toolkit" },
     { name = "ag-ui-protocol", specifier = ">=0.1.15" },
     { name = "fastapi", marker = "extra == 'fastapi'", specifier = ">=0.115.12" },
     { name = "langchain", specifier = ">=1.2.0" },
