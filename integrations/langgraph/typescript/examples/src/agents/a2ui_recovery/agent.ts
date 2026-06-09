@@ -24,7 +24,7 @@
 import { createAgent } from "langchain";
 import { copilotkitMiddleware } from "@copilotkit/sdk-js/langgraph";
 import { ChatOpenAI } from "@langchain/openai";
-import { getA2UITools } from "@ag-ui/langgraph";
+import { getA2UITools, type A2UIAttemptRecord } from "@ag-ui/langgraph";
 
 const CUSTOM_CATALOG_ID = "https://a2ui.org/demos/dojo/dynamic_catalog.json";
 
@@ -48,16 +48,20 @@ Card components bound to per-item data (relative paths inside the template).
 - Generate 3-4 realistic items with diverse data.
 `;
 
-const a2uiTool = getA2UITools(new ChatOpenAI({ model: "gpt-4o" }), {
+const a2uiTool = getA2UITools({
+  model: new ChatOpenAI({ model: "gpt-4o" }),
   defaultCatalogId: CUSTOM_CATALOG_ID,
-  compositionGuide: COMPOSITION_GUIDE,
+  guidelines: { compositionGuide: COMPOSITION_GUIDE },
   // Recovery loop runs by default; set explicitly for the showcase. No catalog
   // → structural validation (which is all this demo's error needs).
   recovery: { maxAttempts: 3 },
-  onA2UIAttempt: (rec) => {
+  onA2UIAttempt: (rec: A2UIAttemptRecord) => {
     // Dev observability: each attempt (incl. rejected ones) is logged.
     // eslint-disable-next-line no-console
-    console.log(`[a2ui recovery] attempt ${rec.attempt}: ${rec.ok ? "valid" : "invalid"}`, rec.errors);
+    console.log(
+      `[a2ui recovery] attempt ${rec.attempt}: ${rec.ok ? "valid" : "invalid"}`,
+      rec.errors,
+    );
   },
 });
 

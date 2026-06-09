@@ -12,8 +12,7 @@ import { copilotkitMiddleware } from "@copilotkit/sdk-js/langgraph";
 import { ChatOpenAI } from "@langchain/openai";
 import { getA2UITools } from "@ag-ui/langgraph";
 
-const CUSTOM_CATALOG_ID =
-  "https://a2ui.org/demos/dojo/dynamic_catalog.json";
+const CUSTOM_CATALOG_ID = "https://a2ui.org/demos/dojo/dynamic_catalog.json";
 
 // Project-specific composition rules — tells the subagent how to use the
 // pre-made domain components (HotelCard, ProductCard, TeamMemberCard) shipped
@@ -56,9 +55,10 @@ Example:
 - Generate 3-4 realistic items with diverse data
 `;
 
-const a2uiTool = getA2UITools(new ChatOpenAI({ model: "gpt-4o" }), {
+const a2uiTool = getA2UITools({
+  model: new ChatOpenAI({ model: "gpt-4o" }),
   defaultCatalogId: CUSTOM_CATALOG_ID,
-  compositionGuide: COMPOSITION_GUIDE,
+  guidelines: { compositionGuide: COMPOSITION_GUIDE },
 });
 
 const a2uiDynamicSchemaAgent = createAgent({

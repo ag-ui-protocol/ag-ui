@@ -11,12 +11,17 @@
  *
  *   import { getA2UITools } from "@ag-ui/langgraph";
  *
- *   const a2ui = getA2UITools(new ChatOpenAI({ model: "gpt-4o" }));
+ *   const a2ui = getA2UITools({ model: new ChatOpenAI({ model: "gpt-4o" }) });
  *
  *   const modelWithTools = chatModel.bindTools(
  *     [...state.tools, a2ui],
  *     { parallel_tool_calls: false },
  *   );
+ *
+ * Signature note: the factory takes a single `A2UIToolParams` object owned by
+ * `@ag-ui/a2ui-toolkit`. Every framework adapter (LG, Strands, ADK, …) shares
+ * that exact params shape — only the body below is framework-specific. A new
+ * knob added to `A2UIToolParams` reaches this adapter with no signature change.
  */
 
 import { tool, type ToolRuntime } from "@langchain/core/tools";
@@ -24,18 +29,14 @@ import { SystemMessage } from "@langchain/core/messages";
 import {
   A2UI_OPERATIONS_KEY,
   BASIC_CATALOG_ID,
-  DEFAULT_SURFACE_ID,
-  GENERATE_A2UI_TOOL_NAME,
-  GENERATE_A2UI_TOOL_DESCRIPTION,
   GENERATE_A2UI_ARG_DESCRIPTIONS,
   RENDER_A2UI_TOOL_DEF,
   buildA2UIEnvelope,
   prepareA2UIRequest,
+  resolveA2UIToolParams,
   wrapErrorEnvelope,
   runA2UIGenerationWithRecovery,
-  type A2UIRecoveryConfig,
-  type A2UIValidationCatalog,
-  type A2UIAttemptRecord,
+  type A2UIToolParams,
 } from "@ag-ui/a2ui-toolkit";
 
 /**
@@ -48,35 +49,10 @@ import {
  */
 export type A2UISubagentModel = any;
 
-// Re-export the toolkit constants for callers that previously imported them
-// from this package — keeps the public surface stable.
+// Re-export the toolkit constants/types for callers that previously imported
+// them from this package — keeps the public surface stable.
 export { A2UI_OPERATIONS_KEY, BASIC_CATALOG_ID };
-
-export interface A2UISubagentToolOptions {
-  /** Optional extra rules appended to the subagent's system prompt. */
-  compositionGuide?: string;
-  /** Surface id used when the subagent omits `surfaceId`. */
-  defaultSurfaceId?: string;
-  /** Catalog id assigned to every new surface this factory creates — the
-   *  subagent never picks the catalog. Falls back to the basic v0.9 catalog. */
-  defaultCatalogId?: string;
-  /** Name advertised to the main agent's planner. */
-  toolName?: string;
-  /** Description shown to the main agent's planner. */
-  toolDescription?: string;
-  /**
-   * Inline catalog (component name → JSON Schema with `required`) enabling
-   * catalog-aware recovery (unknown-component / missing-required-prop). Pass the
-   * SAME catalog the host gives `@ag-ui/a2ui-middleware` so the retry decision
-   * (here) and the paint gate (middleware) agree. Omit for structural-only
-   * recovery (malformed JSON, missing root, broken refs/bindings).
-   */
-  catalog?: A2UIValidationCatalog;
-  /** Recovery loop config: attempt cap, retry-UI threshold, debug exposure. */
-  recovery?: A2UIRecoveryConfig;
-  /** Per-attempt hook for emitting recovery status / dev logs (non-disruptive). */
-  onA2UIAttempt?: (record: A2UIAttemptRecord) => void;
-}
+export type { A2UIToolParams };
 
 /** Tool arguments exposed to the main agent's planner. */
 interface GenerateA2UIArgs {
@@ -99,32 +75,29 @@ interface GenerateA2UIArgs {
  *
  * The returned tool is ready to bind into a chat model alongside any other tools.
  *
- * @param model Chat model the subagent will invoke for structured A2UI output.
- *   Using the same provider/model as the main agent is fine.
- * @param options Optional behavior overrides.
+ * @param params Shared `A2UIToolParams` (model + behavior knobs). The toolkit
+ *   owns the shape and fills defaults via `resolveA2UIToolParams`.
  */
-export function getA2UITools(
-  model: A2UISubagentModel,
-  options: A2UISubagentToolOptions = {},
+export function getA2UITools<TModel = A2UISubagentModel>(
+  params: A2UIToolParams<TModel>,
 ) {
-  // Use `||` rather than destructuring defaults so empty-string overrides fall
-  // back to the canonical defaults (matches the Python adapter, which uses
-  // `or` for the same parity). Otherwise an accidental `""` from a caller
-  // would advertise a nameless / empty-description tool to the planner.
+  // Shared: normalize knobs + fill canonical defaults (toolName, catalogId, …)
+  // so this adapter never re-implements default logic. A new params field +
+  // its default lives entirely in the toolkit.
   const {
-    compositionGuide,
-    defaultSurfaceId: defaultSurfaceIdOpt,
-    defaultCatalogId: defaultCatalogIdOpt,
-    toolName: toolNameOpt,
-    toolDescription: toolDescriptionOpt,
+    model,
+    guidelines,
+    defaultSurfaceId,
+    defaultCatalogId,
+    toolName,
+    toolDescription,
     catalog,
     recovery,
     onA2UIAttempt,
-  } = options;
-  const defaultSurfaceId = defaultSurfaceIdOpt || DEFAULT_SURFACE_ID;
-  const defaultCatalogId = defaultCatalogIdOpt || BASIC_CATALOG_ID;
-  const toolName = toolNameOpt || GENERATE_A2UI_TOOL_NAME;
-  const toolDescription = toolDescriptionOpt || GENERATE_A2UI_TOOL_DESCRIPTION;
+  } = resolveA2UIToolParams(params);
+  // Loose-typed locally: the generic TModel only guarantees the shape the
+  // toolkit needs; bindTools/invoke are checked at runtime (see guard below).
+  const chatModel = model as A2UISubagentModel;
 
   return tool(
     async (
@@ -146,15 +119,15 @@ export function getA2UITools(
         changes: input.changes,
         messages,
         state,
-        compositionGuide,
+        guidelines,
       });
       if (prep.error) return wrapErrorEnvelope(prep.error);
 
       // Glue: bind the structured-output tool.
-      if (!model.bindTools) {
+      if (!chatModel.bindTools) {
         return wrapErrorEnvelope("Provided model does not support bindTools");
       }
-      const modelWithTool = model.bindTools([RENDER_A2UI_TOOL_DEF], {
+      const modelWithTool = chatModel.bindTools([RENDER_A2UI_TOOL_DEF], {
         tool_choice: { type: "function", function: { name: "render_a2ui" } },
       });
 

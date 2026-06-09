@@ -60,6 +60,13 @@ def _extract_agent_kwargs(agent: StrandsAgentCore) -> dict:
     return kwargs
 
 
+def _has_strands_session_manager(agent: Any) -> bool:
+    return (
+        getattr(agent, "session_manager", None) is not None
+        or getattr(agent, "_session_manager", None) is not None
+    )
+
+
 logger = logging.getLogger(__name__)
 from ag_ui.core import (
     AssistantMessage,
@@ -692,7 +699,7 @@ class StrandsAgent:
             # Strands manages history itself, so we leave it alone.
             replay_history = (
                 self.config.replay_history_into_strands
-                and getattr(strands_agent, "session_manager", None) is None
+                and not _has_strands_session_manager(strands_agent)
             )
             if replay_history:
                 native_history = _build_strands_history(input_data.messages)
