@@ -276,6 +276,49 @@ describe("AgentSubscriber", () => {
       );
     });
 
+    it("strips client-only renderId from outgoing messages even when injected via onRunInitialized", async () => {
+      let capturedInput: RunAgentInput | undefined;
+
+      class CapturingAgent extends AbstractAgent {
+        run(input: RunAgentInput): Observable<BaseEvent> {
+          capturedInput = input;
+          return of({
+            type: EventType.RUN_STARTED,
+            threadId: "test",
+            runId: "test",
+          } as RunStartedEvent);
+        }
+      }
+
+      const capturingAgent = new CapturingAgent({
+        threadId: "test-thread",
+        initialMessages: [{ id: "msg-1", role: "user", content: "Hello" }],
+      });
+
+      // A subscriber injects messages carrying a client-only renderId — the
+      // same shape the agent holds after a snapshot re-key. These bypass
+      // prepareRunAgentInput's strip via the onRunInitialized override.
+      const injectingSubscriber: AgentSubscriber = {
+        onRunInitialized: vi.fn().mockReturnValue({
+          messages: [
+            { id: "msg-1", role: "user", content: "Hello" },
+            { id: "canon-id", role: "assistant", content: "hi", renderId: "stream-id" },
+          ],
+        }),
+      };
+
+      await capturingAgent.runAgent({}, injectingSubscriber);
+
+      expect(capturedInput).toBeDefined();
+      const sent = capturedInput!.messages.find((m) => m.id === "canon-id")!;
+      expect(sent).toBeDefined();
+      expect((sent as { renderId?: string }).renderId).toBeUndefined();
+
+      // The agent retains renderId locally so rendering identity stays stable.
+      const local = capturingAgent.messages.find((m) => m.id === "canon-id")!;
+      expect((local as { renderId?: string }).renderId).toBe("stream-id");
+    });
+
     it("should allow subscribers to mutate state", async () => {
       const mutatingSubscriber: AgentSubscriber = {
         onRunInitialized: vi.fn().mockReturnValue({

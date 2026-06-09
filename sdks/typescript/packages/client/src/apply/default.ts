@@ -590,10 +590,64 @@ export const defaultApplyEvents = (
           if (mutation.stopPropagation !== true) {
             const { messages: newMessages } = event as MessagesSnapshotEvent;
 
+            // Preserve a stable render identity across canonical-id changes.
+            // A snapshot can carry the same logical message under a NEW id
+            // (e.g. a transient streaming/run id replaced by a provider's
+            // final response id). Correlate snapshot messages to existing ones
+            // by tool-call identity (which survives the rename) and carry over
+            // the existing message's renderId, so UIs keying on `renderId ?? id`
+            // reconcile the row in place instead of remounting it (the cause of
+            // the HITL chat flash). Messages matched by id keep their identity;
+            // genuinely new messages leave renderId unset and fall back to
+            // their own id at render time. renderId chains across repeated
+            // renames because we read `existing.renderId ?? existing.id`.
+            const renderIdByMessageId = new Map<string, string>();
+            const renderIdByToolAnchor = new Map<string, string>();
+            for (const m of messages) {
+              const rid = m.renderId ?? m.id;
+              renderIdByMessageId.set(m.id, rid);
+              if (m.role === "assistant") {
+                for (const tc of (m as AssistantMessage).toolCalls ?? []) {
+                  renderIdByToolAnchor.set(`call:${tc.id}`, rid);
+                }
+              }
+              const existingToolCallId = (m as { toolCallId?: string }).toolCallId;
+              if (m.role === "tool" && existingToolCallId) {
+                renderIdByToolAnchor.set(`tool:${existingToolCallId}`, rid);
+              }
+            }
+            // Carry renderId onto re-keyed snapshot messages. Shallow-copy the
+            // re-keyed ones rather than mutating in place: `newMessages` is the
+            // inbound event payload, and mutating it would leak the client-only
+            // renderId into any consumer holding the event. A shallow copy (not
+            // a structuredClone) keeps this off the documented OOM hot path.
+            const snapshotMessages = newMessages.map((sm) => {
+              let rid = renderIdByMessageId.get(sm.id);
+              if (rid === undefined && sm.role === "assistant") {
+                const firstToolCallId = (sm as AssistantMessage).toolCalls?.[0]?.id;
+                if (firstToolCallId) {
+                  rid = renderIdByToolAnchor.get(`call:${firstToolCallId}`);
+                }
+              }
+              if (rid === undefined && sm.role === "tool") {
+                const toolCallId = (sm as { toolCallId?: string }).toolCallId;
+                if (toolCallId) {
+                  rid = renderIdByToolAnchor.get(`tool:${toolCallId}`);
+                }
+              }
+              // Only set renderId when it actually differs from the canonical
+              // id — keeps the field sparse and meaningful ("this row was
+              // re-keyed; here's its original render identity").
+              if (rid !== undefined && rid !== sm.id) {
+                return { ...sm, renderId: rid } as Message;
+              }
+              return sm;
+            });
+
             // Edit-based merge: update existing messages with snapshot data while
             // preserving activity and reasoning messages (which the backend
             // doesn't include in the snapshot).
-            const snapshotMap = new Map(newMessages.map((m) => [m.id, m]));
+            const snapshotMap = new Map(snapshotMessages.map((m) => [m.id, m]));
 
             // Step 1 + 2: Keep activity/reasoning messages as-is, keep messages
             // present in the snapshot (replaced with snapshot version), drop
@@ -605,7 +659,7 @@ export const defaultApplyEvents = (
 
             // Step 3: Append messages from the snapshot that we don't have yet.
             const existingIds = new Set(messages.map((m) => m.id));
-            for (const snapshotMsg of newMessages) {
+            for (const snapshotMsg of snapshotMessages) {
               if (!existingIds.has(snapshotMsg.id)) {
                 messages.push(snapshotMsg);
               }

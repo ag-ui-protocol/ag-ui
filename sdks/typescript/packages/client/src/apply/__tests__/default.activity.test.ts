@@ -437,4 +437,89 @@ describe("MESSAGES_SNAPSHOT preserves client-only messages", () => {
       "m1", "asst-1", "act-1", "asst-2", "tool-canon",
     ]);
   });
+
+  it("preserves a stable renderId when a tool-call message is re-keyed in snapshot", async () => {
+    // Streaming creates an assistant message holding a tool call under a
+    // transient id ("stream-id"); the snapshot carries the SAME tool call
+    // under a new canonical id ("canon-id"). The renamed message must keep a
+    // stable renderId (the original id) so UIs keying on `renderId ?? id`
+    // reconcile the row in place instead of remounting it.
+    const msgs = await applySnapshot(
+      [
+        { id: "m1", role: "user", content: "process a $200 expense" },
+        {
+          id: "stream-id",
+          role: "assistant",
+          toolCalls: [
+            {
+              id: "call_1",
+              type: "function",
+              function: { name: "requestApproval", arguments: "{}" },
+            },
+          ],
+        },
+      ] as Message[],
+      [
+        { id: "m1", role: "user", content: "process a $200 expense" },
+        {
+          id: "canon-id",
+          role: "assistant",
+          toolCalls: [
+            {
+              id: "call_1",
+              type: "function",
+              function: { name: "requestApproval", arguments: "{}" },
+            },
+          ],
+        },
+      ] as Message[],
+    );
+
+    const renamed = msgs.find((m) => m.id === "canon-id")!;
+    expect(renamed).toBeDefined();
+    expect(renamed.renderId).toBe("stream-id");
+  });
+
+  it("does not set renderId for a genuinely new message (falls back to id)", async () => {
+    const msgs = await applySnapshot(
+      [{ id: "m1", role: "user", content: "hi" }] as Message[],
+      [
+        { id: "m1", role: "user", content: "hi" },
+        { id: "a1", role: "assistant", content: "hello" },
+      ] as Message[],
+    );
+
+    const created = msgs.find((m) => m.id === "a1")!;
+    expect(created).toBeDefined();
+    expect(created.renderId).toBeUndefined();
+  });
+
+  it("does not mutate the inbound snapshot event payload when assigning renderId", async () => {
+    const renamedSnapshotMessage = {
+      id: "canon-id",
+      role: "assistant",
+      toolCalls: [
+        { id: "call_1", type: "function", function: { name: "requestApproval", arguments: "{}" } },
+      ],
+    } as Message;
+
+    const msgs = await applySnapshot(
+      [
+        { id: "m1", role: "user", content: "process a $200 expense" },
+        {
+          id: "stream-id",
+          role: "assistant",
+          toolCalls: [
+            { id: "call_1", type: "function", function: { name: "requestApproval", arguments: "{}" } },
+          ],
+        },
+      ] as Message[],
+      [{ id: "m1", role: "user", content: "process a $200 expense" }, renamedSnapshotMessage],
+    );
+
+    // The merged message carries the stable renderId...
+    expect(msgs.find((m) => m.id === "canon-id")!.renderId).toBe("stream-id");
+    // ...but the original event-payload object is left untouched.
+    expect(renamedSnapshotMessage.renderId).toBeUndefined();
+  });
 });

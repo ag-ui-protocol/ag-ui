@@ -18,6 +18,17 @@ export const BaseMessageSchema = z.object({
   content: z.string().optional(),
   name: z.string().optional(),
   encryptedValue: z.string().optional(),
+  /**
+   * Client-assigned stable render identity. NOT a wire field that backends
+   * are expected to produce or consume: servers should ignore it and clients
+   * strip it before sending. The AG-UI client sets it during snapshot merges
+   * so a message whose canonical `id` changes mid-stream (e.g. a transient
+   * streaming/run id replaced by a provider's final response id) keeps one
+   * identity for rendering. UIs should key list rows by `renderId ?? id` to
+   * avoid remounting a row (and the flicker that causes) when only the
+   * canonical id changes. Declared in the schema so it survives Zod parsing.
+   */
+  renderId: z.string().optional(),
 });
 
 export const TextInputContentSchema = z.object({
@@ -142,6 +153,10 @@ export const ToolMessageSchema = z.object({
   toolCallId: z.string(),
   error: z.string().optional(),
   encryptedValue: z.string().optional(),
+  // See `renderId` on BaseMessageSchema. These message variants don't extend
+  // BaseMessageSchema, so the client-only stable render identity is declared
+  // here too, keeping `renderId` uniform across the Message union.
+  renderId: z.string().optional(),
 });
 
 export const ActivityMessageSchema = z.object({
@@ -149,6 +164,7 @@ export const ActivityMessageSchema = z.object({
   role: z.literal("activity"),
   activityType: z.string(),
   content: z.record(z.any()),
+  renderId: z.string().optional(),
 });
 
 export const ReasoningMessageSchema = z.object({
@@ -156,6 +172,7 @@ export const ReasoningMessageSchema = z.object({
   role: z.literal("reasoning"),
   content: z.string(),
   encryptedValue: z.string().optional(),
+  renderId: z.string().optional(),
 });
 
 export const MessageSchema = z.discriminatedUnion("role", [
