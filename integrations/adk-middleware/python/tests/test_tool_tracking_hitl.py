@@ -13,6 +13,7 @@ from ag_ui.core import (
 
 from ag_ui_adk import ADKAgent
 from ag_ui_adk.execution_state import ExecutionState
+from tests.constants import LIVE_TEST_MODEL
 
 
 class TestHITLToolTracking:
@@ -32,7 +33,7 @@ class TestHITLToolTracking:
         from google.adk.agents import LlmAgent
         return LlmAgent(
             name="test_agent",
-            model="gemini-2.0-flash",
+            model=LIVE_TEST_MODEL,
             instruction="Test agent"
         )
 
