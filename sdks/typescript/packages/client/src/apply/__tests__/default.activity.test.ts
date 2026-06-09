@@ -493,4 +493,33 @@ describe("MESSAGES_SNAPSHOT preserves client-only messages", () => {
     expect(created).toBeDefined();
     expect(created.renderId).toBeUndefined();
   });
+
+  it("does not mutate the inbound snapshot event payload when assigning renderId", async () => {
+    const renamedSnapshotMessage = {
+      id: "canon-id",
+      role: "assistant",
+      toolCalls: [
+        { id: "call_1", type: "function", function: { name: "requestApproval", arguments: "{}" } },
+      ],
+    } as Message;
+
+    const msgs = await applySnapshot(
+      [
+        { id: "m1", role: "user", content: "process a $200 expense" },
+        {
+          id: "stream-id",
+          role: "assistant",
+          toolCalls: [
+            { id: "call_1", type: "function", function: { name: "requestApproval", arguments: "{}" } },
+          ],
+        },
+      ] as Message[],
+      [{ id: "m1", role: "user", content: "process a $200 expense" }, renamedSnapshotMessage],
+    );
+
+    // The merged message carries the stable renderId...
+    expect(msgs.find((m) => m.id === "canon-id")!.renderId).toBe("stream-id");
+    // ...but the original event-payload object is left untouched.
+    expect(renamedSnapshotMessage.renderId).toBeUndefined();
+  });
 });
