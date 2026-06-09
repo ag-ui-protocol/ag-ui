@@ -19,15 +19,6 @@ dependencies = [
 [project.optional-dependencies]
 fastapi = ["fastapi>=0.115.12"]
 
-# Dev-only TEMP bridge (OSS-248): resolve the sibling A2UI toolkit from local
-# source so the new A2UIToolParams / A2UIGuidelines / resolve_a2ui_tool_params
-# symbols are picked up before `ag-ui-a2ui-toolkit` 0.0.3 is published. uv
-# strips [tool.uv.sources] from the built wheel, so the published package still
-# depends on `ag-ui-a2ui-toolkit>=0.0.3` from PyPI. REMOVE once 0.0.3 ships
-# (mirrors the OSS-162 scaffolding that was removed in c096afed after publish).
-[tool.uv.sources]
-ag-ui-a2ui-toolkit = { path = "../../../sdks/python/a2ui_toolkit", editable = true }
-
 [tool.ag-ui.scripts]
 test = "python -m unittest discover tests"
 
