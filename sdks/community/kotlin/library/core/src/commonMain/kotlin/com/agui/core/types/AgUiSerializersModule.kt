@@ -71,6 +71,23 @@ val AgUiSerializersModule by lazy {
             subclass(ToolMessage::class)
         }
 
+        // Polymorphic serialization for InputContent parts
+        polymorphic(InputContent::class) {
+            subclass(TextInputContent::class)
+            subclass(ImageInputContent::class)
+            subclass(AudioInputContent::class)
+            subclass(VideoInputContent::class)
+            subclass(DocumentInputContent::class)
+            @Suppress("DEPRECATION")
+            subclass(BinaryInputContent::class)
+        }
+
+        // Polymorphic serialization for InputContentSource
+        polymorphic(InputContentSource::class) {
+            subclass(InputContentDataSource::class)
+            subclass(InputContentUrlSource::class)
+        }
+
         // Polymorphic serialization for RUN_FINISHED outcomes
         polymorphic(RunFinishedOutcome::class) {
             subclass(RunFinishedSuccessOutcome::class)
