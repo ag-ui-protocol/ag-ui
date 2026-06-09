@@ -379,14 +379,9 @@ export abstract class AbstractAgent {
 
   protected prepareRunAgentInput(parameters?: RunAgentParameters): RunAgentInput {
     const clonedMessages = structuredClone_(this.messages) as Message[];
-    const messagesWithoutActivity = clonedMessages
-      .filter((message) => message.role !== "activity")
-      .map((message) => {
-        // `renderId` is a client-only stable render identity — strip it before
-        // sending so it never crosses the wire to the agent.
-        delete (message as { renderId?: string }).renderId;
-        return message;
-      });
+    const messagesWithoutActivity = this.stripRenderId(
+      clonedMessages.filter((message) => message.role !== "activity"),
+    );
 
     return {
       threadId: this.threadId,
@@ -398,6 +393,21 @@ export abstract class AbstractAgent {
       messages: messagesWithoutActivity,
       ...(parameters?.resume !== undefined ? { resume: structuredClone_(parameters.resume) } : {}),
     };
+  }
+
+  // `renderId` is a client-only stable render identity — strip it from outgoing
+  // messages so it never crosses the wire to the agent. Returns the original
+  // element when there's nothing to strip (no deep clone — keeps the
+  // structuredClone hot path light); otherwise a shallow copy without renderId.
+  private stripRenderId(messages: Message[]): Message[] {
+    return messages.map((message) => {
+      if ((message as { renderId?: string }).renderId === undefined) {
+        return message;
+      }
+      const copy = { ...message };
+      delete (copy as { renderId?: string }).renderId;
+      return copy as Message;
+    });
   }
 
   protected async onInitialize(input: RunAgentInput, subscribers: AgentSubscriber[]) {
@@ -431,7 +441,10 @@ export abstract class AbstractAgent {
     ) {
       if (onRunInitializedMutation.messages) {
         this.messages = onRunInitializedMutation.messages;
-        input.messages = onRunInitializedMutation.messages;
+        // Strip renderId again: this override replaces the messages built (and
+        // stripped) by prepareRunAgentInput, so without this the client-only
+        // renderId would cross the wire.
+        input.messages = this.stripRenderId(onRunInitializedMutation.messages);
         subscribers.forEach((subscriber) => {
           subscriber.onMessagesChanged?.({
             messages: this.messages,
