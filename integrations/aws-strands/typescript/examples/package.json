@@ -4,15 +4,15 @@
   "version": "0.0.0",
   "description": "Runnable AG-UI + Strands examples. Each file under server/api/ is a standalone server; server.ts mounts them all at once for the dojo.",
   "scripts": {
-    "dojo": "tsx server/server.ts",
-    "agentic-chat": "tsx server/api/agentic-chat.ts",
-    "agentic-chat-multimodal": "tsx server/api/agentic-chat-multimodal.ts",
-    "agentic-chat-reasoning": "tsx server/api/agentic-chat-reasoning.ts",
-    "agentic-generative-ui": "tsx server/api/agentic-generative-ui.ts",
-    "backend-tool-rendering": "tsx server/api/backend-tool-rendering.ts",
-    "human-in-the-loop": "tsx server/api/human-in-the-loop.ts",
-    "shared-state": "tsx server/api/shared-state.ts",
-    "tool-based-generative-ui": "tsx server/api/tool-based-generative-ui.ts"
+    "dojo": "tsx --env-file-if-exists=.env server/server.ts",
+    "agentic-chat": "tsx --env-file-if-exists=.env server/api/agentic-chat.ts",
+    "agentic-chat-multimodal": "tsx --env-file-if-exists=.env server/api/agentic-chat-multimodal.ts",
+    "agentic-chat-reasoning": "tsx --env-file-if-exists=.env server/api/agentic-chat-reasoning.ts",
+    "agentic-generative-ui": "tsx --env-file-if-exists=.env server/api/agentic-generative-ui.ts",
+    "backend-tool-rendering": "tsx --env-file-if-exists=.env server/api/backend-tool-rendering.ts",
+    "human-in-the-loop": "tsx --env-file-if-exists=.env server/api/human-in-the-loop.ts",
+    "shared-state": "tsx --env-file-if-exists=.env server/api/shared-state.ts",
+    "tool-based-generative-ui": "tsx --env-file-if-exists=.env server/api/tool-based-generative-ui.ts"
   },
   "dependencies": {
     "@ag-ui/aws-strands": "workspace:*",

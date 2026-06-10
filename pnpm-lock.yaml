@@ -515,6 +515,9 @@ importers:
 
   integrations/aws-strands/typescript:
     devDependencies:
+      '@ag-ui/a2ui-toolkit':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/a2ui-toolkit
       '@ag-ui/client':
         specifier: workspace:*
         version: link:../../../sdks/typescript/packages/client

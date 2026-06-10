@@ -312,6 +312,8 @@ export const menuIntegrations = [
       "shared_state",
       "human_in_the_loop",
       "tool_based_generative_ui",
+      "a2ui_dynamic_schema",
+      "a2ui_recovery",
     ],
   },
   {
