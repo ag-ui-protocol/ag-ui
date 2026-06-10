@@ -8,6 +8,9 @@ concurrency:
   group: ${{ github.repository }}-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -16,10 +19,12 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # v8.1.0
         with:
           version: ">=0.8.0"
 
@@ -32,7 +37,9 @@ jobs:
           echo "Preview version: ${VERSION}"
 
       - name: Rewrite pyproject.toml versions
-        run: uv run python scripts/rewrite-python-preview-versions.py ${{ steps.version.outputs.version }}
+        run: uv run python scripts/rewrite-python-preview-versions.py ${STEPS_VERSION_OUTPUTS_VERSION}
+        env:
+          STEPS_VERSION_OUTPUTS_VERSION: ${{ steps.version.outputs.version }}
 
       - name: Build ag-ui-protocol
         working-directory: sdks/python
@@ -75,17 +82,19 @@ jobs:
         run: |
           mkdir -p pr-metadata
           echo "${{ github.event.pull_request.number }}" > pr-metadata/pr-number
-          echo "${{ steps.version.outputs.version }}" > pr-metadata/version
+          echo "${STEPS_VERSION_OUTPUTS_VERSION}" > pr-metadata/version
           echo "${{ github.sha }}" > pr-metadata/sha
+        env:
+          STEPS_VERSION_OUTPUTS_VERSION: ${{ steps.version.outputs.version }}
 
       - name: Upload dist artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: python-preview-dist
           path: dist-preview/
 
       - name: Upload PR metadata
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: python-preview-metadata
           path: pr-metadata/

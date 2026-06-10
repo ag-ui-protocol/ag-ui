@@ -15,3 +15,5 @@ docs/sdk/dart @mattsp1290
 integrations/adk-middleware @contextablemark
 
 integrations/agent-spec @sonleoracle
+
+.github/config-allowlist.txt @AlemTuzlak @atai

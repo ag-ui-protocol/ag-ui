@@ -109,6 +109,11 @@ const ALL_TARGETS = {
     name: "AWS Strands",
     cwd: path.join(integrationsRoot, "aws-strands/python/examples"),
   },
+  "aws-strands-typescript": {
+    command: "pnpm install",
+    name: "AWS Strands (TypeScript)",
+    cwd: path.join(integrationsRoot, "aws-strands/typescript/examples"),
+  },
   "adk-middleware": {
     command: "uv sync",
     name: "ADK Middleware",

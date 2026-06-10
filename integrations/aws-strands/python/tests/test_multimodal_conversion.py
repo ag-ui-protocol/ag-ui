@@ -286,10 +286,15 @@ class TestMimeToFormat:
         assert result == []
 
     def test_missing_mime_skips_image_block(self):
-        """An image with no MIME type should be skipped entirely."""
+        """An image with no MIME type should be skipped entirely.
+
+        ``InputContentDataSource`` now requires ``mime_type``, so we use
+        ``model_construct`` to bypass validation and simulate a source
+        object that somehow lacks the attribute.
+        """
         raw_bytes = b"fake-image-data"
         b64_value = base64.b64encode(raw_bytes).decode()
-        source = InputContentDataSource(value=b64_value)
+        source = InputContentDataSource.model_construct(value=b64_value)
         content = [ImageInputContent(source=source)]
 
         result = convert_agui_content_to_strands(content)
@@ -311,6 +316,12 @@ class MockStrandsAgentForMultimodal:
         self.tool_registry = MagicMock()
         self.tool_registry.registry = {}
         self.record_direct_tool_call = True
+        # The adapter reconciles ``self.messages`` with ``RunAgentInput.messages``
+        # before invoking ``stream_async`` (when no ``session_manager`` is wired),
+        # so the user content under test now lands here rather than in the
+        # ``stream_async(prompt)`` argument.
+        self.messages: list = []
+        self.session_manager = None
 
     async def stream_async(self, prompt):
         self.last_prompt = prompt
@@ -365,13 +376,14 @@ class TestAgentMultimodalIntegration:
         async for event in agent.run(input_data):
             events.append(event)
 
-        # The prompt passed to stream_async should be a list (Strands ContentBlock list)
-        assert isinstance(mock_strands.last_prompt, list), (
-            f"Expected list for multimodal prompt, got {type(mock_strands.last_prompt)}"
-        )
-        # Should contain a text block and an image block
-        assert any("text" in block for block in mock_strands.last_prompt)
-        assert any("image" in block for block in mock_strands.last_prompt)
+        # The reconciled history now carries the multimodal content as the
+        # last user turn's ``content`` (Strands ContentBlock list).
+        assert mock_strands.messages, "expected reconciled history on Strands agent"
+        last_user = mock_strands.messages[-1]
+        assert last_user["role"] == "user"
+        assert isinstance(last_user["content"], list)
+        assert any("text" in block for block in last_user["content"])
+        assert any("image" in block for block in last_user["content"])
 
     @pytest.mark.asyncio
     async def test_text_only_list_flattened_to_string(self):
@@ -394,11 +406,12 @@ class TestAgentMultimodalIntegration:
         async for event in agent.run(input_data):
             events.append(event)
 
-        # Should be flattened to a plain string
-        assert isinstance(mock_strands.last_prompt, str), (
-            f"Expected str for text-only list, got {type(mock_strands.last_prompt)}"
-        )
-        assert mock_strands.last_prompt == "Hello world"
+        # Text-only list should land in reconciled history as a single
+        # text ContentBlock under the last user turn.
+        assert mock_strands.messages, "expected reconciled history on Strands agent"
+        last_user = mock_strands.messages[-1]
+        assert last_user["role"] == "user"
+        assert last_user["content"] == [{"text": "Hello world"}]
 
     @pytest.mark.asyncio
     async def test_plain_string_message_unchanged(self):
@@ -421,5 +434,7 @@ class TestAgentMultimodalIntegration:
         async for event in agent.run(input_data):
             events.append(event)
 
-        assert isinstance(mock_strands.last_prompt, str)
-        assert mock_strands.last_prompt == "Just a plain string"
+        assert mock_strands.messages, "expected reconciled history on Strands agent"
+        last_user = mock_strands.messages[-1]
+        assert last_user["role"] == "user"
+        assert last_user["content"] == [{"text": "Just a plain string"}]

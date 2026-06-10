@@ -1,0 +1,19 @@
+# zizmor configuration. Suppresses well-documented intentional patterns
+# so the security tab stays focused on genuine new findings.
+#
+# Note: docs at https://docs.zizmor.sh/configuration/
+
+rules:
+  dangerous-triggers:
+    ignore:
+      # publish-python-preview.yml deliberately uses workflow_run to publish
+      # PR-built Python wheels to TestPyPI from the trusted base context.
+      # It does NOT execute fork code — it only consumes artifacts and PR
+      # metadata. The trade-off is documented in the file's header comment.
+      - publish-python-preview.yml
+      # Dependabot auto-merge: uses pull_request_target for write token.
+      # Does NOT checkout PR code. Actor-gated to dependabot[bot].
+      - dependabot-auto-merge.yml
+      # Dependabot major analysis: uses pull_request_target for PR comments.
+      # Does NOT checkout PR code. Actor-gated to dependabot[bot].
+      - dependabot-major-analysis.yml

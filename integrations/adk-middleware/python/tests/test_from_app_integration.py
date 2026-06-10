@@ -11,6 +11,7 @@ from ag_ui_adk import ADKAgent
 from ag_ui_adk.session_manager import SessionManager
 from google.adk.apps import App
 from google.adk.agents import LlmAgent
+from tests.constants import LIVE_TEST_MODEL
 
 @pytest.fixture(autouse=True)
 def setup_llmock(llmock_server):
@@ -22,7 +23,7 @@ def sample_app():
     """Create a simple App for testing."""
     agent = LlmAgent(
         name="test_agent",
-        model="gemini-2.0-flash",
+        model=LIVE_TEST_MODEL,
         instruction="You are a helpful assistant. Keep responses brief.",
     )
     return App(name="test_app", root_agent=agent)
@@ -121,7 +122,7 @@ async def test_from_app_with_custom_timeout():
     """Test that plugin_close_timeout is stored correctly."""
     agent = LlmAgent(
         name="test_agent",
-        model="gemini-2.0-flash",
+        model=LIVE_TEST_MODEL,
         instruction="You are helpful.",
     )
     app = App(name="test_app", root_agent=agent)
@@ -271,7 +272,7 @@ async def test_runner_supports_plugin_close_timeout():
     """Test that runtime detection of plugin_close_timeout works."""
     agent = LlmAgent(
         name="test_agent",
-        model="gemini-2.0-flash",
+        model=LIVE_TEST_MODEL,
         instruction="You are helpful.",
     )
     app = App(name="test_app", root_agent=agent)

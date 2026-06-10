@@ -202,15 +202,31 @@ def convert_message_content_to_parts(content: Optional[Union[str, List[Any]]]) -
 
 def convert_ag_ui_messages_to_adk(messages: List[Message]) -> List[ADKEvent]:
     """Convert AG-UI messages to ADK events.
-    
+
     Args:
         messages: List of AG-UI messages
-        
+
     Returns:
         List of ADK events
     """
     adk_events = []
-    
+
+    # Build a tool_call_id -> function_name lookup so we can populate
+    # `FunctionResponse.name` correctly when we hit a ToolMessage. AG-UI's
+    # ToolMessage doesn't carry the function name (only `tool_call_id`),
+    # but Gemini's `FunctionResponse.name` MUST equal the called
+    # function's name so providers (real Gemini and proxies like aimock)
+    # can correlate the response back to the originating FunctionCall.
+    # Without this, `name` would be set to the tool_call_id, which is a
+    # UUID-like string that no prior FunctionCall.name will match — the
+    # round-trip silently breaks (e.g. multi-leg fixture proxies fall
+    # back to a generated id and stop matching second-leg responses).
+    tool_call_id_to_name: dict[str, str] = {}
+    for prior in messages:
+        if isinstance(prior, AssistantMessage) and prior.tool_calls:
+            for tool_call in prior.tool_calls:
+                tool_call_id_to_name[tool_call.id] = tool_call.function.name
+
     for message in messages:
         try:
             # Create base event
@@ -254,12 +270,22 @@ def convert_ag_ui_messages_to_adk(messages: List[Message]) -> List[ADKEvent]:
                     )
             
             elif isinstance(message, ToolMessage):
-                # Tool messages become function responses
+                # Tool messages become function responses. `name` must be
+                # the called function's name (looked up from the prior
+                # AssistantMessage's tool_calls by id); falling back to
+                # the tool_call_id only when the lookup misses (e.g. the
+                # caller sent a ToolMessage without the originating
+                # AssistantMessage in the same batch — rare, but the old
+                # behaviour). `id` carries the tool_call_id so providers
+                # that key on it directly still see it.
+                function_name = tool_call_id_to_name.get(
+                    message.tool_call_id, message.tool_call_id
+                )
                 event.content = types.Content(
                     role="function",
                     parts=[types.Part(
                         function_response=types.FunctionResponse(
-                            name=message.tool_call_id, 
+                            name=function_name,
                             response={"result": message.content} if isinstance(message.content, str) else message.content,
                             id=message.tool_call_id
                         )

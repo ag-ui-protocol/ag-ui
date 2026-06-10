@@ -1,12 +1,12 @@
 [project]
 name = "ag_ui_strands"
-version = "0.1.7"
+version = "0.1.9"
 authors = [
     { name = "AG-UI Contributors" }
 ]
 requires-python = ">=3.12, <3.14"
 dependencies = [
-    "ag-ui-protocol>=0.1.10",
+    "ag-ui-protocol>=0.1.18",
     "fastapi>=0.115.12",
     "strands-agents>=1.15.0",
 ]

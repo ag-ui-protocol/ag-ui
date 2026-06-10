@@ -3,6 +3,7 @@
 """FastAPI endpoint for ADK middleware."""
 
 import logging
+import uuid
 import warnings
 from typing import Any, Callable, Coroutine, List, Optional
 
@@ -156,10 +157,18 @@ class AgentStateRequest(BaseModel):
     """Request body for /agents/state endpoint.
 
     EXPERIMENTAL: This endpoint is subject to change in future versions.
+
+    ``appName`` and ``userId`` are **deprecated** as primary identity inputs
+    (ag-ui-protocol/ag-ui#1646). When ``extract_state_from_request`` is
+    configured on the endpoint, identity is resolved from the extractor
+    pipeline (matching the chat endpoint) and these body fields are ignored
+    — a ``DeprecationWarning`` is emitted to surface the mismatch. They
+    remain as a fallback only when no static value and no extractor produce
+    an identity.
     """
     threadId: str
-    appName: Optional[str] = None  # Required for session lookup; falls back to agent's static value
-    userId: Optional[str] = None   # Required for session lookup; falls back to agent's static value
+    appName: Optional[str] = None  # Deprecated fallback — see class docstring
+    userId: Optional[str] = None   # Deprecated fallback — see class docstring
     name: Optional[str] = None
     properties: Optional[Any] = None
 
@@ -318,7 +327,7 @@ def add_adk_fastapi_endpoint(
             )
 
     @app.post("/agents/state")
-    async def agents_state_endpoint(request_data: AgentStateRequest):
+    async def agents_state_endpoint(request_data: AgentStateRequest, request: Request):
         """EXPERIMENTAL: Retrieve thread state and message history.
 
         This endpoint allows front-end frameworks to retrieve the current state
@@ -328,8 +337,18 @@ def add_adk_fastapi_endpoint(
         future versions. It is provided to support front-end frameworks that
         require on-demand access to thread state.
 
+        Identity resolution mirrors the chat endpoint so that
+        ``extract_state_from_request`` (and the legacy ``extract_headers``)
+        is not bypassed when used as an auth hook (#1646). A synthetic
+        ``RunAgentInput`` is constructed from the request body and threaded
+        through the same extractor pipeline; the resulting state is then
+        consulted for ``app_name``/``user_id`` alongside the agent-level
+        static values and extractors. Body ``appName``/``userId`` are kept
+        as a documented fallback for deployments that configure neither.
+
         Args:
             request_data: Request containing threadId and optional name/properties
+            request: Underlying FastAPI ``Request`` (used by the extractor pipeline)
 
         Returns:
             JSON response with threadId, threadExists, state, and messages
@@ -337,9 +356,61 @@ def add_adk_fastapi_endpoint(
         thread_id = request_data.threadId
 
         try:
-            # Resolve app_name and user_id: request params > static values
-            app_name = request_data.appName or agent._static_app_name
-            user_id = request_data.userId or agent._static_user_id
+            synthetic_input = RunAgentInput(
+                thread_id=thread_id,
+                run_id=f"agents-state-{uuid.uuid4()}",
+                state={},
+                messages=[],
+                tools=[],
+                context=[],
+                forwarded_props=None,
+            )
+
+            if extract_state_fn:
+                extracted_state_dict = await extract_state_fn(request, synthetic_input)
+                if extracted_state_dict:
+                    synthetic_input = synthetic_input.model_copy(
+                        update={"state": extracted_state_dict}
+                    )
+
+            extractor_state = (
+                synthetic_input.state if isinstance(synthetic_input.state, dict) else {}
+            )
+
+            # Identity precedence (matches chat endpoint, then falls back to body):
+            #   1. ADKAgent static value
+            #   2. ADKAgent-level extractor against post-extractor state
+            #   3. state["app_name"] / state["user_id"] written by extract_state_fn
+            #      (so JWT-style hooks work without also wiring an ADKAgent extractor)
+            #   4. Body field (deprecated when an extractor is configured)
+            if agent._static_app_name:
+                app_name = agent._static_app_name
+            elif getattr(agent, "_app_name_extractor", None):
+                app_name = agent._app_name_extractor(synthetic_input)
+            elif "app_name" in extractor_state:
+                app_name = extractor_state["app_name"]
+            else:
+                app_name = request_data.appName
+
+            if agent._static_user_id:
+                user_id = agent._static_user_id
+            elif getattr(agent, "_user_id_extractor", None):
+                user_id = agent._user_id_extractor(synthetic_input)
+            elif "user_id" in extractor_state:
+                user_id = extractor_state["user_id"]
+            else:
+                user_id = request_data.userId
+
+            if extract_state_fn and (request_data.appName or request_data.userId):
+                warnings.warn(
+                    "appName/userId in the /agents/state request body are "
+                    "deprecated when extract_state_from_request is configured. "
+                    "Identity is resolved from the extractor pipeline; body "
+                    "values are ignored unless the extractor produces neither. "
+                    "See ag-ui-protocol/ag-ui#1646.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
 
             if not app_name or not user_id:
                 return JSONResponse(content={

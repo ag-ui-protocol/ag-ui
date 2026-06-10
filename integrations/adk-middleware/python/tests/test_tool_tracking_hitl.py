@@ -13,6 +13,7 @@ from ag_ui.core import (
 
 from ag_ui_adk import ADKAgent
 from ag_ui_adk.execution_state import ExecutionState
+from tests.constants import LIVE_TEST_MODEL
 
 
 class TestHITLToolTracking:
@@ -32,7 +33,7 @@ class TestHITLToolTracking:
         from google.adk.agents import LlmAgent
         return LlmAgent(
             name="test_agent",
-            model="gemini-2.0-flash",
+            model=LIVE_TEST_MODEL,
             instruction="Test agent"
         )
 
@@ -94,6 +95,10 @@ class TestHITLToolTracking:
 
             # Emit tool call events
             tool_call_id = "test_tool_call_123"
+            # The real producer (ClientProxyTool) registers HITL tool call IDs
+            # in long_running_tool_ids before TOOL_CALL_START is enqueued, so
+            # the consumer's gate persists pending_tool_calls (issue #1652).
+            kwargs['long_running_tool_ids'].add(tool_call_id)
             await event_queue.put(ToolCallStartEvent(
                 type=EventType.TOOL_CALL_START,
                 tool_call_id=tool_call_id,
@@ -108,6 +113,13 @@ class TestHITLToolTracking:
                 type=EventType.TOOL_CALL_END,
                 tool_call_id=tool_call_id
             ))
+
+            # Simulate the real producer's pre-None persistence step
+            # (#1755 moves this from the consumer to the producer).
+            for hitl_id in list(getattr(event_queue, "deferred_hitl_ids", [])):
+                await adk_middleware._add_pending_tool_call_with_context(
+                    "test_thread", hitl_id, "test_app", "test_user"
+                )
 
             # Signal completion
             await event_queue.put(None)
@@ -162,12 +174,19 @@ class TestHITLToolTracking:
         async def mock_run_adk_in_background(*args, **kwargs):
             event_queue = kwargs['event_queue']
 
-            # Emit tool call events
+            # Emit tool call events (HITL — see issue #1652)
             tool_call_id = "test_tool_call_456"
+            kwargs['long_running_tool_ids'].add(tool_call_id)
             await event_queue.put(ToolCallEndEvent(
                 type=EventType.TOOL_CALL_END,
                 tool_call_id=tool_call_id
             ))
+
+            # Simulate the real producer's pre-None persistence step (#1755).
+            for hitl_id in list(getattr(event_queue, "deferred_hitl_ids", [])):
+                await adk_middleware._add_pending_tool_call_with_context(
+                    "test_thread", hitl_id, "test_app", "test_user"
+                )
 
             # Signal completion
             await event_queue.put(None)
@@ -217,12 +236,19 @@ class TestHITLToolTracking:
         async def mock_run_adk_in_background(*args, **kwargs):
             event_queue = kwargs['event_queue']
 
-            # Emit tool call events
+            # Emit tool call events (HITL — see issue #1652)
             tool_call_id = "test_tool_call_456"
+            kwargs['long_running_tool_ids'].add(tool_call_id)
             await event_queue.put(ToolCallEndEvent(
                 type=EventType.TOOL_CALL_END,
                 tool_call_id=tool_call_id
             ))
+
+            # Simulate the real producer's pre-None persistence step (#1755).
+            for hitl_id in list(getattr(event_queue, "deferred_hitl_ids", [])):
+                await adk_middleware._add_pending_tool_call_with_context(
+                    "test_thread", hitl_id, "test_app", "test_user"
+                )
 
             # Signal completion
             await event_queue.put(None)
@@ -417,13 +443,19 @@ class TestHITLToolTracking:
             initial_state={}
         )
 
-        # Simulate pending tool call via background execution
+        # Simulate pending tool call via background execution (HITL — issue #1652)
         async def mock_run_adk_in_background(*args, **kwargs):
             event_queue = kwargs['event_queue']
+            kwargs['long_running_tool_ids'].add("pending_tool_123")
             await event_queue.put(ToolCallEndEvent(
                 type=EventType.TOOL_CALL_END,
                 tool_call_id="pending_tool_123"
             ))
+            # Simulate the real producer's pre-None persistence step (#1755).
+            for hitl_id in list(getattr(event_queue, "deferred_hitl_ids", [])):
+                await adk_middleware._add_pending_tool_call_with_context(
+                    "test_thread", hitl_id, "test_app", "test_user"
+                )
             await event_queue.put(None)
 
         with patch.object(adk_middleware, '_run_adk_in_background', side_effect=mock_run_adk_in_background):
@@ -476,10 +508,17 @@ class TestHITLToolTracking:
 
         async def mock_run_adk_in_background(*args, **kwargs):
             event_queue = kwargs['event_queue']
+            # HITL tool call — see issue #1652.
+            kwargs['long_running_tool_ids'].add("pending_tool_456")
             await event_queue.put(ToolCallEndEvent(
                 type=EventType.TOOL_CALL_END,
                 tool_call_id="pending_tool_456"
             ))
+            # Simulate the real producer's pre-None persistence step (#1755).
+            for hitl_id in list(getattr(event_queue, "deferred_hitl_ids", [])):
+                await adk_middleware._add_pending_tool_call_with_context(
+                    "test_thread", hitl_id, "test_app", "test_user"
+                )
             await event_queue.put(None)
 
         with patch.object(adk_middleware, '_run_adk_in_background', side_effect=mock_run_adk_in_background):
