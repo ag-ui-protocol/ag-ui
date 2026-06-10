@@ -79,6 +79,25 @@ def _user_event(text):
     )
 
 
+class _ToolResultEvent:
+    """ADK session event carrying a generate_a2ui function RESPONSE, wrapped the
+    way ADK wraps a string tool return: response = {"result": "<envelope json>"}."""
+
+    def __init__(self, envelope_str, call_id):
+        from types import SimpleNamespace
+        self.content = types.Content(role="user", parts=[types.Part(text="(tool result)")])
+        self.author = "user"
+        self.partial = False
+        self.id = call_id
+        self._fr = SimpleNamespace(response={"result": envelope_str}, id=call_id)
+
+    def get_function_calls(self):
+        return []
+
+    def get_function_responses(self):
+        return [self._fr]
+
+
 class _RecordingRenderLlm(BaseLlm):
     """Records the LlmRequest it receives, then yields a valid render_a2ui call."""
 
@@ -339,6 +358,39 @@ async def test_subagent_call_mirrors_langgraph_system_instruction_and_conversati
     assert any("luxury hotels" in t for t in user_texts)
     # The prompt is NOT duplicated into a user content turn.
     assert not any("HotelCard" in t for t in user_texts)
+
+
+@pytest.mark.asyncio
+async def test_update_intent_finds_prior_surface_and_skips_create():
+    # intent="update" must locate the PRIOR render in ADK session history and
+    # produce an UPDATE (no createSurface). The prior generate_a2ui result is
+    # stored by ADK as a wrapped/serialized function response, which the adapter
+    # must unwrap so the toolkit's find_prior_surface can read a2ui_operations.
+    prior_env = json.dumps({"a2ui_operations": [
+        {"version": "v0.9", "createSurface": {
+            "surfaceId": "hotel-comparison", "catalogId": "cat://dynamic"}},
+        {"version": "v0.9", "updateComponents": {
+            "surfaceId": "hotel-comparison",
+            "components": [{"id": "root", "component": "Row"}]}},
+    ]})
+    tool = get_a2ui_tool({"model": _FreeformRenderLlm(model="ff")})
+    tool.event_queue = asyncio.Queue()
+    ctx = _FakeToolContextWithSession(state={}, events=[
+        _ToolResultEvent(prior_env, "call_prev"),
+        _user_event("Make the layout a single column instead of a row."),
+    ])
+
+    result = await tool.run_async(
+        args={"intent": "update", "target_surface_id": "hotel-comparison",
+              "changes": "use a column layout"},
+        tool_context=ctx,
+    )
+
+    # Prior was found (not an error envelope) and committed as an UPDATE.
+    assert "a2ui_operations" in result, result
+    assert "createSurface" not in result  # update reuses the surface, never re-creates
+    env = json.loads(result)
+    assert any("updateComponents" in op for op in env["a2ui_operations"])
 
 
 @pytest.mark.asyncio

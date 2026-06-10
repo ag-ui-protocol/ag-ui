@@ -29,9 +29,11 @@ from ag_ui.core import (
     ToolCallArgsEvent,
     ToolCallEndEvent,
     ToolCallStartEvent,
+    ToolMessage,
 )
 
 from ag_ui_a2ui_toolkit import (
+    A2UI_OPERATIONS_KEY,
     A2UIToolParams,
     RENDER_A2UI_TOOL_DEF,
     build_a2ui_envelope,
@@ -135,7 +137,7 @@ class A2UISubAgentTool(BaseTool):
         events = self._session_events(tool_context)
         # AG-UI messages drive prepare_a2ui_request's prior-surface lookup
         # (intent="update"); the genai conversation drives the subagent call.
-        messages = adk_events_to_messages(events)
+        messages = self._normalize_a2ui_tool_results(adk_events_to_messages(events))
         conversation = self._conversation_contents(events)
         state = self._state_view(tool_context)
 
@@ -330,6 +332,54 @@ class A2UISubAgentTool(BaseTool):
             ctx = getattr(tool_context, "_invocation_context", None)
             session = getattr(ctx, "session", None)
         return list(getattr(session, "events", None) or [])
+
+    @staticmethod
+    def _extract_envelope(content: str) -> Optional[dict]:
+        """Pull an ``a2ui_operations`` envelope out of an ADK tool-result string,
+        unwrapping the layers ADK adds.
+
+        A generate_a2ui result returns the envelope as a JSON *string*; ADK wraps a
+        string tool return as ``{"result": <string>}`` and the translator
+        ``json.dumps`` it — so the stored content can be double-encoded and/or
+        nested under ``result``. Peel those layers until an envelope dict surfaces."""
+        payload: Any = content
+        for _ in range(3):
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except (ValueError, TypeError):
+                    return None
+            if isinstance(payload, dict):
+                if A2UI_OPERATIONS_KEY in payload:
+                    return payload
+                inner = payload.get("result")
+                if isinstance(inner, (str, dict)):
+                    payload = inner
+                    continue
+            return None
+        return None
+
+    @classmethod
+    def _normalize_a2ui_tool_results(cls, messages: list) -> list:
+        """Rewrite A2UI tool-result messages so their content is the canonical
+        envelope JSON string the toolkit's ``find_prior_surface`` expects (it does
+        ``json.loads(content)`` and looks for ``a2ui_operations``). Non-A2UI tool
+        results pass through unchanged."""
+        out: list = []
+        for msg in messages:
+            role = getattr(msg, "role", None)
+            content = getattr(msg, "content", None)
+            if role == "tool" and isinstance(content, str):
+                envelope = cls._extract_envelope(content)
+                if envelope is not None:
+                    msg = ToolMessage(
+                        id=getattr(msg, "id", None) or str(uuid.uuid4()),
+                        role="tool",
+                        content=json.dumps(envelope),
+                        tool_call_id=getattr(msg, "tool_call_id", None) or "",
+                    )
+            out.append(msg)
+        return out
 
     @staticmethod
     def _conversation_contents(events: list) -> list:
