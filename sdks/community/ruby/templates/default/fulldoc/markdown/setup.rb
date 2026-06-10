@@ -23,6 +23,12 @@ TARGET_PAGES = {
     title: "Overview",
     document_title: "Event Encoder",
     description: "Documentation for encoding Agent User Interaction Protocol events (Ruby SDK)"
+  },
+  "AgUiProtocol::Core::Capabilities" => {
+    path: "core/capabilities",
+    title: "Capabilities",
+    document_title: "Agent Capabilities",
+    description: "Documentation for agent capability declarations in the Agent User Interaction Protocol (Ruby SDK)"
   }
 }.freeze
 
@@ -44,10 +50,13 @@ def init
 
     begin
       Templates::Engine.with_serializer(object, options.serializer) { serialize(object) }
-    rescue => e
+    rescue StandardError => e
       path = options.serializer.serialized_path(object)
       log.error "Exception occurred while generating '#{path}'"
       log.backtrace(e)
+      # Target pages MUST succeed — re-raise so YARD exits non-zero rather
+      # than silently shipping an empty or partial documentation page.
+      raise if TARGET_PAGES.key?(object.path)
     end
   end
 end
@@ -58,8 +67,8 @@ def define_custom_tags
   begin
     YARD::Tags::Library.define_tag("Category", :category)
     YARD::Tags::Library.define_tag("Document Title", :document_title)
-  rescue
-    nil
+  rescue NoMethodError, ArgumentError => e
+    log.warn "ag_ui_protocol YARD template: failed to define custom tags: #{e.message}"
   end
 end
 
@@ -154,17 +163,85 @@ def parse_param_tags_from_source(file, line)
   start_idx = [line.to_i - 2, lines.size - 1].min
   return [] if start_idx < 0
 
+  # Scan backward through the comment block preceding the method
+  # declaration, walking past any Sorbet `sig do ... end` block(s) that sit
+  # between the @param comments and `def initialize`. Stop at real
+  # declaration boundaries (`class `/`module `/`def `) so @param tags from
+  # a previous class/method never leak in.
+  #
+  # YARD's `line` for a multi-line `def initialize(...)` points at the
+  # opening `def` line, so `start_idx = line - 2` lands us EITHER on the
+  # closing `end` of the sig block, OR somewhere inside the sig body
+  # (e.g. `).void`) when the def signature itself is multi-line. We track
+  # sig-block depth so both shapes are handled: each `end` we encounter
+  # walking back opens a depth, and the matching `sig do`/`sig {`/`sig`
+  # closes it. While inside a sig block, all body lines are silently
+  # skipped — including DSL content like `).void`, `params(`, identifier
+  # lines, etc.
   search_window = 120
   first_param_idx = nil
 
   idx = start_idx
   min_idx = [0, start_idx - search_window].max
+  sig_depth = 0
   while idx >= min_idx
     stripped = lines[idx].to_s.strip
-    if stripped.match?(/^#\s*@param\b/)
-      first_param_idx = idx
+
+    # Hard boundary: never cross into a different class/module/def.
+    if stripped.start_with?("class ", "module ", "def ") || stripped == "class" || stripped == "module"
       break
     end
+
+    # Bare `end` walking backward: open a sig-block depth. (Method bodies
+    # don't legally sit between @param tags and the method they describe,
+    # so this is unambiguous in our codebase — boundary check above keeps
+    # us from drifting into a previous declaration.)
+    if stripped == "end"
+      sig_depth += 1
+      idx -= 1
+      next
+    end
+
+    # Sig openers — close the current sig block if we have one open, or
+    # treat as a single-line sig to walk past.
+    is_sig_opener = stripped.start_with?("sig ", "sig{", "sig do") || stripped == "sig"
+    if is_sig_opener
+      sig_depth -= 1 if sig_depth > 0
+      idx -= 1
+      next
+    end
+
+    # Inside a sig block: skip body content unconditionally — BUT still
+    # respect class/module/def boundaries. A bare `end` walking backward
+    # might have actually closed a def/class/module above us; if we see
+    # such a declaration line while sig_depth > 0, stop here so a previous
+    # method's @param tags can't leak in.
+    if sig_depth > 0
+      idx -= 1
+      next
+    end
+
+    # attr_reader/attr_writer/attr_accessor lines may live between the
+    # @param doc block and `def initialize`. Walk past them transparently.
+    if stripped.start_with?("attr_reader", "attr_writer", "attr_accessor")
+      idx -= 1
+      next
+    end
+
+    # Outside any sig block: comments and blanks are walkable. @param hit
+    # ends the search. Anything else (stray code, or sig DSL leftovers
+    # like `).void` from a sig block whose closing `end` we passed before
+    # entering this scope) is also walked past — common when YARD points
+    # at the OPENING line of a multi-line `def initialize(...)` and
+    # start_idx lands inside the sig body just below its opener. The
+    # class/module/def boundary check above is what actually bounds us.
+    if stripped.start_with?("#") || stripped.empty?
+      if stripped.match?(/^#\s*@param\b/)
+        first_param_idx = idx
+        break
+      end
+    end
+
     idx -= 1
   end
 
@@ -325,7 +402,8 @@ end
 
 def safe_tags(object)
   object.tags
-rescue
+rescue NoMethodError => e
+  log.warn "ag_ui_protocol YARD template: tags lookup failed for #{object.respond_to?(:path) ? object.path : object.inspect}: #{e.message}"
   []
 end
 
@@ -451,14 +529,21 @@ def render_params_table_for(object)
     display_types = non_nil_types.empty? ? type_values : non_nil_types
 
     is_optional = optional_param?(types: type_values, default: defaults[name])
-    type = display_types.any? ? "`#{display_types.join(" , ")}`" : ""
+    type = display_types.any? ? "`#{display_types.join(", ")}`" : ""
     type = "#{type} (optional)" if is_optional
     desc = param_tag_text(t).to_s.strip
 
     default = defaults[name]
     if default && !default.empty?
-      suffix = ", Default: `#{default}`."
-      desc = desc.empty? ? suffix : "#{desc} #{suffix}".strip
+      if desc.empty?
+        desc = "Default: `#{default}`."
+      else
+        # Strip a trailing period/whitespace from the description so the
+        # rendered cell is "<text>. Default: `nil`." instead of the stray
+        # "<text>. , Default: `nil`." artifact.
+        clean_desc = desc.sub(/[.\s]+\z/, "")
+        desc = "#{clean_desc}. Default: `#{default}`."
+      end
     end
 
     prop_cell = "`#{name}`"
@@ -501,7 +586,8 @@ def locate_method_line_in_file(file, method_name)
   rx = /^\s*def\s+#{Regexp.escape(method_name)}(\b|\s*\(|\s*$)/
   idx = lines.find_index { |l| l.to_s.match?(rx) }
   idx ? (idx + 1) : nil
-rescue
+rescue Errno::ENOENT, IOError => e
+  log.warn "ag_ui_protocol YARD template: locate_method_line_in_file failed for #{file}/#{method_name}: #{e.message}"
   nil
 end
 
@@ -529,7 +615,8 @@ def method_param_tags(method_object, owner: nil)
 
   parsed = parse_method_doc_from_source(file, line)
   parsed.fetch(:params, [])
-rescue
+rescue NoMethodError, Errno::ENOENT, IOError => e
+  log.warn "ag_ui_protocol YARD template: method_param_tags failed for #{method_object.respond_to?(:path) ? method_object.path : method_object.inspect}: #{e.message}"
   []
 end
 
@@ -542,7 +629,8 @@ def method_return_tag(method_object, owner: nil)
 
   parsed = parse_method_doc_from_source(file, line)
   parsed[:return]
-rescue
+rescue NoMethodError, Errno::ENOENT, IOError => e
+  log.warn "ag_ui_protocol YARD template: method_return_tag failed for #{method_object.respond_to?(:path) ? method_object.path : method_object.inspect}: #{e.message}"
   nil
 end
 
@@ -552,7 +640,8 @@ def method_description_from_source(method_object, owner: nil)
 
   parsed = parse_method_doc_from_source(file, line)
   parsed.fetch(:description, "").to_s.strip
-rescue
+rescue NoMethodError, Errno::ENOENT, IOError => e
+  log.warn "ag_ui_protocol YARD template: method_description_from_source failed for #{method_object.respond_to?(:path) ? method_object.path : method_object.inspect}: #{e.message}"
   ""
 end
 
@@ -582,6 +671,7 @@ def parse_method_doc_from_source(file, line)
   collected = []
   scanned = 0
   max_scan = 80
+  sig_depth = 0
 
   while idx >= 0 && scanned < max_scan
     scanned += 1
@@ -590,13 +680,52 @@ def parse_method_doc_from_source(file, line)
 
     stripped = raw.strip
 
+    # Inside a multi-line `sig do ... end` block — skip body unconditionally
+    # until we reach the `sig do`/`sig` opener that closes the depth.
+    #
+    # However, a real def/class/module boundary line ALWAYS stops traversal.
+    # A bare `end` walking backward isn't necessarily a sig closer — it could
+    # be closing a `def`/`class`/`module`. If we hit one of those declaration
+    # keywords while sig_depth > 0, the `end` we treated as a sig closer was
+    # actually a def/class/module closer, so we must stop here to avoid
+    # leaking another method's docstring into this one.
+    if sig_depth > 0
+      if stripped.start_with?("class ", "module ", "def ") || stripped == "class" || stripped == "module"
+        break
+      end
+      if stripped.start_with?("sig ", "sig{", "sig do") || stripped == "sig"
+        sig_depth -= 1
+      end
+      idx -= 1
+      next
+    end
+
     if stripped.start_with?("#") || stripped.empty?
       collected << stripped
       idx -= 1
       next
     end
 
-    if stripped.start_with?("sig") || stripped == "end" || stripped.include?("params(") || stripped.include?("returns(") || stripped.end_with?(".void") || stripped.include?("T.nilable")
+    # Hard boundaries: never cross into a different class/module/def. These
+    # mark territory belonging to another declaration and leaking across
+    # them produces cross-method doc contamination.
+    if stripped.start_with?("class ", "module ", "def ") || stripped == "class" || stripped == "module"
+      break
+    end
+
+    # `end` walking backward closes a sig block above us (a comment-or-code
+    # bound region directly above the method we're documenting).
+    if stripped == "end"
+      sig_depth += 1
+      idx -= 1
+      next
+    end
+
+    # Single-line sig (`sig { ... }`) — strip cleanly. Use start-of-line
+    # checks, not substring matching, so comment text mentioning sig DSL
+    # tokens (e.g. a `# @param ... T.nilable(String)`) is never mistaken
+    # for actual sig code.
+    if stripped.start_with?("sig ", "sig{", "sig do") || stripped == "sig"
       idx -= 1
       next
     end
@@ -642,13 +771,65 @@ end
 
 def method_signature_for(method_object, owner: nil)
   name = method_object.name(false).to_s
-  tags = method_param_tags(method_object, owner: owner)
-  params = tags.map { |t| normalize_param_name(param_tag_name(t)) }.join(", ")
-  sig = params.empty? ? name : "#{name}(#{params})"
 
-  return sig if name == "initialize"
+  # Prefer YARD's parameter introspection so we render keyword args with
+  # their trailing colon AND default value (e.g. `initialize(accept: nil)`
+  # rather than `initialize(accept)`). YARD's `.parameters` returns an
+  # array of `[raw_name, default_or_nil]` pairs where `raw_name` retains
+  # the syntactic decoration that distinguishes parameter kinds:
+  #
+  #   positional required:  ["name", nil]
+  #   positional optional:  ["name", "default"]
+  #   keyword required:     ["name:", nil]
+  #   keyword optional:     ["name:", "default"]
+  #   rest:                 ["*args", nil]
+  #   keyrest:              ["**opts", nil]
+  #   block:                ["&block", nil]
+  #
+  # Render each part as `raw_name` (positional required, splat, block,
+  # keyword required) or `raw_name <sep> default` where `<sep>` is `: `
+  # for keyword args (the name already ends in `:`) and ` = ` for
+  # positional optionals.
+  params = nil
+  if method_object.respond_to?(:parameters) && method_object.parameters.is_a?(Array)
+    parts = method_object.parameters.map do |param|
+      raw_name, default = if param.is_a?(Array)
+        [param[0].to_s, param[1]]
+      else
+        s = param.to_s
+        if s.include?("=")
+          n, d = s.split("=", 2)
+          [n.to_s, d.to_s.strip]
+        else
+          [s, nil]
+        end
+      end
 
-  sig
+      raw_name = raw_name.to_s.strip
+      next nil if raw_name.empty?
+
+      default_str = default.to_s.strip
+      if default_str.empty?
+        raw_name
+      elsif raw_name.end_with?(":")
+        "#{raw_name} #{default_str}"
+      else
+        "#{raw_name} = #{default_str}"
+      end
+    end.compact
+
+    params = parts.join(", ")
+  end
+
+  # Fall back to @param tag names (legacy path) when YARD didn't expose
+  # parameters — keeps signatures rendering for objects whose source we
+  # can't introspect.
+  if params.nil?
+    tags = method_param_tags(method_object, owner: owner)
+    params = tags.map { |t| normalize_param_name(param_tag_name(t)) }.join(", ")
+  end
+
+  params.empty? ? name : "#{name}(#{params})"
 end
 
 def render_params_table_for_method(method_object, owner: nil)
@@ -667,7 +848,7 @@ def render_params_table_for_method(method_object, owner: nil)
     display_types = non_nil_types.empty? ? type_values : non_nil_types
 
     is_optional = optional_param?(types: type_values, default: nil)
-    type = display_types.any? ? "`#{display_types.join(" , ")}`" : ""
+    type = display_types.any? ? "`#{display_types.join(", ")}`" : ""
     type = "#{type} (optional)" if is_optional
     desc = param_tag_text(t).to_s.strip
 
@@ -747,8 +928,13 @@ def serialize(object)
     serialize_types_page
   when "AgUiProtocol::Encoder"
     serialize_encoder_page
+  when "AgUiProtocol::Core::Capabilities"
+    serialize_capabilities_page
   else
-    ""
+    # Fail-loud: if TARGET_PAGES gains a new entry but the dispatcher isn't
+    # updated, we want to know immediately rather than silently emit an
+    # empty page.
+    raise "ag_ui_protocol YARD template: no serialize_* dispatch case for #{object.path}. Update setup.rb#serialize to add one."
   end
 end
 
@@ -765,14 +951,33 @@ def serialize_events_page
   preamble_doc, section_docs, section_order = extract_virtual_sections(module_doc)
   out << "#{preamble_doc}\n\n" unless preamble_doc.empty?
 
-  classes = events_module.children.grep(CodeObjects::ClassObject)
-  classes = classes.reject { |c| c.path == "AgUiProtocol::Core::Events::BaseEvent" }
+  all_classes = events_module.children.grep(CodeObjects::ClassObject)
+  all_classes = all_classes.reject { |c| c.path == "AgUiProtocol::Core::Events::BaseEvent" }
+
+  # Outcome classes live in the Events module but are value types (subclasses
+  # of Types::Model), not events. Keep them separate so they don't get
+  # mis-bucketed into "Lifecycle Events" (their names start with "Run").
+  outcomes, classes = all_classes.partition do |c|
+    name = c.name.to_s
+    name.end_with?("Outcome")
+  end
 
   lifecycle = classes.select { |c| c.name.to_s.start_with?("Run", "Step") }
-  text = classes.select { |c| c.name.to_s.start_with?("TextMessage", "Thinking") }
+  text = classes.select { |c| c.name.to_s.start_with?("TextMessage") }
+  thinking = classes.select { |c| c.name.to_s.start_with?("Thinking") }
   tool = classes.select { |c| c.name.to_s.start_with?("ToolCall") }
   state = classes.select { |c| c.name.to_s.start_with?("State", "Messages", "Activity") }
+  reasoning = classes.select { |c| c.name.to_s.start_with?("Reasoning") }
   special = classes.select { |c| c.name.to_s.start_with?("Raw", "Custom") }
+
+  # Fail-loud: every event class must land in exactly one bucket. If a new
+  # event class is added upstream and no bucket matches, we want a noisy
+  # failure rather than silently dropping it from the docs.
+  bucketed = (lifecycle + text + thinking + tool + state + reasoning + special).map(&:path).to_set
+  orphans = classes.reject { |c| bucketed.include?(c.path) }.map { |c| c.name.to_s }
+  unless orphans.empty?
+    raise "ag_ui_protocol YARD template: event classes not assigned to any group: #{orphans.join(", ")}. Update setup.rb groups[] to include them."
+  end
 
   if event_type_module
     out << "## EventType\n\n"
@@ -802,8 +1007,10 @@ def serialize_events_page
   groups = [
     ["Lifecycle Events", lifecycle],
     ["Text Message Events", text],
+    ["Thinking Events", thinking],
     ["Tool Call Events", tool],
     ["State Management Events", state],
+    ["Reasoning Events", reasoning],
     ["Special Events", special]
   ]
 
@@ -825,6 +1032,23 @@ def serialize_events_page
     out << "#{section_doc}\n\n" unless section_doc.empty?
 
     list.sort_by { |c| c.name.to_s }.each do |klass|
+      out << "### #{klass.name}\n\n"
+      out << "#{inline_code(klass.path)}\n\n"
+
+      append_doc(out, klass.docstring)
+      append_tags(out, klass)
+
+      table = render_params_table_for(klass)
+      out << table unless table.empty?
+    end
+  end
+
+  # Render outcome value types (used by RunFinishedEvent.outcome) in a
+  # dedicated section, NOT bucketed with events.
+  unless outcomes.empty?
+    out << "## Run Outcome Types\n\n"
+    out << "Value types referenced by `RunFinishedEvent.outcome`.\n\n"
+    outcomes.sort_by { |c| c.name.to_s }.each do |klass|
       out << "### #{klass.name}\n\n"
       out << "#{inline_code(klass.path)}\n\n"
 
@@ -946,6 +1170,117 @@ def serialize_types_page
   out
 end
 
+# Curated semantic order for capability sections. Used when the
+# Capabilities module docstring does NOT provide its own `## Heading`
+# section order. Matches overview.mdx ordering so the rendered page
+# reads top-to-bottom in roughly increasing specialization.
+CAPABILITY_SECTION_ORDER = %w[
+  AgentCapabilities
+  IdentityCapabilities
+  TransportCapabilities
+  ToolsCapabilities
+  OutputCapabilities
+  StateCapabilities
+  MultiAgentCapabilities
+  ReasoningCapabilities
+  MultimodalCapabilities
+  MultimodalInputCapabilities
+  MultimodalOutputCapabilities
+  ExecutionCapabilities
+  HumanInTheLoopCapabilities
+].freeze
+
+# Fallback hardcoded list of value-type class names in the Capabilities
+# module. Classes are recognized as value types iff they carry an explicit
+# `@category Value Types` tag (preferred) OR appear in this list. Any new
+# class in the module that is neither a *Capabilities suffix class nor
+# tagged/listed here will raise — see capability_value_type? below.
+CAPABILITY_VALUE_TYPES = %w[SubAgentInfo].freeze
+
+def capability_value_type?(klass)
+  category = category_for(klass).to_s.strip
+  return true if category == "Value Types"
+
+  name = klass.name.to_s
+  return true if CAPABILITY_VALUE_TYPES.include?(name)
+
+  unless name.end_with?("Capabilities")
+    raise "ag_ui_protocol YARD template: class #{klass.path} is not a *Capabilities class and has no `@category Value Types` tag. Tag it explicitly so setup.rb knows whether to render it as a top-level capability or a value type (or add it to CAPABILITY_VALUE_TYPES in setup.rb)."
+  end
+
+  false
+end
+
+def serialize_capabilities_page
+  capabilities_module = Registry.at("AgUiProtocol::Core::Capabilities")
+  out = +""
+  page_header(out, "AgUiProtocol::Core::Capabilities")
+  return out unless capabilities_module
+
+  module_doc = rdoc_to_md(capabilities_module.docstring).to_s.strip
+  preamble_doc, _section_docs, section_order = extract_virtual_sections(module_doc)
+  out << "#{preamble_doc}\n\n" unless preamble_doc.empty?
+
+  all_classes = capabilities_module.children.grep(CodeObjects::ClassObject).sort_by { |c| c.name.to_s }
+
+  # Value types (e.g. SubAgentInfo) are referenced by capability classes but
+  # are not themselves capabilities. Pull them out so they don't appear as
+  # peers of AgentCapabilities/MultiAgentCapabilities at the top level.
+  value_types, classes = all_classes.partition { |c| capability_value_type?(c) }
+
+  # Section ordering: prefer `## Heading` order from the module docstring
+  # (template flexibility) when present; otherwise fall back to the curated
+  # CAPABILITY_SECTION_ORDER which matches overview.mdx semantic order.
+  effective_order = section_order.any? ? section_order : CAPABILITY_SECTION_ORDER
+
+  rendered = Set.new
+  effective_order.each do |title|
+    klass = classes.find { |c| c.name.to_s == title }
+    next unless klass
+    next if rendered.include?(klass.path)
+
+    rendered << klass.path
+    out << "## #{klass.name}\n\n"
+    out << "#{inline_code(klass.path)}\n\n"
+
+    append_doc(out, klass.docstring)
+    append_tags(out, klass)
+
+    table = render_params_table_for(klass)
+    out << table unless table.empty?
+  end
+
+  classes.each do |klass|
+    next if rendered.include?(klass.path)
+
+    out << "## #{klass.name}\n\n"
+    out << "#{inline_code(klass.path)}\n\n"
+
+    append_doc(out, klass.docstring)
+    append_tags(out, klass)
+
+    table = render_params_table_for(klass)
+    out << table unless table.empty?
+  end
+
+  unless value_types.empty?
+    out << "## Value Types\n\n"
+    out << "Value types referenced by capability classes.\n\n"
+    value_types.each do |klass|
+      out << "### #{klass.name}\n\n"
+      out << "#{inline_code(klass.path)}\n\n"
+
+      append_doc(out, klass.docstring)
+      append_tags(out, klass)
+
+      table = render_params_table_for(klass)
+      out << table unless table.empty?
+    end
+  end
+
+  out
+end
+
 def serialize_encoder_page
   encoder = Registry.at("AgUiProtocol::Encoder")
   out = +""
@@ -995,12 +1330,120 @@ end
 ##
 # Converts rdoc to markdown.
 #
-# I didn't found a way to detect yard/rdoc docstrings, so we're running docstrings through rdoc to markdown converter in all cases. If it's yard docstring, it doesn't seem to have any negative effect on end results. But absense of bugs, doesn't mean that there are no issues.
+# I didn't find a way to detect yard/rdoc docstrings, so we're running docstrings through rdoc to markdown converter in all cases. If it's yard docstring, it doesn't seem to have any negative effect on end results. But absence of bugs doesn't mean that there are no issues.
 #
 # @param docstring [String, YARD::Docstring]
 # @return [String] markdown formatted string
 def rdoc_to_md(docstring)
-  RDoc::Markup::ToMarkdown.new.convert(docstring)
+  md = RDoc::Markup::ToMarkdown.new.convert(docstring).to_s
+  md = ensure_fences_on_own_lines(md)
+  md = convert_verbatim_plus_to_code(md)
+  md
+end
+
+# RDoc::Markup::ToMarkdown sometimes collapses blank lines around triple
+# backtick fences, producing output like `prose. ```ruby code``` more prose`
+# on a single line. Split fences onto their own lines so MDX renders the
+# code block correctly. Avoid introducing double-blank lines.
+def ensure_fences_on_own_lines(md)
+  return md if md.nil? || md.empty?
+
+  # 1. Force any ``` token that is not already at line-start onto its own
+  #    line. This handles `prose ```ruby` style runons.
+  result = md.gsub(/([^\n])(```)/, "\\1\n\\2")
+
+  # 2. If a fence line has a language tag followed by content on the same
+  #    line (e.g. "```ruby code = 1"), split the language and content.
+  #    For closing fences (bare "```"), split anything after the tag.
+  result = result.split("\n", -1).flat_map do |line|
+    stripped = line.lstrip
+    next [line] unless stripped.start_with?("```")
+
+    indent = line[0...(line.length - stripped.length)]
+    rest = stripped[3..].to_s
+
+    if rest.empty?
+      [line]
+    else
+      # rest may be "<lang>" alone, or "<lang> <content>", or "<content>"
+      # for a closing fence. Pull off the first whitespace-delimited token
+      # as the language tag iff it's all word characters; otherwise treat
+      # the whole rest as content following a bare ``` (closing fence
+      # case).
+      m = rest.match(/\A(\w+)(\s+)(.+)\z/m)
+      if m
+        ["#{indent}```#{m[1]}", m[3]]
+      elsif rest.match?(/\A\w+\z/)
+        # Just a language tag with no trailing content — leave alone.
+        [line]
+      else
+        # Closing fence (or odd content) with stuff after it.
+        ["#{indent}```", rest]
+      end
+    end
+  end.join("\n")
+
+  # 3. Ensure a blank line BEFORE an OPENING fence when the previous line
+  #    is non-empty. Track fence parity line-by-line so we only act on
+  #    transitions out→in (opening fences). Critically: NEVER insert a
+  #    blank between an opening fence and the first code line, nor between
+  #    the last code line and the closing fence — that lives INSIDE a
+  #    fence and would corrupt the rendered code block.
+  out_lines = []
+  prev = nil
+  in_fence_pre = false
+  result.split("\n", -1).each do |line|
+    is_fence = line.lstrip.start_with?("```")
+    is_opening = is_fence && !in_fence_pre
+    if is_opening && prev && !prev.strip.empty? && !prev.lstrip.start_with?("```")
+      out_lines << ""
+    end
+    out_lines << line
+    in_fence_pre = !in_fence_pre if is_fence
+    prev = line
+  end
+
+  # 4. Ensure a blank line AFTER a CLOSING fence when the next line is
+  #    non-empty and not another fence. Track fence parity from the start
+  #    of the document so we know exactly which fence is closing.
+  final = []
+  in_fence_post = false
+  out_lines.each_with_index do |line, i|
+    final << line
+    is_fence = line.lstrip.start_with?("```")
+    if is_fence
+      was_in_fence = in_fence_post
+      in_fence_post = !in_fence_post
+      # Closing fence = transition from inside → outside.
+      is_closing = was_in_fence && !in_fence_post
+      next_line = out_lines[i + 1]
+      if is_closing && next_line && !next_line.strip.empty? && !next_line.lstrip.start_with?("```")
+        final << ""
+      end
+    end
+  end
+
+  final.join("\n")
+end
+
+# RDoc's +verbatim+ markup is not converted to backtick code spans by
+# ToMarkdown, so terms like `+true+` and `+nil+` render literally. Convert
+# `+text+` to `` `text` `` but only outside of fenced code blocks (where
+# arithmetic expressions could legitimately use `+`).
+def convert_verbatim_plus_to_code(md)
+  return md if md.nil? || md.empty?
+
+  in_fence = false
+  md.split("\n", -1).map do |line|
+    if line.lstrip.start_with?("```")
+      in_fence = !in_fence
+      next line
+    end
+    next line if in_fence
+
+    # +word+ where word starts with non-space non-+ and contains no +.
+    line.gsub(/\+([^+\s][^+]*?)\+/, '`\1`')
+  end.join("\n")
 end
 
 ##
@@ -1020,14 +1463,21 @@ def render_tags(object)
   examples = []
 
   object.tags.each do |tag|
-    next if %w[attr_reader param document_title].include?(tag.tag_name)
+    # Skip tags consumed elsewhere (params, document_title, attr_reader) or
+    # tags used purely for bucketing (category). Without this skip, every
+    # class with a @category tag rendered a stray "**@category** [] <name>"
+    # line in the docs.
+    next if %w[attr_reader param document_title category].include?(tag.tag_name)
 
     if tag.tag_name == "example"
       examples << tag
       next
     end
 
-    result << "**@#{tag.tag_name}** [#{tag.types&.join(', ')}] #{tag.text}\n\n"
+    types_arr = tag.respond_to?(:types) ? tag.types : nil
+    type_part = (types_arr && !types_arr.empty?) ? " [#{types_arr.join(", ")}]" : ""
+    text_part = tag.text.to_s
+    result << "**@#{tag.tag_name}**#{type_part}#{text_part.empty? ? "" : " #{text_part}"}\n\n"
   end
 
   examples.each do |tag|

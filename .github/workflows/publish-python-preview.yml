@@ -9,17 +9,21 @@ on:
     workflows: ["Build Python Preview"]
     types: [completed]
 
+permissions:
+  contents: read
+
 jobs:
   publish:
     runs-on: ubuntu-latest
     if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request'
+    environment: pypi
     permissions:
       actions: read
       pull-requests: write
 
     steps:
       - name: Download dist artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
           name: python-preview-dist
           path: dist-preview/
@@ -27,7 +31,7 @@ jobs:
           github-token: ${{ github.token }}
 
       - name: Download PR metadata
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
           name: python-preview-metadata
           path: pr-metadata/
@@ -42,7 +46,7 @@ jobs:
           echo "sha=$(cat pr-metadata/sha)" >> "$GITHUB_OUTPUT"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # v8.1.0
         with:
           version: ">=0.8.0"
 
@@ -60,7 +64,7 @@ jobs:
       - name: Find existing preview comment
         if: always()
         id: find-comment
-        uses: peter-evans/find-comment@v4
+        uses: peter-evans/find-comment@b30e6a3c0ed37e7c023ccd3f1db5c6c0b0c23aad  # v4.0.0
         with:
           issue-number: ${{ steps.meta.outputs.pr-number }}
           comment-author: 'github-actions[bot]'
@@ -68,7 +72,7 @@ jobs:
 
       - name: Post or update install instructions
         if: success()
-        uses: peter-evans/create-or-update-comment@v4
+        uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9  # v5.0.0
         with:
           comment-id: ${{ steps.find-comment.outputs.comment-id }}
           issue-number: ${{ steps.meta.outputs.pr-number }}
@@ -125,7 +129,7 @@ jobs:
 
       - name: Post failure comment
         if: failure()
-        uses: peter-evans/create-or-update-comment@v4
+        uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9  # v5.0.0
         with:
           comment-id: ${{ steps.find-comment.outputs.comment-id }}
           issue-number: ${{ steps.meta.outputs.pr-number }}

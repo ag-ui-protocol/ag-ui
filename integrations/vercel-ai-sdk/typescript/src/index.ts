@@ -97,6 +97,7 @@ export class VercelAISDKAgent extends AbstractAgent {
   model: LanguageModelV1;
   maxSteps: number;
   toolChoice: ToolChoice<Record<string, unknown>>;
+  public headers?: Record<string, string>;
   constructor(private config: VercelAISDKAgentConfig) {
     const { model, maxSteps, toolChoice, ...rest } = config;
     super({ ...rest });
@@ -106,7 +107,11 @@ export class VercelAISDKAgent extends AbstractAgent {
   }
 
   public clone() {
-    return new VercelAISDKAgent(this.config);
+    const cloned = new VercelAISDKAgent(this.config);
+    if (this.headers) {
+      cloned.headers = { ...this.headers };
+    }
+    return cloned;
   }
 
   run(input: RunAgentInput): Observable<BaseEvent> {
@@ -125,6 +130,9 @@ export class VercelAISDKAgent extends AbstractAgent {
         tools: convertToolToVerlAISDKTools(input.tools),
         maxSteps: this.maxSteps,
         toolChoice: this.toolChoice,
+        ...(this.headers && Object.keys(this.headers).length > 0
+          ? { headers: this.headers }
+          : {}),
       });
 
       let messageId = randomUUID();

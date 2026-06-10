@@ -21,7 +21,9 @@ import httpx
 from ag_ui.core import (
     RunAgentInput, UserMessage, AssistantMessage, ToolMessage,
     ReasoningMessage,
-    EventType, MessagesSnapshotEvent, ToolCall, FunctionCall
+    EventType, MessagesSnapshotEvent, ToolCall, FunctionCall,
+    ImageInputContent, AudioInputContent, VideoInputContent,
+    DocumentInputContent, InputContentUrlSource, TextInputContent,
 )
 
 from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint, adk_events_to_messages
@@ -51,11 +53,13 @@ def create_mock_adk_event(
     if text:
         part = MagicMock()
         part.text = text
+        part.file_data = None
         event.content.parts = [part]
     elif function_calls or function_responses:
         # For function calls/responses, create empty parts but content exists
         part = MagicMock()
         part.text = None
+        part.file_data = None
         event.content.parts = [part]
     else:
         event.content = None
@@ -93,6 +97,7 @@ def create_mock_adk_event_with_parts(
             part = MagicMock()
             part.text = p.get("text")
             part.thought = p.get("thought", False)
+            part.file_data = None
             mock_parts.append(part)
         event.content.parts = mock_parts
     else:
@@ -102,6 +107,40 @@ def create_mock_adk_event_with_parts(
     event.get_function_responses = MagicMock(return_value=function_responses or [])
 
     return event
+
+
+def create_mock_adk_event_with_file(
+    event_id: str = None,
+    author: str = "user",
+    text: str = "check this file",
+    file_uri: str = "https://storage.googleapis.com/bucket/file.png",
+    mime_type: str = "image/png",
+):
+    """Create a mock ADK user event with a text part and a file_data part."""
+    event = MagicMock()
+    event.id = event_id or str(uuid.uuid4())
+    event.author = author
+    event.partial = False
+
+    text_part = MagicMock()
+    text_part.text = text
+    text_part.file_data = None
+
+    file_part = MagicMock()
+    file_part.text = None
+    file_part.file_data = MagicMock()
+    file_part.file_data.file_uri = file_uri
+    file_part.file_data.mime_type = mime_type
+
+    event.content = MagicMock()
+    event.content.parts = [text_part, file_part]
+    event.get_function_calls = MagicMock(return_value=[])
+    event.get_function_responses = MagicMock(return_value=[])
+    return event
+
+
+# Keep old name as alias so any external callers still work
+create_mock_adk_event_with_image = create_mock_adk_event_with_file
 
 
 def create_mock_function_call(name: str, args: dict = None, fc_id: str = None):
@@ -148,6 +187,128 @@ class TestAdkEventsToMessages:
         assert messages[0].id == "user-1"
         assert messages[0].role == "user"
         assert messages[0].content == "Hello, how are you?"
+
+    def test_user_message_with_image_attachment(self):
+        """User event with text + image file_data → content list with text and image."""
+        event = create_mock_adk_event_with_file(
+            event_id="user-img-1",
+            text="describe this image",
+            file_uri="https://storage.googleapis.com/bucket/photo.png",
+            mime_type="image/png",
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 1
+        msg = messages[0]
+        assert isinstance(msg, UserMessage)
+        assert isinstance(msg.content, list)
+        assert len(msg.content) == 2
+
+        text_part = msg.content[0]
+        assert isinstance(text_part, TextInputContent)
+        assert text_part.text == "describe this image"
+
+        img_part = msg.content[1]
+        assert isinstance(img_part, ImageInputContent)
+        assert isinstance(img_part.source, InputContentUrlSource)
+        assert img_part.source.value == "https://storage.googleapis.com/bucket/photo.png"
+        assert img_part.source.mime_type == "image/png"
+
+    def test_user_message_with_audio_attachment(self):
+        """User event with text + audio file_data → AudioInputContent."""
+        event = create_mock_adk_event_with_file(
+            event_id="user-audio-1",
+            text="transcribe this",
+            file_uri="https://storage.googleapis.com/bucket/clip.mp3",
+            mime_type="audio/mpeg",
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 1
+        msg = messages[0]
+        assert isinstance(msg.content, list)
+        audio_part = msg.content[1]
+        assert isinstance(audio_part, AudioInputContent)
+        assert audio_part.source.value == "https://storage.googleapis.com/bucket/clip.mp3"
+        assert audio_part.source.mime_type == "audio/mpeg"
+
+    def test_user_message_with_video_attachment(self):
+        """User event with text + video file_data → VideoInputContent."""
+        event = create_mock_adk_event_with_file(
+            event_id="user-video-1",
+            text="summarize this video",
+            file_uri="https://storage.googleapis.com/bucket/recording.mp4",
+            mime_type="video/mp4",
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 1
+        msg = messages[0]
+        assert isinstance(msg.content, list)
+        video_part = msg.content[1]
+        assert isinstance(video_part, VideoInputContent)
+        assert video_part.source.value == (
+            "https://storage.googleapis.com/bucket/recording.mp4"
+        )
+        assert video_part.source.mime_type == "video/mp4"
+
+    def test_user_message_with_document_attachment(self):
+        """User event with text + document file_data → DocumentInputContent."""
+        event = create_mock_adk_event_with_file(
+            event_id="user-doc-1",
+            text="summarize this document",
+            file_uri="https://storage.googleapis.com/bucket/report.docx",
+            mime_type=(
+                "application/vnd.openxmlformats-officedocument"
+                ".wordprocessingml.document"
+            ),
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 1
+        msg = messages[0]
+        assert isinstance(msg.content, list)
+        doc_part = msg.content[1]
+        assert isinstance(doc_part, DocumentInputContent)
+        assert doc_part.source.value == (
+            "https://storage.googleapis.com/bucket/report.docx"
+        )
+
+    def test_user_message_file_data_without_uri_is_skipped(self):
+        """file_data parts with no file_uri are filtered out; content stays a string."""
+        event = create_mock_adk_event_with_file(
+            event_id="user-no-uri",
+            text="text only please",
+            file_uri=None,
+            mime_type="image/png",
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 1
+        msg = messages[0]
+        assert isinstance(msg, UserMessage)
+        # No valid media parts → content collapses back to a plain string
+        assert msg.content == "text only please"
+
+    def test_user_message_without_image_stays_string(self):
+        """User event with text only → content remains a plain string (backward compat)."""
+        event = create_mock_adk_event(
+            event_id="user-text-1",
+            author="user",
+            text="just text, no image",
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 1
+        msg = messages[0]
+        assert isinstance(msg, UserMessage)
+        assert msg.content == "just text, no image"
 
     def test_assistant_message_conversion(self):
         """Should convert model events to AssistantMessage."""
@@ -919,6 +1080,189 @@ class TestAgentsStateEndpoint:
             )
 
             assert response.status_code == 200
+
+
+# ============================================================================
+# Regression Tests: /agents/state extract_state_from_request integration (#1646)
+# ============================================================================
+
+
+class TestAgentsStateExtractorIntegration:
+    """Regression tests for ag-ui-protocol/ag-ui#1646.
+
+    The /agents/state endpoint historically read ``userId``/``appName``
+    straight from the request body, bypassing ``extract_state_from_request``.
+    For deployments that use the extractor as an auth hook (e.g. minting
+    user_id from a session-provider JWT) this lets a client read another
+    user's session state and message history by supplying any ``userId`` in
+    the body.
+
+    These tests pin the fix: the extractor is invoked on /agents/state, its
+    output drives identity resolution, and the body fields fall back only
+    when no other source produces a value.
+    """
+
+    @pytest.fixture
+    def mock_agent(self):
+        """ADKAgent mock with no static identity and no agent-level extractors.
+
+        This isolates the extractor pipeline as the only identity source —
+        the precedence chain falls straight to the extractor-produced state
+        or to the body fallback, mirroring how a JWT-auth deployment is
+        configured.
+        """
+        mock_adk = MagicMock()
+        mock_adk.name = "test_agent"
+
+        agent = MagicMock(spec=ADKAgent)
+        agent._static_app_name = None
+        agent._static_user_id = None
+        agent._app_name_extractor = None
+        agent._user_id_extractor = None
+        agent._adk_agent = mock_adk
+        agent._session_manager = MagicMock()
+        agent._session_lookup_cache = {}
+
+        return agent
+
+    def _wire_session_lookup(self, mock_agent, expected_app_name, expected_user_id):
+        """Wire the session-lookup chain so the endpoint reaches a 200 response
+        and so the test can assert what app_name/user_id were used downstream."""
+        mock_session = MagicMock()
+        mock_session.id = "backend-session-id"
+        mock_session.events = []
+
+        mock_agent._get_session_metadata = MagicMock(return_value=None)
+        mock_agent._session_manager._find_session_by_thread_id = AsyncMock(
+            return_value=mock_session
+        )
+        mock_agent._session_manager._session_service = MagicMock()
+        mock_agent._session_manager._session_service.get_session = AsyncMock(
+            return_value=mock_session
+        )
+        mock_agent._session_manager.get_session_state = AsyncMock(return_value={})
+
+    def test_extract_state_fn_is_invoked(self, mock_agent):
+        """Regression: /agents/state must call extract_state_from_request."""
+        self._wire_session_lookup(mock_agent, "from-extractor", "from-extractor")
+
+        extract_state_fn = AsyncMock(
+            return_value={"app_name": "from-extractor", "user_id": "from-extractor"}
+        )
+
+        app = FastAPI()
+        add_adk_fastapi_endpoint(
+            app, mock_agent, path="/", extract_state_from_request=extract_state_fn
+        )
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/agents/state", json={"threadId": "thread-1"}
+            )
+
+        assert response.status_code == 200
+        extract_state_fn.assert_called_once()
+        # Second positional arg is the synthetic RunAgentInput.
+        synthetic_input = extract_state_fn.call_args.args[1]
+        assert isinstance(synthetic_input, RunAgentInput)
+        assert synthetic_input.thread_id == "thread-1"
+
+    def test_extractor_user_id_overrides_body(self, mock_agent):
+        """The bypass case: body userId is ignored when the extractor mints one.
+
+        Without the fix, a client posting ``userId: "victim"`` would read the
+        victim's session. With the fix, the extractor's ``user_id`` wins and
+        the spoofed value never reaches ``_session_manager``.
+        """
+        self._wire_session_lookup(mock_agent, "from-jwt-app", "from-jwt-user")
+
+        async def jwt_extractor(request, input_data):
+            return {"app_name": "from-jwt-app", "user_id": "from-jwt-user"}
+
+        app = FastAPI()
+        add_adk_fastapi_endpoint(
+            app, mock_agent, path="/", extract_state_from_request=jwt_extractor
+        )
+
+        with TestClient(app) as client:
+            with pytest.warns(DeprecationWarning, match="#1646"):
+                response = client.post(
+                    "/agents/state",
+                    json={
+                        "threadId": "thread-2",
+                        "userId": "victim-user-id",
+                        "appName": "victim-app",
+                    },
+                )
+
+        assert response.status_code == 200
+        # The downstream session lookup must have been called with the
+        # extractor-supplied identity, never the spoofed body values.
+        find_call = mock_agent._session_manager._find_session_by_thread_id.call_args
+        assert find_call.kwargs["user_id"] == "from-jwt-user"
+        assert find_call.kwargs["app_name"] == "from-jwt-app"
+        assert "victim" not in str(find_call)
+
+    def test_body_fallback_when_no_extractor(self, mock_agent):
+        """Backward compat: body userId still works when no extractor is set."""
+        self._wire_session_lookup(mock_agent, "body-app", "body-user")
+
+        app = FastAPI()
+        add_adk_fastapi_endpoint(app, mock_agent, path="/")
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/agents/state",
+                json={
+                    "threadId": "thread-3",
+                    "userId": "body-user",
+                    "appName": "body-app",
+                },
+            )
+
+        assert response.status_code == 200
+        find_call = mock_agent._session_manager._find_session_by_thread_id.call_args
+        assert find_call.kwargs["user_id"] == "body-user"
+        assert find_call.kwargs["app_name"] == "body-app"
+
+    def test_extract_headers_does_not_auto_protect_identity(self, mock_agent):
+        """Documentation test: legacy ``extract_headers`` parks values under
+        ``state.headers.*`` and so does NOT override identity. Deployments
+        wanting auth must either (a) write a custom ``extract_state_from_request``
+        that places the value at ``state["user_id"]``, or (b) configure an
+        ADKAgent-level ``user_id_extractor`` that reads ``input.state.headers``.
+        Pinned here so a future refactor doesn't silently change this contract.
+        """
+        from ag_ui_adk.endpoint import make_extract_headers
+
+        self._wire_session_lookup(mock_agent, "body-app", "body-user")
+
+        app = FastAPI()
+        add_adk_fastapi_endpoint(
+            app,
+            mock_agent,
+            path="/",
+            extract_state_from_request=make_extract_headers(["x-user-id"]),
+        )
+
+        with TestClient(app) as client:
+            with pytest.warns(DeprecationWarning, match="#1646"):
+                response = client.post(
+                    "/agents/state",
+                    headers={"x-user-id": "header-user"},
+                    json={
+                        "threadId": "thread-4",
+                        "userId": "body-user",
+                        "appName": "body-app",
+                    },
+                )
+
+        assert response.status_code == 200
+        # extract_headers writes to state.headers.user_id, not state.user_id, so
+        # identity falls through to the body fallback for both fields.
+        find_call = mock_agent._session_manager._find_session_by_thread_id.call_args
+        assert find_call.kwargs["user_id"] == "body-user"
+        assert find_call.kwargs["app_name"] == "body-app"
 
 
 # ============================================================================

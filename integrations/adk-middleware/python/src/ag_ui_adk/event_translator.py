@@ -16,6 +16,8 @@ from ag_ui.core import (
     ToolCallResultEvent, StateSnapshotEvent, StateDeltaEvent,
     CustomEvent, Message, UserMessage, AssistantMessage, ToolMessage, ReasoningMessage,
     ToolCall, FunctionCall,
+    ImageInputContent, AudioInputContent, VideoInputContent,
+    DocumentInputContent, InputContentUrlSource, TextInputContent,
     ReasoningStartEvent, ReasoningEndEvent,
     ReasoningMessageStartEvent, ReasoningMessageContentEvent, ReasoningMessageEndEvent,
     ReasoningEncryptedValueEvent,
@@ -60,6 +62,29 @@ def _check_thought_support() -> bool:
             _HAS_THOUGHT_SUPPORT = False
         _THOUGHT_SUPPORT_CHECKED = True
     return _HAS_THOUGHT_SUPPORT
+
+
+def _file_data_to_media_part(file_data):
+    """Convert an ADK file_data part to the right AG-UI media content type.
+
+    Dispatches on MIME type prefix: image/* → ImageInputContent,
+    audio/* → AudioInputContent, video/* → VideoInputContent,
+    everything else (documents, text, etc.) → DocumentInputContent.
+    Returns None when file_uri is missing.
+    """
+    uri = getattr(file_data, "file_uri", None)
+    if not uri:
+        return None
+    mime = getattr(file_data, "mime_type", None) or ""
+    source = InputContentUrlSource(value=uri, mimeType=mime or None)
+    if mime.startswith("image/"):
+        return ImageInputContent(source=source)
+    if mime.startswith("audio/"):
+        return AudioInputContent(source=source)
+    if mime.startswith("video/"):
+        return VideoInputContent(source=source)
+    return DocumentInputContent(source=source)
+
 
 def _coerce_tool_response(value: Any, _visited: Optional[set[int]] = None) -> Any:
     """Recursively convert arbitrary tool responses into JSON-serializable structures."""
@@ -517,8 +542,17 @@ class EventTranslator:
             else:
                 text_parts.append(part.text)
 
-        # Handle thought parts first (emit REASONING events)
-        if thought_parts:
+        # Handle thought parts first (emit REASONING events).
+        # When a reasoning stream was opened by partial=True chunks, ADK emits
+        # a final aggregated event with partial=False re-containing the full
+        # thought text — re-emitting it would duplicate the reasoning block.
+        # Mirror the text dedup below (was_already_streaming and not is_partial):
+        # only skip when an active reasoning stream is being aggregated.
+        # Do NOT skip when no reasoning stream is open: StreamingMode.NONE
+        # yields a single partial=False event that carries the only copy.
+        was_already_reasoning = self._is_streaming_reasoning
+        is_partial = getattr(adk_event, 'partial', False)
+        if thought_parts and not (was_already_reasoning and not is_partial):
             async for event in self._translate_reasoning_content(thought_parts, thought_signatures):
                 yield event
 
@@ -1350,10 +1384,21 @@ def adk_events_to_messages(events: List[ADKEvent]) -> List[Message]:
         if author == "user":
             if not text_content:
                 continue
+            media_parts = [
+                part_obj
+                for p in content.parts
+                if getattr(p, "file_data", None)
+                for part_obj in [_file_data_to_media_part(p.file_data)]
+                if part_obj is not None
+            ]
+            user_content: object = (
+                [TextInputContent(text=text_content)] + media_parts
+                if media_parts else text_content
+            )
             user_message = UserMessage(
                 id=event_id,
                 role="user",
-                content=text_content
+                content=user_content,
             )
             messages.append(user_message)
 

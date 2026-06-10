@@ -116,6 +116,14 @@ open class StatefulAgUiAgent(
             forwardedProps = config.forwardedProps
         )
         
+        // Per-run buffers for streaming tool-call reconstruction. Keyed by
+        // toolCallId (args accumulator) and parentMessageId (pending assistant
+        // message the tool calls attach to). We track these at the run scope
+        // so the next run starts clean even if the previous one errored.
+        val toolCallArgs = mutableMapOf<String, StringBuilder>()
+        val toolCallParent = mutableMapOf<String, String>()
+        val toolCallName = mutableMapOf<String, String>()
+
         // Collect events and extract assistant responses to add to history
         return run(input).onEach { event ->
             when (event) {
@@ -128,7 +136,7 @@ open class StatefulAgUiAgent(
                     )
                     threadHistory.add(assistantMessage)
                 }
-                
+
                 is TextMessageContentEvent -> {
                     // Update the last assistant message content
                     val lastMessage = threadHistory.lastOrNull()
@@ -137,17 +145,77 @@ open class StatefulAgUiAgent(
                         threadHistory[threadHistory.lastIndex] = lastMessage.copy(content = updatedContent)
                     }
                 }
-                
+
+                is ToolCallStartEvent -> {
+                    // Begin buffering args. The AssistantMessage with this
+                    // toolCall is materialised on TOOL_CALL_END (below) so
+                    // args are complete when we attach it to history.
+                    val parent = event.parentMessageId ?: event.toolCallId
+                    toolCallArgs[event.toolCallId] = StringBuilder()
+                    toolCallParent[event.toolCallId] = parent
+                    toolCallName[event.toolCallId] = event.toolCallName
+                }
+
+                is ToolCallArgsEvent -> {
+                    toolCallArgs[event.toolCallId]?.append(event.delta)
+                }
+
+                is ToolCallEndEvent -> {
+                    val name = toolCallName.remove(event.toolCallId) ?: return@onEach
+                    val parent = toolCallParent.remove(event.toolCallId) ?: event.toolCallId
+                    val args = toolCallArgs.remove(event.toolCallId)?.toString().orEmpty()
+                    val toolCall = ToolCall(
+                        id = event.toolCallId,
+                        function = FunctionCall(name = name, arguments = args)
+                    )
+                    // Append to existing assistant with the same parent id if
+                    // we already added one (multi-tool-per-turn), otherwise
+                    // create a new one. Server needs this in history so its
+                    // pending-tool-calls bookkeeping can pair with the
+                    // follow-up TOOL_CALL_RESULT.
+                    val existing = threadHistory.indexOfFirst {
+                        it is AssistantMessage && it.id == parent
+                    }
+                    if (existing >= 0) {
+                        val old = threadHistory[existing] as AssistantMessage
+                        threadHistory[existing] = old.copy(
+                            toolCalls = (old.toolCalls ?: emptyList()) + toolCall
+                        )
+                    } else {
+                        threadHistory.add(
+                            AssistantMessage(
+                                id = parent,
+                                content = null,
+                                toolCalls = listOf(toolCall)
+                            )
+                        )
+                    }
+                }
+
+                is ToolCallResultEvent -> {
+                    // Middleware-synthesised or server-side tool results. Record
+                    // as a ToolMessage so the next turn's RunAgentInput echoes
+                    // the result back and the agent session bookkeeping can
+                    // close the pending tool call.
+                    threadHistory.add(
+                        ToolMessage(
+                            id = event.messageId,
+                            content = event.content,
+                            toolCallId = event.toolCallId
+                        )
+                    )
+                }
+
                 is StateSnapshotEvent -> {
                     // Update current state
                     currentState = event.snapshot
                 }
-                
+
                 is StateDeltaEvent -> {
                     // Apply state delta (simplified - proper JSON patch implementation would be needed)
                     logger.d { "State delta received - manual state update needed" }
                 }
-                
+
                 else -> { /* Other events don't affect history */ }
             }
         }

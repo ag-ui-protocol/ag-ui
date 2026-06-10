@@ -421,7 +421,15 @@ class TestConvertAGUIMessagesToADK:
         assert func_part.function_call.args == {"expression": "2 + 2"}
 
     def test_convert_tool_message(self):
-        """Test converting a ToolMessage to ADK event."""
+        """Test the fallback path: a ToolMessage with no prior AssistantMessage
+        in the same batch falls back to using tool_call_id as the
+        FunctionResponse.name. Preserves backwards-compatible behaviour for
+        malformed inputs / orphan tool messages.
+
+        For the corrected round-trip path (AssistantMessage with the matching
+        tool_call present in the batch), see
+        `test_tool_message_uses_function_name_from_prior_assistant_call`.
+        """
         tool_msg = ToolMessage(
             id="tool_1",
             role="tool",
@@ -438,9 +446,142 @@ class TestConvertAGUIMessagesToADK:
         assert event.content.role == "function"
 
         func_response = event.content.parts[0].function_response
+        # Fallback: no prior AssistantMessage with the matching tool_call.id
+        # in this batch, so the converter degrades gracefully to using the
+        # tool_call_id as the function name. Gemini will not be able to
+        # correlate the response back to a call by name in this case, but at
+        # least the conversion doesn't crash.
         assert func_response.name == "call_123"
         assert func_response.id == "call_123"
         assert func_response.response == {"result": '{"temperature": 72, "condition": "sunny"}'}
+
+    def test_tool_message_uses_function_name_from_prior_assistant_call(self):
+        """When a ToolMessage is preceded by an AssistantMessage carrying a
+        tool_call with the matching id, FunctionResponse.name MUST be set to
+        the called function's name (not the tool_call_id).
+
+        Gemini's wire contract is that FunctionResponse.name equals the
+        originating FunctionCall.name; downstream consumers that recover the
+        call id by name (real Gemini's session correlator, the aimock
+        gemini->openai translator, etc.) hit a UUID-shaped name with no
+        matching prior call when this is wrong, silently breaking the
+        round-trip.
+        """
+        assistant_msg = AssistantMessage(
+            id="assistant_1",
+            role="assistant",
+            tool_calls=[
+                ToolCall(
+                    id="call_weather_001",
+                    type="function",
+                    function=FunctionCall(
+                        name="get_weather",
+                        arguments='{"city": "Tokyo"}',
+                    ),
+                )
+            ],
+        )
+        tool_msg = ToolMessage(
+            id="tool_1",
+            role="tool",
+            content='{"temperature": 72, "condition": "sunny"}',
+            tool_call_id="call_weather_001",
+        )
+
+        adk_events = convert_ag_ui_messages_to_adk([assistant_msg, tool_msg])
+
+        # Two events: assistant turn + tool turn.
+        assert len(adk_events) == 2
+        tool_event = adk_events[1]
+        assert tool_event.content.role == "function"
+        func_response = tool_event.content.parts[0].function_response
+        # Critical: name = function name, NOT tool_call_id.
+        assert func_response.name == "get_weather"
+        # id continues to carry the tool_call_id for clients that key on it.
+        assert func_response.id == "call_weather_001"
+
+    def test_multiple_tool_messages_each_use_their_own_function_name(self):
+        """Each ToolMessage looks up its OWN function name by tool_call_id —
+        not a shared / first-found name. Exercises the per-id mapping when an
+        AssistantMessage carries multiple tool_calls and multiple ToolMessages
+        follow in any order.
+        """
+        assistant_msg = AssistantMessage(
+            id="assistant_1",
+            role="assistant",
+            tool_calls=[
+                ToolCall(
+                    id="call_a",
+                    type="function",
+                    function=FunctionCall(name="get_weather", arguments="{}"),
+                ),
+                ToolCall(
+                    id="call_b",
+                    type="function",
+                    function=FunctionCall(name="get_time", arguments="{}"),
+                ),
+            ],
+        )
+        # Tool messages out of declaration order — id-based lookup must still
+        # resolve each to the correct function name.
+        tool_b = ToolMessage(
+            id="tool_b",
+            role="tool",
+            content="2pm",
+            tool_call_id="call_b",
+        )
+        tool_a = ToolMessage(
+            id="tool_a",
+            role="tool",
+            content="sunny",
+            tool_call_id="call_a",
+        )
+
+        adk_events = convert_ag_ui_messages_to_adk([assistant_msg, tool_b, tool_a])
+
+        # 3 events total; events[1] is tool_b, events[2] is tool_a.
+        b_response = adk_events[1].content.parts[0].function_response
+        a_response = adk_events[2].content.parts[0].function_response
+        assert b_response.name == "get_time"
+        assert b_response.id == "call_b"
+        assert a_response.name == "get_weather"
+        assert a_response.id == "call_a"
+
+    def test_tool_message_lookup_falls_back_when_id_unknown(self):
+        """If a ToolMessage's tool_call_id doesn't match any prior
+        AssistantMessage's tool_call in the same batch, the converter falls
+        back to the pre-fix behaviour (name = tool_call_id) rather than
+        crashing. Exercises the same defensive guard as
+        `test_convert_tool_message` but with a prior AssistantMessage that
+        contains an UNRELATED tool_call — proving the lookup is keyed on id,
+        not just presence.
+        """
+        assistant_msg = AssistantMessage(
+            id="assistant_1",
+            role="assistant",
+            tool_calls=[
+                ToolCall(
+                    id="call_known",
+                    type="function",
+                    function=FunctionCall(name="get_weather", arguments="{}"),
+                )
+            ],
+        )
+        # ToolMessage's tool_call_id references a DIFFERENT id (the
+        # AssistantMessage's tool_call.id is "call_known", not "call_orphan").
+        tool_msg = ToolMessage(
+            id="tool_orphan",
+            role="tool",
+            content="orphan result",
+            tool_call_id="call_orphan",
+        )
+
+        adk_events = convert_ag_ui_messages_to_adk([assistant_msg, tool_msg])
+
+        orphan_response = adk_events[1].content.parts[0].function_response
+        # Falls back to tool_call_id since no matching prior call.
+        assert orphan_response.name == "call_orphan"
+        assert orphan_response.id == "call_orphan"
 
     def test_convert_tool_message_with_dict_content(self):
         """Test converting a ToolMessage with dict content (not JSON string)."""

@@ -1657,3 +1657,80 @@ class TestThoughtHandling:
         # Should NOT have encrypted value event
         encrypted_events = [e for e in events if isinstance(e, ReasoningEncryptedValueEvent)]
         assert len(encrypted_events) == 0
+
+    @pytest.mark.asyncio
+    async def test_streaming_none_mode_partial_false_thought_emits_reasoning(self, translator, mock_adk_event):
+        """StreamingMode.NONE regression: a single partial=False event carrying thought
+        parts must still emit REASONING events when no prior streaming has occurred.
+
+        The naive fix (block all partial=False thought events) broke this path because
+        StreamingMode.NONE yields exactly one partial=False event as the only copy of the
+        thought. The correct guard checks _is_streaming_reasoning, not just partial.
+        """
+        from ag_ui.core import (
+            ReasoningStartEvent, ReasoningMessageStartEvent,
+            ReasoningMessageContentEvent,
+        )
+
+        # No prior events — _is_streaming_reasoning starts False (NONE mode)
+        assert translator._is_streaming_reasoning is False
+
+        mock_content = MagicMock()
+        mock_part = MagicMock()
+        mock_part.text = "Let me reason step by step."
+        mock_part.thought = True
+        mock_part.thought_signature = None
+        mock_content.parts = [mock_part]
+        mock_adk_event.content = mock_content
+        mock_adk_event.partial = False  # StreamingMode.NONE sends partial=False
+
+        events = []
+        async for event in translator.translate(mock_adk_event, "thread_1", "run_1"):
+            events.append(event)
+
+        event_types = [type(e).__name__ for e in events]
+        assert "ReasoningStartEvent" in event_types, \
+            "StreamingMode.NONE thought must emit ReasoningStartEvent"
+        assert "ReasoningMessageStartEvent" in event_types
+        content_events = [e for e in events if isinstance(e, ReasoningMessageContentEvent)]
+        assert len(content_events) == 1
+        assert content_events[0].delta == "Let me reason step by step."
+
+    @pytest.mark.asyncio
+    async def test_streaming_mode_final_aggregate_thought_not_duplicated(self, translator, mock_adk_event):
+        """Dedup regression: after partial=True thought chunks open a reasoning stream,
+        the final partial=False aggregate event must not re-emit REASONING content.
+
+        ADK emits all streamed thought text again in the closing aggregate event.
+        The guard must fire (was_already_reasoning=True, is_partial=False) and suppress it.
+        """
+        from ag_ui.core import ReasoningMessageContentEvent
+
+        # --- first event: partial=True thought chunk opens the reasoning stream ---
+        mock_content = MagicMock()
+        thought_part = MagicMock()
+        thought_part.text = "Let me reason step by step."
+        thought_part.thought = True
+        thought_part.thought_signature = None
+        mock_content.parts = [thought_part]
+        mock_adk_event.content = mock_content
+        mock_adk_event.partial = True
+
+        first_events = []
+        async for event in translator.translate(mock_adk_event, "thread_1", "run_1"):
+            first_events.append(event)
+
+        assert translator._is_streaming_reasoning is True, \
+            "Reasoning stream must be open after partial=True thought chunk"
+        assert any(isinstance(e, ReasoningMessageContentEvent) for e in first_events)
+
+        # --- second event: partial=False aggregate re-containing the full thought ---
+        mock_adk_event.partial = False
+
+        second_events = []
+        async for event in translator.translate(mock_adk_event, "thread_1", "run_1"):
+            second_events.append(event)
+
+        duplicate_content = [e for e in second_events if isinstance(e, ReasoningMessageContentEvent)]
+        assert len(duplicate_content) == 0, \
+            "Final aggregate must not re-emit ReasoningMessageContentEvent (duplicate)"

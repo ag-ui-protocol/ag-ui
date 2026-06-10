@@ -184,6 +184,16 @@ def _media_source_to_url(source: Union[InputContentDataSource, InputContentUrlSo
     return None
 
 
+def _attach_input_metadata(
+    content_block: Dict[str, Any],
+    item: AGUIContentItem,
+) -> Dict[str, Any]:
+    metadata = getattr(item, "metadata", None)
+    if metadata is not None:
+        content_block["metadata"] = metadata
+    return content_block
+
+
 def convert_agui_multimodal_to_langchain(content: List[AGUIContentItem]) -> List[Dict[str, Any]]:
     """Convert AG-UI multimodal content to LangChain's multimodal format.
 
@@ -195,17 +205,17 @@ def convert_agui_multimodal_to_langchain(content: List[AGUIContentItem]) -> List
     langchain_content: List[Dict[str, Any]] = []
     for item in content:
         if isinstance(item, TextInputContent):
-            langchain_content.append({
+            langchain_content.append(_attach_input_metadata({
                 "type": "text",
                 "text": item.text
-            })
+            }, item))
         elif isinstance(item, _MEDIA_CONTENT_TYPES):
             url = _media_source_to_url(item.source)
             if url:
-                langchain_content.append({
+                langchain_content.append(_attach_input_metadata({
                     "type": "image_url",
                     "image_url": {"url": url}
-                })
+                }, item))
             else:
                 logger.warning("Dropping %s content: source could not be converted to URL", type(item).__name__)
         elif isinstance(item, BinaryInputContent):
@@ -227,7 +237,7 @@ def convert_agui_multimodal_to_langchain(content: List[AGUIContentItem]) -> List
                 )
                 continue
 
-            langchain_content.append(content_dict)
+            langchain_content.append(_attach_input_metadata(content_dict, item))
 
     return langchain_content
 

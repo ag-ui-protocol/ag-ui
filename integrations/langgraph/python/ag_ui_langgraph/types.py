@@ -1,4 +1,4 @@
-from typing import TypedDict, Optional, List, Any, Dict, Union, Literal
+from typing import TypedDict, Optional, List, Any, Dict, Set, Union, Literal
 from typing_extensions import NotRequired
 from enum import Enum
 
@@ -46,6 +46,10 @@ MessageInProgress = TypedDict("MessageInProgress", {
 RunMetadata = TypedDict("RunMetadata", {
     # Identification
     "id": str,
+    # LangGraph's internal chain run_id, tracked separately so it never
+    # overwrites the client-supplied "id" used for the protocol RUN_STARTED /
+    # RUN_FINISHED events (#1582).
+    "langgraph_run_id": NotRequired[Optional[str]],
     "thread_id": NotRequired[Optional[str]],
     # Run mode/flow
     "mode": NotRequired[Literal["start", "continue"]],
@@ -56,6 +60,14 @@ RunMetadata = TypedDict("RunMetadata", {
     "schema_keys": NotRequired[Optional[SchemaKeys]],
     # Streaming state
     "has_function_streaming": NotRequired[bool],
+    # IDs of tool calls whose Start/Args/End were already emitted from
+    # OnChatModelStream. Used as the per-id guard at OnToolEnd to skip
+    # re-emitting Start/Args/End for the same id. A simple boolean flag
+    # cannot model nested tool execution (e.g. a deepagents ``task`` tool
+    # delegating to a subagent): the inner tool's OnToolEnd would clear the
+    # flag, and the outer tool's OnToolEnd would then re-emit its Args,
+    # producing duplicate / concatenated payloads in persisted history.
+    "streamed_tool_call_ids": NotRequired[Set[str]],
     "model_made_tool_call": NotRequired[bool],
     "state_reliable": NotRequired[bool],
     # Message / state data

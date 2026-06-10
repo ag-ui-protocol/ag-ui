@@ -10,7 +10,7 @@ resolution-markers = [
 
 [[package]]
 name = "ag-ui-adk"
-version = "0.6.0"
+version = "0.6.2"
 source = { editable = "." }
 dependencies = [
     { name = "ag-ui-protocol" },
@@ -19,6 +19,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "google-adk" },
     { name = "pydantic" },
+    { name = "sse-starlette" },
     { name = "uvicorn" },
 ]
 
@@ -43,6 +44,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115.2" },
     { name = "google-adk", specifier = ">=1.16.0,<2.0.0" },
     { name = "pydantic", specifier = ">=2.11.7" },
+    { name = "sse-starlette", specifier = ">=2.1.0" },
     { name = "uvicorn", specifier = ">=0.35.0" },
 ]
 

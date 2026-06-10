@@ -4,7 +4,7 @@
 from ag_ui_adk.agui_toolset import AGUIToolset
 
 import copy
-from typing import Optional, Dict, Callable, Any, AsyncGenerator, List, Iterable, TYPE_CHECKING, Tuple, Union
+from typing import Optional, Dict, Callable, Any, AsyncGenerator, List, Iterable, Set, TYPE_CHECKING, Tuple, Union
 
 if TYPE_CHECKING:
     from google.adk.apps import App
@@ -77,6 +77,82 @@ from .utils.converters import convert_message_content_to_parts
 
 import logging
 logger = logging.getLogger(__name__)
+
+
+class _HitlDeferringQueue(asyncio.Queue):
+    """``asyncio.Queue`` that defers HITL ``ToolCallEndEvent``s.
+
+    Why: writing ``pending_tool_calls`` to ``session.state`` while ADK's
+    Runner still owns its in-memory session trips
+    ``DatabaseSessionService``'s OCC check on ADK >= 1.27 (issue #1732).
+    PR #1735 fixed that by making the consumer ``await execution.task``
+    before persisting, but that approach buffers every event after the
+    first HITL ``TOOL_CALL_END`` in ``event_queue`` until the producer
+    exits — losing streaming fidelity for non-HITL events that arrive
+    afterwards (parallel tool calls, post-LRO text, backend tool
+    results in resumable HITL).
+
+    This queue defers ONLY the HITL ``ToolCallEndEvent`` itself. All
+    other events stream live. The producer flushes the deferred TCEs
+    once it has persisted the matching IDs to ``session.state`` — see
+    ``_run_adk_in_background``. Putting the completion sentinel
+    (``None``) implicitly flushes any remaining deferred TCEs, so the
+    consumer sees them before the stream ends.
+
+    The release-on-result branch handles the edge case of a tool that
+    is marked HITL but resolves in-stream: when a ``ToolCallResultEvent``
+    for a deferred id arrives, the buffered TCE is released
+    immediately (preserving TCE→Result ordering on the wire) and
+    removed from the deferred set so it is not persisted at flush time.
+    """
+
+    def __init__(self, long_running_tool_ids: Set[str]) -> None:
+        super().__init__()
+        self._long_running_tool_ids = long_running_tool_ids
+        self._deferred_hitl_ends: Dict[str, "ToolCallEndEvent"] = {}
+
+    async def put(self, item):  # type: ignore[override]
+        # ``None`` is the completion sentinel; release any remaining
+        # deferred TCEs first so the consumer sees them before the
+        # stream ends.
+        if item is None:
+            await self.flush_deferred()
+            await super().put(item)
+            return
+
+        # Defer HITL TOOL_CALL_END events until the producer has
+        # persisted the corresponding ``pending_tool_calls`` entry.
+        if isinstance(item, ToolCallEndEvent) and (
+            item.tool_call_id in self._long_running_tool_ids
+        ):
+            self._deferred_hitl_ends[item.tool_call_id] = item
+            return
+
+        # Tools marked HITL but resolving in-stream: release the
+        # buffered TCE first so the client sees TCE→Result in order,
+        # and remove the id from the deferred set so it is not
+        # persisted at flush time (the result implies no client-side
+        # continuation, so the cross-pod handoff invariant from #1581
+        # is moot for this id).
+        if isinstance(item, ToolCallResultEvent) and (
+            item.tool_call_id in self._deferred_hitl_ends
+        ):
+            deferred_end = self._deferred_hitl_ends.pop(item.tool_call_id)
+            await super().put(deferred_end)
+
+        await super().put(item)
+
+    @property
+    def deferred_hitl_ids(self) -> List[str]:
+        """Tool call IDs still buffered (not yet released)."""
+        return list(self._deferred_hitl_ends.keys())
+
+    async def flush_deferred(self) -> None:
+        """Release all buffered HITL TCEs onto the underlying queue."""
+        for event in list(self._deferred_hitl_ends.values()):
+            await super().put(event)
+        self._deferred_hitl_ends.clear()
+
 
 class ADKAgent:
     """Middleware to bridge AG-UI Protocol with Google ADK agents.
@@ -353,6 +429,39 @@ class ADKAgent:
             return False
         return getattr(resumability_config, 'is_resumable', False)
 
+    def _root_agent_is_workflow(self) -> bool:
+        """Return True if the root agent is an ADK 2.0 ``Workflow``.
+
+        Workflows rehydrate from ``new_message.parts`` exclusively
+        (``Workflow._run_impl`` calls ``_extract_resume_inputs(new_message)``).
+        The #1534 pre-append workaround for LlmAgent roots — which replaces
+        ``new_message`` with an empty placeholder — strands Workflow roots
+        because there's no ``function_response`` in the placeholder for
+        the Workflow to resume from. See ag-ui#1669.
+
+        We detect the Workflow class by attribute lookup so this stays
+        compatible with ADK 1.x (where the class doesn't exist) without
+        importing it at module top level. The import is wrapped in
+        try/except so ADK 1.x continues to load.
+
+        Returns:
+            True iff the root agent (or App.root_agent) is an instance of
+            ``google.adk.workflow.Workflow``. False on ADK 1.x or any
+            non-Workflow root.
+        """
+        try:
+            from google.adk.workflow import Workflow  # type: ignore[import-not-found]
+        except ImportError:
+            # ADK 1.x has no workflow module — no Workflow roots possible.
+            return False
+
+        root = self._adk_agent
+        if root is None and self._app is not None:
+            root = getattr(self._app, 'root_agent', None)
+        if root is None:
+            return False
+        return isinstance(root, Workflow)
+
     def _root_agent_needs_invocation_id(self) -> bool:
         """Check if the agent topology requires invocation_id for HITL resumption.
 
@@ -503,7 +612,7 @@ class ADKAgent:
 
             app = App(
                 name="my_assistant",
-                root_agent=Agent(name="assistant", model="gemini-2.5-flash", ...),
+                root_agent=Agent(name="assistant", model="gemini-3.5-flash", ...),
                 plugins=[LoggingPlugin()],
             )
             agent = ADKAgent.from_app(app, user_id="demo_user")
@@ -612,6 +721,40 @@ class ADKAgent:
         # Use thread_id as default (assumes thread per user)
         return f"thread_user_{input.thread_id}"
     
+    async def _finalize_hitl_buffer(
+        self,
+        event_queue,
+        thread_id: str,
+        app_name: str,
+        user_id: str,
+    ) -> None:
+        """Persist any HITL pending_tool_calls IDs buffered in the queue.
+
+        Used by ``_run_adk_in_background`` to flush HITL persistence work
+        right before signalling completion or returning early. The matching
+        deferred ``ToolCallEndEvent`` instances stay in the queue's buffer
+        until a subsequent ``put(None)`` (or explicit ``flush_deferred``)
+        releases them onto the underlying queue — that ordering preserves
+        PR #1581's invariant ("persist before the client sees the event").
+
+        Idempotent: safe to call multiple times. No-op when ``event_queue``
+        is not a :class:`_HitlDeferringQueue` or has no deferred events.
+        See issue #1755.
+        """
+        if not isinstance(event_queue, _HitlDeferringQueue):
+            return
+        for hitl_tool_call_id in list(event_queue.deferred_hitl_ids):
+            try:
+                await self._add_pending_tool_call_with_context(
+                    thread_id, hitl_tool_call_id, app_name, user_id
+                )
+            except Exception as persist_error:
+                logger.error(
+                    f"Failed to persist HITL pending_tool_call "
+                    f"{hitl_tool_call_id} for thread {thread_id}: "
+                    f"{persist_error}"
+                )
+
     async def _add_pending_tool_call_with_context(self, thread_id: str, tool_call_id: str, app_name: str, user_id: str):
         """Add a tool call to the session's pending list for HITL tracking.
 
@@ -1698,34 +1841,24 @@ class ADKAgent:
             # Stream events and track tool calls
             logger.debug(f"Starting to stream events for execution {execution.thread_id}")
             app_name = self._get_app_name(input)
-            tool_call_ids: List[str] = []
 
             logger.debug(f"About to iterate over _stream_events for execution {execution.thread_id}")
             async for event in self._stream_events(execution):
-                # Register HITL tool calls in the backend session store BEFORE
-                # yielding ToolCallEndEvent. Otherwise a horizontally-scaled
-                # deployment can race: the client receives the event, posts the
-                # tool result to a different pod, and that pod sees an empty
-                # pending_tool_calls list because this pod hasn't written yet.
-                # See issue #1581.
-                if isinstance(event, ToolCallEndEvent):
-                    logger.info(f"Detected ToolCallEndEvent with id: {event.tool_call_id}")
-                    tool_call_ids.append(event.tool_call_id)
-                    await self._add_pending_tool_call_with_context(
-                        execution.thread_id, event.tool_call_id, app_name, user_id
-                    )
+                # HITL pending_tool_calls persistence happens on the producer
+                # side via _HitlDeferringQueue: HITL TOOL_CALL_END events are
+                # buffered until the producer's persistence write completes
+                # after runner.run_async exits. By the time the consumer
+                # observes a ToolCallEndEvent here, the corresponding
+                # pending_tool_calls entry is already in session.state (or
+                # the event was a non-HITL TCE that doesn't need persistence
+                # at all). See issues #1581, #1652, #1732, and #1755.
 
-                # Backend tools complete within the same stream and emit a
-                # ToolCallResultEvent — no client continuation is expected, so
-                # remove the just-registered ID from the pending list before
-                # yielding the result.
-                if isinstance(event, ToolCallResultEvent) and event.tool_call_id in tool_call_ids:
+                # Always mark tool_call_id as processed when its result is
+                # observed, so replay logic skips it on resumption (fixes #437
+                # replay bug). This is in-memory bookkeeping; it does NOT
+                # touch session.state or any DB marker.
+                if isinstance(event, ToolCallResultEvent):
                     logger.info(f"Detected ToolCallResultEvent with id: {event.tool_call_id}")
-                    tool_call_ids.remove(event.tool_call_id)
-                    await self._remove_pending_tool_call(
-                        execution.thread_id, event.tool_call_id, user_id
-                    )
-                    # Mark tool_call_id as processed so replay will skip it (fixes #437 replay bug)
                     self._session_manager.mark_messages_processed(
                         app_name, execution.thread_id, [event.tool_call_id]
                     )
@@ -1806,7 +1939,18 @@ class ADKAgent:
 
         sub_agents = getattr(copied, 'sub_agents', None)
         if isinstance(sub_agents, (list, tuple)):
-            copied.sub_agents = [ADKAgent._shallow_copy_agent_tree(sa) for sa in sub_agents]
+            copied_subs = [ADKAgent._shallow_copy_agent_tree(sa) for sa in sub_agents]
+            # Re-parent each copied sub-agent so parent_agent points at the
+            # copied parent rather than the original.  Without this, ADK's
+            # transfer_to_agent walks parent_agent up to the original (stale)
+            # tree, escaping the per-run copy whose tools were replaced.
+            # Skip the early-return case where the sub-agent could not be
+            # copied and was returned as-is (e.g. non-Pydantic test mocks) —
+            # mutating its parent_agent would leak into the original tree.
+            for sub, original in zip(copied_subs, sub_agents):
+                if isinstance(sub, BaseAgent) and sub is not original:
+                    sub.parent_agent = copied
+            copied.sub_agents = copied_subs
 
         return copied
 
@@ -1825,7 +1969,19 @@ class ADKAgent:
         Returns:
             ExecutionState tracking the background execution
         """
-        event_queue = asyncio.Queue()
+        # Shared set of HITL (long-running) tool call IDs. Populated by the
+        # producer side (EventTranslator's LRO branch in
+        # _run_adk_in_background and ClientProxyTool) BEFORE TOOL_CALL_END is
+        # enqueued, so the deferring queue (next line) can identify HITL
+        # ends at put time. See issues #1652 and #1755.
+        long_running_tool_ids: set[str] = set()
+
+        # Wrap the inner asyncio.Queue with _HitlDeferringQueue so HITL
+        # ToolCallEndEvents are held back until the producer has persisted
+        # the matching pending_tool_calls IDs. Non-HITL events stream
+        # through unblocked, restoring the streaming fidelity that PR
+        # #1735's consumer-side gate sacrificed. See issue #1755.
+        event_queue: _HitlDeferringQueue = _HitlDeferringQueue(long_running_tool_ids)
         logger.debug(f"Created event queue {id(event_queue)} for thread {input.thread_id}")
         # Extract necessary information
         user_id = self._get_user_id(input)
@@ -1884,22 +2040,38 @@ class ADKAgent:
         client_proxy_toolsets: list[ClientProxyToolset] = []
 
         def _update_agent_tools_recursive(agent: Any) -> None:
-            """
-            Recursively replace AGUIToolset with ClientProxyToolset for an agent and its sub-agents.
+            """Replace every ``AGUIToolset`` placeholder with a per-run
+            ``ClientProxyToolset`` in the agent tree.
+
+            The placeholder carries no client info; this builds a concrete
+            ``ClientProxyToolset`` from ``input.tools`` (with this run's
+            ``event_queue``) and swaps it into the per-run agent's ``tools``
+            list. Because ``_shallow_copy_agent_tree`` gave this agent its own
+            ``tools`` list and the construction-time placeholder is never
+            mutated, concurrent runs are fully isolated. (An earlier
+            ``AGUIToolset.bind()`` delegation stored the per-run toolset on the
+            shared placeholder and was not concurrency-safe; replacement restores
+            per-run isolation. ADK 2.0 GA reads ``agent.tools`` fresh per
+            invocation, so the swap is picked up — see
+            ``tests/test_agui_toolset_concurrency.py``.)
+
             Args:
-                agent: Agent instance to process
+                agent: Agent instance to process recursively.
             """
             nonlocal client_proxy_toolsets
             logger.info(f"[TOOL_SETUP] Processing agent: {agent.name} (type: {type(agent).__name__})")
 
             if isinstance(agent, LlmAgent) and hasattr(agent, "tools"):
-                new_tools: list[ToolUnion] = []
-                original_tool_count = len(agent.tools) if agent.tools else 0
-                logger.info(f"[TOOL_SETUP] Agent {agent.name} has {original_tool_count} tools before replacement")
+                tool_count = len(agent.tools) if agent.tools else 0
+                logger.info(f"[TOOL_SETUP] Agent {agent.name} has {tool_count} tools before replacement")
 
+                new_tools: list[ToolUnion] = []
                 for tool in agent.tools:
                     if isinstance(tool, AGUIToolset):
-                        logger.info(f"[TOOL_SETUP] Agent {agent.name}: Found AGUIToolset with filter={tool.tool_filter}")
+                        logger.info(
+                            f"[TOOL_SETUP] Agent {agent.name}: Found AGUIToolset with "
+                            f"filter={tool.tool_filter}; replacing with per-run ClientProxyToolset"
+                        )
                         proxy_toolset = ClientProxyToolset(
                             ag_ui_tools=input.tools,
                             event_queue=event_queue,
@@ -1908,10 +2080,13 @@ class ADKAgent:
                             predict_state=self._predict_state,
                         )
                         client_proxy_toolsets.append(proxy_toolset)
+                        # Swap the placeholder for a fresh per-run
+                        # ClientProxyToolset in THIS run's tools list.
+                        # _shallow_copy_agent_tree gave this agent its own list,
+                        # so concurrent runs never share a proxy (each carries
+                        # its own input.tools + event_queue) and the
+                        # construction-time AGUIToolset is never mutated.
                         tool = proxy_toolset
-                        logger.info(
-                            f"[TOOL_SETUP] Replaced AGUIToolset with ClientProxyToolset for agent {agent.name}"
-                        )
                     new_tools.append(tool)
 
                 agent.tools = new_tools
@@ -1936,6 +2111,7 @@ class ADKAgent:
             "app_name": app_name,
             "event_queue": event_queue,
             "client_proxy_toolsets": client_proxy_toolsets,
+            "long_running_tool_ids": long_running_tool_ids,
         }
 
         if tool_results is not None:
@@ -1946,11 +2122,12 @@ class ADKAgent:
 
         task = asyncio.create_task(self._run_adk_in_background(**run_kwargs))
         logger.debug(f"Background task created for thread {input.thread_id}: {task}")
-        
+
         return ExecutionState(
             task=task,
             thread_id=input.thread_id,
-            event_queue=event_queue
+            event_queue=event_queue,
+            long_running_tool_ids=long_running_tool_ids,
         )
     
     async def _run_adk_in_background(
@@ -1961,6 +2138,7 @@ class ADKAgent:
         app_name: str,
         event_queue: asyncio.Queue,
         client_proxy_toolsets: List[ClientProxyToolset],
+        long_running_tool_ids: Optional[Set[str]] = None,
         tool_results: Optional[List[Dict]] = None,
         message_batch: Optional[List[Any]] = None,
     ):
@@ -1972,9 +2150,24 @@ class ADKAgent:
             user_id: User ID
             app_name: App name
             event_queue: Queue for emitting events
+            long_running_tool_ids: Shared set of HITL tool call IDs. Populated
+                by this producer (from ADK Event.long_running_tool_ids) and by
+                ClientProxyTool before TOOL_CALL_END events are enqueued, so the
+                consumer can gate session.state writes on HITL membership.
+                See issue #1652.
         """
+        # Default for older call paths / tests that don't supply the set.
+        if long_running_tool_ids is None:
+            long_running_tool_ids = set()
         runner: Optional[Runner] = None
         backend_session_id: Optional[str] = None
+        # Buffer LRO ID remap updates discovered during the runner loop.
+        # Flushed once in the finally block AFTER runner.run_async has
+        # finished, so the mid-runner session-state write that would
+        # otherwise trip DatabaseSessionService's OCC check on ADK >= 1.27
+        # never happens. See issue #1754 (same shape as #1732, different
+        # writer that PR #1735's consumer-side fix can't reach).
+        pending_lro_id_remap: Dict[str, str] = {}
         logger.debug(f"[BG_EXEC] _run_adk_in_background called for thread={input.thread_id}")
         logger.debug(f"[BG_EXEC]   tool_results={len(tool_results) if tool_results else 0}, message_batch={len(message_batch) if message_batch else 0}")
         try:
@@ -2212,8 +2405,22 @@ class ADKAgent:
 
                 function_response_content = types.Content(parts=function_response_parts, role='user')
 
-                if _ADK_OVERRIDES_INVOCATION_ID and self._is_adk_resumable():
-                    # ADK with _resolve_invocation_id (~1.28+) routing:
+                # ag-ui#1669: the #1534 pre-append workaround is correct for
+                # LlmAgent roots (and composite orchestrators built from
+                # LlmAgent), but breaks ADK 2.0 ``Workflow`` roots. Workflows
+                # rehydrate from ``new_message.parts`` only — the empty-text
+                # placeholder we substitute below contains no
+                # ``function_response``, so ``Workflow._run_impl`` cannot
+                # resume from the interrupt and falls back to a fresh START.
+                # Skip the workaround for Workflow roots and pass the
+                # FunctionResponse directly in ``new_message`` (the ADK
+                # 1.x-style path), which Workflow consumes correctly.
+                if (
+                    _ADK_OVERRIDES_INVOCATION_ID
+                    and self._is_adk_resumable()
+                    and not self._root_agent_is_workflow()
+                ):
+                    # ADK with _resolve_invocation_id (~1.28+) routing, non-Workflow root:
                     #
                     # When new_message contains a FunctionResponse, Runner._resolve_invocation_id()
                     # looks up the matching FunctionCall event in session history and forces the
@@ -2231,6 +2438,10 @@ class ADKAgent:
                     # branch and preserves whatever invocation_id handling run_kwargs already
                     # encodes (new-invocation path for standalone LlmAgent; resume path with
                     # stored_invocation_id for composite orchestrators).
+                    #
+                    # Workflow roots are explicitly excluded from this branch (see #1669
+                    # comment above) — they take the else branch and receive the
+                    # FunctionResponse directly in new_message.
                     first_tool_call_id = active_tool_results[0]['message'].tool_call_id
                     first_tool_call_id = lro_id_remap.get(first_tool_call_id, first_tool_call_id)
                     fc_event_invocation_id = self._find_function_call_invocation_id(
@@ -2269,11 +2480,23 @@ class ADKAgent:
                     # standalone LlmAgents correctly take the new-invocation path.
                     tool_only_invocation_id = None
                 else:
-                    # ADK without _resolve_invocation_id (<1.28) or non-resumable apps:
-                    # Pass the FunctionResponse as new_message with the AG-UI run_id as the
-                    # invocation_id. Older ADK honors the caller-supplied invocation_id and
-                    # treats every tool submission as a fresh invocation, so the LLM is invoked
-                    # on the updated history. This preserves the #1074 fix (no duplicate
+                    # Direct-new_message path. Used in three cases:
+                    #
+                    # 1. ADK without _resolve_invocation_id (<1.28): older ADK
+                    #    honors the caller-supplied invocation_id and treats
+                    #    every tool submission as a fresh invocation, so the
+                    #    LLM is invoked on the updated history.
+                    # 2. Non-resumable apps (no ResumabilityConfig): same as
+                    #    above; we're not in the resume path.
+                    # 3. ADK 2.0 Workflow roots (ag-ui#1669): Workflow rehydrates
+                    #    from new_message.parts exclusively, so the
+                    #    FunctionResponse MUST land in new_message — otherwise
+                    #    Workflow._extract_resume_inputs returns None and the
+                    #    workflow restarts from START.
+                    #
+                    # In all three cases we pass the FunctionResponse as
+                    # new_message with the AG-UI run_id as the invocation_id.
+                    # This preserves the #1074 fix (no duplicate
                     # FunctionResponse events) by avoiding the pre-append.
                     new_message = function_response_content
                     tool_only_invocation_id = input.run_id
@@ -2291,6 +2514,12 @@ class ADKAgent:
             client_emitted_ids: set[str] = set()
             for toolset in client_proxy_toolsets:
                 toolset._emitted_tool_call_ids = client_emitted_ids
+
+            # Share the per-execution HITL tool-call set with proxy toolsets so
+            # ClientProxyTool can register IDs synchronously before its
+            # TOOL_CALL_START is enqueued. See issue #1652.
+            for toolset in client_proxy_toolsets:
+                toolset._long_running_tool_ids = long_running_tool_ids
 
             # Collect client-side tool names from proxy toolsets
             client_tool_names: set[str] = set()
@@ -2425,17 +2654,26 @@ class ADKAgent:
                     if not event_partial:
                         # Capture LRO ID remapping: the final (persisted) event
                         # may carry different function-call IDs than the partial
-                        # event we already emitted to the client.
+                        # event we already emitted to the client. Buffer here
+                        # and flush in finally; writing mid-runner would bump
+                        # the session row's storage marker and trip OCC on
+                        # ADK's next ``append_event`` (issue #1754).
                         lro_remap = self._extract_lro_id_remap(adk_event, event_translator)
                         if lro_remap:
-                            await self._store_lro_id_remap(
-                                lro_remap, backend_session_id, app_name, user_id
-                            )
+                            pending_lro_id_remap.update(lro_remap)
 
                         logger.info(
                             f"Received non-partial event during LRO drain, persistence complete "
                             f"(thread={input.thread_id})"
                         )
+                        # #1755: persist any buffered HITL pending_tool_calls
+                        # IDs, then signal completion so the deferring queue
+                        # flushes the deferred TCE(s) onto the underlying
+                        # queue before the consumer exits.
+                        await self._finalize_hitl_buffer(
+                            event_queue, input.thread_id, app_name, user_id
+                        )
+                        await event_queue.put(None)
                         return
                     else:
                         # Still partial, keep draining
@@ -2455,6 +2693,13 @@ class ADKAgent:
                 has_lro_function_call = False
                 try:
                     lro_ids = set(getattr(adk_event, 'long_running_tool_ids', []) or [])
+                    # Mark every LRO id from the ADK event as HITL on the
+                    # shared execution set. Synchronous mutation before any
+                    # downstream `await event_queue.put(...)` of this event's
+                    # TOOL_CALL_END, so the consumer's gate sees the id at
+                    # dequeue time. See issue #1652.
+                    if lro_ids:
+                        long_running_tool_ids.update(lro_ids)
                     if lro_ids and adk_event.content and getattr(adk_event.content, 'parts', None):
                         for part in adk_event.content.parts:
                             func = getattr(part, 'function_call', None)
@@ -2525,12 +2770,13 @@ class ADKAgent:
                     # Capture LRO ID remapping from non-partial events.
                     # The final (persisted) event may carry different function-call
                     # IDs than the partial event we already emitted to the client.
+                    # Buffer here and flush in finally; writing mid-runner would
+                    # bump the session row's storage marker and trip OCC on ADK's
+                    # next ``append_event`` (issue #1754).
                     if has_lro_function_call and not event_partial:
                         lro_remap = self._extract_lro_id_remap(adk_event, event_translator)
                         if lro_remap:
-                            await self._store_lro_id_remap(
-                                lro_remap, backend_session_id, app_name, user_id
-                            )
+                            pending_lro_id_remap.update(lro_remap)
 
                     # Hard stop the execution if we find any long running tool
                     # AND the agent is NOT using ADK's native resumability.
@@ -2576,6 +2822,17 @@ class ADKAgent:
                                 f"LRO detected with partial=False, persistence already complete "
                                 f"(thread={input.thread_id})"
                             )
+                            # #1755: persist any buffered HITL
+                            # pending_tool_calls IDs, then signal
+                            # completion so the deferring queue flushes
+                            # deferred TCE(s) before the consumer exits.
+                            await self._finalize_hitl_buffer(
+                                event_queue,
+                                input.thread_id,
+                                app_name,
+                                user_id,
+                            )
+                            await event_queue.put(None)
                             return
 
             # Force close any streaming messages
@@ -2676,7 +2933,14 @@ class ADKAgent:
                     )
                     logger.debug("Emitted post-confirm StateSnapshotEvent for timing separation")
 
-            # Signal completion - ADK execution is done
+            # Persist HITL pending_tool_calls IDs that the deferring queue
+            # has buffered, then signal completion. The put(None) below
+            # triggers an implicit flush via _HitlDeferringQueue.put so
+            # the consumer sees the deferred TCEs before the stream ends.
+            # See issue #1755.
+            await self._finalize_hitl_buffer(
+                event_queue, input.thread_id, app_name, user_id
+            )
             logger.debug(f"Background task sending completion signal for thread {input.thread_id}")
             await event_queue.put(None)
             logger.debug(f"Background task completion signal sent for thread {input.thread_id}")
@@ -2708,6 +2972,26 @@ class ADKAgent:
                             input.thread_id,
                             close_error,
                         )
+
+            # Flush any LRO ID remap captured during the runner loop. This
+            # runs after the runner has been closed, so the
+            # ``update_session_state`` write can't trip OCC against ADK's
+            # in-memory ``invocation_context.session``. See issue #1754.
+            if pending_lro_id_remap and backend_session_id is not None:
+                try:
+                    await self._store_lro_id_remap(
+                        pending_lro_id_remap,
+                        backend_session_id,
+                        app_name,
+                        user_id,
+                    )
+                except Exception as flush_error:
+                    logger.warning(
+                        "Failed to flush LRO ID remap on runner exit "
+                        "(thread=%s): %s",
+                        input.thread_id,
+                        flush_error,
+                    )
 
             # Drop any pending per-invocation `temp:` state so a later run on
             # the same session does not inherit stale values (e.g. a rotated

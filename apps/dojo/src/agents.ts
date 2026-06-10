@@ -27,6 +27,7 @@ import { A2AClient } from "@a2a-js/sdk/client";
 import { LangChainAgent } from "@ag-ui/langchain";
 import { Ag2Agent } from "@ag-ui/ag2";
 import { LangroidHttpAgent } from "@ag-ui/langroid";
+import { WatsonxAgent } from "@ag-ui/watsonx";
 import { A2UIMiddleware } from "@ag-ui/a2ui-middleware";
 
 const envVars = getEnvVars();
@@ -162,6 +163,19 @@ export const agentsIntegrations = {
       agent.use(new A2UIMiddleware({ injectA2UITool: true }));
       return agent;
     })(),
+    a2ui_dynamic_schema: new LangGraphAgent({
+      deploymentUrl: envVars.langgraphPythonUrl,
+      graphId: "a2ui_dynamic_schema",
+    }),
+    a2ui_fixed_schema: new LangGraphAgent({
+      deploymentUrl: envVars.langgraphPythonUrl,
+      graphId: "a2ui_fixed_schema",
+    }),
+    // Advanced: same backend agent, frontend adds custom progress renderer + action handlers
+    a2ui_advanced: new LangGraphAgent({
+      deploymentUrl: envVars.langgraphPythonUrl,
+      graphId: "a2ui_dynamic_schema",
+    }),
   }),
 
   "langgraph-fastapi": async () => ({
@@ -195,8 +209,8 @@ export const agentsIntegrations = {
     }),
   }),
 
-  "langgraph-typescript": async () =>
-    mapAgents(
+  "langgraph-typescript": async () => ({
+    ...mapAgents(
       (graphId) => {
         return new LangGraphAgent({
           deploymentUrl: envVars.langgraphTypescriptUrl,
@@ -216,6 +230,26 @@ export const agentsIntegrations = {
         subgraphs: "subgraphs",
       },
     ),
+    a2ui_dynamic_schema: new LangGraphAgent({
+      deploymentUrl: envVars.langgraphTypescriptUrl,
+      graphId: "a2ui_dynamic_schema",
+    }),
+    a2ui_fixed_schema: new LangGraphAgent({
+      deploymentUrl: envVars.langgraphTypescriptUrl,
+      graphId: "a2ui_fixed_schema",
+    }),
+    // Advanced: same backend agent, frontend adds custom progress renderer + action handlers
+    a2ui_advanced: new LangGraphAgent({
+      deploymentUrl: envVars.langgraphTypescriptUrl,
+      graphId: "a2ui_dynamic_schema",
+    }),
+    // OSS-162: A2UI error-recovery showcase (sub-agent emits a structural error,
+    // then recovers). Rides the runtime a2ui middleware like the others.
+    a2ui_recovery: new LangGraphAgent({
+      deploymentUrl: envVars.langgraphTypescriptUrl,
+      graphId: "a2ui_recovery",
+    }),
+  }),
 
   // TODO: @ranst91 Enable `langchain` integration in apps/dojo/src/menu.ts once ready
   langchain: async () => {
@@ -413,6 +447,33 @@ export const agentsIntegrations = {
     }),
   }),
 
+  "aws-strands-typescript": async () => ({
+    // TS example server mounts every endpoint on hyphenated paths (matching the
+    // Python reference server) so the same curl payloads drive both adapters.
+    // v1_agentic_chat reuses the agentic-chat endpoint — the dojo page renders
+    // the same agent via the v1 CopilotChat UI instead of the v2 shell.
+    ...mapAgents(
+      (path) =>
+        new AWSStrandsAgent({
+          url: `${envVars.awsStrandsTypescriptUrl}/${path}/`,
+        }),
+      {
+        agentic_chat: "agentic-chat",
+        agentic_chat_reasoning: "agentic-chat-reasoning",
+        agentic_chat_multimodal: "agentic-chat-multimodal",
+        v1_agentic_chat: "agentic-chat",
+        backend_tool_rendering: "backend-tool-rendering",
+        agentic_generative_ui: "agentic-generative-ui",
+        shared_state: "shared-state",
+        tool_based_generative_ui: "tool-based-generative-ui",
+      },
+    ),
+    human_in_the_loop: new AWSStrandsAgent({
+      url: `${envVars.awsStrandsTypescriptUrl}/human-in-the-loop`,
+      debug: true,
+    }),
+  }),
+
   ag2: async () =>
     mapAgents((path) => new Ag2Agent({ url: `${envVars.ag2Url}/${path}` }), {
       agentic_chat: "agentic_chat",
@@ -462,4 +523,16 @@ export const agentsIntegrations = {
         shared_state: "shared_state",
       },
     ),
+
+  watsonx: async () => {
+    const agent = new WatsonxAgent({
+      region: envVars.watsonxRegion,
+      instanceId: envVars.watsonxInstanceId,
+      agentId: envVars.watsonxAgentId,
+      apiKey: envVars.watsonxApiKey,
+    });
+    return {
+      agentic_chat: agent,
+    };
+  },
 } satisfies AgentsMap;

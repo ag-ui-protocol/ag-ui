@@ -52,7 +52,53 @@ const (
 	InputContentTypeText = "text"
 	// InputContentTypeBinary is the input content type for binary fragments.
 	InputContentTypeBinary = "binary"
+	// InputContentTypeImage is the input content type for image fragments.
+	InputContentTypeImage = "image"
+	// InputContentTypeAudio is the input content type for audio fragments.
+	InputContentTypeAudio = "audio"
+	// InputContentTypeVideo is the input content type for video fragments.
+	InputContentTypeVideo = "video"
+	// InputContentTypeDocument is the input content type for document fragments.
+	InputContentTypeDocument = "document"
 )
+
+const (
+	// InputContentSourceTypeData indicates inline base64-encoded data.
+	InputContentSourceTypeData = "data"
+	// InputContentSourceTypeURL indicates a URL reference.
+	InputContentSourceTypeURL = "url"
+)
+
+// InputContentSource represents the source of a multimodal content fragment.
+// The Type field discriminates between inline data and URL references.
+type InputContentSource struct {
+	// Type is the source discriminator ("data" or "url").
+	Type string `json:"type"`
+	// Value is the source value (base64 data or URL string).
+	Value string `json:"value"`
+	// MimeType is the MIME type of the content. Required for data sources, optional for URL sources.
+	MimeType string `json:"mimeType,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler and supports snake_case compatibility.
+func (s *InputContentSource) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	if err := unmarshalField(raw, &s.Type, "type"); err != nil {
+		return err
+	}
+	if err := unmarshalField(raw, &s.Value, "value"); err != nil {
+		return err
+	}
+	if err := unmarshalField(raw, &s.MimeType, "mimeType", "mime_type"); err != nil {
+		return err
+	}
+
+	return nil
+}
 
 // InputContent represents a multimodal content fragment in a user message.
 type InputContent struct {
@@ -70,6 +116,10 @@ type InputContent struct {
 	Data string `json:"data,omitempty"`
 	// Filename is an optional binary payload filename.
 	Filename string `json:"filename,omitempty"`
+	// Source is the content source for typed multimodal fragments (image, audio, video, document).
+	Source *InputContentSource `json:"source,omitempty"`
+	// Metadata is optional metadata for typed multimodal fragments.
+	Metadata any `json:"metadata,omitempty"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler and supports snake_case compatibility.
@@ -98,6 +148,12 @@ func (c *InputContent) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	if err := unmarshalField(raw, &c.Filename, "filename"); err != nil {
+		return err
+	}
+	if err := unmarshalField(raw, &c.Source, "source"); err != nil {
+		return err
+	}
+	if err := unmarshalField(raw, &c.Metadata, "metadata"); err != nil {
 		return err
 	}
 
@@ -193,6 +249,96 @@ type Tool struct {
 	Parameters any `json:"parameters"`
 }
 
+// Interrupt represents a pause point requiring user input before the agent can continue.
+type Interrupt struct {
+	// ID is the unique identifier for this interrupt.
+	ID string `json:"id"`
+	// Reason is the category of the interrupt (e.g. "tool_call").
+	Reason string `json:"reason"`
+	// Message is an optional human-readable explanation of why the agent paused.
+	Message string `json:"message,omitempty"`
+	// ToolCallID is the tool call that triggered this interrupt, if applicable.
+	ToolCallID string `json:"toolCallId,omitempty"`
+	// ResponseSchema is an optional JSON Schema describing the expected resume payload.
+	ResponseSchema map[string]any `json:"responseSchema,omitempty"`
+	// ExpiresAt is an optional ISO 8601 timestamp after which the interrupt is no longer valid.
+	ExpiresAt string `json:"expiresAt,omitempty"`
+	// Metadata is optional arbitrary metadata associated with the interrupt.
+	Metadata map[string]any `json:"metadata,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler and supports snake_case compatibility.
+func (i *Interrupt) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	if err := unmarshalField(raw, &i.ID, "id"); err != nil {
+		return err
+	}
+	if err := unmarshalField(raw, &i.Reason, "reason"); err != nil {
+		return err
+	}
+	if err := unmarshalField(raw, &i.Message, "message"); err != nil {
+		return err
+	}
+	if err := unmarshalField(raw, &i.ToolCallID, "toolCallId", "tool_call_id"); err != nil {
+		return err
+	}
+	if err := unmarshalField(raw, &i.ResponseSchema, "responseSchema", "response_schema"); err != nil {
+		return err
+	}
+	if err := unmarshalField(raw, &i.ExpiresAt, "expiresAt", "expires_at"); err != nil {
+		return err
+	}
+	if err := unmarshalField(raw, &i.Metadata, "metadata"); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// ResumeStatus represents the status of an interrupt resolution.
+type ResumeStatus string
+
+const (
+	// ResumeStatusResolved indicates the interrupt was resolved.
+	ResumeStatusResolved ResumeStatus = "resolved"
+	// ResumeStatusCancelled indicates the interrupt was cancelled.
+	ResumeStatusCancelled ResumeStatus = "cancelled"
+)
+
+// ResumeEntry represents a per-interrupt response in the resume array of a RunAgentInput.
+type ResumeEntry struct {
+	// InterruptID is the identifier of the interrupt being addressed.
+	InterruptID string `json:"interruptId"`
+	// Status is the resolution status ("resolved" or "cancelled").
+	Status ResumeStatus `json:"status"`
+	// Payload is an optional response payload for the interrupt.
+	Payload any `json:"payload,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler and supports snake_case compatibility.
+func (e *ResumeEntry) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	if err := unmarshalField(raw, &e.InterruptID, "interruptId", "interrupt_id"); err != nil {
+		return err
+	}
+	if err := unmarshalField(raw, &e.Status, "status"); err != nil {
+		return err
+	}
+	if err := unmarshalField(raw, &e.Payload, "payload"); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // RunAgentInput represents the input payload for running an agent.
 type RunAgentInput struct {
 	// ThreadID is the conversation thread identifier.
@@ -211,6 +357,8 @@ type RunAgentInput struct {
 	Context []Context `json:"context"`
 	// ForwardedProps is an arbitrary bag of additional properties forwarded to the agent.
 	ForwardedProps any `json:"forwardedProps"`
+	// Resume is an optional list of interrupt responses for resuming a paused run.
+	Resume []ResumeEntry `json:"resume,omitempty"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler and supports snake_case compatibility.
@@ -244,6 +392,9 @@ func (r *RunAgentInput) UnmarshalJSON(data []byte) error {
 	if err := unmarshalField(raw, &r.ForwardedProps, "forwardedProps", "forwarded_props"); err != nil {
 		return err
 	}
+	if err := unmarshalField(raw, &r.Resume, "resume"); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -270,10 +421,10 @@ func findRawField(raw map[string]json.RawMessage, keys ...string) (json.RawMessa
 // validateBinaryInputContent validates required fields for a binary fragment.
 func validateBinaryInputContent(content InputContent) error {
 	if content.MimeType == "" {
-		return fmt.Errorf("BinaryInputContent requires mimeType to be provided.")
+		return fmt.Errorf("BinaryInputContent requires mimeType to be provided")
 	}
 	if content.ID == "" && content.URL == "" && content.Data == "" {
-		return fmt.Errorf("BinaryInputContent requires at least one of id, url, or data.")
+		return fmt.Errorf("BinaryInputContent requires at least one of id, url, or data")
 	}
 	return nil
 }
