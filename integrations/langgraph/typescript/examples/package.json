@@ -9,9 +9,8 @@
     "dev": "pnpx @langchain/langgraph-cli@1.2.3 dev",
     "start": "node dist/index.js"
   },
-  "//oss-248-temp": "TEMPORARY (OSS-248): '@ag-ui/langgraph' points to link:.. (the local adapter at ../, i.e. integrations/langgraph/typescript) so the dojo runs the LOCAL adapter + local @ag-ui/a2ui-toolkit, which carry this PR's UNPUBLISHED changes — the object-arg getA2UITools({ model, guidelines, recovery }) signature, the A2UIAttemptRecord export, and the re-enabled generation/design guidelines. Published @ag-ui/langgraph@0.0.39 still has the old getA2UITools(model, options) signature, so consuming it makes the agents call an incompatible API and NO surface renders (every A2UI e2e 404s). This package is a DELIBERATELY ISOLATED nested pnpm workspace (own pnpm-lock.yaml + pnpm-workspace.yaml) that pins @langchain/langgraph@1.3.0 — required by langgraph-cli@1.2.3's API server (imports STREAM_EVENTS_V3_MODES). Do NOT add it to the root pnpm-workspace.yaml: that dedupes langgraph to 1.2.2 and breaks `pnpm dev`. REVERT to a published version once OSS-248's adapter + toolkit are published; langgraph-cli deploys read published versions, so link:.. must NOT ship. See memory: project_oss-162-examples-workspace-temp.",
   "dependencies": {
-    "@ag-ui/langgraph": "link:..",
+    "@ag-ui/langgraph": "0.0.41",
     "@copilotkit/sdk-js": "1.57.1",
     "@langchain/core": "^1.1.44",
     "@langchain/anthropic": "^0.3.0",
