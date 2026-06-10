@@ -71,6 +71,7 @@ _INTERNAL_STATE_KEYS = frozenset({
 })
 from .execution_state import ExecutionState
 from .client_proxy_toolset import ClientProxyToolset
+from .a2ui_tool import A2UISubAgentTool
 from .config import PredictStateMapping
 from .request_state_service import RequestStateSessionService
 from .utils.converters import convert_message_content_to_parts
@@ -2087,6 +2088,13 @@ class ADKAgent:
                         # its own input.tools + event_queue) and the
                         # construction-time AGUIToolset is never mutated.
                         tool = proxy_toolset
+                    elif isinstance(tool, A2UISubAgentTool):
+                        # Per-run swap: give this run's A2UI subagent tool its own
+                        # event_queue so it can emit the nested render_a2ui
+                        # tool-call stream onto THIS run's stream — without mutating
+                        # the shared construction-time instance (concurrency-safe,
+                        # mirrors the ClientProxyToolset replacement above).
+                        tool = tool.for_run(event_queue)
                     new_tools.append(tool)
 
                 agent.tools = new_tools

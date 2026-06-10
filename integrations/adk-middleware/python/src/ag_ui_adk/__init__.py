@@ -17,6 +17,7 @@ from .session_manager import SessionManager, CONTEXT_STATE_KEY, INVOCATION_ID_ST
 from .endpoint import add_adk_fastapi_endpoint, create_adk_app
 from .config import PredictStateMapping, normalize_predict_state
 from .agui_toolset import AGUIToolset
+from .a2ui_tool import get_a2ui_tool, A2UISubAgentTool
 __all__ = [
     'ADKAgent',
     'add_adk_fastapi_endpoint',
@@ -29,6 +30,8 @@ __all__ = [
     'normalize_predict_state',
     'adk_events_to_messages',
     'AGUIToolset',
+    'get_a2ui_tool',
+    'A2UISubAgentTool',
 ]
 
 __version__ = "0.1.0"
