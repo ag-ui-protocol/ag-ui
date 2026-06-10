@@ -428,7 +428,6 @@ export const agentsIntegrations = {
   },
 
   "aws-strands": async () => ({
-    // Different URL pattern (hyphens) and one has debug:true, so not using mapAgents
     ...mapAgents(
       (path) =>
         new AWSStrandsAgent({ url: `${envVars.awsStrandsUrl}/${path}/` }),
@@ -436,9 +435,16 @@ export const agentsIntegrations = {
         agentic_chat: "agentic-chat",
         agentic_chat_reasoning: "agentic-chat-reasoning",
         agentic_chat_multimodal: "agentic-chat-multimodal",
+        // v1 page reuses the agentic-chat endpoint (menu advertises the
+        // feature; this mapping was missing).
+        v1_agentic_chat: "agentic-chat",
         backend_tool_rendering: "backend-tool-rendering",
         agentic_generative_ui: "agentic-generative-ui",
         shared_state: "shared-state",
+        // A2UI demos: plain Strands agents with no a2ui wiring (the
+        // runtime sends `injectA2UITool` and the adapter injects generate_a2ui).
+        a2ui_dynamic_schema: "a2ui-dynamic-schema",
+        a2ui_recovery: "a2ui-recovery",
       },
     ),
     human_in_the_loop: new AWSStrandsAgent({
@@ -466,7 +472,7 @@ export const agentsIntegrations = {
         agentic_generative_ui: "agentic-generative-ui",
         shared_state: "shared-state",
         tool_based_generative_ui: "tool-based-generative-ui",
-        // OSS-162 port: Tier-1 auto-inject demos. The example server mounts
+        // A2UI demos (auto-injected, see above). The example server mounts
         // plain Strands agents (no a2ui wiring); the runtime sends
         // `injectA2UITool` and the adapter injects `generate_a2ui` itself.
         a2ui_dynamic_schema: "a2ui-dynamic-schema",

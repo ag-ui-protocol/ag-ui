@@ -6,6 +6,7 @@ authors = [
 ]
 requires-python = ">=3.12, <3.14"
 dependencies = [
+    "ag-ui-a2ui-toolkit>=0.0.3",
     "ag-ui-protocol>=0.1.18",
     "fastapi>=0.115.12",
     "strands-agents>=1.15.0",

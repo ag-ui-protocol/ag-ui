@@ -33,15 +33,15 @@ async function getHandler(integrationId: string) {
 
   const agents = await getAgents();
 
-  // OSS-162 port: the AWS Strands a2ui_recovery demo showcases the Tier-1
-  // auto-inject DevEx — a plain Strands agent with no a2ui tool wiring. For
-  // that, the runtime must send `injectA2UITool` so the adapter injects
-  // `generate_a2ui` and infers the model from the wrapped agent. Scope it to
-  // the TS Strands integration only: the LangGraph a2ui demos define their tools
-  // in-backend and must keep their existing (no-injection) a2ui config, and the
-  // Python `aws-strands` integration ships no a2ui agents and no injection
-  // support — so don't advertise a flag it can't honor.
-  const injectsA2UITool = integrationId === "aws-strands-typescript";
+  // The AWS Strands a2ui demos are plain Strands agents with no a2ui tool
+  // wiring: the runtime sends `injectA2UITool` and the adapter injects
+  // `generate_a2ui` itself, inferring the model from the wrapped agent.
+  // Scope it to the Strands integrations only (both adapters implement the
+  // injection):
+  // the LangGraph a2ui demos define their tools in-backend and must keep their
+  // existing (no-injection) a2ui config so their passing tests are unaffected.
+  const injectsA2UITool =
+    integrationId === "aws-strands-typescript" || integrationId === "aws-strands";
 
   const runtime = new CopilotRuntime({
     agents: agents as Record<string, AbstractAgent>,
