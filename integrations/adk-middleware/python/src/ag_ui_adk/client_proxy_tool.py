@@ -41,9 +41,21 @@ except (ImportError, AttributeError):
         "type", "format", "description", "nullable", "enum", "example",
         "items", "properties", "required", "default", "title", "pattern",
         "minimum", "maximum", "minItems", "maxItems", "minLength", "maxLength",
-        "minProperties", "maxProperties", "additionalProperties", "anyOf",
+        "minProperties", "maxProperties", "anyOf",
         "ref", "defs", "propertyOrdering",
     })
+
+
+# Keys that ``google.genai.types.Schema`` accepts as model fields (so the
+# allowlist above keeps them) but the Gemini ``generateContent`` function-calling
+# API rejects with a 400 ("Unknown name ... Cannot find field"). They must be
+# stripped explicitly. ``zod-to-json-schema`` (used by CopilotKit / AG-UI
+# frontend tools) emits ``additionalProperties: false`` on every object, so any
+# client-supplied tool trips this — manifesting as a RUN_ERROR and no tool call
+# reaching the UI. See ag-ui-protocol/ag-ui HITL dojo "nothing renders" report.
+_GENAI_REJECTED_SCHEMA_KEYS = frozenset({
+    "additionalProperties", "additional_properties",
+})
 
 
 def _clean_schema_for_genai(schema: Any) -> Any:
@@ -62,6 +74,10 @@ def _clean_schema_for_genai(schema: Any) -> Any:
         for k, v in schema.items():
             # Always strip $-prefixed keys
             if k.startswith("$"):
+                continue
+            # Strip keys the Gemini API rejects even though genai.Schema accepts
+            # them as model fields (e.g. additionalProperties from zod schemas).
+            if k in _GENAI_REJECTED_SCHEMA_KEYS:
                 continue
             # Map examples -> example (preserve first element as opaque data)
             if k == "examples" and isinstance(v, list) and v:
