@@ -1,6 +1,7 @@
 import { LLMock, type ChatMessage } from "@copilotkit/aimock";
 import * as path from "node:path";
 import { registerA2UIRecoveryFixtures } from "./a2ui-recovery-fixtures";
+import { registerA2UIADKFixtures } from "./a2ui-adk-fixtures";
 
 const MOCK_PORT = 5555;
 const FIXTURES_DIR = path.join(import.meta.dirname, "fixtures", "openai");
@@ -20,6 +21,11 @@ export async function setupLLMock(): Promise<void> {
     port: MOCK_PORT,
     latency: Number(process.env.AIMOCK_LATENCY) || 5,
   });
+
+  // OSS-158 ADK A2UI fixtures (Gemini-shaped, scoped to gemini models). MUST
+  // precede the OpenAI LangGraph recovery fixtures so a Gemini request matches
+  // here first; gpt-4o requests fall through to the LangGraph fixtures.
+  registerA2UIADKFixtures(mockServer);
 
   // OSS-162 A2UI recovery showcase fixtures (predicate fixtures, must precede
   // the generic loadFixtureFile below).

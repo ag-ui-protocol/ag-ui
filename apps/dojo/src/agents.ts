@@ -68,6 +68,8 @@ export const agentsIntegrations = {
         backend_tool_rendering: "backend_tool_rendering",
         shared_state: "adk-shared-state-agent",
         predictive_state_updates: "adk-predictive-state-agent",
+        a2ui_dynamic_schema: "adk-a2ui-dynamic-schema",
+        a2ui_recovery: "adk-a2ui-recovery",
       },
     ),
 
