@@ -1,6 +1,10 @@
 import { test, expect } from "../../test-isolation-helper";
 import { A2UIPage } from "../../featurePages/A2UIPage";
 
+// The exact data values asserted below ($450/night, 4.8, Sony WH-1000XM5, …)
+// come from the deterministic aimock fixtures (apps/dojo/e2e/aimock-setup.ts);
+// these specs are not meant to run against a live model.
+
 test("[Microsoft Agent Framework .NET] A2UI Dynamic Schema renders hotel comparison surface", async ({
   page,
 }) => {

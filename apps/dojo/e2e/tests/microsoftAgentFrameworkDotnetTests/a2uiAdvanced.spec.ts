@@ -1,6 +1,10 @@
 import { test } from "../../test-isolation-helper";
 import { A2UIPage } from "../../featurePages/A2UIPage";
 
+// The exact names asserted below (The Ritz, …) come from the deterministic
+// aimock fixtures (apps/dojo/e2e/aimock-setup.ts); these specs are not meant
+// to run against a live model.
+
 test("[Microsoft Agent Framework .NET] A2UI Advanced renders surface with hotel comparison", async ({
   page,
 }) => {

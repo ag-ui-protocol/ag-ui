@@ -1,6 +1,10 @@
 import { test, expect } from "../../test-isolation-helper";
 import { A2UIPage } from "../../featurePages/A2UIPage";
 
+// The exact data values asserted below (UA 123, $289, …) come from the
+// deterministic aimock fixtures (apps/dojo/e2e/aimock-setup.ts); these specs
+// are not meant to run against a live model.
+
 test("[Microsoft Agent Framework .NET] A2UI Fixed Schema renders flight search surface", async ({
   page,
 }) => {
