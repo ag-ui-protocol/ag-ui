@@ -37,18 +37,23 @@ async function getHandler(integrationId: string) {
     agents: agents as Record<string, AbstractAgent>,
     runner: new InMemoryAgentRunner(),
     a2ui: {
-      agents: ["a2ui_fixed_schema", "a2ui_dynamic_schema", "a2ui_advanced", "a2ui_recovery"],
+      // For the Agent Framework (.NET) integration, a2ui_advanced is the
+      // zero-configuration demo: agents.ts wraps it with its own A2UIMiddleware
+      // (injectA2UITool scoped to that agent alone), so the runtime must not
+      // apply a second middleware instance to it. Injecting render_a2ui into the
+      // other a2ui agents is wrong everywhere — they carry their own A2UI flows
+      // (direct tools / generate_a2ui subagent / recovery loop) that an extra
+      // render tool would let the model bypass.
+      agents:
+        integrationId === "microsoft-agent-framework-dotnet"
+          ? ["a2ui_fixed_schema", "a2ui_dynamic_schema", "a2ui_recovery"]
+          : ["a2ui_fixed_schema", "a2ui_dynamic_schema", "a2ui_advanced", "a2ui_recovery"],
       // Catalog used when creating a surface from a STREAMED render_a2ui call.
-      // Only the dynamic (subagent) agents stream; fixed_schema uses direct
-      // tools that carry their own catalog in the result envelope, so a single
-      // catalog id here is correct for every streaming agent.
+      // Every agent that streams render_a2ui through this config (dynamic_schema,
+      // recovery, and the non-.NET a2ui_advanced) renders against the dynamic
+      // catalog; fixed_schema uses direct tools that carry their own catalog in
+      // the result envelope, so a single catalog id here is correct.
       defaultCatalogId: "https://a2ui.org/demos/dojo/dynamic_catalog.json",
-      // Zero-configuration path for the Agent Framework (.NET) integration: the
-      // middleware injects the render_a2ui tool + usage guidelines; the server
-      // binds incoming client tools to the model automatically, so the agent
-      // needs no A2UI-specific code (a2ui_advanced maps to the plain a2ui_chat
-      // endpoint there).
-      ...(integrationId === "microsoft-agent-framework-dotnet" ? { injectA2UITool: true } : {}),
     },
   });
 

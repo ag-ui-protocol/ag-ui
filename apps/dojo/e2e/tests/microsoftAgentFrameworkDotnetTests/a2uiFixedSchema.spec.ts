@@ -53,7 +53,11 @@ test("[Microsoft Agent Framework .NET] A2UI Fixed Schema renders multiple surfac
   await a2ui.sendMessage("Find hotels in downtown Manhattan.");
   await a2ui.assertSurfaceWithIdVisible("hotel-search-results");
 
-  // Both surfaces should be present
+  // Both surfaces should be present. Re-assert the flight surface with the
+  // retrying locator before the point-in-time count: sendMessage's
+  // running-state wait can return early on multi-turn pages, and the two
+  // visibility assertions absorb any remaining paint latency.
+  await a2ui.assertSurfaceWithIdVisible("flight-search-results");
   const count = await a2ui.getSurfaceCount();
   expect(count).toBeGreaterThanOrEqual(2);
 });
