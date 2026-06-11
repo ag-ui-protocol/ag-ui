@@ -128,6 +128,8 @@ class ClientProxyTool(BaseTool):
         emitted_tool_call_ids: Optional[Set[str]] = None,
         translator_emitted_tool_call_ids: Optional[Set[str]] = None,
         long_running_tool_ids: Optional[Set[str]] = None,
+        translator_lro_emitted_ids_by_name: Optional[Dict[str, List[str]]] = None,
+        lro_finalized_by_name: Optional[Dict[str, int]] = None,
     ):
         """Initialize the client proxy tool.
 
@@ -167,6 +169,8 @@ class ClientProxyTool(BaseTool):
         self._emitted_tool_call_ids = emitted_tool_call_ids if emitted_tool_call_ids is not None else set()
         self._translator_emitted_tool_call_ids = translator_emitted_tool_call_ids if translator_emitted_tool_call_ids is not None else set()
         self._long_running_tool_ids = long_running_tool_ids if long_running_tool_ids is not None else set()
+        self._translator_lro_emitted_ids_by_name = translator_lro_emitted_ids_by_name if translator_lro_emitted_ids_by_name is not None else {}
+        self._lro_finalized_by_name = lro_finalized_by_name if lro_finalized_by_name is not None else {}
 
         # Create dynamic function with proper parameter signatures for ADK inspection
         # This allows ADK to extract parameters from user requests correctly
@@ -290,6 +294,23 @@ class ClientProxyTool(BaseTool):
             # the translator processes the event first, then ADK runs this proxy tool.
             if tool_call_id in self._translator_emitted_tool_call_ids:
                 logger.debug(f"Skipping TOOL_CALL emission for {tool_call_id} — already emitted by EventTranslator")
+                return None
+
+            # Cross-path twin suppression: under SSE streaming the translator
+            # emits this long-running call from the *partial* event with one ID
+            # and ADK then invokes this proxy with a *different* ID (#1168), so
+            # the ID guard above can't recognize them as the same logical call —
+            # the dojo then renders the HITL card twice. Match this invocation to
+            # an already-emitted partial by tool name, positionally (FIFO), so
+            # genuinely parallel same-name calls each still emit once.
+            emitted_partials = self._translator_lro_emitted_ids_by_name.get(self.name, [])
+            finalized = self._lro_finalized_by_name.get(self.name, 0)
+            if finalized < len(emitted_partials):
+                self._lro_finalized_by_name[self.name] = finalized + 1
+                logger.debug(
+                    f"Skipping proxy TOOL_CALL emission for '{self.name}' — twin of "
+                    f"streamed partial {emitted_partials[finalized]} (proxy id {tool_call_id})"
+                )
                 return None
 
             # Check if this tool has predictive state configuration

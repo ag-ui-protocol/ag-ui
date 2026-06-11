@@ -452,11 +452,34 @@ export function resolveReasoningContent(eventData: any): LangGraphReasoning | nu
     }
 
     // OpenAI Responses API v1 format: { type: "reasoning", summary: [{ text: "..." }] }
-    if (block.type === 'reasoning' && block.summary?.[0]?.text) {
-      return {
-        type: 'text',
-        text: block.summary[0].text,
-        index: block.summary[0].index ?? 0,
+    //
+    // The reasoning item's canonical id (OpenAI `rs_…`) only travels on
+    // text-less chunks: the `response.output_item.added` chunk ({ id,
+    // summary: [] }) and — depending on the langchain-openai version — the
+    // `…summary_part.added` chunk ({ id, summary: [{ text: "" }] }). The
+    // `…summary_text.delta` chunks carry text but no id. Surface the id
+    // carriers (instead of dropping them for having no text) so the streamed
+    // reasoning message can adopt the canonical id — the id the snapshot
+    // converter emits for the same block; handleReasoningEvent stashes the id
+    // without opening a message, so summary-less (store=true) items still
+    // render nothing. Only the first summary part takes the id: later parts
+    // belong to the same item, and reusing its id would mint two messages
+    // with one id.
+    if (block.type === 'reasoning' && Array.isArray(block.summary)) {
+      if (block.summary.length === 0 && block.id) {
+        return { type: 'text', text: '', index: block.index ?? 0, id: String(block.id) };
+      }
+      const part = block.summary[0];
+      if (part && typeof part === 'object' && (part.text || block.id)) {
+        const result: LangGraphReasoning = {
+          type: 'text',
+          text: part.text ?? '',
+          index: part.index ?? 0,
+        };
+        if (block.id && (part.index ?? 0) === 0) {
+          result.id = String(block.id);
+        }
+        return result;
       }
     }
 
