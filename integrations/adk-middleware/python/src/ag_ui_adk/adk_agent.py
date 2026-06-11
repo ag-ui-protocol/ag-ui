@@ -1795,6 +1795,7 @@ class ADKAgent:
 
         user_id = self._get_user_id(input)
         exec_key = (input.thread_id, user_id)
+        session_cache_token = self._session_manager.start_session_read_cache()
 
         try:
             # Emit RUN_STARTED
@@ -1885,16 +1886,23 @@ class ADKAgent:
                 code="EXECUTION_ERROR"
             )
         finally:
-            # Clean up execution if complete and no pending tool calls (HITL scenarios)
-            async with self._execution_lock:
-                if exec_key in self._active_executions:
-                    execution = self._active_executions[exec_key]
-                    execution.is_complete = True
+            try:
+                # The ADK runner can mutate session state without going
+                # through SessionManager, so the parent context's pre-run read
+                # cache is stale by the time this cleanup guard runs.
+                self._session_manager.disable_session_read_cache()
+                # Clean up execution if complete and no pending tool calls (HITL scenarios)
+                async with self._execution_lock:
+                    if exec_key in self._active_executions:
+                        execution = self._active_executions[exec_key]
+                        execution.is_complete = True
 
-                    # Check if session has pending tool calls before cleanup
-                    has_pending = await self._has_pending_tool_calls(input.thread_id, user_id)
-                    if not has_pending:
-                        del self._active_executions[exec_key]
+                        # Check if session has pending tool calls before cleanup
+                        has_pending = await self._has_pending_tool_calls(input.thread_id, user_id)
+                        if not has_pending:
+                            del self._active_executions[exec_key]
+            finally:
+                self._session_manager.stop_session_read_cache(session_cache_token)
     
     @staticmethod
     def _collect_output_schema_agent_names(agent: Any, result: Optional[set] = None) -> set:
@@ -2355,6 +2363,9 @@ class ADKAgent:
                 logger.debug(f"Creating FunctionResponse event with invocation_id={resume_invocation_id}")
 
                 await self._session_manager._session_service.append_event(session, function_response_event)
+                self._session_manager.invalidate_session(
+                    backend_session_id, app_name, user_id
+                )
 
                 # Mark user messages from message_batch as processed
                 if message_batch:
@@ -2487,6 +2498,9 @@ class ADKAgent:
                     )
                     await self._session_manager._session_service.append_event(
                         session, function_response_event
+                    )
+                    self._session_manager.invalidate_session(
+                        backend_session_id, app_name, user_id
                     )
 
                     # Placeholder trigger: a single empty text part. _append_new_message_to_session
@@ -2638,6 +2652,7 @@ class ADKAgent:
 
             logger.debug(f"Calling runner.run_async with session_id={backend_session_id}, has_message={new_message is not None}")
 
+            self._session_manager.disable_session_read_cache()
             async for adk_event in runner.run_async(**run_kwargs):
                 event_invocation_id = getattr(adk_event, 'invocation_id', None)
                 event_author = getattr(adk_event, 'author', 'unknown')
