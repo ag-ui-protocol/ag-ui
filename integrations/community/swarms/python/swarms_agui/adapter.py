@@ -108,6 +108,28 @@ def _capture_baseline(agent: Agent) -> Any:
         return None
 
 
+def _chunk_text(chunk: Any) -> str:
+    """Extract the text delta from a Swarms streaming chunk.
+
+    Swarms passes either a plain string delta or a dict ``token_info`` to the
+    streaming callback depending on the agent's configuration, so both shapes are
+    handled.
+    """
+    if isinstance(chunk, str):
+        return chunk
+    if isinstance(chunk, dict):
+        choices = chunk.get("choices")
+        if choices:
+            delta = choices[0].get("delta") or {}
+            content = delta.get("content")
+            if isinstance(content, str):
+                return content
+        content = chunk.get("content")
+        if isinstance(content, str):
+            return content
+    return ""
+
+
 async def _event_stream(
     agent: Agent,
     body: RunAgentInput,
@@ -127,43 +149,105 @@ async def _event_stream(
         )
     )
 
-    # Rebuilding the shared agent's memory and running it must not interleave
-    # with another in-flight request, so the whole reset->seed->run section is
-    # serialized per agent. ``agent.run`` is also blocking (it drives the model),
-    # so it is offloaded to a worker thread to keep the event loop responsive.
-    # We wait for the run to succeed *before* opening the text message, so a
-    # failure surfaces as a clean RUN_ERROR rather than leaving an unterminated
-    # TEXT_MESSAGE_* sequence on the wire.
-    async with lock:
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    def on_chunk(chunk: Any) -> None:
+        text = _chunk_text(chunk)
+        if text:
+            loop.call_soon_threadsafe(queue.put_nowait, ("chunk", text))
+
+    def run_blocking(task: str) -> None:
+        # ``agent.run`` is blocking (it drives the model) and only invokes the
+        # streaming callback when the agent has streaming enabled; otherwise it
+        # simply returns the full response, which the fallback below emits as a
+        # single chunk.
         try:
-            task = _rebuild_memory(agent, baseline, body.messages)
-            result = await asyncio.to_thread(agent.run, task)
+            result = agent.run(task, streaming_callback=on_chunk)
+            loop.call_soon_threadsafe(queue.put_nowait, ("result", result))
         except Exception as exc:  # pylint: disable=broad-exception-caught
+            loop.call_soon_threadsafe(queue.put_nowait, ("error", exc))
+        finally:
+            loop.call_soon_threadsafe(queue.put_nowait, ("done", None))
+
+    message_open = False
+    streamed: list[str] = []
+    result: Any = None
+    error: Exception | None = None
+
+    # Rebuilding the shared agent's memory and running it must not interleave
+    # with another in-flight request, so the run is serialized per agent. Text
+    # deltas are forwarded as they arrive; the message is opened on the first
+    # delta so an error before any output surfaces as a clean RUN_ERROR rather
+    # than leaving an unterminated TEXT_MESSAGE_* sequence on the wire.
+    async with lock:
+        task = _rebuild_memory(agent, baseline, body.messages)
+        asyncio.ensure_future(asyncio.to_thread(run_blocking, task))
+        while True:
+            kind, payload = await queue.get()
+            if kind == "chunk":
+                if not message_open:
+                    message_open = True
+                    yield encoder.encode(
+                        TextMessageStartEvent(
+                            type=EventType.TEXT_MESSAGE_START,
+                            message_id=message_id,
+                            role="assistant",
+                        )
+                    )
+                streamed.append(payload)
+                yield encoder.encode(
+                    TextMessageContentEvent(
+                        type=EventType.TEXT_MESSAGE_CONTENT,
+                        message_id=message_id,
+                        delta=payload,
+                    )
+                )
+            elif kind == "result":
+                result = payload
+            elif kind == "error":
+                error = payload
+            elif kind == "done":
+                break
+
+    if error is not None:
+        if message_open:
             yield encoder.encode(
-                RunErrorEvent(
-                    type=EventType.RUN_ERROR,
-                    message=str(exc),
-                    code="SWARMS_RUN_ERROR",
+                TextMessageEndEvent(
+                    type=EventType.TEXT_MESSAGE_END,
+                    message_id=message_id,
                 )
             )
-            return
-
-    response = result if isinstance(result, str) else str(result)
-
-    yield encoder.encode(
-        TextMessageStartEvent(
-            type=EventType.TEXT_MESSAGE_START,
-            message_id=message_id,
-            role="assistant",
+        yield encoder.encode(
+            RunErrorEvent(
+                type=EventType.RUN_ERROR,
+                message=str(error),
+                code="SWARMS_RUN_ERROR",
+            )
         )
-    )
-    yield encoder.encode(
-        TextMessageContentEvent(
-            type=EventType.TEXT_MESSAGE_CONTENT,
-            message_id=message_id,
-            delta=response,
+        return
+
+    response = result if isinstance(result, str) else "".join(streamed)
+    if not response and result is not None:
+        response = str(result)
+
+    # Fallback: the agent did not stream (streaming disabled), so emit the full
+    # response as a single delta.
+    if not message_open:
+        yield encoder.encode(
+            TextMessageStartEvent(
+                type=EventType.TEXT_MESSAGE_START,
+                message_id=message_id,
+                role="assistant",
+            )
         )
-    )
+        yield encoder.encode(
+            TextMessageContentEvent(
+                type=EventType.TEXT_MESSAGE_CONTENT,
+                message_id=message_id,
+                delta=response,
+            )
+        )
     yield encoder.encode(
         TextMessageEndEvent(
             type=EventType.TEXT_MESSAGE_END,

@@ -47,14 +47,23 @@ On each request it:
    blocking, so it is offloaded to a worker thread (`asyncio.to_thread`) to keep
    the event loop responsive.
 3. Emits `TEXT_MESSAGE_START`
-4. Emits `TEXT_MESSAGE_CONTENT` with the full response
+4. Emits `TEXT_MESSAGE_CONTENT` for each token as the agent streams it
 5. Emits `TEXT_MESSAGE_END`
 6. Emits `MESSAGES_SNAPSHOT` with the updated message list
 7. Emits `RUN_FINISHED`
 
-If `agent.run` raises, a `RUN_ERROR` event is emitted instead. Because the text
-message is only opened *after* the agent call succeeds, an error never leaves an
+If `agent.run` raises, a `RUN_ERROR` event is emitted instead. The message is
+only opened on the first token, so an error before any output never leaves an
 unterminated message on the wire.
+
+## Streaming
+
+If the agent is created with `streaming_on=True`, the adapter bridges Swarms'
+`streaming_callback` into incremental `TEXT_MESSAGE_CONTENT` events, so tokens
+appear in the UI as they are generated. If streaming is disabled (the default),
+the full response is emitted as a single `TEXT_MESSAGE_CONTENT` event instead —
+no configuration change is required either way. The example server enables
+streaming.
 
 ## Conversation history
 

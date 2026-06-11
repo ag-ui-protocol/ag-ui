@@ -97,14 +97,16 @@ class TestEventSequence:
         payload["messages"].append({"id": "msg-2", "role": "user", "content": "Second message"})
         client = _make_app(mock_agent)
         client.post("/", json=payload)
-        mock_agent.run.assert_called_once_with("Second message")
+        assert mock_agent.run.call_count == 1
+        assert mock_agent.run.call_args.args[0] == "Second message"
 
     def test_empty_messages_passes_empty_string(self, mock_agent):
         payload = _run_payload()
         payload["messages"] = []
         client = _make_app(mock_agent)
         client.post("/", json=payload)
-        mock_agent.run.assert_called_once_with("")
+        assert mock_agent.run.call_count == 1
+        assert mock_agent.run.call_args.args[0] == ""
 
 
 class TestErrorHandling:
@@ -159,7 +161,7 @@ class _FakeAgent:
         self.seen_task = None
         self.seen_history = None
 
-    def run(self, task):
+    def run(self, task, streaming_callback=None, **kwargs):
         self.seen_task = task
         # Snapshot what the agent would send to the model for this turn.
         self.seen_history = self.short_memory.to_dict()
@@ -209,6 +211,57 @@ class TestConversationHistory:
         contents = [m["content"] for m in agent.seen_history]
         assert "first turn" not in contents
         assert agent.seen_task == "second turn"
+
+
+class _StreamingAgent:
+    """Fake agent that invokes the streaming callback with the given chunks."""
+
+    user_name = "User"
+    agent_name = "Assistant"
+
+    def __init__(self, chunks, result=None):
+        self.short_memory = _FakeConversation([{"role": "System", "content": "sys"}])
+        self._chunks = chunks
+        self._result = result
+
+    def run(self, task, streaming_callback=None, **kwargs):
+        for chunk in self._chunks:
+            if streaming_callback is not None:
+                streaming_callback(chunk)
+        return self._result if self._result is not None else "".join(self._chunks)
+
+
+class TestStreaming:
+    def test_string_deltas_become_separate_content_events(self):
+        agent = _StreamingAgent(["Hel", "lo ", "there"])
+        app = FastAPI()
+        add_swarms_fastapi_endpoint(app, agent, path="/")
+        events = _parse_sse(TestClient(app).post("/", json=_run_payload()).text)
+
+        deltas = [e["delta"] for e in events if e["type"] == "TEXT_MESSAGE_CONTENT"]
+        assert deltas == ["Hel", "lo ", "there"]
+
+        types = [e["type"] for e in events]
+        assert types.index("TEXT_MESSAGE_START") < types.index("TEXT_MESSAGE_CONTENT")
+        assert types.index("TEXT_MESSAGE_CONTENT") < types.index("TEXT_MESSAGE_END")
+
+        snapshot = next(e for e in events if e["type"] == "MESSAGES_SNAPSHOT")
+        assert snapshot["messages"][-1]["content"] == "Hello there"
+
+    def test_dict_token_chunks_are_handled(self):
+        agent = _StreamingAgent(
+            [
+                {"choices": [{"delta": {"content": "Hi "}}]},
+                {"choices": [{"delta": {"content": "Sam"}}]},
+            ],
+            result="Hi Sam",
+        )
+        app = FastAPI()
+        add_swarms_fastapi_endpoint(app, agent, path="/")
+        events = _parse_sse(TestClient(app).post("/", json=_run_payload()).text)
+
+        deltas = [e["delta"] for e in events if e["type"] == "TEXT_MESSAGE_CONTENT"]
+        assert deltas == ["Hi ", "Sam"]
 
 
 class TestMultiplePaths:

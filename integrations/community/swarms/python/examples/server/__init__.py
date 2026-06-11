@@ -29,6 +29,9 @@ def build_agent() -> Agent:
         # Return only the agent's final reply (not the whole transcript), which
         # is what the adapter streams back to the client.
         output_type="final",
+        # Stream tokens as they are generated so the adapter can forward
+        # incremental TEXT_MESSAGE_CONTENT events to the client.
+        streaming_on=True,
         autosave=False,
         verbose=False,
         print_on=False,
