@@ -127,6 +127,90 @@ class TestErrorHandling:
         assert "RUN_FINISHED" not in types
 
 
+class _FakeConversation:
+    """Minimal stand-in for a Swarms ``Conversation``."""
+
+    def __init__(self, history=None):
+        self.history = list(history or [])
+
+    def clear(self):
+        self.history = []
+
+    def batch_add(self, messages):
+        self.history.extend(messages)
+
+    def add(self, role, content):
+        self.history.append({"role": role, "content": content})
+
+    def to_dict(self):
+        return [dict(m) for m in self.history]
+
+
+class _FakeAgent:
+    """Fake Swarms agent that records the memory it sees when ``run`` is called."""
+
+    user_name = "User"
+    agent_name = "Assistant"
+
+    def __init__(self):
+        self.short_memory = _FakeConversation(
+            [{"role": "System", "content": "You are helpful."}]
+        )
+        self.seen_task = None
+        self.seen_history = None
+
+    def run(self, task):
+        self.seen_task = task
+        # Snapshot what the agent would send to the model for this turn.
+        self.seen_history = self.short_memory.to_dict()
+        return f"reply to: {task}"
+
+
+class TestConversationHistory:
+    def test_full_history_is_replayed_into_agent(self):
+        agent = _FakeAgent()
+        app = FastAPI()
+        add_swarms_fastapi_endpoint(app, agent, path="/")
+        client = TestClient(app)
+
+        payload = _run_payload()
+        payload["messages"] = [
+            {"id": "m1", "role": "user", "content": "My name is Sam"},
+            {"id": "m2", "role": "assistant", "content": "Nice to meet you, Sam"},
+            {"id": "m3", "role": "user", "content": "What is my name?"},
+        ]
+        resp = client.post("/", json=payload)
+        assert resp.status_code == 200
+
+        # The latest user message is the task...
+        assert agent.seen_task == "What is my name?"
+        # ...and the prior turns were replayed as context (system prompt + the
+        # two earlier turns), without the latest message being duplicated.
+        rendered = agent.seen_history
+        roles_contents = [(m["role"], m["content"]) for m in rendered]
+        assert ("System", "You are helpful.") in roles_contents
+        assert ("User", "My name is Sam") in roles_contents
+        assert ("Assistant", "Nice to meet you, Sam") in roles_contents
+        assert sum(1 for r, c in roles_contents if c == "What is my name?") == 0
+
+    def test_memory_resets_between_requests(self):
+        agent = _FakeAgent()
+        app = FastAPI()
+        add_swarms_fastapi_endpoint(app, agent, path="/")
+        client = TestClient(app)
+
+        first = _run_payload("first turn")
+        client.post("/", json=first)
+
+        # A second, unrelated request must not carry the first turn's context.
+        second = _run_payload("second turn")
+        client.post("/", json=second)
+
+        contents = [m["content"] for m in agent.seen_history]
+        assert "first turn" not in contents
+        assert agent.seen_task == "second turn"
+
+
 class TestMultiplePaths:
     def test_custom_path(self, mock_agent):
         app = FastAPI()
