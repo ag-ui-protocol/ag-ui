@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { BaseEvent, EventType, RunAgentInput } from "@ag-ui/client";
 import { Observable, firstValueFrom, toArray } from "rxjs";
 import { A2UIMiddleware, A2UIActivityType } from "../src/index";
+import { MAX_A2UI_ATTEMPTS } from "@ag-ui/a2ui-toolkit";
 import { AbstractAgent } from "@ag-ui/client";
 
 // Minimal mock agent that replays a fixed event sequence.
@@ -135,9 +136,9 @@ describe("A2UI middleware — unified generation lifecycle gate (OSS-162)", () =
     const events = await collect(mw.run(input(), new MockAgent(streamRender([ROOT, BAD_CARD]))));
     const retrying = withStatus(events, "retrying");
     expect(retrying.length).toBeGreaterThanOrEqual(1);
-    // First failure → we're heading into attempt 2 of the default 3.
+    // First failure → we're heading into attempt 2 of the default cap.
     expect((retrying[0] as any).content.attempt).toBe(2);
-    expect((retrying[0] as any).content.maxAttempts).toBe(3);
+    expect((retrying[0] as any).content.maxAttempts).toBe(MAX_A2UI_ATTEMPTS);
   });
 
   it("keeps the retry snapshot stable as the rejected attempt keeps streaming (no 1/N, errors persist)", async () => {
@@ -217,7 +218,7 @@ describe("A2UI middleware — unified generation lifecycle gate (OSS-162)", () =
     const failed = withStatus(events, "failed");
     expect(failed.length).toBe(1);
     // Empty attempts array → fall back to the toolkit default cap.
-    expect((failed[0] as any).content.maxAttempts).toBe(3);
+    expect((failed[0] as any).content.maxAttempts).toBe(MAX_A2UI_ATTEMPTS);
   });
 
   it("detects a DOUBLE-SERIALIZED exhausted envelope in the tool result", async () => {
