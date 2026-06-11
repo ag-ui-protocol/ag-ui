@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **PERFORMANCE**: Cache session reads per execution to cut redundant `get_session` round-trips (#1880, #1890, thanks @he-yufeng)
+  - `SessionManager` now memoizes session reads in a short-lived, execution-local cache so repeated state accessors within one turn reuse a single fetch instead of re-pulling the full session (and event history) from the backing `SessionService` on every call — a notable latency win on remote backends like `VertexAiSessionService`. The cache is invalidated on writes and deliberately disabled before the runner and before the post-run HITL cleanup guard, where ADK can mutate session state outside `SessionManager`.
 - **CHORE**: Update the default model for the live tests to `gemini-3.5-flash`
   - `gemini-2.0-flash` reached its shutdown date (2026-06-01) and `gemini-2.5-flash` is scheduled to shut down (2026-10-16), so the live/integration tests and documentation snippets now target the current stable flash GA, `gemini-3.5-flash`. The large file count is purely this model-string sweep — there are no library or runtime behavior changes.
   - The test model is centralized in `tests/constants.py` as `LIVE_TEST_MODEL` (env-overridable via `ADK_TEST_MODEL`) so future cutovers are a one-line change instead of a sweep across every test file. A companion `LIVE_TEST_PRO_MODEL` (env-overridable via `ADK_TEST_PRO_MODEL`) holds the high-reasoning model at `gemini-2.5-pro` for now.
