@@ -10,6 +10,8 @@ from .backend_tool_rendering import app as backend_tool_rendering_app
 from .agentic_chat_reasoning import app as agentic_chat_reasoning_app
 from .a2ui_dynamic_schema import app as a2ui_dynamic_schema_app
 from .a2ui_recovery import app as a2ui_recovery_app
+from .google_a2ui_dynamic_schema import app as google_a2ui_dynamic_schema_app
+from .google_a2ui_recovery import app as google_a2ui_recovery_app
 
 __all__ = [
     "agentic_chat_app",
@@ -22,4 +24,6 @@ __all__ = [
     "backend_tool_rendering_app",
     "a2ui_dynamic_schema_app",
     "a2ui_recovery_app",
+    "google_a2ui_dynamic_schema_app",
+    "google_a2ui_recovery_app",
 ]

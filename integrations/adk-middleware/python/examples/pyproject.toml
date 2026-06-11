@@ -15,7 +15,14 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "pydantic>=2.0.0",
     "ag_ui_adk",
-    "google-adk>=1.23.0",
+    "google-adk>=1.28.1",
+    # Proof-point (Google A2UI Agent SDK build): generation/validation via Google's
+    # SDK instead of ag-ui-a2ui-toolkit. NOTE: a2ui-agent-sdk 0.2.4 has an IMPORT-TIME
+    # A2A coupling (its ADK toolset module imports a2a.types.DataPart at top level) and
+    # is not yet compatible with a2a-sdk 1.x, which restructured a2a.types. Pin a2a-sdk
+    # to the 0.x line so the toolset imports. (A2A transport itself is unused here.)
+    "a2ui-agent-sdk>=0.2.4",
+    "a2a-sdk>=0.3.0,<1.0.0",
 ]
 
 [project.scripts]

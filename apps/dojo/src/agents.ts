@@ -29,6 +29,7 @@ import { Ag2Agent } from "@ag-ui/ag2";
 import { LangroidHttpAgent } from "@ag-ui/langroid";
 import { WatsonxAgent } from "@ag-ui/watsonx";
 import { A2UIMiddleware } from "@ag-ui/a2ui-middleware";
+import { GoogleA2uiShim } from "./google-a2ui-shim";
 
 const envVars = getEnvVars();
 
@@ -57,8 +58,8 @@ export const agentsIntegrations = {
     agentic_chat: new ServerStarterAgent({ url: envVars.serverStarterUrl }),
   }),
 
-  "adk-middleware": async () =>
-    mapAgents(
+  "adk-middleware": async () => ({
+    ...mapAgents(
       (path) => new ADKAgent({ url: `${envVars.adkMiddlewareUrl}/${path}` }),
       {
         agentic_chat: "chat",
@@ -72,6 +73,40 @@ export const agentsIntegrations = {
         a2ui_recovery: "adk-a2ui-recovery",
       },
     ),
+    // Proof-point: A2UI generated/validated by Google's a2ui-agent-sdk (tool
+    // `send_a2ui_json_to_client`) instead of our ag-ui-a2ui-toolkit. These are wired
+    // explicitly (NOT via the route's a2ui.agents auto-attach) so we can: disable the
+    // middleware's own tool injection, point it at Google's tool name, and run the
+    // GoogleA2uiShim (innermost) to normalize {validated_a2ui_json} -> {a2ui_operations}.
+    google_a2ui_dynamic_schema: (() => {
+      const agent = new ADKAgent({
+        url: `${envVars.adkMiddlewareUrl}/adk-google-a2ui-dynamic-schema`,
+      });
+      agent.use(
+        new A2UIMiddleware({
+          injectA2UITool: false,
+          a2uiToolNames: ["send_a2ui_json_to_client"],
+          defaultCatalogId: "https://a2ui.org/demos/dojo/dynamic_catalog.json",
+        }),
+        new GoogleA2uiShim(),
+      );
+      return agent;
+    })(),
+    google_a2ui_recovery: (() => {
+      const agent = new ADKAgent({
+        url: `${envVars.adkMiddlewareUrl}/adk-google-a2ui-recovery`,
+      });
+      agent.use(
+        new A2UIMiddleware({
+          injectA2UITool: false,
+          a2uiToolNames: ["send_a2ui_json_to_client"],
+          defaultCatalogId: "https://a2ui.org/demos/dojo/dynamic_catalog.json",
+        }),
+        new GoogleA2uiShim(),
+      );
+      return agent;
+    })(),
+  }),
 
   "server-starter-all-features": async () =>
     mapAgents(
