@@ -394,6 +394,9 @@ export const agentsIntegrations = {
         predictive_state_updates: "predictive_state_updates",
         a2ui_fixed_schema: "a2ui_fixed_schema",
         a2ui_dynamic_schema: "a2ui_dynamic_schema",
+        // Zero-config A2UI: plain chat endpoint; the runtime-applied middleware
+        // injects render_a2ui (streamed args -> progressive paint).
+        a2ui_advanced: "a2ui_chat",
         a2ui_recovery: "a2ui_recovery",
       },
     ),

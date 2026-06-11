@@ -43,6 +43,12 @@ async function getHandler(integrationId: string) {
       // tools that carry their own catalog in the result envelope, so a single
       // catalog id here is correct for every streaming agent.
       defaultCatalogId: "https://a2ui.org/demos/dojo/dynamic_catalog.json",
+      // Zero-configuration path for the Agent Framework (.NET) integration: the
+      // middleware injects the render_a2ui tool + usage guidelines; the server
+      // binds incoming client tools to the model automatically, so the agent
+      // needs no A2UI-specific code (a2ui_advanced maps to the plain a2ui_chat
+      // endpoint there).
+      ...(integrationId === "microsoft-agent-framework-dotnet" ? { injectA2UITool: true } : {}),
     },
   });
 
