@@ -2405,6 +2405,26 @@ class ADKAgent:
 
                 function_response_content = types.Content(parts=function_response_parts, role='user')
 
+                # ag-ui#1839: HITL confirmation responses must be the LAST
+                # user event in the session so ADK's
+                # _RequestConfirmationLlmRequestProcessor — which reverse-scans
+                # for the last user event and returns on the first one lacking
+                # function_responses — can re-execute the original tool. The
+                # pre-append + empty-text-placeholder workaround below makes the
+                # placeholder the trailing user event, which blinds that
+                # processor (the FunctionResponse it needs sits one event
+                # earlier). ``adk_request_confirmation`` is a long-running tool
+                # that PAUSES (not ends) the invocation, so routing it through
+                # the direct ``new_message`` path does NOT hit the
+                # ``end_of_agent`` early-return in _resolve_invocation_id's
+                # resume path that motivated the #1534 workaround for
+                # turn-ending client/frontend tools.
+                is_confirmation_resume = any(
+                    part.function_response is not None
+                    and part.function_response.name == 'adk_request_confirmation'
+                    for part in function_response_parts
+                )
+
                 # ag-ui#1669: the #1534 pre-append workaround is correct for
                 # LlmAgent roots (and composite orchestrators built from
                 # LlmAgent), but breaks ADK 2.0 ``Workflow`` roots. Workflows
@@ -2419,6 +2439,7 @@ class ADKAgent:
                     _ADK_OVERRIDES_INVOCATION_ID
                     and self._is_adk_resumable()
                     and not self._root_agent_is_workflow()
+                    and not is_confirmation_resume
                 ):
                     # ADK with _resolve_invocation_id (~1.28+) routing, non-Workflow root:
                     #
@@ -2540,8 +2561,12 @@ class ADKAgent:
 
             # Share the translator's emitted IDs set with proxy toolsets so
             # ClientProxyTool can skip emission when the translator already handled it.
+            # Also share the translator's name→[partial IDs] ledger so the proxy can
+            # suppress the cross-path twin when SSE streaming gives the partial event
+            # and the proxy invocation different IDs (#1168) — matched by tool name.
             for toolset in client_proxy_toolsets:
                 toolset._translator_emitted_tool_call_ids = event_translator.emitted_tool_call_ids
+                toolset._translator_lro_emitted_ids_by_name = event_translator.lro_emitted_ids_by_name
 
             try:
                 # Session was already obtained from _ensure_session_exists above

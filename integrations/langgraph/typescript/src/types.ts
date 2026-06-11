@@ -137,4 +137,9 @@ export interface LangGraphReasoning {
   text: string;
   index: number;
   signature?: string;
+  // The provider's canonical id for the reasoning item (e.g. OpenAI
+  // `rs_…`), when the stream carries one. Used as the AG-UI reasoning
+  // message id so the streamed message reconciles with the snapshot copy
+  // emitted under the same id.
+  id?: string;
 }
