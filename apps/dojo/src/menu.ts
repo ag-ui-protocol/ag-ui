@@ -169,6 +169,8 @@ export const menuIntegrations = [
       "tool_based_generative_ui",
       "a2ui_dynamic_schema",
       "a2ui_recovery",
+      "google_a2ui_dynamic_schema",
+      "google_a2ui_recovery",
     ],
   },
   {

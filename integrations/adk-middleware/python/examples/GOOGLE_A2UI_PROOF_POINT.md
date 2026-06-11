@@ -131,18 +131,17 @@ Against Google's real `A2uiValidator` (dojo dynamic catalog, `remove_strict_vali
 - `apps/dojo/src/agents.ts` — `google_a2ui_dynamic_schema` / `google_a2ui_recovery`
   wired with `.use(A2UIMiddleware({injectA2UITool:false, a2uiToolNames:[…]}), shim)`
   (kept OUT of the route's `a2ui.agents` auto-attach list).
+- Dojo routes: `config.ts` + `menu.ts` (under `adk-middleware`) +
+  `types/integration.ts` (`Feature` union) entries, and the two feature pages
+  `app/[integrationId]/feature/(v2)/google_a2ui_{dynamic_schema,recovery}/page.tsx`
+  (+ `style.css`) — same dojo dynamic catalog + suggestions as the toolkit demos.
 
 Verified in-sandbox: example server imports (89 routes); Google validator pass/fail
-behavior.
+behavior; dojo import symbols resolve. (Full dojo build/typecheck + browser e2e run
+outside the sandbox.)
 
 ## What remains
-Mechanical dojo wiring (mirrors the OSS-158 demos; run/verify outside the sandbox):
-- `apps/dojo/src/config.ts` — feature entries for `google_a2ui_dynamic_schema` /
-  `google_a2ui_recovery`.
-- `apps/dojo/src/menu.ts` — add both ids to the `adk-middleware` feature list.
-- `apps/dojo/src/app/[integrationId]/feature/(v2)/google_a2ui_{dynamic_schema,recovery}/`
-  — `page.tsx` (+ `style.css`), copyable from the existing a2ui pages (same dynamic
-  catalog + suggestions).
+Optional (deferred; run/verify outside the sandbox):
 - `apps/dojo/e2e/google-a2ui-adk-fixtures.ts` — aimock fixtures: Gemini calling
   `send_a2ui_json_to_client` with `{a2ui_json:"…"}`; dynamic_schema → valid; recovery →
   first call invalid (tool `{error}`) then valid (model-driven retry); exhaust → always

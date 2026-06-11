@@ -117,6 +117,18 @@ export const featureConfig: FeatureConfig[] = [
     description: "Automatic A2UI error recovery — invalid surfaces are regenerated (no wipe), with a tasteful hard-failure fallback",
     tags: ["A2UI", "Error Recovery", "Streaming"],
   }),
+  createFeatureConfig({
+    id: "google_a2ui_dynamic_schema",
+    name: "A2UI Dynamic Schema (Google SDK)",
+    description: "Proof-point: dynamic A2UI generated/validated by Google's a2ui-agent-sdk (send_a2ui_json_to_client), painted via the CopilotKit A2UI middleware",
+    tags: ["A2UI", "Generative UI", "Dynamic Schema", "Google SDK"],
+  }),
+  createFeatureConfig({
+    id: "google_a2ui_recovery",
+    name: "A2UI Error Recovery (Google SDK)",
+    description: "Proof-point: A2UI error handling with Google's a2ui-agent-sdk — model-driven (unbounded) retry, no bounded recovery loop or hard-failure envelope",
+    tags: ["A2UI", "Error Recovery", "Google SDK"],
+  }),
 ];
 
 export default featureConfig;
