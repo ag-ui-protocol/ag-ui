@@ -591,17 +591,34 @@ export const defaultApplyEvents = (
             const { messages: newMessages } = event as MessagesSnapshotEvent;
 
             // Edit-based merge: update existing messages with snapshot data while
-            // preserving activity and reasoning messages (which the backend
-            // doesn't include in the snapshot).
+            // preserving client-only messages the backend leaves out of the
+            // snapshot.
             const snapshotMap = new Map(newMessages.map((m) => [m.id, m]));
 
-            // Step 1 + 2: Keep activity/reasoning messages as-is, keep messages
-            // present in the snapshot (replaced with snapshot version), drop
-            // everything else.
-            const isClientOnlyRole = (role: string) => role === "activity" || role === "reasoning";
+            // `activity` messages are always client-only — backends never include
+            // them in MESSAGES_SNAPSHOT — so they are always preserved.
+            //
+            // `reasoning` messages are only sometimes client-only. Most backends
+            // never include reasoning in the snapshot (it exists purely as
+            // streamed REASONING_* events), so dropping local reasoning here
+            // would lose it. But a backend that round-trips reasoning (e.g.
+            // LangGraph re-deriving it from checkpointed content blocks)
+            // re-delivers the streamed reasoning under its own canonical id —
+            // message ids are generally NOT stable between streamed events and
+            // the snapshot. Preserving the streamed copy next to the snapshot
+            // copy would render the same reasoning twice. So when the snapshot
+            // itself carries reasoning, treat it as the source of truth for
+            // reasoning messages too and apply the normal replace semantics.
+            const snapshotHasReasoning = newMessages.some((m) => m.role === "reasoning");
+            const isPreservedClientOnly = (m: Message) =>
+              m.role === "activity" || (m.role === "reasoning" && !snapshotHasReasoning);
+
+            // Step 1 + 2: Keep preserved client-only messages as-is, keep
+            // messages present in the snapshot (replaced with snapshot version),
+            // drop everything else.
             messages = messages
-              .filter((m) => isClientOnlyRole(m.role) || snapshotMap.has(m.id))
-              .map((m) => (isClientOnlyRole(m.role) ? m : snapshotMap.get(m.id)!));
+              .filter((m) => isPreservedClientOnly(m) || snapshotMap.has(m.id))
+              .map((m) => (isPreservedClientOnly(m) ? m : snapshotMap.get(m.id)!));
 
             // Step 3: Append messages from the snapshot that we don't have yet.
             const existingIds = new Set(messages.map((m) => m.id));

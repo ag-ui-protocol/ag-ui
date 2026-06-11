@@ -469,16 +469,40 @@ def resolve_reasoning_content(chunk: Any) -> LangGraphReasoning | None:
                 return result
 
         # OpenAI Responses API v1 format: { type: "reasoning", summary: [{ text: "..." }] }
-        if block_type == "reasoning" and block.get("summary"):
+        #
+        # The reasoning item's canonical id (OpenAI ``rs_…``) only travels on
+        # text-less chunks: the `response.output_item.added` chunk
+        # ({ id, summary: [] }) and — depending on the langchain-openai
+        # version — the `…summary_part.added` chunk ({ id, summary:
+        # [{ text: "" }] }). The `…summary_text.delta` chunks carry text but
+        # no id. Surface the id carriers (instead of dropping them for having
+        # no text) so the streamed reasoning message can adopt the canonical
+        # id — the id the snapshot converter
+        # (_reasoning_block_to_agui_message) emits for the same block;
+        # handle_reasoning_event stashes the id without opening a message, so
+        # summary-less (store=true) items still render nothing. Only the
+        # first summary part takes the id: later parts belong to the same
+        # item, and reusing its id would mint two messages with one id.
+        if block_type == "reasoning" and isinstance(block.get("summary"), list):
             summaries = block["summary"]
-            if summaries and isinstance(summaries, list) and summaries[0]:
+            if not summaries and block.get("id"):
+                return LangGraphReasoning(
+                    type="text",
+                    text="",
+                    index=block.get("index", 0),
+                    id=str(block["id"]),
+                )
+            if summaries and isinstance(summaries[0], dict):
                 data = summaries[0]
-                if data.get("text"):
-                    return LangGraphReasoning(
+                if data.get("text") or block.get("id"):
+                    result = LangGraphReasoning(
                         type="text",
-                        text=data["text"],
+                        text=data.get("text") or "",
                         index=data.get("index", 0)
                     )
+                    if block.get("id") and data.get("index", 0) == 0:
+                        result["id"] = str(block["id"])
+                    return result
 
         # Bedrock Converse API format: { type: "reasoning_content", reasoning_content: { type: "text", text: "..." } }
         if block_type == "reasoning_content" and isinstance(block.get("reasoning_content"), dict):

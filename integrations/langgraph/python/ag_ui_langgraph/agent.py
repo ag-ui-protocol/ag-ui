@@ -1499,6 +1499,17 @@ class LangGraphAgent:
             )
             return
 
+        # A text-less chunk is still meaningful when it carries the provider's
+        # canonical reasoning id (the `response.output_item.added` /
+        # `…summary_part.added` chunks): stash the id so the first text delta
+        # opens the reasoning message under it, WITHOUT opening a message here
+        # — a summary-less (store=true) reasoning item must keep rendering
+        # nothing.
+        if not reasoning_data["text"]:
+            if reasoning_data.get("id"):
+                self.active_run["pending_reasoning_id"] = reasoning_data["id"]
+            return
+
         reasoning_step_index = reasoning_data.get("index", 0)
 
         if (self.active_run.get("reasoning_process") and
@@ -1522,7 +1533,17 @@ class LangGraphAgent:
             self.active_run["reasoning_process"] = None
 
         if not self.active_run.get("reasoning_process"):
-            message_id = str(uuid.uuid4())
+            # Prefer the provider's canonical reasoning id (e.g. OpenAI
+            # ``rs_…``) when the stream carried one: the snapshot converter
+            # (_reasoning_block_to_agui_message) re-emits this same reasoning
+            # under that id, and only a matching id lets the client reconcile
+            # the streamed copy with the snapshot copy instead of rendering
+            # both.
+            message_id = (
+                reasoning_data.get("id")
+                or self.active_run.pop("pending_reasoning_id", None)
+                or str(uuid.uuid4())
+            )
             yield self._dispatch_event(
                 ReasoningStartEvent(
                     type=EventType.REASONING_START,

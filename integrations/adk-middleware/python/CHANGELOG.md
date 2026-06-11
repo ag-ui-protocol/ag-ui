@@ -16,6 +16,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **FIX**: HITL confirmation on a standalone `LlmAgent` root now re-executes the
+  original tool after the user confirms (#1839). Previously, for resumable
+  `LlmAgent` roots the #1534 pre-append workaround substituted `new_message`
+  with an empty-text placeholder that became the last user event in the
+  session. ADK's `_RequestConfirmationLlmRequestProcessor` reverse-scans for
+  the last user event and bails on the first one lacking `function_responses`,
+  so it never reached the pre-appended confirmation `FunctionResponse` — the
+  LLM was invoked instead and hallucinated an "awaiting confirmation" reply.
+  (The same workaround also hard-crashed `SequentialAgent`/`LoopAgent`
+  composites of `LlmAgent`s on confirmation with "No agent to transfer to".)
+  Confirmation responses (`adk_request_confirmation`) are now routed through
+  the direct `new_message` path — the same path ADK 2.0 Workflow roots already
+  take — making the `FunctionResponse` the trailing user event the processor
+  expects. Because `adk_request_confirmation` is a long-running tool that pauses
+  rather than ends the invocation, this does not re-trigger the `end_of_agent`
+  early-return that motivated the #1534 workaround for turn-ending
+  client/frontend tools. This is the `LlmAgent` cousin of the Workflow-root fix
+  in #1669; true ADK 2.0 Workflow roots are unaffected (they already bypass the
+  workaround).
+- **FIX**: Duplicate HITL tool-call emission under SSE streaming (long-running client tools)
+  - With SSE streaming (the default), ADK can deliver the *same logical* long-running client tool call **several times** — a streaming chunk (`partial=True`), an aggregated partial, the persisted final (`partial=False`) — and ADK separately **invokes the `ClientProxyTool`**, with `populate_client_function_call_id` assigning a **different ID to every replay** (#1168). Each replay produced its own `TOOL_CALL_START/ARGS/END` trio because every existing dedupe was keyed by tool-call ID — the dojo rendered the Human-in-the-Loop card **twice** (two cards, two different `adk-…` IDs visible in the event stream).
+  - **Translator** (`translate_lro_function_calls`): replays are now suppressed via a **high-water mark per tool name** — the Nth same-name LRO call *within one event* only emits if fewer than N calls for that name have been emitted this run (ledger: `lro_emitted_ids_by_name`). This uniformly covers second-partial replays, aggregated partials, and the final, regardless of `partial` flags. Genuinely parallel same-name calls arrive as multiple parts of *one* event, exceed the mark, and still emit individually; a later same-name event cannot be a real second call because an LRO pauses the invocation.
+  - **ClientProxyTool**: consults the translator's same ledger (shared into the proxy toolsets like the emitted-ID set already is) and suppresses its invocation when it is the positional twin of an already-streamed emission.
+  - The positional (FIFO) pairing is the same one `_extract_lro_id_remap` uses for ID remapping, so result-routing is unaffected; the non-streaming (final-only) path still emits normally.
+  - Reproduced deterministically with scripted `BaseLlm` streams driving the real runner + proxy + translator for all three shapes (`partial→final`, `partial→partial→final`, `partial→partial` — the "last event is partial" shape). End-to-end regression `TestLroNoDuplicateToolCallEndToEnd` is parametrized over all three; translator-level tests cover twin/second-partial/parallel/final-only/reset.
+  - Reproduced deterministically at the translator level (partial id-A then final id-B for one logical call → previously two `TOOL_CALL_START`, now one). New regression tests in `tests/test_lro_sse_id_remap.py` cover the partial→final twin, parallel same-name calls (no over-suppression), final-only emission, and reset.
+  - Also verified **live against google-adk 1.23.0 + Vertex**, where the partial(id-A)/final(id-B) replay occurs on **every** HITL turn (the unfixed translator emitted both → 100% duplicate cards in the dojo); with this fix the same stack emits exactly one. On google-adk 2.x the replay shape does not occur on this path.
+  - `examples/uv.lock` refreshed: it pinned `google-adk==1.23.0` (plus a similarly stale dependency set), so `uv run dev` served the demo on an ADK whose event shapes differ from the 2.x the middleware is developed and tested against — making this bug deterministic for example-server users yet invisible in development. The lock now resolves `google-adk 2.2.0` / `google-genai 2.8.0` (the old `aiohttp` pin also broke google-genai 2.8's SSE reader and was refreshed along with the rest).
 - **FIX**: Strip `additionalProperties` from client tool schemas before building Gemini function declarations
   - CopilotKit / AG-UI frontend tools serialize their parameters with `zodToJsonSchema(..., {$refStrategy: "none"})`, which stamps `additionalProperties: false` on every object (root and nested). `_clean_schema_for_genai` allowlisted it because it is a field on `google.genai.types.Schema`, so it was forwarded verbatim. The Gemini **Developer API** rejects it in `function_declarations` with `400 INVALID_ARGUMENT` ("Unknown name \"additional_properties\" ... Cannot find field"), which surfaced as a `RUN_ERROR` and **no tool call reaching the UI** — e.g. the Human-in-the-Loop dojo demo rendered nothing for the ADK backend, while OpenAI-based backends (which tolerate the field) worked.
   - `_clean_schema_for_genai` now strips `additionalProperties` / `additional_properties` at every depth via an explicit `_GENAI_REJECTED_SCHEMA_KEYS` denylist, closing both the dynamic `types.Schema.model_fields` allowlist and the static fallback. Gemini ignores `additionalProperties` for argument generation so no model behavior changes; **Vertex** already accepted the field, making this a no-op there and a fix on the Developer API.
