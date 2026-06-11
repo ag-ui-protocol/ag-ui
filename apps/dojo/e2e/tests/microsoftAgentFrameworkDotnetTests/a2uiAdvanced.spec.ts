@@ -1,4 +1,4 @@
-import { test, expect } from "../../test-isolation-helper";
+import { test } from "../../test-isolation-helper";
 import { A2UIPage } from "../../featurePages/A2UIPage";
 
 test("[Microsoft Agent Framework .NET] A2UI Advanced renders surface with hotel comparison", async ({
@@ -9,7 +9,7 @@ test("[Microsoft Agent Framework .NET] A2UI Advanced renders surface with hotel 
   const a2ui = new A2UIPage(page);
   await a2ui.openChat();
   await a2ui.sendMessage(
-    "Use the generate_a2ui tool to create a comparison of 3 hotels with name, location, price per night, and star rating using the StarRating component.",
+    "Create a comparison of 3 hotels with name, location, price per night, and star rating using the StarRating component.",
   );
 
   await a2ui.assertSurfaceWithIdVisible("hotel-comparison");
@@ -28,7 +28,7 @@ test("[Microsoft Agent Framework .NET] A2UI Advanced renders team directory surf
   const a2ui = new A2UIPage(page);
   await a2ui.openChat();
   await a2ui.sendMessage(
-    "Use the generate_a2ui tool to create a team directory with 4 people showing name, role, department, and a Contact button.",
+    "Create a team directory with 4 people showing name, role, department, and a Contact button.",
   );
 
   await a2ui.assertSurfaceWithIdVisible("team-roster");

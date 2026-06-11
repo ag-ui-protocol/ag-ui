@@ -38,6 +38,7 @@ test("[Microsoft Agent Framework .NET] A2UI recovery — exhaustion never paints
 
   // Conversation remains usable after the hard failure.
   await a2ui.sendMessage("Thanks anyway.");
+  await a2ui.assertUserMessageVisible("Thanks anyway");
 });
 
 test("[Microsoft Agent Framework .NET] A2UI recovery — exhaustion shows the hard-failure UI", async ({
@@ -62,4 +63,5 @@ test("[Microsoft Agent Framework .NET] A2UI recovery — exhaustion shows the ha
 
   // Conversation remains usable after the hard failure.
   await a2ui.sendMessage("Thanks anyway.");
+  await a2ui.assertUserMessageVisible("Thanks anyway");
 });
