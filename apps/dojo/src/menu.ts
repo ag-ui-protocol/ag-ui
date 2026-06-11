@@ -142,6 +142,11 @@ export const menuIntegrations = [
     ],
   },
   {
+    id: "swarms",
+    name: "Swarms",
+    features: ["agentic_chat"],
+  },
+  {
     id: "pydantic-ai",
     name: "Pydantic AI",
     features: [
