@@ -1,0 +1,24 @@
+# A2UI Error Recovery (Google SDK)
+
+## What This Demo Shows
+
+A proof-point twin of **A2UI Error Recovery**, built on **Google's `a2ui-agent-sdk`** instead of our `ag-ui-a2ui-toolkit`. It exists to make the recovery difference concrete: Google's SDK validates but does **not** ship a bounded recovery loop.
+
+1. **Agent-side validation**: Google's `send_a2ui_json_to_client` tool validates each generated surface with `A2uiValidator`. On failure it returns an `{"error": …}` to the model rather than a surface.
+2. **Model-driven, unbounded retry**: any regeneration is the model's choice — it may re-call the tool after seeing the error. There is **no attempt cap**, no structured error-augmented re-prompt managed by the framework, and **no hard-failure envelope/UX**.
+3. **Same paint gate**: the CopilotKit A2UI middleware still suppresses invalid surfaces (an invalid tree never paints) and shows a "Retrying…" status, but it does not itself drive regeneration.
+
+## How to Interact
+
+Two suggestions are wired (same prompts as the toolkit recovery demo):
+
+- **"Compare 3 luxury hotels with ratings and prices."** — the first generated surface references a card template the model "forgot" to include (a dangling child reference). Google's `A2uiValidator` rejects it; the model sees the error and may regenerate a valid surface, which then paints.
+- **"Compare 3 broken hotels with ratings and prices."** — generations keep failing validation, so **no surface ever paints**. Note what's *absent* versus the toolkit demo: there is **no** tasteful "Couldn't generate the UI" hard-failure state, because that bounded-loop exhaustion UX is provided by our toolkit, not Google's SDK.
+
+## How It Works Technically
+
+- Validation uses Google's `A2uiValidator` integrity checks (unique ids, root, dangling child references) — the dangling-ref case is what the "luxury" prompt triggers.
+- Recovery here is purely the ADK agent loop: tool returns `{"error"}` → the error is in the model's context → the model decides whether to retry. Contrast the toolkit build, which runs a bounded `run_a2ui_generation_with_recovery` loop (attempt cap, errors fed back deterministically) and emits an `a2ui_recovery_exhausted` hard-failure envelope.
+- The A2UI middleware is unmodified; a thin dojo-local shim rewrites Google's `{validated_a2ui_json}` result into `{a2ui_operations}` for painting.
+
+See the side-by-side **A2UI Error Recovery** (toolkit) demo and `integrations/adk-middleware/python/examples/GOOGLE_A2UI_PROOF_POINT.md` for the full comparison.

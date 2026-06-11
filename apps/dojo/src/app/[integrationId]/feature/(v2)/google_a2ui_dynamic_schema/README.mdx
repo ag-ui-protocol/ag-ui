@@ -1,0 +1,27 @@
+# A2UI Dynamic Schema (Google SDK)
+
+## What This Demo Shows
+
+A proof-point twin of **A2UI Dynamic Schema**: the same dynamic, LLM-generated A2UI surfaces, but the ADK agent generates and validates them with **Google's `a2ui-agent-sdk`** instead of our `ag-ui-a2ui-toolkit` — while still painting through the unmodified CopilotKit A2UI middleware over AG-UI (no A2A).
+
+1. **Google-SDK generation**: the model calls Google's `send_a2ui_json_to_client` tool; the tool injects the catalog schema into the prompt (`render_as_llm_instructions`), then heals (`parse_and_fix`) and validates (`A2uiValidator`) the JSON.
+2. **No pre-defined schema**: the UI layout is created on-the-fly from the conversation, against the dojo's dynamic catalog (Row / HotelCard / ProductCard / TeamMemberCard).
+3. **Same client, same paint path**: a thin dojo-local shim rewrites Google's `{validated_a2ui_json}` tool result into the `{a2ui_operations}` envelope the A2UI middleware already paints — the published middleware is untouched.
+
+## How to Interact
+
+Three suggestions are wired (identical to the toolkit demo for a direct comparison):
+
+- **"Compare 3 luxury hotels in different cities with ratings and prices."**
+- **"Compare 3 wireless headphones with prices, ratings, and descriptions."**
+- **"Show a team of 4 people with their roles, departments, and contact info."**
+
+Each paints a HotelCard / ProductCard / TeamMemberCard surface, same as the toolkit-based demo.
+
+## How It Works Technically
+
+- The agent uses Google's `A2uiSchemaManager` (catalog + prompt assembly), `A2uiValidator` (graph/integrity/JSON-Pointer checks), and `parse_and_fix` (cuttable-key healing) — the SDK's reusable, A2A-free brains.
+- Those brains are re-hosted in a thin ADK tool (`GoogleA2uiSendTool`) that mirrors Google's `SendA2uiToClientToolset` byte-for-byte (same tool name, same `{validated_a2ui_json | error}` return shape). The published toolset is **not** used directly because it has an import-time A2A coupling and a packaging bug; see `integrations/adk-middleware/python/examples/GOOGLE_A2UI_PROOF_POINT.md`.
+- Google's validated messages are already shaped like `a2ui_operations` ops (`{"version":"v0.9", …}`), so the bridge is a near-identity result rewrite, not a translation.
+
+This demo runs against the live model; the toolkit-based **A2UI Dynamic Schema** demo is the side-by-side comparison.
