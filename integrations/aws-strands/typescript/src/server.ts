@@ -41,7 +41,15 @@ export interface CreateStrandsAppOptions {
   capabilitiesPath?: string | null;
   /** Override capabilities advertised at {@link CreateStrandsAppOptions.capabilitiesPath}. */
   capabilities?: StrandsAguiCapabilitiesOverrides;
-  /** Override CORS origin. Default `*` (wide-open, matches the Python adapter). */
+  /**
+   * Override CORS origin. Default `"*"` (wide-open, matches the Python adapter,
+   * which configures Starlette `CORSMiddleware` with `allow_origins=["*"]`).
+   *
+   * Note: with the `cors` package, a literal `"*"` is emitted verbatim as
+   * `Access-Control-Allow-Origin: *`, whereas `true` would reflect the request's
+   * `Origin` header back per-request — a different (more permissive) posture when
+   * combined with credentials. Stick to `"*"` to match the Python adapter.
+   */
   corsOrigin?: string | string[] | boolean;
 }
 
@@ -55,7 +63,7 @@ export async function createStrandsApp(
     pingPath = "/ping",
     capabilitiesPath = "/capabilities",
     capabilities,
-    corsOrigin = true,
+    corsOrigin = "*",
   } = options;
 
   // Lazy dynamic imports so `express` / `cors` are only required at runtime
