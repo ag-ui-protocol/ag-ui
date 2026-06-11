@@ -200,6 +200,51 @@ sealed class BaseEvent {
     abstract val rawEvent: JsonElement?
 }
 
+// ============== Run Outcomes (2) ==============
+
+/**
+ * Discriminated union describing how a run terminated. Carried in the optional
+ * [RunFinishedEvent.outcome] field. The wire-level `"type"` field discriminates
+ * between successful completion ([RunFinishedSuccessOutcome]) and an
+ * interrupt-driven pause ([RunFinishedInterruptOutcome]).
+ *
+ * Producers written before the interrupt-aware run lifecycle simply omit the
+ * `outcome` field on `RunFinishedEvent`; newer producers set it explicitly.
+ *
+ * @see <a href="https://docs.ag-ui.com/concepts/interrupts">AG-UI Interrupts</a>
+ */
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
+@JsonClassDiscriminator("type")
+sealed class RunFinishedOutcome
+
+/**
+ * Outcome variant signalling that a run completed normally.
+ */
+@Serializable
+@SerialName("success")
+data object RunFinishedSuccessOutcome : RunFinishedOutcome()
+
+/**
+ * Outcome variant signalling that a run paused on one or more interrupts.
+ *
+ * The client resumes by addressing every open interrupt in
+ * [RunAgentInput.resume] of the next request, reusing the same `threadId`.
+ *
+ * @param interrupts The pending interrupts; must be non-empty.
+ */
+@Serializable
+@SerialName("interrupt")
+data class RunFinishedInterruptOutcome(
+    val interrupts: List<Interrupt>
+) : RunFinishedOutcome() {
+    init {
+        require(interrupts.isNotEmpty()) {
+            "outcome 'interrupt' requires at least one interrupt"
+        }
+    }
+}
+
 // ============== Lifecycle Events (5) ==============
 
 /**
@@ -227,21 +272,31 @@ data class RunStartedEvent(
 }
 
 /**
- * Event indicating that an agent run has completed successfully.
- * 
- * This event is emitted when an agent has finished processing a run request
- * and has generated all output. It signals the end of the execution lifecycle.
- * 
- * @param threadId The identifier for the conversation thread
- * @param runId The unique identifier for the completed run
- * @param timestamp Optional timestamp when the run finished
- * @param rawEvent Optional raw JSON representation of the event
+ * Event indicating that an agent run has completed.
+ *
+ * This event is emitted when an agent has finished processing a run request.
+ * Whether the run completed successfully or paused on interrupts is signalled
+ * by the optional [outcome] field. Producers written before the interrupt-aware
+ * run lifecycle simply omit [outcome] (legacy back-compat); newer producers set
+ * it to [RunFinishedSuccessOutcome] or [RunFinishedInterruptOutcome].
+ *
+ * @param threadId The identifier for the conversation thread.
+ * @param runId The unique identifier for the completed run.
+ * @param result Optional terminal value produced by the run.
+ * @param outcome Optional discriminated outcome of the run; see [RunFinishedOutcome].
+ * @param timestamp Optional timestamp when the run finished.
+ * @param rawEvent Optional raw JSON representation of the event.
+ *
+ * @see RunFinishedOutcome
+ * @see <a href="https://docs.ag-ui.com/concepts/interrupts">AG-UI Interrupts</a>
  */
 @Serializable
 @SerialName("RUN_FINISHED")
 data class RunFinishedEvent(
     val threadId: String,
     val runId: String,
+    val result: JsonElement? = null,
+    val outcome: RunFinishedOutcome? = null,
     override val timestamp: Long? = null,
     override val rawEvent: JsonElement? = null
 ) : BaseEvent () {

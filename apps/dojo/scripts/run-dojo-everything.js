@@ -4,9 +4,11 @@ const { execSync } = require("child_process");
 const path = require("path");
 const concurrently = require("concurrently");
 
-// Pinned: @langchain/langgraph-api@1.1.14 regressed schema extraction, causing
-// worker timeouts on CI runners. Re-evaluate when a newer version fixes the issue.
-const LANGGRAPH_CLI_VERSION = "1.1.13";
+// 1.2.3: the in-memory dev server provisions persistence itself, so graphs no
+// longer need to compile their own checkpointer for threads.getState (1.1.13
+// 500'd with "No checkpointer set" once the compiled MemorySaver was removed).
+// Supersedes the old 1.1.13 pin that dodged the 1.1.14 schema-extraction regression.
+const LANGGRAPH_CLI_VERSION = "1.2.3";
 
 // Parse command line arguments
 const args = process.argv.slice(2);

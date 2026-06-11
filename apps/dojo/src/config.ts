@@ -111,6 +111,12 @@ export const featureConfig: FeatureConfig[] = [
     description: "Dynamic A2UI with custom progress renderer and frontend action handlers",
     tags: ["A2UI", "Advanced", "Progress", "Action Handlers"],
   }),
+  createFeatureConfig({
+    id: "a2ui_recovery",
+    name: "A2UI Error Recovery",
+    description: "Automatic A2UI error recovery — invalid surfaces are regenerated (no wipe), with a tasteful hard-failure fallback",
+    tags: ["A2UI", "Error Recovery", "Streaming"],
+  }),
 ];
 
 export default featureConfig;

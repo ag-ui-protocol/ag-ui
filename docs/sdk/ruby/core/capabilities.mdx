@@ -1,0 +1,251 @@
+---
+title: "Capabilities"
+description: "Documentation for agent capability declarations in the Agent User Interaction Protocol (Ruby SDK)"
+---
+
+# Agent Capabilities
+
+Agent capabilities define what an agent can do. They are declared by the agent
+implementation and communicated to the client during a run.
+
+All fields on `AgentCapabilities` and its sub-capability classes are optional
+— agents only declare what they support. (Nested helper types like
+`SubAgentInfo` may still have required identifier fields.) Omitted fields mean
+the capability is not declared (unknown), not that it's unsupported.
+
+## AgentCapabilities
+
+`AgUiProtocol::Core::Capabilities::AgentCapabilities`
+
+A categorized snapshot of an agent's current capabilities.
+
+All fields are optional — agents only declare what they support. Omitted
+fields mean the capability is not declared (unknown), not that it's
+unsupported.
+
+The `custom` field is an escape hatch for integration-specific capabilities
+that don't fit into the standard categories.
+
+| Property            | Type                                        | Description                                                                                                                        |
+| ------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `identity`          | `IdentityCapabilities` (optional)           | Agent identity and metadata. Default: `nil`.                                                                                       |
+| `transport`         | `TransportCapabilities` (optional)          | Supported transport mechanisms (SSE, WebSocket, binary, etc.). Default: `nil`.                                                     |
+| `tools`             | `ToolsCapabilities` (optional)              | Tools the agent provides and tool calling configuration. Default: `nil`.                                                           |
+| `output`            | `OutputCapabilities` (optional)             | Output format support (structured output, MIME types). Default: `nil`.                                                             |
+| `state`             | `StateCapabilities` (optional)              | State and memory management (snapshots, deltas, persistence). Default: `nil`.                                                      |
+| `multi_agent`       | `MultiAgentCapabilities` (optional)         | Multi-agent coordination (delegation, handoffs, sub-agents). Default: `nil`.                                                       |
+| `reasoning`         | `ReasoningCapabilities` (optional)          | Reasoning and thinking support (chain-of-thought, encrypted thinking). Default: `nil`.                                             |
+| `multimodal`        | `MultimodalCapabilities` (optional)         | Multimodal input/output support (images, audio, video, files). Default: `nil`.                                                     |
+| `execution`         | `ExecutionCapabilities` (optional)          | Execution control and limits (code execution, timeouts, iteration caps). Default: `nil`.                                           |
+| `human_in_the_loop` | `HumanInTheLoopCapabilities` (optional)     | Human-in-the-loop support (approvals, interventions, feedback). Default: `nil`.                                                    |
+| `custom`            | `Hash{String, Symbol => Object}` (optional) | Integration-specific capabilities not covered by the standard categories. String or Symbol keys are both accepted. Default: `nil`. |
+
+## IdentityCapabilities
+
+`AgUiProtocol::Core::Capabilities::IdentityCapabilities`
+
+Basic metadata about the agent.
+
+Useful for discovery UIs, agent marketplaces, and debugging. Set these when
+you want clients to display agent information or when multiple agents are
+available and users need to pick one.
+
+| Property            | Type                                        | Description                                                                                                                |
+| ------------------- | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `name`              | `String` (optional)                         | Human-readable name shown in UIs and agent selectors. Default: `nil`.                                                      |
+| `type`              | `String` (optional)                         | The framework or platform powering this agent (e.g., "langgraph", "mastra", "crewai"). Default: `nil`.                     |
+| `description`       | `String` (optional)                         | What this agent does — helps users and routing logic decide when to use it. Default: `nil`.                                |
+| `version`           | `String` (optional)                         | Semantic version of the agent (e.g., "1.2.0"). Useful for compatibility checks. Default: `nil`.                            |
+| `provider`          | `String` (optional)                         | Organization or team that maintains this agent. Default: `nil`.                                                            |
+| `documentation_url` | `String` (optional)                         | URL to the agent's documentation or homepage. Default: `nil`.                                                              |
+| `metadata`          | `Hash{String, Symbol => Object}` (optional) | Arbitrary key-value pairs for integration-specific identity info. String or Symbol keys are both accepted. Default: `nil`. |
+
+## TransportCapabilities
+
+`AgUiProtocol::Core::Capabilities::TransportCapabilities`
+
+Declares which transport mechanisms the agent supports.
+
+Clients use this to pick the best connection strategy. Only set flags to
+`true` for transports your agent actually handles — omit or set `false` for
+unsupported ones.
+
+| Property             | Type                 | Description                                                                                         |
+| -------------------- | -------------------- | --------------------------------------------------------------------------------------------------- |
+| `streaming`          | `Boolean` (optional) | Set `true` if the agent streams responses via SSE. Most agents enable this. Default: `nil`.         |
+| `websocket`          | `Boolean` (optional) | Set `true` if the agent accepts persistent WebSocket connections. Default: `nil`.                   |
+| `http_binary`        | `Boolean` (optional) | Set `true` if the agent supports the AG-UI binary protocol (protobuf over HTTP). Default: `nil`.    |
+| `push_notifications` | `Boolean` (optional) | Set `true` if the agent can send async updates via webhooks after a run finishes. Default: `nil`.   |
+| `resumable`          | `Boolean` (optional) | Set `true` if the agent supports resuming interrupted streams via sequence numbers. Default: `nil`. |
+
+## ToolsCapabilities
+
+`AgUiProtocol::Core::Capabilities::ToolsCapabilities`
+
+Tool calling capabilities.
+
+Distinguishes between tools the agent itself provides (listed in `items`) and
+tools the client passes at runtime via <code>RunAgentInput.tools</code>.
+Enable this when your agent can call functions, search the web, execute code,
+etc.
+
+| Property          | Type                     | Description                                                                                                                                                           |
+| ----------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `supported`       | `Boolean` (optional)     | Set `true` if the agent can make tool calls at all. Set `false` to explicitly signal tool calling is disabled even if items are present. Default: `nil`.              |
+| `items`           | `Array<Tool>` (optional) | The tools this agent provides on its own (full JSON Schema definitions). These are distinct from client-provided tools passed in RunAgentInput.tools. Default: `nil`. |
+| `parallel_calls`  | `Boolean` (optional)     | Set `true` if the agent can invoke multiple tools concurrently within a single step. Default: `nil`.                                                                  |
+| `client_provided` | `Boolean` (optional)     | Set `true` if the agent accepts and uses tools provided by the client at runtime. Default: `nil`.                                                                     |
+
+## OutputCapabilities
+
+`AgUiProtocol::Core::Capabilities::OutputCapabilities`
+
+Output format support.
+
+Enable `structured_output` when your agent can return responses conforming to
+a JSON schema, which is useful for programmatic consumption.
+
+| Property               | Type                       | Description                                                                                                                              |
+| ---------------------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `structured_output`    | `Boolean` (optional)       | Set `true` if the agent can produce structured JSON output matching a provided schema. Default: `nil`.                                   |
+| `supported_mime_types` | `Array<String>` (optional) | MIME types the agent can produce (e.g., ["text/plain", "application/json"]). Omit if the agent only produces plain text. Default: `nil`. |
+
+## StateCapabilities
+
+`AgUiProtocol::Core::Capabilities::StateCapabilities`
+
+State and memory management capabilities.
+
+These tell the client how the agent handles shared state and whether
+conversation context persists across runs.
+
+| Property           | Type                 | Description                                                                                                                                           |
+| ------------------ | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `snapshots`        | `Boolean` (optional) | Set `true` if the agent emits STATE_SNAPSHOT events (full state replacement). Default: `nil`.                                                         |
+| `deltas`           | `Boolean` (optional) | Set `true` if the agent emits STATE_DELTA events (JSON Patch incremental updates). Default: `nil`.                                                    |
+| `memory`           | `Boolean` (optional) | Set `true` if the agent has long-term memory beyond the current thread (e.g., vector store, knowledge base, or cross-session recall). Default: `nil`. |
+| `persistent_state` | `Boolean` (optional) | Set `true` if state is preserved across multiple runs within the same thread. When `false`, state resets on each run. Default: `nil`.                 |
+
+## MultiAgentCapabilities
+
+`AgUiProtocol::Core::Capabilities::MultiAgentCapabilities`
+
+Multi-agent coordination capabilities.
+
+Enable these when your agent can orchestrate or hand off work to other agents.
+
+| Property     | Type                             | Description                                                                                            |
+| ------------ | -------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `supported`  | `Boolean` (optional)             | Set `true` if the agent participates in any form of multi-agent coordination. Default: `nil`.          |
+| `delegation` | `Boolean` (optional)             | Set `true` if the agent can delegate subtasks to other agents while retaining control. Default: `nil`. |
+| `handoffs`   | `Boolean` (optional)             | Set `true` if the agent can transfer the conversation entirely to another agent. Default: `nil`.       |
+| `sub_agents` | `Array<SubAgentInfo>` (optional) | List of sub-agents this agent can invoke. Helps clients build agent selection UIs. Default: `nil`.     |
+
+## ReasoningCapabilities
+
+`AgUiProtocol::Core::Capabilities::ReasoningCapabilities`
+
+Reasoning and thinking capabilities.
+
+Enable these when your agent exposes its internal thought process (e.g.,
+chain-of-thought, extended thinking).
+
+| Property    | Type                 | Description                                                                                                                                                                 |
+| ----------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `supported` | `Boolean` (optional) | Set `true` if the agent produces reasoning/thinking tokens visible to the client. Default: `nil`.                                                                           |
+| `streaming` | `Boolean` (optional) | Set `true` if reasoning tokens are streamed incrementally (vs. returned all at once). Default: `nil`.                                                                       |
+| `encrypted` | `Boolean` (optional) | Set `true` if reasoning content is encrypted (zero-data-retention mode). Clients should expect opaque `encrypted_value` fields instead of readable content. Default: `nil`. |
+
+## MultimodalCapabilities
+
+`AgUiProtocol::Core::Capabilities::MultimodalCapabilities`
+
+Multimodal input and output support.
+
+Organized into `input` and `output` sub-objects so clients can independently
+query what the agent accepts versus what it produces.
+
+| Property | Type                                      | Description                                                                                   |
+| -------- | ----------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `input`  | `MultimodalInputCapabilities` (optional)  | Modalities the agent can accept as input (images, audio, video, PDFs, files). Default: `nil`. |
+| `output` | `MultimodalOutputCapabilities` (optional) | Modalities the agent can produce as output (images, audio). Default: `nil`.                   |
+
+## MultimodalInputCapabilities
+
+`AgUiProtocol::Core::Capabilities::MultimodalInputCapabilities`
+
+Modalities the agent can accept as input.
+
+Clients use this to show/hide file upload buttons, audio recorders, image
+pickers, etc.
+
+| Property | Type                 | Description                                                                                   |
+| -------- | -------------------- | --------------------------------------------------------------------------------------------- |
+| `image`  | `Boolean` (optional) | Set `true` if the agent can process image inputs (e.g., screenshots, photos). Default: `nil`. |
+| `audio`  | `Boolean` (optional) | Set `true` if the agent can process audio inputs (speech, recordings). Default: `nil`.        |
+| `video`  | `Boolean` (optional) | Set `true` if the agent can process video inputs. Default: `nil`.                             |
+| `pdf`    | `Boolean` (optional) | Set `true` if the agent can process PDF documents. Default: `nil`.                            |
+| `file`   | `Boolean` (optional) | Set `true` if the agent can process arbitrary file uploads. Default: `nil`.                   |
+
+## MultimodalOutputCapabilities
+
+`AgUiProtocol::Core::Capabilities::MultimodalOutputCapabilities`
+
+Modalities the agent can produce as output.
+
+Clients use this to anticipate rich content in the agent's response.
+
+| Property | Type                 | Description                                                                                     |
+| -------- | -------------------- | ----------------------------------------------------------------------------------------------- |
+| `image`  | `Boolean` (optional) | Set `true` if the agent can generate images as part of its response. Default: `nil`.            |
+| `audio`  | `Boolean` (optional) | Set `true` if the agent can produce audio output (text-to-speech, audio files). Default: `nil`. |
+
+## ExecutionCapabilities
+
+`AgUiProtocol::Core::Capabilities::ExecutionCapabilities`
+
+Execution control and limits.
+
+Declare these so clients can set expectations about how long or how many steps
+an agent run might take.
+
+| Property             | Type                 | Description                                                                                                                                                  |
+| -------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `code_execution`     | `Boolean` (optional) | Set `true` if the agent can execute code (e.g., Python, JavaScript) during a run. Default: `nil`.                                                            |
+| `sandboxed`          | `Boolean` (optional) | Set `true` if code execution happens in a sandboxed/isolated environment. Only meaningful when `code_execution` is `true`. Default: `nil`.                   |
+| `max_iterations`     | `Integer` (optional) | Maximum number of tool-call/reasoning iterations the agent will perform per run. Helps clients display progress or set timeout expectations. Default: `nil`. |
+| `max_execution_time` | `Integer` (optional) | Maximum wall-clock time (in milliseconds) the agent will run before timing out. Default: `nil`.                                                              |
+
+## HumanInTheLoopCapabilities
+
+`AgUiProtocol::Core::Capabilities::HumanInTheLoopCapabilities`
+
+Human-in-the-loop interaction support.
+
+Enable these when your agent can pause execution to request human input,
+approval, or feedback before continuing.
+
+| Property             | Type                 | Description                                                                                                                                                |
+| -------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `supported`          | `Boolean` (optional) | Set `true` if the agent supports any form of human-in-the-loop interaction. Default: `nil`.                                                                |
+| `approvals`          | `Boolean` (optional) | Set `true` if the agent can pause and request explicit approval before performing sensitive actions (e.g., sending emails, deleting data). Default: `nil`. |
+| `interventions`      | `Boolean` (optional) | Set `true` if the agent allows humans to intervene and modify its plan mid-execution. Default: `nil`.                                                      |
+| `feedback`           | `Boolean` (optional) | Set `true` if the agent can incorporate user feedback (thumbs up/down, corrections) to improve its behavior within the current session. Default: `nil`.    |
+| `interrupts`         | `Boolean` (optional) | Set `true` if the agent participates in the AG-UI interrupt protocol (emits RUN_FINISHED with interrupt outcome, accepts resume[]). Default: `nil`.        |
+| `approve_with_edits` | `Boolean` (optional) | Set `true` if tool-call interrupts accept editedArgs in the resume payload. Only meaningful when interrupts is true. Default: `nil`.                       |
+
+## Value Types
+
+Value types referenced by capability classes.
+
+### SubAgentInfo
+
+`AgUiProtocol::Core::Capabilities::SubAgentInfo`
+
+Describes a sub-agent that can be invoked by a parent agent.
+
+| Property      | Type                | Description                                                                                  |
+| ------------- | ------------------- | -------------------------------------------------------------------------------------------- |
+| `name`        | `String`            | Unique name or identifier of the sub-agent.                                                  |
+| `description` | `String` (optional) | What this sub-agent specializes in. Helps clients build agent selection UIs. Default: `nil`. |
+

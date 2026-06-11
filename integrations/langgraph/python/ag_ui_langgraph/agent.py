@@ -186,6 +186,7 @@ class LangGraphAgent:
             "reasoning_process": None,
             "node_name": None,
             "has_function_streaming": False,
+            "streamed_tool_call_ids": set(),
             "model_made_tool_call": False,
             "state_reliable": True,
         }
@@ -302,7 +303,13 @@ class LangGraphAgent:
                 event_type = event.get("event")
                 event_run_id = event.get("run_id")
                 if isinstance(event_run_id, str) and event_run_id:
-                    self.active_run["id"] = event_run_id
+                    # LangGraph's internal chain run_id. Track it separately
+                    # rather than overwriting active_run["id"] (the
+                    # client-supplied run_id from RunAgentInput): clobbering it
+                    # made RUN_FINISHED carry the chain UUID while RUN_STARTED
+                    # carried the client id, so the two disagreed (#1582). The
+                    # client id is what the protocol must echo back.
+                    self.active_run["langgraph_run_id"] = event_run_id
                 elif event_run_id is not None:
                     # Shape mismatch: some upstream emitted a non-string run_id.
                     # Keep the existing id rather than corrupting it.
@@ -870,7 +877,12 @@ class LangGraphAgent:
         # The A2UI schema goes into state["ag-ui"]["a2ui_schema"] so agents
         # can read it directly from state (e.g., for the generate_a2ui tool),
         # instead of it being dumped into the system prompt with all other context.
-        A2UI_SCHEMA_CONTEXT_DESCRIPTION = "A2UI Component Schema \u2014 available components for generating UI surfaces. Use these component names and props when creating A2UI operations."
+        # This string MUST stay byte-identical to the A2UI middleware's exported
+        # A2UI_SCHEMA_CONTEXT_DESCRIPTION (middlewares/a2ui-middleware/src/index.ts).
+        # The match below is exact-equality, so any drift silently routes the schema
+        # into the system prompt instead of state. Covered by
+        # test_a2ui_schema_context_routed_into_ag_ui_state.
+        A2UI_SCHEMA_CONTEXT_DESCRIPTION = "A2UI Component Schema \u2014 available components for generating UI surfaces. Use these component names and properties when creating A2UI operations."
 
         all_context = input.context or []
         a2ui_schema_value = None
@@ -888,6 +900,21 @@ class LangGraphAgent:
         }
         if a2ui_schema_value is not None:
             ag_ui_state["a2ui_schema"] = a2ui_schema_value
+
+        # Surface the A2UI tool-injection flag (set by the A2UI middleware via
+        # forwardedProps.injectA2UITool) into ag-ui state so graphs/tools can
+        # read it directly from state. It is written here whenever the merged
+        # state is built (start/continue runs) and then persists in the
+        # checkpoint, so resumed runs still see it. forwarded_props keys are
+        # snake-cased in run() (camel_to_snake turns "injectA2UITool" into
+        # "inject_a2_u_i_tool" — pinned by test_camel_to_snake_key_contract),
+        # so check the converted key first and fall back to the raw camelCase
+        # form for safety.
+        forwarded = input.forwarded_props or {}
+        if "inject_a2_u_i_tool" in forwarded:
+            ag_ui_state["inject_a2ui_tool"] = forwarded["inject_a2_u_i_tool"]
+        elif "injectA2UITool" in forwarded:
+            ag_ui_state["inject_a2ui_tool"] = forwarded["injectA2UITool"]
 
         return {
             **state,
@@ -997,6 +1024,37 @@ class LangGraphAgent:
             is_tool_call_args_event = has_current_stream and current_stream.get("tool_call_id") and tool_call_data and tool_call_data.get("args")
             is_tool_call_end_event = has_current_stream and current_stream.get("tool_call_id") and not tool_call_data
 
+            # Boundary transition: a new tool_call begins while another is
+            # mid-stream. Happens when an LLM streams *parallel* tool_calls
+            # sequentially — tool A's chunks arrive, then tool B's chunks
+            # arrive without an intervening empty-chunk terminator. Without
+            # this detection, B's args event (below) would route deltas to
+            # A's tool_call_id, producing concatenated JSON like
+            # ``{"x":1}{"x":2}`` in the persisted assistant history and
+            # leaving B with no Start/End at all.
+            if (
+                has_current_stream
+                and current_stream.get("tool_call_id")
+                and tool_call_data
+                and tool_call_data.get("name")
+                and tool_call_data.get("id")
+                and tool_call_data["id"] != current_stream["tool_call_id"]
+            ):
+                yield self._dispatch_event(
+                    ToolCallEndEvent(
+                        type=EventType.TOOL_CALL_END,
+                        tool_call_id=current_stream["tool_call_id"],
+                        raw_event=event,
+                    )
+                )
+                self.messages_in_process[self.active_run["id"]] = None
+                current_stream = None
+                has_current_stream = False
+                # Re-evaluate the booleans against the now-closed stream.
+                is_tool_call_start_event = bool(tool_call_data.get("name"))
+                is_tool_call_args_event = False
+                is_tool_call_end_event = False
+
             if is_tool_call_start_event or is_tool_call_end_event or is_tool_call_args_event:
                 self.active_run["has_function_streaming"] = True
 
@@ -1078,6 +1136,59 @@ class LangGraphAgent:
                     )
                 )
 
+            if tool_call_data and tool_call_data.get("name") and message_content is not None:
+                text_stream_id = None
+                if current_stream and current_stream.get("id") and not current_stream.get("tool_call_id"):
+                    text_stream_id = current_stream["id"]
+                elif message_content != "":
+                    text_stream_id = chunk_id
+                    if should_emit_messages:
+                        yield self._dispatch_event(
+                            TextMessageStartEvent(
+                                type=EventType.TEXT_MESSAGE_START,
+                                role="assistant",
+                                message_id=text_stream_id,
+                                raw_event=event,
+                            )
+                        )
+
+                if text_stream_id and should_emit_messages:
+                    if message_content != "":
+                        yield self._dispatch_event(
+                            TextMessageContentEvent(
+                                type=EventType.TEXT_MESSAGE_CONTENT,
+                                message_id=text_stream_id,
+                                delta=message_content,
+                                raw_event=event,
+                            )
+                        )
+                    yield self._dispatch_event(
+                        TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=text_stream_id, raw_event=event)
+                    )
+
+                if text_stream_id:
+                    self.messages_in_process[self.active_run["id"]] = None
+                    current_stream = None
+                    has_current_stream = False
+                is_message_end_event = False
+                is_tool_call_start_event = True
+                is_tool_call_args_event = False
+                is_tool_call_end_event = False
+                self.active_run["has_function_streaming"] = True
+
+            if is_message_end_event and tool_call_data and tool_call_data.get("name"):
+                yield self._dispatch_event(
+                    TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=current_stream["id"], raw_event=event)
+                )
+                self.messages_in_process[self.active_run["id"]] = None
+                current_stream = None
+                has_current_stream = False
+                is_message_end_event = False
+                is_tool_call_start_event = True
+                is_tool_call_args_event = False
+                is_tool_call_end_event = False
+                self.active_run["has_function_streaming"] = True
+
             if is_tool_call_end_event:
                 yield self._dispatch_event(
                     ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=current_stream["tool_call_id"], raw_event=event)
@@ -1093,20 +1204,28 @@ class LangGraphAgent:
                 self.messages_in_process[self.active_run["id"]] = None
                 return
 
-            if is_tool_call_start_event and should_emit_tool_calls:
-                yield self._dispatch_event(
-                    ToolCallStartEvent(
-                        type=EventType.TOOL_CALL_START,
-                        tool_call_id=tool_call_data["id"],
-                        tool_call_name=tool_call_data["name"],
-                        parent_message_id=chunk_id,
-                        raw_event=event,
+            if is_tool_call_start_event:
+                # Record this tool_call_id as "already streamed" regardless of
+                # ``should_emit_tool_calls``. OnToolEnd uses this set to decide
+                # whether to re-emit Start/Args/End for the same id. Adding the
+                # id even when emission is suppressed preserves the prior
+                # behaviour where ``has_function_streaming=True`` blocked the
+                # OnToolEnd re-emit for opted-out tool calls.
+                self.active_run["streamed_tool_call_ids"].add(tool_call_data["id"])
+                if should_emit_tool_calls:
+                    yield self._dispatch_event(
+                        ToolCallStartEvent(
+                            type=EventType.TOOL_CALL_START,
+                            tool_call_id=tool_call_data["id"],
+                            tool_call_name=tool_call_data["name"],
+                            parent_message_id=chunk_id,
+                            raw_event=event,
+                        )
                     )
-                )
-                self.set_message_in_progress(
-                    self.active_run["id"],
-                    MessageInProgress(id=chunk_id, tool_call_id=tool_call_data["id"], tool_call_name=tool_call_data["name"])
-                )
+                    self.set_message_in_progress(
+                        self.active_run["id"],
+                        MessageInProgress(id=chunk_id, tool_call_id=tool_call_data["id"], tool_call_name=tool_call_data["name"])
+                    )
                 return
 
             if is_tool_call_args_event and should_emit_tool_calls:
@@ -1253,9 +1372,15 @@ class LangGraphAgent:
                             type(m).__name__,
                         )
 
-                # Process each tool message
+                # Process each tool message. Re-emit Start/Args/End only for
+                # tool_call_ids that did NOT already stream them through
+                # OnChatModelStream — checked per-id so nested tool execution
+                # (deepagents ``task`` -> subagent) doesn't cause the outer
+                # tool's Args to be emitted twice when the inner tool's
+                # OnToolEnd fires first.
                 for tool_msg in tool_messages:
-                    if not self.active_run["has_function_streaming"]:
+                    already_streamed = tool_msg.tool_call_id in self.active_run["streamed_tool_call_ids"]
+                    if not already_streamed:
                         yield self._dispatch_event(
                             ToolCallStartEvent(
                                 type=EventType.TOOL_CALL_START,
@@ -1280,6 +1405,7 @@ class LangGraphAgent:
                                 raw_event=event
                             )
                         )
+                    self.active_run["streamed_tool_call_ids"].discard(tool_msg.tool_call_id)
 
                     yield self._dispatch_event(
                         ToolCallResultEvent(
@@ -1306,7 +1432,8 @@ class LangGraphAgent:
                 )
                 return
 
-            if not self.active_run["has_function_streaming"]:
+            already_streamed = tool_call_output.tool_call_id in self.active_run["streamed_tool_call_ids"]
+            if not already_streamed:
                 yield self._dispatch_event(
                     ToolCallStartEvent(
                         type=EventType.TOOL_CALL_START,
@@ -1331,6 +1458,7 @@ class LangGraphAgent:
                         raw_event=event
                     )
                 )
+            self.active_run["streamed_tool_call_ids"].discard(tool_call_output.tool_call_id)
 
             yield self._dispatch_event(
                 ToolCallResultEvent(
@@ -1371,6 +1499,17 @@ class LangGraphAgent:
             )
             return
 
+        # A text-less chunk is still meaningful when it carries the provider's
+        # canonical reasoning id (the `response.output_item.added` /
+        # `…summary_part.added` chunks): stash the id so the first text delta
+        # opens the reasoning message under it, WITHOUT opening a message here
+        # — a summary-less (store=true) reasoning item must keep rendering
+        # nothing.
+        if not reasoning_data["text"]:
+            if reasoning_data.get("id"):
+                self.active_run["pending_reasoning_id"] = reasoning_data["id"]
+            return
+
         reasoning_step_index = reasoning_data.get("index", 0)
 
         if (self.active_run.get("reasoning_process") and
@@ -1394,7 +1533,17 @@ class LangGraphAgent:
             self.active_run["reasoning_process"] = None
 
         if not self.active_run.get("reasoning_process"):
-            message_id = str(uuid.uuid4())
+            # Prefer the provider's canonical reasoning id (e.g. OpenAI
+            # ``rs_…``) when the stream carried one: the snapshot converter
+            # (_reasoning_block_to_agui_message) re-emits this same reasoning
+            # under that id, and only a matching id lets the client reconcile
+            # the streamed copy with the snapshot copy instead of rendering
+            # both.
+            message_id = (
+                reasoning_data.get("id")
+                or self.active_run.pop("pending_reasoning_id", None)
+                or str(uuid.uuid4())
+            )
             yield self._dispatch_event(
                 ReasoningStartEvent(
                     type=EventType.REASONING_START,
