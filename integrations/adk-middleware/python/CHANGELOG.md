@@ -18,6 +18,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **FIX**: `ADKAgent.run()` no longer emits `RUN_FINISHED` after `RUN_ERROR`
+  (#1892). When a tool raised mid-stream, the background queue path emitted
+  `RUN_ERROR` and the consumer loop then fell through to its unconditional
+  `RUN_FINISHED`, producing two terminal events for a single run.
+  `@ag-ui/client`'s state machine correctly rejects the second event with
+  "Cannot send event type 'RUN_FINISHED': The run has already errored". The
+  consumer loop now tracks whether a `RUN_ERROR` already flowed through the
+  queue and skips the trailing `RUN_FINISHED`, enforcing the AG-UI invariant of
+  at most one terminal event per run at the source rather than pushing it onto
+  every downstream SSE wrapper. This covers all queue-borne terminal errors
+  (tool throw, execution timeout, background-execution failure), not just the
+  tool-throw case. Thanks to @sunholo-voight-kampff for the detailed report.
 - **FIX**: HITL confirmation on a standalone `LlmAgent` root now re-executes the
   original tool after the user confirms (#1839). Previously, for resumable
   `LlmAgent` roots the #1534 pre-append workaround substituted `new_message`
