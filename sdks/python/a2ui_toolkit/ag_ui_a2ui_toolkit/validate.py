@@ -54,9 +54,72 @@ def _collect_child_refs(children: Any) -> list[str]:
     if isinstance(children, list):
         for v in children:
             push(v)
-    elif _is_object(children):
+    else:
+        # A single ``{componentId,...}`` template or a bare string id (the singular
+        # ``child`` shape Card/Button use); ``push`` ignores anything else.
         push(children)
     return refs
+
+
+def _child_adjacency(components: list) -> dict[str, list[str]]:
+    """id -> ordered child-id references, gathered from singular ``child`` + plural ``children``."""
+    adj: dict[str, list[str]] = {}
+    for comp in components:
+        if _is_object(comp) and isinstance(comp.get("id"), str):
+            adj[comp["id"]] = _collect_child_refs(comp.get("child")) + _collect_child_refs(comp.get("children"))
+    return adj
+
+
+def _find_child_cycles(components: list) -> list[list[str]]:
+    """Find unique child-reference cycles (self-references and longer loops) via DFS.
+
+    Each cycle is canonicalised — rotated so the lexicographically smallest id
+    leads — so the same loop reached from different entry points collapses to one
+    finding, and the reported chain stays byte-identical across the sibling
+    toolkits.
+
+    The DFS is iterative (explicit frame stack, not call recursion): the validator
+    runs on untrusted model output, so a pathologically deep child chain must not
+    raise ``RecursionError`` (and the .NET sibling must not overflow its stack).
+    """
+    adj = _child_adjacency(components)
+    color: dict[str, int] = {}  # absent/0 = unvisited, 1 = on stack, 2 = done
+    cycles: dict[str, list[str]] = {}
+
+    def canonical(nodes: list[str]) -> list[str]:
+        m = min(range(len(nodes)), key=lambda i: nodes[i])
+        return nodes[m:] + nodes[:m]
+
+    for root in adj:
+        if color.get(root, 0) != 0:
+            continue
+        # ``frames`` is the explicit DFS stack ([node, next-neighbor-index]);
+        # ``path`` mirrors the on-stack (gray) nodes in entry order, so
+        # ``path.index(v)`` recovers the cycle slice on a back edge.
+        frames: list[list] = [[root, 0]]
+        path: list[str] = [root]
+        color[root] = 1
+        while frames:
+            node, i = frames[-1][0], frames[-1][1]
+            neighbors = adj.get(node, [])
+            if i >= len(neighbors):
+                color[node] = 2
+                frames.pop()
+                path.pop()
+                continue
+            frames[-1][1] += 1
+            v = neighbors[i]
+            c = color.get(v, 0)
+            if c == 0:
+                color[v] = 1
+                path.append(v)
+                frames.append([v, 0])
+            elif c == 1:
+                cyc = canonical(path[path.index(v):])
+                key = " ".join(cyc)
+                if key not in cycles:
+                    cycles[key] = cyc
+    return list(cycles.values())
 
 
 def _collect_absolute_binding_paths(node: Any, acc: list[str]) -> list[str]:
@@ -129,12 +192,22 @@ def validate_a2ui_components(
                         errors.append({"code": "missing_required_prop", "path": f"components[{i}].{req}", "message": f"Component '{ctype}' (index {i}) is missing required prop '{req}'"})
 
         if _is_object(comp):
-            for ref in _collect_child_refs(comp.get("children")):
-                if ref not in ids:
-                    errors.append({"code": "unresolved_child", "path": f"components[{i}].children", "message": f"Child reference '{ref}' does not match any component id"})
+            # Validate both the singular ``child`` (one-child containers such as
+            # Card/Button, which the default prompt emits) and the plural
+            # ``children`` so a dangling reference in either feeds the recovery loop.
+            for field in ("child", "children"):
+                for ref in _collect_child_refs(comp.get(field)):
+                    if ref not in ids:
+                        errors.append({"code": "unresolved_child", "path": f"components[{i}].{field}", "message": f"Child reference '{ref}' does not match any component id"})
             for p in (_collect_absolute_binding_paths(comp, []) if validate_bindings else []):
                 if not _absolute_path_resolves(p, data or {}):
                     errors.append({"code": "unresolved_binding", "path": f"components[{i}]", "message": f"Binding path '{p}' does not resolve in the data model"})
+
+    # The child/children tree must be a DAG — a component that (transitively)
+    # references itself never terminates at render time. Report each cycle once.
+    for cycle in _find_child_cycles(components):
+        chain = " -> ".join(cycle + [cycle[0]])
+        errors.append({"code": "child_cycle", "path": f"components[id={cycle[0]}]", "message": f"Child reference cycle detected: {chain}"})
 
     if not any(_is_object(c) and c.get("id") == "root" for c in components):
         errors.append({"code": "no_root", "path": "components", "message": "No component has id 'root'"})
