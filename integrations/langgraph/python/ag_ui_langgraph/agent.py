@@ -1709,9 +1709,14 @@ class LangGraphAgent:
             version=version,
         )
 
-        # Only add context if supported
+        # LangGraph may expose context either as a named parameter or through
+        # **kwargs, depending on the installed version.
         sig = inspect.signature(self.graph.astream_events)
-        if 'context' in sig.parameters:
+        accepts_context = (
+            'context' in sig.parameters
+            or any(param.kind == inspect.Parameter.VAR_KEYWORD for param in sig.parameters.values())
+        )
+        if accepts_context:
             base_context = {}
             if isinstance(config, dict) and 'configurable' in config and isinstance(config['configurable'], dict):
                 base_context.update(config['configurable'])
