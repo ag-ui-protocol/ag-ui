@@ -11,7 +11,8 @@
     "agentic_chat_multimodal": "./src/agents/agentic_chat_multimodal/agent.ts:agenticChatMultimodalGraph",
     "agentic_chat_reasoning": "./src/agents/agentic_chat_reasoning/agent.ts:agenticChatReasoningGraph",
     "a2ui_dynamic_schema": "./src/agents/a2ui_dynamic_schema/agent.ts:a2uiDynamicSchemaGraph",
-    "a2ui_fixed_schema": "./src/agents/a2ui_fixed_schema/agent.ts:a2uiFixedSchemaGraph"
+    "a2ui_fixed_schema": "./src/agents/a2ui_fixed_schema/agent.ts:a2uiFixedSchemaGraph",
+    "a2ui_recovery": "./src/agents/a2ui_recovery/agent.ts:a2uiRecoveryGraph"
   },
   "env": ".env"
 }

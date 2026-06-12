@@ -12,7 +12,11 @@ import unittest
 from ag_ui_a2ui_toolkit import (
     A2UI_OPERATIONS_KEY,
     BASIC_CATALOG_ID,
+    DEFAULT_DESIGN_GUIDELINES,
+    DEFAULT_GENERATION_GUIDELINES,
     DEFAULT_SURFACE_ID,
+    GENERATE_A2UI_TOOL_DESCRIPTION,
+    GENERATE_A2UI_TOOL_NAME,
     RENDER_A2UI_TOOL_DEF,
     assemble_ops,
     build_a2ui_envelope,
@@ -21,6 +25,7 @@ from ag_ui_a2ui_toolkit import (
     create_surface,
     find_prior_surface,
     prepare_a2ui_request,
+    resolve_a2ui_tool_params,
     update_components,
     update_data_model,
     wrap_as_operations_envelope,
@@ -380,20 +385,69 @@ class TestFindPriorSurface(unittest.TestCase):
 
 
 class TestBuildSubagentPrompt(unittest.TestCase):
+    # Suppress both built-in default blocks so the structural tests below can
+    # assert exact output without the (large) DEFAULT_* text. Empty string is
+    # the documented escape hatch (None → default; "" → block omitted).
+    SUPPRESS = {"generation_guidelines": "", "design_guidelines": ""}
+
+    def test_defaults_applied_when_unset(self):
+        # No guidelines → both built-in blocks land in the prompt, with the
+        # design block under its "## Design Guidelines" header (OSS-248).
+        prompt = build_subagent_prompt(context_prompt="ctx")
+        self.assertIn(DEFAULT_GENERATION_GUIDELINES, prompt)
+        self.assertIn("## Design Guidelines", prompt)
+        self.assertIn(DEFAULT_DESIGN_GUIDELINES, prompt)
+        self.assertIn("ctx", prompt)
+
+    def test_section_order(self):
+        # generation → design → context → composition.
+        prompt = build_subagent_prompt(
+            context_prompt="CTXMARK",
+            guidelines={
+                "generation_guidelines": "GENMARK",
+                "design_guidelines": "DESMARK",
+                "composition_guide": "COMPMARK",
+            },
+        )
+        self.assertLess(prompt.index("GENMARK"), prompt.index("DESMARK"))
+        self.assertLess(prompt.index("DESMARK"), prompt.index("CTXMARK"))
+        self.assertLess(prompt.index("CTXMARK"), prompt.index("COMPMARK"))
+
+    def test_per_field_override_keeps_other_default(self):
+        # Override generation only → design still falls back to its default.
+        prompt = build_subagent_prompt(
+            context_prompt="ctx",
+            guidelines={"generation_guidelines": "CUSTOM_GEN"},
+        )
+        self.assertIn("CUSTOM_GEN", prompt)
+        self.assertNotIn(DEFAULT_GENERATION_GUIDELINES, prompt)
+        self.assertIn(DEFAULT_DESIGN_GUIDELINES, prompt)
+
+    def test_empty_string_suppresses_block(self):
+        prompt = build_subagent_prompt(
+            context_prompt="ctx", guidelines=self.SUPPRESS
+        )
+        self.assertNotIn(DEFAULT_GENERATION_GUIDELINES, prompt)
+        self.assertNotIn(DEFAULT_DESIGN_GUIDELINES, prompt)
+        self.assertNotIn("## Design Guidelines", prompt)
+
     def test_context_only(self):
         self.assertEqual(
-            build_subagent_prompt(context_prompt="ctx"), "ctx"
+            build_subagent_prompt(context_prompt="ctx", guidelines=self.SUPPRESS),
+            "ctx",
         )
 
     def test_appends_composition_guide(self):
         prompt = build_subagent_prompt(
-            context_prompt="ctx", composition_guide="guide"
+            context_prompt="ctx",
+            guidelines={**self.SUPPRESS, "composition_guide": "guide"},
         )
         self.assertEqual(prompt, "ctx\nguide")
 
     def test_edit_block(self):
         prompt = build_subagent_prompt(
             context_prompt="ctx",
+            guidelines=self.SUPPRESS,
             edit_context={
                 "surfaceId": "s1",
                 "prior": {
@@ -413,12 +467,16 @@ class TestBuildSubagentPrompt(unittest.TestCase):
     def test_omits_requested_changes_when_none(self):
         prompt = build_subagent_prompt(
             context_prompt="ctx",
+            guidelines=self.SUPPRESS,
             edit_context={"surfaceId": "s1", "prior": {"components": [], "data": None}},
         )
         self.assertNotIn("Requested changes", prompt)
 
-    def test_empty_context_returns_empty(self):
-        self.assertEqual(build_subagent_prompt(context_prompt=""), "")
+    def test_empty_everything_returns_empty(self):
+        # Empty context AND both default blocks suppressed → empty prompt.
+        self.assertEqual(
+            build_subagent_prompt(context_prompt="", guidelines=self.SUPPRESS), ""
+        )
 
 
 class TestAssembleOps(unittest.TestCase):
@@ -512,7 +570,7 @@ class TestPrepareA2UIRequest(unittest.TestCase):
             changes=None,
             messages=[],
             state={"ag-ui": {"context": [{"value": "ctx"}]}},
-            composition_guide="guide",
+            guidelines={"composition_guide": "guide"},
         )
         self.assertIsNone(prep.get("error"))
         self.assertFalse(prep["is_update"])
@@ -666,6 +724,35 @@ class TestBuildA2UIEnvelope(unittest.TestCase):
         ops = env[A2UI_OPERATIONS_KEY]
         self.assertFalse(any("createSurface" in o for o in ops))
         self.assertEqual(ops[0]["updateComponents"]["surfaceId"], "s1")
+
+
+class TestResolveA2UIToolParams(unittest.TestCase):
+    def test_fills_canonical_defaults(self):
+        r = resolve_a2ui_tool_params({"model": "M"})
+        self.assertEqual(r["model"], "M")
+        self.assertEqual(r["default_surface_id"], DEFAULT_SURFACE_ID)
+        self.assertEqual(r["default_catalog_id"], BASIC_CATALOG_ID)
+        self.assertEqual(r["tool_name"], GENERATE_A2UI_TOOL_NAME)
+        self.assertEqual(r["tool_description"], GENERATE_A2UI_TOOL_DESCRIPTION)
+        self.assertIsNone(r["guidelines"])
+
+    def test_empty_string_override_falls_back_to_default(self):
+        r = resolve_a2ui_tool_params(
+            {"model": "M", "tool_name": "", "default_catalog_id": ""}
+        )
+        self.assertEqual(r["tool_name"], GENERATE_A2UI_TOOL_NAME)
+        self.assertEqual(r["default_catalog_id"], BASIC_CATALOG_ID)
+
+    def test_overrides_pass_through(self):
+        r = resolve_a2ui_tool_params(
+            {
+                "model": "M",
+                "tool_name": "custom_tool",
+                "guidelines": {"composition_guide": "g"},
+            }
+        )
+        self.assertEqual(r["tool_name"], "custom_tool")
+        self.assertEqual(r["guidelines"], {"composition_guide": "g"})
 
 
 if __name__ == "__main__":

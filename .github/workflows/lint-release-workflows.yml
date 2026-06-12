@@ -1,8 +1,8 @@
 name: Lint Release Workflows
 
-# Runs actionlint + shellcheck against the release / create-pr and
-# release / publish pipelines and the scripts they call. Keeps these
-# critical, retry-sensitive files from silently regressing on shell or
+# Runs actionlint + shellcheck against the release / create-pr, release /
+# publish, and canary / publish pipelines and the scripts they call. Keeps
+# these critical, retry-sensitive files from silently regressing on shell or
 # action-syntax bugs.
 #
 # Scope is intentionally narrow: only the release workflows and
@@ -15,6 +15,7 @@ on:
     paths:
       - ".github/workflows/prepare-release.yml"
       - ".github/workflows/publish-release.yml"
+      - ".github/workflows/canary.yml"
       - ".github/workflows/lint-release-workflows.yml"
       - "scripts/release/**"
       - "nx.json"
@@ -22,6 +23,7 @@ on:
     paths:
       - ".github/workflows/prepare-release.yml"
       - ".github/workflows/publish-release.yml"
+      - ".github/workflows/canary.yml"
       - ".github/workflows/lint-release-workflows.yml"
       - "scripts/release/**"
       - "nx.json"
@@ -45,6 +47,7 @@ jobs:
           actionlint_flags: >-
             .github/workflows/prepare-release.yml
             .github/workflows/publish-release.yml
+            .github/workflows/canary.yml
             .github/workflows/lint-release-workflows.yml
 
   shellcheck:
@@ -78,3 +81,35 @@ jobs:
           persist-credentials: false
       - name: Verify nx.json and release.config.json are in sync
         run: bash scripts/release/verify-nx-release-allowlist.sh
+
+  release-scope-dropdown-sync:
+    # Verifies the workflow_dispatch `scope` choice dropdowns in
+    # prepare-release.yml and publish-release.yml match release.config.json's
+    # `.scopes` keys. These option lists are hand-maintained and drifted from
+    # the config (newly-enrolled packages weren't canary-selectable; stale
+    # scopes lingered), so this guard fails CI whenever they diverge again.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Verify release scope dropdowns match release.config.json
+        run: bash scripts/release/verify-release-scope-dropdowns.sh
+
+  release-config-manifest-names:
+    # Verifies each release.config.json package `name` matches the actual name
+    # in its on-disk manifest (package.json / pyproject.toml). Catches drift
+    # like langroid's config name being the underscore form `ag_ui_langroid`
+    # while its pyproject (and PyPI distribution) is `ag-ui-langroid` — harmless
+    # for resolution but wrong in PR bodies, release notes and human summaries.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: "3.12"
+      - name: Verify config package names match manifests
+        run: bash scripts/release/verify-config-manifest-names.sh

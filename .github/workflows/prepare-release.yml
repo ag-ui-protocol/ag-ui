@@ -15,13 +15,16 @@ on:
         type: choice
         options:
           - integration-a2a
-          - integration-adk
+          - integration-adk-py
+          - integration-adk-ts
           - integration-ag2
           - integration-agent-spec
           - integration-agno
-          - integration-aws-strands
+          - integration-aws-strands-py
+          - integration-aws-strands-ts
           - integration-claude-agent-sdk-py
           - integration-claude-agent-sdk-ts
+          - integration-cloudflare-agents
           - integration-crewai-py
           - integration-crewai-ts
           - integration-langchain
@@ -32,11 +35,16 @@ on:
           - integration-mastra
           - integration-pydantic-ai
           - integration-spring-ai
+          - integration-watsonx-py
+          - integration-watsonx-ts
           - middleware-a2a
           - middleware-a2ui
+          - middleware-mcp
           - middleware-mcp-apps
           - sdk-py
+          - sdk-py-a2ui-toolkit
           - sdk-ts
+          - sdk-ts-a2ui-toolkit
       bump:
         description: "Version bump level"
         required: true
