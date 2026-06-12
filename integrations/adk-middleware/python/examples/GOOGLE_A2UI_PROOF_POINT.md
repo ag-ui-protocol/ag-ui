@@ -140,6 +140,17 @@ no data model): Google's parser yields each card as it parses and it paints imme
 Verified live: 3 cards streamed in at ~0.65s / 1.1s / 1.3s — a visible skeleton→card
 cascade. Same bridge/plumbing; only the generation prompt differs.
 
+**The "streaming feel" is the `building` lifecycle, not per-component painting.** Event
+logs proved the server streams correctly (e.g. 8–10 component snapshots over ~4.8s,
+400–1000ms apart) yet the surface still rendered all-at-once — because the dojo's client
+renderer doesn't repaint the *surface* per snapshot; the visible streaming in the
+middleware-driven demos is the `{status:"building"}` skeleton + progress affordance the
+middleware emits during generation. So `GoogleA2uiStreamingTool` now emits that same
+lifecycle (a `building` snapshot + live `progressTokens` on the stable messageId) before
+the surface ops — replicating the middleware's UX without the middleware. Net finding:
+through this renderer, the perceived "streaming" is a loader lifecycle, and any direct
+(middleware-bypassing) emitter must reproduce it.
+
 ---
 
 ## Comparison matrix

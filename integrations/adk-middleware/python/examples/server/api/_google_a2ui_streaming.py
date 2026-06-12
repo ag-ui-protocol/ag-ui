@@ -138,8 +138,23 @@ class GoogleA2uiStreamingTool(A2UISubAgentTool):
         surface_id: Optional[str] = None
         catalog_id: str = self._default_catalog_id
         fed = ""  # text already handed to the parser (delta/cumulative safe)
+        painted = False  # True once the first surface snapshot is emitted
+
+        # Pre-paint skeleton: emit a `building` lifecycle on the stable messageId so the
+        # client shows its "generating…" affordance during the model's first-token
+        # latency (mirrors @ag-ui/a2ui-middleware's buildLifecycleActivity — the piece
+        # that makes the middleware-driven demos *feel* like they're streaming).
+        await self.event_queue.put(
+            ActivitySnapshotEvent(
+                message_id=message_id,
+                activity_type=A2UI_ACTIVITY_TYPE,
+                content={"status": "building"},
+                replace=True,
+            )
+        )
 
         async def emit() -> None:
+            nonlocal painted
             if surface_id is None:
                 return
             ops: list[dict[str, Any]] = [
@@ -156,6 +171,7 @@ class GoogleA2uiStreamingTool(A2UISubAgentTool):
                     replace=True,
                 )
             )
+            painted = True
 
         async for resp in self._model.generate_content_async(llm_request, stream=True):
             parts = getattr(getattr(resp, "content", None), "parts", None) or []
@@ -171,6 +187,17 @@ class GoogleA2uiStreamingTool(A2UISubAgentTool):
                 new, fed = text, fed + text
             if not new:
                 continue
+            if not painted:
+                # Keep the skeleton alive with live progress while the model is still
+                # emitting the pre-component opening text (no surface to paint yet).
+                await self.event_queue.put(
+                    ActivitySnapshotEvent(
+                        message_id=message_id,
+                        activity_type=A2UI_ACTIVITY_TYPE,
+                        content={"status": "building", "progressTokens": len(fed)},
+                        replace=True,
+                    )
+                )
             for part in parser.process_chunk(new):
                 for msg in (getattr(part, "a2ui_json", None) or []):
                     key = next((k for k in msg if k != "version"), None)
