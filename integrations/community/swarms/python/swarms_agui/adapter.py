@@ -3,6 +3,7 @@ import asyncio
 import copy
 import uuid
 from collections.abc import AsyncIterator, Sequence
+from contextlib import suppress
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -23,6 +24,14 @@ from ag_ui.core import (
 )
 from ag_ui.core.types import AssistantMessage
 from ag_ui.encoder import EventEncoder
+
+
+# When a client disconnects mid-stream, the worker thread running the blocking
+# ``agent.run`` cannot be cancelled and keeps writing to the shared
+# ``agent.short_memory``. The next request waits up to this many seconds for that
+# thread to finish before rebuilding memory, so the two never write at once. The
+# bound keeps a genuinely hung run from wedging every subsequent request.
+_PREVIOUS_RUN_DRAIN_TIMEOUT = 30.0
 
 
 def _role_label(agent: Agent, role: str) -> str:
@@ -136,6 +145,7 @@ async def _event_stream(
     encoder: EventEncoder,
     baseline: Any,
     lock: asyncio.Lock,
+    pending_run: dict[str, Any],
 ) -> AsyncIterator[str]:
     run_id = body.run_id or str(uuid.uuid4())
     thread_id = body.thread_id or str(uuid.uuid4())
@@ -181,8 +191,25 @@ async def _event_stream(
     # delta so an error before any output surfaces as a clean RUN_ERROR rather
     # than leaving an unterminated TEXT_MESSAGE_* sequence on the wire.
     async with lock:
+        # Wait for any previous run's worker thread to finish before mutating
+        # the shared agent memory. On a normal turn the previous run already
+        # completed, so this returns immediately; it only blocks when an earlier
+        # client disconnected mid-stream, leaving its uncancellable worker thread
+        # still writing to ``agent.short_memory``. Shielded so a timeout here
+        # does not cancel that thread's future, and bounded so a genuinely hung
+        # run cannot wedge every subsequent request.
+        previous = pending_run["future"]
+        if previous is not None and not previous.done():
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(previous), _PREVIOUS_RUN_DRAIN_TIMEOUT
+                )
+            except asyncio.TimeoutError:
+                pass
+
         task = _rebuild_memory(agent, baseline, body.messages)
-        asyncio.ensure_future(asyncio.to_thread(run_blocking, task))
+        run_future = asyncio.ensure_future(asyncio.to_thread(run_blocking, task))
+        pending_run["future"] = run_future
         while True:
             kind, payload = await queue.get()
             if kind == "chunk":
@@ -209,6 +236,13 @@ async def _event_stream(
                 error = payload
             elif kind == "done":
                 break
+
+        # Normal completion: the worker emitted "done" from its finally and is
+        # about to return. Await it so the shared memory is provably quiescent
+        # before the lock is released. On client disconnect this is skipped —
+        # GeneratorExit unwinds the lock and the next request drains the worker.
+        with suppress(Exception):
+            await run_future
 
     if error is not None:
         if message_open:
@@ -292,11 +326,15 @@ def add_swarms_fastapi_endpoint(
     """
     baseline = _capture_baseline(agent)
     lock = asyncio.Lock()
+    # Holds the worker future of the most recent run so the next run can wait for
+    # it to drain before rebuilding the shared agent memory (see _event_stream).
+    # Shared across requests and guarded by ``lock``.
+    pending_run: dict[str, Any] = {"future": None}
 
     @app.post(path)
     async def swarms_endpoint(body: RunAgentInput, request: Request):
         encoder = EventEncoder(accept=request.headers.get("accept"))
         return StreamingResponse(
-            _event_stream(agent, body, encoder, baseline, lock),
+            _event_stream(agent, body, encoder, baseline, lock, pending_run),
             media_type=encoder.get_content_type(),
         )
