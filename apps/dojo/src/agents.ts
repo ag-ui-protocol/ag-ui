@@ -113,6 +113,12 @@ export const agentsIntegrations = {
     google_a2ui_streaming: new ADKAgent({
       url: `${envVars.adkMiddlewareUrl}/adk-google-a2ui-streaming`,
     }),
+    // Streaming, EXPLICIT mode (Option B): literal-valued cards + static children
+    // (no template/data model), so each card paints as its component streams in —
+    // visible component-by-component streaming. Also no middleware.
+    google_a2ui_streaming_explicit: new ADKAgent({
+      url: `${envVars.adkMiddlewareUrl}/adk-google-a2ui-streaming-explicit`,
+    }),
   }),
 
   "server-starter-all-features": async () =>

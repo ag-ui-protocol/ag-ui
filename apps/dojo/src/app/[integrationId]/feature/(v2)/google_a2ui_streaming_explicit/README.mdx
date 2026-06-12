@@ -1,0 +1,18 @@
+# A2UI Streaming — Explicit (Google SDK)
+
+## What This Demo Shows
+
+The **visible** version of Google's component streaming. The companion **A2UI Streaming (Google SDK)** demo streams correctly but uses a data-bound template (`Row` repeating a card over `/items`), so the components paint nothing until the data model arrives — the build-up isn't visible. This demo removes that: the model emits **explicit, literal-valued cards** so each one paints the instant its component streams in.
+
+1. **Explicit components, no data model**: `root` is a `Row` with a **static `children` array** (`["hotel-1","hotel-2","hotel-3"]`), and each card is its own component with values written inline as literals (`"name":"The Ritz","rating":4.8`), not `{path:…}` bindings. No `updateDataModel`.
+2. **Component-by-component paint**: Google's `A2uiStreamParser` yields each card as it parses; the bridge emits a cumulative `a2ui-surface` `ACTIVITY_SNAPSHOT` per yield. You see empty-`Row` **placeholder slots** appear, then real cards pop in one at a time.
+
+Verified live: 3 cards streamed in at ~0.65s / 1.1s / 1.3s (each as its component arrived), with **no data phase**.
+
+## How to Interact
+
+Same suggestions as the other dynamic demos (hotel / product / team). Watch the cards cascade in one-by-one — for a longer cascade, ask for more items ("compare 8 hotels").
+
+## How It Works Technically
+
+Identical plumbing to **A2UI Streaming (Google SDK)** — `GoogleA2uiStreamingTool` runs Google's `A2uiStreamParser` over the model's `<a2ui-json>` text stream and emits progressive `a2ui-surface` activity snapshots directly (no CopilotKit A2UI middleware; see `GOOGLE_A2UI_PROOF_POINT.md` for why the streaming path bypasses it). The **only** difference is the generation prompt: this agent instructs the model to use explicit literal-valued components + a static children array instead of a template-over-data surface, so the visible unit of streaming is the component, not the data item.

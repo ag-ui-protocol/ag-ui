@@ -31,6 +31,7 @@ from .api import (
     google_a2ui_dynamic_schema_app,
     google_a2ui_recovery_app,
     google_a2ui_streaming_app,
+    google_a2ui_streaming_explicit_app,
 )
 
 app = FastAPI(title='ADK Middleware Demo')
@@ -42,6 +43,7 @@ app.include_router(a2ui_recovery_app.router, prefix='/adk-a2ui-recovery', tags=[
 app.include_router(google_a2ui_dynamic_schema_app.router, prefix='/adk-google-a2ui-dynamic-schema', tags=['A2UI Dynamic Schema (Google SDK)'])
 app.include_router(google_a2ui_recovery_app.router, prefix='/adk-google-a2ui-recovery', tags=['A2UI Recovery (Google SDK)'])
 app.include_router(google_a2ui_streaming_app.router, prefix='/adk-google-a2ui-streaming', tags=['A2UI Streaming (Google SDK)'])
+app.include_router(google_a2ui_streaming_explicit_app.router, prefix='/adk-google-a2ui-streaming-explicit', tags=['A2UI Streaming Explicit (Google SDK)'])
 app.include_router(agentic_generative_ui_app.router, prefix='/adk-agentic-generative-ui', tags=['Agentic Generative UI'])
 app.include_router(tool_based_generative_ui_app.router, prefix='/adk-tool-based-generative-ui', tags=['Tool Based Generative UI'])
 app.include_router(human_in_the_loop_app.router, prefix='/adk-human-in-loop-agent', tags=['Human in the Loop'])

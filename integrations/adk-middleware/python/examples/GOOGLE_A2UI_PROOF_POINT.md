@@ -130,6 +130,16 @@ produced **16 progressive snapshots** (empty → root+placeholder → real card 
 streaming in). **Net: the two frameworks' *atomic* models compose through the middleware;
 their *streaming* models don't — each has its own incremental protocol.**
 
+**Streaming visibility (two variants).** With the dynamic-catalog **template** pattern
+(`Row` repeating a card over `/items`), the component phase paints *nothing* until the
+data model lands — components are data-bound, so the visible build-up is compressed into
+the data phase at the end (after gemini's ~7s first-token latency, the visible window is
+~1–2s). To make component streaming *visible*, a second demo (`google_a2ui_streaming_explicit`)
+prompts for **explicit literal-valued cards + a static `children` array** (no template,
+no data model): Google's parser yields each card as it parses and it paints immediately.
+Verified live: 3 cards streamed in at ~0.65s / 1.1s / 1.3s — a visible skeleton→card
+cascade. Same bridge/plumbing; only the generation prompt differs.
+
 ---
 
 ## Comparison matrix
@@ -156,6 +166,9 @@ their *streaming* models don't — each has its own incremental protocol.**
 - `examples/server/api/_google_a2ui_streaming.py` + `google_a2ui_streaming.py` — the
   Option-A streaming demo (`GoogleA2uiStreamingTool` bridges `A2uiStreamParser` → direct
   `a2ui-surface` snapshots), mounted at `/adk-google-a2ui-streaming`. No middleware.
+- `examples/server/api/google_a2ui_streaming_explicit.py` — Option-B variant (explicit
+  literal-valued cards, no template/data; visible component-by-component streaming),
+  mounted at `/adk-google-a2ui-streaming-explicit`. Same bridge, different prompt.
 - `examples/pyproject.toml` — `a2ui-agent-sdk` + `a2a-sdk<1.0` + `google-adk>=1.28.1`.
 - `apps/dojo/src/google-a2ui-shim.ts` — disposable result-normalizing middleware.
 - `apps/dojo/src/agents.ts` — `google_a2ui_dynamic_schema` / `google_a2ui_recovery`
@@ -187,4 +200,5 @@ Optional (deferred; run/verify outside the sandbox):
 3. From `apps/dojo`: `npm run run-everything` (starts dojo + ADK uvicorn + aimock;
    routes ADK Gemini to the mock).
 4. Visit `/adk-middleware/feature/google_a2ui_dynamic_schema`, `…/google_a2ui_recovery`,
-   and `…/google_a2ui_streaming` (watch the streaming one fill in progressively).
+   `…/google_a2ui_streaming`, and `…/google_a2ui_streaming_explicit` (the explicit one
+   shows the clearest card-by-card cascade).

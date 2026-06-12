@@ -135,6 +135,12 @@ export const featureConfig: FeatureConfig[] = [
     description: "Proof-point: progressive A2UI via Google's A2uiStreamParser (<a2ui-json> text stream) emitting activity snapshots directly — no A2UI middleware",
     tags: ["A2UI", "Streaming", "Google SDK"],
   }),
+  createFeatureConfig({
+    id: "google_a2ui_streaming_explicit",
+    name: "A2UI Streaming — Explicit (Google SDK)",
+    description: "Proof-point: visible component-by-component streaming — explicit literal-valued cards (no template/data model), so each card paints as its component streams in",
+    tags: ["A2UI", "Streaming", "Google SDK"],
+  }),
 ];
 
 export default featureConfig;

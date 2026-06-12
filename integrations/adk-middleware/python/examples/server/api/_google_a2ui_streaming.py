@@ -60,7 +60,16 @@ class GoogleA2uiStreamingTool(A2UISubAgentTool):
     not used here.
     """
 
-    def __init__(self, *, model: Any, schema_manager: Any, catalog: Any, default_catalog_id: str):
+    def __init__(
+        self,
+        *,
+        model: Any,
+        schema_manager: Any,
+        catalog: Any,
+        default_catalog_id: str,
+        role_description: str = ROLE_DESCRIPTION,
+        example: str = A2UI_EXAMPLES,
+    ):
         # Reuse A2UISubAgentTool.__init__ via a minimal cfg so isinstance + helpers work.
         super().__init__(
             {
@@ -84,12 +93,12 @@ class GoogleA2uiStreamingTool(A2UISubAgentTool):
         # the version mandate + a concrete version-bearing example (the catalog has no
         # bundled examples path, so include_examples would be a no-op).
         base_prompt = schema_manager.generate_system_prompt(
-            role_description=ROLE_DESCRIPTION,
+            role_description=role_description,
             workflow_description=_VERSION_MANDATE,
             include_schema=True,
             include_examples=False,
         )
-        self._system_prompt = f"{base_prompt}\n\n{A2UI_EXAMPLES}"
+        self._system_prompt = f"{base_prompt}\n\n{example}"
 
     def for_run(self, event_queue: Any) -> "GoogleA2uiStreamingTool":
         clone = copy.copy(self)  # preserves subclass type + config; fresh parser per run
