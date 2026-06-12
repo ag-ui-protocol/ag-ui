@@ -1,12 +1,18 @@
 """Unit tests for the Swarms AG-UI adapter."""
+import asyncio
 import json
+import threading
+from contextlib import suppress
 from unittest.mock import MagicMock, patch
 
 import pytest
+from ag_ui.core import RunAgentInput
+from ag_ui.encoder import EventEncoder
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from swarms_agui import add_swarms_fastapi_endpoint
+from swarms_agui import adapter
 
 
 def _parse_sse(body: str) -> list[dict]:
@@ -276,3 +282,113 @@ class TestMultiplePaths:
         client = _make_app(mock_agent)
         resp = client.post("/", json=_run_payload())
         assert "text/event-stream" in resp.headers["content-type"]
+
+
+class _LoggingConversation(_FakeConversation):
+    """A conversation that records when it is cleared, for race detection."""
+
+    def __init__(self, events, log_lock, history=None):
+        super().__init__(history)
+        self._events = events
+        self._log_lock = log_lock
+
+    def clear(self):
+        with self._log_lock:
+            self._events.append("clear")
+        super().clear()
+
+
+class _BlockingAgent:
+    """Agent whose first ``run`` blocks until released.
+
+    Simulates a worker thread that keeps writing to ``short_memory`` after its
+    client disconnected, so a test can assert the next request does not rebuild
+    memory until that thread has drained.
+    """
+
+    user_name = "User"
+    agent_name = "Assistant"
+
+    def __init__(self):
+        self.events: list[str] = []
+        self._log_lock = threading.Lock()
+        self.short_memory = _LoggingConversation(
+            self.events, self._log_lock, [{"role": "System", "content": "sys"}]
+        )
+        self.run_started = threading.Event()
+        self.release = threading.Event()
+        self._runs = 0
+
+    def run(self, task, streaming_callback=None, **kwargs):
+        with self._log_lock:
+            self._runs += 1
+            first = self._runs == 1
+            self.events.append("run_start")
+        self.run_started.set()
+        if first:
+            # Mimic the model call still running after the client disconnected.
+            self.release.wait(timeout=5)
+        with self._log_lock:
+            self.events.append("run_end")
+        return f"reply to: {task}"
+
+
+async def _disconnect_drain_scenario():
+    agent = _BlockingAgent()
+    baseline = adapter._capture_baseline(agent)
+    lock = asyncio.Lock()
+    pending_run: dict = {"future": None}
+    encoder = EventEncoder()
+
+    body_a = RunAgentInput.model_validate(_run_payload("first"))
+    body_b = RunAgentInput.model_validate(_run_payload("second"))
+
+    # Request A: drive its stream in a task and let it reach the blocked worker.
+    gen_a = adapter._event_stream(agent, body_a, encoder, baseline, lock, pending_run)
+
+    async def consume_a():
+        async for _ in gen_a:
+            pass
+
+    task_a = asyncio.ensure_future(consume_a())
+    await asyncio.to_thread(agent.run_started.wait, 5)
+
+    # Client A disconnects mid-stream. Cancelling the consumer (as the server
+    # does on disconnect) unwinds the ``async with lock`` and releases the lock,
+    # but A's worker thread keeps running and writing to short_memory.
+    task_a.cancel()
+    with suppress(asyncio.CancelledError):
+        await task_a
+
+    # Request B starts immediately and must NOT rebuild memory until A drains.
+    gen_b = adapter._event_stream(agent, body_b, encoder, baseline, lock, pending_run)
+
+    async def consume_b():
+        async for _ in gen_b:
+            pass
+
+    task_b = asyncio.ensure_future(consume_b())
+
+    # Give B a chance to run. It should be parked waiting on A's worker future,
+    # so only A's own rebuild (one "clear") has happened and A has not ended.
+    await asyncio.sleep(0.1)
+    with agent._log_lock:
+        snapshot = list(agent.events)
+    assert snapshot.count("clear") == 1, snapshot
+    assert "run_end" not in snapshot, snapshot
+
+    # Let A's worker finish; B should then proceed and complete.
+    agent.release.set()
+    await asyncio.wait_for(task_b, 5)
+
+    # The race is closed iff B rebuilt memory (the 2nd clear) only AFTER A's
+    # worker finished writing (the first run_end).
+    events = agent.events
+    first_run_end = events.index("run_end")
+    second_clear = events.index("clear", events.index("clear") + 1)
+    assert first_run_end < second_clear, events
+
+
+class TestDisconnectDrain:
+    def test_disconnect_does_not_race_shared_memory(self):
+        asyncio.run(_disconnect_drain_scenario())
