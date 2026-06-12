@@ -221,7 +221,15 @@ function collectChildRefs(children: unknown): string[] {
   return refs;
 }
 
-/** id → ordered child-id references, gathered from singular `child` + plural `children`. */
+/**
+ * id → ordered child-id references, gathered from singular `child` + plural `children`.
+ *
+ * Scope note: only these two fields feed the dangling-ref check and the cycle
+ * graph. Other catalog ref-fields (Modal `trigger`/`content`, Tabs
+ * `tabs[].child`) are NOT yet traversed — deriving ref-fields from the catalog
+ * (in lockstep across the TS/Python/.NET toolkits) is tracked in
+ * https://github.com/ag-ui-protocol/ag-ui/issues/1948.
+ */
 function childAdjacency(components: Array<Record<string, unknown>>): Map<string, string[]> {
   const adj = new Map<string, string[]>();
   for (const comp of components) {

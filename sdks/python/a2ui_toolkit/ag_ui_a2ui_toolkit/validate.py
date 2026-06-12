@@ -62,7 +62,14 @@ def _collect_child_refs(children: Any) -> list[str]:
 
 
 def _child_adjacency(components: list) -> dict[str, list[str]]:
-    """id -> ordered child-id references, gathered from singular ``child`` + plural ``children``."""
+    """id -> ordered child-id references, gathered from singular ``child`` + plural ``children``.
+
+    Scope note: only these two fields feed the dangling-ref check and the cycle
+    graph. Other catalog ref-fields (Modal ``trigger``/``content``, Tabs
+    ``tabs[].child``) are NOT yet traversed — deriving ref-fields from the
+    catalog (in lockstep across the TS/Python/.NET toolkits) is tracked in
+    https://github.com/ag-ui-protocol/ag-ui/issues/1948.
+    """
     adj: dict[str, list[str]] = {}
     for comp in components:
         if _is_object(comp) and isinstance(comp.get("id"), str):
