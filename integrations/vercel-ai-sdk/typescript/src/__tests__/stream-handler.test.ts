@@ -93,6 +93,50 @@ describe("StreamHandler — basic text + lifecycle", () => {
     expect(assistant.content).toBe("Hello world");
   });
 
+  it("reuses the streamed text part id as the snapshot assistant message id", async () => {
+    // The TEXT_MESSAGE_START id and the assistant message id in
+    // MESSAGES_SNAPSHOT must match, so the canonical client replaces the
+    // streamed message in place instead of dropping + re-appending a UUID copy.
+    const model = makeMockModel([
+      streamStart,
+      responseMetadata(),
+      { type: "text-start", id: "msg-1" },
+      { type: "text-delta", id: "msg-1", delta: "Hello" },
+      { type: "text-end", id: "msg-1" },
+      finishStop(),
+    ]);
+    const events = await collectEvents(streamText({ model, prompt: "hi" }).fullStream);
+
+    const start = events.find((e) => e.type === EventType.TEXT_MESSAGE_START) as TextMessageStartEvent;
+    const snapshot = events.find((e) => e.type === EventType.MESSAGES_SNAPSHOT) as MessagesSnapshotEvent;
+    const assistant = snapshot.messages.find((m) => m.role === "assistant") as AssistantMessage;
+    expect(assistant.id).toBe("msg-1");
+    expect(assistant.id).toBe(start.messageId);
+  });
+
+  it("first text segment's id anchors the assistant message when a step streams several", async () => {
+    // Multiple segments collapse into one snapshot assistant message; its id is
+    // the FIRST segment's id (seg-a), and later segments keep their own
+    // streaming ids but fold their content into this one message.
+    const model = makeMockModel([
+      streamStart,
+      responseMetadata(),
+      { type: "text-start", id: "seg-a" },
+      { type: "text-delta", id: "seg-a", delta: "Let me check. " },
+      { type: "text-end", id: "seg-a" },
+      { type: "text-start", id: "seg-b" },
+      { type: "text-delta", id: "seg-b", delta: "Done." },
+      { type: "text-end", id: "seg-b" },
+      finishStop(),
+    ]);
+    const events = await collectEvents(streamText({ model, prompt: "hi" }).fullStream);
+
+    const snapshot = events.find((e) => e.type === EventType.MESSAGES_SNAPSHOT) as MessagesSnapshotEvent;
+    const assistant = snapshot.messages.find((m) => m.role === "assistant") as AssistantMessage;
+    expect(assistant.id).toBe("seg-a");
+    expect(assistant.content).toBe("Let me check. Done.");
+  });
+
   it("does NOT push a trailing empty assistant message when there is no content", async () => {
     const model = makeMockModel([streamStart, responseMetadata(), finishStop()]);
     const events = await collectEvents(streamText({ model, prompt: "hi" }).fullStream, {

@@ -226,6 +226,26 @@ export class StreamHandler {
   // text -----------------------------------------------------------------
   private onTextStart(part: { id: string }): void {
     this.closeAllOpenReasonings();
+    // Adopt the first text part's id as this step's assistant message id, so
+    // the streamed TEXT_MESSAGE_* events and the assistant message that lands
+    // in MESSAGES_SNAPSHOT share one id. Without this, the canonical client
+    // drops the streamed message on snapshot (its id is absent from the
+    // snapshot) and re-appends a fresh-UUID copy — a needless id churn. This
+    // matches the langgraph/mastra convention of reusing the streamed id.
+    //
+    // `currentMessagePushed` doubles as the step-identity lock: a tool-first
+    // step has already pushed the assistant message and emitted
+    // TOOL_CALL_START.parentMessageId pointing at the current id, so we must
+    // NOT re-key it here. Likewise, when a single step streams multiple text
+    // segments, only the FIRST segment's id is adopted; later segments keep
+    // their own TEXT_MESSAGE_* ids but collapse into this one assistant
+    // message in the snapshot (their accumulated content already lands in
+    // currentAssistantMessage.content). That collapse is intentional — one
+    // assistant turn is one snapshot message.
+    if (!this.currentMessagePushed) {
+      this.currentStepAssistantId = part.id;
+      this.currentAssistantMessage.id = part.id;
+    }
     this.ensureAssistantPushed();
     this.openTextIds.add(part.id);
     this.emit({
@@ -407,7 +427,10 @@ export class StreamHandler {
   }
 
   private onToolOutputDenied(part: ToolOutputDeniedPart): void {
-    this.emitToolResult(part.toolCallId, "denied");
+    // Pass an `error` so a client can distinguish an actual denial from a
+    // tool that legitimately returned the string "denied" — mirrors how
+    // onToolError surfaces the failure on the ToolMessage.
+    this.emitToolResult(part.toolCallId, "denied", "tool output denied");
   }
 
   private emitToolResult(toolCallId: string, content: string, error?: string): void {

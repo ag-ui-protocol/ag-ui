@@ -120,6 +120,15 @@ describe("StreamHandler — multi-step", () => {
     expect(assistants[0].id).not.toBe(assistants[1].id);
     expect(assistants[0].toolCalls?.length).toBeGreaterThan(0);
     expect(assistants[1].content).toContain("Step 2");
+
+    // Step 1 streamed text "txt-a" before the tool call, so the assistant id
+    // is anchored to that text id and the tool call's TOOL_CALL_START
+    // parentMessageId points at it (not an orphan UUID).
+    expect(assistants[0].id).toBe("txt-a");
+    const toolStart = events.find(
+      (e) => e.type === EventType.TOOL_CALL_START,
+    ) as ToolCallStartEvent;
+    expect(toolStart.parentMessageId).toBe("txt-a");
   });
 
   it("TOOL_CALL_START.parentMessageId rotates per step", async () => {
