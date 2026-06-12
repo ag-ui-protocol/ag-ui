@@ -33,6 +33,8 @@ export type {
   ToolCallContext,
   ToolCallContextExtras,
   ToolResultContext,
+  ToolStreamEventContext,
+  ToolStreamEventHandler,
   PredictStateMapping,
   SessionManagerProvider,
   StateContextBuilder,
