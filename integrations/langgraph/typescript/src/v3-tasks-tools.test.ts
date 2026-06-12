@@ -75,6 +75,10 @@ async function runV3(chunks: any[], getStateResult: any = EMPTY_STATE) {
   (agent as any).activeRun = {
     id: "run1",
     threadId: "thread1",
+    // The raw `messages` translation is gated behind an active node name
+    // (in production set from lifecycle/graph_name). Preset it so the
+    // messages handler is reachable in isolation.
+    nodeName: "chat",
     hasFunctionStreaming: false,
     modelMadeToolCall: false,
     textBlockMessageIds: new Map(),
@@ -86,7 +90,18 @@ async function runV3(chunks: any[], getStateResult: any = EMPTY_STATE) {
     makeStreamArg(chunks),
     "thread1",
     { next: (e: any) => dispatched.push(e), error: () => {}, complete: () => {} },
-    { runId: "run1", threadId: "thread1", messages: [], state: {}, tools: [], context: [] },
+    {
+      runId: "run1",
+      threadId: "thread1",
+      messages: [],
+      state: {},
+      tools: [],
+      context: [],
+      // Seed an active node so the raw `messages` translation (gated on
+      // an active node name) is reachable in isolation. handleStreamEventsV3
+      // applies this via handleNodeChange at run start.
+      forwardedProps: { nodeName: "chat" },
+    },
     [],
   );
 
@@ -96,6 +111,23 @@ async function runV3(chunks: any[], getStateResult: any = EMPTY_STATE) {
 const toolResults = (d: any[]) => d.filter((e) => e.type === EventType.TOOL_CALL_RESULT);
 const interrupts = (d: any[]) =>
   d.filter((e) => e.type === EventType.CUSTOM && e.name === "on_interrupt");
+const textStarts = (d: any[]) => d.filter((e) => e.type === EventType.TEXT_MESSAGE_START);
+
+/** An agui-channel passthrough event (method === "agui"). */
+function aguiChunk(event: any) {
+  return makeChunk("agui", event);
+}
+/** Raw messages-channel frames that the v3 bundle would translate. */
+function rawTextMessage(id: string) {
+  return [
+    makeChunk("messages", { event: "message-start", id }),
+    makeChunk("messages", {
+      event: "content-block-start",
+      index: 0,
+      content: { type: "text" },
+    }),
+  ];
+}
 
 // ---------------------------------------------------------------------------
 // tools channel
@@ -200,5 +232,45 @@ describe("v3 tasks channel → deduped OnInterrupt", () => {
       }),
     ]);
     expect(interrupts(dispatched)).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// transformer mode: sticky lazy flip
+// ---------------------------------------------------------------------------
+
+describe("v3 transformer mode (lazy flip)", () => {
+  it("without any agui event, raw messages are translated", async () => {
+    const dispatched = await runV3([
+      ...rawTextMessage("m1"),
+    ]);
+    // Raw path opened a text message.
+    expect(textStarts(dispatched)).toHaveLength(1);
+    expect(textStarts(dispatched)[0].messageId).toBe("m1");
+  });
+
+  it("flips on first agui event and suppresses subsequent raw translation", async () => {
+    const dispatched = await runV3([
+      // agui passthrough first (mux pushes it ahead of the raw source)...
+      aguiChunk({ type: EventType.TEXT_MESSAGE_START, messageId: "agui-1", role: "assistant" }),
+      // ...then raw frames that WOULD open another text message if translated.
+      ...rawTextMessage("m1"),
+    ]);
+    const starts = textStarts(dispatched);
+    // Only the passthrough one — the raw m1 must be suppressed.
+    expect(starts).toHaveLength(1);
+    expect(starts[0].messageId).toBe("agui-1");
+  });
+
+  it("passes through agui events verbatim and ignores raw tools/tasks once flipped", async () => {
+    const dispatched = await runV3([
+      aguiChunk({ type: EventType.TEXT_MESSAGE_START, messageId: "agui-1", role: "assistant" }),
+      makeChunk("tools", { event: "tool-finished", tool_call_id: "tc-1", output: "x" }),
+      makeChunk("tasks", { id: "t", name: "n", interrupts: [{ id: "int-1", value: "v" }] }),
+    ]);
+    // Raw tools must NOT produce a TOOL_CALL_RESULT in transformer mode.
+    expect(toolResults(dispatched)).toHaveLength(0);
+    // The agui passthrough is present.
+    expect(textStarts(dispatched)).toHaveLength(1);
   });
 });
