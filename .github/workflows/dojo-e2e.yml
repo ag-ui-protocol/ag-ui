@@ -168,10 +168,6 @@ jobs:
             test_path: tests/microsoftAgentFrameworkDotnetTests
             services: ["dojo", "microsoft-agent-framework-dotnet"]
             wait_on: http://localhost:9999,tcp:localhost:8016
-          # - suite: vercel-ai-sdk
-          #   test_path: tests/vercelAISdkTests
-          #   services: ["dojo"]
-          #   wait_on: http://localhost:9999
           - suite: vercel-ai-sdk
             test_path: tests/vercelAISdkTests
             services: ["dojo"]

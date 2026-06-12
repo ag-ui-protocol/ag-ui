@@ -334,7 +334,7 @@ describe("StreamHandler — tool streaming", () => {
     expect(results.map((e) => e.toolCallId).sort()).toEqual(["tc-1", "tc-2"]);
   });
 
-  it("treats tool-output-denied as a TOOL_CALL_RESULT with content 'denied'", async () => {
+  it("treats tool-output-denied as a TOOL_CALL_RESULT with content 'denied' and an error field", async () => {
     // tool-output-denied isn't easy to provoke via streamText (it's a static
     // tool path). Drive the handler directly with a minimal async iterable.
     async function* parts(): AsyncIterable<unknown> {
@@ -370,6 +370,15 @@ describe("StreamHandler — tool streaming", () => {
     expect(results).toHaveLength(1);
     expect(results[0].content).toBe("denied");
     expect(results[0].toolCallId).toBe("tc-1");
+
+    // The persisted ToolMessage carries an `error` so a client can tell a real
+    // denial apart from a tool that legitimately returned the string "denied".
+    const snap = events.find(
+      (e) => e.type === EventType.MESSAGES_SNAPSHOT,
+    ) as MessagesSnapshotEvent;
+    const toolMsg = snap.messages.find((m) => m.role === "tool") as ToolMessage;
+    expect(toolMsg.content).toBe("denied");
+    expect(toolMsg.error).toBe("tool output denied");
   });
 
   it("emits TOOL_CALL_END derived from tool-input-end", async () => {
