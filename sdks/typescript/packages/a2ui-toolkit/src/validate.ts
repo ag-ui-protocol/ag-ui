@@ -23,6 +23,7 @@ export interface A2UIValidationError {
     | "unknown_component"
     | "missing_required_prop"
     | "unresolved_child"
+    | "child_cycle"
     | "unresolved_binding";
   /** A JSON-pointer-ish locator, e.g. `components[2].component`. */
   path: string;
@@ -156,16 +157,21 @@ export function validateA2UIComponents(input: ValidateA2UIInput): ValidateA2UIRe
       }
     }
 
-    // Child references must resolve to existing component ids.
+    // Child references must resolve to existing component ids. Both the singular
+    // `child` (one-child containers such as Card/Button, which the default prompt
+    // emits) and the plural `children` are validated so a dangling reference in
+    // either is caught and fed back to the recovery loop.
     if (isObject(comp)) {
-      collectChildRefs(comp.children).forEach((ref) => {
-        if (!ids.has(ref)) {
-          errors.push({
-            code: "unresolved_child",
-            path: `components[${i}].children`,
-            message: `Child reference '${ref}' does not match any component id`,
-          });
-        }
+      (["child", "children"] as const).forEach((field) => {
+        collectChildRefs(comp[field]).forEach((ref) => {
+          if (!ids.has(ref)) {
+            errors.push({
+              code: "unresolved_child",
+              path: `components[${i}].${field}`,
+              message: `Child reference '${ref}' does not match any component id`,
+            });
+          }
+        });
       });
 
       // Absolute binding paths must resolve against the data model (unless
@@ -182,6 +188,16 @@ export function validateA2UIComponents(input: ValidateA2UIInput): ValidateA2UIRe
     }
   });
 
+  // The child/children tree must be a DAG — a component that (transitively)
+  // references itself never terminates at render time. Report each cycle once.
+  findChildCycles(components).forEach((cycle) => {
+    errors.push({
+      code: "child_cycle",
+      path: `components[id=${cycle[0]}]`,
+      message: `Child reference cycle detected: ${[...cycle, cycle[0]].join(" -> ")}`,
+    });
+  });
+
   if (!components.some((c) => isObject(c) && c.id === "root")) {
     errors.push({ code: "no_root", path: "components", message: "No component has id 'root'" });
   }
@@ -189,7 +205,11 @@ export function validateA2UIComponents(input: ValidateA2UIInput): ValidateA2UIRe
   return { valid: errors.length === 0, errors };
 }
 
-/** Pull child-id references out of a `children` value (array of ids or {componentId,...}). */
+/**
+ * Pull child-id references out of a `child`/`children` value: an array of ids or
+ * `{componentId,...}` templates, a single `{componentId,...}` template, or a bare
+ * string id (the singular `child` shape Card/Button use).
+ */
 function collectChildRefs(children: unknown): string[] {
   const refs: string[] = [];
   const push = (v: unknown) => {
@@ -197,8 +217,79 @@ function collectChildRefs(children: unknown): string[] {
     else if (isObject(v) && typeof v.componentId === "string") refs.push(v.componentId);
   };
   if (Array.isArray(children)) children.forEach(push);
-  else if (isObject(children)) push(children);
+  else push(children);
   return refs;
+}
+
+/**
+ * id → ordered child-id references, gathered from singular `child` + plural `children`.
+ *
+ * Scope note: only these two fields feed the dangling-ref check and the cycle
+ * graph. Other catalog ref-fields (Modal `trigger`/`content`, Tabs
+ * `tabs[].child`) are NOT yet traversed — deriving ref-fields from the catalog
+ * (in lockstep across the TS/Python/.NET toolkits) is tracked in
+ * https://github.com/ag-ui-protocol/ag-ui/issues/1948.
+ */
+function childAdjacency(components: Array<Record<string, unknown>>): Map<string, string[]> {
+  const adj = new Map<string, string[]>();
+  for (const comp of components) {
+    if (isObject(comp) && typeof comp.id === "string") {
+      adj.set(comp.id, [...collectChildRefs(comp.child), ...collectChildRefs(comp.children)]);
+    }
+  }
+  return adj;
+}
+
+/**
+ * Find unique child-reference cycles (self-references and longer loops) over the
+ * child graph via a depth-first search. Each cycle is canonicalised — rotated so
+ * the lexicographically smallest id leads — so the same loop reached from
+ * different entry points collapses to one finding, and the reported chain stays
+ * byte-identical across the sibling toolkits.
+ */
+function findChildCycles(components: Array<Record<string, unknown>>): string[][] {
+  const adj = childAdjacency(components);
+  const color = new Map<string, number>(); // absent/0 = unvisited, 1 = on stack, 2 = done
+  const cycles = new Map<string, string[]>();
+
+  const canonical = (nodes: string[]): string[] => {
+    let m = 0;
+    for (let i = 1; i < nodes.length; i++) if (nodes[i] < nodes[m]) m = i;
+    return [...nodes.slice(m), ...nodes.slice(0, m)];
+  };
+
+  // Iterative DFS (explicit frame stack, not call recursion): the validator runs
+  // on untrusted model output, so a pathologically deep child chain must not
+  // overflow the native call stack. `path` mirrors the on-stack (gray) nodes in
+  // entry order, so `path.indexOf(v)` recovers the cycle slice on a back edge.
+  for (const root of adj.keys()) {
+    if ((color.get(root) ?? 0) !== 0) continue;
+    const frames: Array<{ node: string; i: number }> = [{ node: root, i: 0 }];
+    const path: string[] = [root];
+    color.set(root, 1);
+    while (frames.length > 0) {
+      const frame = frames[frames.length - 1];
+      const neighbors = adj.get(frame.node) ?? [];
+      if (frame.i >= neighbors.length) {
+        color.set(frame.node, 2);
+        frames.pop();
+        path.pop();
+        continue;
+      }
+      const v = neighbors[frame.i++];
+      const c = color.get(v) ?? 0;
+      if (c === 0) {
+        color.set(v, 1);
+        path.push(v);
+        frames.push({ node: v, i: 0 });
+      } else if (c === 1) {
+        const cyc = canonical(path.slice(path.indexOf(v)));
+        const key = cyc.join(" ");
+        if (!cycles.has(key)) cycles.set(key, cyc);
+      }
+    }
+  }
+  return [...cycles.values()];
 }
 
 /** Recursively collect absolute (`/…`) binding paths from a component's props. */
