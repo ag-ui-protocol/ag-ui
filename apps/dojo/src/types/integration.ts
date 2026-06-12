@@ -20,6 +20,7 @@ export type Feature =
   | "a2ui_recovery"
   | "google_a2ui_dynamic_schema"
   | "google_a2ui_recovery"
+  | "google_a2ui_streaming"
   | "crew_chat"
   | "error_flow";
 

@@ -1,0 +1,22 @@
+# A2UI Streaming (Google SDK)
+
+## What This Demo Shows
+
+Google's **prompt-based streaming** path, end to end — the counterpoint to the atomic **A2UI Dynamic Schema (Google SDK)** demo. Here the surface paints **progressively**, driven by Google's `A2uiStreamParser`.
+
+1. **`<a2ui-json>` text generation**: the model emits A2UI JSON inline in its response text (wrapped in `<a2ui-json>…</a2ui-json>`), top-down ordered, rather than calling a tool.
+2. **Incremental parsing**: Google's `A2uiStreamParser` consumes the text stream and yields A2UI messages as they become parseable — `createSurface`, then `updateComponents` (with an empty-`Row` **placeholder** standing in for forward-referenced children), then a growing `updateDataModel`, with `PayloadFixer` healing the in-flight tail.
+3. **Progressive paint**: a bridge accumulates those incremental messages (upsert components by id, track the latest data model) and emits a cumulative `a2ui-surface` `ACTIVITY_SNAPSHOT` (`replace: true`) on every yield. You see the surface fill in: empty → root + placeholder → real card → data streaming in.
+
+## How to Interact
+
+Same suggestions as the other dynamic demos (hotel / product / team). Watch the surface build up incrementally rather than appearing all at once.
+
+## How It Works Technically (and the key finding)
+
+This demo **does not use the CopilotKit A2UI middleware**. That's deliberate, and it's the finding the demo exists to surface:
+
+- The middleware's *progressive* path expects a `render_a2ui` tool call with **append-only, fully-valid** component trees and **gates on validation** — it would reject Google's forward-referencing `root` (`unresolved_child`) and can't express the placeholder→real **replacement** protocol Google streams.
+- So Google's streaming model routes **around** the middleware: the ADK agent runs `A2uiStreamParser` and emits `a2ui-surface` activity snapshots directly via the AG-UI event queue (`GoogleA2uiStreamingTool`, a subclass of the OSS-158 `A2UISubAgentTool` purely to receive the per-run event queue). The dojo's A2UI renderer paints the snapshots.
+
+**Takeaway:** the two frameworks' **atomic** models compose cleanly (see the tool-based Google demo, which paints through the middleware); their **streaming** models do not — each has its own incremental protocol, so progressive Google streaming bypasses the middleware. Full write-up in `integrations/adk-middleware/python/examples/GOOGLE_A2UI_PROOF_POINT.md`.

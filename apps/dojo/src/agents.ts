@@ -106,6 +106,13 @@ export const agentsIntegrations = {
       );
       return agent;
     })(),
+    // Streaming proof-point (Option A): NO A2UI middleware. The agent runs Google's
+    // A2uiStreamParser and emits progressive `a2ui-surface` ACTIVITY_SNAPSHOT events
+    // directly; the client renderer paints them. (Google's streaming model doesn't
+    // compose with the middleware's render_a2ui path — see GOOGLE_A2UI_PROOF_POINT.md.)
+    google_a2ui_streaming: new ADKAgent({
+      url: `${envVars.adkMiddlewareUrl}/adk-google-a2ui-streaming`,
+    }),
   }),
 
   "server-starter-all-features": async () =>

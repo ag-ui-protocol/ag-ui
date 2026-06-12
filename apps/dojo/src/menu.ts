@@ -171,6 +171,7 @@ export const menuIntegrations = [
       "a2ui_recovery",
       "google_a2ui_dynamic_schema",
       "google_a2ui_recovery",
+      "google_a2ui_streaming",
     ],
   },
   {

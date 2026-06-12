@@ -12,6 +12,7 @@ from .a2ui_dynamic_schema import app as a2ui_dynamic_schema_app
 from .a2ui_recovery import app as a2ui_recovery_app
 from .google_a2ui_dynamic_schema import app as google_a2ui_dynamic_schema_app
 from .google_a2ui_recovery import app as google_a2ui_recovery_app
+from .google_a2ui_streaming import app as google_a2ui_streaming_app
 
 __all__ = [
     "agentic_chat_app",
@@ -26,4 +27,5 @@ __all__ = [
     "a2ui_recovery_app",
     "google_a2ui_dynamic_schema_app",
     "google_a2ui_recovery_app",
+    "google_a2ui_streaming_app",
 ]

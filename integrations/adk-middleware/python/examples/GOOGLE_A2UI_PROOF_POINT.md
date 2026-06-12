@@ -114,6 +114,22 @@ Without the pin the lock resolves aiohttp 3.13.3 and live streaming dies with
 takes its aiohttp path rather than the httpx fallback.) Verified: live AI-Studio stream
 succeeds on 3.14.1.
 
+### 7. Streaming models don't compose (Option A demo).
+Google's SDK has a real streaming path — but on its **prompt-based** mode, not the tool
+mode. The model emits A2UI inline as `<a2ui-json>` text and `A2uiStreamParser` yields
+messages incrementally: `createSurface` → `updateComponents` **with an empty-`Row`
+placeholder** standing in for forward-referenced children → growing `updateDataModel`,
+with `PayloadFixer` healing. That **replacement** protocol (placeholder → real, by id)
+does **not** compose with the CopilotKit middleware's progressive path, which expects a
+`render_a2ui` tool call with **append-only, fully-valid** trees and **gates on
+validation** (it would reject the forward-ref `root`). So the streaming demo
+(`google_a2ui_streaming`) routes **around** the middleware: the ADK agent runs the
+parser and emits cumulative `a2ui-surface` `ACTIVITY_SNAPSHOT`s (`replace:true`) directly
+onto the AG-UI queue; the dojo renderer paints them. Verified live: a 3-headphone request
+produced **16 progressive snapshots** (empty → root+placeholder → real card → data
+streaming in). **Net: the two frameworks' *atomic* models compose through the middleware;
+their *streaming* models don't — each has its own incremental protocol.**
+
 ---
 
 ## Comparison matrix
@@ -125,7 +141,8 @@ succeeds on 3.14.1.
 | Validation | `A2uiValidator` (graph/depth/JSON-Pointer) | `validate_a2ui_components` (+ binding resolution) |
 | Healing | `parse_and_fix` (cuttable-keys) | none (extract-only) |
 | Recovery | **model-driven, unbounded** | **bounded loop + exhaustion UX** |
-| Paint-gate | CopilotKit A2UI middleware | same |
+| Paint-gate | CopilotKit A2UI middleware (atomic demos) | same |
+| Streaming | tool path = atomic; prompt path = **progressive** via `A2uiStreamParser` (`google_a2ui_streaming`, bypasses middleware) | `render_a2ui` streams (LangGraph); ADK adapter atomic |
 | Transport | AG-UI via `ag_ui_adk` (no A2A) | same |
 
 ---
@@ -136,18 +153,23 @@ succeeds on 3.14.1.
 - `examples/server/api/google_a2ui_dynamic_schema.py`, `google_a2ui_recovery.py` — ADK
   agents; registered in `api/__init__.py` + mounted in `server/__init__.py` at
   `/adk-google-a2ui-dynamic-schema` and `/adk-google-a2ui-recovery`.
+- `examples/server/api/_google_a2ui_streaming.py` + `google_a2ui_streaming.py` — the
+  Option-A streaming demo (`GoogleA2uiStreamingTool` bridges `A2uiStreamParser` → direct
+  `a2ui-surface` snapshots), mounted at `/adk-google-a2ui-streaming`. No middleware.
 - `examples/pyproject.toml` — `a2ui-agent-sdk` + `a2a-sdk<1.0` + `google-adk>=1.28.1`.
 - `apps/dojo/src/google-a2ui-shim.ts` — disposable result-normalizing middleware.
 - `apps/dojo/src/agents.ts` — `google_a2ui_dynamic_schema` / `google_a2ui_recovery`
   wired with `.use(A2UIMiddleware({injectA2UITool:false, a2uiToolNames:[…]}), shim)`
   (kept OUT of the route's `a2ui.agents` auto-attach list).
 - Dojo routes: `config.ts` + `menu.ts` (under `adk-middleware`) +
-  `types/integration.ts` (`Feature` union) entries, and the two feature pages
-  `app/[integrationId]/feature/(v2)/google_a2ui_{dynamic_schema,recovery}/page.tsx`
-  (+ `style.css`) — same dojo dynamic catalog + suggestions as the toolkit demos.
+  `types/integration.ts` (`Feature` union) entries, and the three feature pages
+  `app/[integrationId]/feature/(v2)/google_a2ui_{dynamic_schema,recovery,streaming}/`
+  (`page.tsx` + `style.css` + `README.mdx`) — same dojo dynamic catalog + suggestions as
+  the toolkit demos. `google_a2ui_streaming` is wired with **no** middleware.
 
-Verified in-sandbox: example server imports (89 routes); Google validator pass/fail
-behavior; dojo import symbols resolve. (Full dojo build/typecheck + browser e2e run
+Verified in-sandbox: example server imports (96 routes); Google validator pass/fail
+behavior; **live streaming run produced 16 progressive snapshots**; dojo import symbols
+resolve + content-manifest check passes. (Full dojo build/typecheck + browser e2e run
 outside the sandbox.)
 
 ## What remains
@@ -164,5 +186,5 @@ Optional (deferred; run/verify outside the sandbox):
    + pinned `a2a-sdk<1.0`). Live runs need `GOOGLE_API_KEY`.
 3. From `apps/dojo`: `npm run run-everything` (starts dojo + ADK uvicorn + aimock;
    routes ADK Gemini to the mock).
-4. Visit `/adk-middleware/feature/google_a2ui_dynamic_schema` and `…/google_a2ui_recovery`
-   (after the remaining dojo wiring is added).
+4. Visit `/adk-middleware/feature/google_a2ui_dynamic_schema`, `…/google_a2ui_recovery`,
+   and `…/google_a2ui_streaming` (watch the streaming one fill in progressively).

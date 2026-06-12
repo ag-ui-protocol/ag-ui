@@ -129,6 +129,12 @@ export const featureConfig: FeatureConfig[] = [
     description: "Proof-point: A2UI error handling with Google's a2ui-agent-sdk — model-driven (unbounded) retry, no bounded recovery loop or hard-failure envelope",
     tags: ["A2UI", "Error Recovery", "Google SDK"],
   }),
+  createFeatureConfig({
+    id: "google_a2ui_streaming",
+    name: "A2UI Streaming (Google SDK)",
+    description: "Proof-point: progressive A2UI via Google's A2uiStreamParser (<a2ui-json> text stream) emitting activity snapshots directly — no A2UI middleware",
+    tags: ["A2UI", "Streaming", "Google SDK"],
+  }),
 ];
 
 export default featureConfig;
