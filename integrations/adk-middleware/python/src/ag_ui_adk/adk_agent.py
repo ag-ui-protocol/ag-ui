@@ -1844,6 +1844,14 @@ class ADKAgent:
             app_name = self._get_app_name(input)
 
             logger.debug(f"About to iterate over _stream_events for execution {execution.thread_id}")
+            # Track whether a terminal event already flowed through the queue.
+            # The background producer surfaces failures as a RUN_ERROR data
+            # event (see _run_adk_in_background) rather than by raising, so the
+            # loop below completes normally and would otherwise fall through to
+            # the unconditional RUN_FINISHED. The AG-UI spec allows at most one
+            # terminal event per run, and @ag-ui/client's state machine rejects
+            # a RUN_FINISHED that follows a RUN_ERROR. See issue #1892.
+            run_errored = False
             async for event in self._stream_events(execution):
                 # HITL pending_tool_calls persistence happens on the producer
                 # side via _HitlDeferringQueue: HITL TOOL_CALL_END events are
@@ -1864,19 +1872,29 @@ class ADKAgent:
                         app_name, execution.thread_id, [event.tool_call_id]
                     )
 
+                if isinstance(event, RunErrorEvent):
+                    run_errored = True
+
                 logger.debug(f"Yielding event: {type(event).__name__}")
                 yield event
 
             logger.debug(f"Finished iterating over _stream_events for execution {execution.thread_id}")
             logger.debug(f"Finished streaming events for execution {execution.thread_id}")
 
-            # Emit RUN_FINISHED
-            logger.debug(f"Emitting RUN_FINISHED for thread {input.thread_id}, run {input.run_id}")
-            yield RunFinishedEvent(
-                type=EventType.RUN_FINISHED,
-                thread_id=input.thread_id,
-                run_id=input.run_id
-            )
+            # Emit RUN_FINISHED only if the run did not already terminate with a
+            # RUN_ERROR from the queue path (issue #1892).
+            if run_errored:
+                logger.debug(
+                    f"Skipping RUN_FINISHED for thread {input.thread_id}, run {input.run_id}: "
+                    "run already terminated with RUN_ERROR"
+                )
+            else:
+                logger.debug(f"Emitting RUN_FINISHED for thread {input.thread_id}, run {input.run_id}")
+                yield RunFinishedEvent(
+                    type=EventType.RUN_FINISHED,
+                    thread_id=input.thread_id,
+                    run_id=input.run_id
+                )
             
         except Exception as e:
             logger.error(f"Error in new execution: {e}", exc_info=True)
