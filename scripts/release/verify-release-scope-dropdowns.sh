@@ -12,9 +12,10 @@
 # (newly-enrolled packages weren't canary-selectable; stale scopes lingered).
 # This guard fails CI whenever a dropdown diverges from the config.
 #
-# Two files are checked:
+# Three files are checked:
 #   .github/workflows/publish-release.yml  — canary/prerelease `scope` input
 #   .github/workflows/prepare-release.yml  — create-pr `scope` input
+#   .github/workflows/canary.yml           — one-click canary orchestrator `scope` input
 #
 # Sentinel exception: neither workflow uses a non-scope sentinel option (no
 # `all` / `canary` pseudo-scope — an empty/omitted scope is handled outside
@@ -35,11 +36,12 @@ REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CONFIG="$REPO_ROOT/scripts/release/release.config.json"
 PUBLISH_WF="$REPO_ROOT/.github/workflows/publish-release.yml"
 PREPARE_WF="$REPO_ROOT/.github/workflows/prepare-release.yml"
+CANARY_WF="$REPO_ROOT/.github/workflows/canary.yml"
 
 # Documented non-scope sentinel options to ignore (none today). Space-separated.
 SENTINELS=""
 
-for f in "$CONFIG" "$PUBLISH_WF" "$PREPARE_WF"; do
+for f in "$CONFIG" "$PUBLISH_WF" "$PREPARE_WF" "$CANARY_WF"; do
   if [ ! -f "$f" ]; then
     echo "ERROR: $f not found" >&2
     exit 1
@@ -234,11 +236,12 @@ check_notify_case() {
 rc=0
 check_workflow "publish-release.yml" "$PUBLISH_WF" || rc=1
 check_workflow "prepare-release.yml" "$PREPARE_WF" || rc=1
+check_workflow "canary.yml" "$CANARY_WF" || rc=1
 check_notify_case "$PUBLISH_WF" || rc=1
 
 if [ "$rc" -ne 0 ]; then
   exit 1
 fi
 
-echo "OK: both release scope dropdowns match release.config.json; notify-job ecosystem case matches too"
+echo "OK: all release scope dropdowns match release.config.json; notify-job ecosystem case matches too"
 exit 0

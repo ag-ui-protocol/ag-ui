@@ -1796,6 +1796,7 @@ class ADKAgent:
 
         user_id = self._get_user_id(input)
         exec_key = (input.thread_id, user_id)
+        session_cache_token = self._session_manager.start_session_read_cache()
 
         try:
             # Emit RUN_STARTED
@@ -1844,6 +1845,14 @@ class ADKAgent:
             app_name = self._get_app_name(input)
 
             logger.debug(f"About to iterate over _stream_events for execution {execution.thread_id}")
+            # Track whether a terminal event already flowed through the queue.
+            # The background producer surfaces failures as a RUN_ERROR data
+            # event (see _run_adk_in_background) rather than by raising, so the
+            # loop below completes normally and would otherwise fall through to
+            # the unconditional RUN_FINISHED. The AG-UI spec allows at most one
+            # terminal event per run, and @ag-ui/client's state machine rejects
+            # a RUN_FINISHED that follows a RUN_ERROR. See issue #1892.
+            run_errored = False
             async for event in self._stream_events(execution):
                 # HITL pending_tool_calls persistence happens on the producer
                 # side via _HitlDeferringQueue: HITL TOOL_CALL_END events are
@@ -1864,19 +1873,29 @@ class ADKAgent:
                         app_name, execution.thread_id, [event.tool_call_id]
                     )
 
+                if isinstance(event, RunErrorEvent):
+                    run_errored = True
+
                 logger.debug(f"Yielding event: {type(event).__name__}")
                 yield event
 
             logger.debug(f"Finished iterating over _stream_events for execution {execution.thread_id}")
             logger.debug(f"Finished streaming events for execution {execution.thread_id}")
 
-            # Emit RUN_FINISHED
-            logger.debug(f"Emitting RUN_FINISHED for thread {input.thread_id}, run {input.run_id}")
-            yield RunFinishedEvent(
-                type=EventType.RUN_FINISHED,
-                thread_id=input.thread_id,
-                run_id=input.run_id
-            )
+            # Emit RUN_FINISHED only if the run did not already terminate with a
+            # RUN_ERROR from the queue path (issue #1892).
+            if run_errored:
+                logger.debug(
+                    f"Skipping RUN_FINISHED for thread {input.thread_id}, run {input.run_id}: "
+                    "run already terminated with RUN_ERROR"
+                )
+            else:
+                logger.debug(f"Emitting RUN_FINISHED for thread {input.thread_id}, run {input.run_id}")
+                yield RunFinishedEvent(
+                    type=EventType.RUN_FINISHED,
+                    thread_id=input.thread_id,
+                    run_id=input.run_id
+                )
             
         except Exception as e:
             logger.error(f"Error in new execution: {e}", exc_info=True)
@@ -1886,16 +1905,23 @@ class ADKAgent:
                 code="EXECUTION_ERROR"
             )
         finally:
-            # Clean up execution if complete and no pending tool calls (HITL scenarios)
-            async with self._execution_lock:
-                if exec_key in self._active_executions:
-                    execution = self._active_executions[exec_key]
-                    execution.is_complete = True
+            try:
+                # The ADK runner can mutate session state without going
+                # through SessionManager, so the parent context's pre-run read
+                # cache is stale by the time this cleanup guard runs.
+                self._session_manager.disable_session_read_cache()
+                # Clean up execution if complete and no pending tool calls (HITL scenarios)
+                async with self._execution_lock:
+                    if exec_key in self._active_executions:
+                        execution = self._active_executions[exec_key]
+                        execution.is_complete = True
 
-                    # Check if session has pending tool calls before cleanup
-                    has_pending = await self._has_pending_tool_calls(input.thread_id, user_id)
-                    if not has_pending:
-                        del self._active_executions[exec_key]
+                        # Check if session has pending tool calls before cleanup
+                        has_pending = await self._has_pending_tool_calls(input.thread_id, user_id)
+                        if not has_pending:
+                            del self._active_executions[exec_key]
+            finally:
+                self._session_manager.stop_session_read_cache(session_cache_token)
     
     @staticmethod
     def _collect_output_schema_agent_names(agent: Any, result: Optional[set] = None) -> set:
@@ -2363,6 +2389,9 @@ class ADKAgent:
                 logger.debug(f"Creating FunctionResponse event with invocation_id={resume_invocation_id}")
 
                 await self._session_manager._session_service.append_event(session, function_response_event)
+                self._session_manager.invalidate_session(
+                    backend_session_id, app_name, user_id
+                )
 
                 # Mark user messages from message_batch as processed
                 if message_batch:
@@ -2413,6 +2442,26 @@ class ADKAgent:
 
                 function_response_content = types.Content(parts=function_response_parts, role='user')
 
+                # ag-ui#1839: HITL confirmation responses must be the LAST
+                # user event in the session so ADK's
+                # _RequestConfirmationLlmRequestProcessor — which reverse-scans
+                # for the last user event and returns on the first one lacking
+                # function_responses — can re-execute the original tool. The
+                # pre-append + empty-text-placeholder workaround below makes the
+                # placeholder the trailing user event, which blinds that
+                # processor (the FunctionResponse it needs sits one event
+                # earlier). ``adk_request_confirmation`` is a long-running tool
+                # that PAUSES (not ends) the invocation, so routing it through
+                # the direct ``new_message`` path does NOT hit the
+                # ``end_of_agent`` early-return in _resolve_invocation_id's
+                # resume path that motivated the #1534 workaround for
+                # turn-ending client/frontend tools.
+                is_confirmation_resume = any(
+                    part.function_response is not None
+                    and part.function_response.name == 'adk_request_confirmation'
+                    for part in function_response_parts
+                )
+
                 # ag-ui#1669: the #1534 pre-append workaround is correct for
                 # LlmAgent roots (and composite orchestrators built from
                 # LlmAgent), but breaks ADK 2.0 ``Workflow`` roots. Workflows
@@ -2427,6 +2476,7 @@ class ADKAgent:
                     _ADK_OVERRIDES_INVOCATION_ID
                     and self._is_adk_resumable()
                     and not self._root_agent_is_workflow()
+                    and not is_confirmation_resume
                 ):
                     # ADK with _resolve_invocation_id (~1.28+) routing, non-Workflow root:
                     #
@@ -2474,6 +2524,9 @@ class ADKAgent:
                     )
                     await self._session_manager._session_service.append_event(
                         session, function_response_event
+                    )
+                    self._session_manager.invalidate_session(
+                        backend_session_id, app_name, user_id
                     )
 
                     # Placeholder trigger: a single empty text part. _append_new_message_to_session
@@ -2548,8 +2601,12 @@ class ADKAgent:
 
             # Share the translator's emitted IDs set with proxy toolsets so
             # ClientProxyTool can skip emission when the translator already handled it.
+            # Also share the translator's name→[partial IDs] ledger so the proxy can
+            # suppress the cross-path twin when SSE streaming gives the partial event
+            # and the proxy invocation different IDs (#1168) — matched by tool name.
             for toolset in client_proxy_toolsets:
                 toolset._translator_emitted_tool_call_ids = event_translator.emitted_tool_call_ids
+                toolset._translator_lro_emitted_ids_by_name = event_translator.lro_emitted_ids_by_name
 
             try:
                 # Session was already obtained from _ensure_session_exists above
@@ -2621,6 +2678,7 @@ class ADKAgent:
 
             logger.debug(f"Calling runner.run_async with session_id={backend_session_id}, has_message={new_message is not None}")
 
+            self._session_manager.disable_session_read_cache()
             async for adk_event in runner.run_async(**run_kwargs):
                 event_invocation_id = getattr(adk_event, 'invocation_id', None)
                 event_author = getattr(adk_event, 'author', 'unknown')

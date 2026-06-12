@@ -1,8 +1,8 @@
 name: Lint Release Workflows
 
-# Runs actionlint + shellcheck against the release / create-pr and
-# release / publish pipelines and the scripts they call. Keeps these
-# critical, retry-sensitive files from silently regressing on shell or
+# Runs actionlint + shellcheck against the release / create-pr, release /
+# publish, and canary / publish pipelines and the scripts they call. Keeps
+# these critical, retry-sensitive files from silently regressing on shell or
 # action-syntax bugs.
 #
 # Scope is intentionally narrow: only the release workflows and
@@ -15,6 +15,7 @@ on:
     paths:
       - ".github/workflows/prepare-release.yml"
       - ".github/workflows/publish-release.yml"
+      - ".github/workflows/canary.yml"
       - ".github/workflows/lint-release-workflows.yml"
       - "scripts/release/**"
       - "nx.json"
@@ -22,6 +23,7 @@ on:
     paths:
       - ".github/workflows/prepare-release.yml"
       - ".github/workflows/publish-release.yml"
+      - ".github/workflows/canary.yml"
       - ".github/workflows/lint-release-workflows.yml"
       - "scripts/release/**"
       - "nx.json"
@@ -45,6 +47,7 @@ jobs:
           actionlint_flags: >-
             .github/workflows/prepare-release.yml
             .github/workflows/publish-release.yml
+            .github/workflows/canary.yml
             .github/workflows/lint-release-workflows.yml
 
   shellcheck:

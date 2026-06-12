@@ -203,6 +203,58 @@ class TestHITLToolTracking:
             assert execution.is_complete
 
     @pytest.mark.asyncio
+    async def test_parent_cleanup_drops_stale_read_cache(
+        self, adk_middleware, sample_tool
+    ):
+        """The parent cleanup read must not use its pre-run session cache."""
+        input_data = RunAgentInput(
+            thread_id="test_thread",
+            run_id="run_1",
+            messages=[UserMessage(id="1", role="user", content="Test")],
+            tools=[sample_tool],
+            context=[],
+            state={},
+            forwarded_props={},
+        )
+
+        cache_disabled = False
+        original_disable = (
+            adk_middleware._session_manager.disable_session_read_cache
+        )
+
+        def disable_session_read_cache():
+            nonlocal cache_disabled
+            cache_disabled = True
+            original_disable()
+
+        async def mock_has_pending_tool_calls(*_args, **_kwargs):
+            return cache_disabled
+
+        async def mock_run_adk_in_background(*args, **kwargs):
+            await kwargs["event_queue"].put(None)
+
+        with patch.object(
+            adk_middleware._session_manager,
+            "disable_session_read_cache",
+            side_effect=disable_session_read_cache,
+        ), patch.object(
+            adk_middleware,
+            "_has_pending_tool_calls",
+            side_effect=mock_has_pending_tool_calls,
+        ), patch.object(
+            adk_middleware,
+            "_run_adk_in_background",
+            side_effect=mock_run_adk_in_background,
+        ):
+            async for _event in adk_middleware._start_new_execution(
+                input_data,
+            ):
+                pass
+
+        assert cache_disabled
+        assert ("test_thread", "test_user") in adk_middleware._active_executions
+
+    @pytest.mark.asyncio
     async def test_session_not_cleaned_up_with_pending_tools(self, mock_adk_agent, sample_tool):
         """Test that executions with pending tool calls are not cleaned up."""
         # Create input
