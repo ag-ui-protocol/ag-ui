@@ -1732,6 +1732,26 @@ export class LangGraphAgent extends AbstractAgent {
 
     let { streamResponse, state } = stream;
 
+    // Transformer mode: sticky per-run flag. A graph that compiled-in the
+    // aguiTransformer emits fully-formed AG-UI events on the `agui`
+    // channel; the mux pushes those BEFORE the raw event that triggered
+    // them, so the first agui event arrives ahead of any raw event we'd
+    // translate. On that first sight we flip into transformer mode and
+    // stop translating raw channels — the transformer becomes the single
+    // source of truth.
+    let transformerMode = false;
+    // Step names opened by transformer passthrough STEP_STARTED events and
+    // not yet closed by a STEP_FINISHED. The transformer balances these in
+    // its finalize(), but those finalize events land AFTER the root
+    // terminal lifecycle that watchForRootTerminal uses to end the stream,
+    // so they can be cut off. We close any leftover before RUN_FINISHED to
+    // satisfy AG-UI verify (no RUN_FINISHED while a step is active).
+    const openTransformerSteps = new Set<string>();
+    // Set once a RUN_ERROR has been emitted (passthrough or raw `error`).
+    // AG-UI verify forbids ANY event after RUN_ERROR, so all post-loop
+    // dispatching (step closes, snapshots, RUN_FINISHED) must be skipped.
+    let runErrored = false;
+
     this.activeRun!.prevNodeName = null;
     let latestStateValues = {} as ThreadState<State>["values"];
     let updatedState = state;
@@ -1788,7 +1808,26 @@ export class LangGraphAgent extends AbstractAgent {
         // because the `agui` channel is not a standard stream mode.
         const passthrough = this.extractAguiPassthroughEvent(eventType, chunkData);
         if (passthrough) {
+          transformerMode = true;
+          // Track step balance so we can close any the transformer's
+          // finalize didn't get to flush before the stream ended.
+          if (passthrough.type === EventType.STEP_STARTED) {
+            openTransformerSteps.add(passthrough.stepName);
+          } else if (passthrough.type === EventType.STEP_FINISHED) {
+            openTransformerSteps.delete(passthrough.stepName);
+          } else if (passthrough.type === EventType.RUN_ERROR) {
+            // Transformer surfaced a fatal run error. After this no further
+            // events may be dispatched; suppress all post-loop emission.
+            runErrored = true;
+          }
           this.dispatchEvent(passthrough);
+          continue;
+        }
+
+        // Once in transformer mode the transformer is the single source of
+        // truth: ignore every raw channel. `error` is exempt — a fatal run
+        // error must always surface.
+        if (transformerMode && eventType !== "error") {
           continue;
         }
 
@@ -1808,6 +1847,7 @@ export class LangGraphAgent extends AbstractAgent {
             message: chunkData.message,
             rawEvent: streamResponseChunk,
           });
+          runErrored = true;
           break;
         }
 
@@ -1984,6 +2024,16 @@ export class LangGraphAgent extends AbstractAgent {
         }
       }
 
+      // If the run already errored, RUN_ERROR is terminal — AG-UI verify
+      // rejects any further event. Skip all post-loop emission (step
+      // closes, snapshots, RUN_FINISHED) and just finish the stream.
+      if (runErrored) {
+        this.cancelRequested = false;
+        this.cancelSent = false;
+        this.activeRun = undefined;
+        return subscriber.complete();
+      }
+
       state = await this.client.threads.getState(threadId);
       const tasks = state.tasks;
       // Collect interrupts from ALL tasks, not just tasks[0] (fixes #1409)
@@ -2002,15 +2052,49 @@ export class LangGraphAgent extends AbstractAgent {
             : (state.next[0] ?? Object.keys(writes)[0]);
       }
 
-      // Terminal interrupts (the run paused at interrupt()). Deduped
-      // against any already surfaced live via the `tasks` channel above.
+      // Terminal interrupts (the run paused at interrupt()). Read from the
+      // persisted state (channel-independent), deduped against any already
+      // surfaced live via the `tasks` channel. Kept even in transformer
+      // mode: the dev server reports interrupts on `tasks`, which the
+      // transformer does not itself translate, so this is the HITL net.
       interrupts.forEach((interrupt) => this.emitInterruptOnce(interrupt));
 
-      this.handleNodeChange(newNodeName);
-      // Immediately turn off new step
+      // Canonical snapshots + the final node-step are owned by the client
+      // only when translating raw events. In transformer mode the
+      // transformer emits STEP_* and STATE/MESSAGES snapshots itself, so
+      // skip those. RUN_FINISHED stays — agent.ts owns run lifecycle in
+      // both modes.
+      if (!transformerMode) {
+        this.handleNodeChange(newNodeName);
+      }
+
+      // Always close the open client-side step. `handleNodeChange` /
+      // `startStep` track the active step ONLY via `activeRun.nodeName`
+      // (not openTransformerSteps), and one gets opened by the run-start
+      // `handleNodeChange(nodeNameInput)` or a raw node event seen before
+      // transformer mode flipped. Without this close it dangles past
+      // RUN_FINISHED and AG-UI verify rejects the terminal event.
       this.handleNodeChange(undefined);
 
+      // Emit the canonical STATE/MESSAGES snapshot from the server's
+      // persisted state at run end — in BOTH modes. This runs after every
+      // transformer event is consumed, so it's the last snapshot and wins
+      // (MESSAGES_SNAPSHOT is a full replace by id). It reconciles the
+      // frontend history to authoritative server state, which matters in
+      // transformer mode because the transformer's own MESSAGES_SNAPSHOT
+      // can drop an assistant's tool_calls linkage — the next turn would
+      // then send OpenAI an orphan `tool` message and get a 400.
       await this.getStateAndMessagesSnapshots(threadId);
+
+      // Also close any transformer-emitted step whose finalize
+      // STEP_FINISHED was cut off when the stream ended on the root
+      // terminal (these are tracked from passthrough STEP_* events).
+      if (transformerMode) {
+        for (const stepName of openTransformerSteps) {
+          this.dispatchEvent({ type: EventType.STEP_FINISHED, stepName });
+        }
+        openTransformerSteps.clear();
+      }
 
       this.dispatchEvent({
         type: EventType.RUN_FINISHED,
