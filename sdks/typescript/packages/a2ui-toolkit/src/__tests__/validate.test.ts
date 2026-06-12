@@ -131,6 +131,73 @@ describe("validateA2UIComponents — child references", () => {
     const r = validateA2UIComponents({ components: comps });
     expect(r.errors.some((e) => e.code === "unresolved_child" && /missing-1/.test(e.message))).toBe(true);
   });
+
+  it("flags a singular `child` referencing a non-existent component id", () => {
+    // One-child containers (Card/Button) use the singular `child`, which the
+    // default generation prompt emits — a dangling ref there must be caught too.
+    const comps = [{ id: "root", component: "Card", child: "ghost" }];
+    const r = validateA2UIComponents({ components: comps });
+    expect(r.errors.some((e) => e.code === "unresolved_child" && e.path === "components[0].child" && /ghost/.test(e.message))).toBe(true);
+  });
+
+  it("accepts a singular `child` pointing at a real component id", () => {
+    const comps = [
+      { id: "root", component: "Card", child: "label" },
+      { id: "label", component: "Text" },
+    ];
+    const r = validateA2UIComponents({ components: comps });
+    expect(r.errors.some((e) => e.code === "unresolved_child")).toBe(false);
+  });
+});
+
+describe("validateA2UIComponents — child cycles", () => {
+  it("flags a self-referential singular `child`", () => {
+    const comps = [{ id: "avatar", component: "Card", child: "avatar" }];
+    const r = validateA2UIComponents({ components: comps });
+    expect(r.valid).toBe(false);
+    expect(r.errors.some((e) => e.code === "child_cycle" && /avatar -> avatar/.test(e.message))).toBe(true);
+  });
+
+  it("flags a multi-component cycle and reports it once", () => {
+    const comps = [
+      { id: "root", component: "Row", children: ["a"] },
+      { id: "a", component: "Row", children: ["b"] },
+      { id: "b", component: "Row", children: ["a"] },
+    ];
+    const r = validateA2UIComponents({ components: comps });
+    expect(r.errors.filter((e) => e.code === "child_cycle").length).toBe(1);
+    expect(r.errors.some((e) => e.code === "child_cycle" && /a -> b -> a/.test(e.message))).toBe(true);
+  });
+
+  it("does not flag an acyclic child graph", () => {
+    const comps = [
+      { id: "root", component: "Row", children: ["a", "b"] },
+      { id: "a", component: "Text" },
+      { id: "b", component: "Text" },
+    ];
+    const r = validateA2UIComponents({ components: comps });
+    expect(r.errors.some((e) => e.code === "child_cycle")).toBe(false);
+  });
+
+  it("handles a pathologically deep child chain without overflowing the stack", () => {
+    // The cycle check runs on untrusted model output; a deep linear chain that
+    // would blow a recursive DFS's call stack must validate iteratively. 50k deep
+    // is well past V8's recursion limit but a no-op for the explicit-stack walk.
+    const N = 50000;
+    const comps: Array<Record<string, unknown>> = [{ id: "root", component: "Row", children: ["n0"] }];
+    for (let i = 0; i < N; i++) comps.push({ id: `n${i}`, component: "Row", children: i + 1 < N ? [`n${i + 1}`] : [] });
+    const r = validateA2UIComponents({ components: comps });
+    expect(r.errors.some((e) => e.code === "child_cycle")).toBe(false);
+  });
+
+  it("detects a cycle that closes at the end of a deep chain", () => {
+    // Same deep chain, but the tail points back at root — one cycle, no overflow.
+    const N = 50000;
+    const comps: Array<Record<string, unknown>> = [{ id: "root", component: "Row", children: ["n0"] }];
+    for (let i = 0; i < N; i++) comps.push({ id: `n${i}`, component: "Row", children: [i + 1 < N ? `n${i + 1}` : "root"] });
+    const r = validateA2UIComponents({ components: comps });
+    expect(r.errors.filter((e) => e.code === "child_cycle").length).toBe(1);
+  });
 });
 
 describe("validateA2UIComponents — data bindings", () => {
