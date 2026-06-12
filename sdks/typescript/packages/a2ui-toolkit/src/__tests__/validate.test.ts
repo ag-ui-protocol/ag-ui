@@ -179,25 +179,39 @@ describe("validateA2UIComponents — child cycles", () => {
     expect(r.errors.some((e) => e.code === "child_cycle")).toBe(false);
   });
 
-  it("handles a pathologically deep child chain without overflowing the stack", () => {
-    // The cycle check runs on untrusted model output; a deep linear chain that
-    // would blow a recursive DFS's call stack must validate iteratively. 50k deep
-    // is well past V8's recursion limit but a no-op for the explicit-stack walk.
-    const N = 50000;
-    const comps: Array<Record<string, unknown>> = [{ id: "root", component: "Row", children: ["n0"] }];
-    for (let i = 0; i < N; i++) comps.push({ id: `n${i}`, component: "Row", children: i + 1 < N ? [`n${i + 1}`] : [] });
-    const r = validateA2UIComponents({ components: comps });
-    expect(r.errors.some((e) => e.code === "child_cycle")).toBe(false);
-  });
+  it(
+    "handles a pathologically deep child chain without overflowing the stack",
+    () => {
+      // The cycle check runs on untrusted model output; a deep linear chain that
+      // would blow a recursive DFS's call stack must validate iteratively. 20k deep
+      // is >2x V8's recursion overflow depth (~8.8k for a trivial frame, lower for
+      // a real DFS frame), so it still proves the walk is iterative — but allocates
+      // far less than 50k, keeping GC pressure (and thus the chance of a CI-runner
+      // stall) low. The explicit-stack walk itself is linear (~25ms for this N).
+      const N = 20000;
+      const comps: Array<Record<string, unknown>> = [{ id: "root", component: "Row", children: ["n0"] }];
+      for (let i = 0; i < N; i++) comps.push({ id: `n${i}`, component: "Row", children: i + 1 < N ? [`n${i + 1}`] : [] });
+      const r = validateA2UIComponents({ components: comps });
+      expect(r.errors.some((e) => e.code === "child_cycle")).toBe(false);
+    },
+    // The work is ~25ms; the default 5s timeout flaked under parallel-fork GC
+    // contention on shared CI runners. A generous explicit budget decouples the
+    // (provably fast) assertion from runner scheduling jitter.
+    30000,
+  );
 
-  it("detects a cycle that closes at the end of a deep chain", () => {
-    // Same deep chain, but the tail points back at root — one cycle, no overflow.
-    const N = 50000;
-    const comps: Array<Record<string, unknown>> = [{ id: "root", component: "Row", children: ["n0"] }];
-    for (let i = 0; i < N; i++) comps.push({ id: `n${i}`, component: "Row", children: [i + 1 < N ? `n${i + 1}` : "root"] });
-    const r = validateA2UIComponents({ components: comps });
-    expect(r.errors.filter((e) => e.code === "child_cycle").length).toBe(1);
-  });
+  it(
+    "detects a cycle that closes at the end of a deep chain",
+    () => {
+      // Same deep chain, but the tail points back at root — one cycle, no overflow.
+      const N = 20000;
+      const comps: Array<Record<string, unknown>> = [{ id: "root", component: "Row", children: ["n0"] }];
+      for (let i = 0; i < N; i++) comps.push({ id: `n${i}`, component: "Row", children: [i + 1 < N ? `n${i + 1}` : "root"] });
+      const r = validateA2UIComponents({ components: comps });
+      expect(r.errors.filter((e) => e.code === "child_cycle").length).toBe(1);
+    },
+    30000,
+  );
 });
 
 describe("validateA2UIComponents — data bindings", () => {
