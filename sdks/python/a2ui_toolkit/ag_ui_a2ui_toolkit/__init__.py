@@ -28,6 +28,12 @@ __all__ = [
     "build_context_prompt",
     "find_prior_surface",
     "build_subagent_prompt",
+    "A2UIGuidelines",
+    "DEFAULT_GENERATION_GUIDELINES",
+    "DEFAULT_DESIGN_GUIDELINES",
+    "A2UIToolParams",
+    "ResolvedA2UIToolParams",
+    "resolve_a2ui_tool_params",
     "assemble_ops",
     "wrap_as_operations_envelope",
     "wrap_error_envelope",
@@ -36,7 +42,31 @@ __all__ = [
     "PriorSurface",
     "EditContext",
     "PreparedA2UIRequest",
+    # Error-recovery loop (OSS-162)
+    "validate_a2ui_components",
+    "A2UIValidationError",
+    "ValidateA2UIResult",
+    "MAX_A2UI_ATTEMPTS",
+    "A2UI_RECOVERY_ACTIVITY_TYPE",
+    "format_validation_errors",
+    "augment_prompt_with_validation_errors",
+    "run_a2ui_generation_with_recovery",
 ]
+
+# Error-recovery loop (OSS-162) — semantic validation + validate→retry loop,
+# shared so the middleware (paint gate) and adapters (retry driver) agree.
+from .validate import (  # noqa: E402
+    validate_a2ui_components,
+    A2UIValidationError,
+    ValidateA2UIResult,
+)
+from .recovery import (  # noqa: E402
+    MAX_A2UI_ATTEMPTS,
+    A2UI_RECOVERY_ACTIVITY_TYPE,
+    format_validation_errors,
+    augment_prompt_with_validation_errors,
+    run_a2ui_generation_with_recovery,
+)
 
 
 A2UI_OPERATIONS_KEY = "a2ui_operations"
@@ -327,21 +357,193 @@ class EditContext(TypedDict, total=False):
     changes: Optional[str]
 
 
+# ---------------------------------------------------------------------------
+# Subagent prompt guidelines (OSS-248)
+#
+# Re-enables the rich generation + design guidance the legacy
+# ``copilotkit.a2ui.a2ui_prompt`` shipped. The two DEFAULT_* blocks are applied
+# automatically (per-field) so subagent output is well-designed out of the box;
+# a host overrides either block via ``A2UIGuidelines``. Pass an empty string to
+# suppress a block entirely.
+# ---------------------------------------------------------------------------
+
+DEFAULT_GENERATION_GUIDELINES = """\
+Generate A2UI v0.9 JSON.
+
+## A2UI Protocol Instructions
+
+A2UI (Agent to UI) is a protocol for rendering rich UI surfaces from agent responses.
+
+CRITICAL: You MUST call the render_a2ui tool with ALL of these arguments:
+- surfaceId: A unique ID for the surface (e.g. "product-comparison")
+- components: REQUIRED — the A2UI component array. NEVER omit this. Use a List with
+  children: { componentId: "card-id", path: "/items" } for repeating cards.
+- data: OPTIONAL — a JSON object written to the root of the surface data model.
+  Use for pre-filling form values or providing data for path-bound components.
+- every component must have the "component" field specifying the component type (e.g. "Text", "Image", "Row", "Column", "List", "Button", etc.)
+
+COMPONENT ID RULES:
+- Every component ID must be unique within the surface.
+- A component MUST NOT reference itself as child/children. This causes a
+  circular dependency error. For example, if a component has id="avatar",
+  its child must be a DIFFERENT id (e.g. "avatar-img"), never "avatar".
+- The child/children tree must be a DAG — no cycles allowed.
+
+PATH RULES FOR TEMPLATES:
+Components inside a repeating List use RELATIVE paths (no leading slash).
+The path is resolved relative to each array item automatically.
+If List has children: { componentId: "card", path: "/items" } and item has key "name",
+use { "path": "name" } (NO leading slash — relative to item).
+CRITICAL: Do NOT use "/name" (absolute) inside templates — use "name" (relative).
+The List's own path ("/items") uses a leading slash (absolute), but all
+components INSIDE the template card use paths WITHOUT leading slash.
+Do NOT use "/items/0/name" or "/items/{@key}/name" — just "name".
+
+DATA MODEL:
+The "data" key in the tool args is a plain JSON object that initializes the surface
+data model. Components bound to paths (e.g. "value": { "path": "/form/name" })
+read from and write to this data model. Examples:
+  For forms:  "data": { "form": { "name": "Alice", "email": "" } }
+  For lists:  "data": { "items": [{"name": "Product A"}, {"name": "Product B"}] }
+  For mixed:  "data": { "form": { "query": "" }, "results": [...] }
+
+FORMS AND TWO-WAY DATA BINDING:
+To create editable forms, bind input components to data model paths using { "path": "..." }.
+The client automatically writes user input back to the data model at the bound path.
+CRITICAL: Using a literal value (e.g. "value": "") makes the field READ-ONLY.
+You MUST use { "path": "..." } to make inputs editable.
+
+All input components use "value" as the binding property:
+- TextField:     "value": { "path": "/form/fieldName" }
+- CheckBox:      "value": { "path": "/form/isChecked" }
+- Slider:        "value": { "path": "/form/sliderVal" }
+- DateTimeInput: "value": { "path": "/form/date" }
+- ChoicePicker:  "value": { "path": "/form/choices" }
+
+To retrieve form values when a button is clicked, include "context" with path references
+in the button's action. Paths are resolved to their current values at click time:
+  "action": { "event": { "name": "submit", "context": { "userName": { "path": "/form/name" } } } }
+
+To pre-fill form values, pass initial data via the "data" tool argument:
+  "data": { "form": { "name": "Markus" } }
+
+FORM EXAMPLE (editable text field with pre-filled value + submit button):
+  "components": [
+    { "id": "root", "component": "Card", "child": "form-col" },
+    { "id": "form-col", "component": "Column", "children": ["name-field", "submit-row"] },
+    { "id": "name-field", "component": "TextField", "label": "Name", "value": { "path": "/form/name" } },
+    { "id": "submit-row", "component": "Row", "justify": "end", "children": ["submit-btn"] },
+    { "id": "submit-btn", "component": "Button", "child": "btn-text", "variant": "primary",
+      "action": { "event": { "name": "submit", "context": { "userName": { "path": "/form/name" } } } } },
+    { "id": "btn-text", "component": "Text", "text": "Submit" }
+  ],
+  "data": { "form": { "name": "Markus" } }"""
+"""Default generation guidance (tool-call contract, id/path/data-binding rules).
+
+Applied when ``A2UIGuidelines["generation_guidelines"]`` is unset (``None``).
+Ported verbatim from the legacy ``copilotkit.a2ui`` defaults (OSS-248)."""
+
+DEFAULT_DESIGN_GUIDELINES = """\
+Create polished, visually appealing interfaces:
+- Always include a title heading (h2) for the surface, outside the List.
+  Wrap in a Column: [title, list] as root.
+- For card templates, create clear visual hierarchy:
+  - h3 for primary text (names, titles)
+  - h2 for featured numbers (prices, scores) — makes them stand out
+  - caption for secondary info (ratings, categories, metadata)
+  - body for descriptions
+- Use Divider between logical sections within cards.
+- Use Row with justify="spaceBetween" for label-value pairs
+  (e.g. "Rating" on left, "4.5/5" on right).
+- Include images when relevant (logos, icons, product photos):
+  - Use Image component with variant="smallFeature" or "avatar"
+  - Prefer company logos for branded products — Google favicons are reliable:
+    https://www.google.com/s2/favicons?domain=sony.com&sz=128
+    https://www.google.com/s2/favicons?domain=bose.com&sz=128
+  - For generic icons: https://placehold.co/128x128/EEE/999?text=🎧
+  - Do NOT invent Unsplash photo-IDs — they will 404. Only use real, known URLs.
+- Use horizontal List direction for side-by-side comparison cards.
+- Keep cards clean — avoid clutter. Whitespace is good.
+- Use consistent surfaceIds (lowercase, hyphenated).
+- NEVER use the same ID for a component and its child — this creates a
+  circular dependency. E.g. if id="avatar", child must NOT be "avatar".
+- Both Row and Column support "justify" and "align".
+- Add Button for interactivity. Button needs child (Text ID) + action.
+  Action MUST use this exact nested format:
+    "action": { "event": { "name": "myAction", "context": { "key": "value" } } }
+  The "event" key holds an OBJECT with "name" (required) and "context" (optional).
+  Do NOT use a flat format like {"event": "name"} — "event" must be an object.
+  Use variant="primary" for main action buttons, variant="borderless" for links.
+- For forms: wrap fields in a Card with a Column. Place the submit button in a
+  Row with justify="end". Every input MUST use path binding on the "value" property
+  (e.g. "value": { "path": "/form/name" }) to be editable. The submit button's action
+  context MUST reference the same paths to capture the user's input.
+
+Use the SAME surfaceId as the main surface. Match action names to Button action event names."""
+"""Default design guidance (visual hierarchy, layout, imagery, action format).
+
+Applied when ``A2UIGuidelines["design_guidelines"]`` is unset (``None``).
+Ported verbatim from the legacy ``copilotkit.a2ui`` defaults (OSS-248)."""
+
+
+class A2UIGuidelines(TypedDict, total=False):
+    """Prompt knobs threaded from the host through the adapter into the subagent
+    prompt. The toolkit owns this shape so a new knob is added here (and rendered
+    in ``build_subagent_prompt``) without editing any framework adapter — each
+    adapter forwards this bag verbatim.
+
+    Per-field semantics (mirrors the legacy ``a2ui_prompt`` defaults):
+      - key absent / ``None``  → the built-in ``DEFAULT_*`` block is used.
+      - ``""`` (empty string)  → that block is suppressed (no section emitted).
+      - any other string       → replaces the default for that block.
+
+    ``composition_guide`` has no default; it is appended only when provided.
+    """
+
+    generation_guidelines: Optional[str]
+    design_guidelines: Optional[str]
+    composition_guide: Optional[str]
+
+
 def build_subagent_prompt(
     *,
     context_prompt: str,
-    composition_guide: Optional[str] = None,
+    guidelines: Optional[A2UIGuidelines] = None,
     edit_context: Optional[EditContext] = None,
 ) -> str:
     """Compose the full subagent system prompt.
 
+    Section order: generation guidelines → design guidelines → context (catalog)
+    → composition guide → edit block. Faithful to the legacy ``a2ui_prompt``
+    ordering (generation lead, design header, then available components).
+
     Args:
         context_prompt: Output of ``build_context_prompt(state)``.
-        composition_guide: Project-specific composition rules to append.
+        guidelines: Generation/design/composition prompt knobs. Generation and
+            design fall back per-field to ``DEFAULT_GENERATION_GUIDELINES`` /
+            ``DEFAULT_DESIGN_GUIDELINES`` when unset; an empty string suppresses
+            the block.
         edit_context: When set, instructs the subagent to edit a prior surface
             in place (used by ``intent="update"``).
     """
+    guidelines = guidelines or {}
+
+    # Per-field fallback: ``None`` (or absent) → built-in default; ``""`` → the
+    # host explicitly suppressed the block. ``.get()`` returns ``None`` for an
+    # absent key, so both unset paths collapse to the default.
+    generation = guidelines.get("generation_guidelines")
+    if generation is None:
+        generation = DEFAULT_GENERATION_GUIDELINES
+    design = guidelines.get("design_guidelines")
+    if design is None:
+        design = DEFAULT_DESIGN_GUIDELINES
+    composition_guide = guidelines.get("composition_guide")
+
     parts: list[str] = []
+    if generation:
+        parts.append(generation)
+    if design:
+        parts.append(f"## Design Guidelines\n{design}")
     if context_prompt:
         parts.append(context_prompt)
     if composition_guide:
@@ -448,6 +650,74 @@ GENERATE_A2UI_ARG_DESCRIPTIONS: dict[str, str] = {
 
 
 # ---------------------------------------------------------------------------
+# Shared A2UI tool-factory params (OSS-248)
+#
+# One params shape, owned by the toolkit, consumed identically by every
+# framework adapter. A framework's factory is always
+# ``get_a2ui_tools(params: A2UIToolParams)`` — only the body (tool decorator,
+# runtime/state accessor, model bind+invoke) differs per framework.
+#
+# ``model`` is the single framework-specific field (typed ``Any`` here so the
+# toolkit stays framework-agnostic). Adding a new knob = add a field here (+ its
+# default in ``resolve_a2ui_tool_params``) — NO adapter signature ever changes,
+# and a brand-new framework adapter gets the knob for free on day one.
+# ---------------------------------------------------------------------------
+
+
+class A2UIToolParams(TypedDict, total=False):
+    """Shared input shape for every framework's ``get_a2ui_tools`` factory."""
+
+    model: Any  # required in practice; framework-specific chat model
+    guidelines: Optional[A2UIGuidelines]
+    default_surface_id: Optional[str]
+    default_catalog_id: Optional[str]
+    tool_name: Optional[str]
+    tool_description: Optional[str]
+    catalog: Optional[dict]
+    recovery: Optional[dict]
+    on_a2ui_attempt: Optional[Any]
+
+
+class ResolvedA2UIToolParams(TypedDict):
+    """``A2UIToolParams`` with every optional knob resolved to its effective
+    value — returned by ``resolve_a2ui_tool_params`` so adapters never
+    re-implement defaults."""
+
+    model: Any
+    guidelines: Optional[A2UIGuidelines]
+    default_surface_id: str
+    default_catalog_id: str
+    tool_name: str
+    tool_description: str
+    catalog: Optional[dict]
+    recovery: Optional[dict]
+    on_a2ui_attempt: Optional[Any]
+
+
+def resolve_a2ui_tool_params(params: A2UIToolParams) -> ResolvedA2UIToolParams:
+    """Normalize ``A2UIToolParams`` into ``ResolvedA2UIToolParams``, filling the
+    canonical defaults so each framework adapter stops re-implementing
+    ``tool_name or DEFAULT`` / ``catalog_id or BASIC`` lines.
+
+    Uses ``or`` (not ``is None``) so an accidental empty-string override falls
+    back to the canonical default rather than advertising a nameless tool or
+    emitting a blank surface/catalog id.
+    """
+    return {
+        "model": params.get("model"),
+        "guidelines": params.get("guidelines"),
+        "default_surface_id": params.get("default_surface_id") or DEFAULT_SURFACE_ID,
+        "default_catalog_id": params.get("default_catalog_id") or BASIC_CATALOG_ID,
+        "tool_name": params.get("tool_name") or GENERATE_A2UI_TOOL_NAME,
+        "tool_description": params.get("tool_description")
+        or GENERATE_A2UI_TOOL_DESCRIPTION,
+        "catalog": params.get("catalog"),
+        "recovery": params.get("recovery"),
+        "on_a2ui_attempt": params.get("on_a2ui_attempt"),
+    }
+
+
+# ---------------------------------------------------------------------------
 # High-level orchestration
 #
 # These two functions hold the entire create/update decision + prompt prep +
@@ -470,10 +740,13 @@ def prepare_a2ui_request(
     changes: Optional[str],
     messages: list[Any],
     state: dict,
-    composition_guide: Optional[str] = None,
+    guidelines: Optional[A2UIGuidelines] = None,
 ) -> PreparedA2UIRequest:
     """Resolve the create/update decision, locate any prior surface, and build
     the subagent system prompt.
+
+    ``guidelines`` is forwarded verbatim to ``build_subagent_prompt`` — the
+    toolkit owns the shape so adapters never need editing when a knob is added.
 
     Returns a dict with ``error`` set (and no ``prompt``) when the request is
     invalid — an ``update`` referencing a surface not found in history.
@@ -505,7 +778,7 @@ def prepare_a2ui_request(
 
     prompt = build_subagent_prompt(
         context_prompt=build_context_prompt(state),
-        composition_guide=composition_guide,
+        guidelines=guidelines,
         edit_context=(
             {"surfaceId": target_surface_id, "prior": prior, "changes": changes}
             if prior is not None

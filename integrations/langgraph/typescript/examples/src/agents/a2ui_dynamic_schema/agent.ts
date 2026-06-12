@@ -8,13 +8,11 @@
  */
 
 import { createAgent } from "langchain";
-import { MemorySaver } from "@langchain/langgraph";
 import { copilotkitMiddleware } from "@copilotkit/sdk-js/langgraph";
 import { ChatOpenAI } from "@langchain/openai";
 import { getA2UITools } from "@ag-ui/langgraph";
 
-const CUSTOM_CATALOG_ID =
-  "https://a2ui.org/demos/dojo/dynamic_catalog.json";
+const CUSTOM_CATALOG_ID = "https://a2ui.org/demos/dojo/dynamic_catalog.json";
 
 // Project-specific composition rules — tells the subagent how to use the
 // pre-made domain components (HotelCard, ProductCard, TeamMemberCard) shipped
@@ -57,14 +55,13 @@ Example:
 - Generate 3-4 realistic items with diverse data
 `;
 
-const a2uiTool = getA2UITools(new ChatOpenAI({ model: "gpt-4o" }), {
+const a2uiTool = getA2UITools({
+  model: new ChatOpenAI({ model: "gpt-4o" }),
   defaultCatalogId: CUSTOM_CATALOG_ID,
-  compositionGuide: COMPOSITION_GUIDE,
+  guidelines: { compositionGuide: COMPOSITION_GUIDE },
 });
 
-const checkpointer = new MemorySaver();
-
-export const a2uiDynamicSchemaGraph = createAgent({
+const a2uiDynamicSchemaAgent = createAgent({
   model: "openai:gpt-4o",
   // Cast: tool returned by `getA2UITools` is typed against `@ag-ui/langgraph`'s
   // own `@langchain/core` peer, which can skew vs. the consumer's pin.
@@ -75,5 +72,9 @@ export const a2uiDynamicSchemaGraph = createAgent({
 When the user asks for visual content (product comparisons, dashboards, lists, cards, etc.),
 use the generate_a2ui tool to create a dynamic A2UI surface.
 IMPORTANT: After calling the tool, do NOT repeat the data in your text response. The tool renders UI automatically. Just confirm what was rendered.`,
-  checkpointer,
 });
+
+// Export the inner graph, not the ReactAgent wrapper, so LangGraph Platform can
+// inject its managed checkpointer (the wrapper swallows the injection —
+// langchainjs#10144 — causing MISSING_CHECKPOINTER on the 2nd turn deployed).
+export const a2uiDynamicSchemaGraph = a2uiDynamicSchemaAgent.graph;

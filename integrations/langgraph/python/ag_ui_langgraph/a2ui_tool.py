@@ -11,7 +11,7 @@ Example usage in a chat node::
 
     from ag_ui_langgraph import get_a2ui_tools
 
-    a2ui = get_a2ui_tools(model=ChatOpenAI(model="gpt-4o"))
+    a2ui = get_a2ui_tools({"model": ChatOpenAI(model="gpt-4o")})
 
     model_with_tools = chat_model.bind_tools(
         [*state["tools"], a2ui],
@@ -24,64 +24,65 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from langchain.tools import tool, ToolRuntime
-from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import SystemMessage
 
 from ag_ui_a2ui_toolkit import (
     A2UI_OPERATIONS_KEY,
+    A2UIGuidelines,
+    A2UIToolParams,
     BASIC_CATALOG_ID,
-    DEFAULT_SURFACE_ID,
-    GENERATE_A2UI_TOOL_NAME,
-    GENERATE_A2UI_TOOL_DESCRIPTION,
     RENDER_A2UI_TOOL_DEF,
     build_a2ui_envelope,
     prepare_a2ui_request,
+    resolve_a2ui_tool_params,
     wrap_error_envelope,
+    run_a2ui_generation_with_recovery,
 )
 
 
-# Re-export the toolkit constants for callers that previously imported them
-# from this package — keeps the public surface stable.
+# Re-export the toolkit constants/types for callers that previously imported
+# them from this package — keeps the public surface stable and lets consumers
+# type the shared params object + its guidelines without depending on the
+# toolkit package directly.
 __all__ = [
     "get_a2ui_tools",
     "A2UI_OPERATIONS_KEY",
+    "A2UIToolParams",
+    "A2UIGuidelines",
     "BASIC_CATALOG_ID",
 ]
 
 
-def get_a2ui_tools(
-    model: BaseChatModel,
-    *,
-    composition_guide: Optional[str] = None,
-    default_surface_id: str = DEFAULT_SURFACE_ID,
-    default_catalog_id: str = BASIC_CATALOG_ID,
-    tool_name: str = GENERATE_A2UI_TOOL_NAME,
-    tool_description: Optional[str] = None,
-):
+def get_a2ui_tools(params: A2UIToolParams):
     """Build a LangGraph tool that delegates A2UI surface generation to a subagent.
 
     The returned tool is decorated with ``@langchain.tools.tool`` and is
     ready to bind into a chat model alongside any other tools.
 
     Args:
-        model: Chat model the subagent will invoke for structured A2UI output.
-            Using the same provider/model as the main agent is fine.
-        composition_guide: Optional extra rules appended to the subagent's
-            system prompt (e.g. project-specific component usage rules).
-        default_surface_id: Surface id used when the subagent omits ``surfaceId``.
-        default_catalog_id: Catalog id assigned to every new surface this
-            factory creates — the subagent never picks the catalog. Falls back
-            to the basic v0.9 catalog.
-        tool_name: Name advertised to the main agent's planner.
-        tool_description: Description shown to the main agent's planner.
+        params: Shared ``A2UIToolParams`` (``model`` + behavior knobs). The
+            toolkit owns the shape and fills defaults via
+            ``resolve_a2ui_tool_params``. Every framework adapter takes this
+            exact params type — only the body below is LangGraph-specific, so a
+            new knob added to ``A2UIToolParams`` reaches this adapter with no
+            signature change.
 
     Returns:
         A LangGraph tool callable suitable for ``bind_tools(...)``.
     """
+    # Shared: normalize knobs + fill canonical defaults so this adapter never
+    # re-implements default logic. A new params field + its default lives
+    # entirely in the toolkit.
+    cfg = resolve_a2ui_tool_params(params)
+    model = cfg["model"]
+    guidelines = cfg["guidelines"]
+    default_surface_id = cfg["default_surface_id"]
+    default_catalog_id = cfg["default_catalog_id"]
+    catalog = cfg["catalog"]
+    recovery = cfg["recovery"]
+    on_a2ui_attempt = cfg["on_a2ui_attempt"]
 
-    description = tool_description or GENERATE_A2UI_TOOL_DESCRIPTION
-
-    @tool(tool_name, description=description)
+    @tool(cfg["tool_name"], description=cfg["tool_description"])
     def generate_a2ui(
         runtime: ToolRuntime[Any],
         intent: str = "create",
@@ -110,29 +111,47 @@ def get_a2ui_tools(
             changes=changes,
             messages=messages,
             state=runtime.state,
-            composition_guide=composition_guide,
+            guidelines=guidelines,
         )
         if prep.get("error"):
             return wrap_error_envelope(prep["error"])
 
-        # Glue: bind the structured-output tool and invoke the subagent.
+        # Glue: bind the structured-output tool.
         model_with_tool = model.bind_tools(
             [RENDER_A2UI_TOOL_DEF], tool_choice="render_a2ui"
         )
-        response = model_with_tool.invoke(
-            [SystemMessage(content=prep["prompt"]), *messages]
-        )
-        if not response.tool_calls:
-            return wrap_error_envelope("LLM did not call render_a2ui")
 
-        # Shared: assemble the final operations envelope.
-        return build_a2ui_envelope(
-            args=response.tool_calls[0]["args"],
-            is_update=prep["is_update"],
-            target_surface_id=target_surface_id,
-            prior=prep["prior"],
-            default_surface_id=default_surface_id,
-            default_catalog_id=default_catalog_id,
+        def _invoke_subagent(prompt, _attempt):
+            response = model_with_tool.invoke(
+                [SystemMessage(content=prompt), *messages]
+            )
+            if not response.tool_calls:
+                return None
+            return response.tool_calls[0]["args"]
+
+        def _build_envelope(args):
+            return build_a2ui_envelope(
+                args=args,
+                is_update=prep["is_update"],
+                target_surface_id=target_surface_id,
+                prior=prep["prior"],
+                default_surface_id=default_surface_id,
+                default_catalog_id=default_catalog_id,
+            )
+
+        # Shared: validate->retry loop (mirrors the TS adapter). On each retry the
+        # prompt is re-augmented with the prior attempt's structured errors; only a
+        # validated surface is committed (the middleware gate suppresses any
+        # unvalidated attempt, so a rejected one never paints). Returns a structured
+        # hard-failure envelope once the attempt cap is hit.
+        result = run_a2ui_generation_with_recovery(
+            base_prompt=prep["prompt"],
+            catalog=catalog,
+            config=recovery,
+            invoke_subagent=_invoke_subagent,
+            build_envelope=_build_envelope,
+            on_attempt=on_a2ui_attempt,
         )
+        return result["envelope"]
 
     return generate_a2ui

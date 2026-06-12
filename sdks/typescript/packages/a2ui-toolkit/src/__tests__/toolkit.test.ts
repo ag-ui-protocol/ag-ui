@@ -2,8 +2,13 @@ import { describe, it, expect } from "vitest";
 import {
   A2UI_OPERATIONS_KEY,
   BASIC_CATALOG_ID,
+  DEFAULT_DESIGN_GUIDELINES,
+  DEFAULT_GENERATION_GUIDELINES,
   DEFAULT_SURFACE_ID,
+  GENERATE_A2UI_TOOL_DESCRIPTION,
+  GENERATE_A2UI_TOOL_NAME,
   RENDER_A2UI_TOOL_DEF,
+  resolveA2UIToolParams,
   assembleOps,
   buildA2UIEnvelope,
   buildContextPrompt,
@@ -23,9 +28,7 @@ describe("constants", () => {
   });
 
   it("BASIC_CATALOG_ID points at the v0.9 basic catalog", () => {
-    expect(BASIC_CATALOG_ID).toBe(
-      "https://a2ui.org/specification/v0_9/basic_catalog.json",
-    );
+    expect(BASIC_CATALOG_ID).toBe("https://a2ui.org/specification/v0_9/basic_catalog.json");
   });
 });
 
@@ -36,16 +39,15 @@ describe("RENDER_A2UI_TOOL_DEF", () => {
   });
 
   it("requires surfaceId and components", () => {
-    expect(RENDER_A2UI_TOOL_DEF.function.parameters.required).toEqual([
-      "surfaceId",
-      "components",
-    ]);
+    expect(RENDER_A2UI_TOOL_DEF.function.parameters.required).toEqual(["surfaceId", "components"]);
   });
 
   it("declares the three expected parameter slots", () => {
-    expect(
-      Object.keys(RENDER_A2UI_TOOL_DEF.function.parameters.properties),
-    ).toEqual(["surfaceId", "components", "data"]);
+    expect(Object.keys(RENDER_A2UI_TOOL_DEF.function.parameters.properties)).toEqual([
+      "surfaceId",
+      "components",
+      "data",
+    ]);
   });
 });
 
@@ -319,14 +321,58 @@ describe("findPriorSurface", () => {
 });
 
 describe("buildSubagentPrompt", () => {
+  // Suppress both built-in default blocks so structural tests can assert exact
+  // output without the (large) DEFAULT_* text. Empty string is the documented
+  // escape hatch (undefined → default; "" → block omitted).
+  const SUPPRESS = { generationGuidelines: "", designGuidelines: "" };
+
+  it("applies the built-in defaults when no guidelines are given (OSS-248)", () => {
+    const prompt = buildSubagentPrompt({ contextPrompt: "ctx" });
+    expect(prompt).toContain(DEFAULT_GENERATION_GUIDELINES);
+    expect(prompt).toContain("## Design Guidelines");
+    expect(prompt).toContain(DEFAULT_DESIGN_GUIDELINES);
+    expect(prompt).toContain("ctx");
+  });
+
+  it("orders generation → design → context → composition", () => {
+    const prompt = buildSubagentPrompt({
+      contextPrompt: "CTXMARK",
+      guidelines: {
+        generationGuidelines: "GENMARK",
+        designGuidelines: "DESMARK",
+        compositionGuide: "COMPMARK",
+      },
+    });
+    expect(prompt.indexOf("GENMARK")).toBeLessThan(prompt.indexOf("DESMARK"));
+    expect(prompt.indexOf("DESMARK")).toBeLessThan(prompt.indexOf("CTXMARK"));
+    expect(prompt.indexOf("CTXMARK")).toBeLessThan(prompt.indexOf("COMPMARK"));
+  });
+
+  it("overrides one block per-field, keeping the other default", () => {
+    const prompt = buildSubagentPrompt({
+      contextPrompt: "ctx",
+      guidelines: { generationGuidelines: "CUSTOM_GEN" },
+    });
+    expect(prompt).toContain("CUSTOM_GEN");
+    expect(prompt).not.toContain(DEFAULT_GENERATION_GUIDELINES);
+    expect(prompt).toContain(DEFAULT_DESIGN_GUIDELINES);
+  });
+
+  it("suppresses a block when passed an empty string", () => {
+    const prompt = buildSubagentPrompt({ contextPrompt: "ctx", guidelines: SUPPRESS });
+    expect(prompt).not.toContain(DEFAULT_GENERATION_GUIDELINES);
+    expect(prompt).not.toContain(DEFAULT_DESIGN_GUIDELINES);
+    expect(prompt).not.toContain("## Design Guidelines");
+  });
+
   it("returns the context prompt verbatim when no extras", () => {
-    expect(buildSubagentPrompt({ contextPrompt: "ctx" })).toBe("ctx");
+    expect(buildSubagentPrompt({ contextPrompt: "ctx", guidelines: SUPPRESS })).toBe("ctx");
   });
 
   it("appends composition guide after the context prompt", () => {
     const prompt = buildSubagentPrompt({
       contextPrompt: "ctx",
-      compositionGuide: "guide",
+      guidelines: { ...SUPPRESS, compositionGuide: "guide" },
     });
     expect(prompt).toBe("ctx\nguide");
   });
@@ -334,6 +380,7 @@ describe("buildSubagentPrompt", () => {
   it("emits an edit block carrying the prior surface state", () => {
     const prompt = buildSubagentPrompt({
       contextPrompt: "ctx",
+      guidelines: SUPPRESS,
       editContext: {
         surfaceId: "s1",
         prior: { components: [{ id: "root", component: "Row" }], data: { x: 1 } },
@@ -351,6 +398,7 @@ describe("buildSubagentPrompt", () => {
   it("omits the requested-changes section when changes is missing", () => {
     const prompt = buildSubagentPrompt({
       contextPrompt: "ctx",
+      guidelines: SUPPRESS,
       editContext: {
         surfaceId: "s1",
         prior: { components: [], data: null },
@@ -360,7 +408,7 @@ describe("buildSubagentPrompt", () => {
   });
 
   it("drops empty parts from the join", () => {
-    expect(buildSubagentPrompt({ contextPrompt: "" })).toBe("");
+    expect(buildSubagentPrompt({ contextPrompt: "", guidelines: SUPPRESS })).toBe("");
   });
 });
 
@@ -454,7 +502,7 @@ describe("prepareA2UIRequest", () => {
       intent: "create",
       messages: [],
       state: { "ag-ui": { context: [{ value: "ctx" }] } },
-      compositionGuide: "guide",
+      guidelines: { compositionGuide: "guide" },
     });
     expect(prep.error).toBeUndefined();
     expect(prep.isUpdate).toBe(false);
@@ -501,7 +549,11 @@ describe("buildA2UIEnvelope", () => {
   it("create: createSurface uses the configured default catalog, not the args", () => {
     const env = JSON.parse(
       buildA2UIEnvelope({
-        args: { surfaceId: "from-args", components: [{ id: "root", component: "Row" }], data: { items: [1] } },
+        args: {
+          surfaceId: "from-args",
+          components: [{ id: "root", component: "Row" }],
+          data: { items: [1] },
+        },
         isUpdate: false,
         defaultCatalogId: "cat://configured",
       }),
@@ -513,9 +565,7 @@ describe("buildA2UIEnvelope", () => {
   });
 
   it("create: falls back to DEFAULT_SURFACE_ID when args omit surfaceId", () => {
-    const env = JSON.parse(
-      buildA2UIEnvelope({ args: { components: [] }, isUpdate: false }),
-    );
+    const env = JSON.parse(buildA2UIEnvelope({ args: { components: [] }, isUpdate: false }));
     expect(env[A2UI_OPERATIONS_KEY][0].createSurface.surfaceId).toBe(DEFAULT_SURFACE_ID);
   });
 
@@ -590,5 +640,33 @@ describe("buildA2UIEnvelope", () => {
     const ops = env[A2UI_OPERATIONS_KEY];
     expect(ops.some((o: any) => o.createSurface)).toBe(false);
     expect(ops[0].updateComponents.surfaceId).toBe("s1");
+  });
+});
+
+describe("resolveA2UIToolParams", () => {
+  it("fills the canonical defaults", () => {
+    const r = resolveA2UIToolParams({ model: "M" });
+    expect(r.model).toBe("M");
+    expect(r.defaultSurfaceId).toBe(DEFAULT_SURFACE_ID);
+    expect(r.defaultCatalogId).toBe(BASIC_CATALOG_ID);
+    expect(r.toolName).toBe(GENERATE_A2UI_TOOL_NAME);
+    expect(r.toolDescription).toBe(GENERATE_A2UI_TOOL_DESCRIPTION);
+    expect(r.guidelines).toBeUndefined();
+  });
+
+  it("falls back to defaults on empty-string overrides", () => {
+    const r = resolveA2UIToolParams({ model: "M", toolName: "", defaultCatalogId: "" });
+    expect(r.toolName).toBe(GENERATE_A2UI_TOOL_NAME);
+    expect(r.defaultCatalogId).toBe(BASIC_CATALOG_ID);
+  });
+
+  it("passes overrides through", () => {
+    const r = resolveA2UIToolParams({
+      model: "M",
+      toolName: "custom_tool",
+      guidelines: { compositionGuide: "g" },
+    });
+    expect(r.toolName).toBe("custom_tool");
+    expect(r.guidelines).toEqual({ compositionGuide: "g" });
   });
 });

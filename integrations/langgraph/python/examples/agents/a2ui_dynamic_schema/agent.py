@@ -64,9 +64,11 @@ base_model = ChatOpenAI(model="gpt-4o")
 
 TOOLS = [
     get_a2ui_tools(
-        model=base_model,
-        default_catalog_id=CUSTOM_CATALOG_ID,
-        composition_guide=COMPOSITION_GUIDE,
+        {
+            "model": base_model,
+            "default_catalog_id": CUSTOM_CATALOG_ID,
+            "guidelines": {"composition_guide": COMPOSITION_GUIDE},
+        }
     )
 ]
 

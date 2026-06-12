@@ -2,6 +2,10 @@
   "name": "@ag-ui/aws-strands",
   "author": "AG-UI Contributors",
   "version": "0.1.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ag-ui-protocol/ag-ui.git"
+  },
   "description": "AWS Strands Agents integration for the AG-UI protocol",
   "publishConfig": {
     "access": "public"
