@@ -16,6 +16,7 @@ except ImportError:
     from langchain_core.messages import BaseMessage, SystemMessage, ToolMessage
     
 from langchain_core.runnables import RunnableConfig, ensure_config
+from langchain_core.runnables.config import merge_configs
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.types import Command
 
@@ -651,12 +652,22 @@ class LangGraphAgent:
             as_node=next_nodes[0] if next_nodes else "__start__",
         )
 
+        # ``fork`` only carries the checkpoint-level configurable keys
+        # (``thread_id``, ``checkpoint_id``, ``checkpoint_ns``).  Pass it
+        # alone and runtime settings from the caller's config -- notably
+        # ``recursion_limit`` and ``callbacks`` -- are silently dropped,
+        # so LangGraph stamps the default ``recursion_limit=25`` and any
+        # tracing / observability callbacks are lost.  Merge the caller's
+        # config underneath the fork so checkpoint keys still win but
+        # everything else is preserved.  Fixes #1749.
+        merged_config = merge_configs(config, fork)
+
         stream_input = self.langgraph_default_merge_state(time_travel_checkpoint.values, [message_checkpoint], input)
         subgraphs_stream_enabled = input.forwarded_props.get('stream_subgraphs', True) if input.forwarded_props else True
 
         kwargs = self.get_stream_kwargs(
             input=stream_input,
-            config=fork,
+            config=merged_config,
             subgraphs=bool(subgraphs_stream_enabled),
             version="v2",
         )
