@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **PERFORMANCE**: Cache session reads per execution to cut redundant `get_session` round-trips (#1880, #1890, thanks @he-yufeng)
+  - `SessionManager` now memoizes session reads in a short-lived, execution-local cache so repeated state accessors within one turn reuse a single fetch instead of re-pulling the full session (and event history) from the backing `SessionService` on every call — a notable latency win on remote backends like `VertexAiSessionService`. The cache is invalidated on writes and deliberately disabled before the runner and before the post-run HITL cleanup guard, where ADK can mutate session state outside `SessionManager`.
 - **CHORE**: Update the default model for the live tests to `gemini-3.5-flash`
   - `gemini-2.0-flash` reached its shutdown date (2026-06-01) and `gemini-2.5-flash` is scheduled to shut down (2026-10-16), so the live/integration tests and documentation snippets now target the current stable flash GA, `gemini-3.5-flash`. The large file count is purely this model-string sweep — there are no library or runtime behavior changes.
   - The test model is centralized in `tests/constants.py` as `LIVE_TEST_MODEL` (env-overridable via `ADK_TEST_MODEL`) so future cutovers are a one-line change instead of a sweep across every test file. A companion `LIVE_TEST_PRO_MODEL` (env-overridable via `ADK_TEST_PRO_MODEL`) holds the high-reasoning model at `gemini-2.5-pro` for now.
@@ -16,6 +18,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **FIX**: `ADKAgent.run()` no longer emits `RUN_FINISHED` after `RUN_ERROR`
+  (#1892). When a tool raised mid-stream, the background queue path emitted
+  `RUN_ERROR` and the consumer loop then fell through to its unconditional
+  `RUN_FINISHED`, producing two terminal events for a single run.
+  `@ag-ui/client`'s state machine correctly rejects the second event with
+  "Cannot send event type 'RUN_FINISHED': The run has already errored". The
+  consumer loop now tracks whether a `RUN_ERROR` already flowed through the
+  queue and skips the trailing `RUN_FINISHED`, enforcing the AG-UI invariant of
+  at most one terminal event per run at the source rather than pushing it onto
+  every downstream SSE wrapper. This covers all queue-borne terminal errors
+  (tool throw, execution timeout, background-execution failure), not just the
+  tool-throw case. Thanks to @sunholo-voight-kampff for the detailed report.
+- **FIX**: HITL confirmation on a standalone `LlmAgent` root now re-executes the
+  original tool after the user confirms (#1839). Previously, for resumable
+  `LlmAgent` roots the #1534 pre-append workaround substituted `new_message`
+  with an empty-text placeholder that became the last user event in the
+  session. ADK's `_RequestConfirmationLlmRequestProcessor` reverse-scans for
+  the last user event and bails on the first one lacking `function_responses`,
+  so it never reached the pre-appended confirmation `FunctionResponse` — the
+  LLM was invoked instead and hallucinated an "awaiting confirmation" reply.
+  (The same workaround also hard-crashed `SequentialAgent`/`LoopAgent`
+  composites of `LlmAgent`s on confirmation with "No agent to transfer to".)
+  Confirmation responses (`adk_request_confirmation`) are now routed through
+  the direct `new_message` path — the same path ADK 2.0 Workflow roots already
+  take — making the `FunctionResponse` the trailing user event the processor
+  expects. Because `adk_request_confirmation` is a long-running tool that pauses
+  rather than ends the invocation, this does not re-trigger the `end_of_agent`
+  early-return that motivated the #1534 workaround for turn-ending
+  client/frontend tools. This is the `LlmAgent` cousin of the Workflow-root fix
+  in #1669; true ADK 2.0 Workflow roots are unaffected (they already bypass the
+  workaround).
 - **FIX**: Duplicate HITL tool-call emission under SSE streaming (long-running client tools)
   - With SSE streaming (the default), ADK can deliver the *same logical* long-running client tool call **several times** — a streaming chunk (`partial=True`), an aggregated partial, the persisted final (`partial=False`) — and ADK separately **invokes the `ClientProxyTool`**, with `populate_client_function_call_id` assigning a **different ID to every replay** (#1168). Each replay produced its own `TOOL_CALL_START/ARGS/END` trio because every existing dedupe was keyed by tool-call ID — the dojo rendered the Human-in-the-Loop card **twice** (two cards, two different `adk-…` IDs visible in the event stream).
   - **Translator** (`translate_lro_function_calls`): replays are now suppressed via a **high-water mark per tool name** — the Nth same-name LRO call *within one event* only emits if fewer than N calls for that name have been emitted this run (ledger: `lro_emitted_ids_by_name`). This uniformly covers second-partial replays, aggregated partials, and the final, regardless of `partial` flags. Genuinely parallel same-name calls arrive as multiple parts of *one* event, exceed the mark, and still emit individually; a later same-name event cannot be a real second call because an LRO pauses the invocation.
