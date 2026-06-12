@@ -144,6 +144,10 @@ jobs:
             test_path: tests/awsStrandsTests
             services: ["dojo", "aws-strands"]
             wait_on: http://localhost:9999,tcp:localhost:8017
+          - suite: aws-strands-typescript
+            test_path: tests/awsStrandsTypescriptTests
+            services: ["dojo", "aws-strands-typescript"]
+            wait_on: http://localhost:9999,tcp:localhost:8022
           - suite: claude-agent-sdk-python
             test_path: tests/claudeAgentSdkPythonTests
             services: ["dojo", "claude-agent-sdk-python"]
@@ -307,6 +311,11 @@ jobs:
       - name: Run dojo+agents
         uses: JarvusInnovations/background-action@2428e7b970a846423095c79d43f759abf979a635  # v1.0.7
         if: ${{ join(matrix.services, ',') != '' && contains(join(matrix.services, ','), 'dojo') }}
+        env:
+          # Backend tool-rendering demos call the live open-meteo API, which
+          # rate-limits CI's shared egress IPs and hangs the e2e tests. Return
+          # canned weather data instead so these suites are deterministic.
+          AG_UI_MOCK_WEATHER: "1"
         with:
           run: |
             node ../scripts/run-dojo-everything.js --only ${{ join(matrix.services, ',') }}

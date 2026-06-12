@@ -24,7 +24,8 @@ import { A2AMiddlewareAgent } from "@ag-ui/a2a-middleware";
 import { AWSStrandsAgent } from "@ag-ui/aws-strands";
 import { A2AAgent } from "@ag-ui/a2a";
 import { A2AClient } from "@a2a-js/sdk/client";
-import { LangChainAgent } from "@ag-ui/langchain";
+// TODO: fix this — re-enable when langchain dojo agent is restored (see below)
+// import { LangChainAgent } from "@ag-ui/langchain";
 import { Ag2Agent } from "@ag-ui/ag2";
 import { LangroidHttpAgent } from "@ag-ui/langroid";
 import { WatsonxAgent } from "@ag-ui/watsonx";
@@ -163,6 +164,19 @@ export const agentsIntegrations = {
       agent.use(new A2UIMiddleware({ injectA2UITool: true }));
       return agent;
     })(),
+    a2ui_dynamic_schema: new LangGraphAgent({
+      deploymentUrl: envVars.langgraphPythonUrl,
+      graphId: "a2ui_dynamic_schema",
+    }),
+    a2ui_fixed_schema: new LangGraphAgent({
+      deploymentUrl: envVars.langgraphPythonUrl,
+      graphId: "a2ui_fixed_schema",
+    }),
+    // Advanced: same backend agent, frontend adds custom progress renderer + action handlers
+    a2ui_advanced: new LangGraphAgent({
+      deploymentUrl: envVars.langgraphPythonUrl,
+      graphId: "a2ui_dynamic_schema",
+    }),
   }),
 
   "langgraph-fastapi": async () => ({
@@ -196,8 +210,8 @@ export const agentsIntegrations = {
     }),
   }),
 
-  "langgraph-typescript": async () =>
-    mapAgents(
+  "langgraph-typescript": async () => ({
+    ...mapAgents(
       (graphId) => {
         return new LangGraphAgent({
           deploymentUrl: envVars.langgraphTypescriptUrl,
@@ -217,27 +231,50 @@ export const agentsIntegrations = {
         subgraphs: "subgraphs",
       },
     ),
+    a2ui_dynamic_schema: new LangGraphAgent({
+      deploymentUrl: envVars.langgraphTypescriptUrl,
+      graphId: "a2ui_dynamic_schema",
+    }),
+    a2ui_fixed_schema: new LangGraphAgent({
+      deploymentUrl: envVars.langgraphTypescriptUrl,
+      graphId: "a2ui_fixed_schema",
+    }),
+    // Advanced: same backend agent, frontend adds custom progress renderer + action handlers
+    a2ui_advanced: new LangGraphAgent({
+      deploymentUrl: envVars.langgraphTypescriptUrl,
+      graphId: "a2ui_dynamic_schema",
+    }),
+    // OSS-162: A2UI error-recovery showcase (sub-agent emits a structural error,
+    // then recovers). Rides the runtime a2ui middleware like the others.
+    a2ui_recovery: new LangGraphAgent({
+      deploymentUrl: envVars.langgraphTypescriptUrl,
+      graphId: "a2ui_recovery",
+    }),
+  }),
 
+  // TODO: fix this — CopilotKit 1.60.x bump flips @langchain/openai onto
+  // @langchain/core@1.1.40, which clashes with @ag-ui/langchain (pinned to
+  // core@0.3.80) and breaks the chainFn type-check. Re-enable once resolved.
   // TODO: @ranst91 Enable `langchain` integration in apps/dojo/src/menu.ts once ready
-  langchain: async () => {
-    const agent = new LangChainAgent({
-      chainFn: async ({ messages, tools, threadId }) => {
-        const { ChatOpenAI } = await import("@langchain/openai");
-        const chatOpenAI = new ChatOpenAI({ model: "gpt-4o" });
-        const model = chatOpenAI.bindTools(tools, {
-          strict: true,
-        });
-        return model.stream(messages, {
-          tools,
-          metadata: { conversation_id: threadId },
-        });
-      },
-    });
-    return {
-      agentic_chat: agent,
-      tool_based_generative_ui: agent,
-    };
-  },
+  // langchain: async () => {
+  //   const agent = new LangChainAgent({
+  //     chainFn: async ({ messages, tools, threadId }) => {
+  //       const { ChatOpenAI } = await import("@langchain/openai");
+  //       const chatOpenAI = new ChatOpenAI({ model: "gpt-4o" });
+  //       const model = chatOpenAI.bindTools(tools, {
+  //         strict: true,
+  //       });
+  //       return model.stream(messages, {
+  //         tools,
+  //         metadata: { conversation_id: threadId },
+  //       });
+  //     },
+  //   });
+  //   return {
+  //     agentic_chat: agent,
+  //     tool_based_generative_ui: agent,
+  //   };
+  // },
 
   agno: async () =>
     mapAgents(
@@ -410,6 +447,33 @@ export const agentsIntegrations = {
     ),
     human_in_the_loop: new AWSStrandsAgent({
       url: `${envVars.awsStrandsUrl}/human-in-the-loop`,
+      debug: true,
+    }),
+  }),
+
+  "aws-strands-typescript": async () => ({
+    // TS example server mounts every endpoint on hyphenated paths (matching the
+    // Python reference server) so the same curl payloads drive both adapters.
+    // v1_agentic_chat reuses the agentic-chat endpoint — the dojo page renders
+    // the same agent via the v1 CopilotChat UI instead of the v2 shell.
+    ...mapAgents(
+      (path) =>
+        new AWSStrandsAgent({
+          url: `${envVars.awsStrandsTypescriptUrl}/${path}/`,
+        }),
+      {
+        agentic_chat: "agentic-chat",
+        agentic_chat_reasoning: "agentic-chat-reasoning",
+        agentic_chat_multimodal: "agentic-chat-multimodal",
+        v1_agentic_chat: "agentic-chat",
+        backend_tool_rendering: "backend-tool-rendering",
+        agentic_generative_ui: "agentic-generative-ui",
+        shared_state: "shared-state",
+        tool_based_generative_ui: "tool-based-generative-ui",
+      },
+    ),
+    human_in_the_loop: new AWSStrandsAgent({
+      url: `${envVars.awsStrandsTypescriptUrl}/human-in-the-loop`,
       debug: true,
     }),
   }),

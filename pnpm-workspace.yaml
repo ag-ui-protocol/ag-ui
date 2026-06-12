@@ -4,6 +4,7 @@ packages:
   - sdks/typescript/packages/*
   - integrations/*/typescript
   - integrations/community/*/typescript
+  - integrations/aws-strands/typescript/examples
   - integrations/mastra/typescript/examples
 
 ignoredBuiltDependencies:

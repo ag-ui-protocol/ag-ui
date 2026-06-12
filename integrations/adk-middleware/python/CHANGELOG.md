@@ -7,7 +7,219 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **PERFORMANCE**: Cache session reads per execution to cut redundant `get_session` round-trips (#1880, #1890, thanks @he-yufeng)
+  - `SessionManager` now memoizes session reads in a short-lived, execution-local cache so repeated state accessors within one turn reuse a single fetch instead of re-pulling the full session (and event history) from the backing `SessionService` on every call — a notable latency win on remote backends like `VertexAiSessionService`. The cache is invalidated on writes and deliberately disabled before the runner and before the post-run HITL cleanup guard, where ADK can mutate session state outside `SessionManager`.
+- **CHORE**: Update the default model for the live tests to `gemini-3.5-flash`
+  - `gemini-2.0-flash` reached its shutdown date (2026-06-01) and `gemini-2.5-flash` is scheduled to shut down (2026-10-16), so the live/integration tests and documentation snippets now target the current stable flash GA, `gemini-3.5-flash`. The large file count is purely this model-string sweep — there are no library or runtime behavior changes.
+  - The test model is centralized in `tests/constants.py` as `LIVE_TEST_MODEL` (env-overridable via `ADK_TEST_MODEL`) so future cutovers are a one-line change instead of a sweep across every test file. A companion `LIVE_TEST_PRO_MODEL` (env-overridable via `ADK_TEST_PRO_MODEL`) holds the high-reasoning model at `gemini-2.5-pro` for now.
+  - The HITL resumption live test was hardened for determinism alongside the model bump: the agent instruction now mandates a single `plan_steps` tool call, `temperature` is `0.0`, and per-run `thread_id`s use a UUID instead of a second-resolution timestamp to avoid collisions under concurrent test load.
+
 ### Fixed
+
+- **FIX**: `ADKAgent.run()` no longer emits `RUN_FINISHED` after `RUN_ERROR`
+  (#1892). When a tool raised mid-stream, the background queue path emitted
+  `RUN_ERROR` and the consumer loop then fell through to its unconditional
+  `RUN_FINISHED`, producing two terminal events for a single run.
+  `@ag-ui/client`'s state machine correctly rejects the second event with
+  "Cannot send event type 'RUN_FINISHED': The run has already errored". The
+  consumer loop now tracks whether a `RUN_ERROR` already flowed through the
+  queue and skips the trailing `RUN_FINISHED`, enforcing the AG-UI invariant of
+  at most one terminal event per run at the source rather than pushing it onto
+  every downstream SSE wrapper. This covers all queue-borne terminal errors
+  (tool throw, execution timeout, background-execution failure), not just the
+  tool-throw case. Thanks to @sunholo-voight-kampff for the detailed report.
+- **FIX**: HITL confirmation on a standalone `LlmAgent` root now re-executes the
+  original tool after the user confirms (#1839). Previously, for resumable
+  `LlmAgent` roots the #1534 pre-append workaround substituted `new_message`
+  with an empty-text placeholder that became the last user event in the
+  session. ADK's `_RequestConfirmationLlmRequestProcessor` reverse-scans for
+  the last user event and bails on the first one lacking `function_responses`,
+  so it never reached the pre-appended confirmation `FunctionResponse` — the
+  LLM was invoked instead and hallucinated an "awaiting confirmation" reply.
+  (The same workaround also hard-crashed `SequentialAgent`/`LoopAgent`
+  composites of `LlmAgent`s on confirmation with "No agent to transfer to".)
+  Confirmation responses (`adk_request_confirmation`) are now routed through
+  the direct `new_message` path — the same path ADK 2.0 Workflow roots already
+  take — making the `FunctionResponse` the trailing user event the processor
+  expects. Because `adk_request_confirmation` is a long-running tool that pauses
+  rather than ends the invocation, this does not re-trigger the `end_of_agent`
+  early-return that motivated the #1534 workaround for turn-ending
+  client/frontend tools. This is the `LlmAgent` cousin of the Workflow-root fix
+  in #1669; true ADK 2.0 Workflow roots are unaffected (they already bypass the
+  workaround).
+- **FIX**: Duplicate HITL tool-call emission under SSE streaming (long-running client tools)
+  - With SSE streaming (the default), ADK can deliver the *same logical* long-running client tool call **several times** — a streaming chunk (`partial=True`), an aggregated partial, the persisted final (`partial=False`) — and ADK separately **invokes the `ClientProxyTool`**, with `populate_client_function_call_id` assigning a **different ID to every replay** (#1168). Each replay produced its own `TOOL_CALL_START/ARGS/END` trio because every existing dedupe was keyed by tool-call ID — the dojo rendered the Human-in-the-Loop card **twice** (two cards, two different `adk-…` IDs visible in the event stream).
+  - **Translator** (`translate_lro_function_calls`): replays are now suppressed via a **high-water mark per tool name** — the Nth same-name LRO call *within one event* only emits if fewer than N calls for that name have been emitted this run (ledger: `lro_emitted_ids_by_name`). This uniformly covers second-partial replays, aggregated partials, and the final, regardless of `partial` flags. Genuinely parallel same-name calls arrive as multiple parts of *one* event, exceed the mark, and still emit individually; a later same-name event cannot be a real second call because an LRO pauses the invocation.
+  - **ClientProxyTool**: consults the translator's same ledger (shared into the proxy toolsets like the emitted-ID set already is) and suppresses its invocation when it is the positional twin of an already-streamed emission.
+  - The positional (FIFO) pairing is the same one `_extract_lro_id_remap` uses for ID remapping, so result-routing is unaffected; the non-streaming (final-only) path still emits normally.
+  - Reproduced deterministically with scripted `BaseLlm` streams driving the real runner + proxy + translator for all three shapes (`partial→final`, `partial→partial→final`, `partial→partial` — the "last event is partial" shape). End-to-end regression `TestLroNoDuplicateToolCallEndToEnd` is parametrized over all three; translator-level tests cover twin/second-partial/parallel/final-only/reset.
+  - Reproduced deterministically at the translator level (partial id-A then final id-B for one logical call → previously two `TOOL_CALL_START`, now one). New regression tests in `tests/test_lro_sse_id_remap.py` cover the partial→final twin, parallel same-name calls (no over-suppression), final-only emission, and reset.
+  - Also verified **live against google-adk 1.23.0 + Vertex**, where the partial(id-A)/final(id-B) replay occurs on **every** HITL turn (the unfixed translator emitted both → 100% duplicate cards in the dojo); with this fix the same stack emits exactly one. On google-adk 2.x the replay shape does not occur on this path.
+  - `examples/uv.lock` refreshed: it pinned `google-adk==1.23.0` (plus a similarly stale dependency set), so `uv run dev` served the demo on an ADK whose event shapes differ from the 2.x the middleware is developed and tested against — making this bug deterministic for example-server users yet invisible in development. The lock now resolves `google-adk 2.2.0` / `google-genai 2.8.0` (the old `aiohttp` pin also broke google-genai 2.8's SSE reader and was refreshed along with the rest).
+- **FIX**: Strip `additionalProperties` from client tool schemas before building Gemini function declarations
+  - CopilotKit / AG-UI frontend tools serialize their parameters with `zodToJsonSchema(..., {$refStrategy: "none"})`, which stamps `additionalProperties: false` on every object (root and nested). `_clean_schema_for_genai` allowlisted it because it is a field on `google.genai.types.Schema`, so it was forwarded verbatim. The Gemini **Developer API** rejects it in `function_declarations` with `400 INVALID_ARGUMENT` ("Unknown name \"additional_properties\" ... Cannot find field"), which surfaced as a `RUN_ERROR` and **no tool call reaching the UI** — e.g. the Human-in-the-Loop dojo demo rendered nothing for the ADK backend, while OpenAI-based backends (which tolerate the field) worked.
+  - `_clean_schema_for_genai` now strips `additionalProperties` / `additional_properties` at every depth via an explicit `_GENAI_REJECTED_SCHEMA_KEYS` denylist, closing both the dynamic `types.Schema.model_fields` allowlist and the static fallback. Gemini ignores `additionalProperties` for argument generation so no model behavior changes; **Vertex** already accepted the field, making this a no-op there and a fix on the Developer API.
+  - The middleware never read the value anywhere — it was only ever forwarded. The three #1495 tests that asserted pass-through (they validated `model_validate()` only, never a live request) were updated, and a regression test reproduces the exact dojo HITL tool schema and asserts `additional_properties` appears at no depth.
+
+- **FIX**: `adk_events_to_messages` now preserves `file_data` parts on user
+  events (#1771). Previously only the text part was extracted, so image,
+  audio, video, and document attachments were silently dropped from
+  `MESSAGES_SNAPSHOT` and disappeared from chat history after a page
+  refresh. MIME prefix dispatches to `ImageInputContent`, `AudioInputContent`,
+  `VideoInputContent`, or `DocumentInputContent`; `file_data` parts with no
+  `file_uri` are filtered out and text-only events still serialize as a
+  plain string. Thanks to @viktor-matic for the fix.
+
+## [0.6.5] - 2026-05-28
+
+### Fixed
+
+- **FIX**: Revert the `AGUIToolset.bind()` delegation introduced in 0.6.4 (#1746)
+  and restore per-run `ClientProxyToolset` replacement (#1786). Thanks to
+  @jplikesbikes for catching the regression and driving the fix.
+  - **Impact**: 0.6.4 introduced a cross-user data leak under concurrent runs.
+    With `max_concurrent_executions=10` (default) and serialization only per
+    `(thread_id, user_id)`, two overlapping runs would share a single mutable
+    `_delegate` slot on the construction-time `AGUIToolset` placeholder.
+    Run A's `TOOL_CALL_START/ARGS/END` events could be emitted onto Run B's
+    `event_queue` (a confidentiality breach: tool-call arguments generated
+    from one user's conversation/state would land on another user's stream
+    and Run A would stall, never having been told about the call). A
+    secondary failure mode stranded any still-in-flight run with an empty
+    tool list when the first run's `finally` block unbound the shared
+    placeholder. Tool *results* (client → agent) were not affected — they
+    return via a separate `RunAgentInput` matched per `(thread_id, user)`.
+  - **Root cause of the 0.6.4 regression**: The #1746 rationale — that
+    ADK 2.0 `Runner.__init__` eagerly caches `get_tools()` results and
+    therefore the `AGUIToolset` object must be preserved by reference —
+    does not match the GA behavior. Verified against `google-adk` 1.16.0,
+    1.34.1, 2.0.0, and 2.1.0: `Runner.__init__` does *no* tool resolution;
+    `agent.canonical_tools` reads `self.tools` live per invocation
+    (`flows/llm_flows/base_llm_flow.py` caches on the per-`run_async`
+    `InvocationContext`, and the toolset-level cache in
+    `tools/base_toolset.py` is keyed by `invocation_id`). The actual #1389
+    failure mode on the pre-release `google-adk==2.0.0a2` was a separate
+    well-formed-`BaseToolset` issue: a toolset missing
+    `_use_invocation_cache` (i.e. not calling `BaseToolset.__init__`) is
+    silently dropped to `[]` by `llm_agent._convert_tool_union_to_tools`.
+    That fix — `super().__init__()` on `AGUIToolset` — is retained; only
+    the unnecessary `bind()` delegation that introduced the concurrency
+    hazard is reverted.
+  - **Fix**: `_update_agent_tools_recursive` once again replaces the
+    placeholder per-run with a fresh `ClientProxyToolset` inside the
+    per-run shallow-copied agent's own `tools` list. The construction-time
+    placeholder is never mutated; each run carries its own `input.tools`
+    and `event_queue`.
+  - **Tests added** (pass on both `google-adk==1.26.0` and
+    `google-adk==2.1.0`):
+    - `tests/test_agui_toolset_concurrency.py` — three tests asserting
+      per-run isolation, including a real concurrent-`asyncio`
+      reproduction with a barrier.
+    - `tests/test_adk_2_0_compat.py::TestAGUIToolsetReplacement::test_swapped_in_toolset_resolves_nonempty_via_get_tools_with_prefix`
+      — guards the real #1389 silent-drop path (via
+      `_use_invocation_cache`) so it cannot silently regress.
+  - **Compatibility note**: Pre-release `google-adk==2.0.0a2` snapshotted
+    toolset references at `LlmAgent` construction (via `model_post_init` →
+    `_build_nodes`) and would regress to an empty tool list under per-run
+    replacement; the supported install range `>=1.16.0,<3.0.0` never
+    resolves a pre-release.
+
+## [0.6.4] - 2026-05-26
+
+### Added
+
+- **DEPS**: `google-adk` upper bound lifted from `<2.0.0` to `<3.0.0`. The middleware
+  is now compatible with both ADK 1.x and ADK 2.x (GA 2026-05-19). See the two
+  paired fixes below for the source changes that enable 2.0 support without
+  regressing 1.x. Verified against `google-adk==1.33.0`, `google-adk==2.0.0`, and
+  `google-adk[a2a]==2.1.0` (the `[a2a]` extra only pulls `a2a-sdk` and does not
+  intersect any middleware code path). CI should ideally run the suite under both
+  ADK 1.33 and the latest 2.x to keep the dual-pin invariant honest.
+
+### Fixed
+
+- **FIX**: `AGUIToolset` now binds a `ClientProxyToolset` delegate instead of being
+  replaced wholesale, so ADK 2.0's eager `Runner.__init__` tool cache stays valid (#1389)
+  - **Cause**: ADK 2.0 changed `Runner.__init__` to eagerly walk `agent.tools` and
+    cache whatever each toolset returns from `get_tools()`. The previous
+    `_update_agent_tools_recursive` strategy reassigned `agent.tools = [...]` so the
+    placeholder `AGUIToolset` was replaced by a `ClientProxyToolset` object — but
+    the Runner had already cached a reference to the placeholder, leaving the LLM
+    with an empty tool list and the error
+    `"Tool 'X' not found. Available tools: []"` on first frontend-tool invocation.
+    ADK 1.x resolved `get_tools()` lazily so the replacement was visible.
+  - **Fix**: `AGUIToolset` gains `bind(delegate)` and `unbind()` methods.
+    `get_tools()` forwards to the bound delegate, or returns `[]` if unbound.
+    Object identity of the `AGUIToolset` instance in `agent.tools` is preserved
+    end-to-end, so ADK 2.0's cache stays valid and ADK 1.x continues to work
+    unchanged (the delegation pattern is functionally equivalent to the previous
+    replace-the-object approach there).
+  - `_update_agent_tools_recursive` calls `bind()` instead of mutating `agent.tools`.
+    `_run_adk_in_background`'s `finally` block walks the tree and calls `unbind()`
+    so the next run starts with placeholders in their construction-time state.
+  - **Additionally**, `AGUIToolset.__init__` now explicitly calls
+    `super().__init__()`. `BaseToolset.__init__` initializes the cache
+    attributes (`_use_invocation_cache`, `_cached_invocation_id`,
+    `_cached_prefixed_tools`) on both ADK 1.x and 2.0; the 2.0 change is
+    that `llm_agent.py:185` eagerly reads `_use_invocation_cache` and
+    silently drops the toolset when missing. Required now that bind()
+    delegation preserves the instance across the run.
+  - **Tests**: `tests/test_adk_2_0_compat.py::TestAGUIToolsetDelegation` covers
+    construction (super-init runs), unbound `get_tools()` returns `[]` (with an
+    opt-in explicit-raise mode preserved for tests), bind/unbind round-trip,
+    re-bind across multi-turn runs, and object-identity preservation across a
+    full `ADKAgent.run` invocation. Two existing tests in
+    `tests/test_adk_agent.py` (`test_agui_tools_properly_converted_in_subagents`
+    and `test_non_deepcopyable_tool_does_not_crash`) were updated to assert the
+    new delegated semantics (toolset instance preserved, `._delegate` is the
+    `ClientProxyToolset`) instead of the old wholesale-replacement semantics.
+  - **Reporter**: filed [#1389](https://github.com/ag-ui-protocol/ag-ui/issues/1389)
+    with the exact `_use_invocation_cache` symptom and the delegation-via-bind
+    workaround. The architecture of this fix follows the proposal in
+    [#1470 (withdrawn)](https://github.com/ag-ui-protocol/ag-ui/pull/1470).
+
+- **FIX**: Workflow roots now receive `FunctionResponse` directly in `new_message`
+  so ADK 2.0 `Workflow._run_impl` can rehydrate from interrupt (#1669)
+  - **Cause**: The #1534 workaround for `Runner._resolve_invocation_id`'s
+    end-of-agent short-circuit pre-appends the `FunctionResponse` to the session
+    and replaces `new_message` with an empty-text placeholder. That's correct for
+    LlmAgent roots (whose `function_call` events carry `end_of_agent=True`), but
+    ADK 2.0 `Workflow._run_impl` rehydrates from `new_message.parts` only —
+    `_extract_resume_inputs(new_message)` returns `None` when the placeholder
+    has no `function_response`, so the workflow restarts from `START` instead of
+    resuming the interrupted node. Symptom: Workflow-rooted HITL flows hang
+    indefinitely on tool-result submission.
+  - **Fix**: Add `ADKAgent._root_agent_is_workflow()` predicate. The pre-append
+    branch is now gated on `not self._root_agent_is_workflow()` — Workflow roots
+    take the direct-`new_message` path (same path used by ADK <1.28 and
+    non-resumable apps), where the `FunctionResponse` lands in
+    `new_message.parts` and `Workflow._extract_resume_inputs` can correctly read
+    it. The LlmAgent + composite-orchestrator path is unchanged.
+  - The predicate imports `google.adk.workflow.Workflow` lazily inside the
+    function with a try/except guard, so ADK 1.x (which has no `workflow`
+    module) returns `False` without raising.
+  - **Tests**: `tests/test_adk_2_0_compat.py::TestWorkflowRootDetection`
+    covers the predicate's three branches (LlmAgent-not-workflow, no-root,
+    Workflow-true via `Workflow(name="wf_root")`).
+    `TestWorkflowRootHitlEndToEnd` is the end-to-end regression: paused
+    HITL state, tool-result-only resume, capture `runner.run_async`'s
+    `new_message` and assert it carries the `function_response` (not the
+    #1534 placeholder). Paired negative-control pins the LlmAgent path.
+    Skips cleanly on ADK 1.x. Positive test fails on `main` with ADK 2.0
+    force-installed (Workflow gets the placeholder — #1669 reproduced) and
+    passes on this branch.
+  - **Reporter**: filed [#1669](https://github.com/ag-ui-protocol/ag-ui/issues/1669)
+    with the exact root cause and the proposed gating expression that this fix
+    implements verbatim.
+- **FIX**: `DatabaseSessionService` stale-session crash on HITL turns, with producer-side persistence for streaming fidelity (#1732, #1753, #1754, #1755)
+  - **Root cause (#1732)**: ADK 1.27+ added optimistic concurrency control (OCC) to `DatabaseSessionService.append_event`: the session row's storage-update marker is compared to the in-memory session's marker on every write. On a HITL turn, the middleware wrote `pending_tool_calls` to `session.state` from the consumer (`_run_new_execution`) while ADK's Runner was still iterating `runner.run_async` and holding the same session in `invocation_context.session`. The write bumped the storage marker; the next ADK `append_event` raised `ValueError: The session has been modified in storage since it was loaded.` The error escaped from the runner's own append loop, was caught by `_run_adk_in_background`'s `except`, and surfaced to the client as a `RunErrorEvent` with code `BACKGROUND_EXECUTION_ERROR`.
+  - **Initial fix (#1735, by [@he-yufeng](https://github.com/he-yufeng))**: gated the consumer's persistence call on `execution.task.done()` — if the producer task is still running when a HITL `ToolCallEndEvent` is dequeued, the consumer awaits `execution.task` before calling `_add_pending_tool_call_with_context`. This guarantees the DB write happens after `runner.run_async` has fully exited, eliminating the race against ADK's in-memory session. PR #1735's ordering test mocks the producer and asserts persistence does not fire until the task is done. Thanks to @he-yufeng for landing this fix quickly. See [PR #1735](https://github.com/ag-ui-protocol/ag-ui/pull/1735).
+  - **Regression test for #1732 (#1753 / [PR #1756](https://github.com/ag-ui-protocol/ag-ui/pull/1756))**: the existing `TestStaleSessionRegression` suite in `tests/test_pending_tool_calls_gating.py` had purpose-built scaffolding for this bug class (`_StaleSessionDetector` log handler, `DatabaseSessionService(sqlite+aiosqlite)` fixture, scripted `BaseLlm` stubs) but only covered the backend-tool variant from #1652. Two HITL siblings added: a synchronous smoke test that runs without credentials and pins the post-fix invariants (no stale-session error, no `RunErrorEvent`, `pending_tool_calls` actually persisted), plus a live-Gemini integration test in `TestStaleSessionRegressionLiveLLM` (gated on `GOOGLE_API_KEY`, falls back to `llmock_server`) that reproduces the exact #1732 traceback when PR #1735's fix is reverted. The live test uses `gemini-2.0-flash` + `ResumabilityConfig(is_resumable=True)` + `DatabaseSessionService`, producing the `adk-<uuid>` tool-call IDs from the original issue.
+  - **Latent twin: `_store_lro_id_remap` (#1754 / [PR #1757](https://github.com/ag-ui-protocol/ag-ui/pull/1757))**: PR #1735's consumer-side gate did not cover a second mid-Runner writer. `_run_adk_in_background` calls `_store_lro_id_remap` from inside its `async for adk_event in runner.run_async(...)` loop at two sites (the LRO drain branch and the main LRO branch) to record partial→final ID remappings from SSE streaming. Each call went through `session_manager.update_session_state` → `session_service.append_event` and bumped the same storage marker. On non-resumable HITL the existing hard-stop after the LRO event masked the bug, but on resumable HITL (`ResumabilityConfig(is_resumable=True)`) — the path being deprecated *toward* — the runner kept going and ADK's next `append_event` (for the parallel backend tool's `function_response`) hit the same OCC error. The fix buffers remap updates in a local `pending_lro_id_remap: Dict[str, str]` during the runner loop and flushes them once via `_store_lro_id_remap` in the function's `finally` block (after `runner.close()`). New `TestLroIdRemapStaleSessionRegression` in `tests/test_lro_sse_id_remap.py` uses a scripted `BaseLlm` emitting partial=True + partial=False LlmResponses, each with parallel function_calls (backend + frontend) with no IDs set — ADK's `populate_client_function_call_id` assigns fresh UUIDs each time, guaranteeing ID divergence. The backend tool returns a result, forcing the subsequent `append_event` that exposes the stale in-memory session. Deterministic; uses real ADK runner + real `DatabaseSessionService`.
+  - **Streaming fidelity via producer-side persistence (#1755 / [PR #1758](https://github.com/ag-ui-protocol/ag-ui/pull/1758))**: PR #1735's gate fired on the first HITL `ToolCallEndEvent` and held the consumer until the producer exited. For resumable HITL with parallel tool calls, post-LRO text, or backend tool results following the LRO, every event the producer enqueued after the first HITL TCE sat in `event_queue` until runner exit and reached the client as a burst rather than streaming live. The producer-side replacement defers only the HITL `ToolCallEndEvent` itself; all other events stream through immediately. New `_HitlDeferringQueue` (subclass of `asyncio.Queue`) replaces the bare queue in `_start_background_execution`: HITL TCEs whose id is in `long_running_tool_ids` are buffered in a local dict; `ToolCallResultEvent` for a deferred id releases the buffered TCE first (preserves TCE→Result order); the `None` sentinel implicitly flushes any remaining deferred TCEs. A new `_finalize_hitl_buffer` helper persists `deferred_hitl_ids` via `_add_pending_tool_call_with_context` and is called at all three producer exit points (normal exit, LRO drain return, non-resumable LRO return). The consumer's HITL gate and the `ToolCallResultEvent`→`_remove_pending_tool_call` unpersist branch are removed entirely — by the time the consumer observes a TCE, the producer has already persisted. PR #1581 invariant preserved (persist before client sees TCE), PR #1735/#1732 invariant preserved (no mid-runner state writes), #1652 invariant preserved (only HITL ids persisted). New `test_non_hitl_events_stream_live_after_hitl_tce` in `tests/test_multi_instance_hitl.py` pins the streaming behavior: producer enqueues HITL TCE then a non-HITL `ToolCallStartEvent` then blocks; assertion is that the non-HITL event reaches the client within 1s while the producer is still blocked AND that the HITL TCE arrives later. Existing mocks in `test_multi_instance_hitl.py` and `test_tool_tracking_hitl.py` were updated to call `_add_pending_tool_call_with_context` before `put(None)`, matching the real producer's new behavior.
+  - **Reporter**: [@bajayo](https://github.com/bajayo) filed [#1732](https://github.com/ag-ui-protocol/ag-ui/issues/1732) with a complete bug report — Postgres-backed `DatabaseSessionService` setup, ADK version pinning (1.26.0 working / 1.27.0+ broken), the full traceback, and the workaround. Thanks!
 
 - **FIX**: `_shallow_copy_agent_tree` now re-parents copied sub-agents so `transfer_to_agent` resolves against the per-run copy (#1719)
   - `ADKAgent._shallow_copy_agent_tree` recursively copies the agent tree before each run so that per-execution tool replacement (`AGUIToolset` → `ClientProxyToolset` via `_update_agent_tools_recursive`) doesn't mutate the originals. Pydantic's `model_copy(deep=False)` inherits every field by reference, including `parent_agent`, so each recursively-copied sub-agent still pointed at the **original** parent.

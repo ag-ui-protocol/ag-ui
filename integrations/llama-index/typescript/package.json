@@ -2,6 +2,10 @@
   "name": "@ag-ui/llamaindex",
   "author": "Logan Markewich <logan@runllama.ai>",
   "version": "0.1.5",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ag-ui-protocol/ag-ui.git"
+  },
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",

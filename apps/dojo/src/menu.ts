@@ -49,6 +49,9 @@ export const menuIntegrations = [
       "shared_state",
       "tool_based_generative_ui",
       "subgraphs",
+      "a2ui_dynamic_schema",
+      "a2ui_fixed_schema",
+      "a2ui_advanced",
     ],
   },
   {
@@ -87,6 +90,10 @@ export const menuIntegrations = [
       "shared_state",
       "tool_based_generative_ui",
       "subgraphs",
+      "a2ui_dynamic_schema",
+      "a2ui_fixed_schema",
+      "a2ui_advanced",
+      "a2ui_recovery",
     ],
   },
   // {
@@ -280,7 +287,7 @@ export const menuIntegrations = [
   },
   {
     id: "aws-strands",
-    name: "AWS Strands",
+    name: "AWS Strands (Python)",
     features: [
       "agentic_chat",
       "agentic_chat_reasoning",
@@ -290,6 +297,21 @@ export const menuIntegrations = [
       "agentic_generative_ui",
       "shared_state",
       "human_in_the_loop",
+    ],
+  },
+  {
+    id: "aws-strands-typescript",
+    name: "AWS Strands (TypeScript)",
+    features: [
+      "agentic_chat",
+      "agentic_chat_reasoning",
+      "agentic_chat_multimodal",
+      "v1_agentic_chat",
+      "backend_tool_rendering",
+      "agentic_generative_ui",
+      "shared_state",
+      "human_in_the_loop",
+      "tool_based_generative_ui",
     ],
   },
   {
