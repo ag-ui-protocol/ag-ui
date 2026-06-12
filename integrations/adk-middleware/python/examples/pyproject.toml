@@ -23,6 +23,11 @@ dependencies = [
     # to the 0.x line so the toolset imports. (A2A transport itself is unused here.)
     "a2ui-agent-sdk>=0.2.4",
     "a2a-sdk>=0.3.0,<1.0.0",
+    # google-genai 2.8.0's async streaming calls aiohttp StreamReader.readline(
+    # max_line_length=...), which only exists in aiohttp >= 3.14.0. Without this the
+    # lockfile resolves 3.13.3 and live streaming dies with a TypeError. (ag_ui_adk
+    # requires aiohttp>=3.12.0; genai allows <4.0.0 — 3.14.x satisfies both.)
+    "aiohttp>=3.14.1",
 ]
 
 [project.scripts]

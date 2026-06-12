@@ -102,7 +102,17 @@ Against Google's real `A2uiValidator` (dojo dynamic catalog, `remove_strict_vali
 
 ### 6. Dependency pins (examples env only — proof-point isolation).
 `a2ui-agent-sdk>=0.2.4`, `a2a-sdk>=0.3.0,<1.0.0`, `google-adk>=1.28.1` (compatible with
-`ag_ui_adk`'s `<3.0.0`). The `ag_ui_adk` package itself is **unchanged**.
+`ag_ui_adk`'s `<3.0.0`), and **`aiohttp>=3.14.1`**. The `ag_ui_adk` package itself is
+**unchanged**.
+
+The `aiohttp` pin fixes a second-order conflict: bumping to `google-adk>=1.28.1` pulls
+`google-adk` 2.x + `google-genai` 2.8.0, whose async streaming calls
+`StreamReader.readline(max_line_length=…)` — a kwarg added only in **aiohttp 3.14.0**.
+Without the pin the lock resolves aiohttp 3.13.3 and live streaming dies with
+`TypeError: readline() got an unexpected keyword argument 'max_line_length'`. (Since
+`ag_ui_adk` hard-requires `aiohttp>=3.12.0`, aiohttp is always present, so genai always
+takes its aiohttp path rather than the httpx fallback.) Verified: live AI-Studio stream
+succeeds on 3.14.1.
 
 ---
 
