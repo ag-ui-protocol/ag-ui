@@ -1397,7 +1397,7 @@ class LangGraphAgent:
                                 type=EventType.TOOL_CALL_START,
                                 tool_call_id=tool_msg.tool_call_id,
                                 tool_call_name=tool_msg.name or event.get("name", ""),
-                                parent_message_id=tool_msg.id,
+                                parent_message_id=str(tool_msg.id or tool_msg.tool_call_id),
                                 raw_event=event,
                             )
                         )
@@ -1422,7 +1422,8 @@ class LangGraphAgent:
                         ToolCallResultEvent(
                             type=EventType.TOOL_CALL_RESULT,
                             tool_call_id=tool_msg.tool_call_id,
-                            message_id=str(uuid.uuid4()),
+                            # Match ToolMessage.id (or tool_call_id) so MESSAGES_SNAPSHOT merge works.
+                            message_id=str(tool_msg.id or tool_msg.tool_call_id),
                             content=normalize_tool_content(tool_msg.content),
                             role="tool"
                         )
@@ -1450,7 +1451,7 @@ class LangGraphAgent:
                         type=EventType.TOOL_CALL_START,
                         tool_call_id=tool_call_output.tool_call_id,
                         tool_call_name=tool_call_output.name or event.get("name", ""),
-                        parent_message_id=tool_call_output.id,
+                        parent_message_id=str(tool_call_output.id or tool_call_output.tool_call_id),
                         raw_event=event,
                     )
                 )
@@ -1475,7 +1476,8 @@ class LangGraphAgent:
                 ToolCallResultEvent(
                     type=EventType.TOOL_CALL_RESULT,
                     tool_call_id=tool_call_output.tool_call_id,
-                    message_id=str(uuid.uuid4()),
+                    # Match ToolMessage.id (or tool_call_id) so MESSAGES_SNAPSHOT merge works.
+                    message_id=str(tool_call_output.id or tool_call_output.tool_call_id),
                     content=normalize_tool_content(tool_call_output.content),
                     role="tool"
                 )
