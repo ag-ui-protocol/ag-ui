@@ -48,6 +48,15 @@ public enum EventType {
     /** Signals the end of thinking text message content */
     THINKING_TEXT_MESSAGE_END("THINKING_TEXT_MESSAGE_END"), // Fixed typo
 
+    /** Signals the start of a reasoning message stream (assistant chain-of-thought) */
+    REASONING_MESSAGE_START("REASONING_MESSAGE_START"),
+
+    /** Represents incremental reasoning message content */
+    REASONING_MESSAGE_CONTENT("REASONING_MESSAGE_CONTENT"),
+
+    /** Signals the end of a reasoning message stream */
+    REASONING_MESSAGE_END("REASONING_MESSAGE_END"),
+
     /** Signals the start of a tool call */
     TOOL_CALL_START("TOOL_CALL_START"),
 
