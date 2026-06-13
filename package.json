@@ -39,6 +39,9 @@
     "node": ">=18"
   },
   "version": "0.0.1",
+  "bugs": {
+    "url": "https://github.com/ag-ui-protocol/ag-ui/issues"
+  },
   "pnpm": {
     "overrides": {
       "langium": "3.2.0",
