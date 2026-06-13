@@ -45,6 +45,11 @@ import {
   type ToolResultContext,
 } from "./config";
 import { syncProxyTools } from "./client-proxy-tool";
+import {
+  planA2UIInjection,
+  isAutoInjectedA2UITool,
+  A2UI_STREAM_KEY,
+} from "./a2ui-tool";
 import { convertAguiContentToStrands, flattenContentToText } from "./utils";
 import type { SeenToolCall } from "./types";
 import { DEFAULT_LOGGER, resolveLogger, type Logger } from "./logger";
@@ -700,6 +705,59 @@ export class StrandsAgent {
         syncProxyTools(strandsAgent.toolRegistry, [], previous, this._log);
         this._proxyToolNamesByThread.set(threadId, new Set());
       }
+    }
+
+    // A2UI auto-injection. When the runtime forwards
+    // `injectA2UITool` (or the host opts in via config), register a
+    // `generate_a2ui` recovery tool bound to this agent's model and drop the
+    // injected `render_a2ui` proxy so the model calls generate_a2ui directly.
+    // `planA2UIInjection` returns null when injection is off, the model can't be
+    // inferred (orchestrator), or the dev already wired generate_a2ui.
+    // Wrapped so a failure here can NEVER escape after RUN_STARTED with no
+    // terminal RUN_ERROR (this block runs before the main try/catch below).
+    // Auto-injection is best-effort: if it throws, log and run without A2UI
+    // rather than crashing the turn.
+    try {
+      const registry = strandsAgent.toolRegistry;
+      // Auto-inject requires enumerating the registry to (a) remove our OWN
+      // prior-turn tool so the refresh carries THIS turn's messages/state, and
+      // (b) honor USER-PREVAILS (never touch a dev-wired generate_a2ui). Without
+      // `list()` we can do neither safely, so SKIP rather than risk clobbering a
+      // developer's tool. The real @strands-agents/sdk ToolRegistry always
+      // provides list(); this guard is a fail-loud backstop for alternates.
+      if (typeof registry.list !== "function") {
+        const wantsInject =
+          (inputData.forwardedProps as { injectA2UITool?: unknown } | undefined)
+            ?.injectA2UITool ?? this.config.a2ui?.injectA2UITool;
+        if (wantsInject) {
+          this._log.warn(
+            "[@ag-ui/aws-strands] A2UI tool injection requested but toolRegistry.list() " +
+              "is unavailable; skipping auto-injection for this run.",
+          );
+        }
+      } else {
+        for (const t of registry.list()) {
+          if (isAutoInjectedA2UITool(t)) registry.remove(t.name);
+        }
+        const existingToolNames = registry.list().map((t) => t.name);
+        const plan = planA2UIInjection({
+          model: (strandsAgent as { model?: unknown }).model ?? null,
+          input: inputData,
+          existingToolNames,
+          config: this.config.a2ui,
+          log: this._log,
+        });
+        if (plan) {
+          for (const name of plan.dropToolNames) registry.remove(name);
+          registry.add(plan.tool);
+        }
+      }
+    } catch (e) {
+      this._log.warn(
+        `[@ag-ui/aws-strands] A2UI auto-injection failed; running without A2UI for this turn: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
     }
 
     try {
@@ -1708,6 +1766,37 @@ export class StrandsAgent {
                 type: EventType.STATE_SNAPSHOT,
                 snapshot: (data as { state: Record<string, unknown> }).state,
               };
+            } else if (data && typeof data === "object" && A2UI_STREAM_KEY in data) {
+              // A2UI sub-agent streaming: re-emit the generate_a2ui
+              // tool's inner render_a2ui progress as synthetic TOOL_CALL events.
+              // The a2ui middleware's streaming path keys its "building"
+              // skeleton + progressive paint off these — without them the
+              // surface only paints in bulk from the final TOOL_CALL_RESULT.
+              const a2ui = (
+                data as {
+                  [A2UI_STREAM_KEY]: {
+                    kind: "start" | "args" | "end";
+                    toolCallId: string;
+                    toolCallName?: string;
+                    delta?: string;
+                  };
+                }
+              )[A2UI_STREAM_KEY];
+              if (a2ui.kind === "start") {
+                yield {
+                  type: EventType.TOOL_CALL_START,
+                  toolCallId: a2ui.toolCallId,
+                  toolCallName: a2ui.toolCallName ?? "render_a2ui",
+                };
+              } else if (a2ui.kind === "args" && a2ui.delta) {
+                yield {
+                  type: EventType.TOOL_CALL_ARGS,
+                  toolCallId: a2ui.toolCallId,
+                  delta: a2ui.delta,
+                };
+              } else if (a2ui.kind === "end") {
+                yield { type: EventType.TOOL_CALL_END, toolCallId: a2ui.toolCallId };
+              }
             }
             continue;
           }

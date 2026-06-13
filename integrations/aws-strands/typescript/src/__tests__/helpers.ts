@@ -60,7 +60,14 @@ export function scriptedAgent(
   const registry = {
     add: (t: unknown) => {
       const name = (t as { name?: string })?.name;
-      if (name) tools.set(name, t);
+      if (!name) return;
+      // Match the real `@strands-agents/sdk` ToolRegistry.add(): it throws
+      // ToolValidationError on a duplicate name. Overwriting silently would let
+      // a double-inject regression (the F1 bug class) pass undetected.
+      if (tools.has(name)) {
+        throw new Error(`Tool "${name}" is already registered`);
+      }
+      tools.set(name, t);
     },
     get: (n: string) => tools.get(n),
     getByName: (n: string) => tools.get(n),
@@ -70,6 +77,8 @@ export function scriptedAgent(
     },
     removeByName: (n: string) => tools.delete(n),
     values: () => Array.from(tools.values()),
+    // Mirrors the real `@strands-agents/sdk` ToolRegistry.list().
+    list: () => Array.from(tools.values()),
   };
   return {
     model: { name: "stub-model", modelId: "stub-model" },

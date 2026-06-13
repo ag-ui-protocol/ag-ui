@@ -110,6 +110,73 @@ class TestChildRefs(unittest.TestCase):
         r = validate_a2ui_components(components=comps)
         self.assertTrue(any(e["code"] == "unresolved_child" and "missing-1" in e["message"] for e in r["errors"]))
 
+    def test_singular_child_unresolved(self):
+        # One-child containers (Card/Button) use the singular `child`, which the
+        # default generation prompt emits — a dangling ref there must be caught too.
+        comps = [{"id": "root", "component": "Card", "child": "ghost"}]
+        r = validate_a2ui_components(components=comps)
+        self.assertTrue(
+            any(e["code"] == "unresolved_child" and e["path"] == "components[0].child" and "ghost" in e["message"] for e in r["errors"])
+        )
+
+    def test_singular_child_resolved(self):
+        comps = [
+            {"id": "root", "component": "Card", "child": "label"},
+            {"id": "label", "component": "Text"},
+        ]
+        r = validate_a2ui_components(components=comps)
+        self.assertNotIn("unresolved_child", codes(r))
+
+
+class TestChildCycles(unittest.TestCase):
+    def test_self_referential_child(self):
+        comps = [{"id": "avatar", "component": "Card", "child": "avatar"}]
+        r = validate_a2ui_components(components=comps)
+        self.assertFalse(r["valid"])
+        self.assertTrue(any(e["code"] == "child_cycle" and "avatar -> avatar" in e["message"] for e in r["errors"]))
+
+    def test_multi_component_cycle_reported_once(self):
+        comps = [
+            {"id": "root", "component": "Row", "children": ["a"]},
+            {"id": "a", "component": "Row", "children": ["b"]},
+            {"id": "b", "component": "Row", "children": ["a"]},
+        ]
+        r = validate_a2ui_components(components=comps)
+        self.assertEqual(len([e for e in r["errors"] if e["code"] == "child_cycle"]), 1)
+        self.assertTrue(any(e["code"] == "child_cycle" and "a -> b -> a" in e["message"] for e in r["errors"]))
+
+    def test_acyclic_graph_not_flagged(self):
+        comps = [
+            {"id": "root", "component": "Row", "children": ["a", "b"]},
+            {"id": "a", "component": "Text"},
+            {"id": "b", "component": "Text"},
+        ]
+        r = validate_a2ui_components(components=comps)
+        self.assertNotIn("child_cycle", codes(r))
+
+    def test_deep_chain_no_recursion_error(self):
+        # The cycle check runs on untrusted model output; a deep linear chain that
+        # would exceed CPython's recursion limit (~1000) must validate iteratively.
+        n = 5000
+        comps = [{"id": "root", "component": "Row", "children": ["n0"]}]
+        comps += [
+            {"id": f"n{i}", "component": "Row", "children": ([f"n{i + 1}"] if i + 1 < n else [])}
+            for i in range(n)
+        ]
+        r = validate_a2ui_components(components=comps)
+        self.assertNotIn("child_cycle", codes(r))
+
+    def test_deep_chain_closing_cycle_reported_once(self):
+        # Same deep chain, but the tail points back at root — one cycle, no overflow.
+        n = 5000
+        comps = [{"id": "root", "component": "Row", "children": ["n0"]}]
+        comps += [
+            {"id": f"n{i}", "component": "Row", "children": [f"n{i + 1}" if i + 1 < n else "root"]}
+            for i in range(n)
+        ]
+        r = validate_a2ui_components(components=comps)
+        self.assertEqual(len([e for e in r["errors"] if e["code"] == "child_cycle"]), 1)
+
 
 class TestBindings(unittest.TestCase):
     def test_absolute_binding_unresolved(self):

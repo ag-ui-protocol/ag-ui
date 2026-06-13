@@ -410,7 +410,9 @@ jobs:
           name: py-build-artifacts
           path: |
             sdks/python/dist/
+            sdks/python/*/dist/
             integrations/*/python/dist/
+          if-no-files-found: error
           retention-days: 1
 
       # ===== Prerelease mode: validate suffix, bump in place, build/test, upload =====
@@ -548,7 +550,9 @@ jobs:
           name: py-canary-artifacts
           path: |
             sdks/python/dist/
+            sdks/python/*/dist/
             integrations/*/python/dist/
+          if-no-files-found: error
           retention-days: 1
 
       - name: Upload bump result (prerelease)

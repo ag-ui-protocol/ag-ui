@@ -438,3 +438,111 @@ describe("MESSAGES_SNAPSHOT preserves client-only messages", () => {
     ]);
   });
 });
+
+describe("MESSAGES_SNAPSHOT with snapshot-supplied reasoning", () => {
+  // When the backend includes reasoning in the snapshot (e.g. LangGraph
+  // re-deriving it from checkpointed content blocks), the snapshot is the
+  // source of truth for reasoning: the streamed copy — which carries a
+  // different, locally-generated id — must be replaced, not kept alongside.
+
+  it("replaces streamed reasoning with the snapshot's canonical copy when ids differ", async () => {
+    const msgs = await applySnapshot(
+      [
+        { id: "m1", role: "user", content: "What is the best car to buy?" },
+        { id: "uuid-a", role: "reasoning", content: "The user wants a car recommendation." },
+        { id: "lc-1", role: "assistant", content: "Based on my analysis…" },
+      ] as Message[],
+      [
+        { id: "m1", role: "user", content: "What is the best car to buy?" },
+        { id: "rs-1", role: "reasoning", content: "The user wants a car recommendation." },
+        { id: "resp-1", role: "assistant", content: "Based on my analysis…" },
+      ],
+    );
+
+    expect(msgs.filter((m) => m.role === "reasoning").length).toBe(1);
+    expect(msgs.map((m) => m.id)).toEqual(["m1", "rs-1", "resp-1"]);
+  });
+
+  it("replaces streamed reasoning when the snapshot arrives before the assistant streamed", async () => {
+    const msgs = await applySnapshot(
+      [
+        { id: "m1", role: "user", content: "What is the best car to buy?" },
+        { id: "uuid-a", role: "reasoning", content: "The user wants a car recommendation." },
+      ] as Message[],
+      [
+        { id: "m1", role: "user", content: "What is the best car to buy?" },
+        { id: "rs-1", role: "reasoning", content: "The user wants a car recommendation." },
+        { id: "resp-1", role: "assistant", content: "Based on my analysis…" },
+      ],
+    );
+
+    expect(msgs.filter((m) => m.role === "reasoning").length).toBe(1);
+    expect(msgs.map((m) => m.id)).toEqual(["m1", "rs-1", "resp-1"]);
+  });
+
+  it("converges multi-turn reasoning to one message per turn", async () => {
+    // Models turn 2 of the real flow: turn 1 already converged to canonical
+    // ids via its own end-of-run snapshot; turn 2's streamed reasoning and
+    // assistant still carry locally-generated ids.
+    const msgs = await applySnapshot(
+      [
+        { id: "u1", role: "user", content: "q1" },
+        { id: "rs-1", role: "reasoning", content: "thinking about q1" },
+        { id: "resp-1", role: "assistant", content: "a1" },
+        { id: "u2", role: "user", content: "q2" },
+        { id: "uuid-b", role: "reasoning", content: "thinking about q2" },
+        { id: "lc-2", role: "assistant", content: "a2" },
+      ] as Message[],
+      [
+        { id: "u1", role: "user", content: "q1" },
+        { id: "rs-1", role: "reasoning", content: "thinking about q1" },
+        { id: "resp-1", role: "assistant", content: "a1" },
+        { id: "u2", role: "user", content: "q2" },
+        { id: "rs-2", role: "reasoning", content: "thinking about q2" },
+        { id: "resp-2", role: "assistant", content: "a2" },
+      ],
+    );
+
+    expect(msgs.filter((m) => m.role === "reasoning").length).toBe(2);
+    expect(msgs.map((m) => m.id)).toEqual(["u1", "rs-1", "resp-1", "u2", "rs-2", "resp-2"]);
+  });
+
+  it("still preserves activity messages when the snapshot carries reasoning", async () => {
+    const msgs = await applySnapshot(
+      [
+        { id: "m1", role: "user", content: "hello" },
+        { id: "act-1", role: "activity", activityType: "PLAN", content: { tasks: ["a"] } },
+        { id: "uuid-a", role: "reasoning", content: "thinking" },
+        { id: "lc-1", role: "assistant", content: "hi" },
+      ] as Message[],
+      [
+        { id: "m1", role: "user", content: "hello" },
+        { id: "rs-1", role: "reasoning", content: "thinking" },
+        { id: "resp-1", role: "assistant", content: "hi" },
+      ],
+    );
+
+    expect(msgs.filter((m) => m.role === "activity").length).toBe(1);
+    expect(msgs.filter((m) => m.role === "reasoning").length).toBe(1);
+    expect(msgs.map((m) => m.id)).toEqual(["m1", "act-1", "rs-1", "resp-1"]);
+  });
+
+  it("updates an id-stable reasoning message with the snapshot version", async () => {
+    const msgs = await applySnapshot(
+      [
+        { id: "m1", role: "user", content: "hello" },
+        { id: "r1", role: "reasoning", content: "thinking" },
+        { id: "a1", role: "assistant", content: "hi" },
+      ] as Message[],
+      [
+        { id: "m1", role: "user", content: "hello" },
+        { id: "r1", role: "reasoning", content: "thinking", encryptedValue: "enc-1" } as Message,
+        { id: "a1", role: "assistant", content: "hi" },
+      ],
+    );
+
+    expect(msgs.filter((m) => m.role === "reasoning").length).toBe(1);
+    const reasoning = msgs.find((m) => m.id === "r1")! as { encryptedValue?: string };
+    expect(reasoning.encryptedValue).toBe("enc-1");
+  });
+});
