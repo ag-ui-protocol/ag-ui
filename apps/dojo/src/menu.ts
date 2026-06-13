@@ -297,6 +297,8 @@ export const menuIntegrations = [
       "agentic_generative_ui",
       "shared_state",
       "human_in_the_loop",
+      "a2ui_dynamic_schema",
+      "a2ui_recovery",
     ],
   },
   {
@@ -312,6 +314,8 @@ export const menuIntegrations = [
       "shared_state",
       "human_in_the_loop",
       "tool_based_generative_ui",
+      "a2ui_dynamic_schema",
+      "a2ui_recovery",
     ],
   },
   {

@@ -25,6 +25,14 @@ export interface CreateModelOptions {
    * Responses API drops reasoning blocks across multi-turn conversations.
    */
   reasoning?: boolean;
+  /**
+   * OpenAI API mode. Defaults to the SDK default (Responses). Pass `"chat"`
+   * for demos that need tool-call ARGUMENTS to stream incrementally — the
+   * Strands Responses adapter buffers `function_call_arguments.delta` and only
+   * emits the complete toolUse at `…arguments.done`, so e.g. A2UI progressive
+   * surface painting never streams on the Responses API.
+   */
+  openaiApi?: "chat" | "responses";
 }
 
 export async function createModel(
@@ -49,6 +57,7 @@ export async function createModel(
     return new OpenAIModel({
       apiKey,
       modelId: process.env.MODEL_ID ?? "gpt-5.4",
+      ...(options.openaiApi ? { api: options.openaiApi } : {}),
       ...(reasoning
         ? { params: { reasoning: { effort: "medium", summary: "auto" } } }
         : {}),
