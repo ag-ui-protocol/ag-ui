@@ -99,6 +99,11 @@ from ag_ui.core import (
     UserMessage,
 )
 
+from .a2ui_tool import (
+    A2UI_STREAM_KEY,
+    is_auto_injected_a2ui_tool,
+    plan_a2ui_injection,
+)
 from .client_proxy_tool import sync_proxy_tools
 from .config import (
     StrandsAgentConfig,
@@ -458,6 +463,54 @@ class StrandsAgent:
                 self._proxy_tool_names_by_thread[thread_id],
             )
             self._proxy_tool_names_by_thread[thread_id] = set()
+
+        # A2UI auto-injection. When the runtime forwards
+        # ``injectA2UITool`` (or the host opts in via ``config.a2ui``), register
+        # a ``generate_a2ui`` recovery tool bound to this agent's model and drop
+        # the injected ``render_a2ui`` proxy so the model calls generate_a2ui
+        # directly. Best-effort: a failure here logs and runs without A2UI
+        # rather than crashing the turn.
+        try:
+            registry = strands_agent.tool_registry
+            # Remove our OWN prior-turn auto-injected tool first, so (a) the
+            # refreshed tool carries THIS turn's messages/state, and (b) the
+            # USER-PREVAILS check only ever sees a dev-wired
+            # generate_a2ui — not our own from a previous turn on this cached
+            # agent. Without this, turn 2+ leaks the re-synced render_a2ui back
+            # to the model.
+            for name in [
+                n for n, t in list(registry.registry.items())
+                if is_auto_injected_a2ui_tool(t)
+            ]:
+                registry.registry.pop(name, None)
+                getattr(registry, "dynamic_tools", {}).pop(name, None)
+            a2ui_plan = plan_a2ui_injection(
+                model=getattr(strands_agent, "model", None),
+                input=input_data,
+                existing_tool_names=list(registry.registry.keys()),
+                config=self.config.a2ui,
+                log=logger,
+                strands_agent=strands_agent,
+            )
+            if a2ui_plan:
+                # Register FIRST: if this raises, the except below degrades to
+                # "render proxy leaks through" (middleware still paints,
+                # unvalidated) instead of a turn with no A2UI path at all.
+                registry.register_tool(a2ui_plan["tool"])
+                for name in a2ui_plan["drop_tool_names"]:
+                    registry.registry.pop(name, None)
+                    getattr(registry, "dynamic_tools", {}).pop(name, None)
+                    # Keep the proxy bookkeeping honest — the dropped render
+                    # tool is no longer registered.
+                    self._proxy_tool_names_by_thread.get(thread_id, set()).discard(name)
+        except Exception as e:  # noqa: BLE001 — never crash the turn here
+            # ERROR, not warning: the runtime explicitly requested injection
+            # (injectA2UITool) and this turn runs without it.
+            logger.error(
+                "A2UI auto-injection failed; running without A2UI for this turn: %s",
+                e,
+                exc_info=True,
+            )
 
         # Start run
         yield RunStartedEvent(
@@ -888,6 +941,38 @@ class StrandsAgent:
                                 type=EventType.STATE_SNAPSHOT,
                                 snapshot=stream_data["state"],
                             )
+                        # A2UI sub-agent streaming: re-emit the
+                        # generate_a2ui tool's inner render_a2ui progress as
+                        # synthetic TOOL_CALL events. The a2ui middleware's
+                        # streaming path keys its "building" skeleton +
+                        # progressive paint off these — without them the
+                        # surface only paints in bulk from the final result.
+                        elif (
+                            isinstance(stream_data, dict)
+                            and isinstance(stream_data.get(A2UI_STREAM_KEY), dict)
+                        ):
+                            a2ui_ev = stream_data[A2UI_STREAM_KEY]
+                            kind = a2ui_ev.get("kind")
+                            a2ui_call_id = a2ui_ev.get("tool_call_id", "")
+                            if kind == "start":
+                                yield ToolCallStartEvent(
+                                    type=EventType.TOOL_CALL_START,
+                                    tool_call_id=a2ui_call_id,
+                                    tool_call_name=a2ui_ev.get(
+                                        "tool_call_name", "render_a2ui"
+                                    ),
+                                )
+                            elif kind == "args" and a2ui_ev.get("delta"):
+                                yield ToolCallArgsEvent(
+                                    type=EventType.TOOL_CALL_ARGS,
+                                    tool_call_id=a2ui_call_id,
+                                    delta=a2ui_ev["delta"],
+                                )
+                            elif kind == "end":
+                                yield ToolCallEndEvent(
+                                    type=EventType.TOOL_CALL_END,
+                                    tool_call_id=a2ui_call_id,
+                                )
 
                     # Handle tool results from Strands for backend tool rendering
                     elif "message" in event and event["message"].get("role") == "user":
