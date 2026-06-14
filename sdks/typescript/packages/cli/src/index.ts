@@ -130,7 +130,6 @@ async function handleCopilotKitNextJs() {
     [
       "copilotkit@latest",
       "create",
-      "--no-banner",
       "-n", projectName.name,
       ...frameworkArgs,
     ],
