@@ -3,6 +3,7 @@ name = "ag-ui-agent-spec"
 version = "0.1.0"
 description = "AG-UI FastAPI adapter for Agent-Spec (LangGraph/Wayflow)"
 license = "MIT"
+license-files = ["LICENSE"]
 readme = "README.md"
 requires-python = ">=3.10,<3.14.0"
 dependencies = [

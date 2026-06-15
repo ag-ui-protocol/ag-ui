@@ -5,7 +5,7 @@
     "type": "git",
     "url": "https://github.com/ag-ui-protocol/ag-ui.git"
   },
-  "license": "Apache-2.0",
+  "license": "MIT",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",

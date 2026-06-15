@@ -2,6 +2,8 @@
 name = "ag-ui-langgraph"
 version = "0.0.37"
 description = "Implementation of the AG-UI protocol for LangGraph."
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "Ran Shem Tov", email = "ran@copilotkit.ai" }
 ]
