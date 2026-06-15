@@ -1,5 +1,7 @@
 [project]
 name = "ag_ui_strands"
+license = "MIT"
+license-files = ["LICENSE"]
 version = "0.2.0"
 authors = [
     { name = "AG-UI Contributors" }
