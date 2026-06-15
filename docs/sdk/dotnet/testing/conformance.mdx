@@ -1,0 +1,61 @@
+---
+title: "Conformance and Verification"
+description: "Draft the .NET SDK verification story for AG-UI event parity"
+---
+
+<Warning>
+  This is a draft outline for the in-flight .NET SDK. Replace outline-level guidance with concrete commands after PR #1963 settles the final test and sample layout.
+</Warning>
+
+The .NET SDK docs should include a short verification page so contributors and partners can prove that the .NET implementation preserves AG-UI protocol behavior across server and client boundaries.
+
+## Reader journey
+
+Start with the .NET SDK source or a published preview package. End with confidence that .NET can round-trip AG-UI events and interoperate with the existing TypeScript SDK behavior.
+
+## Verification areas
+
+### Protocol event parity
+
+Docs should explain how to verify:
+
+- Lifecycle events.
+- Text message events.
+- Tool call and tool result events.
+- State snapshot and state delta events.
+- Reasoning events.
+- Interrupt outcomes.
+- Custom and raw events.
+
+### Cross-language conformance
+
+The final page should describe how the .NET tests compare behavior against the existing TypeScript SDK.
+
+Docs should cover:
+
+- Which fixtures are shared.
+- Which direction each conformance test runs.
+- How failures should be interpreted.
+- Whether test output can be used as evidence in Microsoft docs review.
+
+### Sample coverage
+
+The .NET docs should map each sample to the protocol feature it demonstrates.
+
+| Sample area | Protocol feature to verify |
+| --- | --- |
+| Getting started | Lifecycle and text streaming |
+| Backend tools | Server-side function invocation |
+| Frontend tools | Client-declared tools and continuation turns |
+| Human-in-the-loop | Approval and interrupt outcomes |
+| State management | Snapshot and delta events |
+| Reasoning | Reasoning event brackets |
+| Multimodal input | Image, audio, video, and document content |
+| Serialization | Stable event and message JSON |
+
+## Publishing checklist
+
+- Add exact repository paths for samples and tests.
+- Add exact test commands for local verification and CI.
+- Link failures back to the event or concept page that explains the protocol behavior.
+- Confirm whether Microsoft Agent Framework examples rely on the same conformance evidence.

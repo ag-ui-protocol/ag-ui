@@ -1,0 +1,64 @@
+---
+title: "Hosting AG-UI from ASP.NET Core"
+description: "Draft the .NET server journey for exposing an IChatClient as an AG-UI endpoint"
+---
+
+<Warning>
+  This is a draft outline for the in-flight .NET SDK. Replace outline-level guidance with runnable code after PR #1963 settles the final API surface.
+</Warning>
+
+You have an ASP.NET Core application with an `IChatClient`. The hosting package should let you expose that client as an AG-UI endpoint without rewriting your agent around wire-level event types.
+
+## Reader journey
+
+Start with an ASP.NET Core application that already registers an `IChatClient`. End with a POST endpoint that accepts AG-UI `RunAgentInput`, streams AG-UI events over SSE, and keeps `Microsoft.Extensions.AI` middleware in the path.
+
+## Core concepts to explain
+
+### Register AG-UI serialization
+
+The server setup needs to register AG-UI JSON metadata so ASP.NET Core can serialize and deserialize the protocol types without reflection-heavy runtime discovery.
+
+Docs should cover:
+
+- Where `AddAGUI()` belongs in service registration.
+- Which serializer options are affected.
+- How this supports trim and AOT scenarios.
+
+### Adapt inbound AG-UI requests
+
+`ToChatRequestContext` is the bridge from AG-UI protocol input to the `Microsoft.Extensions.AI` model.
+
+Docs should cover:
+
+- Mapping `RunAgentInput.Messages` into `ChatMessage` values.
+- Preserving thread, run, and message identity.
+- Carrying client-declared tools into `ChatOptions`.
+- Handling multimodal input as standard MEAI content.
+
+### Stream outbound protocol events
+
+`AsAGUIEventStreamAsync` converts `ChatResponseUpdate` items into AG-UI events.
+
+Docs should cover:
+
+- Lifecycle events for run start and finish.
+- Text message start, content, and end events.
+- Tool call and tool result event mapping.
+- State snapshot, state delta, reasoning, custom, raw, and interrupt mapping through `AGUIStreamOptions`.
+
+## Example sequence to finalize
+
+The final page should include one complete ASP.NET Core sample that:
+
+1. Registers `AddAGUI()`.
+2. Registers an `IChatClient` through the standard MEAI builder pipeline.
+3. Maps a POST endpoint.
+4. Converts `RunAgentInput` to `ChatRequestContext`.
+5. Streams `BaseEvent` values as SSE items.
+
+## Cross-links to add
+
+- Link to the .NET client page when explaining how to test the endpoint from another .NET process.
+- Link to the AG-UI event reference when describing the event families emitted by `AsAGUIEventStreamAsync`.
+- Link from Microsoft Learn's AG-UI integration page once the Microsoft Agent Framework examples settle.

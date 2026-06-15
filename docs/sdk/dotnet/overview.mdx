@@ -1,0 +1,74 @@
+---
+title: ".NET SDK Overview"
+description: "Plan AG-UI documentation for Microsoft.Extensions.AI-based .NET agents"
+---
+
+<Warning>
+  The AG-UI .NET SDK is being prepared in draft PR #1963. This page captures the documentation shape that can be reviewed now; confirm package names, install commands, and final examples against the merged SDK before publishing.
+</Warning>
+
+The AG-UI .NET SDK is designed for .NET applications that already use `Microsoft.Extensions.AI`. It exposes AG-UI endpoints as ordinary `IChatClient` instances and adapts existing `IChatClient` implementations into AG-UI-compatible HTTP and Server-Sent Events endpoints.
+
+## Who this serves
+
+- .NET application developers who want to expose an existing `IChatClient` as an AG-UI agent endpoint.
+- .NET client developers who want to consume an AG-UI endpoint through the `Microsoft.Extensions.AI` middleware stack.
+- Microsoft Agent Framework builders who need to validate that AG-UI preserves messages, tools, state, interrupts, reasoning, and multimodal input across the .NET boundary.
+
+## Planned package map
+
+| Package | Reader goal | Draft SDK role |
+| --- | --- | --- |
+| `AGUI.Abstractions` | Share protocol types without choosing a transport | Defines events, messages, tools, run input, interrupts, capabilities, multimodal input, and the source-generated JSON serializer context. |
+| `AGUI.Client` | Consume an AG-UI endpoint from .NET | Wraps an AG-UI server as an `IChatClient` with HTTP/SSE transport and event-to-update conversion. |
+| `AGUI.Hosting.AspNetCore` | Host an AG-UI endpoint from ASP.NET Core | Converts inbound `RunAgentInput` into `ChatRequestContext` and outbound `ChatResponseUpdate` streams into AG-UI events. |
+
+## Documentation set
+
+The first .NET docs set should stay focused on the two primary journeys: hosting an agent and consuming an agent.
+
+<Card
+  title="Hosting AG-UI from ASP.NET Core"
+  icon="server"
+  href="/sdk/dotnet/hosting/overview"
+  color="#3B82F6"
+  iconType="solid"
+>
+  Adapt an existing `IChatClient` to an AG-UI endpoint and stream protocol events over SSE.
+</Card>
+
+<Card
+  title="Consuming AG-UI as IChatClient"
+  icon="plug"
+  href="/sdk/dotnet/client/overview"
+  color="#3B82F6"
+  iconType="solid"
+>
+  Connect to an AG-UI endpoint while keeping the standard `Microsoft.Extensions.AI` client shape.
+</Card>
+
+<Card
+  title="Conformance and verification"
+  icon="check"
+  href="/sdk/dotnet/testing/conformance"
+  color="#3B82F6"
+  iconType="solid"
+>
+  Use the SDK test harness to verify event parity and cross-language protocol behavior.
+</Card>
+
+## Work that can start before the SDK merges
+
+- Audit terminology across the AG-UI docs so .NET pages use the same protocol names as the existing TypeScript and Python references.
+- Draft hosting and client journeys around `IChatClient`, `ChatMessage`, `ChatOptions`, `ChatResponseUpdate`, `AIContent`, and `AIFunction`.
+- Prepare cross-links from Microsoft Agent Framework and Microsoft Learn pages once the Microsoft docs owners confirm the preferred destination.
+- Create a final-package checklist for NuGet names, target frameworks, sample paths, and conformance commands.
+
+## Publishing checklist
+
+Before this page is linked from production docs, verify:
+
+- The .NET SDK PR has merged or has a committed preview package plan.
+- NuGet package IDs, target frameworks, namespaces, and extension method names match the merged code.
+- Every code sample compiles against the published package versions.
+- The Microsoft Learn AG-UI integration page links to the final hosting and client pages.
