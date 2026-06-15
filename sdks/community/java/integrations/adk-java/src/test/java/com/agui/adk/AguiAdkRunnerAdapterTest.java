@@ -18,6 +18,7 @@ import com.google.adk.sessions.Session;
 import com.google.genai.types.Content;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Flowable;
+import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
 import io.reactivex.rxjava3.subscribers.TestSubscriber;
 import org.jetbrains.annotations.NotNull;
@@ -31,6 +32,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -38,6 +40,8 @@ import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class AguiAdkRunnerAdapterTest {
+
+    private static final String TEST_USER_ID = "test-user";
 
     private AguiAdkRunnerAdapter aguiAdkRunnerAdapter;
 
@@ -54,7 +58,7 @@ class AguiAdkRunnerAdapterTest {
 
     @BeforeEach
     void setUp() {
-        when(runner.appName()).thenReturn("test-app");
+        lenient().when(runner.appName()).thenReturn("test-app");
 
         // Mock the event translator factory to return our mock translator
         lenient().when(eventTranslatorFactory.create(anyString(), anyString())).thenReturn(eventTranslator);
@@ -64,7 +68,6 @@ class AguiAdkRunnerAdapterTest {
                 runner,
                 sessionManager,
                 RunConfig.builder().build(),
-                params -> "test-user",
                 eventTranslatorFactory,
                 messageProcessor
         );
@@ -84,7 +87,7 @@ class AguiAdkRunnerAdapterTest {
         // Mock the message processor to return a chunk, ensuring startNewExecution is called
         MessageChunk chunk = MessageChunk.fromUserSystemChunk(List.of(userMessage));
         when(messageProcessor.groupMessagesIntoChunks(anyList())).thenReturn(List.of(chunk));
-        
+
         // Mock the message processor to return some content, ensuring the runner is called
         Content mockContent = mock(Content.class);
         when(messageProcessor.constructMessageToSend(anyList(), anyList())).thenReturn(Optional.of(mockContent));
@@ -97,20 +100,20 @@ class AguiAdkRunnerAdapterTest {
 
         // Act
         TestSubscriber<BaseEvent> testSubscriber = new TestSubscriber<>();
-        aguiAdkRunnerAdapter.runAgent(params).subscribe(testSubscriber);
-        
+        aguiAdkRunnerAdapter.runAgent(params, TEST_USER_ID).subscribe(testSubscriber);
+
         testSubscriber.await();
 
         // Assert
         testSubscriber.assertComplete();
         testSubscriber.assertNoErrors();
-        
+
         List<BaseEvent> results = testSubscriber.values();
         assertThat(results).anyMatch(e -> e instanceof RunStartedEvent);
         assertThat(results).anyMatch(e -> e instanceof RunFinishedEvent);
 
         verify(eventTranslatorFactory, times(1)).create(anyString(), anyString());
-        verify(runner).runAsync(eq("test-user"), eq(params.getThreadId()), eq(mockContent), any());
+        verify(runner).runAsync(eq(TEST_USER_ID), eq(params.getThreadId()), eq(mockContent), any());
         verify(eventTranslator, times(1)).apply(any());
     }
 
@@ -124,14 +127,14 @@ class AguiAdkRunnerAdapterTest {
 
         // Act
         TestSubscriber<BaseEvent> testSubscriber = new TestSubscriber<>();
-        aguiAdkRunnerAdapter.runAgent(params).subscribe(testSubscriber);
+        aguiAdkRunnerAdapter.runAgent(params, TEST_USER_ID).subscribe(testSubscriber);
 
         testSubscriber.await();
-        
+
         // Assert
         testSubscriber.assertComplete(); // onErrorResumeNext completes the stream
         testSubscriber.assertNoErrors(); // The error is caught and emitted as a value
-        
+
         List<BaseEvent> results = testSubscriber.values();
         assertThat(results).hasSize(2);
         assertThat(results.get(0)).isInstanceOf(RunStartedEvent.class);
@@ -154,19 +157,156 @@ class AguiAdkRunnerAdapterTest {
 
         // Act
         TestSubscriber<BaseEvent> testSubscriber = new TestSubscriber<>();
-        aguiAdkRunnerAdapter.runAgent(params).subscribe(testSubscriber);
+        aguiAdkRunnerAdapter.runAgent(params, TEST_USER_ID).subscribe(testSubscriber);
 
         testSubscriber.await();
 
         // Assert
         testSubscriber.assertComplete();
         testSubscriber.assertNoErrors();
-        
+
         List<BaseEvent> results = testSubscriber.values();
         assertThat(results).hasSize(2);
         assertThat(results.get(0)).isInstanceOf(RunStartedEvent.class);
         assertThat(results.get(1)).isInstanceOf(RunFinishedEvent.class);
         verify(runner, never()).runAsync(anyString(), anyString(), any(), any());
+    }
+
+    @Test
+    void shouldEmitRunError_whenStringUserIdIsNull() throws InterruptedException {
+        // Arrange
+        RunAgentParameters params = createAgentParameters(new UserMessage());
+
+        // Act
+        TestSubscriber<BaseEvent> testSubscriber = new TestSubscriber<>();
+        aguiAdkRunnerAdapter.runAgent(params, (String) null).subscribe(testSubscriber);
+
+        testSubscriber.await();
+
+        // Assert
+        testSubscriber.assertComplete();
+        testSubscriber.assertNoErrors();
+
+        List<BaseEvent> results = testSubscriber.values();
+        assertThat(results).hasSize(1);
+        assertThat(results.get(0)).isInstanceOf(RunErrorEvent.class);
+        // No RUN_STARTED, no session interaction
+        verifyNoInteractions(sessionManager);
+    }
+
+    @Test
+    void shouldEmitRunError_whenStringUserIdIsBlank() throws InterruptedException {
+        // Arrange
+        RunAgentParameters params = createAgentParameters(new UserMessage());
+
+        // Act
+        TestSubscriber<BaseEvent> testSubscriber = new TestSubscriber<>();
+        aguiAdkRunnerAdapter.runAgent(params, "   ").subscribe(testSubscriber);
+
+        testSubscriber.await();
+
+        // Assert
+        testSubscriber.assertComplete();
+        testSubscriber.assertNoErrors();
+
+        List<BaseEvent> results = testSubscriber.values();
+        assertThat(results).hasSize(1);
+        assertThat(results.get(0)).isInstanceOf(RunErrorEvent.class);
+        verifyNoInteractions(sessionManager);
+    }
+
+    @Test
+    void shouldEmitRunError_whenSingleUserIdEmitsEmpty() throws InterruptedException {
+        // Arrange — synthesise an empty source via Maybe.empty().toSingle() pattern.
+        // Pure Single cannot legally emit empty; reachable only via fromPublisher(empty).
+        RunAgentParameters params = createAgentParameters(new UserMessage());
+        Single<String> emptyUid = Single.fromPublisher(Maybe.<String>empty().toFlowable());
+
+        // Act
+        TestSubscriber<BaseEvent> testSubscriber = new TestSubscriber<>();
+        aguiAdkRunnerAdapter.runAgent(params, emptyUid).subscribe(testSubscriber);
+
+        testSubscriber.await();
+
+        // Assert
+        testSubscriber.assertComplete();
+        testSubscriber.assertNoErrors();
+
+        List<BaseEvent> results = testSubscriber.values();
+        assertThat(results).hasSize(1);
+        assertThat(results.get(0)).isInstanceOf(RunErrorEvent.class);
+        verifyNoInteractions(sessionManager);
+    }
+
+    @Test
+    void shouldEmitRunError_whenSingleUserIdEmitsError() throws InterruptedException {
+        // Arrange
+        RunAgentParameters params = createAgentParameters(new UserMessage());
+        Single<String> failingUid = Single.error(new RuntimeException("auth failed"));
+
+        // Act
+        TestSubscriber<BaseEvent> testSubscriber = new TestSubscriber<>();
+        aguiAdkRunnerAdapter.runAgent(params, failingUid).subscribe(testSubscriber);
+
+        testSubscriber.await();
+
+        // Assert
+        testSubscriber.assertComplete();
+        testSubscriber.assertNoErrors();
+
+        List<BaseEvent> results = testSubscriber.values();
+        assertThat(results).hasSize(1);
+        assertThat(results.get(0)).isInstanceOf(RunErrorEvent.class);
+        verifyNoInteractions(sessionManager);
+    }
+
+    @Test
+    void shouldDelegateToStringOverload_whenSingleEmitsValue() throws InterruptedException {
+        // Arrange — minimal happy path: empty session, no unseen messages, just verify lifecycle.
+        String messageId = "msg-already-processed";
+        UserMessage userMessage = createUserMessage(messageId);
+
+        Session mockSession = mock(Session.class);
+        SessionManager.SessionWithProcessedIds sessionData = new SessionManager.SessionWithProcessedIds(mockSession, Set.of(messageId));
+        when(sessionManager.getSessionAndProcessedMessageIds(any(RunContext.class)))
+                .thenReturn(Single.just(sessionData));
+
+        RunAgentParameters params = createAgentParameters(userMessage);
+
+        // Act
+        TestSubscriber<BaseEvent> testSubscriber = new TestSubscriber<>();
+        aguiAdkRunnerAdapter.runAgent(params, Single.just("alice")).subscribe(testSubscriber);
+
+        testSubscriber.await();
+
+        // Assert — same outcome as the String overload happy path
+        testSubscriber.assertComplete();
+        testSubscriber.assertNoErrors();
+        List<BaseEvent> results = testSubscriber.values();
+        assertThat(results).hasSize(2);
+        assertThat(results.get(0)).isInstanceOf(RunStartedEvent.class);
+        assertThat(results.get(1)).isInstanceOf(RunFinishedEvent.class);
+    }
+
+    @Test
+    void shouldNotSubscribeToSingle_untilFlowableSubscribed() {
+        // Arrange
+        AtomicBoolean subscribed = new AtomicBoolean(false);
+        Single<String> lazyUid = Single.create(emitter -> {
+            subscribed.set(true);
+            emitter.onSuccess("alice");
+        });
+        RunAgentParameters params = createAgentParameters(new UserMessage());
+
+        // Act — build the Flowable but do NOT subscribe
+        Flowable<BaseEvent> flow = aguiAdkRunnerAdapter.runAgent(params, lazyUid);
+
+        // Assert — the Single has not been touched
+        assertThat(subscribed).isFalse();
+
+        // Now subscribe and verify the Single is consumed
+        flow.test();
+        assertThat(subscribed).isTrue();
     }
 
     @NotNull

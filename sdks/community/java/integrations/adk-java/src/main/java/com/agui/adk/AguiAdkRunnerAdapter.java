@@ -14,11 +14,11 @@ import com.google.adk.agents.RunConfig;
 import com.google.adk.runner.Runner;
 import com.google.adk.sessions.Session;
 import io.reactivex.rxjava3.core.Flowable;
+import io.reactivex.rxjava3.core.Single;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.*;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import static com.agui.server.EventFactory.*;
@@ -30,7 +30,6 @@ public final class AguiAdkRunnerAdapter {
     private final Runner runner;
     private final SessionManager sessionManager;
     private final RunConfig runConfig;
-    private final Function<RunAgentParameters, String> userIdExtractor;
     private final EventTranslatorFactory eventTranslatorFactory;
     private final MessageProcessor messageProcessor;
 
@@ -38,33 +37,32 @@ public final class AguiAdkRunnerAdapter {
     public AguiAdkRunnerAdapter(
             Runner runner,
             SessionManager sessionManager,
-            RunConfig runConfig,
-            Function<RunAgentParameters, String> userIdExtractor
+            RunConfig runConfig
     ) {
-        // Simplified constructor
-        this(runner, sessionManager, runConfig, userIdExtractor, EventTranslatorFactory.INSTANCE, MessageProcessor.INSTANCE);
+        this(runner, sessionManager, runConfig, EventTranslatorFactory.INSTANCE, MessageProcessor.INSTANCE);
     }
 
-    AguiAdkRunnerAdapter( // Full constructor
-                          Runner runner,
-                          SessionManager sessionManager,
-                          RunConfig runConfig,
-                          Function<RunAgentParameters, String> userIdExtractor,
-                          EventTranslatorFactory eventTranslatorFactory,
-                          MessageProcessor messageProcessor
+    AguiAdkRunnerAdapter(
+            Runner runner,
+            SessionManager sessionManager,
+            RunConfig runConfig,
+            EventTranslatorFactory eventTranslatorFactory,
+            MessageProcessor messageProcessor
     ) {
         this.runner = runner;
         this.sessionManager = sessionManager;
         this.runConfig = runConfig;
-        this.userIdExtractor = userIdExtractor;
         this.eventTranslatorFactory = eventTranslatorFactory;
         this.messageProcessor = messageProcessor;
     }
 
-    public Flowable<BaseEvent> runAgent(RunAgentParameters parameters) {
+    public Flowable<BaseEvent> runAgent(RunAgentParameters parameters, String userId) {
+        if (userId == null || userId.isBlank()) {
+            return Flowable.just(runErrorEvent("userId must not be null or blank"));
+        }
         return Flowable.defer(() -> {
             try {
-                RunContext runContext = new RunContext(parameters, this.runner.appName(), userIdExtractor.apply(parameters));
+                RunContext runContext = new RunContext(parameters, this.runner.appName(), userId);
 
                 Flowable<BaseEvent> coreLogic = sessionManager.getSessionAndProcessedMessageIds(runContext)
                         .toFlowable()
@@ -81,6 +79,13 @@ public final class AguiAdkRunnerAdapter {
                 return Flowable.just(runErrorEvent(e.getMessage()));
             }
         }).cache();
+    }
+
+    public Flowable<BaseEvent> runAgent(RunAgentParameters parameters, Single<String> userId) {
+        return userId.toFlowable()
+                .concatMap(uid -> runAgent(parameters, uid))
+                .switchIfEmpty(Flowable.just(runErrorEvent("userId resolution produced no value")))
+                .onErrorResumeNext((Throwable error) -> Flowable.just(runErrorEvent("Failed to resolve userId: " + error.getMessage())));
     }
 
 

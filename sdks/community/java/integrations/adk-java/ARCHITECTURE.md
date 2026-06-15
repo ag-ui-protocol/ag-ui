@@ -39,9 +39,9 @@ A singleton class for centralized session control, similar to the Python impleme
 
 ## Parameter and Session Flow
 
-1.  **Client Request**: The AG-UI server receives a request and calls the `AguiAdkRunnerAdapter.runAgent` method with `RunAgentParameters`.
+1.  **Client Request**: The AG-UI server receives a request and calls `AguiAdkRunnerAdapter.runAgent(RunAgentParameters, String userId)` (or the `Single<String>` overload).
 2.  **Parameter Extraction**:
-    *   The `AguiAdkRunnerAdapter` uses a configurable `Function<RunAgentParameters, String>` to extract `userId`.
+    *   The `userId` is supplied by the caller per request — typically resolved from the authenticated principal in a Spring WebFlux handler (see `INTEGRATION_GUIDE.md` § 1.4). The adapter itself does not source the `userId`.
     *   The `sessionId` will be the `thread_id` from `RunAgentParameters`.
 3.  **Session Resolution**: The `SessionManager`'s `getOrCreateSession` method is called with the `appName` (from ADK `Runner`), `userId`, and `sessionId`. It returns an ADK `Session` object.
 4.  **Agent Execution**: A Google ADK `Runner` instance (typically pre-configured and injected) is used, and its `runAsync()` method is called. This method processes the parameters against the configured ADK agent.
@@ -51,7 +51,7 @@ A singleton class for centralized session control, similar to the Python impleme
 ## Key Design Patterns
 
 ### Dependency Injection
-Core ADK services (`Runner`, `SessionManager`, `RunConfig`, `userIdExtractor`) are injected into `AguiAdkRunnerAdapter`, promoting modularity and testability.
+Core ADK services (`Runner`, `SessionManager`, `RunConfig`) are injected into `AguiAdkRunnerAdapter`, promoting modularity and testability. The `userId` is not an injected dependency — it is supplied by the caller on every `runAgent(...)` invocation so it can carry per-request authenticated identity.
 
 ### Reactive Programming
 The middleware leverages RxJava's `Flowable` to handle asynchronous event streams from the Google ADK, providing a non-blocking and efficient way to process and transform events. This also naturally supports Server-Sent Events (SSE).
