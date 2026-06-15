@@ -1,6 +1,9 @@
 [project]
 name = "ag_ui_strands"
 version = "0.1.9"
+description = "Implementation of the AG-UI protocol for AWS Strands."
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "AG-UI Contributors" }
 ]
