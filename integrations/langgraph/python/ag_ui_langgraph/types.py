@@ -46,6 +46,10 @@ MessageInProgress = TypedDict("MessageInProgress", {
 RunMetadata = TypedDict("RunMetadata", {
     # Identification
     "id": str,
+    # LangGraph's internal chain run_id, tracked separately so it never
+    # overwrites the client-supplied "id" used for the protocol RUN_STARTED /
+    # RUN_FINISHED events (#1582).
+    "langgraph_run_id": NotRequired[Optional[str]],
     "thread_id": NotRequired[Optional[str]],
     # Run mode/flow
     "mode": NotRequired[Literal["start", "continue"]],
@@ -111,4 +115,9 @@ LangGraphReasoning = TypedDict("LangGraphReasoning", {
     "text": str,
     "index": int,
     "signature": NotRequired[Optional[str]],
+    # The provider's canonical id for the reasoning item (e.g. OpenAI
+    # ``rs_…``), when the stream carries one. Used as the AG-UI reasoning
+    # message id so the streamed message reconciles with the snapshot copy
+    # emitted by ``_reasoning_block_to_agui_message`` under the same id.
+    "id": NotRequired[Optional[str]],
 })

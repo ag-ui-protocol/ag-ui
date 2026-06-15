@@ -16,6 +16,7 @@ except ImportError:
     from langchain_core.messages import BaseMessage, SystemMessage, ToolMessage
     
 from langchain_core.runnables import RunnableConfig, ensure_config
+from langchain_core.runnables.config import merge_configs
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.types import Command
 
@@ -303,7 +304,13 @@ class LangGraphAgent:
                 event_type = event.get("event")
                 event_run_id = event.get("run_id")
                 if isinstance(event_run_id, str) and event_run_id:
-                    self.active_run["id"] = event_run_id
+                    # LangGraph's internal chain run_id. Track it separately
+                    # rather than overwriting active_run["id"] (the
+                    # client-supplied run_id from RunAgentInput): clobbering it
+                    # made RUN_FINISHED carry the chain UUID while RUN_STARTED
+                    # carried the client id, so the two disagreed (#1582). The
+                    # client id is what the protocol must echo back.
+                    self.active_run["langgraph_run_id"] = event_run_id
                 elif event_run_id is not None:
                     # Shape mismatch: some upstream emitted a non-string run_id.
                     # Keep the existing id rather than corrupting it.
@@ -645,12 +652,22 @@ class LangGraphAgent:
             as_node=next_nodes[0] if next_nodes else "__start__",
         )
 
+        # ``fork`` only carries the checkpoint-level configurable keys
+        # (``thread_id``, ``checkpoint_id``, ``checkpoint_ns``).  Pass it
+        # alone and runtime settings from the caller's config -- notably
+        # ``recursion_limit`` and ``callbacks`` -- are silently dropped,
+        # so LangGraph stamps the default ``recursion_limit=25`` and any
+        # tracing / observability callbacks are lost.  Merge the caller's
+        # config underneath the fork so checkpoint keys still win but
+        # everything else is preserved.  Fixes #1749.
+        merged_config = merge_configs(config, fork)
+
         stream_input = self.langgraph_default_merge_state(time_travel_checkpoint.values, [message_checkpoint], input)
         subgraphs_stream_enabled = input.forwarded_props.get('stream_subgraphs', True) if input.forwarded_props else True
 
         kwargs = self.get_stream_kwargs(
             input=stream_input,
-            config=fork,
+            config=merged_config,
             subgraphs=bool(subgraphs_stream_enabled),
             version="v2",
         )
@@ -871,7 +888,12 @@ class LangGraphAgent:
         # The A2UI schema goes into state["ag-ui"]["a2ui_schema"] so agents
         # can read it directly from state (e.g., for the generate_a2ui tool),
         # instead of it being dumped into the system prompt with all other context.
-        A2UI_SCHEMA_CONTEXT_DESCRIPTION = "A2UI Component Schema \u2014 available components for generating UI surfaces. Use these component names and props when creating A2UI operations."
+        # This string MUST stay byte-identical to the A2UI middleware's exported
+        # A2UI_SCHEMA_CONTEXT_DESCRIPTION (middlewares/a2ui-middleware/src/index.ts).
+        # The match below is exact-equality, so any drift silently routes the schema
+        # into the system prompt instead of state. Covered by
+        # test_a2ui_schema_context_routed_into_ag_ui_state.
+        A2UI_SCHEMA_CONTEXT_DESCRIPTION = "A2UI Component Schema \u2014 available components for generating UI surfaces. Use these component names and properties when creating A2UI operations."
 
         all_context = input.context or []
         a2ui_schema_value = None
@@ -889,6 +911,21 @@ class LangGraphAgent:
         }
         if a2ui_schema_value is not None:
             ag_ui_state["a2ui_schema"] = a2ui_schema_value
+
+        # Surface the A2UI tool-injection flag (set by the A2UI middleware via
+        # forwardedProps.injectA2UITool) into ag-ui state so graphs/tools can
+        # read it directly from state. It is written here whenever the merged
+        # state is built (start/continue runs) and then persists in the
+        # checkpoint, so resumed runs still see it. forwarded_props keys are
+        # snake-cased in run() (camel_to_snake turns "injectA2UITool" into
+        # "inject_a2_u_i_tool" — pinned by test_camel_to_snake_key_contract),
+        # so check the converted key first and fall back to the raw camelCase
+        # form for safety.
+        forwarded = input.forwarded_props or {}
+        if "inject_a2_u_i_tool" in forwarded:
+            ag_ui_state["inject_a2ui_tool"] = forwarded["inject_a2_u_i_tool"]
+        elif "injectA2UITool" in forwarded:
+            ag_ui_state["inject_a2ui_tool"] = forwarded["injectA2UITool"]
 
         return {
             **state,
@@ -1110,6 +1147,59 @@ class LangGraphAgent:
                     )
                 )
 
+            if tool_call_data and tool_call_data.get("name") and message_content is not None:
+                text_stream_id = None
+                if current_stream and current_stream.get("id") and not current_stream.get("tool_call_id"):
+                    text_stream_id = current_stream["id"]
+                elif message_content != "":
+                    text_stream_id = chunk_id
+                    if should_emit_messages:
+                        yield self._dispatch_event(
+                            TextMessageStartEvent(
+                                type=EventType.TEXT_MESSAGE_START,
+                                role="assistant",
+                                message_id=text_stream_id,
+                                raw_event=event,
+                            )
+                        )
+
+                if text_stream_id and should_emit_messages:
+                    if message_content != "":
+                        yield self._dispatch_event(
+                            TextMessageContentEvent(
+                                type=EventType.TEXT_MESSAGE_CONTENT,
+                                message_id=text_stream_id,
+                                delta=message_content,
+                                raw_event=event,
+                            )
+                        )
+                    yield self._dispatch_event(
+                        TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=text_stream_id, raw_event=event)
+                    )
+
+                if text_stream_id:
+                    self.messages_in_process[self.active_run["id"]] = None
+                    current_stream = None
+                    has_current_stream = False
+                is_message_end_event = False
+                is_tool_call_start_event = True
+                is_tool_call_args_event = False
+                is_tool_call_end_event = False
+                self.active_run["has_function_streaming"] = True
+
+            if is_message_end_event and tool_call_data and tool_call_data.get("name"):
+                yield self._dispatch_event(
+                    TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=current_stream["id"], raw_event=event)
+                )
+                self.messages_in_process[self.active_run["id"]] = None
+                current_stream = None
+                has_current_stream = False
+                is_message_end_event = False
+                is_tool_call_start_event = True
+                is_tool_call_args_event = False
+                is_tool_call_end_event = False
+                self.active_run["has_function_streaming"] = True
+
             if is_tool_call_end_event:
                 yield self._dispatch_event(
                     ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=current_stream["tool_call_id"], raw_event=event)
@@ -1322,7 +1412,7 @@ class LangGraphAgent:
                                 type=EventType.TOOL_CALL_START,
                                 tool_call_id=tool_msg.tool_call_id,
                                 tool_call_name=tool_msg.name or event.get("name", ""),
-                                parent_message_id=tool_msg.id,
+                                parent_message_id=str(tool_msg.id or tool_msg.tool_call_id),
                                 raw_event=event,
                             )
                         )
@@ -1347,7 +1437,8 @@ class LangGraphAgent:
                         ToolCallResultEvent(
                             type=EventType.TOOL_CALL_RESULT,
                             tool_call_id=tool_msg.tool_call_id,
-                            message_id=str(uuid.uuid4()),
+                            # Match ToolMessage.id (or tool_call_id) so MESSAGES_SNAPSHOT merge works.
+                            message_id=str(tool_msg.id or tool_msg.tool_call_id),
                             content=normalize_tool_content(tool_msg.content),
                             role="tool"
                         )
@@ -1375,7 +1466,7 @@ class LangGraphAgent:
                         type=EventType.TOOL_CALL_START,
                         tool_call_id=tool_call_output.tool_call_id,
                         tool_call_name=tool_call_output.name or event.get("name", ""),
-                        parent_message_id=tool_call_output.id,
+                        parent_message_id=str(tool_call_output.id or tool_call_output.tool_call_id),
                         raw_event=event,
                     )
                 )
@@ -1400,7 +1491,8 @@ class LangGraphAgent:
                 ToolCallResultEvent(
                     type=EventType.TOOL_CALL_RESULT,
                     tool_call_id=tool_call_output.tool_call_id,
-                    message_id=str(uuid.uuid4()),
+                    # Match ToolMessage.id (or tool_call_id) so MESSAGES_SNAPSHOT merge works.
+                    message_id=str(tool_call_output.id or tool_call_output.tool_call_id),
                     content=normalize_tool_content(tool_call_output.content),
                     role="tool"
                 )
@@ -1435,6 +1527,17 @@ class LangGraphAgent:
             )
             return
 
+        # A text-less chunk is still meaningful when it carries the provider's
+        # canonical reasoning id (the `response.output_item.added` /
+        # `…summary_part.added` chunks): stash the id so the first text delta
+        # opens the reasoning message under it, WITHOUT opening a message here
+        # — a summary-less (store=true) reasoning item must keep rendering
+        # nothing.
+        if not reasoning_data["text"]:
+            if reasoning_data.get("id"):
+                self.active_run["pending_reasoning_id"] = reasoning_data["id"]
+            return
+
         reasoning_step_index = reasoning_data.get("index", 0)
 
         if (self.active_run.get("reasoning_process") and
@@ -1458,7 +1561,17 @@ class LangGraphAgent:
             self.active_run["reasoning_process"] = None
 
         if not self.active_run.get("reasoning_process"):
-            message_id = str(uuid.uuid4())
+            # Prefer the provider's canonical reasoning id (e.g. OpenAI
+            # ``rs_…``) when the stream carried one: the snapshot converter
+            # (_reasoning_block_to_agui_message) re-emits this same reasoning
+            # under that id, and only a matching id lets the client reconcile
+            # the streamed copy with the snapshot copy instead of rendering
+            # both.
+            message_id = (
+                reasoning_data.get("id")
+                or self.active_run.pop("pending_reasoning_id", None)
+                or str(uuid.uuid4())
+            )
             yield self._dispatch_event(
                 ReasoningStartEvent(
                     type=EventType.REASONING_START,
@@ -1624,9 +1737,14 @@ class LangGraphAgent:
             version=version,
         )
 
-        # Only add context if supported
+        # LangGraph may expose context either as a named parameter or through
+        # **kwargs, depending on the installed version.
         sig = inspect.signature(self.graph.astream_events)
-        if 'context' in sig.parameters:
+        accepts_context = (
+            'context' in sig.parameters
+            or any(param.kind == inspect.Parameter.VAR_KEYWORD for param in sig.parameters.values())
+        )
+        if accepts_context:
             base_context = {}
             if isinstance(config, dict) and 'configurable' in config and isinstance(config['configurable'], dict):
                 base_context.update(config['configurable'])

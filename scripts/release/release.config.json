@@ -13,6 +13,20 @@
         { "name": "create-ag-ui-app", "path": "sdks/typescript/packages/cli", "ecosystem": "typescript" }
       ]
     },
+    "sdk-ts-a2ui-toolkit": {
+      "description": "A2UI Toolkit (standalone TypeScript SDK package, independently versioned)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "@ag-ui/a2ui-toolkit", "path": "sdks/typescript/packages/a2ui-toolkit", "ecosystem": "typescript" }
+      ]
+    },
+    "sdk-py-a2ui-toolkit": {
+      "description": "A2UI Toolkit (standalone Python SDK package, independently versioned)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "ag-ui-a2ui-toolkit", "path": "sdks/python/a2ui_toolkit", "ecosystem": "python", "buildSystem": "uv" }
+      ]
+    },
     "sdk-py": {
       "description": "Python SDK",
       "sharedVersion": false,
@@ -27,7 +41,14 @@
         { "name": "@ag-ui/a2a", "path": "integrations/a2a/typescript", "ecosystem": "typescript" }
       ]
     },
-    "integration-adk": {
+    "integration-adk-ts": {
+      "description": "ADK integration (TypeScript)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "@ag-ui/adk", "path": "integrations/adk-middleware/typescript", "ecosystem": "typescript" }
+      ]
+    },
+    "integration-adk-py": {
       "description": "ADK Middleware integration (Python)",
       "sharedVersion": false,
       "packages": [
@@ -55,7 +76,14 @@
         { "name": "@ag-ui/agno", "path": "integrations/agno/typescript", "ecosystem": "typescript" }
       ]
     },
-    "integration-aws-strands": {
+    "integration-aws-strands-ts": {
+      "description": "AWS Strands integration (TypeScript)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "@ag-ui/aws-strands", "path": "integrations/aws-strands/typescript", "ecosystem": "typescript" }
+      ]
+    },
+    "integration-aws-strands-py": {
       "description": "AWS Strands integration (Python)",
       "sharedVersion": false,
       "packages": [
@@ -67,6 +95,20 @@
       "sharedVersion": false,
       "packages": [
         { "name": "@ag-ui/claude-agent-sdk", "path": "integrations/claude-agent-sdk/typescript", "ecosystem": "typescript" }
+      ]
+    },
+    "integration-claude-agent-sdk-py": {
+      "description": "Claude Agent SDK integration (Python)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "ag-ui-claude-sdk", "path": "integrations/claude-agent-sdk/python", "ecosystem": "python", "buildSystem": "uv" }
+      ]
+    },
+    "integration-cloudflare-agents": {
+      "description": "Cloudflare Agents integration (community, TypeScript)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "@ag-ui/cloudflare-agents", "path": "integrations/community/cloudflare-agents/typescript", "ecosystem": "typescript" }
       ]
     },
     "integration-crewai-ts": {
@@ -108,7 +150,7 @@
       "description": "Langroid integration (Python)",
       "sharedVersion": false,
       "packages": [
-        { "name": "ag_ui_langroid", "path": "integrations/langroid/python", "ecosystem": "python", "buildSystem": "uv" }
+        { "name": "ag-ui-langroid", "path": "integrations/langroid/python", "ecosystem": "python", "buildSystem": "uv" }
       ]
     },
     "integration-llama-index": {
@@ -172,6 +214,13 @@
       "sharedVersion": false,
       "packages": [
         { "name": "@ag-ui/mcp-apps-middleware", "path": "middlewares/mcp-apps-middleware", "ecosystem": "typescript" }
+      ]
+    },
+    "middleware-mcp": {
+      "description": "MCP Middleware (TypeScript)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "@ag-ui/mcp-middleware", "path": "middlewares/mcp-middleware", "ecosystem": "typescript" }
       ]
     }
   }

@@ -2,6 +2,7 @@
 
 import type { RunAgentInput, BaseEvent } from "@ag-ui/core";
 import type { SessionManager } from "@strands-agents/sdk";
+import type { A2UIInjectConfig } from "./a2ui-tool";
 
 import type { Logger } from "./logger";
 
@@ -161,6 +162,22 @@ export interface StrandsAgentConfig {
    * TypeScript-only. Default: `false`.
    */
   emitChunkEvents?: boolean;
+  /**
+   * A2UI auto-injection config — everything A2UI-related in one place.
+   * When the CopilotKit runtime forwards `injectA2UITool` (or `a2ui.injectA2UITool`
+   * opts in on a host that doesn't), the adapter injects a `generate_a2ui`
+   * recovery tool and infers the model from the wrapped agent — no manual
+   * `getA2UITools()` needed. Knobs:
+   *   - `injectA2UITool` — opt in without the runtime flag; a string also names
+   *     the injected render tool to drop.
+   *   - `defaultCatalogId` — catalog id stamped into auto-injected surfaces
+   *     (must match the host renderer's catalog).
+   *   - `guidelines.compositionGuide` — teaches the sub-agent the catalog's
+   *     components; required for a real model to compose them.
+   *   - `catalog` — inline catalog for catalog-aware (semantic) recovery.
+   *   - `recovery` — attempt cap / retry-UI threshold.
+   */
+  a2ui?: A2UIInjectConfig;
   /**
    * Optional injectable logger. Mirrors the Python adapter's
    * `logging.getLogger("ag_ui_strands")`: the default surfaces `warn` / `error`

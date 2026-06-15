@@ -1,5 +1,7 @@
 """API modules for AWS Strands integration examples."""
 
+from .a2ui_dynamic_schema import app as a2ui_dynamic_schema_app
+from .a2ui_recovery import app as a2ui_recovery_app
 from .agentic_chat import app as agentic_chat_app
 from .agentic_chat_reasoning import app as agentic_chat_reasoning_app
 from .agentic_chat_multimodal import app as agentic_chat_multimodal_app
@@ -9,6 +11,8 @@ from .human_in_the_loop import app as human_in_the_loop_app
 from .shared_state import app as shared_state_app
 
 __all__ = [
+    "a2ui_dynamic_schema_app",
+    "a2ui_recovery_app",
     "agentic_chat_app",
     "agentic_chat_reasoning_app",
     "agentic_chat_multimodal_app",
