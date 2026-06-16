@@ -18,6 +18,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **FIX**: `output_schema` text suppression now reaches agents used as Workflow
+  graph nodes (#1889, fixes #1860, thanks @he-yufeng). The #1390 suppression
+  walks the agent tree to find `LlmAgent`s with an `output_schema` and tells
+  `EventTranslator` to drop their `TEXT_MESSAGE_*` events, so the structured
+  JSON they emit never leaks into the chat transcript. The collector only
+  traversed `.sub_agents`, but an ADK 2.x `Workflow`'s child agents live in
+  `workflow.graph.nodes`, not `.sub_agents` — so an `output_schema` agent used
+  as a graph node (the canonical Workflow pattern) was never added to the
+  suppression set, and its structured output, including the streamed
+  `partial=True` chunks, leaked as visible text.
+  `ADKAgent._collect_output_schema_agent_names` now also descends into
+  `agent.graph.nodes` when present, leaving the existing `.sub_agents`
+  traversal unchanged.
+- **FIX**: Resume is gated until all of a turn's long-running results arrive
+  (#1935). When one model turn emits **multiple long-running tool calls** and
+  their results arrive in **separate submissions** (an instant frontend tool
+  resolves before a HITL one), ag-ui-adk resumed the model on the *first*
+  result. That replays a turn whose function-**call** parts outnumber its
+  function-**response** parts, which Gemini rejects server-side (`400
+  INVALID_ARGUMENT — number of function response parts [must] equal the number
+  of function call parts`). Where the provider tolerated the rearranged history
+  instead, ADK dropped the unanswered call and the model re-issued it under a
+  fresh id — a **duplicate HITL widget** on the client plus an orphaned
+  `pending_tool_calls` entry. The middleware now resumes **once**, after all of
+  the turn's long-running calls have results: earlier results are persisted to
+  the session (and merged in by ADK) but don't advance the model on their own.
+  The gate is scoped to the arriving turn's `invocation_id`, so a leaked or
+  orphaned pending entry from another turn can't stall the thread; persistence
+  happens before any pending/processed bookkeeping is mutated, so a failed
+  persist leaves the turn cleanly re-submittable.
+  - **New client-visible `RUN_ERROR` codes.** `PENDING_TOOL_CALLS` — a trailing
+    user/system message arrived while another long-running call from the same
+    turn was still unanswered; the middleware rejects it and mutates nothing
+    (resolve or cancel the open call, then resubmit) rather than forwarding an
+    under-answered turn (an opaque provider 400) and silently dropping the
+    message. `TOOL_RESULT_BUFFER_ERROR` — persisting a buffered result failed;
+    no state was changed, so the client can simply resubmit.
+  - **Scope/non-goals**: same-name parallel long-running calls resolved
+    *separately* remain unsupported (ADK's `_merge_function_response_events`
+    can't pair them); distinct-named staggered calls and same-name calls
+    resolved together in one submission both work. See #1334 / PR #1355.
 - **FIX**: `ADKAgent.run()` no longer emits `RUN_FINISHED` after `RUN_ERROR`
   (#1892). When a tool raised mid-stream, the background queue path emitted
   `RUN_ERROR` and the consumer loop then fell through to its unconditional

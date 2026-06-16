@@ -61,23 +61,94 @@ def _collect_child_refs(children: Any) -> list[str]:
     return refs
 
 
-def _child_adjacency(components: list) -> dict[str, list[str]]:
-    """id -> ordered child-id references, gathered from singular ``child`` + plural ``children``.
+def _collect_component_ref_edges(comp: dict, schema: Optional[dict]) -> list[tuple[str, str]]:
+    """Collect ``(path_suffix, ref_id)`` pairs for every child reference a component makes (#1948).
 
-    Scope note: only these two fields feed the dangling-ref check and the cycle
-    graph. Other catalog ref-fields (Modal ``trigger``/``content``, Tabs
-    ``tabs[].child``) are NOT yet traversed — deriving ref-fields from the
-    catalog (in lockstep across the TS/Python/.NET toolkits) is tracked in
-    https://github.com/ag-ui-protocol/ag-ui/issues/1948.
+    The implicit ``child`` (single) and ``children`` (list) fields are ALWAYS ref
+    fields, even with no catalog — this preserves the #1944 / catalog-free
+    behaviour. Other fields are refs ONLY when the component's catalog schema
+    marks the property ``"format": "componentRef"`` (single) or
+    ``"componentRefList"`` (list). For an array-typed property whose ``items`` is
+    an object schema, marked sub-properties are honoured per element (this finds
+    Tabs ``tabItems[].child`` — derived, never hard-coded). An unmarked property
+    is data, never a ref: a bare data string and a bare ref string are otherwise
+    indistinguishable, so shape-based detection is unsafe.
+
+    Path grammar (byte-aligned with the TS/.NET siblings):
+      single-ref field             -> ``<field>``
+      list-ref field (array)       -> ``<field>[k]``
+      list-ref field (single tmpl) -> ``<field>``
+      nested array-of-object ref   -> ``<arrayField>[k].<refField>`` (and ``[j]`` if that sub-field is a list)
     """
+    edges: list[tuple[str, str]] = []
+
+    def push_single(field: str, value: Any) -> None:
+        for ref in _collect_child_refs(value):
+            edges.append((field, ref))
+
+    def push_list(field: str, value: Any) -> None:
+        if isinstance(value, list):
+            for k, item in enumerate(value):
+                for ref in _collect_child_refs(item):
+                    edges.append((f"{field}[{k}]", ref))
+        else:
+            for ref in _collect_child_refs(value):
+                edges.append((field, ref))
+
+    # Implicit refs — always, regardless of catalog.
+    push_single("child", comp.get("child"))
+    push_list("children", comp.get("children"))
+
+    # Explicit catalog-marked refs.
+    props = schema.get("properties") if _is_object(schema) else None
+    if _is_object(props):
+        for field, prop_schema in props.items():
+            if field in ("child", "children") or not _is_object(prop_schema):
+                continue
+            fmt = prop_schema.get("format")
+            if fmt == "componentRef":
+                push_single(field, comp.get(field))
+            elif fmt == "componentRefList":
+                push_list(field, comp.get(field))
+            elif prop_schema.get("type") == "array" and _is_object(prop_schema.get("items")):
+                item_props = prop_schema["items"].get("properties")
+                arr_val = comp.get(field)
+                if _is_object(item_props) and isinstance(arr_val, list):
+                    for k, item in enumerate(arr_val):
+                        if not _is_object(item):
+                            continue
+                        for sub, sub_schema in item_props.items():
+                            if not _is_object(sub_schema):
+                                continue
+                            sub_fmt = sub_schema.get("format")
+                            if sub_fmt == "componentRef":
+                                for ref in _collect_child_refs(item.get(sub)):
+                                    edges.append((f"{field}[{k}].{sub}", ref))
+                            elif sub_fmt == "componentRefList":
+                                sub_val = item.get(sub)
+                                if isinstance(sub_val, list):
+                                    for j, sv in enumerate(sub_val):
+                                        for ref in _collect_child_refs(sv):
+                                            edges.append((f"{field}[{k}].{sub}[{j}]", ref))
+                                else:
+                                    for ref in _collect_child_refs(sub_val):
+                                        edges.append((f"{field}[{k}].{sub}", ref))
+    return edges
+
+
+def _child_adjacency(components: list, catalog: Optional[dict] = None) -> dict[str, list[str]]:
+    """id -> ordered child-id references, derived per component via ``_collect_component_ref_edges``."""
+    catalog_components = (catalog or {}).get("components", {}) if catalog else {}
     adj: dict[str, list[str]] = {}
     for comp in components:
         if _is_object(comp) and isinstance(comp.get("id"), str):
-            adj[comp["id"]] = _collect_child_refs(comp.get("child")) + _collect_child_refs(comp.get("children"))
+            ctype = comp.get("component")
+            schema = catalog_components.get(ctype) if isinstance(ctype, str) else None
+            adj[comp["id"]] = [ref for _, ref in _collect_component_ref_edges(comp, schema)]
     return adj
 
 
-def _find_child_cycles(components: list) -> list[list[str]]:
+def _find_child_cycles(components: list, catalog: Optional[dict] = None) -> list[list[str]]:
     """Find unique child-reference cycles (self-references and longer loops) via DFS.
 
     Each cycle is canonicalised — rotated so the lexicographically smallest id
@@ -89,7 +160,7 @@ def _find_child_cycles(components: list) -> list[list[str]]:
     runs on untrusted model output, so a pathologically deep child chain must not
     raise ``RecursionError`` (and the .NET sibling must not overflow its stack).
     """
-    adj = _child_adjacency(components)
+    adj = _child_adjacency(components, catalog)
     color: dict[str, int] = {}  # absent/0 = unvisited, 1 = on stack, 2 = done
     cycles: dict[str, list[str]] = {}
 
@@ -199,20 +270,21 @@ def validate_a2ui_components(
                         errors.append({"code": "missing_required_prop", "path": f"components[{i}].{req}", "message": f"Component '{ctype}' (index {i}) is missing required prop '{req}'"})
 
         if _is_object(comp):
-            # Validate both the singular ``child`` (one-child containers such as
-            # Card/Button, which the default prompt emits) and the plural
-            # ``children`` so a dangling reference in either feeds the recovery loop.
-            for field in ("child", "children"):
-                for ref in _collect_child_refs(comp.get(field)):
-                    if ref not in ids:
-                        errors.append({"code": "unresolved_child", "path": f"components[{i}].{field}", "message": f"Child reference '{ref}' does not match any component id"})
+            # Implicit ``child``/``children`` are always checked; catalog-marked
+            # ref-fields (Modal ``trigger``/``content``, Tabs ``tabItems[].child``,
+            # ...) are checked too when a catalog is supplied. A dangling reference
+            # in any of them feeds the recovery loop. See ``_collect_component_ref_edges``.
+            schema = catalog_components.get(ctype) if isinstance(ctype, str) else None
+            for ref_path, ref in _collect_component_ref_edges(comp, schema):
+                if ref not in ids:
+                    errors.append({"code": "unresolved_child", "path": f"components[{i}].{ref_path}", "message": f"Child reference '{ref}' does not match any component id"})
             for p in (_collect_absolute_binding_paths(comp, []) if validate_bindings else []):
                 if not _absolute_path_resolves(p, data or {}):
                     errors.append({"code": "unresolved_binding", "path": f"components[{i}]", "message": f"Binding path '{p}' does not resolve in the data model"})
 
-    # The child/children tree must be a DAG — a component that (transitively)
+    # The child reference tree must be a DAG — a component that (transitively)
     # references itself never terminates at render time. Report each cycle once.
-    for cycle in _find_child_cycles(components):
+    for cycle in _find_child_cycles(components, catalog):
         chain = " -> ".join(cycle + [cycle[0]])
         errors.append({"code": "child_cycle", "path": f"components[id={cycle[0]}]", "message": f"Child reference cycle detected: {chain}"})
 
