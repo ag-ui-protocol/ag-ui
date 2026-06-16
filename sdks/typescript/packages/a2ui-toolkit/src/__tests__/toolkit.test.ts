@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   A2UI_OPERATIONS_KEY,
+  A2UI_SCHEMA_CONTEXT_DESCRIPTION,
   BASIC_CATALOG_ID,
   DEFAULT_DESIGN_GUIDELINES,
   DEFAULT_GENERATION_GUIDELINES,
@@ -16,6 +17,8 @@ import {
   createSurface,
   findPriorSurface,
   prepareA2UIRequest,
+  resolveA2UICatalog,
+  splitA2UISchemaContext,
   updateComponents,
   updateDataModel,
   wrapAsOperationsEnvelope,
@@ -118,6 +121,96 @@ describe("buildContextPrompt", () => {
       "ag-ui": { context: [{}] },
     });
     expect(prompt).toBe("");
+  });
+});
+
+describe("splitA2UISchemaContext", () => {
+  it("splits the schema entry from regular context", () => {
+    const [schema, regular] = splitA2UISchemaContext([
+      { description: "Style guide", value: "use cards" },
+      { description: A2UI_SCHEMA_CONTEXT_DESCRIPTION, value: "<catalog>" },
+    ]);
+    expect(schema).toBe("<catalog>");
+    expect(regular).toHaveLength(1);
+    expect(regular[0].description).toBe("Style guide");
+  });
+
+  it("returns undefined schema when no schema entry is present", () => {
+    const [schema, regular] = splitA2UISchemaContext([
+      { description: "Style guide", value: "use cards" },
+    ]);
+    expect(schema).toBeUndefined();
+    expect(regular).toHaveLength(1);
+  });
+
+  it("handles null/undefined context", () => {
+    expect(splitA2UISchemaContext(undefined)).toEqual([undefined, []]);
+    expect(splitA2UISchemaContext(null)).toEqual([undefined, []]);
+  });
+
+  it("round-trips into buildContextPrompt", () => {
+    const [schema, regular] = splitA2UISchemaContext([
+      { description: "App context", value: "on dashboard" },
+      { description: A2UI_SCHEMA_CONTEXT_DESCRIPTION, value: "<catalog>" },
+    ]);
+    const prompt = buildContextPrompt({
+      "ag-ui": { context: regular, a2ui_schema: schema },
+    });
+    expect(prompt).toContain("## Available Components");
+    expect(prompt).toContain("<catalog>");
+    expect(prompt).toContain("## App context");
+    expect(prompt).not.toContain(A2UI_SCHEMA_CONTEXT_DESCRIPTION);
+  });
+});
+
+describe("resolveA2UICatalog", () => {
+  it("reads catalogId from the native ag-ui a2ui_schema (schema undefined)", () => {
+    const resolved = resolveA2UICatalog({
+      "ag-ui": {
+        a2ui_schema: JSON.stringify({ catalogId: "my-catalog", components: [] }),
+      },
+    });
+    expect(resolved).toEqual([undefined, "my-catalog"]);
+  });
+
+  it("accepts an already-parsed a2ui_schema object", () => {
+    const resolved = resolveA2UICatalog({
+      "ag-ui": { a2ui_schema: { catalogId: "parsed-cat" } },
+    });
+    expect(resolved?.[1]).toBe("parsed-cat");
+  });
+
+  it("degrades to no id on unparseable schema", () => {
+    const resolved = resolveA2UICatalog({ "ag-ui": { a2ui_schema: "{not json" } });
+    expect(resolved).toEqual([undefined, undefined]);
+  });
+
+  it("reads the catalog from an 'A2UI catalog' context entry (first listed)", () => {
+    const resolved = resolveA2UICatalog({
+      "ag-ui": {
+        context: [
+          { description: "unrelated", value: "x" },
+          { description: "Registered A2UI catalog", value: "- custom-cat\n- basic" },
+        ],
+      },
+    });
+    expect(resolved?.[1]).toBe("custom-cat");
+    expect(resolved?.[0]).toContain("custom-cat");
+  });
+
+  it("prefers the schema entry over the context entry", () => {
+    const resolved = resolveA2UICatalog({
+      "ag-ui": {
+        a2ui_schema: JSON.stringify({ catalogId: "native-cat" }),
+        context: [{ description: "A2UI catalog", value: "- ctx-cat" }],
+      },
+    });
+    expect(resolved?.[1]).toBe("native-cat");
+  });
+
+  it("returns undefined when no catalog is present", () => {
+    expect(resolveA2UICatalog({})).toBeUndefined();
+    expect(resolveA2UICatalog({ "ag-ui": { context: [] } })).toBeUndefined();
   });
 });
 
