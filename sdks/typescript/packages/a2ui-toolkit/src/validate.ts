@@ -157,21 +157,21 @@ export function validateA2UIComponents(input: ValidateA2UIInput): ValidateA2UIRe
       }
     }
 
-    // Child references must resolve to existing component ids. Both the singular
-    // `child` (one-child containers such as Card/Button, which the default prompt
-    // emits) and the plural `children` are validated so a dangling reference in
-    // either is caught and fed back to the recovery loop.
+    // Child references must resolve to existing component ids. The implicit
+    // `child`/`children` fields are always checked; catalog-marked ref-fields
+    // (Modal `trigger`/`content`, Tabs `tabItems[].child`, …) are checked too
+    // when a catalog is supplied. A dangling reference in any of them is fed
+    // back to the recovery loop. See `collectComponentRefEdges`.
     if (isObject(comp)) {
-      (["child", "children"] as const).forEach((field) => {
-        collectChildRefs(comp[field]).forEach((ref) => {
-          if (!ids.has(ref)) {
-            errors.push({
-              code: "unresolved_child",
-              path: `components[${i}].${field}`,
-              message: `Child reference '${ref}' does not match any component id`,
-            });
-          }
-        });
+      const schema = catalog && typeof type === "string" ? catalog.components[type] : undefined;
+      collectComponentRefEdges(comp, schema).forEach(({ path: refPath, ref }) => {
+        if (!ids.has(ref)) {
+          errors.push({
+            code: "unresolved_child",
+            path: `components[${i}].${refPath}`,
+            message: `Child reference '${ref}' does not match any component id`,
+          });
+        }
       });
 
       // Absolute binding paths must resolve against the data model (unless
@@ -188,9 +188,9 @@ export function validateA2UIComponents(input: ValidateA2UIInput): ValidateA2UIRe
     }
   });
 
-  // The child/children tree must be a DAG — a component that (transitively)
+  // The child reference tree must be a DAG — a component that (transitively)
   // references itself never terminates at render time. Report each cycle once.
-  findChildCycles(components).forEach((cycle) => {
+  findChildCycles(components, catalog).forEach((cycle) => {
     errors.push({
       code: "child_cycle",
       path: `components[id=${cycle[0]}]`,
@@ -221,20 +221,102 @@ function collectChildRefs(children: unknown): string[] {
   return refs;
 }
 
+/** A single child reference and the field-path suffix it was found at (e.g. `children[0]`, `tabItems[1].child`). */
+interface RefEdge {
+  path: string;
+  ref: string;
+}
+
 /**
- * id → ordered child-id references, gathered from singular `child` + plural `children`.
+ * Collect every child reference a component makes, paired with its field-path
+ * suffix, by deriving ref-fields from the catalog (#1948).
  *
- * Scope note: only these two fields feed the dangling-ref check and the cycle
- * graph. Other catalog ref-fields (Modal `trigger`/`content`, Tabs
- * `tabs[].child`) are NOT yet traversed — deriving ref-fields from the catalog
- * (in lockstep across the TS/Python/.NET toolkits) is tracked in
- * https://github.com/ag-ui-protocol/ag-ui/issues/1948.
+ * The implicit `child` (single) and `children` (list) fields are ALWAYS ref
+ * fields, even with no catalog — this preserves the #1944 / catalog-free
+ * behaviour. Other fields are refs ONLY when the component's catalog schema
+ * marks the property `"format": "componentRef"` (single) or
+ * `"componentRefList"` (list). For an array-typed property whose `items` is an
+ * object schema, marked sub-properties are honoured per element (this is how
+ * Tabs `tabItems[].child` is found — derived, never hard-coded). A property with
+ * no marker is treated as data, never a ref — a bare data string and a bare ref
+ * string are otherwise indistinguishable, so shape-based detection is unsafe.
+ *
+ * Path grammar (byte-aligned with the Python/.NET siblings):
+ *   single-ref field             → `<field>`
+ *   list-ref field (array)       → `<field>[k]`
+ *   list-ref field (single tmpl) → `<field>`
+ *   nested array-of-object ref   → `<arrayField>[k].<refField>` (and `[j]` if that sub-field is itself a list)
  */
-function childAdjacency(components: Array<Record<string, unknown>>): Map<string, string[]> {
+function collectComponentRefEdges(
+  comp: Record<string, unknown>,
+  schema: { properties?: Record<string, unknown>; [k: string]: unknown } | undefined,
+): RefEdge[] {
+  const edges: RefEdge[] = [];
+
+  const pushSingle = (field: string, value: unknown) => {
+    collectChildRefs(value).forEach((ref) => edges.push({ path: field, ref }));
+  };
+  const pushList = (field: string, value: unknown) => {
+    if (Array.isArray(value)) {
+      value.forEach((item, k) => collectChildRefs(item).forEach((ref) => edges.push({ path: `${field}[${k}]`, ref })));
+    } else {
+      collectChildRefs(value).forEach((ref) => edges.push({ path: field, ref }));
+    }
+  };
+
+  // Implicit refs — always, regardless of catalog.
+  pushSingle("child", comp.child);
+  pushList("children", comp.children);
+
+  // Explicit catalog-marked refs.
+  const props = schema?.properties;
+  if (isObject(props)) {
+    for (const [field, propSchema] of Object.entries(props)) {
+      if (field === "child" || field === "children" || !isObject(propSchema)) continue;
+      const fmt = propSchema.format;
+      if (fmt === "componentRef") {
+        pushSingle(field, comp[field]);
+      } else if (fmt === "componentRefList") {
+        pushList(field, comp[field]);
+      } else if (propSchema.type === "array" && isObject(propSchema.items)) {
+        const itemProps = (propSchema.items as Record<string, unknown>).properties;
+        const arrVal = comp[field];
+        if (isObject(itemProps) && Array.isArray(arrVal)) {
+          arrVal.forEach((item, k) => {
+            if (!isObject(item)) return;
+            for (const [sub, subSchema] of Object.entries(itemProps)) {
+              if (!isObject(subSchema)) continue;
+              if (subSchema.format === "componentRef") {
+                collectChildRefs(item[sub]).forEach((ref) => edges.push({ path: `${field}[${k}].${sub}`, ref }));
+              } else if (subSchema.format === "componentRefList") {
+                const subVal = item[sub];
+                if (Array.isArray(subVal)) {
+                  subVal.forEach((sv, j) => collectChildRefs(sv).forEach((ref) => edges.push({ path: `${field}[${k}].${sub}[${j}]`, ref })));
+                } else {
+                  collectChildRefs(subVal).forEach((ref) => edges.push({ path: `${field}[${k}].${sub}`, ref }));
+                }
+              }
+            }
+          });
+        }
+      }
+    }
+  }
+
+  return edges;
+}
+
+/** id → ordered child-id references, derived per component via `collectComponentRefEdges`. */
+function childAdjacency(components: Array<Record<string, unknown>>, catalog?: A2UIValidationCatalog): Map<string, string[]> {
   const adj = new Map<string, string[]>();
   for (const comp of components) {
     if (isObject(comp) && typeof comp.id === "string") {
-      adj.set(comp.id, [...collectChildRefs(comp.child), ...collectChildRefs(comp.children)]);
+      const type = typeof comp.component === "string" ? comp.component : undefined;
+      const schema = catalog && type ? catalog.components[type] : undefined;
+      adj.set(
+        comp.id,
+        collectComponentRefEdges(comp, schema).map((e) => e.ref),
+      );
     }
   }
   return adj;
@@ -247,8 +329,8 @@ function childAdjacency(components: Array<Record<string, unknown>>): Map<string,
  * different entry points collapses to one finding, and the reported chain stays
  * byte-identical across the sibling toolkits.
  */
-function findChildCycles(components: Array<Record<string, unknown>>): string[][] {
-  const adj = childAdjacency(components);
+function findChildCycles(components: Array<Record<string, unknown>>, catalog?: A2UIValidationCatalog): string[][] {
+  const adj = childAdjacency(components, catalog);
   const color = new Map<string, number>(); // absent/0 = unvisited, 1 = on stack, 2 = done
   const cycles = new Map<string, string[]>();
 

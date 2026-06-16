@@ -178,6 +178,80 @@ class TestChildCycles(unittest.TestCase):
         self.assertEqual(len([e for e in r["errors"] if e["code"] == "child_cycle"]), 1)
 
 
+# #1948 — ref-fields beyond child/children, derived from catalog `format` markers.
+# A property is a child reference only when marked `componentRef` (single) or
+# `componentRefList` (list); unmarked props stay data, so a data string is never
+# mistaken for a dangling id. `tabItems[].child` is found via the array item schema.
+REF_CATALOG = {
+    "components": {
+        "Modal": {
+            "type": "object",
+            "properties": {
+                "trigger": {"type": "string", "format": "componentRef"},
+                "content": {"type": "string", "format": "componentRef"},
+                "title": {"type": "string"},  # unmarked data prop
+            },
+        },
+        "Tabs": {
+            "type": "object",
+            "properties": {
+                "tabItems": {
+                    "type": "array",
+                    "items": {"type": "object", "properties": {"label": {"type": "string"}, "child": {"type": "string", "format": "componentRef"}}},
+                },
+            },
+        },
+        "Stack": {"type": "object", "properties": {"items": {"type": "array", "format": "componentRefList"}}},
+        "Text": {"type": "object"},
+    }
+}
+
+
+class TestCatalogDerivedRefFields(unittest.TestCase):
+    def test_modal_trigger_content_dangling(self):
+        comps = [{"id": "root", "component": "Modal", "trigger": "ghost-btn", "content": "ghost-body", "title": "Hi"}]
+        r = validate_a2ui_components(components=comps, catalog=REF_CATALOG)
+        self.assertTrue(any(e["code"] == "unresolved_child" and e["path"] == "components[0].trigger" and "ghost-btn" in e["message"] for e in r["errors"]))
+        self.assertTrue(any(e["code"] == "unresolved_child" and e["path"] == "components[0].content" and "ghost-body" in e["message"] for e in r["errors"]))
+
+    def test_unmarked_data_string_not_a_ref(self):
+        comps = [
+            {"id": "root", "component": "Modal", "trigger": "btn", "content": "body", "title": "not-an-id"},
+            {"id": "btn", "component": "Text"},
+            {"id": "body", "component": "Text"},
+        ]
+        r = validate_a2ui_components(components=comps, catalog=REF_CATALOG)
+        self.assertNotIn("unresolved_child", codes(r))
+
+    def test_nested_tabitems_child_dangling_per_index_path(self):
+        comps = [
+            {"id": "root", "component": "Tabs", "tabItems": [{"label": "A", "child": "panel-a"}, {"label": "B", "child": "ghost-panel"}]},
+            {"id": "panel-a", "component": "Text"},
+        ]
+        r = validate_a2ui_components(components=comps, catalog=REF_CATALOG)
+        self.assertTrue(any(e["code"] == "unresolved_child" and e["path"] == "components[0].tabItems[1].child" and "ghost-panel" in e["message"] for e in r["errors"]))
+        self.assertFalse(any(e["path"] == "components[0].tabItems[0].child" for e in r["errors"]))
+
+    def test_cycle_through_marked_field(self):
+        comps = [
+            {"id": "root", "component": "Modal", "content": "b"},
+            {"id": "b", "component": "Card", "child": "root"},
+        ]
+        r = validate_a2ui_components(components=comps, catalog=REF_CATALOG)
+        self.assertEqual(len([e for e in r["errors"] if e["code"] == "child_cycle"]), 1)
+        self.assertTrue(any(e["code"] == "child_cycle" and ("b -> root -> b" in e["message"] or "root -> b -> root" in e["message"]) for e in r["errors"]))
+
+    def test_list_ref_array_per_index_path(self):
+        comps = [{"id": "root", "component": "Stack", "items": ["x", "ghost-1"]}, {"id": "x", "component": "Text"}]
+        r = validate_a2ui_components(components=comps, catalog=REF_CATALOG)
+        self.assertTrue(any(e["code"] == "unresolved_child" and e["path"] == "components[0].items[1]" and "ghost-1" in e["message"] for e in r["errors"]))
+
+    def test_marked_fields_ignored_without_catalog(self):
+        comps = [{"id": "root", "component": "Modal", "trigger": "ghost-btn", "content": "ghost-body"}]
+        r = validate_a2ui_components(components=comps)
+        self.assertNotIn("unresolved_child", codes(r))
+
+
 class TestBindings(unittest.TestCase):
     def test_absolute_binding_unresolved(self):
         r = validate_a2ui_components(components=valid_components(), data={}, catalog=CATALOG)
