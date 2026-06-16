@@ -26,6 +26,7 @@ Docs should explain how to verify:
 - Reasoning events.
 - Interrupt outcomes.
 - Custom and raw events.
+- Forward compatibility when new or unmapped event shapes need to remain available through raw representations.
 
 ### Cross-language conformance
 
@@ -34,9 +35,21 @@ The final page should describe how the .NET tests compare behavior against the e
 Docs should cover:
 
 - Which fixtures are shared.
-- Which direction each conformance test runs.
+- C# server with TypeScript client coverage.
+- TypeScript server with C# `AGUIChatClient` coverage.
 - How failures should be interpreted.
 - Whether test output can be used as evidence in Microsoft docs review.
+
+### Ownership boundary
+
+The .NET SDK tests should focus on mappings owned by the SDK:
+
+- `ChatMessage` and `ChatOptions` to AG-UI run input.
+- `ChatResponseUpdate` to AG-UI event streams.
+- AG-UI event streams back to `ChatResponseUpdate`.
+- Serialization, source-generated JSON, and raw event preservation.
+
+Microsoft Agent Framework-specific event mappings should be documented as consumer-side responsibilities. Agent Framework can rely on the SDK for the shared `Microsoft.Extensions.AI` and AG-UI bridge, but it should own tests for framework-specific workflow, step, and agent events.
 
 ### Sample coverage
 
@@ -47,9 +60,10 @@ The .NET docs should map each sample to the protocol feature it demonstrates.
 | Getting started | Lifecycle and text streaming |
 | Backend tools | Server-side function invocation |
 | Frontend tools | Client-declared tools and continuation turns |
-| Human-in-the-loop | Approval and interrupt outcomes |
+| Human-in-the-loop | Approval, user input, and interrupt outcomes |
 | State management | Snapshot and delta events |
-| Reasoning | Reasoning event brackets |
+| Raw events | Raw event preservation and escape hatches |
+| Thinking/reasoning | Reasoning event brackets |
 | Multimodal input | Image, audio, video, and document content |
 | Serialization | Stable event and message JSON |
 

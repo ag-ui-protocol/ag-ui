@@ -19,7 +19,7 @@ The AG-UI .NET SDK is designed for .NET applications that already use `Microsoft
 
 | Package | Reader goal | Draft SDK role |
 | --- | --- | --- |
-| `AGUI.Abstractions` | Share protocol types without choosing a transport | Defines events, messages, tools, run input, interrupts, capabilities, multimodal input, and the source-generated JSON serializer context. |
+| `AGUI.Abstractions` | Share protocol types without choosing a transport | Defines events, messages, tools, run input, interrupts, capabilities, multimodal input, raw event preservation, and the source-generated JSON serializer context. |
 | `AGUI.Client` | Consume an AG-UI endpoint from .NET | Wraps an AG-UI server as an `IChatClient` with HTTP/SSE transport and event-to-update conversion. |
 | `AGUI.Hosting.AspNetCore` | Host an AG-UI endpoint from ASP.NET Core | Converts inbound `RunAgentInput` into `ChatRequestContext` and outbound `ChatResponseUpdate` streams into AG-UI events. |
 
@@ -61,6 +61,8 @@ The first .NET docs set should stay focused on the two primary journeys: hosting
 
 - Audit terminology across the AG-UI docs so .NET pages use the same protocol names as the existing TypeScript and Python references.
 - Draft hosting and client journeys around `IChatClient`, `ChatMessage`, `ChatOptions`, `ChatResponseUpdate`, `AIContent`, and `AIFunction`.
+- Document forward compatibility expectations: mapped concepts become MEAI updates, while unmapped AG-UI concepts remain available through raw event representations.
+- Keep Microsoft Agent Framework-specific mappings separate from SDK conformance guidance; Agent Framework consumes the .NET SDK and owns its framework-specific event mapping tests.
 - Prepare cross-links from Microsoft Agent Framework and Microsoft Learn pages once the Microsoft docs owners confirm the preferred destination.
 - Create a final-package checklist for NuGet names, target frameworks, sample paths, and conformance commands.
 
