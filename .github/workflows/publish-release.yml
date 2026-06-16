@@ -110,6 +110,7 @@ on:
           - sdk-py-a2ui-toolkit
           - sdk-ts
           - sdk-ts-a2ui-toolkit
+          - create-ag-ui-app
       suffix:
         description: "Prerelease suffix (e.g. 'fix-user-issue'); blank = unix timestamp. Allowed: [a-zA-Z0-9._-]+. Ignored when mode=stable."
         required: false
