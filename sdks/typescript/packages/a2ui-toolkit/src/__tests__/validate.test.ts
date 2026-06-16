@@ -214,6 +214,98 @@ describe("validateA2UIComponents — child cycles", () => {
   );
 });
 
+// #1948 — ref-fields beyond child/children, derived from catalog `format` markers.
+// A property is a child reference only when its schema marks it `componentRef`
+// (single) or `componentRefList` (list); unmarked props stay data, so a data
+// string is never mistaken for a dangling id. `tabItems[].child` is found by
+// honouring markers on an array property's item sub-schema.
+const REF_CATALOG = {
+  components: {
+    Modal: {
+      type: "object",
+      properties: {
+        trigger: { type: "string", format: "componentRef" },
+        content: { type: "string", format: "componentRef" },
+        title: { type: "string" }, // unmarked data prop
+      },
+    },
+    Tabs: {
+      type: "object",
+      properties: {
+        tabItems: {
+          type: "array",
+          items: { type: "object", properties: { label: { type: "string" }, child: { type: "string", format: "componentRef" } } },
+        },
+      },
+    },
+    Stack: {
+      type: "object",
+      properties: { items: { type: "array", format: "componentRefList" } },
+    },
+    Text: { type: "object" },
+  },
+};
+
+describe("validateA2UIComponents — catalog-derived ref-fields (#1948)", () => {
+  it("flags a dangling Modal `trigger`/`content` ref via the catalog marker", () => {
+    const comps = [{ id: "root", component: "Modal", trigger: "ghost-btn", content: "ghost-body", title: "Hi" }];
+    const r = validateA2UIComponents({ components: comps, catalog: REF_CATALOG });
+    expect(r.errors.some((e) => e.code === "unresolved_child" && e.path === "components[0].trigger" && /ghost-btn/.test(e.message))).toBe(true);
+    expect(r.errors.some((e) => e.code === "unresolved_child" && e.path === "components[0].content" && /ghost-body/.test(e.message))).toBe(true);
+  });
+
+  it("does not treat an unmarked data string as a child reference", () => {
+    // `title` is a plain string prop; its value must never be flagged as a dangling id.
+    const comps = [
+      { id: "root", component: "Modal", trigger: "btn", content: "body", title: "not-an-id" },
+      { id: "btn", component: "Text" },
+      { id: "body", component: "Text" },
+    ];
+    const r = validateA2UIComponents({ components: comps, catalog: REF_CATALOG });
+    expect(r.errors.some((e) => e.code === "unresolved_child")).toBe(false);
+  });
+
+  it("flags a dangling nested `tabItems[k].child` with a per-index path", () => {
+    const comps = [
+      {
+        id: "root",
+        component: "Tabs",
+        tabItems: [
+          { label: "A", child: "panel-a" },
+          { label: "B", child: "ghost-panel" },
+        ],
+      },
+      { id: "panel-a", component: "Text" },
+    ];
+    const r = validateA2UIComponents({ components: comps, catalog: REF_CATALOG });
+    expect(r.errors.some((e) => e.code === "unresolved_child" && e.path === "components[0].tabItems[1].child" && /ghost-panel/.test(e.message))).toBe(true);
+    expect(r.errors.some((e) => e.path === "components[0].tabItems[0].child")).toBe(false);
+  });
+
+  it("detects a cycle routed through a catalog-marked field", () => {
+    // root(Modal).content -> b(Card).child -> root : undetectable without the marker.
+    const comps = [
+      { id: "root", component: "Modal", content: "b" },
+      { id: "b", component: "Card", child: "root" },
+    ];
+    const r = validateA2UIComponents({ components: comps, catalog: REF_CATALOG });
+    expect(r.errors.filter((e) => e.code === "child_cycle").length).toBe(1);
+    expect(r.errors.some((e) => e.code === "child_cycle" && /b -> root -> b|root -> b -> root/.test(e.message))).toBe(true);
+  });
+
+  it("emits per-index paths for list-ref array refs", () => {
+    const comps = [{ id: "root", component: "Stack", items: ["x", "ghost-1"] }, { id: "x", component: "Text" }];
+    const r = validateA2UIComponents({ components: comps, catalog: REF_CATALOG });
+    expect(r.errors.some((e) => e.code === "unresolved_child" && e.path === "components[0].items[1]" && /ghost-1/.test(e.message))).toBe(true);
+  });
+
+  it("ignores marked ref-fields when no catalog is supplied (structural child/children only)", () => {
+    const comps = [{ id: "root", component: "Modal", trigger: "ghost-btn", content: "ghost-body" }];
+    const r = validateA2UIComponents({ components: comps });
+    expect(r.errors.some((e) => e.code === "unresolved_child")).toBe(false);
+  });
+});
+
 describe("validateA2UIComponents — data bindings", () => {
   it("flags an absolute binding path absent from the data model", () => {
     const r = validateA2UIComponents({ components: validComponents(), data: {}, catalog: CATALOG });

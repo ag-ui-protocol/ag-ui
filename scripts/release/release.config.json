@@ -9,7 +9,13 @@
         { "name": "@ag-ui/core", "path": "sdks/typescript/packages/core", "ecosystem": "typescript" },
         { "name": "@ag-ui/client", "path": "sdks/typescript/packages/client", "ecosystem": "typescript" },
         { "name": "@ag-ui/encoder", "path": "sdks/typescript/packages/encoder", "ecosystem": "typescript" },
-        { "name": "@ag-ui/proto", "path": "sdks/typescript/packages/proto", "ecosystem": "typescript" },
+        { "name": "@ag-ui/proto", "path": "sdks/typescript/packages/proto", "ecosystem": "typescript" }
+      ]
+    },
+    "create-ag-ui-app": {
+      "description": "create-ag-ui-app CLI (independently versioned)",
+      "sharedVersion": false,
+      "packages": [
         { "name": "create-ag-ui-app", "path": "sdks/typescript/packages/cli", "ecosystem": "typescript" }
       ]
     },
