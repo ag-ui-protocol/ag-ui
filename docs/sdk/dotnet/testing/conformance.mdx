@@ -1,75 +1,131 @@
 ---
 title: "Conformance and Verification"
-description: "Draft the .NET SDK verification story for AG-UI event parity"
+description: "Verify AG-UI .NET SDK protocol parity and cross-language behavior"
 ---
 
 <Warning>
-  This is a draft outline for the in-flight .NET SDK. Replace outline-level guidance with concrete commands after PR #1963 settles the final test and sample layout.
+  This page follows the current .NET SDK draft in PR #1963. Recheck test project names and commands before publishing final release docs.
 </Warning>
 
-The .NET SDK docs should include a short verification page so contributors and partners can prove that the .NET implementation preserves AG-UI protocol behavior across server and client boundaries.
+The .NET SDK includes unit, integration, sample replay, and cross-language tests. Use these tests to verify that .NET preserves AG-UI protocol behavior and interoperates with the TypeScript ecosystem.
 
-## Reader journey
+## Run the .NET test suite
 
-Start with the .NET SDK source or a published preview package. End with confidence that .NET can round-trip AG-UI events and interoperate with the existing TypeScript SDK behavior.
+From the SDK root:
 
-## Verification areas
+```bash
+cd sdks/dotnet
+dotnet test
+```
 
-### Protocol event parity
+For focused runs, use the project-specific commands:
 
-Docs should explain how to verify:
+```bash
+dotnet test tests/AGUI.Abstractions.UnitTests/
+dotnet test tests/AGUI.Client.UnitTests/
+dotnet test tests/AGUI.Hosting.AspNetCore.UnitTests/
+dotnet test tests/AGUI.Hosting.AspNetCore.IntegrationTests/
+dotnet test tests/AGUI.CrossLanguage.IntegrationTests/
+```
 
-- Lifecycle events.
+The test projects cover different layers of the bridge.
+
+| Test project | What it verifies |
+| --- | --- |
+| `AGUI.Abstractions.UnitTests` | Event serialization, compatibility fixtures, forward compatibility, and protocol type behavior. |
+| `AGUI.Client.UnitTests` | `AGUIChatClient`, transport behavior, client builders, protocol rules, and event-to-update conversion. |
+| `AGUI.Hosting.AspNetCore.UnitTests` | `ChatResponseUpdate` to AG-UI event conversion, tool invocation, interrupts, and stream behavior. |
+| `AGUI.Hosting.AspNetCore.IntegrationTests` | Full ASP.NET Core pipeline: POST `RunAgentInput`, stream SSE events, and consume the result through raw events and `AGUIChatClient`. |
+| `AGUI.CrossLanguage.IntegrationTests` | C# client behavior against TypeScript server scenarios. |
+
+## Verify protocol event parity
+
+Protocol parity starts in `AGUI.Abstractions`. The current PR keeps .NET types aligned with the TypeScript protocol by using compatibility fixtures for event families such as:
+
+- Run lifecycle events.
 - Text message events.
 - Tool call and tool result events.
 - State snapshot and state delta events.
+- Activity events.
 - Reasoning events.
-- Interrupt outcomes.
 - Custom and raw events.
-- Forward compatibility when new or unmapped event shapes need to remain available through raw representations.
+- Forward-compatible unknown event shapes.
 
-### Cross-language conformance
+When a protocol type changes, update the .NET type, update `AGUIJsonSerializerContext`, and add or update the matching compatibility fixture.
 
-The final page should describe how the .NET tests compare behavior against the existing TypeScript SDK.
+## Verify hosting conversion
 
-Docs should cover:
+Hosting conversion is responsible for turning an MEAI stream into an AG-UI event stream.
 
-- Which fixtures are shared.
-- C# server with TypeScript client coverage.
-- TypeScript server with C# `AGUIChatClient` coverage.
-- How failures should be interpreted.
-- Whether test output can be used as evidence in Microsoft docs review.
+The hosting tests prove that:
 
-### Ownership boundary
+- `RunStartedEvent` and `RunFinishedEvent` are emitted when the upstream stream does not provide them.
+- Text updates open, stream, and close AG-UI text messages correctly.
+- `FunctionCallContent` emits tool call start, args, and end events.
+- `FunctionResultContent` emits tool result events.
+- `ToolApprovalRequestContent` can become an AG-UI interrupt outcome.
+- Raw `BaseEvent` values carried on `ChatResponseUpdate.RawRepresentation` pass through without being remapped.
+- `AGUIStreamOptions` mappers can emit state, custom, and framework-specific events.
 
-The .NET SDK tests should focus on mappings owned by the SDK:
+The integration tests use recorded and verified outputs so changes in conversion behavior are visible in review.
 
-- `ChatMessage` and `ChatOptions` to AG-UI run input.
+## Verify client conversion
+
+Client conversion is responsible for turning .NET messages into `RunAgentInput` and AG-UI events back into MEAI updates.
+
+The client tests prove that:
+
+- `ChatMessage` history becomes AG-UI messages.
+- `ChatOptions.Tools` becomes AG-UI tools.
+- `ChatOptions.ConversationId` becomes the AG-UI thread ID without causing MEAI middleware to drop message history.
+- Server-side tool calls are marked informational so the .NET client does not execute them locally.
+- Client-side tools flow through function invocation, approval, resume, and continuation turns.
+- Raw AG-UI events remain available through `ChatResponseUpdate.RawRepresentation`.
+
+Use `IAGUITransport` for focused tests that need to capture outbound `RunAgentInput` or replay a deterministic event stream.
+
+## Verify cross-language behavior
+
+The cross-language goal is end-to-end compatibility, not only JSON shape compatibility.
+
+Current PR coverage is split into two directions:
+
+| Direction | Purpose |
+| --- | --- |
+| C# server + TypeScript client | Proves an ASP.NET Core AG-UI endpoint can drive the existing TypeScript client and Dojo-style UI scenarios. |
+| TypeScript server + C# client | Proves `AGUIChatClient` can consume real TypeScript server output and produce the expected `ChatResponseUpdate` stream. |
+
+The cross-language design uses LLMock and existing Dojo-style fixtures so tests can compare behavior without calling a live LLM. The important outcome is that clients see the same conversation behavior even when chunking, optional fields, or field ordering differ by implementation.
+
+## Keep the ownership boundary clear
+
+The AG-UI .NET SDK owns these mappings:
+
+- `RunAgentInput` to `ChatMessage` and `ChatOptions`.
 - `ChatResponseUpdate` to AG-UI event streams.
-- AG-UI event streams back to `ChatResponseUpdate`.
-- Serialization, source-generated JSON, and raw event preservation.
+- AG-UI event streams to `ChatResponseUpdate`.
+- JSON serialization and source-generated serializer metadata.
+- Raw event preservation and forward compatibility.
+- Client tool approval, resume, and continuation plumbing.
 
-Microsoft Agent Framework-specific event mappings should be documented as consumer-side responsibilities. Agent Framework can rely on the SDK for the shared `Microsoft.Extensions.AI` and AG-UI bridge, but it should own tests for framework-specific workflow, step, and agent events.
+Microsoft Agent Framework owns tests for Agent Framework-specific workflow, step, and agent events. Agent Framework can consume this SDK for the shared MEAI and AG-UI bridge, then add framework-specific mappings on top through `AGUIStreamOptions`, raw `BaseEvent` values, or its own adapter layer.
 
-### Sample coverage
+## Sample replay coverage
 
-The .NET docs should map each sample to the protocol feature it demonstrates.
+The current PR includes getting-started samples and matching integration coverage for the major AG-UI feature areas.
 
 | Sample area | Protocol feature to verify |
 | --- | --- |
-| Getting started | Lifecycle and text streaming |
-| Backend tools | Server-side function invocation |
-| Frontend tools | Client-declared tools and continuation turns |
-| Human-in-the-loop | Approval, user input, and interrupt outcomes |
-| State management | Snapshot and delta events |
-| Raw events | Raw event preservation and escape hatches |
-| Thinking/reasoning | Reasoning event brackets |
-| Multimodal input | Image, audio, video, and document content |
-| Serialization | Stable event and message JSON |
+| `Step01_GettingStarted` | Lifecycle and text streaming. |
+| `Step02_BackendTools` | Server-side function invocation and tool results. |
+| `Step03_FrontendTools` | Client-declared tools and continuation turns. |
+| `Step04_HumanInLoop` | Approval interrupts and resume. |
+| `Step05_StateManagement` | State snapshots and structured state output. |
+| `Step06_RawEvents` | Raw event preservation and escape hatches. |
+| `Step07_ThinkingEvents` | Reasoning event streams. |
+| `Step08_MultimodalMessages` | Image and multimodal input content. |
+| `Step09_InterruptsApproval` | Tool approval interrupts. |
+| `Step10_InterruptsUserInput` | User input interrupts. |
+| `Step11_Serialization` | Stable JSON serialization behavior. |
 
-## Publishing checklist
-
-- Add exact repository paths for samples and tests.
-- Add exact test commands for local verification and CI.
-- Link failures back to the event or concept page that explains the protocol behavior.
-- Confirm whether Microsoft Agent Framework examples rely on the same conformance evidence.
+When adding a new protocol feature, add coverage at the lowest layer that owns the behavior, then add an integration or cross-language test if the feature changes end-to-end client/server behavior.

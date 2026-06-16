@@ -1,34 +1,38 @@
 ---
 title: ".NET SDK Overview"
-description: "Plan AG-UI documentation for Microsoft.Extensions.AI-based .NET agents"
+description: "Use AG-UI with Microsoft.Extensions.AI-based .NET agents"
 ---
 
 <Warning>
-  The AG-UI .NET SDK is being prepared in draft PR #1963. This page captures the documentation shape that can be reviewed now; confirm package names, install commands, and final examples against the merged SDK before publishing.
+  The AG-UI .NET SDK is being prepared in draft PR #1963. These docs follow the current PR shape and should be rechecked against the merged SDK before this page is published as final release guidance.
 </Warning>
 
-The AG-UI .NET SDK is designed for .NET applications that already use `Microsoft.Extensions.AI`. It exposes AG-UI endpoints as ordinary `IChatClient` instances and adapts existing `IChatClient` implementations into AG-UI-compatible HTTP and Server-Sent Events endpoints.
+The AG-UI .NET SDK connects the AG-UI protocol to `Microsoft.Extensions.AI`. On the server, it adapts an AG-UI `RunAgentInput` into `ChatMessage` and `ChatOptions`, calls any `IChatClient`, and streams the response back as AG-UI events. On the client, it wraps an AG-UI endpoint as an `IChatClient`, so .NET applications can consume an AG-UI agent through the standard MEAI middleware pipeline.
 
-## Who this serves
+## Packages
 
-- .NET application developers who want to expose an existing `IChatClient` as an AG-UI agent endpoint.
-- .NET client developers who want to consume an AG-UI endpoint through the `Microsoft.Extensions.AI` middleware stack.
-- Microsoft Agent Framework builders who need to validate that AG-UI preserves messages, tools, state, interrupts, reasoning, and multimodal input across the .NET boundary.
+The current SDK PR adds three packages under `sdks/dotnet/src`.
 
-## Planned package map
-
-| Package | Reader goal | Draft SDK role |
+| Package | Use it when you want to | What it contains |
 | --- | --- | --- |
-| `AGUI.Abstractions` | Share protocol types without choosing a transport | Defines events, messages, tools, run input, interrupts, capabilities, multimodal input, raw event preservation, and the source-generated JSON serializer context. |
-| `AGUI.Client` | Consume an AG-UI endpoint from .NET | Wraps an AG-UI server as an `IChatClient` with HTTP/SSE transport and event-to-update conversion. |
-| `AGUI.Hosting.AspNetCore` | Host an AG-UI endpoint from ASP.NET Core | Converts inbound `RunAgentInput` into `ChatRequestContext` and outbound `ChatResponseUpdate` streams into AG-UI events. |
+| `AGUI.Abstractions` | Share AG-UI protocol types across clients, servers, tests, and framework adapters. | Events, messages, tools, capabilities, interrupts, `RunAgentInput`, raw event preservation, and `AGUIJsonSerializerContext`. |
+| `AGUI.Hosting.AspNetCore` | Expose an ASP.NET Core endpoint that speaks AG-UI. | `AddAGUI()`, `ToChatRequestContext(...)`, `AsAGUIEventStreamAsync(...)`, `AGUIStreamOptions`, and hosting conversion helpers. |
+| `AGUI.Client` | Call an AG-UI endpoint from .NET. | `AGUIChatClient`, `IAGUITransport`, and the HTTP/SSE transport that converts AG-UI events into `ChatResponseUpdate` values. |
 
-## Documentation set
+When preview packages are published, the expected install shape is:
 
-The first .NET docs set should stay focused on the two primary journeys: hosting an agent and consuming an agent.
+```bash
+dotnet add package AGUI.Abstractions
+dotnet add package AGUI.Hosting.AspNetCore
+dotnet add package AGUI.Client
+```
+
+Confirm package IDs and versions against the final NuGet release before publishing the install commands.
+
+## Choose a path
 
 <Card
-  title="Hosting AG-UI from ASP.NET Core"
+  title="Host AG-UI from ASP.NET Core"
   icon="server"
   href="/sdk/dotnet/hosting/overview"
   color="#3B82F6"
@@ -38,7 +42,7 @@ The first .NET docs set should stay focused on the two primary journeys: hosting
 </Card>
 
 <Card
-  title="Consuming AG-UI as IChatClient"
+  title="Consume AG-UI as IChatClient"
   icon="plug"
   href="/sdk/dotnet/client/overview"
   color="#3B82F6"
@@ -48,29 +52,58 @@ The first .NET docs set should stay focused on the two primary journeys: hosting
 </Card>
 
 <Card
-  title="Conformance and verification"
+  title="Verify conformance"
   icon="check"
   href="/sdk/dotnet/testing/conformance"
   color="#3B82F6"
   iconType="solid"
 >
-  Use the SDK test harness to verify event parity and cross-language protocol behavior.
+  Run the .NET test suites that protect protocol serialization, hosting conversion, and cross-language behavior.
 </Card>
 
-## Work that can start before the SDK merges
+## How the bridge works
 
-- Audit terminology across the AG-UI docs so .NET pages use the same protocol names as the existing TypeScript and Python references.
-- Draft hosting and client journeys around `IChatClient`, `ChatMessage`, `ChatOptions`, `ChatResponseUpdate`, `AIContent`, and `AIFunction`.
-- Document forward compatibility expectations: mapped concepts become MEAI updates, while unmapped AG-UI concepts remain available through raw event representations.
-- Keep Microsoft Agent Framework-specific mappings separate from SDK conformance guidance; Agent Framework consumes the .NET SDK and owns its framework-specific event mapping tests.
-- Prepare cross-links from Microsoft Agent Framework and Microsoft Learn pages once the Microsoft docs owners confirm the preferred destination.
-- Create a final-package checklist for NuGet names, target frameworks, sample paths, and conformance commands.
+AG-UI and MEAI represent the same conversation at different layers.
 
-## Publishing checklist
+On the hosting side:
 
-Before this page is linked from production docs, verify:
+1. An AG-UI client posts a `RunAgentInput`.
+2. `ToChatRequestContext(...)` converts AG-UI messages and tools into `ChatMessage` and `ChatOptions`.
+3. Your `IChatClient` streams `ChatResponseUpdate` values.
+4. `AsAGUIEventStreamAsync(...)` converts those updates into AG-UI lifecycle, message, tool, state, reasoning, raw, custom, and interrupt events.
+5. ASP.NET Core writes the events as Server-Sent Events.
 
-- The .NET SDK PR has merged or has a committed preview package plan.
-- NuGet package IDs, target frameworks, namespaces, and extension method names match the merged code.
-- Every code sample compiles against the published package versions.
-- The Microsoft Learn AG-UI integration page links to the final hosting and client pages.
+On the client side:
+
+1. Your .NET app creates an `AGUIChatClient`.
+2. The client builds a `RunAgentInput` from `ChatMessage`, `ChatOptions`, tools, state, and resume data.
+3. The HTTP transport posts to the AG-UI endpoint and reads the SSE event stream.
+4. The event converter produces `ChatResponseUpdate` values for your .NET app and MEAI middleware.
+
+## Compatibility model
+
+The SDK maps common protocol concepts into MEAI-native shapes:
+
+- Text events become streamed text content.
+- Tool calls and tool results become `FunctionCallContent` and `FunctionResultContent`.
+- Client tools flow through MEAI function invocation and AG-UI interrupt/resume semantics.
+- State, reasoning, custom, and framework-specific content can be emitted through `AGUIStreamOptions`.
+- AG-UI events that do not map cleanly to MEAI stay available through raw representations instead of being discarded.
+
+Microsoft Agent Framework consumes this bridge. The shared SDK docs cover the AG-UI and MEAI mapping layer. Agent Framework-specific workflow, step, and agent events belong in Agent Framework docs and tests.
+
+## Current source paths
+
+The SDK PR currently places the implementation and samples here:
+
+| Area | Path |
+| --- | --- |
+| Packages | `sdks/dotnet/src/AGUI.Abstractions`, `sdks/dotnet/src/AGUI.Client`, `sdks/dotnet/src/AGUI.Hosting.AspNetCore` |
+| Getting started samples | `sdks/dotnet/samples/GettingStarted` |
+| Dojo-compatible server/client samples | `sdks/dotnet/samples/AGUIClientServer` |
+| Copilot SDK sample | `sdks/dotnet/samples/AGUIWithCopilotSdk` |
+| MCP tools sample | `sdks/dotnet/samples/AGUIWithMcpTools` |
+| Unit and integration tests | `sdks/dotnet/tests` |
+| Cross-language testing design | `sdks/dotnet/cross-language-testing.md` |
+
+Before making these docs ready for merge, re-run this page against the final PR diff and update sample paths, package names, target frameworks, and commands.

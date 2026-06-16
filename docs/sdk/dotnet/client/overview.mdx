@@ -1,67 +1,200 @@
 ---
 title: "Consuming AG-UI as IChatClient"
-description: "Draft the .NET client journey for consuming AG-UI endpoints through Microsoft.Extensions.AI"
+description: "Call AG-UI endpoints through Microsoft.Extensions.AI"
 ---
 
 <Warning>
-  This is a draft outline for the in-flight .NET SDK. Replace outline-level guidance with runnable code after PR #1963 settles the final API surface.
+  This page follows the current .NET SDK draft in PR #1963. Recheck API names, sample paths, and package versions before publishing final release docs.
 </Warning>
 
-You have an AG-UI endpoint and want to call it from .NET code. The client package should make that endpoint look like a standard `IChatClient`, so existing `Microsoft.Extensions.AI` middleware and application patterns continue to work.
+You have an AG-UI endpoint and want to call it from .NET. `AGUIChatClient` wraps the endpoint as an `IChatClient`, so your app can stream updates, register tools, and use MEAI middleware without writing protocol-level HTTP or SSE code.
 
-## Reader journey
+## Install the client packages
 
-Start with a remote AG-UI endpoint URL. End with an `AGUIChatClient` that streams `ChatResponseUpdate` values and composes with MEAI middleware for function invocation, logging, telemetry, retry, caching, and structured output.
+Once preview packages are published, a .NET client references:
 
-## Core concepts to explain
+```bash
+dotnet add package AGUI.Abstractions
+dotnet add package AGUI.Client
+```
 
-### Create the client
+Until NuGet packages are published, the samples in Javier's PR use project references to `sdks/dotnet/src/AGUI.Abstractions` and `sdks/dotnet/src/AGUI.Client`.
 
-Docs should show the final constructor or builder shape for connecting an `HttpClient` to an AG-UI base URL.
+## Create an AGUIChatClient
 
-Final examples need to verify:
+Construct the client with an `HttpClient` and the AG-UI endpoint URL.
 
-- Required endpoint URL shape.
-- Authentication and header configuration.
-- Cancellation behavior.
-- How connection errors surface through MEAI abstractions.
+```csharp
+using AGUI.Client;
+using Microsoft.Extensions.AI;
 
-### Send messages and stream updates
+using var httpClient = new HttpClient();
 
-The client should accept ordinary `ChatMessage` values and return ordinary `ChatResponseUpdate` values.
+IChatClient client = new AGUIChatClient(
+    httpClient,
+    "http://localhost:5018/agui");
+```
 
-Docs should cover:
+`AGUIChatClient` implements `IChatClient`, so calling code can treat it like any other MEAI chat client.
 
-- Text content streaming.
-- Tool call content and tool result content.
-- Error content.
-- Raw representations for AG-UI events that do not map cleanly to MEAI content.
-- How to accumulate streamed updates into a multi-turn conversation.
+## Stream a response
 
-### Keep MEAI middleware composable
+Pass ordinary MEAI messages to `GetStreamingResponseAsync(...)`. The client builds a `RunAgentInput`, posts it to the AG-UI endpoint, reads the SSE stream, and yields `ChatResponseUpdate` values.
 
-Because `AGUIChatClient` is an `IChatClient`, readers should be able to use the same middleware they use with direct model clients.
+```csharp
+var messages = new List<ChatMessage>
+{
+    new(ChatRole.User, "Write a haiku about protocol bridges.")
+};
 
-Docs should cover:
+await foreach (var update in client.GetStreamingResponseAsync(messages))
+{
+    if (!string.IsNullOrEmpty(update.Text))
+    {
+        Console.Write(update.Text);
+    }
+}
+```
 
-- Local tool execution through function invocation middleware.
-- Telemetry and logging around a remote AG-UI call.
-- Retry and caching boundaries for streaming calls.
-- Structured output considerations when the server emits protocol events.
+When the server emits lifecycle events, message chunks, tool calls, tool results, errors, or raw events, the client maps them into the closest MEAI shape. Events that do not map cleanly remain available through raw representations.
 
-## Example sequence to finalize
+## Register client-side tools
 
-The final page should include one complete console sample that:
+Add MEAI tools through `ChatOptions.Tools`. The client converts them to AG-UI tools in `RunAgentInput.Tools`, and the hosting side can route them through approval and continuation semantics.
 
-1. Creates an `HttpClient`.
-2. Creates an `AGUIChatClient`.
-3. Sends a user `ChatMessage`.
-4. Streams response updates.
-5. Handles text, tool call, tool result, and error content.
-6. Preserves messages for a follow-up turn.
+```csharp
+var changeBackground = AIFunctionFactory.Create(
+    (string background) =>
+    {
+        Console.WriteLine($"Changing background to {background}");
+        return "Background changed successfully.";
+    },
+    name: "change_background",
+    description: "Change the chat background color. Use a CSS gradient or color.");
 
-## Cross-links to add
+var messages = new List<ChatMessage>
+{
+    new(ChatRole.User, "Change the background to a sunset gradient.")
+};
 
-- Link to the hosting page when readers need a local test server.
-- Link to the AG-UI events concept page when describing how protocol events become MEAI updates.
-- Link from Microsoft Learn if MAF docs show AG-UI as a client-side or bridge integration.
+var options = new ChatOptions
+{
+    Tools = [changeBackground]
+};
+
+await foreach (var update in client.GetStreamingResponseAsync(messages, options))
+{
+    if (!string.IsNullOrEmpty(update.Text))
+    {
+        Console.Write(update.Text);
+    }
+}
+```
+
+Server-owned tool calls are marked as informational so local MEAI function invocation does not execute them as client tools.
+
+## Preserve a conversation
+
+AG-UI expects the full message history on every turn. `AGUIChatClient` handles AG-UI thread IDs through MEAI conversation metadata, but your application should still retain the messages it wants the remote agent to see.
+
+```csharp
+var messages = new List<ChatMessage>
+{
+    new(ChatRole.User, "My name is Ada.")
+};
+
+var first = await client.GetResponseAsync(messages);
+messages.AddMessages(first);
+
+messages.Add(new ChatMessage(ChatRole.User, "What is my name?"));
+
+var second = await client.GetResponseAsync(messages);
+Console.WriteLine(second.Text);
+```
+
+If you set `ChatOptions.ConversationId`, the client sends it as the AG-UI thread ID while still sending the full message list.
+
+## Provide a complete RunAgentInput
+
+Most apps can let `AGUIChatClient` build `RunAgentInput` from messages and options. If you need to supply AG-UI-specific fields such as state, resume data, or a fixed run ID, provide a `RunAgentInput` through `ChatOptions.RawRepresentationFactory`.
+
+```csharp
+using AGUI.Abstractions;
+
+var options = new ChatOptions
+{
+    RawRepresentationFactory = _ => new RunAgentInput
+    {
+        ThreadId = "thread-123",
+        RunId = "run-456",
+        State = JsonSerializer.SerializeToElement(new
+        {
+            recipe = new
+            {
+                title = "Pasta",
+                skill_level = "beginner"
+            }
+        })
+    }
+};
+
+await foreach (var update in client.GetStreamingResponseAsync(messages, options))
+{
+    Console.Write(update.Text);
+}
+```
+
+The client fills in missing messages and tools from the MEAI inputs unless the supplied `RunAgentInput` already provides them.
+
+## Use a custom transport
+
+For tests or non-HTTP transports, implement `IAGUITransport` and pass it to `AGUIChatClient`.
+
+```csharp
+using AGUI.Abstractions;
+using AGUI.Client;
+
+public sealed class RecordingTransport : IAGUITransport
+{
+    public List<RunAgentInput> Inputs { get; } = [];
+
+    public async IAsyncEnumerable<BaseEvent> SendAsync(
+        RunAgentInput input,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        Inputs.Add(input);
+
+        yield return new RunStartedEvent
+        {
+            ThreadId = input.ThreadId,
+            RunId = input.RunId
+        };
+        yield return new TextMessageStartEvent
+        {
+            MessageId = "message-1",
+            Role = AGUIRoles.Assistant
+        };
+        yield return new TextMessageContentEvent
+        {
+            MessageId = "message-1",
+            Delta = "Hello from a test transport."
+        };
+        yield return new TextMessageEndEvent
+        {
+            MessageId = "message-1"
+        };
+        yield return new RunFinishedEvent
+        {
+            ThreadId = input.ThreadId,
+            RunId = input.RunId,
+            Outcome = new RunFinishedSuccessOutcome()
+        };
+
+        await Task.CompletedTask;
+    }
+}
+
+IChatClient client = new AGUIChatClient(new RecordingTransport());
+```
+
+Use this path when you want to assert the exact `RunAgentInput` emitted by your application or replay a known AG-UI event stream without starting a server.
