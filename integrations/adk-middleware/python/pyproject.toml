@@ -1,8 +1,8 @@
 [project]
 name = "ag_ui_adk"
 description = "ADK Middleware for AG-UI Protocol"
-license-files = ["LICENSE"]
 version = "0.6.5"
+license-files = ["LICENSE"]
 readme = "README.md"
 authors = [
     { name = "Mark Fogle", email = "mark@contextable.com" }
