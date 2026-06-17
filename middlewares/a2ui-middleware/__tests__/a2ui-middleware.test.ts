@@ -13,6 +13,7 @@ import { Observable, firstValueFrom, toArray } from "rxjs";
 import {
   A2UIMiddleware,
   A2UIActivityType,
+  A2UI_SCHEMA_CONTEXT_DESCRIPTION,
   RENDER_A2UI_TOOL_NAME,
   LOG_A2UI_EVENT_TOOL_NAME,
   extractSurfaceIds,
@@ -512,6 +513,98 @@ describe("A2UIMiddleware", () => {
             expect(op.createSurface.catalogId).not.toBe("");
             expect(typeof op.createSurface.catalogId).toBe("string");
             expect((op.createSurface.catalogId as string).length).toBeGreaterThan(0);
+          }
+        }
+      }
+    });
+
+    it("falls back to the frontend-registered catalog id when no defaultCatalogId is configured", async () => {
+      // Zero-config path: the host sets NO defaultCatalogId. The renderer ships
+      // the catalog it registered as the A2UI schema context entry
+      // ({ catalogId, components }). The middleware must stamp createSurface with
+      // THAT id — not "basic" — so the surface resolves against the catalog the
+      // frontend actually has.
+      const middleware = new A2UIMiddleware({});
+      const toolCallId = "tc-fe-catalog";
+
+      const fullArgs = JSON.stringify({
+        surfaceId: "s-fe",
+        components: [
+          { id: "root", component: "Row", children: { componentId: "card", path: "/items" } },
+          { id: "card", component: "HotelCard", name: { path: "name" } },
+        ],
+        data: { items: [{ name: "A" }] },
+      });
+
+      const mockAgent = new MockAgent([
+        { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
+        { type: EventType.TOOL_CALL_START, toolCallId, toolCallName: "render_a2ui" },
+        { type: EventType.TOOL_CALL_ARGS, toolCallId, delta: fullArgs } as BaseEvent,
+        { type: EventType.TOOL_CALL_END, toolCallId },
+        { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
+      ]);
+
+      const input = createRunAgentInput({
+        context: [
+          {
+            description: A2UI_SCHEMA_CONTEXT_DESCRIPTION,
+            value: JSON.stringify({ catalogId: "declarative-gen-ui-catalog", components: {} }),
+          },
+        ],
+      });
+
+      const events = await collectEvents(middleware.run(input, mockAgent));
+      const snapshots = events.filter(isPaint);
+      expect(snapshots.length).toBeGreaterThan(0);
+      for (const snap of snapshots) {
+        const ops = (snap as any).content.a2ui_operations as any[];
+        for (const op of ops) {
+          if (op.createSurface) {
+            expect(op.createSurface.catalogId).toBe("declarative-gen-ui-catalog");
+          }
+        }
+      }
+    });
+
+    it("configured defaultCatalogId wins over the frontend-registered catalog id", async () => {
+      // Explicit host override must take precedence over the frontend-shipped id.
+      const middleware = new A2UIMiddleware({ defaultCatalogId: "server://override" });
+      const toolCallId = "tc-config-wins";
+
+      const fullArgs = JSON.stringify({
+        surfaceId: "s-override",
+        components: [
+          { id: "root", component: "Row", children: { componentId: "card", path: "/items" } },
+          { id: "card", component: "HotelCard", name: { path: "name" } },
+        ],
+        data: { items: [{ name: "A" }] },
+      });
+
+      const mockAgent = new MockAgent([
+        { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
+        { type: EventType.TOOL_CALL_START, toolCallId, toolCallName: "render_a2ui" },
+        { type: EventType.TOOL_CALL_ARGS, toolCallId, delta: fullArgs } as BaseEvent,
+        { type: EventType.TOOL_CALL_END, toolCallId },
+        { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
+      ]);
+
+      const input = createRunAgentInput({
+        context: [
+          {
+            description: A2UI_SCHEMA_CONTEXT_DESCRIPTION,
+            value: JSON.stringify({ catalogId: "declarative-gen-ui-catalog", components: {} }),
+          },
+        ],
+      });
+
+      const events = await collectEvents(middleware.run(input, mockAgent));
+      const snapshots = events.filter(isPaint);
+      expect(snapshots.length).toBeGreaterThan(0);
+      for (const snap of snapshots) {
+        const ops = (snap as any).content.a2ui_operations as any[];
+        for (const op of ops) {
+          if (op.createSurface) {
+            expect(op.createSurface.catalogId).toBe("server://override");
           }
         }
       }

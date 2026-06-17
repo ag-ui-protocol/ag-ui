@@ -45,6 +45,7 @@ on:
           - sdk-py-a2ui-toolkit
           - sdk-ts
           - sdk-ts-a2ui-toolkit
+          - create-ag-ui-app
       bump:
         description: "Version bump level"
         required: true

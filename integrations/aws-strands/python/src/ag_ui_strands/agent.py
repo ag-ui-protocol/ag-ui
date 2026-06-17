@@ -332,6 +332,14 @@ class StrandsAgent:
         # would clobber the other.
         self._thread_init_lock = asyncio.Lock()
 
+    def _will_emit_tool_snapshot(self, behavior: Any, emit_snapshots: bool) -> bool:
+        # ``emit_snapshots`` is the per-run gate (config flag AND not a
+        # delta-only payload); callers pass it so snapshot emission stays
+        # suppressed on delta payloads that would otherwise wipe prior turns.
+        return emit_snapshots and not (
+            behavior and behavior.skip_messages_snapshot
+        )
+
     async def run(self, input_data: RunAgentInput) -> AsyncIterator[Any]:
         """Run the Strands agent and yield AG-UI events."""
 
@@ -520,12 +528,32 @@ class StrandsAgent:
         )
 
         try:
+            # Detect delta-only payloads (where the client sent fewer
+            # messages than the session has — e.g. only the trailing
+            # tool result, or only the new user message in a continued
+            # chat). CopilotKit V2's MESSAGES_SNAPSHOT handler treats
+            # the snapshot as authoritative: any existing client message
+            # whose id is not in the snapshot gets dropped. Emitting a
+            # partial snapshot on a delta payload would wipe prior turns
+            # from the UI. The frontend already has the full history with
+            # the original ids, so we suppress snapshot emission for this
+            # run and let TEXT_MESSAGE_*/TOOL_CALL_* streaming events
+            # reconcile naturally.
+            session_msgs = getattr(strands_agent, "messages", None) or []
+            is_delta_payload = (
+                bool(session_msgs)
+                and len(session_msgs) > len(input_data.messages or [])
+            )
+            emit_snapshots = (
+                self.config.emit_messages_snapshot and not is_delta_payload
+            )
+
             # Seed the running ``MessagesSnapshotEvent`` payload from the
             # full conversation history sent by the client. Each emitted
             # snapshot then carries prior turns + whatever this turn adds.
             snapshot_messages: List[Any] = (
                 _build_snapshot_messages(input_data.messages)
-                if self.config.emit_messages_snapshot
+                if emit_snapshots
                 else []
             )
 
@@ -544,7 +572,7 @@ class StrandsAgent:
             # after ``RunStartedEvent`` / ``StateSnapshotEvent`` so the
             # frontend can render the seeded thread before any new content
             # streams in.
-            if self.config.emit_messages_snapshot and snapshot_messages:
+            if emit_snapshots and snapshot_messages:
                 yield MessagesSnapshotEvent(
                     type=EventType.MESSAGES_SNAPSHOT,
                     messages=list(snapshot_messages),
@@ -632,11 +660,17 @@ class StrandsAgent:
 
                 # Handle tool messages (must follow assistant message with tool_calls)
                 elif msg.role == "tool":
-                    # Skip tool messages that don't have a preceding assistant message with tool_calls
+                    # Skip tool messages that don't have a preceding assistant message
+                    # with tool_calls — UNLESS this is a pending frontend tool result
+                    # (delta-only payloads only contain the tool result, so the
+                    # assistant message is absent but the result is still valid).
+                    is_pending_frontend_result = (
+                        msg.tool_call_id in pending_tool_result_ids
+                    )
                     if (
                         not last_msg_had_tool_calls
                         or msg.tool_call_id not in expected_tool_call_ids
-                    ):
+                    ) and not is_pending_frontend_result:
                         logger.debug(
                             f"Skipping orphaned tool message: tool_call_id={msg.tool_call_id}, last_msg_had_tool_calls={last_msg_had_tool_calls}, valid_ids={expected_tool_call_ids}, thread_id={input_data.thread_id}"
                         )
@@ -649,7 +683,7 @@ class StrandsAgent:
                     else:
                         strands_msg["content"] = msg.content
 
-                    expected_tool_call_ids.remove(msg.tool_call_id)
+                    expected_tool_call_ids.discard(msg.tool_call_id)
                     if not expected_tool_call_ids:
                         last_msg_had_tool_calls = False
                     strands_messages.append(strands_msg)
@@ -675,17 +709,47 @@ class StrandsAgent:
                         if tc.id and tc_name:
                             _tool_call_id_to_name[tc.id] = tc_name
 
+            # On delta-only continuation payloads, the assistant message that
+            # carries the tool_call is absent from input_data.messages, so the
+            # lookup above misses. The session manager still holds the full
+            # native history — scan its ``toolUse`` blocks so we resolve the
+            # tool that actually executed rather than guessing.
+            for _smsg in session_msgs:
+                if not isinstance(_smsg, dict) or _smsg.get("role") != "assistant":
+                    continue
+                for _block in (_smsg.get("content") or []):
+                    tool_use = _block.get("toolUse") if isinstance(_block, dict) else None
+                    if tool_use:
+                        tu_id = tool_use.get("toolUseId")
+                        tu_name = tool_use.get("name")
+                        if tu_id and tu_name and tu_id not in _tool_call_id_to_name:
+                            _tool_call_id_to_name[tu_id] = tu_name
+
             # Get the latest user message for state context builder.
             # For continuation runs (has_pending_tool_result), derive a meaningful
             # message from the frontend tool that was just executed so the agent
             # understands the context and can generate a proper conclusion.
-            user_message = "Hello"
+            user_message = ""
             if pending_tool_result_ids and input_data.messages:
                 for msg in reversed(input_data.messages):
                     if msg.role == "tool" and hasattr(msg, "tool_call_id"):
                         tool_name = _tool_call_id_to_name.get(msg.tool_call_id)
                         if tool_name and tool_name in frontend_tool_names:
                             user_message = f"{tool_name} executed successfully with no return value."
+                        else:
+                            # Could not resolve the executed tool's name from
+                            # input messages or session history. Leave the
+                            # continuation message empty rather than guessing:
+                            # picking an arbitrary frontend tool would feed false
+                            # context to the LLM when several frontend tools exist.
+                            # Strands still has the real tool result in session
+                            # history to conclude the round-trip from.
+                            logger.warning(
+                                f"Could not resolve tool name for tool_call_id={msg.tool_call_id} "
+                                f"from input messages or session history (assistant message with "
+                                f"tool_calls may be missing — delta-only payload). Leaving the "
+                                f"continuation message empty."
+                            )
                         break
             elif input_data.messages:
                 for msg in reversed(input_data.messages):
@@ -699,7 +763,7 @@ class StrandsAgent:
                                 user_message = convert_agui_content_to_strands(msg.content)
                                 if not user_message:
                                     # All content blocks failed conversion — fall back to text
-                                    user_message = flatten_content_to_text(msg.content) or "Hello"
+                                    user_message = flatten_content_to_text(msg.content) or ""
                                     logger.warning("All media content blocks failed conversion, falling back to text")
                             else:
                                 user_message = flatten_content_to_text(msg.content)
@@ -729,6 +793,10 @@ class StrandsAgent:
             message_id = str(uuid.uuid4())
             message_started = False
             accumulated_text = ""
+            # Tracks the latest assistant text id that was actually emitted on
+            # the wire. Tool calls use it only when no snapshot will expose the
+            # tool-call AssistantMessage id.
+            last_emitted_text_message_id: str | None = None
             tool_calls_seen = {}
             current_state = dict(input_data.state or {})  # Track state for final snapshot
             stop_text_streaming = False
@@ -821,6 +889,7 @@ class StrandsAgent:
                                 role="assistant",
                             )
                             message_started = True
+                            last_emitted_text_message_id = message_id
 
                         text_chunk = str(event["data"])
                         accumulated_text += text_chunk
@@ -1060,7 +1129,7 @@ class StrandsAgent:
                             # running snapshot so the frontend can pair
                             # call + result in the message tree.
                             if (
-                                self.config.emit_messages_snapshot
+                                emit_snapshots
                                 and not (
                                     behavior
                                     and behavior.skip_messages_snapshot
@@ -1131,7 +1200,7 @@ class StrandsAgent:
                                     # variant): commit any accumulated
                                     # assistant text into the snapshot.
                                     if (
-                                        self.config.emit_messages_snapshot
+                                        emit_snapshots
                                         and accumulated_text
                                     ):
                                         snapshot_messages.append(
@@ -1255,7 +1324,7 @@ class StrandsAgent:
                                         message_id=message_id,
                                     )
                                     if (
-                                        self.config.emit_messages_snapshot
+                                        emit_snapshots
                                         and accumulated_text
                                     ):
                                         snapshot_messages.append(
@@ -1291,11 +1360,17 @@ class StrandsAgent:
                                             value=predict_state_payload,
                                         )
 
+                                # Must mirror the later tool snapshot emission condition.
+                                tool_parent_message_id = (
+                                    message_id
+                                    if self._will_emit_tool_snapshot(behavior_now, emit_snapshots)
+                                    else last_emitted_text_message_id
+                                )
                                 yield ToolCallStartEvent(
                                     type=EventType.TOOL_CALL_START,
                                     tool_call_id=tool_use_id,
                                     tool_call_name=tool_name,
-                                    parent_message_id=message_id,
+                                    parent_message_id=tool_parent_message_id,
                                 )
                                 tool_calls_seen[tool_use_id]["start_emitted"] = True
                         elif tool_name and tool_use_id in tool_calls_seen:
@@ -1427,13 +1502,7 @@ class StrandsAgent:
                                         tool_call_id=tool_use_id,
                                     )
 
-                                    if (
-                                        self.config.emit_messages_snapshot
-                                        and not (
-                                            behavior
-                                            and behavior.skip_messages_snapshot
-                                        )
-                                    ):
+                                    if self._will_emit_tool_snapshot(behavior, emit_snapshots):
                                         snapshot_messages.append(
                                             AssistantMessage(
                                                 id=message_id,
@@ -1532,7 +1601,7 @@ class StrandsAgent:
                                             type=EventType.TEXT_MESSAGE_END, message_id=message_id
                                         )
                                         if (
-                                            self.config.emit_messages_snapshot
+                                            emit_snapshots
                                             and accumulated_text
                                         ):
                                             snapshot_messages.append(
@@ -1550,11 +1619,17 @@ class StrandsAgent:
                                         message_started = False
                                         message_id = str(uuid.uuid4())
 
+                                    # Must mirror the later tool snapshot emission condition.
+                                    tool_parent_message_id = (
+                                        message_id
+                                        if self._will_emit_tool_snapshot(behavior, emit_snapshots)
+                                        else last_emitted_text_message_id
+                                    )
                                     yield ToolCallStartEvent(
                                         type=EventType.TOOL_CALL_START,
                                         tool_call_id=tool_use_id,
                                         tool_call_name=tool_name,
-                                        parent_message_id=message_id,
+                                        parent_message_id=tool_parent_message_id,
                                     )
 
                                     try:
@@ -1583,13 +1658,7 @@ class StrandsAgent:
                                         tool_call_id=tool_use_id,
                                     )
 
-                                    if (
-                                        self.config.emit_messages_snapshot
-                                        and not (
-                                            behavior
-                                            and behavior.skip_messages_snapshot
-                                        )
-                                    ):
+                                    if self._will_emit_tool_snapshot(behavior, emit_snapshots):
                                         snapshot_messages.append(
                                             AssistantMessage(
                                                 id=message_id,
@@ -1678,7 +1747,7 @@ class StrandsAgent:
                 # Splice point 4 of 4 (terminal): commit the final
                 # assistant text turn into the snapshot so the frontend
                 # has the closing message in canonical history.
-                if self.config.emit_messages_snapshot and accumulated_text:
+                if emit_snapshots and accumulated_text:
                     snapshot_messages.append(
                         AssistantMessage(
                             id=message_id,
