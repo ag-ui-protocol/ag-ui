@@ -7,7 +7,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 from strands.session import SessionManager
 
-from ag_ui.core import EventType, RunAgentInput, UserMessage
+from ag_ui.core import (
+    EventType,
+    RunAgentInput,
+    Tool,
+    ToolMessage,
+    UserMessage,
+)
 from ag_ui_strands.agent import StrandsAgent
 from ag_ui_strands.config import StrandsAgentConfig
 
@@ -270,3 +276,115 @@ class TestSessionManagerProvider:
 
         assert instance.stream_prompts == ["hello from user"]
         assert not hasattr(instance, "messages")
+
+
+class _MockSessionAgentWithHistory:
+    """Session-manager-backed mock that records ``stream_async`` prompts and
+    exposes a native Strands ``messages`` history (as a real session manager
+    would). ``replay_history_into_strands`` is suppressed when a session
+    manager is present, so this exercises the legacy
+    ``stream_async(user_message)`` path."""
+
+    def __init__(self, session_manager, messages=None):
+        self._session_manager = session_manager
+        self.messages = messages if messages is not None else []
+        self.tool_registry = MagicMock()
+        self.tool_registry.registry = {}
+        self.stream_prompts = []
+
+    async def stream_async(self, prompt):
+        self.stream_prompts.append(prompt)
+        return
+        yield  # pragma: no cover
+
+
+def _delta_continuation_input(tools):
+    """A delta-only continuation payload: just the trailing ``tool`` result,
+    with NO preceding assistant message carrying ``tool_calls`` (mirrors what
+    CopilotKit sends after a void-handler frontend tool resolves)."""
+    return RunAgentInput(
+        thread_id="thread-delta",
+        run_id="run-2",
+        state={},
+        messages=[
+            ToolMessage(id="t1", role="tool", content="", tool_call_id="call-xyz"),
+        ],
+        tools=tools,
+        context=[],
+        forwarded_props={},
+    )
+
+
+def _frontend_tool(name: str) -> Tool:
+    return Tool(name=name, description=f"{name} tool", parameters={})
+
+
+class TestFrontendToolContinuation:
+    """Regression tests for the 'Hello' injection on delta-only frontend-tool
+    continuation runs (PR #1761)."""
+
+    @pytest.mark.asyncio
+    async def test_delta_only_continuation_does_not_inject_hello(self):
+        """Session-manager path + delta-only trailing tool message + missing
+        assistant tool_calls: ``stream_async`` must NOT receive ``"Hello"``,
+        and must not guess an arbitrary frontend tool when several exist."""
+        mock_session_manager = _mock_session_manager()
+        provider = MagicMock(return_value=mock_session_manager)
+        agent = _make_base_agent(session_manager_provider=provider)
+
+        # Multiple frontend tools — the old code would arbitrarily pick one.
+        tools = [_frontend_tool("setBackground"), _frontend_tool("setForeground")]
+        input_data = _delta_continuation_input(tools)
+
+        # No session history that resolves call-xyz → name is unresolvable.
+        instance = _MockSessionAgentWithHistory(mock_session_manager, messages=[])
+        with patch("ag_ui_strands.agent.StrandsAgentCore") as MockCore:
+            MockCore.return_value = instance
+            await _collect_events(agent, input_data)
+
+        assert instance.stream_prompts == [""]
+        assert "Hello" not in instance.stream_prompts
+        # No arbitrary frontend tool name leaked into the prompt.
+        assert not any(
+            "executed successfully" in (p or "") for p in instance.stream_prompts
+        )
+
+    @pytest.mark.asyncio
+    async def test_delta_only_continuation_resolves_name_from_session_history(self):
+        """When the assistant ``tool_calls`` message is absent from the delta
+        payload but present in the session's native history, the correct tool
+        name is recovered (not an arbitrary one)."""
+        mock_session_manager = _mock_session_manager()
+        provider = MagicMock(return_value=mock_session_manager)
+        agent = _make_base_agent(session_manager_provider=provider)
+
+        tools = [_frontend_tool("setBackground"), _frontend_tool("setForeground")]
+        input_data = _delta_continuation_input(tools)
+
+        # Native Strands history holds the toolUse that owns call-xyz.
+        session_history = [
+            {"role": "user", "content": [{"text": "make it blue"}]},
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "toolUse": {
+                            "toolUseId": "call-xyz",
+                            "name": "setBackground",
+                            "input": {"color": "blue"},
+                        }
+                    }
+                ],
+            },
+        ]
+        instance = _MockSessionAgentWithHistory(
+            mock_session_manager, messages=session_history
+        )
+        with patch("ag_ui_strands.agent.StrandsAgentCore") as MockCore:
+            MockCore.return_value = instance
+            await _collect_events(agent, input_data)
+
+        assert instance.stream_prompts == [
+            "setBackground executed successfully with no return value."
+        ]
+        assert "Hello" not in instance.stream_prompts
