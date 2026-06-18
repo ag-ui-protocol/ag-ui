@@ -34,7 +34,13 @@ import { validateA2UIComponents, MAX_A2UI_ATTEMPTS, type A2UIValidationCatalog }
 function tryParseRecoveryFailure(content: unknown): { error: string; attempts: unknown } | null {
   if (typeof content !== "string") return null;
   try {
-    const parsed = JSON.parse(content);
+    let parsed = JSON.parse(content);
+    // Double-serialized envelope: some hosts JSON-encode the tool's string
+    // result once more (e.g. Agent Framework serializing a string function
+    // result). Mirror tryParseA2UIOperations' tolerance and parse again.
+    if (typeof parsed === "string") {
+      parsed = JSON.parse(parsed);
+    }
     if (parsed && typeof parsed === "object" && (parsed as any).code === "a2ui_recovery_exhausted") {
       return { error: String((parsed as any).error ?? "A2UI generation failed"), attempts: (parsed as any).attempts ?? [] };
     }

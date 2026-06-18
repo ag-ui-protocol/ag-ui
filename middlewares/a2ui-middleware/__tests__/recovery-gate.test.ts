@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { BaseEvent, EventType, RunAgentInput } from "@ag-ui/client";
 import { Observable, firstValueFrom, toArray } from "rxjs";
 import { A2UIMiddleware, A2UIActivityType } from "../src/index";
+import { MAX_A2UI_ATTEMPTS } from "@ag-ui/a2ui-toolkit";
 import { AbstractAgent } from "@ag-ui/client";
 
 // Minimal mock agent that replays a fixed event sequence.
@@ -135,9 +136,9 @@ describe("A2UI middleware — unified generation lifecycle gate (OSS-162)", () =
     const events = await collect(mw.run(input(), new MockAgent(streamRender([ROOT, BAD_CARD]))));
     const retrying = withStatus(events, "retrying");
     expect(retrying.length).toBeGreaterThanOrEqual(1);
-    // First failure → we're heading into attempt 2 of the default 3.
+    // First failure → we're heading into attempt 2 of the default cap.
     expect((retrying[0] as any).content.attempt).toBe(2);
-    expect((retrying[0] as any).content.maxAttempts).toBe(3);
+    expect((retrying[0] as any).content.maxAttempts).toBe(MAX_A2UI_ATTEMPTS);
   });
 
   it("keeps the retry snapshot stable as the rejected attempt keeps streaming (no 1/N, errors persist)", async () => {
@@ -177,6 +178,56 @@ describe("A2UI middleware — unified generation lifecycle gate (OSS-162)", () =
   it("emits a hard-failure lifecycle snapshot when the tool result is an exhausted envelope", async () => {
     const mw = new A2UIMiddleware({ schema: CATALOG });
     const errorEnvelope = JSON.stringify({ error: "Failed to generate valid A2UI after 3 attempt(s)", code: "a2ui_recovery_exhausted", attempts: [{ attempt: 1, ok: false }] });
+    const events = await collect(
+      mw.run(
+        input(),
+        new MockAgent([
+          { type: EventType.RUN_STARTED, runId: "r", threadId: "t" },
+          { type: EventType.TOOL_CALL_START, toolCallId: "outer1", toolCallName: "generate_a2ui" },
+          { type: EventType.TOOL_CALL_ARGS, toolCallId: "outer1", delta: '{"intent":"create"}' },
+          { type: EventType.TOOL_CALL_END, toolCallId: "outer1" },
+          { type: EventType.TOOL_CALL_RESULT, messageId: "m1", toolCallId: "outer1", content: errorEnvelope } as BaseEvent,
+          { type: EventType.RUN_FINISHED, runId: "r", threadId: "t" },
+        ]),
+      ),
+    );
+    expect(paints(events)).toHaveLength(0);
+    const failed = withStatus(events, "failed");
+    expect(failed.length).toBe(1);
+    expect((failed[0] as any).content.error).toContain("Failed to generate");
+    // maxAttempts reflects the true number of attempts the envelope carries.
+    expect((failed[0] as any).content.maxAttempts).toBe(1);
+  });
+
+  it("falls back to the configured cap when the exhausted envelope carries no attempts", async () => {
+    const mw = new A2UIMiddleware({ schema: CATALOG });
+    const errorEnvelope = JSON.stringify({ error: "Failed to generate valid A2UI after 3 attempt(s)", code: "a2ui_recovery_exhausted", attempts: [] });
+    const events = await collect(
+      mw.run(
+        input(),
+        new MockAgent([
+          { type: EventType.RUN_STARTED, runId: "r", threadId: "t" },
+          { type: EventType.TOOL_CALL_START, toolCallId: "outer1", toolCallName: "generate_a2ui" },
+          { type: EventType.TOOL_CALL_ARGS, toolCallId: "outer1", delta: '{"intent":"create"}' },
+          { type: EventType.TOOL_CALL_END, toolCallId: "outer1" },
+          { type: EventType.TOOL_CALL_RESULT, messageId: "m1", toolCallId: "outer1", content: errorEnvelope } as BaseEvent,
+          { type: EventType.RUN_FINISHED, runId: "r", threadId: "t" },
+        ]),
+      ),
+    );
+    const failed = withStatus(events, "failed");
+    expect(failed.length).toBe(1);
+    // Empty attempts array → fall back to the toolkit default cap.
+    expect((failed[0] as any).content.maxAttempts).toBe(MAX_A2UI_ATTEMPTS);
+  });
+
+  it("detects a DOUBLE-SERIALIZED exhausted envelope in the tool result", async () => {
+    // Some hosts JSON-encode the tool's string result once more (e.g. the
+    // Agent Framework serializing a string function result), so the content
+    // arrives as a JSON string containing the envelope JSON. Mirrors the
+    // double-parse tolerance tryParseA2UIOperations already has.
+    const mw = new A2UIMiddleware({ schema: CATALOG });
+    const errorEnvelope = JSON.stringify(JSON.stringify({ error: "Failed to generate valid A2UI after 3 attempt(s)", code: "a2ui_recovery_exhausted", attempts: [{ attempt: 1, ok: false }] }));
     const events = await collect(
       mw.run(
         input(),

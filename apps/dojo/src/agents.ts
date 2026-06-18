@@ -384,8 +384,8 @@ export const agentsIntegrations = {
     };
   },
 
-  "microsoft-agent-framework-dotnet": async () =>
-    mapAgents(
+  "microsoft-agent-framework-dotnet": async () => ({
+    ...mapAgents(
       (path) =>
         new HttpAgent({ url: `${envVars.agentFrameworkDotnetUrl}/${path}` }),
       {
@@ -396,8 +396,28 @@ export const agentsIntegrations = {
         shared_state: "shared_state",
         tool_based_generative_ui: "tool_based_generative_ui",
         predictive_state_updates: "predictive_state_updates",
+        a2ui_fixed_schema: "a2ui_fixed_schema",
+        a2ui_dynamic_schema: "a2ui_dynamic_schema",
+        a2ui_recovery: "a2ui_recovery",
       },
     ),
+    // Zero-config A2UI: plain chat endpoint; the middleware injects render_a2ui
+    // (streamed args -> progressive paint). Injection is scoped to this agent
+    // only — the fixed/dynamic/recovery agents carry their own A2UI flows, and an
+    // extra render tool would let the model bypass them. The runtime's a2ui config
+    // (route.ts) excludes a2ui_advanced for this integration so the middleware is
+    // not applied twice.
+    a2ui_advanced: (() => {
+      const agent = new HttpAgent({ url: `${envVars.agentFrameworkDotnetUrl}/a2ui_chat` });
+      agent.use(
+        new A2UIMiddleware({
+          injectA2UITool: true,
+          defaultCatalogId: "https://a2ui.org/demos/dojo/dynamic_catalog.json",
+        }),
+      );
+      return agent;
+    })(),
+  }),
 
   a2a: async () => {
     // A2A agents: building management, finance, it agents
