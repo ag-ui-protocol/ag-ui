@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import uuid
 from enum import Enum
 
 from pydantic import TypeAdapter
@@ -698,6 +699,14 @@ def make_json_safe(value: Any, _seen: set[int] | None = None) -> Any:
     # --- 2. Enum → use underlying value -----------------------------------
     if isinstance(value, Enum):
         return make_json_safe(value.value, _seen)
+
+    # --- 2b. UUID → canonical string --------------------------------------
+    # Handled explicitly (before the repr() last resort) so UUIDs serialize as
+    # "00000000-..." rather than "UUID('00000000-...')". Critical for dict keys:
+    # json.dumps rejects non-str keys outright, and a canonical string key is far
+    # more useful to clients than a Python repr.
+    if isinstance(value, uuid.UUID):
+        return str(value)
 
     # --- 3. Dicts ----------------------------------------------------------
     if isinstance(value, dict):

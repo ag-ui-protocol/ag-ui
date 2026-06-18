@@ -1781,4 +1781,10 @@ def dump_json_safe(value):
     # (not re-encoded with json.dumps). Callers passing pre-serialized JSON
     # strings get them back as-is; callers passing a raw non-JSON string get
     # that raw string back — no quoting is applied.
-    return json.dumps(value, default=json_safe_stringify) if not isinstance(value, str) else value
+    if isinstance(value, str):
+        return value
+    # json.dumps only invokes ``default`` for non-serializable *values*, never for
+    # dict *keys*. A non-str key (e.g. a UUID from a LangGraph interrupt value or
+    # tool input) therefore raises TypeError before json_safe_stringify can run.
+    # make_json_safe recurses into keys as well as values, so normalize first.
+    return json.dumps(make_json_safe(value), default=json_safe_stringify)

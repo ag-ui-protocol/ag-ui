@@ -2,10 +2,12 @@
 import json
 import threading
 import unittest
+import uuid
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from ag_ui_langgraph.agent import dump_json_safe
 from ag_ui_langgraph.utils import make_json_safe, json_safe_stringify
 
 
@@ -218,3 +220,38 @@ class TestMakeJsonSafe(unittest.TestCase):
         assert parsed["tool_call"]["args"] == {"url": "https://example.com"}
         assert "runtime" not in parsed["tool_call"]
         assert "config" not in parsed["tool_call"]
+
+    def test_uuid_value_uses_canonical_string(self):
+        """A UUID *value* serializes to its canonical string, not repr()."""
+        u = uuid.UUID(int=1)
+        assert make_json_safe(u) == str(u)
+        assert make_json_safe(u) == "00000000-0000-0000-0000-000000000001"
+
+    def test_uuid_dict_key_is_made_safe(self):
+        """A UUID dict *key* is normalized to a string so json.dumps accepts it."""
+        u = uuid.UUID(int=42)
+        safe = make_json_safe({u: "value"})
+        assert safe == {str(u): "value"}
+
+
+class TestDumpJsonSafe(unittest.TestCase):
+    """dump_json_safe must survive non-str dict keys (regression for UUID keys)."""
+
+    def test_uuid_dict_keys_do_not_raise(self):
+        # json.dumps never runs ``default`` for dict keys, so without
+        # pre-normalization a UUID key raises TypeError mid-encode.
+        value = {uuid.UUID(int=1): {"nested": uuid.UUID(int=2)}}
+        parsed = json.loads(dump_json_safe(value))
+        assert parsed == {
+            "00000000-0000-0000-0000-000000000001": {
+                "nested": "00000000-0000-0000-0000-000000000002"
+            }
+        }
+
+    def test_plain_string_passed_through_verbatim(self):
+        # Documented sharp edge: a str argument is returned as-is, not re-encoded.
+        assert dump_json_safe("already a string") == "already a string"
+
+    def test_regular_payload_still_serializes(self):
+        parsed = json.loads(dump_json_safe({"a": 1, "b": [1, 2, 3]}))
+        assert parsed == {"a": 1, "b": [1, 2, 3]}
