@@ -457,6 +457,33 @@ adk_agent = ADKAgent(
 
 See `examples/server/api/predictive_state_updates.py` for a complete working example.
 
+### Emitting Named Custom Events
+
+An ADK agent can emit a named AG-UI [`CustomEvent`](https://docs.ag-ui.com/concepts/events#custom) — e.g. `conversation_complete`, `resume_validated`, `payment_required` — by writing the reserved key `ag_ui:custom_event` into `EventActions.state_delta`. The middleware intercepts that key, emits one `CUSTOM` event per spec, and strips it from the state delta (so it never leaks out as a `STATE_DELTA` patch). The colon namespace mirrors ADK's own `temp:`/`app:`/`user:` state-key convention.
+
+```python
+from google.adk.agents import BaseAgent
+from google.adk.events import Event, EventActions
+
+class NotifyingAgent(BaseAgent):
+    async def _run_async_impl(self, ctx):
+        # Emit a single named custom event...
+        yield Event(
+            author=self.name,
+            invocation_id=ctx.invocation_id,
+            actions=EventActions(state_delta={
+                "ag_ui:custom_event": {"name": "conversation_complete", "value": {"turns": 3}},
+            }),
+        )
+```
+
+Notes:
+
+- The value is either a single `{"name": str, "value": Any}` mapping or a **list** of them (emitted in order).
+- Other keys in the same `state_delta` are still translated to a `STATE_DELTA` as usual.
+- Malformed entries (missing/empty `name`) are skipped with a warning rather than aborting the run.
+- Because `ag_ui:custom_event` is an ordinary state key, ADK persists it into session state. Agents wanting ephemeral behavior should clear it on the next turn.
+
 ## Event Translation
 
 The middleware translates between AG-UI and ADK event formats:

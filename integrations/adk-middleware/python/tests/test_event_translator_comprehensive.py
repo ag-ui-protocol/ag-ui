@@ -16,7 +16,7 @@ from ag_ui.core import (
     StateDeltaEvent, StateSnapshotEvent, CustomEvent
 )
 from google.adk.events import Event as ADKEvent
-from ag_ui_adk.event_translator import EventTranslator
+from ag_ui_adk.event_translator import EventTranslator, AG_UI_CUSTOM_EVENT_STATE_KEY
 
 
 class TestEventTranslatorComprehensive:
@@ -201,6 +201,112 @@ class TestEventTranslatorComprehensive:
         assert len(patches) == 2
         assert any(patch["path"] == "/key1" and patch["value"] == "value1" for patch in patches)
         assert any(patch["path"] == "/key2" and patch["value"] == "value2" for patch in patches)
+
+    @pytest.mark.asyncio
+    async def test_reserved_state_key_emits_named_custom_event(self, translator, mock_adk_event):
+        """A reserved state_delta key is translated to a named CustomEvent,
+        and no STATE_DELTA is emitted when it's the only key."""
+        mock_actions = MagicMock()
+        mock_actions.state_delta = {
+            AG_UI_CUSTOM_EVENT_STATE_KEY: {"name": "conversation_complete", "value": {"ok": True}},
+        }
+        mock_actions.state_snapshot = None
+        mock_adk_event.actions = mock_actions
+
+        events = [e async for e in translator.translate(mock_adk_event, "thread_1", "run_1")]
+
+        custom = [e for e in events if isinstance(e, CustomEvent)]
+        assert len(custom) == 1
+        assert custom[0].type == EventType.CUSTOM
+        assert custom[0].name == "conversation_complete"
+        assert custom[0].value == {"ok": True}
+        # The reserved key must not also leak out as a STATE_DELTA.
+        assert not any(isinstance(e, StateDeltaEvent) for e in events)
+
+    @pytest.mark.asyncio
+    async def test_reserved_state_key_coexists_with_regular_state(self, translator, mock_adk_event):
+        """A CustomEvent is emitted for the reserved key while the remaining
+        keys still produce a STATE_DELTA — and the reserved key is stripped
+        from the delta so it doesn't leak."""
+        mock_actions = MagicMock()
+        mock_actions.state_delta = {
+            AG_UI_CUSTOM_EVENT_STATE_KEY: {"name": "payment_required", "value": 42},
+            "real_key": "real_value",
+        }
+        mock_actions.state_snapshot = None
+        mock_adk_event.actions = mock_actions
+
+        events = [e async for e in translator.translate(mock_adk_event, "thread_1", "run_1")]
+
+        custom_idx = next(i for i, e in enumerate(events) if isinstance(e, CustomEvent))
+        delta_idx = next(i for i, e in enumerate(events) if isinstance(e, StateDeltaEvent))
+        # CustomEvent precedes the StateDeltaEvent (mirrors the PredictState precedent).
+        assert custom_idx < delta_idx
+        assert events[custom_idx].name == "payment_required"
+        assert events[custom_idx].value == 42
+
+        paths = [patch["path"] for patch in events[delta_idx].delta]
+        assert "/real_key" in paths
+        assert f"/{AG_UI_CUSTOM_EVENT_STATE_KEY}" not in paths
+
+    @pytest.mark.asyncio
+    async def test_reserved_state_key_accepts_list_of_events(self, translator, mock_adk_event):
+        """A list payload emits one CustomEvent per spec, in order."""
+        mock_actions = MagicMock()
+        mock_actions.state_delta = {
+            AG_UI_CUSTOM_EVENT_STATE_KEY: [
+                {"name": "first", "value": 1},
+                {"name": "second", "value": 2},
+            ],
+        }
+        mock_actions.state_snapshot = None
+        mock_adk_event.actions = mock_actions
+
+        events = [e async for e in translator.translate(mock_adk_event, "thread_1", "run_1")]
+
+        custom = [e for e in events if isinstance(e, CustomEvent)]
+        assert [(e.name, e.value) for e in custom] == [("first", 1), ("second", 2)]
+
+    @pytest.mark.asyncio
+    async def test_reserved_state_key_skips_malformed_payload(self, translator, mock_adk_event):
+        """A malformed reserved payload (missing 'name') is skipped without
+        raising, and does not emit a CustomEvent."""
+        mock_actions = MagicMock()
+        mock_actions.state_delta = {
+            AG_UI_CUSTOM_EVENT_STATE_KEY: {"value": "no name here"},
+        }
+        mock_actions.state_snapshot = None
+        mock_adk_event.actions = mock_actions
+
+        events = [e async for e in translator.translate(mock_adk_event, "thread_1", "run_1")]
+
+        assert not any(isinstance(e, CustomEvent) for e in events)
+        # No StateDelta either — the reserved key was the only key.
+        assert not any(isinstance(e, StateDeltaEvent) for e in events)
+
+    def test_build_custom_events_normalizes_and_validates(self, translator):
+        """Direct unit test of the helper: single mapping, list, and the
+        skip-malformed / wrong-type guards."""
+        # Single mapping → one event.
+        single = translator._build_custom_events({"name": "n", "value": "v"})
+        assert len(single) == 1 and single[0].name == "n" and single[0].value == "v"
+
+        # None → empty.
+        assert translator._build_custom_events(None) == []
+
+        # Wrong top-level type → empty (skipped with a warning).
+        assert translator._build_custom_events("not a mapping or list") == []
+
+        # List with a mix of valid and invalid entries → only valid kept.
+        mixed = translator._build_custom_events([
+            {"name": "good", "value": 1},
+            {"value": "missing name"},
+            {"name": "", "value": "empty name"},
+            "not a mapping",
+            {"name": "also_good"},
+        ])
+        assert [e.name for e in mixed] == ["good", "also_good"]
+        assert mixed[1].value is None  # missing 'value' defaults to None
 
     @pytest.mark.asyncio
     async def test_translate_state_snapshot_event_passthrough(self, translator, mock_adk_event):
