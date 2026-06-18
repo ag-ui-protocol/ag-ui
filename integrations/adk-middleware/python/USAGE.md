@@ -466,6 +466,51 @@ The middleware translates between AG-UI and ADK event formats:
 | TEXT_MESSAGE_* | Event with content.parts[].text | Text messages |
 | RUN_STARTED/FINISHED | Runner lifecycle | Execution flow |
 
+## Keeping SSE Connections Alive During Long-Running Tools
+
+When a tool runs for tens of seconds (scraping a site, processing a document,
+calling a slow API), no data flows on the SSE stream. Timeout-sensitive
+infrastructure — AWS Lambda/API Gateway (~29s), Cloud Run (~60s), load
+balancers, and CDNs — can interpret that silence as a dead connection and drop
+it, cutting the response off mid-execution.
+
+`HeartbeatPlugin` is an ADK `BasePlugin` that emits periodic `ACTIVITY_SNAPSHOT`
+events while a tool is running, keeping the stream warm:
+
+```python
+from ag_ui_adk import ADKAgent, HeartbeatPlugin
+from google.adk.apps import App
+from google.adk.agents import LlmAgent
+
+agent = LlmAgent(name="assistant", model="gemini-3.5-flash", tools=[slow_tool])
+
+# Plugins are only honored on the App path, so use ADKAgent.from_app(...).
+app = App(name="my_app", root_agent=agent, plugins=[HeartbeatPlugin(interval_seconds=5.0)])
+adk_agent = ADKAgent.from_app(app, user_id="user123")
+```
+
+Each running tool emits a `starting` event, a `processing` event every
+`interval_seconds`, and a terminal `complete`/`error` event. Progress is carried
+in the event's `content`:
+
+```json
+{
+  "type": "ACTIVITY_SNAPSHOT",
+  "activity_type": "TOOL_EXECUTION",
+  "replace": true,
+  "content": {"status": "processing", "tool_name": "web_scraper", "heartbeat": 5, "elapsed_seconds": 25.0}
+}
+```
+
+Notes:
+
+- Heartbeats are per-tool-call and isolated per request — a shared plugin
+  instance is safe under concurrent runs.
+- The plugin is a no-op outside the middleware (when no AG-UI stream is bound).
+- For richer, tool-driven progress, call `emit_progress(...)` from inside a tool;
+  it pushes an `ACTIVITY_SNAPSHOT` onto the current run's stream (and is a safe
+  no-op if called outside a run).
+
 ## Message History Features
 
 ### MESSAGES_SNAPSHOT Emission

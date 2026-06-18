@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **FEATURE**: `HeartbeatPlugin` for SSE connection keep-alive during long-running tools (#1001)
+  - An ADK `BasePlugin` that emits periodic `ACTIVITY_SNAPSHOT` events while a tool runs, keeping the SSE stream warm so timeout-sensitive infrastructure (Lambda/API Gateway, Cloud Run, proxies, CDNs) doesn't drop the connection mid-execution. Each tool call emits `starting`, a `processing` heartbeat every `interval_seconds` (default 5s), and a terminal `complete`/`error`, with progress carried in the event `content`. The middleware binds the in-flight run's event queue to a `ContextVar` around `runner.run_async`, so the plugin (and the exported `emit_progress` helper for tool-driven progress) can push events onto the current request's stream; the binding is per-request isolated. Plugins are only honored on the `ADKAgent.from_app(...)` path. New exports: `HeartbeatPlugin`, `emit_progress`, `set_event_queue`, `get_event_queue`, `reset_event_queue`. See "Keeping SSE Connections Alive During Long-Running Tools" in `USAGE.md`.
+
 ### Changed
 
 - **PERFORMANCE**: Cache session reads per execution to cut redundant `get_session` round-trips (#1880, #1890, thanks @he-yufeng)

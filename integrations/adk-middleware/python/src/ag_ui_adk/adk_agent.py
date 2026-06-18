@@ -74,6 +74,7 @@ from .client_proxy_toolset import ClientProxyToolset
 from .config import PredictStateMapping
 from .request_state_service import RequestStateSessionService
 from .utils.converters import convert_message_content_to_parts
+from .heartbeat import set_event_queue, reset_event_queue
 
 import logging
 logger = logging.getLogger(__name__)
@@ -2534,6 +2535,10 @@ class ADKAgent:
         pending_lro_id_remap: Dict[str, str] = {}
         logger.debug(f"[BG_EXEC] _run_adk_in_background called for thread={input.thread_id}")
         logger.debug(f"[BG_EXEC]   tool_results={len(tool_results) if tool_results else 0}, message_batch={len(message_batch) if message_batch else 0}")
+        # Bind this run's event queue so plugins (e.g. HeartbeatPlugin) running
+        # inside runner.run_async can push extra AG-UI events onto the stream.
+        # This task owns its own context copy, so the binding is per-request.
+        heartbeat_queue_token = set_event_queue(event_queue)
         try:
             # Agent is already prepared with tools and SystemMessage instructions (if any)
             # from _start_background_execution, so no additional agent copying needed here
@@ -3300,6 +3305,9 @@ class ADKAgent:
             )
             await event_queue.put(None)
         finally:
+            # Unbind the heartbeat event queue bound at the top of this run.
+            reset_event_queue(heartbeat_queue_token)
+
             # Background task cleanup completed
             # Ensure the ADK runner releases any resources (e.g. toolsets)
             if runner is not None:
