@@ -10,7 +10,15 @@ authors = [
 requires-python = ">=3.10, <3.15"
 dependencies = [
     "ag-ui-protocol>=0.1.15",
-    "aiohttp>=3.12.0",
+    # Floor is 3.14.0 (not 3.12) because google-genai >= 2.x auto-selects its
+    # aiohttp transport whenever aiohttp is importable (genai
+    # _BaseApiClient._use_aiohttp), and its streaming reader calls
+    # StreamReader.readline(max_line_length=...). That keyword only exists in
+    # aiohttp >= 3.14.0; on 3.13.x readline() takes no args, so every streaming
+    # LLM turn raised "TypeError: StreamReader.readline() got an unexpected
+    # keyword argument 'max_line_length'" -> RUN_ERROR (ag-ui#1947). genai's own
+    # pin (aiohttp>=3.10.11) is too loose to guarantee this, so we pin it here.
+    "aiohttp>=3.14.0",
     "asyncio>=3.4.3",
     "fastapi>=0.115.2",
     # Compatible with both google-adk 1.x and 2.x.
