@@ -472,6 +472,21 @@ class EventTranslator:
                 if hasattr(adk_event.actions, 'state_snapshot'):
                     state_snapshot = adk_event.actions.state_snapshot
                     if state_snapshot is not None:
+                        # The delta path above works on a copy and never mutates
+                        # ADK's persisted state, so ADK can still persist the
+                        # reserved key. A later snapshot would then carry it.
+                        # Strip it on a copy so the reserved key — an agent→AG-UI
+                        # signalling channel, not application state — never leaks
+                        # into AG-UI state.
+                        if (
+                            isinstance(state_snapshot, dict)
+                            and AG_UI_CUSTOM_EVENT_STATE_KEY in state_snapshot
+                        ):
+                            state_snapshot = {
+                                key: value
+                                for key, value in state_snapshot.items()
+                                if key != AG_UI_CUSTOM_EVENT_STATE_KEY
+                            }
                         yield self._create_state_snapshot_event(state_snapshot)
                 
             

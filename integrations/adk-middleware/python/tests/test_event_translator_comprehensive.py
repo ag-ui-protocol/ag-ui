@@ -341,6 +341,37 @@ class TestEventTranslatorComprehensive:
         assert snapshot_event.snapshot["custom_state"]["view"]["active_tab"] == "details"
         assert "extra_field" in snapshot_event.snapshot
 
+    @pytest.mark.asyncio
+    async def test_reserved_state_key_stripped_from_snapshot(self, translator, mock_adk_event):
+        """ADK can persist the reserved key (the delta path works on a copy),
+        so a later state_snapshot may still carry it. It must be scrubbed on a
+        copy before the snapshot is forwarded — the reserved key must never
+        leak into AG-UI state."""
+        state_snapshot = {
+            "user_name": "Alice",
+            "timezone": "UTC",
+            AG_UI_CUSTOM_EVENT_STATE_KEY: {"name": "conversation_complete", "value": {"ok": True}},
+        }
+
+        mock_adk_event.actions = SimpleNamespace(
+            state_delta=None,
+            state_snapshot=state_snapshot,
+        )
+
+        events = [e async for e in translator.translate(mock_adk_event, "thread_1", "run_1")]
+
+        snapshot_events = [event for event in events if isinstance(event, StateSnapshotEvent)]
+        assert snapshot_events, "Expected a StateSnapshotEvent to be emitted"
+
+        snapshot = snapshot_events[0].snapshot
+        assert AG_UI_CUSTOM_EVENT_STATE_KEY not in snapshot
+        assert snapshot == {"user_name": "Alice", "timezone": "UTC"}
+        # Scrubbing happens on a copy — the source dict is left untouched.
+        assert AG_UI_CUSTOM_EVENT_STATE_KEY in state_snapshot
+        # The reserved key in a snapshot is leftover persisted state, not a fresh
+        # emission, so it must not be re-translated into a CustomEvent.
+        assert not any(isinstance(e, CustomEvent) for e in events)
+
     def test_create_state_snapshot_event_passthrough(self, translator):
         """Direct helper should forward the snapshot unchanged."""
 
