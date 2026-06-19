@@ -5,7 +5,9 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
-from strands import Agent
+from strands import Agent, tool
+from strands.hooks.events import BeforeInvocationEvent
+from strands.plugins import Plugin, hook
 from strands.tools.registry import ToolRegistry
 
 from ag_ui_strands.agent import StrandsAgent
@@ -55,11 +57,50 @@ class _RegistryOnlyCore(_CapturingCore):
         self._plugin_registry = _PluginRegistry()
 
 
+class _ToolAndHookPlugin(Plugin):
+    name = "agui_test_plugin"
+
+    def __init__(self):
+        self.hook_calls = 0
+        super().__init__()
+
+    @tool
+    def plugin_tool(self) -> str:
+        """A tool provided by the plugin."""
+        return "ok"
+
+    @hook
+    def before_invocation(self, event: BeforeInvocationEvent) -> None:
+        self.hook_calls += 1
+
+
 async def _trigger_thread_creation(ag: StrandsAgent, thread_id: str):
     async for _ in ag.run(_run_input(thread_id)):
         if thread_id in ag._agents_by_thread:
             break
     return ag._agents_by_thread[thread_id]
+
+
+@pytest.mark.asyncio
+async def test_template_plugins_recovered_without_explicit_kwarg():
+    plugin = _ToolAndHookPlugin()
+    template = Agent(model=_mock_model(), plugins=[plugin])
+    assert "plugin_tool" in template.tool_registry.registry
+
+    ag = StrandsAgent(template, name="test")
+    assert "plugin_tool" not in [
+        getattr(tool, "tool_name", None) for tool in ag._tools
+    ], (
+        "plugin tool should be filtered from explicit tools to avoid duplicate registration"
+    )
+
+    per_thread = await _trigger_thread_creation(ag, "t1")
+
+    assert "plugin_tool" in per_thread.tool_registry.registry
+    assert per_thread._plugin_registry._plugins[plugin.name] is plugin
+
+    per_thread.hooks.invoke_callbacks(BeforeInvocationEvent(agent=per_thread))
+    assert plugin.hook_calls == 1
 
 
 @pytest.mark.asyncio

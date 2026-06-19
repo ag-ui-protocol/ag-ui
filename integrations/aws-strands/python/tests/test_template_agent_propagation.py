@@ -66,6 +66,7 @@ _UNTESTABLE_VIA_SENTINEL = {
     "system_prompt",      # handled explicitly
     "session_manager",    # excluded; see StrandsAgentConfig.session_manager_provider
     "plugins",            # explicitly handled via StrandsAgent(plugins=...)
+    "interventions",      # stored as _intervention_registry, not original handlers
     "structured_output_model",  # template Agent rejects a MagicMock sentinel here
     "trace_attributes",         # Strands merges into a dict, losing sentinel identity
 }
