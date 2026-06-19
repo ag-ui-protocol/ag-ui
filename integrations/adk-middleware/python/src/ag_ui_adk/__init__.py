@@ -14,13 +14,20 @@ from typing import Dict, Iterable
 from .adk_agent import ADKAgent
 from .event_translator import EventTranslator, adk_events_to_messages
 from .session_manager import SessionManager, CONTEXT_STATE_KEY, INVOCATION_ID_STATE_KEY
-from .endpoint import add_adk_fastapi_endpoint, create_adk_app
+from .endpoint import (
+    AgentResolver,
+    add_adk_fastapi_endpoint,
+    create_adk_app,
+    resolve_agent_from_message_history,
+)
 from .config import PredictStateMapping, normalize_predict_state
 from .agui_toolset import AGUIToolset
 __all__ = [
     'ADKAgent',
+    'AgentResolver',
     'add_adk_fastapi_endpoint',
     'create_adk_app',
+    'resolve_agent_from_message_history',
     'EventTranslator',
     'SessionManager',
     'CONTEXT_STATE_KEY',
