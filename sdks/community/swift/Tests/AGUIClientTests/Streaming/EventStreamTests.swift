@@ -155,6 +155,8 @@ final class EventStreamTests: XCTestCase {
     }
 
     func testStreamHandlesUnknownEventType() async throws {
+        // The default decoder uses strict mode: unknown events throw EventDecodingError,
+        // which EventStream silently skips. Exactly 2 known events must be yielded.
         let sseData = """
         data: {"type":"RUN_STARTED","threadId":"t1","runId":"r1"}
 
@@ -165,7 +167,7 @@ final class EventStreamTests: XCTestCase {
 
         """
         let bytes = MockAsyncBytes(data: Data(sseData.utf8))
-        let decoder = AGUIEventDecoder()
+        let decoder = AGUIEventDecoder() // strict mode by default
 
         let stream = EventStream(bytes: bytes, decoder: decoder)
 
@@ -174,19 +176,43 @@ final class EventStreamTests: XCTestCase {
             events.append(event)
         }
 
-        // Should include unknown events as UnknownEvent
-        XCTAssertGreaterThanOrEqual(events.count, 2, "Should have at least known events")
-        if events.count >= 1 {
-            XCTAssertTrue(events[0] is RunStartedEvent)
+        // Strict decoder skips unknown — exactly 2 events, not 3.
+        XCTAssertEqual(events.count, 2)
+        XCTAssertTrue(events[0] is RunStartedEvent)
+        XCTAssertTrue(events[1] is RunFinishedEvent)
+    }
+
+    func test_tolerantDecoder_returnsUnknownEventForUnrecognisedType() async throws {
+        // With .returnUnknown strategy, unknown event types are wrapped in UnknownEvent
+        // and forwarded instead of being silently dropped.
+        let sseData = """
+        data: {"type":"RUN_STARTED","threadId":"t1","runId":"r1"}
+
+        data: {"type":"UNKNOWN_EVENT_TYPE","data":"something"}
+
+        data: {"type":"RUN_FINISHED","threadId":"t1","runId":"r1"}
+
+
+        """
+        let bytes = MockAsyncBytes(data: Data(sseData.utf8))
+        var config = AGUIEventDecoder.Configuration()
+        config.unknownEventStrategy = .returnUnknown
+        let decoder = AGUIEventDecoder(config: config)
+
+        let stream = EventStream(bytes: bytes, decoder: decoder)
+
+        var events: [any AGUIEvent] = []
+        for try await event in stream {
+            events.append(event)
         }
-        // Unknown event might be included as UnknownEvent or skipped
-        if events.count == 3 {
-            XCTAssertTrue(events[1] is UnknownEvent)
-            XCTAssertTrue(events[2] is RunFinishedEvent)
-        } else if events.count == 2 {
-            // Unknown event was skipped
-            XCTAssertTrue(events[1] is RunFinishedEvent)
-        }
+
+        // Tolerant decoder yields all 3 events; the middle one is UnknownEvent.
+        XCTAssertEqual(events.count, 3)
+        XCTAssertTrue(events[0] is RunStartedEvent)
+        XCTAssertTrue(events[1] is UnknownEvent)
+        let unknown = events[1] as! UnknownEvent
+        XCTAssertEqual(unknown.typeRaw, "UNKNOWN_EVENT_TYPE")
+        XCTAssertTrue(events[2] is RunFinishedEvent)
     }
 
     // MARK: - Lifecycle Tests

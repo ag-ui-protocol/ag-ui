@@ -35,6 +35,10 @@ struct ToolMessageDTO {
         return ToolMessageDTO(id: id, toolCallId: toolCallId, content: content, name: name, error: error, encryptedValue: encryptedValue)
     }
 
+    /// Converts this DTO to a domain `ToolMessage`.
+    ///
+    /// `content` defaults to an empty string when the JSON field is absent,
+    /// matching the AG-UI protocol where tool result content is optional.
     func toDomain() -> ToolMessage {
         ToolMessage(id: id, content: content ?? "", toolCallId: toolCallId, name: name, error: error, encryptedValue: encryptedValue)
     }

@@ -141,7 +141,8 @@ extension ChatAppStore {
     /// Slots with `dismissDelay == nil` (i.e. `.step`) are cleared synchronously in
     /// the `StepFinishedEvent` case — this method is a no-op for those slots.
     private func scheduleEphemeralDismissal(for slot: EphemeralSlot) {
-        guard let delay = slot.dismissDelay else { return }
+        let delay = ephemeralDismissDelayOverrides[slot] ?? slot.dismissDelay
+        guard let delay else { return }
         ephemeralDismissTasks[slot]?.cancel()
         ephemeralDismissTasks[slot] = Task { [weak self] in
             try? await Task.sleep(for: delay)

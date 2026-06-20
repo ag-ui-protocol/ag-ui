@@ -22,6 +22,8 @@ struct TypingDotsView: View {
             dot(delay: 0.18)
             dot(delay: 0.36)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Agent is typing")
         .onAppear {
             withAnimation(
                 .easeInOut(duration: 0.54)

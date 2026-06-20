@@ -128,23 +128,12 @@ public struct StatefulAgUiAgentConfig: Sendable {
     ///
     /// - Returns: Merged header dictionary ready for `HttpAgentConfiguration`.
     public func buildHeaders() -> [String: String] {
-        var result: [String: String] = [:]
-        if let key = apiKey {
-            result[apiKeyHeader] = sanitizeHeaderValue(key)
-        }
-        if let token = bearerToken {
-            result["Authorization"] = "Bearer \(sanitizeHeaderValue(token))"
-        }
-        for (k, v) in headers {
-            result[k] = sanitizeHeaderValue(v)
-        }
-        return result
-    }
-
-    /// Strips CR and LF from a header value to prevent CRLF injection.
-    private func sanitizeHeaderValue(_ value: String) -> String {
-        value.replacingOccurrences(of: "\r", with: "")
-             .replacingOccurrences(of: "\n", with: "")
+        AgentHeaderBuilder.buildHeaders(
+            headers: headers,
+            bearerToken: bearerToken,
+            apiKey: apiKey,
+            apiKeyHeader: apiKeyHeader
+        )
     }
 
     /// Creates a new stateful agent configuration.

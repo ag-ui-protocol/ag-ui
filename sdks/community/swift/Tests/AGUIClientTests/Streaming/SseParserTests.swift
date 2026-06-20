@@ -454,14 +454,26 @@ final class SseParserTests: XCTestCase {
 
     // MARK: - Thread Safety Tests
 
-    func testParserIsNotThreadSafe() throws {
-        // Document that SseParser is a mutable struct and not thread-safe
-        // Each thread should have its own parser instance
-        var parser = SseParser()
-        _ = try parser.parse("data: test\n\n")
+    func testParserInstancesHaveIndependentBufferState() throws {
+        // SseParser is a value type (struct). Each instance maintains its own buffer.
+        // Feeding a partial chunk into one instance must not affect the other.
+        var parserA = SseParser()
+        var parserB = SseParser()
 
-        // This is expected behavior - parser maintains internal state
-        XCTAssertTrue(true, "SseParser is designed for single-threaded use")
+        // Feed parserA a partial event (no double-newline yet)
+        let eventsA1 = try parserA.parse("data: from-a")
+        XCTAssertEqual(eventsA1.count, 0, "Partial input should not produce events")
+
+        // parserB starts clean — a complete event completes immediately
+        let eventsB = try parserB.parse("data: from-b\n\n")
+        XCTAssertEqual(eventsB.count, 1)
+        XCTAssertEqual(eventsB[0].data, "from-b")
+
+        // Completing parserA's partial event returns only A's buffered data
+        let eventsA2 = try parserA.parse("\n\n")
+        XCTAssertEqual(eventsA2.count, 1)
+        XCTAssertEqual(eventsA2[0].data, "from-a",
+                       "parserA must not contain data from parserB")
     }
 
     // MARK: - Performance Tests

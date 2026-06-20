@@ -137,12 +137,19 @@ private struct StyledText: View {
     }
 
     private var resolvedFont: Font {
+        let weight: Font.Weight
         switch style?.fontWeight {
-        case "bold": return .body.bold()
-        case "semibold": return .body.weight(.semibold)
-        case "light": return .body.weight(.light)
-        default: return .body
+        case "bold": weight = .bold
+        case "semibold": weight = .semibold
+        case "light": weight = .light
+        default: weight = .regular
         }
+        if let size = style?.fontSize {
+            // Fixed size requested: honour it exactly, but still apply the weight.
+            return .system(size: size, weight: weight)
+        }
+        // No explicit size — use .body so Dynamic Type scaling is preserved.
+        return .body.weight(weight)
     }
 
     private var resolvedColor: Color? {

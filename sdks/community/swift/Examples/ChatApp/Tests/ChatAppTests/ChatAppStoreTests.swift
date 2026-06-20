@@ -87,14 +87,16 @@ final class ChatAppStoreTests: XCTestCase {
     func test_toolCallEnd_schedulesEphemeralDismissal() async throws {
         let store = makeStore()
         store.setupForTesting(agent: testConfig())
+        // Inject a short delay so the test doesn't wait the production 1 second.
+        store.ephemeralDismissDelayOverrides[.toolCall] = .milliseconds(50)
 
         store.processEvent(ToolCallStartEvent(toolCallId: "tc1", toolCallName: "search"))
         XCTAssertNotNil(store.state.ephemeralSlots[.toolCall])
 
         store.processEvent(ToolCallEndEvent(toolCallId: "tc1"))
 
-        // The dismissal is scheduled after 1 second — wait slightly longer.
-        try await Task.sleep(for: .seconds(1.2))
+        // Wait long enough for the injected 50ms delay to fire.
+        try await Task.sleep(for: .milliseconds(200))
         XCTAssertNil(store.state.ephemeralSlots[.toolCall])
     }
 

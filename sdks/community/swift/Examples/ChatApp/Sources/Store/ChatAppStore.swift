@@ -32,6 +32,10 @@ final class ChatAppStore: ObservableObject {
     var streamingMessageIndices: [String: Int] = [:]
     /// Per-slot dismiss tasks; keyed so TOOL_CALL and STEP cancel independently.
     var ephemeralDismissTasks: [EphemeralSlot: Task<Void, Never>] = [:]
+    /// Override dismiss delays for testing (avoids real 1-second waits in tests).
+    ///
+    /// Set entries before processing events in tests. Production code never mutates this.
+    var ephemeralDismissDelayOverrides: [EphemeralSlot: Duration] = [:]
     /// The `id` of the optimistic user message currently awaiting agent confirmation.
     var pendingUserMessageId: String?
     /// Buffered tool-call arguments keyed by toolCallId.

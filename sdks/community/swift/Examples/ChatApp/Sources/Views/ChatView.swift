@@ -100,6 +100,8 @@ struct ChatView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(!state.isConnected || state.isLoading)
+                .accessibilityLabel("Send")
+                .accessibilityHint("Send your message to the agent")
             }
 
             if state.isLoading {
@@ -110,6 +112,8 @@ struct ChatView: View {
                         .foregroundStyle(.secondary)
                     Spacer()
                     Button("Cancel", role: .cancel, action: store.cancelStreaming)
+                        .accessibilityLabel("Cancel")
+                        .accessibilityHint("Stop waiting for the agent response")
                 }
             }
         }
@@ -142,6 +146,16 @@ private struct EphemeralBanner: View {
         }
         .padding(12)
         .background(Color.accentColor.opacity(0.1))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var accessibilityLabel: String {
+        switch message.role {
+        case .toolCall(let name): return "Running tool: \(name)"
+        case .stepInfo(let name): return "Step in progress: \(name)"
+        default: return message.content
+        }
     }
 }
 

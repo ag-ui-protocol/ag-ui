@@ -343,6 +343,38 @@ final class ToolExecutorTests: XCTestCase {
         let callCount = await executor.getExecuteCallCount()
         XCTAssertEqual(callCount, 1)
     }
+
+    // MARK: - Default nonisolated implementations (Issue 43)
+
+    func test_defaultValidate_isCallableFromNonisolatedContextOnActorConformer() {
+        // Verifies that actor conformers can call the default `validate` and
+        // `maximumExecutionTime` without `await`, as required by the `nonisolated`
+        // protocol declaration. This is a compile-time contract: without `nonisolated`
+        // on the extension defaults, Swift 6 would require `await` here (or error).
+        let executor = MinimalActorExecutor()
+        let toolCall = ToolCall(id: "x", function: FunctionCall(name: "minimal", arguments: "{}"))
+        // These must be callable synchronously from a nonisolated context.
+        let validation = executor.validate(toolCall: toolCall)
+        let timeout = executor.maximumExecutionTime()
+        XCTAssertTrue(validation.isValid)
+        XCTAssertNil(timeout)
+    }
+}
+
+// MARK: - Minimal actor conformer (no override of default implementations)
+
+/// An actor that satisfies `ToolExecutor` with only the required `execute` method.
+/// `validate` and `maximumExecutionTime` deliberately rely on extension defaults.
+/// If the extension defaults are missing `nonisolated`, this actor cannot satisfy
+/// the `nonisolated` protocol requirements in Swift 6.
+private actor MinimalActorExecutor: ToolExecutor {
+    let tool = Tool(name: "minimal", description: "Minimal", parameters: Data("{}".utf8))
+
+    func execute(context: ToolExecutionContext) async throws -> ToolExecutionResult {
+        .success()
+    }
+
+    // No override of validate or maximumExecutionTime — uses extension defaults.
 }
 
 // MARK: - Test Helper Extensions

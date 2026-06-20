@@ -84,6 +84,8 @@ private struct AgentRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(agent.name)
+        .accessibilityHint(isSelected ? "Selected. Tap to keep this agent active." : "Tap to select this agent")
         .swipeActions(edge: .trailing) {
             Button(role: .destructive, action: onDelete) {
                 Label("Delete", systemImage: "trash")

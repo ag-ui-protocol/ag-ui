@@ -89,9 +89,9 @@ actor ConversationHistoryManager {
         // Check for system message at the beginning
         let hasSystemMessage = history.first is SystemMessage
         if hasSystemMessage && history.count > 1 {
-            // Keep system message + last maxLength-1 messages
+            // Keep system message + last maxLength messages (system excluded from count)
             let systemMessage = history.first!
-            let trimmed = Array(history.dropFirst().suffix(maxLength - 1))
+            let trimmed = Array(history.dropFirst().suffix(maxLength))
             threadHistories[threadId] = [systemMessage] + trimmed
         } else {
             // No system message, just keep last maxLength messages

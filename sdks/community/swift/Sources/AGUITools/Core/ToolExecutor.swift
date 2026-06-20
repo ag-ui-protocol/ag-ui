@@ -104,14 +104,14 @@ public extension ToolExecutor {
     ///
     /// Override this method to implement custom validation logic based on
     /// your tool's parameter schema.
-    func validate(toolCall: ToolCall) -> ToolValidationResult {
+    nonisolated func validate(toolCall: ToolCall) -> ToolValidationResult {
         .valid
     }
 
     /// Default timeout implementation (no timeout).
     ///
     /// Override this method to specify a maximum execution time for your tool.
-    func maximumExecutionTime() -> Duration? {
+    nonisolated func maximumExecutionTime() -> Duration? {
         nil
     }
 }
