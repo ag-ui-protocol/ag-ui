@@ -150,15 +150,21 @@ public struct UserMessage: Message, Sendable, Hashable {
         hasher.combine(role)
         hasher.combine(content)
         hasher.combine(name)
-        // Note: contentParts is not directly hashable due to protocol type
-        hasher.combine(isMultimodal)
+        contentParts?.forEach { hasher.combine($0.anyHashable) }
     }
 
     public static func == (lhs: UserMessage, rhs: UserMessage) -> Bool {
-        lhs.id == rhs.id &&
-            lhs.role == rhs.role &&
-            lhs.content == rhs.content &&
-            lhs.name == rhs.name &&
-            lhs.isMultimodal == rhs.isMultimodal
+        guard lhs.id == rhs.id,
+              lhs.role == rhs.role,
+              lhs.content == rhs.content,
+              lhs.name == rhs.name else { return false }
+        switch (lhs.contentParts, rhs.contentParts) {
+        case (nil, nil):
+            return true
+        case (let lParts?, let rParts?) where lParts.count == rParts.count:
+            return zip(lParts, rParts).allSatisfy { $0.isEqual(to: $1) }
+        default:
+            return false
+        }
     }
 }

@@ -129,16 +129,7 @@ extension AsyncSequence where Element == any AGUIEvent {
                             continuation.yield(AgentState(messages: messages))
 
                         case let e as MessagesSnapshotEvent:
-                            let decoder = MessageDecoder()
-                            let rawArray = try JSONSerialization.jsonObject(
-                                with: e.messages,
-                                options: []
-                            ) as? [[String: Any]] ?? []
-                            let decodedMessages = try rawArray.compactMap { dict -> (any Message)? in
-                                let data = try JSONSerialization.data(withJSONObject: dict)
-                                return try? decoder.decode(data)
-                            }
-                            messages = decodedMessages
+                            messages = e.messages
                             continuation.yield(AgentState(messages: messages))
 
                         case let e as StateSnapshotEvent:

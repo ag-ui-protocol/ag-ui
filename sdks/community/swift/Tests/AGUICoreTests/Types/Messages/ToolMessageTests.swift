@@ -233,7 +233,7 @@ final class ToolMessageTests: XCTestCase {
         let dict: [String: Any] = [
             "id": original.id,
             "role": original.role.rawValue,
-            "content": original.content ?? "",
+            "content": original.content,
             "toolCallId": original.toolCallId
         ]
         let encoded = try JSONSerialization.data(withJSONObject: dict)
@@ -264,7 +264,7 @@ final class ToolMessageTests: XCTestCase {
         let dict: [String: Any] = [
             "id": original.id,
             "role": original.role.rawValue,
-            "content": original.content ?? "",
+            "content": original.content,
             "toolCallId": original.toolCallId,
             "name": original.name as Any,
             "error": original.error as Any
@@ -334,7 +334,7 @@ final class ToolMessageTests: XCTestCase {
 
         XCTAssertEqual(result.role, .tool)
         XCTAssertNil(result.error)
-        XCTAssertTrue(result.content?.contains("Successfully") ?? false)
+        XCTAssertTrue(result.content.contains("Successfully"))
     }
 
     func testFailedToolExecution() {
@@ -377,6 +377,6 @@ final class ToolMessageTests: XCTestCase {
             name: "execute_sql"
         )
 
-        XCTAssertTrue(queryResult.content?.contains("42") ?? false)
+        XCTAssertTrue(queryResult.content.contains("42"))
     }
 }

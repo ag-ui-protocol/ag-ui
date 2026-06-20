@@ -5,23 +5,19 @@ import Foundation
 /// Event containing a complete snapshot of the conversation messages.
 ///
 /// This event provides a full messages snapshot containing the entire conversation
-/// history at a point in time. The messages are stored as raw JSON data to preserve
-/// their exact structure and allow for flexible message schemas.
+/// history at a point in time. Messages are decoded at receive time into strongly-typed
+/// `Message` values, so callers can use them directly without further parsing.
 ///
 /// - SeeAlso: `StateSnapshotEvent`, `StateDeltaEvent`
-public struct MessagesSnapshotEvent: AGUIEvent, Equatable, Sendable {
+public struct MessagesSnapshotEvent: AGUIEvent, Sendable {
 
     // MARK: - Properties
 
-    /// The complete messages snapshot as raw JSON data.
+    /// The decoded conversation messages.
     ///
-    /// This typically contains an array of message objects, but the structure is
-    /// application-specific and can be any valid JSON value (array, object, etc.).
-    /// Each message usually contains fields like id, role, content, and timestamp.
-    ///
-    /// To access the parsed messages, use `parsedMessages()` or parse the data
-    /// using `JSONSerialization.jsonObject(with:)`.
-    public let messages: Data
+    /// Messages are decoded during event parsing using `MessageDecoder`, providing
+    /// type-safe access without requiring callers to parse raw JSON.
+    public let messages: [any Message]
 
     /// Optional timestamp when the messages snapshot was captured.
     ///
@@ -39,11 +35,11 @@ public struct MessagesSnapshotEvent: AGUIEvent, Equatable, Sendable {
     /// Creates a new `MessagesSnapshotEvent`.
     ///
     /// - Parameters:
-    ///   - messages: The complete messages snapshot as raw JSON data
+    ///   - messages: The decoded conversation messages
     ///   - timestamp: Optional timestamp in milliseconds since epoch
     ///   - rawEvent: Optional raw event data as received from the agent
     public init(
-        messages: Data,
+        messages: [any Message],
         timestamp: Int64? = nil,
         rawEvent: Data? = nil
     ) {
@@ -51,76 +47,23 @@ public struct MessagesSnapshotEvent: AGUIEvent, Equatable, Sendable {
         self.timestamp = timestamp
         self.rawEvent = rawEvent
     }
-
-    // MARK: - Convenience Methods
-
-    /// Parses the messages JSON data into a Swift object.
-    ///
-    /// This method uses `JSONSerialization` because the messages structure is
-    /// application-specific and unknown at compile time. It can return any
-    /// valid JSON value (typically an array of message objects, but could be
-    /// an object with metadata, or other structures).
-    ///
-    /// For type-safe parsing when you know the messages structure, use
-    /// `parsedMessages(as:)` instead.
-    ///
-    /// - Returns: The parsed JSON object (typically an array, but can be object or primitive)
-    /// - Throws: An error if the messages data is not valid JSON
-    public func parsedMessages() throws -> Any {
-        try JSONSerialization.jsonObject(with: messages, options: .allowFragments)
-    }
-
-    /// Parses the messages JSON data into a strongly-typed Swift object.
-    ///
-    /// This method uses `Codable` for type-safe decoding when you know the
-    /// expected structure of the messages. Use this when you have a specific
-    /// type that conforms to `Decodable`.
-    ///
-    /// - Parameter type: The type to decode the messages as (must conform to `Decodable`)
-    /// - Returns: A decoded instance of the specified type
-    /// - Throws: A `DecodingError` if the messages cannot be decoded as the specified type
-    ///
-    /// Example:
-    /// ```swift
-    /// struct Message: Decodable {
-    ///     let id: String
-    ///     let role: String
-    ///     let content: String
-    /// }
-    ///
-    /// let messages = try event.parsedMessages(as: [MyMessage].self)
-    /// for message in messages {
-    ///     print("\(message.role): \(message.content)")
-    /// }
-    /// ```
-    public func parsedMessages<T: Decodable>(as type: T.Type, decoder: JSONDecoder = JSONDecoder()) throws -> T {
-        try decoder.decode(type, from: messages)
-    }
 }
 
 // MARK: - CustomStringConvertible
 extension MessagesSnapshotEvent: CustomStringConvertible {
     public var description: String {
-        let messagesSize = messages.count
-        return "MessagesSnapshotEvent(messages: \(messagesSize) bytes, timestamp: \(timestamp?.description ?? "nil"))"
+        "MessagesSnapshotEvent(messages: \(messages.count) messages, timestamp: \(timestamp?.description ?? "nil"))"
     }
 }
 
 // MARK: - CustomDebugStringConvertible
 extension MessagesSnapshotEvent: CustomDebugStringConvertible {
     public var debugDescription: String {
-        let messagesPreview: String
-        if let jsonString = String(data: messages, encoding: .utf8) {
-            let preview = String(jsonString.prefix(100))
-            messagesPreview = jsonString.count > 100 ? "\(preview)..." : preview
-        } else {
-            messagesPreview = "\(messages.count) bytes (invalid UTF-8)"
-        }
-
+        let preview = messages.prefix(3).map { "\($0.role.rawValue):\($0.id)" }.joined(separator: ", ")
+        let suffix = messages.count > 3 ? ", …" : ""
         return """
         MessagesSnapshotEvent {
-            messages: \(messagesPreview)
-            messagesSize: \(messages.count) bytes
+            messages: [\(preview)\(suffix)] (\(messages.count) total)
             timestamp: \(timestamp.map(String.init) ?? "nil")
             eventType: \(eventType.rawValue)
         }

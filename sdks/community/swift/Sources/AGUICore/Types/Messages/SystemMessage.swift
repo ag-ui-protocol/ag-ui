@@ -35,14 +35,6 @@ import Foundation
 /// )
 /// ```
 ///
-/// ## Optional Content
-///
-/// Unlike ``DeveloperMessage``, system messages allow nil content, which can be
-/// useful for:
-/// - Placeholder system messages to be filled later
-/// - System messages that rely only on name for identification
-/// - Resetting or clearing system context
-///
 /// ## Differences from DeveloperMessage
 ///
 /// While both guide agent behavior:
@@ -63,9 +55,9 @@ public struct SystemMessage: Message, Sendable, Hashable {
     /// The system's instruction content.
     ///
     /// This typically contains behavioral guidelines, personality traits,
-    /// response format preferences, or contextual information. Unlike
-    /// ``DeveloperMessage``, this field is optional.
-    public let content: String?
+    /// response format preferences, or contextual information.
+    /// Matches the TypeScript schema `content: z.string()` — required, non-nullable.
+    public let content: String
 
     /// Optional identifier for the system or instruction set.
     ///
@@ -88,7 +80,7 @@ public struct SystemMessage: Message, Sendable, Hashable {
     ///   - encryptedValue: Optional encrypted reasoning value
     public init(
         id: String,
-        content: String? = nil,
+        content: String = "",
         name: String? = nil,
         encryptedValue: String? = nil
     ) {
@@ -114,7 +106,7 @@ extension SystemMessage: Decodable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
         role = .system
-        content = try container.decodeIfPresent(String.self, forKey: .content)
+        content = try container.decodeIfPresent(String.self, forKey: .content) ?? ""
         name = try container.decodeIfPresent(String.self, forKey: .name)
         encryptedValue = try container.decodeIfPresent(String.self, forKey: .encryptedValue)
     }

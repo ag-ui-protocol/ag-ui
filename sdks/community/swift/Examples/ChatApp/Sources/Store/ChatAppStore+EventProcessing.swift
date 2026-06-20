@@ -154,8 +154,7 @@ extension ChatAppStore {
     // MARK: - Message snapshot reconstruction
 
     private func rebuildMessages(from event: MessagesSnapshotEvent) {
-        guard let rawArray = try? event.parsedMessages() as? [[String: Any]] else { return }
-        var rebuilt = rawArray.compactMap { displayMessage(from: $0) }
+        var rebuilt = event.messages.compactMap { displayMessage(from: $0) }
 
         // Phase 1C: Correlate the pending optimistic user message.
         if let pendingId = pendingUserMessageId,
@@ -172,22 +171,27 @@ extension ChatAppStore {
         streamingMessageIndices.removeAll()
     }
 
-    private func displayMessage(from dict: [String: Any]) -> DisplayMessage? {
-        guard
-            let id = dict["id"] as? String,
-            let role = dict["role"] as? String
-        else { return nil }
-
-        let content = dict["content"] as? String ?? ""
-
+    private func displayMessage(from message: any Message) -> DisplayMessage? {
         let displayRole: DisplayMessageRole
-        switch role {
-        case "user": displayRole = .user
-        case "assistant": displayRole = .assistant
-        case "system": displayRole = .system
-        default: return nil  // skip tool/activity messages from the display list
+        switch message.role {
+        case .user: displayRole = .user
+        case .assistant: displayRole = .assistant
+        case .system: displayRole = .system
+        default: return nil  // skip tool/activity/reasoning messages from the display list
         }
-        return DisplayMessage(id: id, role: displayRole, content: content, timestamp: .now)
+
+        let content: String
+        if let userMsg = message as? UserMessage {
+            content = userMsg.content ?? ""
+        } else if let assistantMsg = message as? AssistantMessage {
+            content = assistantMsg.content ?? ""
+        } else if let sysMsg = message as? SystemMessage {
+            content = sysMsg.content
+        } else {
+            content = ""
+        }
+
+        return DisplayMessage(id: message.id, role: displayRole, content: content, timestamp: .now)
     }
 
     // MARK: - Custom event handling

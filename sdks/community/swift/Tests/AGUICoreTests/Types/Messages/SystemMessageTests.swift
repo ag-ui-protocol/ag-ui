@@ -32,14 +32,12 @@ final class SystemMessageTests: XCTestCase {
         XCTAssertEqual(message.role, .system)
     }
 
-    func testInitWithNilContent() {
-        let message = SystemMessage(
-            id: "sys-3",
-            content: nil
-        )
+    func testInitWithDefaultContent() {
+        // content defaults to "" when omitted
+        let message = SystemMessage(id: "sys-3")
 
         XCTAssertEqual(message.id, "sys-3")
-        XCTAssertNil(message.content)
+        XCTAssertEqual(message.content, "")
         XCTAssertNil(message.name)
         XCTAssertEqual(message.role, .system)
     }
@@ -59,7 +57,7 @@ final class SystemMessageTests: XCTestCase {
 
     func testRoleIsAlwaysSystem() {
         let message1 = SystemMessage(id: "1", content: "Message 1")
-        let message2 = SystemMessage(id: "2", content: nil, name: "System")
+        let message2 = SystemMessage(id: "2", content: "", name: "System")
 
         XCTAssertEqual(message1.role, .system)
         XCTAssertEqual(message2.role, .system)
@@ -114,7 +112,8 @@ final class SystemMessageTests: XCTestCase {
         XCTAssertEqual(sysMessage.name, "ProfessionalMode")
     }
 
-    func testDecodingWithNilContent() throws {
+    func testDecodingWithMissingContent() throws {
+        // Missing content key decodes as "" (non-optional String with fallback)
         let json = """
         {
             "id": "sys-decode-3",
@@ -129,11 +128,12 @@ final class SystemMessageTests: XCTestCase {
         let sysMessage = message as! SystemMessage
         XCTAssertEqual(sysMessage.id, "sys-decode-3")
         XCTAssertEqual(sysMessage.role, .system)
-        XCTAssertNil(sysMessage.content)
+        XCTAssertEqual(sysMessage.content, "")
         XCTAssertNil(sysMessage.name)
     }
 
     func testDecodingWithNullContent() throws {
+        // Null content decodes as "" (non-optional String with fallback)
         let json = """
         {
             "id": "sys-decode-4",
@@ -148,7 +148,7 @@ final class SystemMessageTests: XCTestCase {
         XCTAssertTrue(message is SystemMessage)
         let sysMessage = message as! SystemMessage
         XCTAssertEqual(sysMessage.id, "sys-decode-4")
-        XCTAssertNil(sysMessage.content)
+        XCTAssertEqual(sysMessage.content, "")
     }
 
     func testDecodingFailsWithoutId() {
@@ -215,21 +215,16 @@ final class SystemMessageTests: XCTestCase {
         XCTAssertEqual(sysMessage.name, original.name)
     }
 
-    func testRoundTripWithNilContent() throws {
-        // Create original message
-        let original = SystemMessage(
-            id: "sys-roundtrip-2",
-            content: nil
-        )
+    func testRoundTripWithEmptyContent() throws {
+        // Create original message with default empty content
+        let original = SystemMessage(id: "sys-roundtrip-2")
 
-        // Encode via DTO (simulating what RunAgentInput does)
-        var dict: [String: Any] = [
+        // Encode via DTO
+        let dict: [String: Any] = [
             "id": original.id,
-            "role": original.role.rawValue
+            "role": original.role.rawValue,
+            "content": original.content
         ]
-        if let content = original.content {
-            dict["content"] = content
-        }
         let encoded = try JSONSerialization.data(withJSONObject: dict)
 
         // Decode via MessageDecoder
@@ -240,7 +235,7 @@ final class SystemMessageTests: XCTestCase {
         let sysMessage = decoded as! SystemMessage
         XCTAssertEqual(sysMessage.id, original.id)
         XCTAssertEqual(sysMessage.role, original.role)
-        XCTAssertNil(sysMessage.content)
+        XCTAssertEqual(sysMessage.content, "")
     }
 
     // MARK: - Equatable Tests
@@ -250,7 +245,7 @@ final class SystemMessageTests: XCTestCase {
         let message2 = SystemMessage(id: "1", content: "Test", name: "Sys")
         let message3 = SystemMessage(id: "2", content: "Test", name: "Sys")
         let message4 = SystemMessage(id: "1", content: "Different", name: "Sys")
-        let message5 = SystemMessage(id: "1", content: nil, name: "Sys")
+        let message5 = SystemMessage(id: "1", content: "", name: "Sys")
 
         XCTAssertEqual(message1, message2)
         XCTAssertNotEqual(message1, message3)
@@ -296,7 +291,7 @@ final class SystemMessageTests: XCTestCase {
         )
 
         XCTAssertEqual(guidelines.role, .system)
-        XCTAssertTrue(guidelines.content?.contains("professional") ?? false)
+        XCTAssertTrue(guidelines.content.contains("professional"))
     }
 
     func testPersonalityTraits() {
@@ -316,7 +311,7 @@ final class SystemMessageTests: XCTestCase {
             content: "You are helping a beginner learn Swift programming. Be patient and explain concepts clearly."
         )
 
-        XCTAssertNotNil(context.content)
-        XCTAssertTrue(context.content?.contains("beginner") ?? false)
+        XCTAssertFalse(context.content.isEmpty)
+        XCTAssertTrue(context.content.contains("beginner"))
     }
 }

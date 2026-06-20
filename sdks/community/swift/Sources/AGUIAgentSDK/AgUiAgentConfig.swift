@@ -140,17 +140,23 @@ public struct AgUiAgentConfig: Sendable {
 
         // Low-priority auth headers first
         if let key = apiKey {
-            result[apiKeyHeader] = key
+            result[apiKeyHeader] = sanitizeHeaderValue(key)
         }
         if let token = bearerToken {
-            result["Authorization"] = "Bearer \(token)"
+            result["Authorization"] = "Bearer \(sanitizeHeaderValue(token))"
         }
 
         // User-supplied headers override auth helpers
         for (k, v) in headers {
-            result[k] = v
+            result[k] = sanitizeHeaderValue(v)
         }
 
         return result
+    }
+
+    /// Strips CR and LF from a header value to prevent CRLF injection.
+    private func sanitizeHeaderValue(_ value: String) -> String {
+        value.replacingOccurrences(of: "\r", with: "")
+             .replacingOccurrences(of: "\n", with: "")
     }
 }

@@ -58,15 +58,25 @@ public struct HttpAgentConfiguration: Sendable {
     public func buildHeaders() -> [String: String] {
         var result: [String: String] = [:]
         if let key = apiKey {
-            result[apiKeyHeader] = key
+            result[apiKeyHeader] = sanitizeHeaderValue(key)
         }
         if let token = bearerToken {
-            result["Authorization"] = "Bearer \(token)"
+            result["Authorization"] = "Bearer \(sanitizeHeaderValue(token))"
         }
         for (k, v) in headers {
-            result[k] = v
+            result[k] = sanitizeHeaderValue(v)
         }
         return result
+    }
+
+    /// Strips CR and LF characters from a header value to prevent CRLF injection.
+    ///
+    /// URLSession rejects headers containing `\r\n` on Apple platforms, but custom
+    /// `HTTPClient` implementations may not. Sanitizing at the source protects all
+    /// transport implementations uniformly.
+    private func sanitizeHeaderValue(_ value: String) -> String {
+        value.replacingOccurrences(of: "\r", with: "")
+             .replacingOccurrences(of: "\n", with: "")
     }
 
     /// Retry policy options.

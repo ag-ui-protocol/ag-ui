@@ -13,9 +13,17 @@ public final class AgUiAgent: Sendable {
 
     // MARK: - Private state
 
-    private let transport: any AgentTransport
-    private let httpAgent: HttpAgent
+    // Non-nil for URL-based init; provides run/subscribe/dispose and tool responses.
+    // The HttpAgent owns the single URLSession for this init path.
+    private let httpAgent: HttpAgent?
+    // Non-nil for transport-based init; provides run/subscribe/dispose without
+    // needing an HttpAgent (avoids the placeholder-URL dummy agent).
+    private let abstractAgent: AbstractAgent?
     private let toolExecutionManager: ToolExecutionManager?
+
+    /// Stable thread ID used when the caller does not provide one.
+    /// Generated once at init time so consecutive `sendMessage` calls share a conversation thread.
+    private let defaultThreadId: String = UUID().uuidString
 
     // MARK: - Initialization
 
@@ -34,7 +42,7 @@ public final class AgUiAgent: Sendable {
 
         let agent = HttpAgent(configuration: httpConfig)
         self.httpAgent = agent
-        self.transport = HttpAgentTransport(configuration: httpConfig)
+        self.abstractAgent = nil
 
         if let registry = cfg.toolRegistry {
             self.toolExecutionManager = ToolExecutionManager(
@@ -52,29 +60,31 @@ public final class AgUiAgent: Sendable {
         toolExecutionManager: ToolExecutionManager? = nil
     ) {
         self.config = config
-        self.transport = transport
-        let url = URL(string: "https://placeholder.local")!
-        self.httpAgent = HttpAgent(baseURL: url)
+        self.httpAgent = nil
+        self.abstractAgent = AbstractAgent(transport: transport)
         self.toolExecutionManager = toolExecutionManager
     }
 
     // MARK: - Core run method
 
     public func run(input: RunAgentInput) -> AsyncThrowingStream<any AGUIEvent, Error> {
-        transport.run(input: input)
+        if let agent = httpAgent { return agent.run(input: input) }
+        return abstractAgent!.run(input: input)
     }
 
     // MARK: - sendMessage (primary API)
 
     public func sendMessage(
         _ message: String,
-        threadId: String = UUID().uuidString,
+        threadId: String? = nil,
         state: State? = nil,
         includeSystemPrompt: Bool = true
     ) -> AsyncThrowingStream<any AGUIEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
+                    let effectiveThreadId = threadId ?? self.defaultThreadId
+
                     var messages: [any Message] = []
 
                     if includeSystemPrompt, let prompt = self.config.systemPrompt {
@@ -95,7 +105,7 @@ public final class AgUiAgent: Sendable {
                     }
 
                     let input = RunAgentInput(
-                        threadId: threadId,
+                        threadId: effectiveThreadId,
                         runId: "run_\(UUID().uuidString)",
                         state: state ?? Data("{}".utf8),
                         messages: messages,
@@ -133,7 +143,8 @@ public final class AgUiAgent: Sendable {
     // MARK: - Subscriber
 
     public func subscribe(_ subscriber: any AgentSubscriber) async -> any AgentSubscription {
-        await httpAgent.subscribe(subscriber)
+        if let agent = httpAgent { return await agent.subscribe(subscriber) }
+        return await abstractAgent!.subscribe(subscriber)
     }
 
     // MARK: - Lifecycle
@@ -142,6 +153,10 @@ public final class AgUiAgent: Sendable {
         if let manager = toolExecutionManager {
             await manager.cancelAllExecutions()
         }
-        await httpAgent.dispose()
+        if let agent = httpAgent {
+            await agent.dispose()
+        } else {
+            await abstractAgent!.dispose()
+        }
     }
 }

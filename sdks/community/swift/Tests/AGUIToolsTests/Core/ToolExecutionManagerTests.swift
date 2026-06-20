@@ -6,6 +6,14 @@ import AGUICore
 
 // MARK: - Mock types
 
+/// Always throws on sendToolResponse — used to test Issue 26 delivery-failure path.
+private actor FailingResponseHandler: ToolResponseHandler {
+    struct DeliveryError: Error {}
+    func sendToolResponse(_ message: ToolMessage, threadId: String?, runId: String?) async throws {
+        throw DeliveryError()
+    }
+}
+
 /// Records execute calls and returns a configurable result or error.
 private actor CapturingToolExecutor: ToolExecutor {
     let tool: Tool
@@ -57,7 +65,7 @@ final class ToolExecutionManagerTests: XCTestCase {
         ToolExecutionManager(
             toolRegistry: registry,
             responseHandler: responseHandler,
-            errorHandler: ToolErrorHandler(config: ToolErrorConfig(maxRetryAttempts: 0))
+            errorHandlerConfig: ToolErrorConfig(maxRetryAttempts: 0)
         )
     }
 
@@ -407,8 +415,8 @@ final class ToolExecutionManagerTests: XCTestCase {
         XCTAssertEqual(messages.count, 1)
         XCTAssertEqual(messages[0].toolCallId, "c1")
         XCTAssertTrue(
-            messages[0].content?.hasPrefix("Error:") == true,
-            "Expected error message, got: \(messages[0].content ?? "nil")"
+            messages[0].content.hasPrefix("Error:"),
+            "Expected error message, got: \(messages[0].content)"
         )
     }
 
@@ -448,8 +456,8 @@ final class ToolExecutionManagerTests: XCTestCase {
         let messages = await handler.sentMessages
         XCTAssertEqual(messages.count, 1)
         XCTAssertTrue(
-            messages[0].content?.hasPrefix("Error:") == true,
-            "Expected error message, got: \(messages[0].content ?? "nil")"
+            messages[0].content.hasPrefix("Error:"),
+            "Expected error message, got: \(messages[0].content)"
         )
     }
 
@@ -596,5 +604,211 @@ final class ToolExecutionManagerTests: XCTestCase {
         // Then: event forwarded, no execution launched, no crash
         XCTAssertEqual(result.count, 1)
         XCTAssertTrue(result[0] is ToolCallEndEvent)
+    }
+
+    // MARK: - Feature: Delivery-failure propagation (Issue 26)
+
+    /// On the `.fail` path (tool execution failed, non-retryable), when `sendToolResponse`
+    /// also throws, the `.failed` event error string must include a delivery-failure note —
+    /// not just the original tool error. This distinguishes "agent was notified" from
+    /// "agent was NOT notified and may stall".
+    func test_failPath_responseDeliveryFailure_errorReflectsDeliveryFailure() async throws {
+        // Given: tool throws a non-retryable error AND delivery always fails
+        let registry = DefaultToolRegistry()
+        let executor = CapturingToolExecutor(name: "broken")
+        await executor.setError(ToolExecutionError.validationFailed(message: "bad args"))
+        try await registry.register(executor: executor)
+        let manager = ToolExecutionManager(
+            toolRegistry: registry,
+            responseHandler: FailingResponseHandler(),
+            errorHandlerConfig: ToolErrorConfig(maxRetryAttempts: 0)
+        )
+
+        let execEventsStream = await manager.executionEvents
+        let eventsTask = Task<[ToolExecutionEvent], Never> {
+            var collected: [ToolExecutionEvent] = []
+            for await event in execEventsStream {
+                collected.append(event)
+                if collected.count == 3 { break }
+            }
+            return collected
+        }
+
+        try await drain(
+            await manager.processEventStream(
+                makeStream(toolCallEvents(id: "c1", name: "broken")),
+                threadId: nil, runId: nil
+            )
+        )
+
+        let received = await eventsTask.value
+        XCTAssertEqual(received.count, 3)
+
+        // The .failed error must mention delivery failure — not just the original tool error.
+        // Before fix: error = "bad args" only (delivery failure silently dropped via try?).
+        // After fix:  error = "bad args; response delivery failed: ..."
+        if case .failed(_, _, let errorStr) = received[2] {
+            XCTAssertTrue(
+                errorStr.contains("response delivery failed"),
+                "Expected delivery failure in .failed error, got: '\(errorStr)'"
+            )
+        } else {
+            XCTFail("Expected .failed at index 2, got \(received[2])")
+        }
+    }
+
+    /// On the `.circuitOpen` path, when `sendToolResponse` also throws, the `.failed`
+    /// event error string must include a delivery-failure note — not just "Circuit breaker open".
+    func test_circuitOpenPath_responseDeliveryFailure_errorReflectsDeliveryFailure() async throws {
+        // Given: tool fails enough to open circuit AND delivery always fails
+        let registry = DefaultToolRegistry()
+        let executor = CapturingToolExecutor(name: "tool")
+        await executor.setError(NSError(domain: "TestError", code: 1, userInfo: nil))
+        try await registry.register(executor: executor)
+
+        // Circuit opens after 1 failure; no recovery window
+        let config = ToolErrorConfig(
+            maxRetryAttempts: 0,
+            circuitBreaker: CircuitBreakerConfig(failureThreshold: 1, recoveryTimeoutSeconds: 3600)
+        )
+        let manager = ToolExecutionManager(
+            toolRegistry: registry,
+            responseHandler: FailingResponseHandler(),
+            errorHandlerConfig: config
+        )
+
+        // Collect all 6 events (3 per run) in a single background pass over the shared stream
+        let execEventsStream = await manager.executionEvents
+        let eventsTask = Task<[ToolExecutionEvent], Never> {
+            var collected: [ToolExecutionEvent] = []
+            for await event in execEventsStream {
+                collected.append(event)
+                if collected.count == 6 { break }
+            }
+            return collected
+        }
+
+        // Run 1: tool fails → .fail decision → circuit opens (threshold=1)
+        try await drain(
+            await manager.processEventStream(
+                makeStream(toolCallEvents(id: "c1", name: "tool")),
+                threadId: nil, runId: nil
+            )
+        )
+
+        // Run 2: circuit already open → .circuitOpen decision → delivery also fails
+        try await drain(
+            await manager.processEventStream(
+                makeStream(toolCallEvents(id: "c2", name: "tool")),
+                threadId: nil, runId: nil
+            )
+        )
+
+        let received = await eventsTask.value
+        XCTAssertEqual(received.count, 6)
+
+        // Events [3..5] are from run 2; [5] is the final .failed for the circuit-open case
+        if case .failed(let id, _, let errorStr) = received[5] {
+            XCTAssertEqual(id, "c2")
+            XCTAssertTrue(
+                errorStr.contains("response delivery failed"),
+                "Expected delivery failure in circuit-open .failed error, got: '\(errorStr)'"
+            )
+        } else {
+            XCTFail("Expected .failed at index 5 (run-2 terminal event), got \(received[5])")
+        }
+    }
+
+    /// When `sendToolResponse` throws, the execution lifecycle must still emit `.failed`
+    /// rather than silently swallowing the error and emitting `.succeeded`.
+    func test_processEventStream_responseDeliveryFailure_yieldsFailedEvent() async throws {
+        // Given: tool executes successfully but response delivery always fails
+        let registry = DefaultToolRegistry()
+        let executor = CapturingToolExecutor(name: "tool")
+        try await registry.register(executor: executor)
+        let manager = ToolExecutionManager(
+            toolRegistry: registry,
+            responseHandler: FailingResponseHandler(),
+            errorHandlerConfig: ToolErrorConfig(maxRetryAttempts: 0)
+        )
+
+        let execEventsStream = await manager.executionEvents
+        let eventsTask = Task<[ToolExecutionEvent], Never> {
+            var collected: [ToolExecutionEvent] = []
+            for await event in execEventsStream {
+                collected.append(event)
+                if collected.count == 3 { break }
+            }
+            return collected
+        }
+
+        try await drain(
+            await manager.processEventStream(
+                makeStream(toolCallEvents(id: "c1", name: "tool")),
+                threadId: nil, runId: nil
+            )
+        )
+
+        let received = await eventsTask.value
+        XCTAssertEqual(received.count, 3)
+
+        // Must be .failed — not .succeeded — when response delivery throws
+        if case .failed(let id, _, _) = received[2] {
+            XCTAssertEqual(id, "c1")
+        } else {
+            XCTFail("Expected .failed when response delivery fails, got \(received[2])")
+        }
+    }
+
+    // MARK: - Feature: Per-tool circuit breaker isolation (Issue 27)
+
+    /// Circuit breakers must be scoped per-tool: one tool's failures must not block other tools.
+    func test_perToolCircuitBreaker_oneToolFailingDoesNotBlockOtherTools() async throws {
+        // Given: two tools; 'fragile' consistently errors, 'healthy' always succeeds
+        let registry = DefaultToolRegistry()
+
+        let fragileExec = CapturingToolExecutor(name: "fragile")
+        await fragileExec.setError(NSError(domain: "TestError", code: 1, userInfo: nil))
+
+        let healthyExec = CapturingToolExecutor(name: "healthy")
+        await healthyExec.setResult(.success(message: "ok"))
+
+        try await registry.register(executor: fragileExec)
+        try await registry.register(executor: healthyExec)
+
+        let handler = CapturingResponseHandler()
+        // Circuit opens after 1 failure; recovery window is impossibly long during the test
+        let config = ToolErrorConfig(
+            maxRetryAttempts: 0,
+            circuitBreaker: CircuitBreakerConfig(failureThreshold: 1, recoveryTimeoutSeconds: 3600)
+        )
+        let manager = ToolExecutionManager(
+            toolRegistry: registry,
+            responseHandler: handler,
+            errorHandlerConfig: config
+        )
+
+        // First run: fail 'fragile' once — this opens its per-tool circuit breaker
+        try await drain(
+            await manager.processEventStream(
+                makeStream(toolCallEvents(id: "c1", name: "fragile")),
+                threadId: nil, runId: nil
+            )
+        )
+
+        // Second run: 'healthy' must succeed — its circuit breaker is independent
+        try await drain(
+            await manager.processEventStream(
+                makeStream(toolCallEvents(id: "c2", name: "healthy")),
+                threadId: nil, runId: nil
+            )
+        )
+
+        let messages = await handler.sentMessages
+        XCTAssertEqual(messages.count, 2)
+
+        let healthyMsg = messages.first(where: { $0.toolCallId == "c2" })
+        XCTAssertEqual(healthyMsg?.content, "ok",
+                       "Healthy tool was blocked by fragile tool's circuit breaker (shared state)")
     }
 }

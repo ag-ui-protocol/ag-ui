@@ -37,7 +37,11 @@ public actor ToolExecutionManager {
 
     private let toolRegistry: any ToolRegistry
     private let responseHandler: any ToolResponseHandler
-    private let errorHandler: ToolErrorHandler
+    /// Configuration template used to mint one `ToolErrorHandler` per tool name.
+    private let errorHandlerConfig: ToolErrorConfig
+    /// Per-tool error handlers, keyed by tool name.
+    /// Each tool gets its own circuit breaker so one tool's failures don't block others.
+    private var errorHandlers: [String: ToolErrorHandler] = [:]
     private var activeExecutions: [String: Task<Void, Never>] = [:]
     private var toolCallBuffer: [String: ToolCallBuilder] = [:]
 
@@ -55,20 +59,29 @@ public actor ToolExecutionManager {
     /// - Parameters:
     ///   - toolRegistry: The registry used to look up and execute tools.
     ///   - responseHandler: The handler used to send tool results back to the agent.
-    ///   - errorHandler: Controls per-tool retry behaviour and circuit-breaker protection.
-    ///     Defaults to a shared handler with sensible defaults (3 retries, exponential jitter,
-    ///     circuit opens after 5 consecutive failures).
+    ///   - errorHandlerConfig: Configuration template used to create one `ToolErrorHandler`
+    ///     per tool name, giving each tool an independent retry counter and circuit breaker.
+    ///     Defaults to sensible values (3 retries, exponential jitter, circuit opens after
+    ///     5 consecutive failures).
     public init(
         toolRegistry: any ToolRegistry,
         responseHandler: any ToolResponseHandler,
-        errorHandler: ToolErrorHandler = ToolErrorHandler()
+        errorHandlerConfig: ToolErrorConfig = ToolErrorConfig()
     ) {
         self.toolRegistry = toolRegistry
         self.responseHandler = responseHandler
-        self.errorHandler = errorHandler
+        self.errorHandlerConfig = errorHandlerConfig
         var cont: AsyncStream<ToolExecutionEvent>.Continuation!
         self.executionEvents = AsyncStream { cont = $0 }
         self.eventsContinuation = cont
+    }
+
+    /// Returns the per-tool error handler for `toolName`, creating one on first access.
+    private func errorHandler(for toolName: String) -> ToolErrorHandler {
+        if let existing = errorHandlers[toolName] { return existing }
+        let handler = ToolErrorHandler(config: errorHandlerConfig)
+        errorHandlers[toolName] = handler
+        return handler
     }
 
     deinit {
@@ -160,13 +173,14 @@ public actor ToolExecutionManager {
 
         eventsContinuation?.yield(.executing(toolCallId: toolCallId, toolName: toolName))
 
+        let handler = errorHandler(for: toolName)
         let context = ToolExecutionContext(toolCall: toolCall, threadId: threadId, runId: runId)
         var attempt = 0
 
         while true {
             do {
                 let result = try await toolRegistry.execute(context: context)
-                await errorHandler.recordSuccess()
+                await handler.recordSuccess()
 
                 let content: String
                 if let data = result.result, let decoded = String(data: data, encoding: .utf8), !decoded.isEmpty {
@@ -182,12 +196,21 @@ public actor ToolExecutionManager {
                     content: content,
                     toolCallId: toolCallId
                 )
-                try? await responseHandler.sendToolResponse(toolMessage, threadId: threadId, runId: runId)
-                eventsContinuation?.yield(.succeeded(toolCallId: toolCallId, toolName: toolName, result: result))
+                // Issue 26: surface delivery failures instead of silently discarding them.
+                do {
+                    try await responseHandler.sendToolResponse(toolMessage, threadId: threadId, runId: runId)
+                    eventsContinuation?.yield(.succeeded(toolCallId: toolCallId, toolName: toolName, result: result))
+                } catch {
+                    eventsContinuation?.yield(.failed(
+                        toolCallId: toolCallId,
+                        toolName: toolName,
+                        error: "Response delivery failed: \(error.localizedDescription)"
+                    ))
+                }
                 return
 
             } catch {
-                let decision = await errorHandler.handleError(error: error, context: context, attempt: attempt)
+                let decision = await handler.handleError(error: error, context: context, attempt: attempt)
                 switch decision {
                 case .retry(let delayNs):
                     if delayNs > 0 {
@@ -201,18 +224,35 @@ public actor ToolExecutionManager {
                         content: "Error: \(message)",
                         toolCallId: toolCallId
                     )
-                    try? await responseHandler.sendToolResponse(errorMessage, threadId: threadId, runId: runId)
-                    eventsContinuation?.yield(.failed(toolCallId: toolCallId, toolName: toolName, error: message))
+                    do {
+                        try await responseHandler.sendToolResponse(errorMessage, threadId: threadId, runId: runId)
+                        eventsContinuation?.yield(.failed(toolCallId: toolCallId, toolName: toolName, error: message))
+                    } catch {
+                        eventsContinuation?.yield(.failed(
+                            toolCallId: toolCallId,
+                            toolName: toolName,
+                            error: "\(message); response delivery failed: \(error.localizedDescription)"
+                        ))
+                    }
                     return
 
                 case .circuitOpen:
+                    let circuitError = "Circuit breaker open"
                     let errorMessage = ToolMessage(
                         id: "msg_\(UUID().uuidString)",
                         content: "Error: Tool '\(toolName)' is temporarily unavailable",
                         toolCallId: toolCallId
                     )
-                    try? await responseHandler.sendToolResponse(errorMessage, threadId: threadId, runId: runId)
-                    eventsContinuation?.yield(.failed(toolCallId: toolCallId, toolName: toolName, error: "Circuit breaker open"))
+                    do {
+                        try await responseHandler.sendToolResponse(errorMessage, threadId: threadId, runId: runId)
+                        eventsContinuation?.yield(.failed(toolCallId: toolCallId, toolName: toolName, error: circuitError))
+                    } catch {
+                        eventsContinuation?.yield(.failed(
+                            toolCallId: toolCallId,
+                            toolName: toolName,
+                            error: "\(circuitError); response delivery failed: \(error.localizedDescription)"
+                        ))
+                    }
                     return
                 }
             }

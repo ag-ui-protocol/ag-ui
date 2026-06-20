@@ -199,6 +199,50 @@ final class AgUiAgentTests: XCTestCase {
         XCTAssertTrue(received[1] is RunFinishedEvent)
     }
 
+    // MARK: - threadId stability (Issue 25)
+
+    func test_sendMessage_defaultThreadId_isStableAcrossCalls() async throws {
+        // Two consecutive calls with no explicit threadId must share the same ID.
+        // This fails before the fix because UUID().uuidString is evaluated fresh each call.
+        let (agent, transport) = makeCapturingAgent()
+
+        for try await _ in agent.sendMessage("First") {}
+        for try await _ in agent.sendMessage("Second") {}
+
+        let inputs = await transport.capturedInputs
+        XCTAssertEqual(inputs.count, 2)
+        XCTAssertEqual(inputs[0].threadId, inputs[1].threadId,
+                       "Expected stable threadId across calls, got '\(inputs[0].threadId)' and '\(inputs[1].threadId)'")
+    }
+
+    func test_sendMessage_explicitThreadId_overridesAgentDefault() async throws {
+        // Explicit threadId must be honoured; the following un-keyed call uses the stable default.
+        let (agent, transport) = makeCapturingAgent()
+
+        for try await _ in agent.sendMessage("Hi", threadId: "explicit-thread") {}
+        for try await _ in agent.sendMessage("Again") {}
+
+        let inputs = await transport.capturedInputs
+        XCTAssertEqual(inputs[0].threadId, "explicit-thread")
+        XCTAssertNotEqual(inputs[1].threadId, "explicit-thread")
+    }
+
+    func test_sendMessage_twoAgentInstances_haveIndependentDefaultThreadIds() async throws {
+        // Two independent agent instances must not share thread IDs.
+        let (agent1, transport1) = makeCapturingAgent()
+        let (agent2, transport2) = makeCapturingAgent()
+
+        for try await _ in agent1.sendMessage("Hi") {}
+        for try await _ in agent2.sendMessage("Hi") {}
+
+        let id1 = await transport1.capturedInputs.first?.threadId
+        let id2 = await transport2.capturedInputs.first?.threadId
+
+        XCTAssertNotNil(id1)
+        XCTAssertNotNil(id2)
+        XCTAssertNotEqual(id1, id2)
+    }
+
     // MARK: - close()
 
     func testCloseDoesNotCrash() async {

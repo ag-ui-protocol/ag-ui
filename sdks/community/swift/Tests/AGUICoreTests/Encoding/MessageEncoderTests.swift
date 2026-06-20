@@ -66,15 +66,15 @@ final class MessageEncoderTests: XCTestCase {
         XCTAssertEqual(json["content"] as? String, "You are a helpful assistant.")
     }
 
-    func test_encodeSystemMessage_nilContent_omittedFromJSON() throws {
-        // Given
-        let message = SystemMessage(id: "sys-2", content: nil)
+    func test_encodeSystemMessage_emptyContent_includedInJSON() throws {
+        // Given — content defaults to "" when omitted
+        let message = SystemMessage(id: "sys-2")
 
         // When
         let json = try json(from: message)
 
-        // Then: optional content must not appear in JSON when nil
-        XCTAssertNil(json["content"])
+        // Then: content is always included (non-optional String)
+        XCTAssertEqual(json["content"] as? String, "")
     }
 
     func test_encodeSystemMessage_withName_includesName() throws {

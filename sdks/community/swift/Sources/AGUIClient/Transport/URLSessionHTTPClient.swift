@@ -47,6 +47,12 @@ public actor URLSessionHTTPClient: HTTPClient {
         self.session = session
     }
 
+    deinit {
+        // Release OS-level socket pool and free the session delegate.
+        // invalidateAndCancel() is synchronous and safe to call from deinit.
+        session.invalidateAndCancel()
+    }
+
     /// Creates a new URLSession HTTP client with the specified configuration.
     ///
     /// This factory method provides a convenient way to create a client

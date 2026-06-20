@@ -55,15 +55,11 @@ final class MessagesSnapshotEventTests: XCTestCase,
         }
         XCTAssertEqual(messagesSnapshot.eventType, .messagesSnapshot)
         XCTAssertNil(messagesSnapshot.timestamp)
-
-        // Verify messages can be parsed
-        let parsed = try messagesSnapshot.parsedMessages() as? [[String: Any]]
-        XCTAssertNotNil(parsed)
-        XCTAssertEqual(parsed?.count, 2)
-        XCTAssertEqual(parsed?[0]["id"] as? String, "msg-1")
-        XCTAssertEqual(parsed?[0]["role"] as? String, "user")
-        XCTAssertEqual(parsed?[1]["id"] as? String, "msg-2")
-        XCTAssertEqual(parsed?[1]["role"] as? String, "assistant")
+        XCTAssertEqual(messagesSnapshot.messages.count, 2)
+        XCTAssertEqual(messagesSnapshot.messages[0].id, "msg-1")
+        XCTAssertEqual(messagesSnapshot.messages[0].role, .user)
+        XCTAssertEqual(messagesSnapshot.messages[1].id, "msg-2")
+        XCTAssertEqual(messagesSnapshot.messages[1].role, .assistant)
     }
 
     func test_decodeMessagesSnapshot_withEmptyArray_handlesCorrectly() throws {
@@ -81,61 +77,7 @@ final class MessagesSnapshotEventTests: XCTestCase,
 
         // Then
         let messagesSnapshot = try XCTUnwrap(event as? MessagesSnapshotEvent)
-        let parsed = try messagesSnapshot.parsedMessages() as? [Any]
-        XCTAssertNotNil(parsed)
-        XCTAssertEqual(parsed?.count, 0)
-    }
-
-    func test_decodeMessagesSnapshot_withComplexMessageStructure_handlesCorrectly() throws {
-        // Given
-        let data = jsonData("""
-        {
-          "type": "MESSAGES_SNAPSHOT",
-          "messages": [
-            {
-              "id": "msg-1",
-              "role": "user",
-              "content": "Hello",
-              "timestamp": 1234567890,
-              "metadata": {
-                "source": "web",
-                "language": "en"
-              }
-            },
-            {
-              "id": "msg-2",
-              "role": "assistant",
-              "content": "Hi!",
-              "toolCalls": [
-                {
-                  "id": "call-1",
-                  "name": "search",
-                  "args": {"query": "test"}
-                }
-              ]
-            }
-          ]
-        }
-        """)
-        let decoder = makeStrictDecoder()
-
-        // When
-        let event = try decoder.decode(data)
-
-        // Then
-        let messagesSnapshot = try XCTUnwrap(event as? MessagesSnapshotEvent)
-        let parsed = try messagesSnapshot.parsedMessages() as? [[String: Any]]
-        XCTAssertEqual(parsed?.count, 2)
-
-        let firstMessage = parsed?[0]
-        XCTAssertEqual(firstMessage?["id"] as? String, "msg-1")
-        let metadata = firstMessage?["metadata"] as? [String: Any]
-        XCTAssertEqual(metadata?["source"] as? String, "web")
-
-        let secondMessage = parsed?[1]
-        let toolCalls = secondMessage?["toolCalls"] as? [[String: Any]]
-        XCTAssertEqual(toolCalls?.count, 1)
-        XCTAssertEqual(toolCalls?[0]["name"] as? String, "search")
+        XCTAssertEqual(messagesSnapshot.messages.count, 0)
     }
 
     func test_decodeMessagesSnapshot_withUnicodeContent_handlesCorrectly() throws {
@@ -159,12 +101,13 @@ final class MessagesSnapshotEventTests: XCTestCase,
 
         // Then
         let messagesSnapshot = try XCTUnwrap(event as? MessagesSnapshotEvent)
-        let parsed = try messagesSnapshot.parsedMessages() as? [[String: Any]]
-        XCTAssertEqual(parsed?[0]["content"] as? String, "Hello, 🌍! 你好")
+        XCTAssertEqual(messagesSnapshot.messages.count, 1)
+        let userMsg = try XCTUnwrap(messagesSnapshot.messages[0] as? UserMessage)
+        XCTAssertEqual(userMsg.content, "Hello, 🌍! 你好")
     }
 
-    func test_decodeMessagesSnapshot_withNullMessages_handlesCorrectly() throws {
-        // Given
+    func test_decodeMessagesSnapshot_withNullMessages_throwsDecodingError() {
+        // Given — null is not a valid message array
         let data = jsonData("""
         {
           "type": "MESSAGES_SNAPSHOT",
@@ -173,38 +116,25 @@ final class MessagesSnapshotEventTests: XCTestCase,
         """)
         let decoder = makeStrictDecoder()
 
-        // When
-        let event = try decoder.decode(data)
-
-        // Then
-        let messagesSnapshot = try XCTUnwrap(event as? MessagesSnapshotEvent)
-        let parsed = try messagesSnapshot.parsedMessages()
-        XCTAssertTrue(parsed is NSNull)
+        // When / Then
+        XCTAssertThrowsError(try decoder.decode(data))
     }
 
-    func test_decodeMessagesSnapshot_withObjectInsteadOfArray_handlesCorrectly() throws {
-        // Given (in case API sends object structure)
+    func test_decodeMessagesSnapshot_withObjectInsteadOfArray_throwsDecodingError() {
+        // Given — object is not a valid message array
         let data = jsonData("""
         {
           "type": "MESSAGES_SNAPSHOT",
           "messages": {
-            "conversation": [
-              {"id": "msg-1", "content": "test"}
-            ],
+            "conversation": [{"id": "msg-1", "content": "test"}],
             "total": 1
           }
         }
         """)
         let decoder = makeStrictDecoder()
 
-        // When
-        let event = try decoder.decode(data)
-
-        // Then
-        let messagesSnapshot = try XCTUnwrap(event as? MessagesSnapshotEvent)
-        let parsed = try messagesSnapshot.parsedMessages() as? [String: Any]
-        XCTAssertNotNil(parsed)
-        XCTAssertEqual(parsed?["total"] as? Int, 1)
+        // When / Then
+        XCTAssertThrowsError(try decoder.decode(data))
     }
 
     func test_decodeMessagesSnapshot_withTimestamp_populatesTimestamp() throws {
@@ -213,7 +143,7 @@ final class MessagesSnapshotEventTests: XCTestCase,
         {
           "type": "MESSAGES_SNAPSHOT",
           "messages": [
-            {"id": "msg-1", "content": "test"}
+            {"id": "msg-1", "role": "user", "content": "test"}
           ],
           "timestamp": \(EventTestData.timestamp)
         }
@@ -233,7 +163,7 @@ final class MessagesSnapshotEventTests: XCTestCase,
         let data = jsonData("""
         {
           "type": "MESSAGES_SNAPSHOT",
-          "messages": [{"id": "msg-1"}],
+          "messages": [{"id": "msg-1", "role": "user", "content": "test"}],
           "timestamp": \(EventTestData.timestamp)
         }
         """)
@@ -252,7 +182,7 @@ final class MessagesSnapshotEventTests: XCTestCase,
         let data = jsonData("""
         {
           "type": "MESSAGES_SNAPSHOT",
-          "messages": [{"id": "msg-1"}],
+          "messages": [{"id": "msg-1", "role": "user", "content": "test"}],
           "extraField": "ignored",
           "nested": { "x": 1 }
         }
@@ -264,23 +194,18 @@ final class MessagesSnapshotEventTests: XCTestCase,
 
         // Then
         let messagesSnapshot = try XCTUnwrap(event as? MessagesSnapshotEvent)
-        let parsed = try messagesSnapshot.parsedMessages() as? [[String: Any]]
-        XCTAssertEqual(parsed?[0]["id"] as? String, "msg-1")
+        XCTAssertEqual(messagesSnapshot.messages.count, 1)
+        XCTAssertEqual(messagesSnapshot.messages[0].id, "msg-1")
     }
 
-    func test_decodeMessagesSnapshot_withMessagesContainingNestedArrays_handlesCorrectly() throws {
-        // Given
+    func test_decodeMessagesSnapshot_unrecognizedMessageRole_skipsEntry() throws {
+        // Given — messages with unrecognized roles are silently skipped (compactMap)
         let data = jsonData("""
         {
           "type": "MESSAGES_SNAPSHOT",
           "messages": [
-            {
-              "id": "msg-1",
-              "attachments": [
-                {"type": "image", "url": "http://example.com/1.jpg"},
-                {"type": "file", "url": "http://example.com/doc.pdf"}
-              ]
-            }
+            {"id": "msg-1", "role": "user", "content": "Hello"},
+            {"id": "msg-bad", "role": "unknown_role"}
           ]
         }
         """)
@@ -291,10 +216,9 @@ final class MessagesSnapshotEventTests: XCTestCase,
 
         // Then
         let messagesSnapshot = try XCTUnwrap(event as? MessagesSnapshotEvent)
-        let parsed = try messagesSnapshot.parsedMessages() as? [[String: Any]]
-        let attachments = parsed?[0]["attachments"] as? [[String: Any]]
-        XCTAssertEqual(attachments?.count, 2)
-        XCTAssertEqual(attachments?[0]["type"] as? String, "image")
+        // Unrecognized roles are skipped via compactMap; only the valid message survives
+        XCTAssertEqual(messagesSnapshot.messages.count, 1)
+        XCTAssertEqual(messagesSnapshot.messages[0].id, "msg-1")
     }
 
     // MARK: - Feature: Error handling
@@ -323,7 +247,7 @@ final class MessagesSnapshotEventTests: XCTestCase,
         let data = jsonData("""
         {
           "type": "MESSAGES_SNAPSHOT",
-          "messages": [{"id": "msg-1"}],
+          "messages": [{"id": "msg-1", "role": "user", "content": "test"}],
           "timestamp": "not-a-number"
         }
         """)
@@ -340,134 +264,33 @@ final class MessagesSnapshotEventTests: XCTestCase,
 
     // MARK: - Feature: Model behaviors
 
-    func test_messagesSnapshotEvent_eventTypeIsAlwaysMessagesSnapshot() throws {
+    func test_messagesSnapshotEvent_eventTypeIsAlwaysMessagesSnapshot() {
         // Given
-        let messagesData = try JSONSerialization.data(withJSONObject: [["id": "msg-1"]], options: [])
-        let event = MessagesSnapshotEvent(messages: messagesData, timestamp: nil, rawEvent: nil)
+        let event = MessagesSnapshotEvent(messages: [], timestamp: nil, rawEvent: nil)
 
         // Then
         XCTAssertEqual(event.eventType, .messagesSnapshot)
     }
 
-    func test_messagesSnapshotEvent_equatable_sameMessages_areEqual() throws {
+    func test_messagesSnapshotEvent_messagesAreTyped() throws {
         // Given
-        let messagesData = try JSONSerialization.data(withJSONObject: [["id": "msg-1"]], options: [])
-        let event1 = MessagesSnapshotEvent(messages: messagesData, timestamp: EventTestData.timestamp, rawEvent: nil)
-        let event2 = MessagesSnapshotEvent(messages: messagesData, timestamp: EventTestData.timestamp, rawEvent: nil)
+        let userMsg = UserMessage(id: "msg-1", content: "Hello")
+        let assistantMsg = AssistantMessage(id: "msg-2", content: "Hi!")
+        let event = MessagesSnapshotEvent(messages: [userMsg, assistantMsg])
 
         // Then
-        XCTAssertEqual(event1, event2)
+        XCTAssertEqual(event.messages.count, 2)
+        XCTAssertTrue(event.messages[0] is UserMessage)
+        XCTAssertTrue(event.messages[1] is AssistantMessage)
     }
 
-    func test_messagesSnapshotEvent_equatable_differentMessages_areNotEqual() throws {
+    func test_messagesSnapshotEvent_description_containsKeyInformation() {
         // Given
-        let messagesData1 = try JSONSerialization.data(withJSONObject: [["id": "msg-1"]], options: [])
-        let messagesData2 = try JSONSerialization.data(withJSONObject: [["id": "msg-2"]], options: [])
-        let event1 = MessagesSnapshotEvent(messages: messagesData1, timestamp: EventTestData.timestamp, rawEvent: nil)
-        let event2 = MessagesSnapshotEvent(messages: messagesData2, timestamp: EventTestData.timestamp, rawEvent: nil)
-
-        // Then
-        XCTAssertNotEqual(event1, event2)
-    }
-
-    func test_messagesSnapshotEvent_equatable_differentTimestamps_areNotEqual() throws {
-        // Given
-        let messagesData = try JSONSerialization.data(withJSONObject: [["id": "msg-1"]], options: [])
-        let event1 = MessagesSnapshotEvent(messages: messagesData, timestamp: EventTestData.timestamp, rawEvent: nil)
-        let event2 = MessagesSnapshotEvent(messages: messagesData, timestamp: EventTestData.timestamp2, rawEvent: nil)
-
-        // Then
-        XCTAssertNotEqual(event1, event2)
-    }
-
-    func test_messagesSnapshotEvent_equatable_oneWithTimestampOneWithout_areNotEqual() throws {
-        // Given
-        let messagesData = try JSONSerialization.data(withJSONObject: [["id": "msg-1"]], options: [])
-        let event1 = MessagesSnapshotEvent(messages: messagesData, timestamp: EventTestData.timestamp, rawEvent: nil)
-        let event2 = MessagesSnapshotEvent(messages: messagesData, timestamp: nil, rawEvent: nil)
-
-        // Then
-        XCTAssertNotEqual(event1, event2)
-    }
-
-    func test_messagesSnapshotEvent_parsedMessages_returnsCorrectValue() throws {
-        // Given
-        let originalMessages: [[String: Any]] = [
-            ["id": "msg-1", "content": "Hello"],
-            ["id": "msg-2", "content": "World"]
-        ]
-        let messagesData = try JSONSerialization.data(withJSONObject: originalMessages, options: [])
-        let event = MessagesSnapshotEvent(messages: messagesData, timestamp: nil, rawEvent: nil)
-
-        // When
-        let parsed = try event.parsedMessages() as? [[String: Any]]
-
-        // Then
-        XCTAssertNotNil(parsed)
-        XCTAssertEqual(parsed?.count, 2)
-        XCTAssertEqual(parsed?[0]["id"] as? String, "msg-1")
-        XCTAssertEqual(parsed?[1]["content"] as? String, "World")
-    }
-
-    func test_messagesSnapshotEvent_parsedMessages_withInvalidData_throws() throws {
-        // Given
-        let invalidData = Data("not json".utf8)
-        let event = MessagesSnapshotEvent(messages: invalidData, timestamp: nil, rawEvent: nil)
-
-        // When / Then
-        XCTAssertThrowsError(try event.parsedMessages())
-    }
-
-    func test_messagesSnapshotEvent_parsedMessagesAs_withCodableType_decodesCorrectly() throws {
-        // Given
-        struct Message: Codable, Equatable {
-            let id: String
-            let role: String
-            let content: String
-        }
-
-        let originalMessages = [
-            Message(id: "msg-1", role: "user", content: "Hello"),
-            Message(id: "msg-2", role: "assistant", content: "Hi!")
-        ]
-        let messagesData = try JSONEncoder().encode(originalMessages)
-        let event = MessagesSnapshotEvent(messages: messagesData, timestamp: nil, rawEvent: nil)
-
-        // When
-        let decoded = try event.parsedMessages(as: [Message].self)
-
-        // Then
-        XCTAssertEqual(decoded.count, 2)
-        XCTAssertEqual(decoded[0].id, "msg-1")
-        XCTAssertEqual(decoded[0].role, "user")
-        XCTAssertEqual(decoded[1].id, "msg-2")
-        XCTAssertEqual(decoded[1].role, "assistant")
-    }
-
-    func test_messagesSnapshotEvent_parsedMessagesAs_withWrongType_throws() throws {
-        // Given
-        struct Message: Codable {
-            let id: String
-        }
-
-        struct WrongMessage: Decodable {
-            let wrongField: String
-        }
-
-        let originalMessages = [Message(id: "msg-1")]
-        let messagesData = try JSONEncoder().encode(originalMessages)
-        let event = MessagesSnapshotEvent(messages: messagesData, timestamp: nil, rawEvent: nil)
-
-        // When / Then
-        XCTAssertThrowsError(try event.parsedMessages(as: [WrongMessage].self)) { error in
-            XCTAssertTrue(error is DecodingError)
-        }
-    }
-
-    func test_messagesSnapshotEvent_description_containsKeyInformation() throws {
-        // Given
-        let messagesData = try JSONSerialization.data(withJSONObject: [["id": "msg-1"]], options: [])
-        let event = MessagesSnapshotEvent(messages: messagesData, timestamp: EventTestData.timestamp, rawEvent: nil)
+        let event = MessagesSnapshotEvent(
+            messages: [UserMessage(id: "msg-1", content: "Hello")],
+            timestamp: EventTestData.timestamp,
+            rawEvent: nil
+        )
 
         // Then
         let description = event.description
@@ -475,10 +298,13 @@ final class MessagesSnapshotEventTests: XCTestCase,
         XCTAssertTrue(description.contains("timestamp"))
     }
 
-    func test_messagesSnapshotEvent_debugDescription_containsDetailedInformation() throws {
+    func test_messagesSnapshotEvent_debugDescription_containsDetailedInformation() {
         // Given
-        let messagesData = try JSONSerialization.data(withJSONObject: [["id": "msg-1"]], options: [])
-        let event = MessagesSnapshotEvent(messages: messagesData, timestamp: EventTestData.timestamp, rawEvent: nil)
+        let event = MessagesSnapshotEvent(
+            messages: [UserMessage(id: "msg-1", content: "Hello")],
+            timestamp: EventTestData.timestamp,
+            rawEvent: nil
+        )
 
         // Then
         let debugDescription = event.debugDescription

@@ -227,6 +227,9 @@ private func encodeDeveloperMessage(_ message: any Message, encoder: JSONEncoder
     if let name = devMsg.name {
         dict["name"] = name
     }
+    if let encryptedValue = devMsg.encryptedValue {
+        dict["encryptedValue"] = encryptedValue
+    }
     return try JSONSerialization.data(withJSONObject: dict)
 }
 
@@ -238,13 +241,14 @@ private func encodeSystemMessage(_ message: any Message, encoder: JSONEncoder) t
 
     var dict: [String: Any] = [
         "id": sysMsg.id,
-        "role": sysMsg.role.rawValue
+        "role": sysMsg.role.rawValue,
+        "content": sysMsg.content
     ]
-    if let content = sysMsg.content {
-        dict["content"] = content
-    }
     if let name = sysMsg.name {
         dict["name"] = name
+    }
+    if let encryptedValue = sysMsg.encryptedValue {
+        dict["encryptedValue"] = encryptedValue
     }
     return try JSONSerialization.data(withJSONObject: dict)
 }
@@ -326,6 +330,9 @@ private func encodeUserMessage(_ message: any Message, encoder: JSONEncoder) thr
     if let name = userMsg.name {
         dict["name"] = name
     }
+    if let encryptedValue = userMsg.encryptedValue {
+        dict["encryptedValue"] = encryptedValue
+    }
     return try JSONSerialization.data(withJSONObject: dict)
 }
 
@@ -350,6 +357,9 @@ private func encodeAssistantMessage(_ message: any Message, encoder: JSONEncoder
         let toolCallsArray = try JSONSerialization.jsonObject(with: toolCallsData)
         dict["toolCalls"] = toolCallsArray
     }
+    if let encryptedValue = assistantMsg.encryptedValue {
+        dict["encryptedValue"] = encryptedValue
+    }
     return try JSONSerialization.data(withJSONObject: dict)
 }
 
@@ -362,16 +372,17 @@ private func encodeToolMessage(_ message: any Message, encoder: JSONEncoder) thr
     var dict: [String: Any] = [
         "id": toolMsg.id,
         "role": toolMsg.role.rawValue,
-        "toolCallId": toolMsg.toolCallId
+        "toolCallId": toolMsg.toolCallId,
+        "content": toolMsg.content
     ]
-    if let content = toolMsg.content {
-        dict["content"] = content
-    }
     if let name = toolMsg.name {
         dict["name"] = name
     }
     if let error = toolMsg.error {
         dict["error"] = error
+    }
+    if let encryptedValue = toolMsg.encryptedValue {
+        dict["encryptedValue"] = encryptedValue
     }
     return try JSONSerialization.data(withJSONObject: dict)
 }

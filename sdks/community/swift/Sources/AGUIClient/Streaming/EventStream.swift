@@ -176,8 +176,10 @@ public struct EventStream<Bytes: AsyncSequence>: AsyncSequence where Bytes.Eleme
                     // Successful decode - process the chunk
                     utf8Buffer.removeAll()
 
-                    // Parse SSE events from the string chunk
-                    let sseEvents = sseParser.parse(string)
+                    // Parse SSE events from the string chunk.
+                    // Throws SseParserError.bufferOverflow if the buffer exceeds
+                    // maxBufferByteCount — treat as a fatal stream error.
+                    let sseEvents = try sseParser.parse(string)
 
                     // Decode AG-UI events from SSE data
                     for sseEvent in sseEvents {

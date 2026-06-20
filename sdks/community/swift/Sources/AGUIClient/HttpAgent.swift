@@ -5,23 +5,23 @@ import Foundation
 
 public final class HttpAgent: Sendable {
     private let abstractAgent: AbstractAgent
-    private let httpTransport: HttpTransport
+    private let agentTransport: HttpAgentTransport
     private let decoder: AGUIEventDecoder
     private let defaultEndpoint: String
 
     public init(baseURL: URL) {
         let config = HttpAgentConfiguration(baseURL: baseURL)
         let agentTransport = HttpAgentTransport(configuration: config)
+        self.agentTransport = agentTransport
         self.abstractAgent = AbstractAgent(transport: agentTransport, debug: config.debug)
-        self.httpTransport = HttpTransport(configuration: config)
         self.decoder = AGUIEventDecoder()
         self.defaultEndpoint = "/run"
     }
 
     public init(configuration: HttpAgentConfiguration) {
         let agentTransport = HttpAgentTransport(configuration: configuration)
+        self.agentTransport = agentTransport
         self.abstractAgent = AbstractAgent(transport: agentTransport, debug: configuration.debug)
-        self.httpTransport = HttpTransport(configuration: configuration)
         self.decoder = AGUIEventDecoder()
         self.defaultEndpoint = "/run"
     }
@@ -31,8 +31,8 @@ public final class HttpAgent: Sendable {
         httpClient: any HTTPClient
     ) {
         let agentTransport = HttpAgentTransport(configuration: configuration, httpClient: httpClient)
+        self.agentTransport = agentTransport
         self.abstractAgent = AbstractAgent(transport: agentTransport, debug: configuration.debug)
-        self.httpTransport = HttpTransport(configuration: configuration, httpClient: httpClient)
         self.decoder = AGUIEventDecoder()
         self.defaultEndpoint = "/run"
     }
@@ -41,7 +41,7 @@ public final class HttpAgent: Sendable {
         _ input: RunAgentInput,
         endpoint: String? = nil
     ) async throws -> EventStream<AsyncThrowingStream<UInt8, Error>> {
-        let bytes = try await httpTransport.execute(
+        let bytes = try await agentTransport.execute(
             endpoint: endpoint ?? defaultEndpoint,
             input: input
         )

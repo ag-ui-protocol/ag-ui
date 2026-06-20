@@ -357,7 +357,6 @@ public final class StatefulAgUiAgent: Sendable {
             let task = Task {
                 var currentAssistantMessage: AssistantMessage?
                 let patchApplicator = PatchApplicator()
-                let messageDecoder = MessageDecoder()
 
                 do {
                     for try await event in stream {
@@ -474,15 +473,9 @@ public final class StatefulAgUiAgent: Sendable {
 
                         case let msgSnapshot as MessagesSnapshotEvent:
                             // Replace the thread history with the authoritative snapshot.
-                            if let rawArray = try? JSONSerialization.jsonObject(with: msgSnapshot.messages) as? [[String: Any]] {
-                                let msgs: [any Message] = rawArray.compactMap { dict in
-                                    guard let data = try? JSONSerialization.data(withJSONObject: dict) else { return nil }
-                                    return try? messageDecoder.decode(data)
-                                }
-                                await self.historyManager.clear(threadId: threadId)
-                                for msg in msgs {
-                                    await self.historyManager.append(message: msg, to: threadId)
-                                }
+                            await self.historyManager.clear(threadId: threadId)
+                            for msg in msgSnapshot.messages {
+                                await self.historyManager.append(message: msg, to: threadId)
                             }
 
                         default:

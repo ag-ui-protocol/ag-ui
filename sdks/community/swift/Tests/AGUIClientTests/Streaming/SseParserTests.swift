@@ -19,9 +19,9 @@ import XCTest
 final class SseParserTests: XCTestCase {
     // MARK: - Basic Parsing Tests
 
-    func testParseSingleEvent() {
+    func testParseSingleEvent() throws {
         var parser = SseParser()
-        let events = parser.parse("data: {\"test\":\"value\"}\n\n")
+        let events = try parser.parse("data: {\"test\":\"value\"}\n\n")
 
         XCTAssertEqual(events.count, 1)
         XCTAssertEqual(events[0].data, "{\"test\":\"value\"}")
@@ -29,7 +29,7 @@ final class SseParserTests: XCTestCase {
         XCTAssertEqual(events[0].event, "message")
     }
 
-    func testParseMultipleEvents() {
+    func testParseMultipleEvents() throws {
         var parser = SseParser()
         let input = """
         data: event1
@@ -40,7 +40,7 @@ final class SseParserTests: XCTestCase {
 
 
         """
-        let events = parser.parse(input)
+        let events = try parser.parse(input)
 
         XCTAssertEqual(events.count, 3)
         XCTAssertEqual(events[0].data, "event1")
@@ -48,9 +48,9 @@ final class SseParserTests: XCTestCase {
         XCTAssertEqual(events[2].data, "event3")
     }
 
-    func testParseEmptyDataField() {
+    func testParseEmptyDataField() throws {
         var parser = SseParser()
-        let events = parser.parse("data:\n\n")
+        let events = try parser.parse("data:\n\n")
 
         XCTAssertEqual(events.count, 1)
         XCTAssertEqual(events[0].data, "")
@@ -58,7 +58,7 @@ final class SseParserTests: XCTestCase {
 
     // MARK: - Multi-line Data Tests
 
-    func testParseMultiLineData() {
+    func testParseMultiLineData() throws {
         var parser = SseParser()
         let input = """
         data: line1
@@ -67,13 +67,13 @@ final class SseParserTests: XCTestCase {
 
 
         """
-        let events = parser.parse(input)
+        let events = try parser.parse(input)
 
         XCTAssertEqual(events.count, 1)
         XCTAssertEqual(events[0].data, "line1\nline2\nline3")
     }
 
-    func testParseMultiLineDataWithEmptyLines() {
+    func testParseMultiLineDataWithEmptyLines() throws {
         var parser = SseParser()
         let input = """
         data: first
@@ -82,7 +82,7 @@ final class SseParserTests: XCTestCase {
 
 
         """
-        let events = parser.parse(input)
+        let events = try parser.parse(input)
 
         XCTAssertEqual(events.count, 1)
         XCTAssertEqual(events[0].data, "first\n\nthird")
@@ -90,18 +90,18 @@ final class SseParserTests: XCTestCase {
 
     // MARK: - Event ID Tests
 
-    func testParseEventWithId() {
+    func testParseEventWithId() throws {
         var parser = SseParser()
-        let events = parser.parse("id: 123\ndata: test\n\n")
+        let events = try parser.parse("id: 123\ndata: test\n\n")
 
         XCTAssertEqual(events.count, 1)
         XCTAssertEqual(events[0].data, "test")
         XCTAssertEqual(events[0].id, "123")
     }
 
-    func testParseEventWithIdAfterData() {
+    func testParseEventWithIdAfterData() throws {
         var parser = SseParser()
-        let events = parser.parse("data: test\nid: 456\n\n")
+        let events = try parser.parse("data: test\nid: 456\n\n")
 
         XCTAssertEqual(events.count, 1)
         XCTAssertEqual(events[0].data, "test")
@@ -110,16 +110,16 @@ final class SseParserTests: XCTestCase {
 
     // MARK: - Event Type Tests
 
-    func testParseEventWithCustomType() {
+    func testParseEventWithCustomType() throws {
         var parser = SseParser()
-        let events = parser.parse("event: custom\ndata: payload\n\n")
+        let events = try parser.parse("event: custom\ndata: payload\n\n")
 
         XCTAssertEqual(events.count, 1)
         XCTAssertEqual(events[0].data, "payload")
         XCTAssertEqual(events[0].event, "custom")
     }
 
-    func testParseEventWithAllFields() {
+    func testParseEventWithAllFields() throws {
         var parser = SseParser()
         let input = """
         event: notification
@@ -128,7 +128,7 @@ final class SseParserTests: XCTestCase {
 
 
         """
-        let events = parser.parse(input)
+        let events = try parser.parse(input)
 
         XCTAssertEqual(events.count, 1)
         XCTAssertEqual(events[0].event, "notification")
@@ -138,59 +138,59 @@ final class SseParserTests: XCTestCase {
 
     // MARK: - Partial Chunk Tests
 
-    func testParsePartialEventReturnsNoEvents() {
+    func testParsePartialEventReturnsNoEvents() throws {
         var parser = SseParser()
-        let events = parser.parse("data: incomplete")
+        let events = try parser.parse("data: incomplete")
 
         // No complete event yet (missing double newline)
         XCTAssertEqual(events.count, 0)
     }
 
-    func testParsePartialEventCompletedInNextChunk() {
+    func testParsePartialEventCompletedInNextChunk() throws {
         var parser = SseParser()
 
         // First chunk: incomplete event
-        var events = parser.parse("data: {\"te")
+        var events = try parser.parse("data: {\"te")
         XCTAssertEqual(events.count, 0)
 
         // Second chunk: complete the event
-        events = parser.parse("st\":\"value\"}\n\n")
+        events = try parser.parse("st\":\"value\"}\n\n")
         XCTAssertEqual(events.count, 1)
         XCTAssertEqual(events[0].data, "{\"test\":\"value\"}")
     }
 
-    func testParseMultiplePartialChunks() {
+    func testParseMultiplePartialChunks() throws {
         var parser = SseParser()
 
-        var events = parser.parse("da")
+        var events = try parser.parse("da")
         XCTAssertEqual(events.count, 0)
 
-        events = parser.parse("ta: first")
+        events = try parser.parse("ta: first")
         XCTAssertEqual(events.count, 0)
 
-        events = parser.parse("\n\ndata: ")
+        events = try parser.parse("\n\ndata: ")
         XCTAssertEqual(events.count, 1)
         XCTAssertEqual(events[0].data, "first")
 
-        events = parser.parse("second\n\n")
+        events = try parser.parse("second\n\n")
         XCTAssertEqual(events.count, 1)
         XCTAssertEqual(events[0].data, "second")
     }
 
-    func testParseEventSplitAcrossDoubleNewline() {
+    func testParseEventSplitAcrossDoubleNewline() throws {
         var parser = SseParser()
 
-        var events = parser.parse("data: test\n")
+        var events = try parser.parse("data: test\n")
         XCTAssertEqual(events.count, 0)
 
-        events = parser.parse("\n")
+        events = try parser.parse("\n")
         XCTAssertEqual(events.count, 1)
         XCTAssertEqual(events[0].data, "test")
     }
 
     // MARK: - Comment Tests
 
-    func testParseIgnoresComments() {
+    func testParseIgnoresComments() throws {
         var parser = SseParser()
         let input = """
         : this is a comment
@@ -198,13 +198,13 @@ final class SseParserTests: XCTestCase {
 
 
         """
-        let events = parser.parse(input)
+        let events = try parser.parse(input)
 
         XCTAssertEqual(events.count, 1)
         XCTAssertEqual(events[0].data, "payload")
     }
 
-    func testParseIgnoresCommentsBeforeAndAfterData() {
+    func testParseIgnoresCommentsBeforeAndAfterData() throws {
         var parser = SseParser()
         let input = """
         : comment 1
@@ -213,7 +213,7 @@ final class SseParserTests: XCTestCase {
 
 
         """
-        let events = parser.parse(input)
+        let events = try parser.parse(input)
 
         XCTAssertEqual(events.count, 1)
         XCTAssertEqual(events[0].data, "value")
@@ -221,16 +221,16 @@ final class SseParserTests: XCTestCase {
 
     // MARK: - Empty Event Tests
 
-    func testParseEmptyEventAsHeartbeat() {
+    func testParseEmptyEventAsHeartbeat() throws {
         var parser = SseParser()
         // Double newline with no data is typically a heartbeat
-        let events = parser.parse("\n\n")
+        let events = try parser.parse("\n\n")
 
         // Empty events are ignored (no data field)
         XCTAssertEqual(events.count, 0)
     }
 
-    func testParseMultipleHeartbeats() {
+    func testParseMultipleHeartbeats() throws {
         var parser = SseParser()
         let input = """
 
@@ -241,7 +241,7 @@ final class SseParserTests: XCTestCase {
 
 
         """
-        let events = parser.parse(input)
+        let events = try parser.parse(input)
 
         XCTAssertEqual(events.count, 1)
         XCTAssertEqual(events[0].data, "real_event")
@@ -249,27 +249,27 @@ final class SseParserTests: XCTestCase {
 
     // MARK: - Whitespace Handling Tests
 
-    func testParseTrimsWhitespaceAfterColon() {
+    func testParseTrimsWhitespaceAfterColon() throws {
         var parser = SseParser()
         // SSE spec: Remove only ONE leading space after colon
-        let events = parser.parse("data:   value with spaces   \n\n")
+        let events = try parser.parse("data:   value with spaces   \n\n")
 
         XCTAssertEqual(events.count, 1)
         // After removing colon and ONE space, "  value with spaces   " remains
         XCTAssertEqual(events[0].data, "  value with spaces   ")
     }
 
-    func testParseHandlesNoSpaceAfterColon() {
+    func testParseHandlesNoSpaceAfterColon() throws {
         var parser = SseParser()
-        let events = parser.parse("data:value\n\n")
+        let events = try parser.parse("data:value\n\n")
 
         XCTAssertEqual(events.count, 1)
         XCTAssertEqual(events[0].data, "value")
     }
 
-    func testParsePreservesTrailingWhitespaceInData() {
+    func testParsePreservesTrailingWhitespaceInData() throws {
         var parser = SseParser()
-        let events = parser.parse("data: trailing   \n\n")
+        let events = try parser.parse("data: trailing   \n\n")
 
         XCTAssertEqual(events.count, 1)
         XCTAssertEqual(events[0].data, "trailing   ")
@@ -277,7 +277,7 @@ final class SseParserTests: XCTestCase {
 
     // MARK: - Special Character Tests
 
-    func testParseDataWithNewlines() {
+    func testParseDataWithNewlines() throws {
         var parser = SseParser()
         let input = """
         data: line1
@@ -285,23 +285,23 @@ final class SseParserTests: XCTestCase {
 
 
         """
-        let events = parser.parse(input)
+        let events = try parser.parse(input)
 
         XCTAssertEqual(events.count, 1)
         XCTAssertTrue(events[0].data.contains("\n"))
     }
 
-    func testParseDataWithColons() {
+    func testParseDataWithColons() throws {
         var parser = SseParser()
-        let events = parser.parse("data: {\"url\":\"https://example.com\"}\n\n")
+        let events = try parser.parse("data: {\"url\":\"https://example.com\"}\n\n")
 
         XCTAssertEqual(events.count, 1)
         XCTAssertEqual(events[0].data, "{\"url\":\"https://example.com\"}")
     }
 
-    func testParseDataWithEmoji() {
+    func testParseDataWithEmoji() throws {
         var parser = SseParser()
-        let events = parser.parse("data: Hello 👋 World 🌍\n\n")
+        let events = try parser.parse("data: Hello 👋 World 🌍\n\n")
 
         XCTAssertEqual(events.count, 1)
         XCTAssertEqual(events[0].data, "Hello 👋 World 🌍")
@@ -309,23 +309,23 @@ final class SseParserTests: XCTestCase {
 
     // MARK: - Edge Cases
 
-    func testParseLongDataLine() {
+    func testParseLongDataLine() throws {
         var parser = SseParser()
         let longData = String(repeating: "a", count: 10000)
-        let events = parser.parse("data: \(longData)\n\n")
+        let events = try parser.parse("data: \(longData)\n\n")
 
         XCTAssertEqual(events.count, 1)
         XCTAssertEqual(events[0].data, longData)
     }
 
-    func testParseManySmallChunks() {
+    func testParseManySmallChunks() throws {
         var parser = SseParser()
         let input = "data: test\n\n"
 
         // Parse one character at a time
         var allEvents: [SseEvent] = []
         for char in input {
-            let events = parser.parse(String(char))
+            let events = try parser.parse(String(char))
             allEvents.append(contentsOf: events)
         }
 
@@ -333,7 +333,7 @@ final class SseParserTests: XCTestCase {
         XCTAssertEqual(allEvents[0].data, "test")
     }
 
-    func testParseUnknownFieldsAreIgnored() {
+    func testParseUnknownFieldsAreIgnored() throws {
         var parser = SseParser()
         let input = """
         data: payload
@@ -342,13 +342,13 @@ final class SseParserTests: XCTestCase {
 
 
         """
-        let events = parser.parse(input)
+        let events = try parser.parse(input)
 
         XCTAssertEqual(events.count, 1)
         XCTAssertEqual(events[0].data, "payload")
     }
 
-    func testParseFieldWithoutColon() {
+    func testParseFieldWithoutColon() throws {
         var parser = SseParser()
         let input = """
         data: valid
@@ -356,7 +356,7 @@ final class SseParserTests: XCTestCase {
 
 
         """
-        let events = parser.parse(input)
+        let events = try parser.parse(input)
 
         XCTAssertEqual(events.count, 1)
         XCTAssertEqual(events[0].data, "valid")
@@ -364,50 +364,50 @@ final class SseParserTests: XCTestCase {
 
     // MARK: - Reset Tests
 
-    func testResetClearsBuffer() {
+    func testResetClearsBuffer() throws {
         var parser = SseParser()
 
         // Add partial event
-        _ = parser.parse("data: incomplete")
+        _ = try parser.parse("data: incomplete")
 
         // Reset
         parser.reset()
 
         // New event should not include old buffer
-        let events = parser.parse("data: new\n\n")
+        let events = try parser.parse("data: new\n\n")
         XCTAssertEqual(events.count, 1)
         XCTAssertEqual(events[0].data, "new")
     }
 
     // MARK: - Real-world AG-UI Event Tests
 
-    func testParseAGUIRunStartedEvent() {
+    func testParseAGUIRunStartedEvent() throws {
         var parser = SseParser()
         let input = """
         data: {"type":"RUN_STARTED","threadId":"thread-1","runId":"run-1"}
 
 
         """
-        let events = parser.parse(input)
+        let events = try parser.parse(input)
 
         XCTAssertEqual(events.count, 1)
         XCTAssertTrue(events[0].data.contains("RUN_STARTED"))
     }
 
-    func testParseAGUITextMessageChunk() {
+    func testParseAGUITextMessageChunk() throws {
         var parser = SseParser()
         let input = """
         data: {"type":"TEXT_MESSAGE_CHUNK","messageId":"msg-1","delta":"Hello"}
 
 
         """
-        let events = parser.parse(input)
+        let events = try parser.parse(input)
 
         XCTAssertEqual(events.count, 1)
         XCTAssertTrue(events[0].data.contains("TEXT_MESSAGE_CHUNK"))
     }
 
-    func testParseMultipleAGUIEvents() {
+    func testParseMultipleAGUIEvents() throws {
         var parser = SseParser()
         let input = """
         data: {"type":"RUN_STARTED","threadId":"t1","runId":"r1"}
@@ -422,7 +422,7 @@ final class SseParserTests: XCTestCase {
 
 
         """
-        let events = parser.parse(input)
+        let events = try parser.parse(input)
 
         XCTAssertEqual(events.count, 5)
         XCTAssertTrue(events[0].data.contains("RUN_STARTED"))
@@ -434,19 +434,19 @@ final class SseParserTests: XCTestCase {
 
     // MARK: - retry field
 
-    func test_sseParser_retryField_parsedAsMilliseconds() {
+    func test_sseParser_retryField_parsedAsMilliseconds() throws {
         // WHATWG SSE spec §9.2.6: the retry field sets the reconnection time in ms.
         var parser = SseParser()
-        let events = parser.parse("retry: 5000\ndata: ping\n\n")
+        let events = try parser.parse("retry: 5000\ndata: ping\n\n")
 
         XCTAssertEqual(events.count, 1)
         XCTAssertEqual(events[0].retry, 5000)
     }
 
-    func test_sseParser_retryField_nonInteger_isIgnored() {
+    func test_sseParser_retryField_nonInteger_isIgnored() throws {
         // Per spec: if the value is not an ASCII integer, ignore the field entirely.
         var parser = SseParser()
-        let events = parser.parse("retry: abc\ndata: ping\n\n")
+        let events = try parser.parse("retry: abc\ndata: ping\n\n")
 
         XCTAssertEqual(events.count, 1)
         XCTAssertNil(events[0].retry)
@@ -454,11 +454,11 @@ final class SseParserTests: XCTestCase {
 
     // MARK: - Thread Safety Tests
 
-    func testParserIsNotThreadSafe() {
+    func testParserIsNotThreadSafe() throws {
         // Document that SseParser is a mutable struct and not thread-safe
         // Each thread should have its own parser instance
         var parser = SseParser()
-        _ = parser.parse("data: test\n\n")
+        _ = try parser.parse("data: test\n\n")
 
         // This is expected behavior - parser maintains internal state
         XCTAssertTrue(true, "SseParser is designed for single-threaded use")
@@ -466,7 +466,7 @@ final class SseParserTests: XCTestCase {
 
     // MARK: - Performance Tests
 
-    func testParseLargeStreamEfficiently() {
+    func testParseLargeStreamEfficiently() throws {
         var parser = SseParser()
 
         // Simulate large stream
@@ -474,7 +474,7 @@ final class SseParserTests: XCTestCase {
         var totalEvents = 0
 
         for i in 0..<iterations {
-            let events = parser.parse("data: event\(i)\n\n")
+            let events = try parser.parse("data: event\(i)\n\n")
             totalEvents += events.count
         }
 

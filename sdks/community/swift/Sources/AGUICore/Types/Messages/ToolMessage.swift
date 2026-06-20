@@ -54,7 +54,7 @@ import Foundation
 /// - The agent can then decide how to handle or report the error
 ///
 /// - SeeAlso: ``Message``, ``AssistantMessage``
-public struct ToolMessage: Message, Sendable, Hashable {
+public struct ToolMessage: Message, Sendable, Hashable, Decodable {
     /// Unique identifier for this message.
     public let id: String
 
@@ -65,10 +65,8 @@ public struct ToolMessage: Message, Sendable, Hashable {
     ///
     /// This contains the result of the tool execution, whether successful or failed.
     /// For failed executions, this typically contains a user-friendly error description.
-    ///
-    /// While the protocol allows optional content, tool messages in practice always
-    /// contain content describing the result.
-    public let content: String?
+    /// Matches the TypeScript schema `content: z.string()` — required, non-nullable.
+    public let content: String
 
     /// The ID of the tool call this message responds to.
     ///
@@ -120,5 +118,26 @@ public struct ToolMessage: Message, Sendable, Hashable {
         self.name = name
         self.error = error
         self.encryptedValue = encryptedValue
+    }
+}
+
+// MARK: - Decodable
+
+extension ToolMessage {
+    private enum CodingKeys: String, CodingKey {
+        case id, content, toolCallId, name, error, encryptedValue
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        role = .tool
+        // Default to "" when absent — matches TypeScript z.string() (required but may be
+        // missing in legacy payloads).
+        content = try container.decodeIfPresent(String.self, forKey: .content) ?? ""
+        toolCallId = try container.decode(String.self, forKey: .toolCallId)
+        name = try container.decodeIfPresent(String.self, forKey: .name)
+        error = try container.decodeIfPresent(String.self, forKey: .error)
+        encryptedValue = try container.decodeIfPresent(String.self, forKey: .encryptedValue)
     }
 }

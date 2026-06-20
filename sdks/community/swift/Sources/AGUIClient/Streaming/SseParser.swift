@@ -51,13 +51,26 @@ import Foundation
 /// ## Reference
 ///
 /// SSE specification: https://html.spec.whatwg.org/multipage/server-sent-events.html
+/// Errors thrown by ``SseParser``.
+public enum SseParserError: Error, Sendable {
+    /// The internal buffer exceeded the maximum byte limit.
+    ///
+    /// All buffered data has been discarded. This indicates a broken or malicious
+    /// connection that is sending data without the double-newline event delimiter.
+    /// The stream should be treated as unrecoverable and terminated.
+    ///
+    /// - Parameter limit: The byte limit that was exceeded (``SseParser/maxBufferByteCount``).
+    case bufferOverflow(limit: Int)
+}
+
 public struct SseParser {
     /// Maximum number of UTF-8 bytes the internal buffer may hold.
     ///
     /// If a stream sends data faster than complete events arrive — or sends a
     /// pathologically large payload without a double-newline terminator — the
-    /// buffer is reset and parsing continues with the next chunk. This prevents
-    /// unbounded memory growth from malformed or malicious streams.
+    /// buffer is reset and a ``SseParserError/bufferOverflow(limit:)`` error is
+    /// thrown. This prevents unbounded memory growth from malformed or malicious
+    /// streams.
     public static let maxBufferByteCount = 10 * 1_048_576 // 10 MB
 
     /// Internal buffer for incomplete events.
@@ -95,7 +108,7 @@ public struct SseParser {
     /// - Partial UTF-8 sequences are preserved in buffer
     /// - Very long lines are supported
     /// - Multiple events in one chunk are all returned
-    public mutating func parse(_ chunk: String) -> [SseEvent] {
+    public mutating func parse(_ chunk: String) throws -> [SseEvent] {
         // Normalize all line endings to \n per SSE spec (WHATWG):
         // \r\n and \r are both valid line ending sequences.
         let normalized = chunk.replacingOccurrences(of: "\r\n", with: "\n")
@@ -103,9 +116,11 @@ public struct SseParser {
         buffer += normalized
 
         // Guard against unbounded buffer growth from malformed/malicious streams.
+        // Discard buffered data and throw — a 10 MB buffer without an event
+        // delimiter indicates a broken or malicious connection.
         guard buffer.utf8.count <= Self.maxBufferByteCount else {
             buffer = ""
-            return []
+            throw SseParserError.bufferOverflow(limit: Self.maxBufferByteCount)
         }
 
         var events: [SseEvent] = []
@@ -164,10 +179,11 @@ public struct SseParser {
             switch field {
             case "data":
                 dataLines.append(value)
-            case "id":
-                id = value
             case "event":
                 eventType = value
+            case "id":
+                // Per WHATWG SSE spec §9.2.7: ignore if value contains U+0000 NULL.
+                if !value.contains("\0") { id = value }
             case "retry":
                 // Per spec §9.2.6: only set if the value is an ASCII integer; ignore otherwise.
                 retry = Int(value)

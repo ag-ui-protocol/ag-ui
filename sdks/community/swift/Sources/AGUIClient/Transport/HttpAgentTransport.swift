@@ -23,6 +23,28 @@ public struct HttpAgentTransport: AgentTransport {
         self.endpoint = endpoint
     }
 
+    /// Executes a raw HTTP request and returns the byte stream.
+    ///
+    /// Exposes the underlying transport's execute method so callers can share
+    /// the same URLSession without creating a duplicate `HttpTransport`.
+    ///
+    /// - Parameters:
+    ///   - endpoint: API endpoint path
+    ///   - input: The run agent input
+    ///   - lastEventId: Optional last SSE event ID for reconnection
+    /// - Returns: Raw byte stream from the HTTP response
+    public func execute(
+        endpoint: String,
+        input: RunAgentInput,
+        lastEventId: String? = nil
+    ) async throws -> AsyncThrowingStream<UInt8, Error> {
+        try await transport.execute(
+            endpoint: endpoint,
+            input: input,
+            lastEventId: lastEventId
+        )
+    }
+
     public func run(input: RunAgentInput) -> AsyncThrowingStream<any AGUIEvent, Error> {
         let transport = self.transport
         let decoder = self.decoder
