@@ -22,6 +22,9 @@ defaults:
   run:
     working-directory: ./rust
 
+permissions:
+  contents: read
+
 jobs:
   rust:
     strategy:
@@ -36,9 +39,12 @@ jobs:
       CARGO_TERM_COLOR: always
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
 
-      - uses: Swatinem/rust-cache@v2
+      # Built-in cache is fork-safe (fork PRs can't write to base repo cache)
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2.8.1
 
       - name: Build
         run: cargo build --verbose

@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package com.agui.client.state
 
 import com.agui.client.agent.AbstractAgent
@@ -211,5 +213,96 @@ class DefaultApplyEventsTest {
         assertNotNull(thinking)
         assertFalse(thinking.isThinking)
         assertEquals(listOf("Considering options"), thinking.messages)
+    }
+
+    @Test
+    fun tracksReasoningSingleStreamLifecycle() = runTest {
+        val input = baseInput()
+        val events = flowOf<BaseEvent>(
+            ReasoningStartEvent(messageId = "r1"),
+            ReasoningMessageStartEvent(messageId = "r1"),
+            ReasoningMessageContentEvent(messageId = "r1", delta = "Step 1"),
+            ReasoningMessageContentEvent(messageId = "r1", delta = " -> Step 2"),
+            ReasoningMessageEndEvent(messageId = "r1"),
+            ReasoningEndEvent(messageId = "r1")
+        )
+
+        val states = defaultApplyEvents(input, events).toList()
+        val reasoning = states.last().reasoning
+        assertNotNull(reasoning)
+        assertEquals(1, reasoning.streams.size)
+        val stream = reasoning.streams.first()
+        assertEquals("r1", stream.messageId)
+        assertFalse(stream.isActive)
+        assertEquals("Step 1 -> Step 2", stream.text)
+    }
+
+    @Test
+    fun tracksReasoningConcurrentStreams() = runTest {
+        val input = baseInput()
+        val events = flowOf<BaseEvent>(
+            ReasoningStartEvent(messageId = "r1"),
+            ReasoningStartEvent(messageId = "r2"),
+            ReasoningMessageContentEvent(messageId = "r1", delta = "alpha"),
+            ReasoningMessageContentEvent(messageId = "r2", delta = "beta"),
+            ReasoningMessageContentEvent(messageId = "r1", delta = " more"),
+            ReasoningEndEvent(messageId = "r2"),
+            ReasoningEndEvent(messageId = "r1")
+        )
+
+        val states = defaultApplyEvents(input, events).toList()
+        val reasoning = states.last().reasoning
+        assertNotNull(reasoning)
+        assertEquals(2, reasoning.streams.size)
+
+        val r1 = reasoning.streams.first { it.messageId == "r1" }
+        val r2 = reasoning.streams.first { it.messageId == "r2" }
+        assertEquals("alpha more", r1.text)
+        assertEquals("beta", r2.text)
+        assertFalse(r1.isActive)
+        assertFalse(r2.isActive)
+    }
+
+    @Test
+    fun reasoningEncryptedValueAttachesToMostRecentStream() = runTest {
+        val input = baseInput()
+        val events = flowOf<BaseEvent>(
+            ReasoningStartEvent(messageId = "r1"),
+            ReasoningMessageContentEvent(messageId = "r1", delta = "thinking..."),
+            ReasoningEncryptedValueEvent(
+                subtype = "message",
+                entityId = "e1",
+                encryptedValue = "ENC_PAYLOAD"
+            ),
+            ReasoningEndEvent(messageId = "r1")
+        )
+
+        val states = defaultApplyEvents(input, events).toList()
+        val reasoning = states.last().reasoning
+        assertNotNull(reasoning)
+        val stream = reasoning.streams.single()
+        assertEquals("r1", stream.messageId)
+        assertEquals(1, stream.encryptedValues.size)
+        val ev = stream.encryptedValues.first()
+        assertEquals("message", ev.subtype)
+        assertEquals("e1", ev.entityId)
+        assertEquals("ENC_PAYLOAD", ev.encryptedValue)
+    }
+
+    @Test
+    fun reasoningChunkAutoPopulatesStream() = runTest {
+        val input = baseInput()
+        val events = flowOf<BaseEvent>(
+            ReasoningMessageChunkEvent(messageId = "r1", delta = "Hello "),
+            ReasoningMessageChunkEvent(delta = "world!")
+        )
+
+        val states = defaultApplyEvents(input, events).toList()
+        val reasoning = states.last().reasoning
+        assertNotNull(reasoning)
+        val stream = reasoning.streams.single()
+        assertEquals("r1", stream.messageId)
+        assertEquals("Hello world!", stream.text)
+        assertTrue(stream.isActive)
     }
 }

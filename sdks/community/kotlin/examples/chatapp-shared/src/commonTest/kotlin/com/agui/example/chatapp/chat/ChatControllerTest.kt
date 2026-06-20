@@ -4,7 +4,14 @@ import com.agui.client.agent.AgentSubscriber
 import com.agui.client.agent.AgentSubscription
 import com.agui.core.types.AssistantMessage
 import com.agui.core.types.BaseEvent
+import com.agui.core.types.ReasoningEndEvent
+import com.agui.core.types.ReasoningMessageChunkEvent
+import com.agui.core.types.ReasoningMessageContentEvent
+import com.agui.core.types.ReasoningMessageEndEvent
+import com.agui.core.types.ReasoningMessageStartEvent
+import com.agui.core.types.ReasoningStartEvent
 import com.agui.core.types.RunErrorEvent
+import com.agui.core.types.RunFinishedEvent
 import com.agui.core.types.ToolCallEndEvent
 import com.agui.core.types.ToolCallStartEvent
 import com.agui.core.types.UserMessage
@@ -121,6 +128,83 @@ class ChatControllerTest {
         advanceUntilIdle()
 
         assertFalse(controller.state.value.messages.any { it.role == MessageRole.TOOL_CALL })
+
+        controller.close()
+        scope.cancel()
+        AgentRepository.resetInstance()
+    }
+
+    @Test
+    fun reasoningEventsStreamEphemeralBubble() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val scope = TestScope(dispatcher)
+        val settings = FakeSettings()
+        AgentRepository.resetInstance()
+        UserIdManager.resetInstance()
+
+        val repository = AgentRepository.getInstance(settings)
+        val userIdManager = UserIdManager.getInstance(settings)
+        val controller = ChatController(
+            externalScope = scope,
+            agentFactory = StubChatAgentFactory(),
+            settings = settings,
+            agentRepository = repository,
+            userIdManager = userIdManager
+        )
+
+        controller.handleAgentEvent(ReasoningStartEvent(messageId = "r-1"))
+        val placeholder = controller.state.value.messages.singleOrNull { it.role == MessageRole.REASONING }
+        assertTrue(placeholder != null)
+        assertEquals(EphemeralType.REASONING, placeholder.ephemeralType)
+
+        controller.handleAgentEvent(ReasoningMessageStartEvent(messageId = "r-1"))
+        controller.handleAgentEvent(ReasoningMessageContentEvent(messageId = "r-1", delta = "First "))
+        controller.handleAgentEvent(ReasoningMessageContentEvent(messageId = "r-1", delta = "thought."))
+        val streaming = controller.state.value.messages.single { it.role == MessageRole.REASONING }
+        assertTrue(streaming.content.contains("First thought."))
+
+        controller.handleAgentEvent(ReasoningMessageEndEvent(messageId = "r-1"))
+        controller.handleAgentEvent(ReasoningEndEvent(messageId = "r-1"))
+        advanceTimeBy(500)
+        advanceUntilIdle()
+
+        assertFalse(controller.state.value.messages.any { it.role == MessageRole.REASONING })
+
+        controller.close()
+        scope.cancel()
+        AgentRepository.resetInstance()
+    }
+
+    @Test
+    fun reasoningChunkEventsAppendDelta() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val scope = TestScope(dispatcher)
+        val settings = FakeSettings()
+        AgentRepository.resetInstance()
+        UserIdManager.resetInstance()
+
+        val repository = AgentRepository.getInstance(settings)
+        val userIdManager = UserIdManager.getInstance(settings)
+        val controller = ChatController(
+            externalScope = scope,
+            agentFactory = StubChatAgentFactory(),
+            settings = settings,
+            agentRepository = repository,
+            userIdManager = userIdManager
+        )
+
+        controller.handleAgentEvent(ReasoningStartEvent(messageId = "r-2"))
+        controller.handleAgentEvent(ReasoningMessageChunkEvent(messageId = "r-2", delta = "Chunk-A "))
+        controller.handleAgentEvent(ReasoningMessageChunkEvent(messageId = null, delta = "Chunk-B"))
+        controller.handleAgentEvent(ReasoningMessageChunkEvent(messageId = null, delta = null))
+
+        val streaming = controller.state.value.messages.single { it.role == MessageRole.REASONING }
+        assertTrue(streaming.content.contains("Chunk-A Chunk-B"))
+
+        controller.handleAgentEvent(RunFinishedEvent(threadId = "t", runId = "r"))
+        advanceUntilIdle()
+
+        assertFalse(controller.state.value.messages.any { it.role == MessageRole.REASONING })
 
         controller.close()
         scope.cancel()

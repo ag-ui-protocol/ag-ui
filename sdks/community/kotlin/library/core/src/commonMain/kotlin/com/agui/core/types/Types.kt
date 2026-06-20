@@ -433,5 +433,79 @@ data class RunAgentInput(
     val messages: List<Message> = emptyList(),
     val tools: List<Tool> = emptyList(),
     val context: List<Context> = emptyList(),
-    val forwardedProps: JsonElement = JsonObject(emptyMap())
+    val forwardedProps: JsonElement = JsonObject(emptyMap()),
+    /**
+     * Per-interrupt responses sent when resuming a previously interrupted run.
+     *
+     * Each entry addresses an [Interrupt] from the prior `RunFinishedEvent` whose
+     * `outcome` was a [com.agui.core.types.RunFinishedInterruptOutcome]. The same
+     * `threadId` must be reused. Omitted when not resuming.
+     *
+     * @see Interrupt
+     * @see ResumeEntry
+     * @see <a href="https://docs.ag-ui.com/concepts/interrupts">AG-UI Interrupts</a>
+     */
+    val resume: List<ResumeEntry>? = null
+)
+
+// ============== Interrupts ==============
+
+/**
+ * A pause carried inside [com.agui.core.types.RunFinishedInterruptOutcome] when a
+ * run finishes on one or more interrupts. The client resumes by addressing this
+ * interrupt in the [RunAgentInput.resume] array of the next request, using the
+ * same `threadId`.
+ *
+ * @param id Stable identifier of this interrupt; echoed back as [ResumeEntry.interruptId].
+ * @param reason Machine-readable reason describing why the agent paused
+ *               (e.g. `"tool_call"`, `"human_approval"`).
+ * @param message Optional human-readable explanation suitable for surfacing to the user.
+ * @param toolCallId Optional tool-call this interrupt is associated with.
+ * @param responseSchema Optional JSON Schema describing the expected shape of
+ *                       [ResumeEntry.payload]. Agents MAY validate the payload against this.
+ * @param expiresAt Optional ISO-8601 timestamp after which a resume MUST NOT be submitted.
+ * @param metadata Optional opaque metadata for the agent / UI to use.
+ *
+ * @see <a href="https://docs.ag-ui.com/concepts/interrupts">AG-UI Interrupts</a>
+ */
+@Serializable
+data class Interrupt(
+    val id: String,
+    val reason: String,
+    val message: String? = null,
+    val toolCallId: String? = null,
+    val responseSchema: JsonElement? = null,
+    val expiresAt: String? = null,
+    val metadata: JsonElement? = null
+)
+
+/**
+ * Status of a [ResumeEntry].
+ *
+ * - [RESOLVED]: the user provided a response (typically with a `payload`).
+ * - [CANCELLED]: the user abandoned the interrupt without providing input.
+ */
+@Serializable
+enum class ResumeStatus {
+    @SerialName("resolved")
+    RESOLVED,
+    @SerialName("cancelled")
+    CANCELLED
+}
+
+/**
+ * A per-interrupt response in [RunAgentInput.resume].
+ *
+ * @param interruptId The [Interrupt.id] this entry resolves.
+ * @param status See [ResumeStatus].
+ * @param payload Optional response value. Shape is dictated by the originating
+ *                interrupt's [Interrupt.responseSchema] (if any).
+ *
+ * @see <a href="https://docs.ag-ui.com/concepts/interrupts">AG-UI Interrupts</a>
+ */
+@Serializable
+data class ResumeEntry(
+    val interruptId: String,
+    val status: ResumeStatus,
+    val payload: JsonElement? = null
 )

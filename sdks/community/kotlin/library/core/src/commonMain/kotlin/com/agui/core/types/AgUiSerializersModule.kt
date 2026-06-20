@@ -45,5 +45,11 @@ val AgUiSerializersModule by lazy {
             subclass(UserMessage::class)
             subclass(ToolMessage::class)
         }
+
+        // Polymorphic serialization for RUN_FINISHED outcomes
+        polymorphic(RunFinishedOutcome::class) {
+            subclass(RunFinishedSuccessOutcome::class)
+            subclass(RunFinishedInterruptOutcome::class)
+        }
     }
 }

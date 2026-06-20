@@ -243,7 +243,7 @@ from google.adk import tools as adk_tools
 # Add memory tools to the ADK agent (not ADKAgent)
 my_agent = Agent(
     name="assistant",
-    model="gemini-2.0-flash",
+    model="gemini-3.5-flash",
     instruction="You are a helpful assistant.",
     tools=[
         AGUIToolset(), # Add the tools provided by the AG-UI client

@@ -71,6 +71,12 @@ class ToolBehavior:
     """Declarative configuration for tool-specific handling."""
 
     skip_messages_snapshot: bool = False
+    """When True, suppress the ``MessagesSnapshotEvent`` that would normally
+    follow this tool's ``TOOL_CALL_END`` / ``TOOL_CALL_RESULT`` events.
+
+    Useful when ``custom_result_handler`` already emits its own
+    ``MessagesSnapshotEvent`` and you want to avoid duplicates.
+    """
     continue_after_frontend_call: bool = False
     stop_streaming_after_result: bool = False
     predict_state: Optional[Iterable[PredictStateMapping]] = None
@@ -102,6 +108,44 @@ class StrandsAgentConfig:
     If the provider returns ``None`` a warning is logged and the agent runs
     without session persistence; the thread IS cached in this state, so the
     provider will not be called again for the same thread.
+    """
+    emit_messages_snapshot: bool = True
+    """Emit ``MessagesSnapshotEvent`` at lifecycle boundaries (after the
+    initial state snapshot, after each ``TOOL_CALL_END`` /
+    ``TOOL_CALL_RESULT``, and after each ``TEXT_MESSAGE_END``).
+
+    Required for CopilotKit v2 frontends, which key tool-call rendering
+    off canonical message reconstruction rather than the streaming
+    ``TOOL_CALL_*`` events alone. Set to False for raw AG-UI consumers
+    that do their own message reconstruction.
+    """
+    replay_history_into_strands: bool = True
+    """When True (and the cached Strands agent has no ``session_manager``),
+    reconcile the per-thread ``StrandsAgentCore.messages`` list with
+    ``RunAgentInput.messages`` before invoking ``stream_async``.
+
+    This prevents the LLM from re-firing frontend tools every turn
+    because Strands' internal history was missing the tool result that
+    the frontend produced. Disable only if you manage Strands history
+    yourself (e.g. via a custom ``session_manager``).
+    """
+    a2ui: Optional[Dict[str, Any]] = None
+    """A2UI auto-injection config — everything A2UI-related in one
+    place. When the CopilotKit runtime forwards ``injectA2UITool`` (or
+    ``a2ui["inject_a2ui_tool"]`` opts in on a host that doesn't), the adapter
+    injects a ``generate_a2ui`` recovery tool and infers the model from the
+    wrapped agent — no manual ``get_a2ui_tools()`` needed. Keys:
+
+    - ``inject_a2ui_tool`` — opt in without the runtime flag; a string also
+      names the injected render tool to drop.
+    - ``default_catalog_id`` — catalog id stamped into auto-injected surfaces
+      (must match the host renderer's catalog).
+    - ``guidelines`` — ``{"composition_guide": ...}`` teaches the sub-agent the
+      catalog's components; required for a real model to compose them.
+    - ``catalog`` — inline catalog for catalog-aware (semantic) recovery.
+    - ``recovery`` — recovery loop config. NOTE: keys are camelCase per the
+      shared toolkit contract — e.g. ``{"maxAttempts": 5}`` (a snake_case
+      ``max_attempts`` is silently ignored).
     """
 
 

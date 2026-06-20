@@ -1,6 +1,6 @@
 import { AbstractAgent, RunAgentResult } from "./agent";
 import { runHttpRequest } from "@/run/http-request";
-import { HttpAgentConfig, RunAgentParameters } from "./types";
+import { HttpAgentConfig, HttpAgentFetchFn, RunAgentParameters } from "./types";
 import { RunAgentInput, BaseEvent } from "@ag-ui/core";
 import { structuredClone_ } from "@/utils";
 import { transformHttpEventStream } from "@/transform/http";
@@ -14,6 +14,7 @@ interface RunHttpAgentConfig extends RunAgentParameters {
 export class HttpAgent extends AbstractAgent {
   public url: string;
   public headers: Record<string, string>;
+  public fetch: HttpAgentFetchFn;
   public abortController: AbortController = new AbortController();
 
   /**
@@ -52,10 +53,16 @@ export class HttpAgent extends AbstractAgent {
     super(config);
     this.url = config.url;
     this.headers = structuredClone_(config.headers ?? {});
+    // Bind the default fetch to the global object. Storing the bare `fetch`
+    // and later invoking it as `this.fetch(...)` sets the receiver to the agent
+    // instance; a browser's native fetch is a checked-receiver method and throws
+    // "Illegal invocation" when not called with `window` as `this`. (Node's fetch
+    // tolerates any receiver, so this only surfaces in the browser.)
+    this.fetch = config.fetch ?? ((url, requestInit) => fetch(url, requestInit));
   }
 
   run(input: RunAgentInput): Observable<BaseEvent> {
-    const httpEvents = runHttpRequest(this.url, this.requestInit(input));
+    const httpEvents = runHttpRequest(() => this.fetch(this.url, this.requestInit(input)));
     return transformHttpEventStream(httpEvents, this.debugLogger);
   }
 
@@ -63,6 +70,7 @@ export class HttpAgent extends AbstractAgent {
     const cloned = super.clone() as HttpAgent;
     cloned.url = this.url;
     cloned.headers = structuredClone_(this.headers ?? {});
+    cloned.fetch = this.fetch;
 
     const newController = new AbortController();
     const originalSignal = this.abortController.signal as AbortSignal & { reason?: unknown };

@@ -114,20 +114,11 @@ async def recipe_state_from_args(context):
         return None
 
 
-async def recipe_state_from_result(context):
-    """Update recipe state based on tool result payload."""
-    if isinstance(context.result_data, dict):
-        return {"recipe": context.result_data}
-    return None
-
-
 shared_state_config = StrandsAgentConfig(
     state_context_builder=build_recipe_prompt,
     tool_behaviors={
         "generate_recipe": ToolBehavior(
-            skip_messages_snapshot=True,
             state_from_args=recipe_state_from_args,
-            state_from_result=recipe_state_from_result,
         )
     },
 )
