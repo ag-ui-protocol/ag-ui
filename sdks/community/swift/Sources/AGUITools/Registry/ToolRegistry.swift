@@ -202,6 +202,14 @@ public actor DefaultToolRegistry: ToolRegistry {
         let result: ToolExecutionResult
 
         do {
+            // Validate before executing
+            let validation = executor.validate(toolCall: context.toolCall)
+            if !validation.isValid {
+                throw ToolExecutionError.validationFailed(
+                    message: validation.errors.joined(separator: "; ")
+                )
+            }
+
             // Execute with timeout if specified
             if let maxTime = executor.maximumExecutionTime() {
                 result = try await withTimeout(maxTime, toolName: toolName) {

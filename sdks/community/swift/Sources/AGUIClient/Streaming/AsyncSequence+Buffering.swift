@@ -39,32 +39,21 @@ extension AsyncSequence where Self: Sendable, Element: Sendable {
         limit: Int,
         strategy: BufferingStrategy
     ) -> AsyncThrowingStream<Element, Error> {
-        AsyncThrowingStream { continuation in
+        // Map our strategy to AsyncThrowingStream's built-in buffer policy.
+        // bufferingNewest keeps the newest `limit` elements (drops oldest on overflow).
+        // bufferingOldest keeps the oldest `limit` elements (drops newest on overflow).
+        let policy: AsyncThrowingStream<Element, Error>.Continuation.BufferingPolicy
+        switch strategy {
+        case .dropOldest: policy = .bufferingNewest(limit)
+        case .dropNewest: policy = .bufferingOldest(limit)
+        }
+
+        return AsyncThrowingStream(bufferingPolicy: policy) { continuation in
             let task = Task {
                 do {
-                    var buffer: [Element] = []
-
                     for try await element in self {
-                        // Apply overflow strategy when buffer is full
-                        if buffer.count >= limit {
-                            switch strategy {
-                            case .dropOldest:
-                                buffer.removeFirst()
-                                buffer.append(element)
-                            case .dropNewest:
-                                // Drop the new element, keep buffer as-is
-                                continue
-                            }
-                        } else {
-                            buffer.append(element)
-                        }
+                        continuation.yield(element) // yield immediately — no accumulation
                     }
-
-                    // Yield remaining buffered elements
-                    while !buffer.isEmpty {
-                        continuation.yield(buffer.removeFirst())
-                    }
-
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)

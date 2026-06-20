@@ -134,6 +134,7 @@ public struct SseParser {
         var dataLines: [String] = []
         var id: String?
         var eventType: String?
+        var retry: Int?
 
         // Process each line in the event
         for line in text.components(separatedBy: "\n") {
@@ -167,6 +168,9 @@ public struct SseParser {
                 id = value
             case "event":
                 eventType = value
+            case "retry":
+                // Per spec §9.2.6: only set if the value is an ASCII integer; ignore otherwise.
+                retry = Int(value)
             default:
                 // Unknown fields are ignored per spec
                 break
@@ -184,7 +188,8 @@ public struct SseParser {
         return SseEvent(
             data: data,
             id: id,
-            event: eventType ?? "message"
+            event: eventType ?? "message",
+            retry: retry
         )
     }
 

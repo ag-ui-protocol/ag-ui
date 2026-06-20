@@ -110,7 +110,7 @@ public final class StatefulAgUiAgent: Sendable {
         let agent = HttpAgent(configuration: HttpAgentConfiguration(
             baseURL: configuration.baseURL,
             timeout: configuration.timeout,
-            headers: configuration.headers,
+            headers: configuration.buildHeaders(),
             debug: configuration.debug
         ))
         self.httpAgent = agent

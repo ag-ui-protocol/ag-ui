@@ -162,4 +162,101 @@ final class URLSessionHTTPClientTests: XCTestCase {
         XCTAssertNotNil(ephemeralClient)
         XCTAssertNotNil(backgroundClient)
     }
+
+    // MARK: - Cancellation propagation
+
+    func test_cancellation_stopsUnderlyingTask() async throws {
+        // When the consumer cancels the stream, the inner Task must be cancelled via
+        // continuation.onTermination so the URLSession data task is torn down.
+        // StallingURLProtocol sends response headers then stalls on the body,
+        // letting us verify stopLoading() is called after consumer cancellation.
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StallingURLProtocol.self]
+        let session = URLSession(configuration: config)
+        let client = URLSessionHTTPClient(session: session)
+
+        StallingURLProtocol.reset()
+
+        let consumingTask = Task {
+            let request = URLRequest(url: URL(string: "https://stall.test/stream")!)
+            let response = try await client.execute(request)
+            // Start consuming — the stream body never arrives, so this suspends.
+            for try await _ in response.bytes { break }
+        }
+
+        // Wait for the URLProtocol to signal it has started serving the body.
+        await StallingURLProtocol.waitUntilStarted()
+        // Cancel the consumer — this should trigger onTermination → task.cancel().
+        consumingTask.cancel()
+
+        let cancelled = await StallingURLProtocol.waitUntilCancelledOrTimeout()
+        XCTAssertTrue(cancelled, "URLSession task must be cancelled when consumer cancels the stream")
+    }
+}
+
+// MARK: - StallingURLProtocol
+
+/// URLProtocol that sends 200 response headers immediately, then stalls on the body.
+/// Records when URLSession cancels the task via stopLoading().
+final class StallingURLProtocol: URLProtocol, @unchecked Sendable {
+    private static let startedContinuations = NSLock()
+    private static var _startedContinuation: CheckedContinuation<Void, Never>?
+    private static var _cancelledContinuation: CheckedContinuation<Bool, Never>?
+    private static var _started = false
+    private static var _cancelled = false
+
+    static func reset() {
+        startedContinuations.lock(); defer { startedContinuations.unlock() }
+        _startedContinuation = nil
+        _cancelledContinuation = nil
+        _started = false
+        _cancelled = false
+    }
+
+    static func waitUntilStarted() async {
+        await withCheckedContinuation { cont in
+            startedContinuations.lock(); defer { startedContinuations.unlock() }
+            if _started { cont.resume() } else { _startedContinuation = cont }
+        }
+    }
+
+    static func waitUntilCancelledOrTimeout() async -> Bool {
+        await withCheckedContinuation { cont in
+            startedContinuations.lock(); defer { startedContinuations.unlock() }
+            if _cancelled { cont.resume(returning: true) } else { _cancelledContinuation = cont }
+        }
+    }
+
+    private static func signalStarted() {
+        startedContinuations.lock(); defer { startedContinuations.unlock() }
+        _started = true
+        _startedContinuation?.resume()
+        _startedContinuation = nil
+    }
+
+    private static func signalCancelled() {
+        startedContinuations.lock(); defer { startedContinuations.unlock() }
+        _cancelled = true
+        _cancelledContinuation?.resume(returning: true)
+        _cancelledContinuation = nil
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "text/event-stream"]
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        // Signal that headers were sent — body never arrives (intentional stall).
+        StallingURLProtocol.signalStarted()
+    }
+
+    override func stopLoading() {
+        StallingURLProtocol.signalCancelled()
+    }
 }

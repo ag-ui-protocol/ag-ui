@@ -432,6 +432,26 @@ final class SseParserTests: XCTestCase {
         XCTAssertTrue(events[4].data.contains("RUN_FINISHED"))
     }
 
+    // MARK: - retry field
+
+    func test_sseParser_retryField_parsedAsMilliseconds() {
+        // WHATWG SSE spec §9.2.6: the retry field sets the reconnection time in ms.
+        var parser = SseParser()
+        let events = parser.parse("retry: 5000\ndata: ping\n\n")
+
+        XCTAssertEqual(events.count, 1)
+        XCTAssertEqual(events[0].retry, 5000)
+    }
+
+    func test_sseParser_retryField_nonInteger_isIgnored() {
+        // Per spec: if the value is not an ASCII integer, ignore the field entirely.
+        var parser = SseParser()
+        let events = parser.parse("retry: abc\ndata: ping\n\n")
+
+        XCTAssertEqual(events.count, 1)
+        XCTAssertNil(events[0].retry)
+    }
+
     // MARK: - Thread Safety Tests
 
     func testParserIsNotThreadSafe() {

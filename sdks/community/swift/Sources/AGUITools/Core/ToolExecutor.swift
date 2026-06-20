@@ -245,5 +245,5 @@ public enum ToolExecutionError: Error, Sendable {
     /// - Parameters:
     ///   - toolName: Name of the tool that failed
     ///   - underlyingError: The underlying error that caused the failure
-    case executionFailed(toolName: String, underlyingError: Error)
+    case executionFailed(toolName: String, underlyingError: any Error & Sendable)
 }

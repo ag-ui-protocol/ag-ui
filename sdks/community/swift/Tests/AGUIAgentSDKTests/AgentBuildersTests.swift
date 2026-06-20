@@ -145,4 +145,30 @@ final class AgentBuildersTests: XCTestCase {
         let config = AgUiAgentConfig()
         XCTAssertTrue(config.buildHeaders().isEmpty)
     }
+
+    // MARK: - StatefulAgUiAgentConfig.buildHeaders
+
+    func test_statefulConfig_buildHeaders_bearerToken() {
+        var config = StatefulAgUiAgentConfig(baseURL: agentURL)
+        config.bearerToken = "sk-secret"
+        XCTAssertEqual(config.buildHeaders()["Authorization"], "Bearer sk-secret")
+    }
+
+    func test_statefulConfig_buildHeaders_apiKey() {
+        var config = StatefulAgUiAgentConfig(baseURL: agentURL)
+        config.apiKey = "my-key"
+        XCTAssertEqual(config.buildHeaders()["X-API-Key"], "my-key")
+    }
+
+    func test_statefulConfig_buildHeaders_explicitHeadersOverrideAuth() {
+        var config = StatefulAgUiAgentConfig(baseURL: agentURL)
+        config.bearerToken = "tok"
+        config.headers = ["Authorization": "Basic override"]
+        XCTAssertEqual(config.buildHeaders()["Authorization"], "Basic override")
+    }
+
+    func test_statefulConfig_buildHeaders_emptyWhenNothingConfigured() {
+        let config = StatefulAgUiAgentConfig(baseURL: agentURL)
+        XCTAssertTrue(config.buildHeaders().isEmpty)
+    }
 }

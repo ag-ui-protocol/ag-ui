@@ -84,8 +84,11 @@ import Foundation
 ///
 /// ## Thread Safety
 ///
-/// `AGUIEventDecoder` is thread-safe and can be used concurrently. The decoder itself
-/// is immutable after initialization, and all configuration is `Sendable`.
+/// `AGUIEventDecoder` maintains mutable state for the THINKING→REASONING backward-compat
+/// remap (tracking IDs across event sequences). It must be used **serially** — one
+/// `decode(_:)` call at a time. Create one decoder per agent run; do not share a decoder
+/// across concurrent tasks. SSE streams guarantee serial delivery, so this is satisfied
+/// automatically when decoding streamed events.
 ///
 /// - SeeAlso: `AGUIEvent`, `EventType`, `EventDecodingError`, `UnknownEvent`
 public struct AGUIEventDecoder: Sendable {
@@ -153,6 +156,13 @@ public struct AGUIEventDecoder: Sendable {
     private let makeDecoder: @Sendable () -> JSONDecoder
     private let registry: [EventType: DecodeHandler]
 
+    /// Mutable state for the THINKING→REASONING backward-compat remap.
+    ///
+    /// Stored as a reference type so the `Sendable` struct can hold mutable state.
+    /// `AGUIEventDecoder` must be used serially (one decode at a time), which is
+    /// guaranteed by SSE streams — events arrive sequentially on a single task.
+    private let remapState: ThinkingRemapState
+
     // MARK: - Initialization
 
     /// Creates a new `AGUIEventDecoder`.
@@ -187,6 +197,7 @@ public struct AGUIEventDecoder: Sendable {
         self.config = config
         self.makeDecoder = makeDecoder
         self.registry = registry
+        self.remapState = ThinkingRemapState()
     }
 
     // MARK: - Decoding
@@ -226,7 +237,7 @@ public struct AGUIEventDecoder: Sendable {
 
         // Transparent backward compat: remap legacy THINKING_* wire events to REASONING_*,
         // mirroring the TypeScript SDK's BackwardCompatibility_0_0_45 middleware.
-        if let (remappedData, remappedType) = Self.remapThinkingEvent(data: data, typeRaw: disc.typeRaw) {
+        if let (remappedData, remappedType) = remapThinkingEvent(data: data, typeRaw: disc.typeRaw) {
             guard let handler = registry[remappedType] else {
                 return try handleMissingHandler(for: remappedType, typeRaw: disc.typeRaw, rawEvent: data)
             }
@@ -251,27 +262,54 @@ public struct AGUIEventDecoder: Sendable {
     /// upgrades them — matching how the TypeScript SDK's `BackwardCompatibility_0_0_45`
     /// middleware handles the same transition.
     ///
-    /// IDs are generated fresh per-event; the caller should not rely on cross-event ID
-    /// correlation for events originating from a `THINKING_*` stream.
+    /// IDs are stable across all events in the same sequence:
+    /// - `currentReasoningId` is shared by `THINKING_START` and `THINKING_END`.
+    /// - `currentMessageId` is shared by `THINKING_TEXT_MESSAGE_START`, `_CONTENT`, and `_END`.
+    ///
+    /// This decoder must be used serially (one decode call at a time), which is
+    /// guaranteed by SSE streams — events arrive sequentially on a single task.
     ///
     /// - Parameters:
     ///   - data: Raw JSON bytes from the SSE stream.
     ///   - typeRaw: The `"type"` discriminator string already extracted from `data`.
     /// - Returns: Rewritten JSON + the target `EventType`, or `nil` if no remapping is needed.
-    private static func remapThinkingEvent(data: Data, typeRaw: String) -> (Data, EventType)? {
-        // Wire string → (target EventType, extra fields to inject)
-        let mapping: [String: (EventType, [String: Any])] = [
-            "THINKING_START": (.reasoningStart, ["messageId": UUID().uuidString]),
-            "THINKING_END": (.reasoningEnd, ["messageId": UUID().uuidString]),
-            "THINKING_TEXT_MESSAGE_START": (.reasoningMessageStart, [
-                "messageId": UUID().uuidString,
-                "role": "assistant",
-            ]),
-            "THINKING_TEXT_MESSAGE_CONTENT": (.reasoningMessageContent, ["messageId": UUID().uuidString]),
-            "THINKING_TEXT_MESSAGE_END": (.reasoningMessageEnd, ["messageId": UUID().uuidString]),
-        ]
+    private func remapThinkingEvent(data: Data, typeRaw: String) -> (Data, EventType)? {
+        let targetType: EventType
+        var extraFields: [String: Any]
 
-        guard let (targetType, extraFields) = mapping[typeRaw] else { return nil }
+        switch typeRaw {
+        case "THINKING_START":
+            let id = UUID().uuidString
+            remapState.currentReasoningId = id
+            targetType = .reasoningStart
+            extraFields = ["messageId": id]
+
+        case "THINKING_END":
+            let id = remapState.currentReasoningId ?? UUID().uuidString
+            remapState.currentReasoningId = nil
+            targetType = .reasoningEnd
+            extraFields = ["messageId": id]
+
+        case "THINKING_TEXT_MESSAGE_START":
+            let id = UUID().uuidString
+            remapState.currentMessageId = id
+            targetType = .reasoningMessageStart
+            extraFields = ["messageId": id, "role": "assistant"]
+
+        case "THINKING_TEXT_MESSAGE_CONTENT":
+            let id = remapState.currentMessageId ?? UUID().uuidString
+            targetType = .reasoningMessageContent
+            extraFields = ["messageId": id]
+
+        case "THINKING_TEXT_MESSAGE_END":
+            let id = remapState.currentMessageId ?? UUID().uuidString
+            remapState.currentMessageId = nil
+            targetType = .reasoningMessageEnd
+            extraFields = ["messageId": id]
+
+        default:
+            return nil
+        }
 
         guard var jsonObject = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return nil

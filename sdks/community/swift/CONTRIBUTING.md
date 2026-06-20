@@ -116,7 +116,7 @@ gh pr create
 
 **Using GitHub Web UI**:
 
-1. Go to https://github.com/your-username/AGUISwift
+1. Go to https://github.com/paduh/ag-ui
 2. Click "Compare & pull request"
 3. Fill in the PR template
 4. Click "Create pull request"

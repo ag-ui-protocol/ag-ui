@@ -50,15 +50,26 @@ public struct SseEvent: Sendable, Equatable {
     /// The `event:` field allows distinguishing different event types.
     public let event: String
 
+    /// Reconnection interval in milliseconds.
+    ///
+    /// Set by the server via the `retry:` field. This is a connection-level
+    /// directive telling the client how long to wait before reconnecting after
+    /// a dropped connection. `nil` means no interval was specified in this event.
+    ///
+    /// Per WHATWG SSE spec §9.2.6, values that are not ASCII integers are ignored.
+    public let retry: Int?
+
     /// Creates a new SSE event.
     ///
     /// - Parameters:
     ///   - data: The event data payload
     ///   - id: Optional event ID (default: nil)
     ///   - event: Event type name (default: "message")
-    public init(data: String, id: String? = nil, event: String = "message") {
+    ///   - retry: Optional reconnection interval in milliseconds (default: nil)
+    public init(data: String, id: String? = nil, event: String = "message", retry: Int? = nil) {
         self.data = data
         self.id = id
         self.event = event
+        self.retry = retry
     }
 }

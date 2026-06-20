@@ -469,6 +469,94 @@ final class ToolRegistryTests: XCTestCase {
         XCTAssertEqual(allStats["tool_stats_1"]?.executionCount, 1)
         XCTAssertEqual(allStats["tool_stats_2"]?.executionCount, 0)
     }
+
+    // MARK: - validate() pipeline tests
+
+    func test_registry_execute_callsValidateBeforeExecute() async throws {
+        // validate(toolCall:) must be called and must precede execute(context:).
+        let registry = DefaultToolRegistry()
+        let tool = Tool(name: "ordered_tool", description: "Test", parameters: Data("{}".utf8))
+        let executor = OrderTrackingExecutor(tool: tool, validationResult: .valid)
+        try await registry.register(executor: executor)
+
+        let toolCall = ToolCall(id: "c1", function: FunctionCall(name: "ordered_tool", arguments: "{}"))
+        _ = try await registry.execute(context: ToolExecutionContext(toolCall: toolCall))
+
+        let order = executor.callOrder
+        XCTAssertEqual(order, ["validate", "execute"], "validate must be called before execute")
+    }
+
+    func test_registry_execute_validationFailure_preventsExecution() async throws {
+        // When validate() returns .invalid, execute() must not be called and the registry
+        // must throw ToolExecutionError.validationFailed.
+        let registry = DefaultToolRegistry()
+        let tool = Tool(name: "strict_tool", description: "Test", parameters: Data("{}".utf8))
+        let executor = OrderTrackingExecutor(
+            tool: tool,
+            validationResult: .invalid(errors: ["bad arg"])
+        )
+        try await registry.register(executor: executor)
+
+        let toolCall = ToolCall(id: "c2", function: FunctionCall(name: "strict_tool", arguments: "{}"))
+        do {
+            _ = try await registry.execute(context: ToolExecutionContext(toolCall: toolCall))
+            XCTFail("Expected validationFailed to be thrown")
+        } catch let error as ToolExecutionError {
+            guard case .validationFailed(let message) = error else {
+                return XCTFail("Expected .validationFailed, got \(error)")
+            }
+            XCTAssertTrue(message.contains("bad arg"))
+        }
+
+        let order = executor.callOrder
+        XCTAssertEqual(order, ["validate"], "execute must not be called when validation fails")
+    }
+}
+
+/// Executor that records whether validate and execute were called and in what order.
+///
+/// Uses a class-based recorder with a lock so that `nonisolated func validate()`
+/// can write to shared state without crossing an actor boundary asynchronously.
+final class OrderTrackingExecutor: ToolExecutor, Sendable {
+    let tool: Tool
+
+    /// Thread-safe recorder. `nonisolated` validate() and actor-like execute() both
+    /// write to this synchronously, so the order is deterministic.
+    private let recorder = CallOrderRecorder()
+    private let validationResult: ToolValidationResult
+
+    var callOrder: [String] { recorder.callOrder }
+
+    init(tool: Tool, validationResult: ToolValidationResult) {
+        self.tool = tool
+        self.validationResult = validationResult
+    }
+
+    nonisolated func validate(toolCall: ToolCall) -> ToolValidationResult {
+        recorder.record("validate")
+        return validationResult
+    }
+
+    func execute(context: ToolExecutionContext) async throws -> ToolExecutionResult {
+        recorder.record("execute")
+        return .success()
+    }
+
+    nonisolated func maximumExecutionTime() -> Duration? { nil }
+}
+
+/// Lock-protected call-order log used by OrderTrackingExecutor.
+final class CallOrderRecorder: @unchecked Sendable {
+    private var _callOrder: [String] = []
+    private let lock = NSLock()
+
+    func record(_ step: String) {
+        lock.withLock { _callOrder.append(step) }
+    }
+
+    var callOrder: [String] {
+        lock.withLock { _callOrder }
+    }
 }
 
 // MARK: - Helper Extensions

@@ -260,6 +260,24 @@ final class ToolExecutorTests: XCTestCase {
 
     // MARK: - Sendable Conformance
 
+    func test_toolExecutionError_executionFailed_isSendable() async {
+        // ToolExecutionError is Sendable. executionFailed's underlyingError must also
+        // be Sendable; otherwise passing the error across a Task boundary is a Swift 6
+        // compile error. This test verifies the associated value crosses a Task boundary.
+        struct SendableFailure: Error, Sendable { let code: Int }
+        let error = ToolExecutionError.executionFailed(
+            toolName: "my_tool",
+            underlyingError: SendableFailure(code: 42)
+        )
+        let result = await Task.detached { error }.value
+        if case .executionFailed(_, let underlying) = result,
+           let failure = underlying as? SendableFailure {
+            XCTAssertEqual(failure.code, 42)
+        } else {
+            XCTFail("Expected .executionFailed with SendableFailure")
+        }
+    }
+
     func testToolExecutorSendable() async {
         // Given: A tool executor
         let tool = Tool(

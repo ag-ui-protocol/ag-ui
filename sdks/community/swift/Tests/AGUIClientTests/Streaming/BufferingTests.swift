@@ -414,6 +414,96 @@ final class BufferingTests: XCTestCase {
         XCTAssertEqual(batches.flatMap { $0 }, [0, 1, 2, 3, 4, 5])
     }
 
+    // MARK: - Streaming correctness (verifies elements arrive during iteration, not after)
+
+    func test_buffered_yieldsElementsDuringIteration() async throws {
+        // The core bug was: buffered() accumulated all elements and only yielded
+        // after upstream finished. For an SSE stream that never closes, this means
+        // no events ever arrive. This test verifies elements flow through immediately.
+        let firstArrived = expectation(description: "first element arrives before upstream finishes")
+        firstArrived.assertForOverFulfill = false
+
+        let source = AsyncThrowingStream<Int, Error> { continuation in
+            Task {
+                continuation.yield(1)
+                // Pause before yielding second element — consumer must receive 1 before this
+                try await Task.sleep(for: .milliseconds(200))
+                continuation.yield(2)
+                continuation.yield(3)
+                continuation.finish()
+            }
+        }
+
+        let buffered = source.buffered(limit: 10, strategy: .dropOldest)
+        var received: [Int] = []
+
+        for try await element in buffered {
+            received.append(element)
+            if element == 1 {
+                firstArrived.fulfill()
+            }
+        }
+
+        await fulfillment(of: [firstArrived], timeout: 1.0)
+        XCTAssertEqual(received, [1, 2, 3])
+    }
+
+    func test_buffered_propagatesUpstreamError() async throws {
+        // Elements received before the error must not be discarded.
+        struct UpstreamFailure: Error {}
+
+        let source = AsyncThrowingStream<Int, Error> { continuation in
+            Task {
+                continuation.yield(1)
+                continuation.yield(2)
+                continuation.finish(throwing: UpstreamFailure())
+            }
+        }
+
+        let buffered = source.buffered(limit: 10, strategy: .dropOldest)
+        var received: [Int] = []
+        var caughtError: Error?
+
+        do {
+            for try await element in buffered {
+                received.append(element)
+            }
+        } catch {
+            caughtError = error
+        }
+
+        XCTAssertEqual(received, [1, 2], "Elements before error must be delivered")
+        XCTAssertTrue(caughtError is UpstreamFailure)
+    }
+
+    func test_buffered_cancellation_stopsProduction() async throws {
+        // When the consumer breaks, the inner Task must be cancelled.
+        // We verify by counting how many elements the upstream actually produced.
+        let produced = ActorCounter()
+
+        let source = AsyncThrowingStream<Int, Error> { continuation in
+            Task {
+                for i in 1...1000 {
+                    await produced.increment()
+                    continuation.yield(i)
+                    try await Task.sleep(for: .milliseconds(5))
+                }
+                continuation.finish()
+            }
+        }
+
+        let buffered = source.buffered(limit: 5, strategy: .dropOldest)
+        for try await _ in buffered {
+            break  // cancel immediately after first element
+        }
+
+        // Give inner Task a moment to honour cancellation.
+        try await Task.sleep(for: .milliseconds(50))
+        let count = await produced.value
+        // The inner Task must have been cancelled; far fewer than 1000 elements produced.
+        XCTAssertLessThan(count, 50, "Cancellation must stop the inner Task promptly")
+    }
+
     // MARK: - Cancellation Tests
 
     func testBufferedCancellation() async throws {
@@ -443,4 +533,12 @@ final class BufferingTests: XCTestCase {
         let count = try await task.value
         XCTAssertEqual(count, 5)
     }
+}
+
+// MARK: - Helpers
+
+/// Thread-safe counter for verifying production counts across task boundaries.
+actor ActorCounter {
+    private(set) var value = 0
+    func increment() { value += 1 }
 }

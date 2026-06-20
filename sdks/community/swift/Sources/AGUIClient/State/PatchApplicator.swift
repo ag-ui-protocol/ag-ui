@@ -322,7 +322,7 @@ public struct PatchApplicator: Sendable {
             return [""]
         }
 
-        return path.dropFirst().split(separator: "/").map { token in
+        return path.dropFirst().split(separator: "/", omittingEmptySubsequences: false).map { token in
             let decoded = String(token)
                 .replacingOccurrences(of: "~1", with: "/")
                 .replacingOccurrences(of: "~0", with: "~")

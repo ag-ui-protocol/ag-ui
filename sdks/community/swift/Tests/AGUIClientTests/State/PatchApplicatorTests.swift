@@ -480,6 +480,26 @@ final class PatchApplicatorTests: XCTestCase {
         XCTAssertEqual(json[""] as? String, "myValue")
     }
 
+    // MARK: - RFC 6901: empty-string path segments
+
+    func test_rfc6901_emptySegmentInPath_isPreserved() throws {
+        // /a//b decodes to ["a", "", "b"] per RFC 6901.
+        // Before fix: split(separator:) with default omittingEmptySubsequences: true
+        // collapses the empty segment to ["a", "b"], silently targeting the wrong key.
+        let state = Data("""
+        {"a":{"":{"b":0}}}
+        """.utf8)
+        let patch = Data("""
+        [{"op":"replace","path":"/a//b","value":42}]
+        """.utf8)
+
+        let result = try applicator.apply(patch: patch, to: state)
+        let json = try JSONSerialization.jsonObject(with: result) as! [String: Any]
+        let inner = json["a"] as! [String: Any]
+        let empty = inner[""] as! [String: Any]
+        XCTAssertEqual(empty["b"] as? Int, 42)
+    }
+
     func testEscapedPathCharacters() throws {
         let state = Data("{}".utf8)
         let patch = Data("""
