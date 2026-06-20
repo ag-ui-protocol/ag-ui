@@ -37,6 +37,7 @@ fun MessageBubble(
     val isSystem = message.role == MessageRole.SYSTEM || message.role == MessageRole.DEVELOPER
     val isToolCall = message.role == MessageRole.TOOL_CALL
     val isStepInfo = message.role == MessageRole.STEP_INFO
+    val isReasoning = message.role == MessageRole.REASONING
     val isEphemeral = message.ephemeralGroupId != null
     val messageTextColor = when {
         isUser -> MaterialTheme.colorScheme.onPrimary
@@ -44,6 +45,7 @@ fun MessageBubble(
         isSystem -> MaterialTheme.colorScheme.onTertiary
         isToolCall -> MaterialTheme.colorScheme.onSecondaryContainer
         isStepInfo -> MaterialTheme.colorScheme.onTertiaryContainer
+        isReasoning -> MaterialTheme.colorScheme.onPrimaryContainer
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
 
@@ -93,6 +95,7 @@ fun MessageBubble(
                         isSystem -> MaterialTheme.colorScheme.tertiary
                         isToolCall -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f)
                         isStepInfo -> MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.7f)
+                        isReasoning -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
                         else -> MaterialTheme.colorScheme.surfaceVariant
                     }
                 )

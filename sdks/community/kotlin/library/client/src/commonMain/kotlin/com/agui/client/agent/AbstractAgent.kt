@@ -37,7 +37,16 @@ abstract class AbstractAgent(
     var customEvents: List<CustomEvent> = emptyList()
         protected set
     
+    @Deprecated(
+        message = "Use 'reasoning' instead. Will be removed in 1.0.0.",
+        replaceWith = ReplaceWith("reasoning"),
+        level = DeprecationLevel.WARNING
+    )
+    @Suppress("DEPRECATION")
     var thinking: ThinkingTelemetryState? = null
+        protected set
+
+    var reasoning: ReasoningTelemetryState? = null
         protected set
     
     val debug: Boolean = config.debug
@@ -278,8 +287,12 @@ abstract class AbstractAgent(
             agentState.customEvents?.let {
                 customEvents = it
             }
+            @Suppress("DEPRECATION")
             agentState.thinking?.let {
                 thinking = it
+            }
+            agentState.reasoning?.let {
+                reasoning = it
             }
 
             if (messagesChanged) {
@@ -548,21 +561,29 @@ data class RunAgentParameters(
 
 /**
  * Represents the transformed agent state.
- * Contains the current state of the agent including messages, thinking telemetry,
+ * Contains the current state of the agent including messages, reasoning telemetry,
  * state data, and auxiliary events.
- * 
+ *
  * @property messages Optional list of messages in the current conversation
- * @property thinking Optional thinking telemetry describing the agent's internal reasoning stream
+ * @property thinking Optional thinking telemetry (deprecated; use [reasoning])
+ * @property reasoning Optional reasoning telemetry describing the agent's internal reasoning streams
  * @property state Optional state object containing agent-specific data
  * @property rawEvents Optional list of RAW events that have been received
  * @property customEvents Optional list of CUSTOM events that have been received
  */
+@Suppress("DEPRECATION")
 data class AgentState(
     val messages: List<Message>? = null,
+    @Deprecated(
+        message = "Use 'reasoning' instead. Will be removed in 1.0.0.",
+        replaceWith = ReplaceWith("reasoning"),
+        level = DeprecationLevel.WARNING
+    )
     val thinking: ThinkingTelemetryState? = null,
     val state: State? = null,
     val rawEvents: List<RawEvent>? = null,
-    val customEvents: List<CustomEvent>? = null
+    val customEvents: List<CustomEvent>? = null,
+    val reasoning: ReasoningTelemetryState? = null
 )
 
 /**
@@ -572,8 +593,53 @@ data class AgentState(
  * @property title Optional title or description supplied with the thinking step
  * @property messages Ordered list of thinking text messages emitted by the agent
  */
+@Deprecated(
+    message = "Use ReasoningTelemetryState instead. Will be removed in 1.0.0.",
+    replaceWith = ReplaceWith("ReasoningTelemetryState"),
+    level = DeprecationLevel.WARNING
+)
 data class ThinkingTelemetryState(
     val isThinking: Boolean,
     val title: String? = null,
     val messages: List<String> = emptyList()
+)
+
+/**
+ * Represents a single reasoning stream identified by its messageId.
+ *
+ * @property messageId Unique identifier for this reasoning stream
+ * @property isActive Whether this stream is still receiving events (false after REASONING_END)
+ * @property text The accumulated reasoning text emitted on this stream
+ * @property encryptedValues Encrypted reasoning payloads attached to this stream (e.g. provider signatures)
+ */
+data class ReasoningStreamState(
+    val messageId: String,
+    val isActive: Boolean,
+    val text: String,
+    val encryptedValues: List<ReasoningEncryptedValue> = emptyList()
+)
+
+/**
+ * An encrypted reasoning payload attached to a reasoning stream.
+ *
+ * @property subtype Either "tool-call" or "message"
+ * @property entityId Identifier of the tool call or message this value attaches to
+ * @property encryptedValue Provider-specific encrypted payload
+ */
+data class ReasoningEncryptedValue(
+    val subtype: String,
+    val entityId: String,
+    val encryptedValue: String
+)
+
+/**
+ * Represents the agent's reasoning telemetry across one or more streams.
+ *
+ * Replacement for [ThinkingTelemetryState]. Reasoning events carry a messageId so
+ * concurrent reasoning streams are tracked independently.
+ *
+ * @property streams One entry per messageId in the order the streams were first observed
+ */
+data class ReasoningTelemetryState(
+    val streams: List<ReasoningStreamState> = emptyList()
 )

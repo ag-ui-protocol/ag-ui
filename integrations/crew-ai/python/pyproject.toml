@@ -2,6 +2,7 @@
 name = "ag-ui-crewai"
 version = "0.2.0"
 description = "Implementation of the AG-UI protocol for CrewAI"
+license = "MIT"
 authors = ["Markus Ecker <markus.ecker@gmail.com>"]
 readme = "README.md"
 exclude = [

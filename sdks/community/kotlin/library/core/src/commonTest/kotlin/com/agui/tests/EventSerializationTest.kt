@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package com.agui.tests
 
 import com.agui.core.types.*
@@ -582,12 +584,227 @@ class EventSerializationTest {
         }
     }
 
+    // ========== Reasoning Events Tests ==========
+
+    @Test
+    fun testReasoningStartEventSerialization() {
+        val event = ReasoningStartEvent(
+            messageId = "msg_r1",
+            timestamp = 1234567890L
+        )
+
+        val jsonString = json.encodeToString<BaseEvent>(event)
+        val jsonObj = json.parseToJsonElement(jsonString).jsonObject
+
+        assertEquals("REASONING_START", jsonObj["type"]?.jsonPrimitive?.content)
+        assertEquals("msg_r1", jsonObj["messageId"]?.jsonPrimitive?.content)
+        assertEquals(1234567890L, jsonObj["timestamp"]?.jsonPrimitive?.long)
+
+        val decoded = json.decodeFromString<BaseEvent>(jsonString)
+        assertTrue(decoded is ReasoningStartEvent)
+        assertEquals(event, decoded)
+    }
+
+    @Test
+    fun testReasoningMessageStartEventSerialization() {
+        val event = ReasoningMessageStartEvent(
+            messageId = "msg_r1",
+            timestamp = 1234567890L
+        )
+
+        val jsonString = json.encodeToString<BaseEvent>(event)
+        val jsonObj = json.parseToJsonElement(jsonString).jsonObject
+
+        assertEquals("REASONING_MESSAGE_START", jsonObj["type"]?.jsonPrimitive?.content)
+        assertEquals("msg_r1", jsonObj["messageId"]?.jsonPrimitive?.content)
+        assertEquals("reasoning", jsonObj["role"]?.jsonPrimitive?.content)
+
+        val decoded = json.decodeFromString<BaseEvent>(jsonString)
+        assertTrue(decoded is ReasoningMessageStartEvent)
+        assertEquals(event, decoded)
+    }
+
+    @Test
+    fun testReasoningMessageStartEventRejectsWrongRole() {
+        assertFailsWith<IllegalArgumentException> {
+            ReasoningMessageStartEvent(messageId = "m", role = "assistant")
+        }
+    }
+
+    @Test
+    fun testReasoningMessageContentEventSerialization() {
+        val event = ReasoningMessageContentEvent(
+            messageId = "msg_r1",
+            delta = "Let me think about this..."
+        )
+
+        val jsonString = json.encodeToString<BaseEvent>(event)
+        val jsonObj = json.parseToJsonElement(jsonString).jsonObject
+
+        assertEquals("REASONING_MESSAGE_CONTENT", jsonObj["type"]?.jsonPrimitive?.content)
+        assertEquals("msg_r1", jsonObj["messageId"]?.jsonPrimitive?.content)
+        assertEquals("Let me think about this...", jsonObj["delta"]?.jsonPrimitive?.content)
+
+        val decoded = json.decodeFromString<BaseEvent>(jsonString)
+        assertTrue(decoded is ReasoningMessageContentEvent)
+        assertEquals(event, decoded)
+    }
+
+    @Test
+    fun testReasoningMessageContentEmptyDeltaValidation() {
+        assertFailsWith<IllegalArgumentException> {
+            ReasoningMessageContentEvent(messageId = "m", delta = "")
+        }
+    }
+
+    @Test
+    fun testReasoningMessageEndEventSerialization() {
+        val event = ReasoningMessageEndEvent(messageId = "msg_r1", timestamp = 1234567890L)
+
+        val jsonString = json.encodeToString<BaseEvent>(event)
+        val jsonObj = json.parseToJsonElement(jsonString).jsonObject
+
+        assertEquals("REASONING_MESSAGE_END", jsonObj["type"]?.jsonPrimitive?.content)
+        assertEquals("msg_r1", jsonObj["messageId"]?.jsonPrimitive?.content)
+
+        val decoded = json.decodeFromString<BaseEvent>(jsonString)
+        assertTrue(decoded is ReasoningMessageEndEvent)
+        assertEquals(event, decoded)
+    }
+
+    @Test
+    fun testReasoningMessageChunkEventSerialization() {
+        val event = ReasoningMessageChunkEvent(
+            messageId = "msg_r1",
+            delta = "chunk text"
+        )
+
+        val jsonString = json.encodeToString<BaseEvent>(event)
+        val jsonObj = json.parseToJsonElement(jsonString).jsonObject
+
+        assertEquals("REASONING_MESSAGE_CHUNK", jsonObj["type"]?.jsonPrimitive?.content)
+        assertEquals("msg_r1", jsonObj["messageId"]?.jsonPrimitive?.content)
+        assertEquals("chunk text", jsonObj["delta"]?.jsonPrimitive?.content)
+
+        val decoded = json.decodeFromString<BaseEvent>(jsonString)
+        assertTrue(decoded is ReasoningMessageChunkEvent)
+        assertEquals(event, decoded)
+    }
+
+    @Test
+    fun testReasoningMessageChunkEventNullable() {
+        val event = ReasoningMessageChunkEvent()
+
+        val jsonString = json.encodeToString<BaseEvent>(event)
+        val jsonObj = json.parseToJsonElement(jsonString).jsonObject
+
+        assertEquals("REASONING_MESSAGE_CHUNK", jsonObj["type"]?.jsonPrimitive?.content)
+        assertFalse(jsonObj.containsKey("messageId"))
+        assertFalse(jsonObj.containsKey("delta"))
+
+        val decoded = json.decodeFromString<BaseEvent>(jsonString)
+        assertTrue(decoded is ReasoningMessageChunkEvent)
+        assertEquals(event, decoded)
+    }
+
+    @Test
+    fun testReasoningEndEventSerialization() {
+        val event = ReasoningEndEvent(messageId = "msg_r1", timestamp = 1234567890L)
+
+        val jsonString = json.encodeToString<BaseEvent>(event)
+        val jsonObj = json.parseToJsonElement(jsonString).jsonObject
+
+        assertEquals("REASONING_END", jsonObj["type"]?.jsonPrimitive?.content)
+        assertEquals("msg_r1", jsonObj["messageId"]?.jsonPrimitive?.content)
+
+        val decoded = json.decodeFromString<BaseEvent>(jsonString)
+        assertTrue(decoded is ReasoningEndEvent)
+        assertEquals(event, decoded)
+    }
+
+    @Test
+    fun testReasoningEncryptedValueEventSerialization() {
+        val event = ReasoningEncryptedValueEvent(
+            subtype = "tool-call",
+            entityId = "tc_42",
+            encryptedValue = "ENCRYPTED_PAYLOAD"
+        )
+
+        val jsonString = json.encodeToString<BaseEvent>(event)
+        val jsonObj = json.parseToJsonElement(jsonString).jsonObject
+
+        assertEquals("REASONING_ENCRYPTED_VALUE", jsonObj["type"]?.jsonPrimitive?.content)
+        assertEquals("tool-call", jsonObj["subtype"]?.jsonPrimitive?.content)
+        assertEquals("tc_42", jsonObj["entityId"]?.jsonPrimitive?.content)
+        assertEquals("ENCRYPTED_PAYLOAD", jsonObj["encryptedValue"]?.jsonPrimitive?.content)
+
+        val decoded = json.decodeFromString<BaseEvent>(jsonString)
+        assertTrue(decoded is ReasoningEncryptedValueEvent)
+        assertEquals(event, decoded)
+    }
+
+    @Test
+    fun testReasoningEncryptedValueSubtypeMessage() {
+        val event = ReasoningEncryptedValueEvent(
+            subtype = "message",
+            entityId = "m_1",
+            encryptedValue = "ENC"
+        )
+
+        val jsonString = json.encodeToString<BaseEvent>(event)
+        val decoded = json.decodeFromString<BaseEvent>(jsonString)
+        assertTrue(decoded is ReasoningEncryptedValueEvent)
+        assertEquals("message", decoded.subtype)
+    }
+
+    @Test
+    fun testReasoningEncryptedValueRejectsBadSubtype() {
+        assertFailsWith<IllegalArgumentException> {
+            ReasoningEncryptedValueEvent(
+                subtype = "other",
+                entityId = "x",
+                encryptedValue = "y"
+            )
+        }
+    }
+
+    @Test
+    fun testReasoningEventsWithRawEvent() {
+        val rawEventData = buildJsonObject {
+            put("modelProvider", "openai")
+            put("model", "o1-preview")
+        }
+
+        val events = listOf<BaseEvent>(
+            ReasoningStartEvent(messageId = "m", rawEvent = rawEventData),
+            ReasoningMessageStartEvent(messageId = "m", rawEvent = rawEventData),
+            ReasoningMessageContentEvent(messageId = "m", delta = "...", rawEvent = rawEventData),
+            ReasoningMessageEndEvent(messageId = "m", rawEvent = rawEventData),
+            ReasoningMessageChunkEvent(messageId = "m", delta = "...", rawEvent = rawEventData),
+            ReasoningEndEvent(messageId = "m", rawEvent = rawEventData),
+            ReasoningEncryptedValueEvent(
+                subtype = "message",
+                entityId = "m",
+                encryptedValue = "ENC",
+                rawEvent = rawEventData
+            )
+        )
+
+        events.forEach { event ->
+            val jsonString = json.encodeToString<BaseEvent>(event)
+            val decoded = json.decodeFromString<BaseEvent>(jsonString)
+
+            assertEquals(rawEventData, decoded.rawEvent)
+            assertEquals("openai", decoded.rawEvent?.jsonObject?.get("modelProvider")?.jsonPrimitive?.content)
+        }
+    }
+
     // ========== Protocol Compliance Tests ==========
 
     @Test
     fun testEventDiscriminatorFormat() {
         // Test that each event type produces the correct discriminator
-        val testCases = mapOf(
+        val testCases = mapOf<BaseEvent, String>(
             RunStartedEvent(threadId = "t", runId = "r") to "RUN_STARTED",
             RunFinishedEvent(threadId = "t", runId = "r") to "RUN_FINISHED",
             RunErrorEvent(message = "err") to "RUN_ERROR",
@@ -609,7 +826,19 @@ class EventSerializationTest {
             ThinkingEndEvent() to "THINKING_END",
             ThinkingTextMessageStartEvent() to "THINKING_TEXT_MESSAGE_START",
             ThinkingTextMessageContentEvent(delta = "thinking...") to "THINKING_TEXT_MESSAGE_CONTENT",
-            ThinkingTextMessageEndEvent() to "THINKING_TEXT_MESSAGE_END"
+            ThinkingTextMessageEndEvent() to "THINKING_TEXT_MESSAGE_END",
+            // Reasoning Events
+            ReasoningStartEvent(messageId = "m") to "REASONING_START",
+            ReasoningMessageStartEvent(messageId = "m") to "REASONING_MESSAGE_START",
+            ReasoningMessageContentEvent(messageId = "m", delta = "d") to "REASONING_MESSAGE_CONTENT",
+            ReasoningMessageEndEvent(messageId = "m") to "REASONING_MESSAGE_END",
+            ReasoningMessageChunkEvent(messageId = "m", delta = "d") to "REASONING_MESSAGE_CHUNK",
+            ReasoningEndEvent(messageId = "m") to "REASONING_END",
+            ReasoningEncryptedValueEvent(
+                subtype = "tool-call",
+                entityId = "e",
+                encryptedValue = "v"
+            ) to "REASONING_ENCRYPTED_VALUE"
         )
 
         testCases.forEach { (event, expectedType) ->

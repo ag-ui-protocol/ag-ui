@@ -54,19 +54,11 @@
           },
           {
             "group": "Draft Proposals",
-            "pages": [
-              "drafts/overview",
-
-              "drafts/generative-ui",
-              "drafts/meta-events"
-            ]
+            "pages": ["drafts/overview", "drafts/generative-ui", "drafts/meta-events"]
           },
           {
             "group": "Tutorials",
-            "pages": [
-              "tutorials/cursor",
-              "tutorials/debugging"
-            ]
+            "pages": ["tutorials/cursor", "tutorials/debugging"]
           },
           {
             "group": "Development",
@@ -124,9 +116,7 @@
               },
               {
                 "group": "ag_ui.encoder",
-                "pages": [
-                  "sdk/python/encoder/overview"
-                ]
+                "pages": ["sdk/python/encoder/overview"]
               }
             ]
           }
@@ -175,6 +165,9 @@
     "posthog": {
       "apiKey": "phc_XZdymVYjrph9Mi0xZYGNyCKexxgblXRR1jMENCtdz5Q",
       "apiHost": "https://eu.posthog.com"
+    },
+    "ga4": {
+      "measurementId": "G-VLHBBW8BC9"
     }
   },
   "footer": {

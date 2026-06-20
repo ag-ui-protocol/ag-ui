@@ -286,10 +286,15 @@ class TestMimeToFormat:
         assert result == []
 
     def test_missing_mime_skips_image_block(self):
-        """An image with no MIME type should be skipped entirely."""
+        """An image with no MIME type should be skipped entirely.
+
+        ``InputContentDataSource`` now requires ``mime_type``, so we use
+        ``model_construct`` to bypass validation and simulate a source
+        object that somehow lacks the attribute.
+        """
         raw_bytes = b"fake-image-data"
         b64_value = base64.b64encode(raw_bytes).decode()
-        source = InputContentDataSource(value=b64_value)
+        source = InputContentDataSource.model_construct(value=b64_value)
         content = [ImageInputContent(source=source)]
 
         result = convert_agui_content_to_strands(content)
