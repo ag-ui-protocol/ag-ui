@@ -2,12 +2,13 @@
 
 import Foundation
 
-/// Event indicating that an agent run has completed successfully.
+/// Event indicating that an agent run has finished.
 ///
-/// This event is emitted when an agent has finished processing a run request
-/// and has generated all output. It signals the end of the execution lifecycle.
+/// This event is emitted when an agent has finished processing a run request.
+/// Inspect `outcome` to distinguish between a normal completion and a
+/// human-in-the-loop interrupt.
 ///
-/// - SeeAlso: `RunStartedEvent`, `RunErroredEvent`
+/// - SeeAlso: `RunStartedEvent`, `RunErrorEvent`, `RunFinishedOutcome`
 public struct RunFinishedEvent: AGUIEvent, Equatable, Hashable, Sendable {
 
     // MARK: - Properties
@@ -20,9 +21,9 @@ public struct RunFinishedEvent: AGUIEvent, Equatable, Hashable, Sendable {
 
     /// Why the run finished.
     ///
-    /// Decoded from the `"outcome"` field in the AG-UI wire format.
-    /// Defaults to `.completed` when the field is absent or unrecognised.
-    public let outcome: RunFinishedOutcome
+    /// `nil` when the `"outcome"` field was absent or `null` on the wire —
+    /// treat this the same as `.success` (legacy producer behaviour).
+    public let outcome: RunFinishedOutcome?
 
     /// Optional run result as raw JSON.
     ///
@@ -46,14 +47,14 @@ public struct RunFinishedEvent: AGUIEvent, Equatable, Hashable, Sendable {
     /// - Parameters:
     ///   - threadId: The conversation thread identifier
     ///   - runId: The unique run identifier
-    ///   - outcome: Why the run finished (defaults to `.completed`)
+    ///   - outcome: Why the run finished (`nil` = absent/unknown, treat as success)
     ///   - result: Optional run result as raw JSON data
     ///   - timestamp: Optional timestamp in milliseconds since epoch
     ///   - rawEvent: Optional raw event data as received from the agent
     public init(
         threadId: String,
         runId: String,
-        outcome: RunFinishedOutcome = .completed,
+        outcome: RunFinishedOutcome? = nil,
         result: Data? = nil,
         timestamp: Int64? = nil,
         rawEvent: Data? = nil
@@ -72,6 +73,15 @@ public struct RunFinishedEvent: AGUIEvent, Equatable, Hashable, Sendable {
 extension RunFinishedEvent: CustomStringConvertible {
 
     public var description: String {
-        "RunFinishedEvent(threadId: \(threadId), runId: \(runId), outcome: \(outcome.rawValue), timestamp: \(timestamp?.description ?? "nil"))"
+        let outcomeDescription: String
+        switch outcome {
+        case .success:
+            outcomeDescription = "success"
+        case .interrupt(let interrupts):
+            outcomeDescription = "interrupt(\(interrupts.count) interrupt(s))"
+        case nil:
+            outcomeDescription = "nil"
+        }
+        return "RunFinishedEvent(threadId: \(threadId), runId: \(runId), outcome: \(outcomeDescription), timestamp: \(timestamp?.description ?? "nil"))"
     }
 }

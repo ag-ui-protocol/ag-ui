@@ -619,5 +619,62 @@ final class RunAgentInputTests: XCTestCase {
         XCTAssertTrue(input.messages.isEmpty)
         XCTAssertTrue(input.tools.isEmpty)
         XCTAssertTrue(input.context.isEmpty)
+        XCTAssertNil(input.resume)
+    }
+
+    // MARK: - Resume field
+
+    func test_init_withResume_setsResumeField() {
+        let entries = [ResumeEntry(interruptId: "int-1", status: .resolved)]
+        let input = RunAgentInput(threadId: "t", runId: "r", resume: entries)
+        XCTAssertEqual(input.resume?.count, 1)
+        XCTAssertEqual(input.resume?[0].interruptId, "int-1")
+    }
+
+    func test_init_withoutResume_resumeIsNil() {
+        let input = RunAgentInput(threadId: "t", runId: "r")
+        XCTAssertNil(input.resume)
+    }
+
+    func test_encode_withResume_includesResumeKey() throws {
+        let entries = [ResumeEntry(interruptId: "int-1", status: .resolved)]
+        let input = RunAgentInput(threadId: "t", runId: "r", resume: entries)
+        let encoded = try JSONEncoder().encode(input)
+        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        XCTAssertNotNil(json["resume"])
+    }
+
+    func test_encode_withNilResume_omitsResumeKey() throws {
+        let input = RunAgentInput(threadId: "t", runId: "r")
+        let encoded = try JSONEncoder().encode(input)
+        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        // Key must be absent entirely, not present as null
+        XCTAssertNil(json["resume"])
+    }
+
+    func test_decode_withResume_roundTrips() throws {
+        let entries = [
+            ResumeEntry(interruptId: "int-1", status: .resolved),
+            ResumeEntry(interruptId: "int-2", status: .cancelled)
+        ]
+        let original = RunAgentInput(threadId: "t", runId: "r", resume: entries)
+        let encoded = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(RunAgentInput.self, from: encoded)
+
+        XCTAssertEqual(decoded.resume?.count, 2)
+        XCTAssertEqual(decoded.resume?[0].interruptId, "int-1")
+        XCTAssertEqual(decoded.resume?[0].status, .resolved)
+        XCTAssertEqual(decoded.resume?[1].interruptId, "int-2")
+        XCTAssertEqual(decoded.resume?[1].status, .cancelled)
+    }
+
+    func test_equality_withDifferentResume_notEqual() {
+        let a = RunAgentInput(threadId: "t", runId: "r", resume: nil)
+        let b = RunAgentInput(
+            threadId: "t",
+            runId: "r",
+            resume: [ResumeEntry(interruptId: "int-1", status: .resolved)]
+        )
+        XCTAssertNotEqual(a, b)
     }
 }

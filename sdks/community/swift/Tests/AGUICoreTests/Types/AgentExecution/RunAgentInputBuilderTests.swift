@@ -309,6 +309,34 @@ final class RunAgentInputBuilderTests: XCTestCase {
         XCTAssertEqual(input.context.count, direct.context.count)
     }
 
+    // MARK: - Resume Tests
+
+    func test_builder_withResume_setsResumeField() throws {
+        let entries = [
+            ResumeEntry(interruptId: "int-1", status: .resolved),
+            ResumeEntry(interruptId: "int-2", status: .cancelled)
+        ]
+
+        let input = try RunAgentInput.builder()
+            .threadId("t")
+            .runId("r")
+            .resume(entries)
+            .build()
+
+        XCTAssertEqual(input.resume?.count, 2)
+        XCTAssertEqual(input.resume?[0].interruptId, "int-1")
+        XCTAssertEqual(input.resume?[1].interruptId, "int-2")
+    }
+
+    func test_builder_withoutResume_resumeIsNil() throws {
+        let input = try RunAgentInput.builder()
+            .threadId("t")
+            .runId("r")
+            .build()
+
+        XCTAssertNil(input.resume)
+    }
+
     // MARK: - Sendable Tests
 
     func testBuilderIsSendable() {

@@ -68,6 +68,7 @@ public struct RunAgentInputBuilder {
     private var _tools: [Tool] = []
     private var _context: [Context] = []
     private var _forwardedProps = Data("{}".utf8)
+    private var _resume: [ResumeEntry]?
 
     /// Creates a new builder instance.
     public init() {}
@@ -198,6 +199,22 @@ public struct RunAgentInputBuilder {
         return builder
     }
 
+    // MARK: - Resume
+
+    /// Sets the interrupt resume entries for continuing a human-in-the-loop flow.
+    ///
+    /// Call this when the previous run finished with `RunFinishedOutcome.interrupt`.
+    /// Each `ResumeEntry` references one `Interrupt` by its `id` and carries the
+    /// caller's resolution status and optional response payload.
+    ///
+    /// - Parameter entries: The resume entries to include
+    /// - Returns: A new builder instance with resume entries set
+    public func resume(_ entries: [ResumeEntry]) -> Self {
+        var builder = self
+        builder._resume = entries
+        return builder
+    }
+
     // MARK: - Build
 
     /// Builds and returns a `RunAgentInput` instance.
@@ -232,7 +249,8 @@ public struct RunAgentInputBuilder {
             messages: _messages,
             tools: _tools,
             context: _context,
-            forwardedProps: _forwardedProps
+            forwardedProps: _forwardedProps,
+            resume: _resume
         )
     }
 }

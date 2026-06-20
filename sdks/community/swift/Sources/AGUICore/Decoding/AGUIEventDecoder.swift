@@ -165,23 +165,23 @@ public struct AGUIEventDecoder: Sendable {
     /// The decoder uses the provided registry to determine which event types can be decoded.
     /// If no registry is provided, it uses `defaultRegistry()` which includes all lifecycle events.
     ///
+    /// The AG-UI wire protocol uses camelCase keys throughout, so the default `JSONDecoder`
+    /// requires no key decoding strategy. Supply a custom `makeDecoder` only when you need
+    /// additional configuration (e.g. a specific date decoding strategy).
+    ///
     /// Example with custom JSON decoder:
     /// ```swift
     /// let decoder = AGUIEventDecoder(
     ///     makeDecoder: {
-    ///         let jsonDecoder = JSONDecoder()
-    ///         jsonDecoder.dateDecodingStrategy = .millisecondsSince1970
-    ///         return jsonDecoder
+    ///         let d = JSONDecoder()
+    ///         d.dateDecodingStrategy = .millisecondsSince1970
+    ///         return d
     ///     }
     /// )
     /// ```
     public init(
         config: Configuration = .init(),
-        makeDecoder: @escaping @Sendable () -> JSONDecoder = {
-            let d = JSONDecoder()
-            d.keyDecodingStrategy = .convertFromSnakeCase
-            return d
-        },
+        makeDecoder: @escaping @Sendable () -> JSONDecoder = { JSONDecoder() },
         registry: [EventType: DecodeHandler] = AGUIEventDecoder.defaultRegistry()
     ) {
         self.config = config
