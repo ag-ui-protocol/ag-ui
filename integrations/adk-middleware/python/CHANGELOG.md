@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **FEATURE**: Agent-facing named `CustomEvent` emission (#1915)
+  - An ADK agent can now emit a named AG-UI `CustomEvent` by writing the reserved key `ag_ui:custom_event` into `EventActions.state_delta` (a `{"name", "value"}` mapping or a list of them). The translator turns each into a `CUSTOM` event and strips the reserved key from the resulting `STATE_DELTA` so it doesn't leak. The reserved key is also scrubbed from any `STATE_SNAPSHOT` (ADK can persist the key, since the delta path works on a copy) so it never leaks into AG-UI state by either path. Previously the only generic path keyed off `Event.custom_data`, which ADK's `Event` model rejects, leaving agents with no supported way to emit a named custom event. See "Emitting Named Custom Events" in `USAGE.md`.
+
 ### Changed
 
 - **PERFORMANCE**: Cache session reads per execution to cut redundant `get_session` round-trips (#1880, #1890, thanks @he-yufeng)

@@ -31,6 +31,13 @@ from .serialization import serialize_tool_args
 import logging
 logger = logging.getLogger(__name__)
 
+# Reserved key an ADK agent can set in ``EventActions.state_delta`` to emit a
+# named AG-UI CustomEvent instead of a STATE_DELTA. The colon namespace mirrors
+# ADK's own ``temp:``/``app:``/``user:`` state-key convention and avoids
+# colliding with real application state. The value is either a single
+# ``{"name": str, "value": Any}`` mapping or a list of them.
+AG_UI_CUSTOM_EVENT_STATE_KEY = "ag_ui:custom_event"
+
 # Backwards-compatible thought support detection
 # The part.thought attribute may not exist in older versions of google-genai
 _THOUGHT_SUPPORT_CHECKED = False
@@ -449,13 +456,37 @@ class EventTranslator:
             # Handle state changes
             if hasattr(adk_event, 'actions') and adk_event.actions:
                 if hasattr(adk_event.actions, 'state_delta') and adk_event.actions.state_delta:
-                    yield self._create_state_delta_event(
-                        adk_event.actions.state_delta, thread_id, run_id
-                    )
+                    # An agent emits a named CustomEvent by writing the reserved
+                    # AG_UI_CUSTOM_EVENT_STATE_KEY into state_delta. Pull those
+                    # out (on a copy — don't mutate ADK's persisted state) and
+                    # translate them; the remaining keys become a STATE_DELTA.
+                    state_delta = dict(adk_event.actions.state_delta)
+                    custom_specs = state_delta.pop(AG_UI_CUSTOM_EVENT_STATE_KEY, None)
+                    for custom_event in self._build_custom_events(custom_specs):
+                        yield custom_event
+                    if state_delta:
+                        yield self._create_state_delta_event(
+                            state_delta, thread_id, run_id
+                        )
 
                 if hasattr(adk_event.actions, 'state_snapshot'):
                     state_snapshot = adk_event.actions.state_snapshot
                     if state_snapshot is not None:
+                        # The delta path above works on a copy and never mutates
+                        # ADK's persisted state, so ADK can still persist the
+                        # reserved key. A later snapshot would then carry it.
+                        # Strip it on a copy so the reserved key — an agent→AG-UI
+                        # signalling channel, not application state — never leaks
+                        # into AG-UI state.
+                        if (
+                            isinstance(state_snapshot, dict)
+                            and AG_UI_CUSTOM_EVENT_STATE_KEY in state_snapshot
+                        ):
+                            state_snapshot = {
+                                key: value
+                                for key, value in state_snapshot.items()
+                                if key != AG_UI_CUSTOM_EVENT_STATE_KEY
+                            }
                         yield self._create_state_snapshot_event(state_snapshot)
                 
             
@@ -1203,6 +1234,52 @@ class EventTranslator:
                 content=_serialize_tool_response(func_response.response)
             )
   
+    def _build_custom_events(self, specs: Any) -> List[CustomEvent]:
+        """Translate the reserved AG_UI_CUSTOM_EVENT_STATE_KEY payload into
+        named AG-UI CustomEvents.
+
+        ``specs`` is either a single ``{"name": str, "value": Any}`` mapping or
+        a list of them. Malformed entries (not a mapping, or missing/empty/
+        non-str ``name``) are skipped with a warning so one bad payload can't
+        abort translation of the rest of the event.
+
+        Args:
+            specs: The value popped from ``state_delta[AG_UI_CUSTOM_EVENT_STATE_KEY]``.
+
+        Returns:
+            The CustomEvents to emit, in order (empty if ``specs`` is None).
+        """
+        if specs is None:
+            return []
+        if isinstance(specs, Mapping):
+            specs = [specs]
+        elif not isinstance(specs, (list, tuple)):
+            logger.warning(
+                "Ignoring %s: expected a mapping or list of mappings, got %s",
+                AG_UI_CUSTOM_EVENT_STATE_KEY, type(specs).__name__
+            )
+            return []
+
+        events: List[CustomEvent] = []
+        for spec in specs:
+            if not isinstance(spec, Mapping):
+                logger.warning(
+                    "Ignoring malformed %s entry: expected a mapping, got %s",
+                    AG_UI_CUSTOM_EVENT_STATE_KEY, type(spec).__name__
+                )
+                continue
+            name = spec.get("name")
+            if not isinstance(name, str) or not name:
+                logger.warning(
+                    "Ignoring %s entry with missing/invalid 'name': %r",
+                    AG_UI_CUSTOM_EVENT_STATE_KEY, spec
+                )
+                continue
+            events.append(
+                CustomEvent(type=EventType.CUSTOM, name=name, value=spec.get("value"))
+            )
+        return events
+
     def _create_state_delta_event(
         self,
         state_delta: Dict[str, Any],
