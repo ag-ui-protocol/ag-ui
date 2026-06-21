@@ -756,7 +756,24 @@ class StrandsAgent:
                     if msg.role == "tool" and hasattr(msg, "tool_call_id"):
                         tool_name = _tool_call_id_to_name.get(msg.tool_call_id)
                         if tool_name and tool_name in frontend_tool_names:
-                            user_message = f"{tool_name} executed successfully with no return value."
+                            # Forward the ACTUAL frontend tool result so the model
+                            # can act on the human's decision (e.g. an approval
+                            # resolving to {"approved": false}). Previously this
+                            # discarded ``msg.content`` and hardcoded a success
+                            # string, silently breaking HITL — the model was told
+                            # the tool "executed successfully with no return value"
+                            # regardless of what the human actually returned.
+                            # Only fall back to that synthetic acknowledgement when
+                            # the result is genuinely empty.
+                            result_text = (
+                                msg.content
+                                if isinstance(msg.content, str)
+                                else flatten_content_to_text(msg.content)
+                            )
+                            if result_text and result_text.strip():
+                                user_message = f"{tool_name} returned: {result_text}"
+                            else:
+                                user_message = f"{tool_name} executed successfully with no return value."
                         else:
                             # Could not resolve the executed tool's name from
                             # input messages or session history. Leave the
