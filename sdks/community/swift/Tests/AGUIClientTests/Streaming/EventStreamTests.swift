@@ -155,8 +155,10 @@ final class EventStreamTests: XCTestCase {
     }
 
     func testStreamHandlesUnknownEventType() async throws {
-        // The default decoder uses strict mode: unknown events throw EventDecodingError,
-        // which EventStream silently skips. Exactly 2 known events must be yielded.
+        // In strict mode (default), an unrecognised event type causes the decoder to
+        // throw EventDecodingError.unknownEventType. The TypeScript reference implementation
+        // calls eventSubject.error(err) for all decode failures — the stream terminates.
+        // EventStream must propagate, not swallow, the error.
         let sseData = """
         data: {"type":"RUN_STARTED","threadId":"t1","runId":"r1"}
 
@@ -171,15 +173,22 @@ final class EventStreamTests: XCTestCase {
 
         let stream = EventStream(bytes: bytes, decoder: decoder)
 
-        var events: [any AGUIEvent] = []
-        for try await event in stream {
-            events.append(event)
+        var eventsBeforeThrow: [any AGUIEvent] = []
+        do {
+            for try await event in stream {
+                eventsBeforeThrow.append(event)
+            }
+            XCTFail("Expected stream to throw EventDecodingError.unknownEventType")
+        } catch let error as EventDecodingError {
+            guard case .unknownEventType(let typeString) = error else {
+                XCTFail("Expected .unknownEventType, got \(error)")
+                return
+            }
+            XCTAssertEqual(typeString, "UNKNOWN_EVENT_TYPE")
+            // The first event was yielded before the error occurred.
+            XCTAssertEqual(eventsBeforeThrow.count, 1)
+            XCTAssertTrue(eventsBeforeThrow[0] is RunStartedEvent)
         }
-
-        // Strict decoder skips unknown — exactly 2 events, not 3.
-        XCTAssertEqual(events.count, 2)
-        XCTAssertTrue(events[0] is RunStartedEvent)
-        XCTAssertTrue(events[1] is RunFinishedEvent)
     }
 
     func test_tolerantDecoder_returnsUnknownEventForUnrecognisedType() async throws {
@@ -365,10 +374,12 @@ final class EventStreamTests: XCTestCase {
     }
 
     func testStreamHandlesToolCallScenario() async throws {
+        // Wire format uses "toolCallName" (not "toolName") per ToolCallStartEvent.CodingKeys.
+        // All 5 events must decode successfully and be yielded in order.
         let sseData = """
         data: {"type":"RUN_STARTED","threadId":"t1","runId":"r1"}
 
-        data: {"type":"TOOL_CALL_START","toolCallId":"tc1","toolName":"weather"}
+        data: {"type":"TOOL_CALL_START","toolCallId":"tc1","toolCallName":"weather"}
 
         data: {"type":"TOOL_CALL_ARGS","toolCallId":"tc1","delta":"{\\\"location\\\":\\\"NYC\\\"}"}
 
@@ -384,20 +395,19 @@ final class EventStreamTests: XCTestCase {
         let stream = EventStream(bytes: bytes, decoder: decoder)
 
         var events: [any AGUIEvent] = []
-        var eventCount = 0
         for try await event in stream {
             events.append(event)
-            eventCount += 1
-            if eventCount >= 10 {
-                // Safety limit to prevent infinite loop
-                break
-            }
         }
 
-        XCTAssertGreaterThanOrEqual(events.count, 3, "Should have at least some events")
-        if events.count >= 1 {
-            XCTAssertTrue(events[0] is RunStartedEvent)
-        }
+        XCTAssertEqual(events.count, 5)
+        XCTAssertTrue(events[0] is RunStartedEvent)
+        XCTAssertTrue(events[1] is ToolCallStartEvent)
+        let toolStart = events[1] as! ToolCallStartEvent
+        XCTAssertEqual(toolStart.toolCallId, "tc1")
+        XCTAssertEqual(toolStart.toolCallName, "weather")
+        XCTAssertTrue(events[2] is ToolCallArgsEvent)
+        XCTAssertTrue(events[3] is ToolCallEndEvent)
+        XCTAssertTrue(events[4] is RunFinishedEvent)
     }
 
     // MARK: - Edge Cases

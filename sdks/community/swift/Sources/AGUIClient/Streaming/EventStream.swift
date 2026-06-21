@@ -34,10 +34,16 @@ import Foundation
 ///
 /// ## Error Handling
 ///
-/// - Malformed JSON events are logged and skipped
-/// - Unknown event types are returned as `UnknownEvent`
-/// - UTF-8 decoding errors are handled gracefully
-/// - Network errors propagate to the caller
+/// - Malformed JSON (`EventDecodingError.invalidJSON`) is skipped — bytes may arrive
+///   truncated and that is not a protocol violation.
+/// - Protocol violations — `unknownEventType`, `missingTypeField`, `decodingFailed`,
+///   `unsupportedEventType` — are re-thrown, terminating the stream. This matches the
+///   TypeScript reference implementation which calls `eventSubject.error(err)` for all
+///   decode failures.
+/// - In tolerant mode (`.returnUnknown` strategy), unknown event types are wrapped in
+///   `UnknownEvent` by the decoder before reaching this layer, so `unknownEventType` is
+///   never thrown.
+/// - Network errors propagate to the caller.
 ///
 /// ## Last-Event-ID tracking
 ///
@@ -198,13 +204,20 @@ public struct EventStream<Bytes: AsyncSequence>: AsyncSequence where Bytes.Eleme
                         do {
                             let event = try decoder.decode(data)
                             eventQueue.append(event)
-                        } catch {
-                            // Non-fatal decoding errors are silently ignored
-                            // The stream continues processing subsequent events
-                            // Applications can implement custom error handling if needed
-                            #if DEBUG
-                            print("[EventStream] ⚠ Decode error: \(error) — raw: \(sseEvent.data.prefix(200))")
-                            #endif
+                        } catch let error as EventDecodingError {
+                            switch error {
+                            case .invalidJSON:
+                                // Malformed bytes are not a protocol violation — the packet
+                                // may have arrived truncated. Skip and keep the stream alive.
+                                #if DEBUG
+                                print("[EventStream] ⚠ Malformed JSON — skipping: \(sseEvent.data.prefix(200))")
+                                #endif
+                            case .unknownEventType, .missingTypeField, .decodingFailed, .unsupportedEventType:
+                                // Protocol violations: the TypeScript reference implementation
+                                // calls eventSubject.error(err) for all of these — the stream
+                                // terminates. Re-throw to match that behaviour.
+                                throw error
+                            }
                         }
                     }
 
