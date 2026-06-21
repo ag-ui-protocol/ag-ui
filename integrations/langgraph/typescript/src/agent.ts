@@ -146,22 +146,52 @@ export interface LangGraphAgentConfig extends AgentConfig {
 
 const ROOT_SUBGRAPH_NAME = "root";
 
+/**
+ * AG-UI agent adapter for LangGraph Platform deployments.
+ *
+ * Connects to a LangGraph Platform graph via the LangGraph SDK and translates
+ * the platform's SSE/streaming events into the AG-UI protocol event stream
+ * (`Observable<ProcessedEvents>`). Handles message streaming, tool calls,
+ * extended reasoning, interrupt handling, state snapshots, and time-travel
+ * regeneration.
+ *
+ * @example
+ * ```ts
+ * const agent = new LangGraphAgent({
+ *   deploymentUrl: "https://my-deployment.langgraph.app",
+ *   graphId: "my_graph",
+ * });
+ * ```
+ *
+ * @extends AbstractAgent
+ */
 export class LangGraphAgent extends AbstractAgent {
+  /** Underlying LangGraph SDK client used to communicate with the platform. */
   client: LangGraphClient;
+  /** Optional LangGraph run config forwarded with every run payload. */
   assistantConfig?: LangGraphConfig;
+  /** Human-readable agent name used for display purposes. */
   agentName?: string;
+  /** Graph ID of the LangGraph graph this agent targets. */
   graphId: string;
-  /** Per-request headers set by the runtime (e.g., CopilotKit).
-   *  Read by the default headerFactory on every outgoing request. */
+  /**
+   * Per-request headers set by the runtime (e.g., CopilotKit).
+   * Read by the default `headerFactory` on every outgoing request.
+   */
   public headers: Record<string, string> = {};
+  /** Cached assistant object retrieved from the LangGraph Platform. */
   assistant?: Assistant;
+  /** Tracks in-progress message/tool-call state keyed by run ID. */
   messagesInProcess: MessagesInProgressRecord;
+  /** Set of tool-call IDs whose TOOL_CALL_START event has already been emitted. */
   emittedToolCallStartIds: Set<string> = new Set();
+  /** State for an in-progress reasoning (extended thinking) sequence, or `null`. */
   reasoningProcess: null | ReasoningInProgress;
   // Canonical reasoning id (e.g. OpenAI `rs_…`) stashed from a text-less id
   // carrier chunk, consumed when the first text delta opens the reasoning
   // message. See handleReasoningEvent.
   private pendingReasoningId?: string;
+  /** Metadata for the currently active run, or `undefined` between runs. */
   activeRun?: RunMetadata;
   // Subgraph node names discovered dynamically from langgraph_checkpoint_ns
   private subgraphs: Set<string> = new Set();
@@ -177,9 +207,17 @@ export class LangGraphAgent extends AbstractAgent {
   private eventsStreamActive: boolean = false;
   // @ts-expect-error no need to initialize subscriber right now
   subscriber: Subscriber<ProcessedEvents>;
+  /** Schema keys that are always included in state filtering regardless of graph schema. */
   constantSchemaKeys: string[] = DEFAULT_SCHEMA_KEYS;
+  /** Full configuration object passed to the constructor. */
   config: LangGraphAgentConfig;
 
+  /**
+   * Create a new `LangGraphAgent`.
+   *
+   * @param config - Agent configuration including deployment URL, graph ID,
+   *   and optional LangGraph client, API key, and header factories.
+   */
   constructor(config: LangGraphAgentConfig) {
     super(config);
     this.config = config;
@@ -224,6 +262,15 @@ export class LangGraphAgent extends AbstractAgent {
       });
   }
 
+  /**
+   * Create a deep clone of this agent.
+   *
+   * Clones all mutable state (messages in progress, headers, schema keys, etc.)
+   * and re-builds the LangGraph SDK client so that its `onRequest` closure
+   * captures the **cloned** agent's `headers` map rather than the original's.
+   *
+   * @returns A new `LangGraphAgent` instance with independent mutable state.
+   */
   public clone() {
     const cloned = Object.assign(super.clone(), {
       config: this.config,
@@ -272,11 +319,27 @@ export class LangGraphAgent extends AbstractAgent {
     return cloned;
   }
 
+  /**
+   * Push a processed AG-UI event to the active RxJS subscriber.
+   *
+   * @param event - The AG-UI protocol event to emit.
+   * @returns `true` after the event has been dispatched.
+   */
   dispatchEvent(event: ProcessedEvents) {
     this.subscriber.next(event);
     return true;
   }
 
+  /**
+   * Start a new agent run and return a cold Observable of AG-UI events.
+   *
+   * The Observable completes when the run finishes or errors on failure.
+   * Subscribers receive the full event stream including lifecycle, message,
+   * tool-call, state, and reasoning events.
+   *
+   * @param input - Runtime input (thread ID, messages, tools, state, etc.).
+   * @returns An `Observable<ProcessedEvents>` that emits AG-UI protocol events.
+   */
   run(input: RunAgentInput) {
     return new Observable<ProcessedEvents>((subscriber) => {
       this.runAgentStream(input, subscriber).catch((err) => {
@@ -289,6 +352,15 @@ export class LangGraphAgent extends AbstractAgent {
     });
   }
 
+  /**
+   * Core async implementation that drives the LangGraph stream for a single run.
+   *
+   * Initialises per-run metadata, resolves the assistant, prepares the stream,
+   * and delegates to `handleStreamEvents`. Errors are forwarded to `subscriber`.
+   *
+   * @param input - Extended run input (includes optional `forwardedProps`).
+   * @param subscriber - RxJS subscriber to emit events into.
+   */
   async runAgentStream(
     input: RunAgentExtendedInput,
     subscriber: Subscriber<ProcessedEvents>,
@@ -335,6 +407,17 @@ export class LangGraphAgent extends AbstractAgent {
     );
   }
 
+  /**
+   * Prepare a time-travel (regeneration) stream.
+   *
+   * Finds the checkpoint that corresponds to `messageCheckpoint`, forks the
+   * thread from that point, and opens a new stream so the model can regenerate
+   * the response from that message onward.
+   *
+   * @param input - Run input extended with a `messageCheckpoint` to regenerate from.
+   * @param streamMode - LangGraph stream mode(s) to enable.
+   * @returns An object with `streamResponse`, the forked `state`, and `streamMode`.
+   */
   async prepareRegenerateStream(
     input: RegenerateInput,
     streamMode: StreamMode | StreamMode[],
@@ -399,6 +482,20 @@ export class LangGraphAgent extends AbstractAgent {
     };
   }
 
+  /**
+   * Prepare a normal (non-regeneration) LangGraph stream.
+   *
+   * Resolves the thread, merges frontend state with LangGraph thread state,
+   * detects whether this is a continuation or regeneration run, handles
+   * outstanding interrupts, and returns the stream response together with the
+   * resolved thread state. Returns `undefined` (via `subscriber.complete()`)
+   * when outstanding interrupts are handled inline without starting a stream.
+   *
+   * @param input - Extended run input including optional `forwardedProps`.
+   * @param streamMode - LangGraph stream mode(s) to enable.
+   * @returns An object with `streamResponse` and `state`, or `undefined` if the
+   *   run was short-circuited by interrupt handling.
+   */
   async prepareStream(
     input: RunAgentExtendedInput,
     streamMode: StreamMode | StreamMode[],
@@ -724,6 +821,20 @@ export class LangGraphAgent extends AbstractAgent {
     };
   }
 
+  /**
+   * Consume a LangGraph stream and translate each chunk into AG-UI events.
+   *
+   * Emits `RUN_STARTED`, then iterates over the stream emitting state snapshots,
+   * message events, tool-call events, reasoning events, and custom events.
+   * After the stream ends, fetches final thread state, emits remaining snapshots,
+   * and completes with `RUN_FINISHED`.
+   *
+   * @param stream - Prepared stream object from `prepareStream` or `prepareRegenerateStream`.
+   * @param threadId - LangGraph thread ID for this run.
+   * @param subscriber - RxJS subscriber to emit events into.
+   * @param input - Original run input (used for forwarded props and node name).
+   * @param streamModes - Active LangGraph stream modes (used to filter irrelevant chunks).
+   */
   async handleStreamEvents(
     stream: Awaited<
       | ReturnType<typeof this.prepareStream>
@@ -1072,6 +1183,16 @@ export class LangGraphAgent extends AbstractAgent {
     });
   }
 
+  /**
+   * Route a single deserialized LangGraph event to the appropriate handler.
+   *
+   * Dispatches based on `event.event` (e.g. `on_chat_model_stream`,
+   * `on_tool_end`, `on_custom_event`) and emits the corresponding AG-UI events.
+   * Array-shaped data is treated as a `messages-tuple` chunk and forwarded to
+   * `handleMessagesTupleEvent` when no events-mode stream is active.
+   *
+   * @param event - Raw deserialized event data from the LangGraph stream chunk.
+   */
   handleSingleEvent(event: any): void {
     // messages-tuple data arrives as [AIMessageChunk, metadata] arrays,
     // not objects with an .event property like events-mode data.
@@ -1457,14 +1578,17 @@ export class LangGraphAgent extends AbstractAgent {
   }
 
   /**
-   * Process [AIMessageChunk, metadata] tuples from messages-tuple stream mode
-   * and convert them into AG-UI text message and tool call events.
-   * Uses the same messagesInProcess tracking as events-mode streaming.
+   * Process `[AIMessageChunk, metadata]` tuples from the `messages-tuple` stream mode.
+   *
+   * Converts AIMessageChunk tuples into AG-UI text-message and tool-call events,
+   * reusing the same `messagesInProcess` tracking as events-mode streaming.
    *
    * This is a legacy fallback for LangGraph Platform deployments that do not emit
-   * on_chat_model_stream events (older streaming modes). It is only called when
-   * eventsStreamActive is false — i.e. no events-mode streaming has been seen yet.
+   * `on_chat_model_stream` events (older streaming modes). It is only called when
+   * `eventsStreamActive` is `false` — i.e. no events-mode streaming has been seen yet.
    * Do not remove: required for backward compatibility with older LangGraph Platform.
+   *
+   * @param data - Raw `[AIMessageChunk, metadata]` tuple from the stream.
    */
   private handleMessagesTupleEvent(data: any[]) {
     const chunk = data[0];
@@ -1561,7 +1685,14 @@ export class LangGraphAgent extends AbstractAgent {
     }
   }
 
-  // Request cancellation of the current run via LangGraph Platform SDK
+  /**
+   * Request cancellation of the currently active run.
+   *
+   * Sets the `cancelRequested` flag and immediately tries to cancel the run
+   * via the LangGraph SDK if a server-assigned run ID is already known.
+   * The streaming loop will also honour `cancelRequested` on its next iteration,
+   * ensuring cancellation even if the SDK call fails.
+   */
   public abortRun() {
     this.cancelRequested = true;
     const threadId = this.activeRun?.threadId;
@@ -1579,6 +1710,16 @@ export class LangGraphAgent extends AbstractAgent {
     super.abortRun();
   }
 
+  /**
+   * Handle an extended-reasoning (thinking) event from the LangGraph stream.
+   *
+   * Manages the lifecycle of `REASONING_START / REASONING_MESSAGE_START /
+   * REASONING_MESSAGE_CONTENT / REASONING_MESSAGE_END / REASONING_END` events,
+   * including Anthropic encrypted-thinking (signature) support and OpenAI
+   * canonical reasoning IDs (`rs_…`).
+   *
+   * @param reasoningData - Parsed reasoning payload from the stream chunk.
+   */
   handleReasoningEvent(reasoningData: LangGraphReasoning) {
     if (!reasoningData || !reasoningData.type) {
       return;
@@ -1656,6 +1797,16 @@ export class LangGraphAgent extends AbstractAgent {
     }
   }
 
+  /**
+   * Extract the AG-UI state snapshot from a LangGraph `ThreadState`.
+   *
+   * Filters the raw thread state values to only include keys declared in the
+   * graph's output schema (plus `constantSchemaKeys`). This prevents internal
+   * graph state from leaking into the frontend.
+   *
+   * @param threadState - The LangGraph thread state to extract a snapshot from.
+   * @returns Filtered state values safe to send to the frontend.
+   */
   getStateSnapshot(threadState: ThreadState<State>) {
     let state = threadState.values;
     const schemaKeys = this.activeRun!.schemaKeys!;
@@ -1670,6 +1821,14 @@ export class LangGraphAgent extends AbstractAgent {
     return state;
   }
 
+  /**
+   * Get an existing LangGraph thread or create a new one if it does not exist.
+   *
+   * @param threadId - Desired thread ID.
+   * @param threadMetadata - Optional metadata to attach when creating a new thread.
+   * @returns The existing or newly created `Thread`.
+   * @throws If both get and create attempts fail.
+   */
   async getOrCreateThread(
     threadId: string,
     threadMetadata?: Record<string, any>,
@@ -1691,16 +1850,41 @@ export class LangGraphAgent extends AbstractAgent {
     return thread;
   }
 
+  /**
+   * Fetch an existing LangGraph thread by ID.
+   *
+   * @param threadId - The thread ID to look up.
+   * @returns The `Thread` from the LangGraph Platform.
+   * @throws If the thread does not exist.
+   */
   async getThread(threadId: string) {
     return this.client.threads.get(threadId);
   }
 
+  /**
+   * Create a new LangGraph thread.
+   *
+   * @param payload - Optional creation payload (thread ID, metadata, etc.).
+   * @returns The newly created `Thread`.
+   */
   async createThread(
     payload?: Parameters<typeof this.client.threads.create>[0],
   ) {
     return this.client.threads.create(payload);
   }
 
+  /**
+   * Merge one or more LangGraph `Config` objects with the assistant's base config.
+   *
+   * Filters `configurable` keys against the graph's config schema to prevent
+   * unknown keys from reaching the server. Skips no-op updates (e.g. when only
+   * the default `recursion_limit` of 25 differs).
+   *
+   * @param params.configs - Ordered list of configs to merge (later entries win).
+   * @param params.assistant - Resolved assistant whose base config serves as the starting point.
+   * @param params.schemaKeys - Graph schema keys used to filter configurable keys.
+   * @returns The merged `LangGraphConfig`.
+   */
   async mergeConfigs({
     configs,
     assistant,
@@ -1753,10 +1937,22 @@ export class LangGraphAgent extends AbstractAgent {
     }, assistant.config);
   }
 
+  /**
+   * Return the in-progress message/tool-call record for the given run ID, or `null`.
+   *
+   * @param runId - The run ID whose in-progress message record to retrieve.
+   * @returns The `MessageInProgress` record, or `null` / `undefined` if none.
+   */
   getMessageInProgress(runId: string) {
     return this.messagesInProcess[runId];
   }
 
+  /**
+   * Upsert the in-progress message/tool-call record for the given run ID.
+   *
+   * @param runId - The run ID to update.
+   * @param data - Partial `MessageInProgress` fields to merge into the existing record.
+   */
   setMessageInProgress(runId: string, data: MessageInProgress) {
     this.messagesInProcess = {
       ...this.messagesInProcess,
@@ -1767,6 +1963,16 @@ export class LangGraphAgent extends AbstractAgent {
     };
   }
 
+  /**
+   * Resolve the LangGraph assistant for `this.graphId`.
+   *
+   * Searches the deployment for an assistant whose `graph_id` matches and
+   * caches the result in `this.assistant`. If no matching assistant is found,
+   * emits a `RUN_ERROR` event and throws.
+   *
+   * @returns The resolved `Assistant` object.
+   * @throws If no assistant is found for the configured graph ID.
+   */
   async getAssistant(): Promise<Assistant> {
     try {
       const assistants = await this.client.assistants.search({
@@ -1800,6 +2006,15 @@ export class LangGraphAgent extends AbstractAgent {
     }
   }
 
+  /**
+   * Fetch and parse the graph's input/output/config/context schema keys.
+   *
+   * Used to filter state values and configurable keys to only those declared
+   * by the graph's schema, preventing unintentional data leakage. Falls back
+   * to `constantSchemaKeys` if the schema fetch fails.
+   *
+   * @returns A `SchemaKeys` object with `input`, `output`, `config`, and `context` arrays.
+   */
   async getSchemaKeys(): Promise<SchemaKeys> {
     try {
       const graphSchema = await this.client.assistants.getSchemas(
@@ -1852,6 +2067,19 @@ export class LangGraphAgent extends AbstractAgent {
     }
   }
 
+  /**
+   * Merge AG-UI run input into LangGraph graph state.
+   *
+   * Combines existing thread messages with newly received messages (de-duped by
+   * ID), converts AG-UI tools into the LangGraph tool format, and injects the
+   * `ag-ui` state enrichment (tools, context, and optional A2UI injection flag).
+   * System messages are stripped before merging.
+   *
+   * @param state - Current LangGraph thread state values.
+   * @param messages - Incoming LangChain-format messages from the AG-UI run input.
+   * @param input - Full extended run input (used for tools, context, forwardedProps).
+   * @returns Merged state ready to be sent to the LangGraph Platform.
+   */
   langGraphDefaultMergeState(
     state: State,
     messages: LangGraphMessage[],
@@ -1932,6 +2160,15 @@ export class LangGraphAgent extends AbstractAgent {
     };
   }
 
+  /**
+   * Transition to a new graph node, emitting step lifecycle events.
+   *
+   * Ends the current step (if any) and starts a new one when the node name
+   * changes. `"__end__"` is normalised to `undefined` so the graph end does
+   * not appear as an active step.
+   *
+   * @param nodeName - Name of the node being entered, or `undefined` / `"__end__"` to end steps.
+   */
   handleNodeChange(nodeName: string | undefined) {
     if (nodeName === "__end__") {
       nodeName = undefined;
@@ -1949,6 +2186,11 @@ export class LangGraphAgent extends AbstractAgent {
     this.activeRun!.nodeName = nodeName;
   }
 
+  /**
+   * Emit a `STEP_STARTED` event for the given node.
+   *
+   * @param nodeName - Name of the graph node that is starting.
+   */
   startStep(nodeName: string) {
     this.dispatchEvent({
       type: EventType.STEP_STARTED,
@@ -1956,6 +2198,9 @@ export class LangGraphAgent extends AbstractAgent {
     });
   }
 
+  /**
+   * Emit a `STEP_FINISHED` event for the currently active node.
+   */
   endStep() {
     this.dispatchEvent({
       type: EventType.STEP_FINISHED,
@@ -1963,6 +2208,20 @@ export class LangGraphAgent extends AbstractAgent {
     });
   }
 
+  /**
+   * Find the LangGraph checkpoint that precedes the given message.
+   *
+   * Walks the thread history (oldest → newest) to locate the checkpoint where
+   * `messageId` first appears as the last message, then returns the checkpoint
+   * immediately before it. This is the "rewind" point used for time-travel
+   * regeneration.
+   *
+   * @param messageId - ID of the message to find a checkpoint for.
+   * @param threadId - LangGraph thread ID.
+   * @param checkpoint - Optional starting checkpoint for recursive narrowing.
+   * @returns The `ThreadState` of the checkpoint immediately preceding the target message.
+   * @throws If no checkpoint containing `messageId` is found in the thread history.
+   */
   async getCheckpointByMessage(
     messageId: string,
     threadId: string,
