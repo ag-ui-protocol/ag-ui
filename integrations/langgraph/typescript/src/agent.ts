@@ -1036,43 +1036,31 @@ export class LangGraphAgent extends AbstractAgent {
     }
 
     switch (event.event) {
-      case LangGraphEventTypes.OnChatModelStream:
-        let shouldEmitMessages = event.metadata["emit-messages"] ?? true;
-        let shouldEmitToolCalls = event.metadata["emit-tool-calls"] ?? true;
+      case LangGraphEventTypes.OnChatModelStream: {
+        const shouldEmitMessages = event.metadata["emit-messages"] ?? true;
+        const shouldEmitToolCalls = event.metadata["emit-tool-calls"] ?? true;
 
-        if (event.data.chunk.response_metadata.finish_reason) return;
-        let currentStream = this.getMessageInProgress(this.activeRun!.id);
-        const hasCurrentStream = Boolean(currentStream?.id);
+        // Route every payload kind ADDITIVELY for this chunk. A single chunk can
+        // carry interleaved blocks (e.g. Anthropic emits text content AND a
+        // tool_call_chunk together), and text/tool/reasoning can transition into
+        // one another within a stream. Rather than picking one kind via
+        // mutually-exclusive booleans + early break/return (which dropped the
+        // text on interleaved chunks and lost transition events — see
+        // ag-ui-protocol/ag-ui#871), we resolve each kind up front and emit them
+        // in order: reasoning, then text, then tool deltas.
+        //
+        // Out of scope: de-multiplexing multiple tool_call_chunks within a single
+        // chunk — only tool_call_chunks[0] is handled. Supporting parallel tool
+        // call chunks in one chunk would require a per-toolCallId state model.
         const toolCallData = event.data.chunk.tool_call_chunks?.[0];
-        const toolCallUsedToPredictState = event.metadata[
-          "predict_state"
-        ]?.some(
-          (predictStateTool: PredictStateTool) =>
-            predictStateTool.tool === toolCallData?.name,
-        );
-
-        const isToolCallStartEvent = !hasCurrentStream && toolCallData?.name;
-        const isToolCallArgsEvent =
-          hasCurrentStream && currentStream?.toolCallId && toolCallData?.args;
-        const isToolCallEndEvent =
-          hasCurrentStream && currentStream?.toolCallId && !toolCallData;
-
-        if (isToolCallEndEvent || isToolCallArgsEvent || isToolCallStartEvent) {
-          this.activeRun!.hasFunctionStreaming = true;
-        }
-
         const reasoningData = resolveReasoningContent(event.data);
         const encryptedReasoningData = resolveEncryptedReasoningContent(
           event.data,
         );
         const messageContent = resolveMessageContent(event.data.chunk.content);
-        const isMessageContentEvent = Boolean(!toolCallData && messageContent);
 
-        const isMessageEndEvent =
-          hasCurrentStream &&
-          !currentStream?.toolCallId &&
-          !isMessageContentEvent;
-
+        // Reasoning is handled exclusively: a reasoning chunk neither carries
+        // text/tool payloads we emit here nor should it close an open stream.
         if (reasoningData) {
           this.handleReasoningEvent(reasoningData);
           break;
@@ -1089,7 +1077,9 @@ export class LangGraphAgent extends AbstractAgent {
           break;
         }
 
-        if (!reasoningData && this.reasoningProcess) {
+        // No reasoning in this chunk: flush any in-progress reasoning before we
+        // emit text/tool events for it.
+        if (this.reasoningProcess) {
           // Emit signature as encrypted value if accumulated during reasoning
           if (this.reasoningProcess.signature) {
             this.dispatchEvent({
@@ -1110,6 +1100,12 @@ export class LangGraphAgent extends AbstractAgent {
           this.reasoningProcess = null;
         }
 
+        const toolCallUsedToPredictState = event.metadata[
+          "predict_state"
+        ]?.some(
+          (predictStateTool: PredictStateTool) =>
+            predictStateTool.tool === toolCallData?.name,
+        );
         if (toolCallUsedToPredictState) {
           this.activeRun!.modelMadeToolCall = true;
           this.dispatchEvent({
@@ -1119,64 +1115,28 @@ export class LangGraphAgent extends AbstractAgent {
           });
         }
 
-        if (isToolCallEndEvent) {
-          const resolved = this.dispatchEvent({
-            type: EventType.TOOL_CALL_END,
-            toolCallId: currentStream?.toolCallId!,
-            rawEvent: event,
-          });
-          if (resolved) {
-            this.messagesInProcess[this.activeRun!.id] = null;
-          }
-          break;
+        if (toolCallData) {
+          this.activeRun!.hasFunctionStreaming = true;
         }
 
-        if (isMessageEndEvent) {
-          const resolved = this.dispatchEvent({
-            type: EventType.TEXT_MESSAGE_END,
-            messageId: currentStream!.id,
-            rawEvent: event,
-          });
-          if (resolved) {
-            this.messagesInProcess[this.activeRun!.id] = null;
-          }
-          break;
-        }
+        // Text content: emit TEXT_MESSAGE_CONTENT. If a tool call is currently
+        // open, close it first; start a new text message if none is open.
+        if (messageContent && shouldEmitMessages) {
+          let currentStream = this.getMessageInProgress(this.activeRun!.id);
 
-        if (isToolCallStartEvent && shouldEmitToolCalls) {
-          const resolved = this.dispatchEvent({
-            type: EventType.TOOL_CALL_START,
-            toolCallId: toolCallData.id,
-            toolCallName: toolCallData.name,
-            parentMessageId: event.data.chunk.id,
-            rawEvent: event,
-          });
-          if (resolved) {
-            this.emittedToolCallStartIds.add(toolCallData.id);
-            this.setMessageInProgress(this.activeRun!.id, {
-              id: event.data.chunk.id,
-              toolCallId: toolCallData.id,
-              toolCallName: toolCallData.name,
+          if (currentStream?.toolCallId) {
+            const resolved = this.dispatchEvent({
+              type: EventType.TOOL_CALL_END,
+              toolCallId: currentStream.toolCallId,
+              rawEvent: event,
             });
+            if (resolved) {
+              this.messagesInProcess[this.activeRun!.id] = null;
+            }
+            currentStream = this.getMessageInProgress(this.activeRun!.id);
           }
-          break;
-        }
 
-        // Tool call args: emit ActionExecutionArgs
-        if (isToolCallArgsEvent && shouldEmitToolCalls) {
-          this.dispatchEvent({
-            type: EventType.TOOL_CALL_ARGS,
-            toolCallId: currentStream?.toolCallId!,
-            delta: toolCallData.args,
-            rawEvent: event,
-          });
-          break;
-        }
-
-        // Message content: emit TextMessageContent
-        if (isMessageContentEvent && shouldEmitMessages) {
-          // No existing message yet, also init the message
-          if (!currentStream) {
+          if (!currentStream?.id) {
             this.dispatchEvent({
               type: EventType.TEXT_MESSAGE_START,
               role: "assistant",
@@ -1194,13 +1154,76 @@ export class LangGraphAgent extends AbstractAgent {
           this.dispatchEvent({
             type: EventType.TEXT_MESSAGE_CONTENT,
             messageId: currentStream!.id,
-            delta: messageContent!,
+            delta: messageContent,
             rawEvent: event,
           });
-          break;
+        }
+
+        // Tool deltas. A chunk with a `name` opens a new tool call: close any
+        // open text message first, and close any DIFFERENT open tool call
+        // (allowing back-to-back tool calls while one is already streaming —
+        // ag-ui-protocol/ag-ui#871). A chunk with only `args` appends to the
+        // currently open tool call.
+        if (toolCallData && shouldEmitToolCalls) {
+          if (toolCallData.name) {
+            let currentStream = this.getMessageInProgress(this.activeRun!.id);
+
+            if (currentStream?.id && !currentStream.toolCallId) {
+              const resolved = this.dispatchEvent({
+                type: EventType.TEXT_MESSAGE_END,
+                messageId: currentStream.id,
+                rawEvent: event,
+              });
+              if (resolved) {
+                this.messagesInProcess[this.activeRun!.id] = null;
+              }
+              currentStream = this.getMessageInProgress(this.activeRun!.id);
+            }
+
+            if (
+              currentStream?.toolCallId &&
+              currentStream.toolCallId !== toolCallData.id
+            ) {
+              const resolved = this.dispatchEvent({
+                type: EventType.TOOL_CALL_END,
+                toolCallId: currentStream.toolCallId,
+                rawEvent: event,
+              });
+              if (resolved) {
+                this.messagesInProcess[this.activeRun!.id] = null;
+              }
+            }
+
+            const resolved = this.dispatchEvent({
+              type: EventType.TOOL_CALL_START,
+              toolCallId: toolCallData.id,
+              toolCallName: toolCallData.name,
+              parentMessageId: event.data.chunk.id,
+              rawEvent: event,
+            });
+            if (resolved) {
+              this.emittedToolCallStartIds.add(toolCallData.id);
+              this.setMessageInProgress(this.activeRun!.id, {
+                id: event.data.chunk.id,
+                toolCallId: toolCallData.id,
+                toolCallName: toolCallData.name,
+              });
+            }
+          } else if (toolCallData.args) {
+            const currentStream = this.getMessageInProgress(this.activeRun!.id);
+            if (currentStream?.toolCallId) {
+              this.dispatchEvent({
+                type: EventType.TOOL_CALL_ARGS,
+                toolCallId: currentStream.toolCallId,
+                delta: toolCallData.args,
+                rawEvent: event,
+              });
+            }
+          }
         }
 
         break;
+      }
       case LangGraphEventTypes.OnChatModelEnd:
         if (this.getMessageInProgress(this.activeRun!.id)?.toolCallId) {
           const resolved = this.dispatchEvent({
