@@ -1,5 +1,7 @@
 import { LLMock, type ChatMessage } from "@copilotkit/aimock";
 import * as path from "node:path";
+import { registerA2UIRecoveryFixtures } from "./a2ui-recovery-fixtures";
+import { registerA2UIADKFixtures } from "./a2ui-adk-fixtures";
 
 const MOCK_PORT = 5555;
 const FIXTURES_DIR = path.join(import.meta.dirname, "fixtures", "openai");
@@ -12,7 +14,22 @@ export async function setupLLMock(): Promise<void> {
   // Small per-chunk latency prevents crew-ai's asyncio event loop from
   // getting congested by zero-latency streaming (real OpenAI has natural
   // network delays between chunks; LLMock needs to simulate this).
-  mockServer = new LLMock({ port: MOCK_PORT, latency: 5 });
+  // Default 5ms keeps crew-ai's asyncio loop healthy. Bump via AIMOCK_LATENCY (e.g. 1500)
+  // when running the standalone mock (aimock-standalone.ts) for an interactive recording,
+  // so the retrying→hard-failure sequence is watchable.
+  mockServer = new LLMock({
+    port: MOCK_PORT,
+    latency: Number(process.env.AIMOCK_LATENCY) || 5,
+  });
+
+  // OSS-158 ADK A2UI fixtures (Gemini-shaped, scoped to gemini models). MUST
+  // precede the OpenAI LangGraph recovery fixtures so a Gemini request matches
+  // here first; gpt-4o requests fall through to the LangGraph fixtures.
+  registerA2UIADKFixtures(mockServer);
+
+  // OSS-162 A2UI recovery showcase fixtures (predicate fixtures, must precede
+  // the generic loadFixtureFile below).
+  registerA2UIRecoveryFixtures(mockServer);
 
   // Extract text from message content — handles both string and array-of-parts
   // (Strands SDK sends content as [{type: "text", text: "..."}])

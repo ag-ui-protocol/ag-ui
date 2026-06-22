@@ -1,6 +1,6 @@
 import { Page, Locator, expect } from "@playwright/test";
 import { CopilotSelectors } from "../utils/copilot-selectors";
-import { sendChatMessage, awaitLLMResponseDone } from "../utils/copilot-actions";
+import { sendAndAwaitResponse } from "../utils/copilot-actions";
 import { DEFAULT_WELCOME_MESSAGE } from "../lib/constants";
 
 export class AgenticChatPage {
@@ -32,8 +32,16 @@ export class AgenticChatPage {
   }
 
   async sendMessage(message: string) {
-    await sendChatMessage(this.page, message);
-    await awaitLLMResponseDone(this.page);
+    // Use the multi-turn-safe send. The previous `awaitLLMResponseDone`
+    // returned as soon as it saw `data-copilot-running="false"`, but on a
+    // multi-turn conversation that attribute still holds the PREVIOUS turn's
+    // finished state — so the wait could return before the new run started.
+    // The next send would then fire while the prior run was still active, the
+    // agent dropped it, and the user message never rendered (flaky timeout).
+    // `sendAndAwaitResponse` snapshots the assistant-message count and waits
+    // for a NEW response before treating the run as done, so each turn fully
+    // completes before the next send.
+    await sendAndAwaitResponse(this.page, message);
   }
 
   async getGradientButtonByName(name: string | RegExp) {

@@ -9,12 +9,25 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def create_model():
+def create_model(openai_api: str = "responses"):
     """Create a Strands model based on MODEL_PROVIDER env var.
 
     Supported providers: openai (default), anthropic, gemini
+
+    ``openai_api`` selects the OpenAI API mode. The default Responses API
+    surfaces reasoning summaries but buffers tool-call argument deltas until
+    the call completes; pass ``"chat"`` for demos that need tool-call ARGUMENTS
+    to stream incrementally (e.g. A2UI progressive surface painting).
     """
     provider = os.getenv("MODEL_PROVIDER", "openai").lower()
+
+    if openai_api not in ("chat", "responses"):
+        # A typo here would silently select the Responses API, whose buffered
+        # tool-call deltas defeat progressive A2UI painting — the exact
+        # regression the streaming e2e guards. Fail loud instead.
+        raise ValueError(
+            f"Unknown openai_api: {openai_api!r}. Supported: chat, responses"
+        )
 
     if provider == "openai":
         api_key = os.getenv("OPENAI_API_KEY")
@@ -22,6 +35,14 @@ def create_model():
             raise ValueError(
                 "OPENAI_API_KEY environment variable is required when MODEL_PROVIDER=openai. "
                 "Set it in your .env file or environment."
+            )
+        if openai_api == "chat":
+            from strands.models.openai import OpenAIModel
+            return OpenAIModel(
+                client_args={
+                    "api_key": api_key,
+                },
+                model_id=os.getenv("MODEL_ID", "gpt-5.4"),
             )
         from strands.models.openai_responses import OpenAIResponsesModel
         return OpenAIResponsesModel(
@@ -44,11 +65,18 @@ def create_model():
         return AnthropicModel(
             client_args={
                 "api_key": api_key,
+                # Without this beta, Anthropic buffers tool-input JSON into a
+                # few coarse validated chunks (seconds apart), which defeats
+                # progressive A2UI painting. Fine-grained tool streaming emits
+                # token-level input_json_delta events.
+                "default_headers": {
+                    "anthropic-beta": "fine-grained-tool-streaming-2025-05-14"
+                },
             },
             model_id=os.getenv("MODEL_ID", "claude-sonnet-4-6"),
-            params={
-                "budget_tokens": 5000,
-            }
+            # Top-level required config for strands' AnthropicModel (its
+            # format_request reads self.config["max_tokens"] unconditionally).
+            max_tokens=8192,
         )
     elif provider == "gemini":
         api_key = os.getenv("GOOGLE_API_KEY")

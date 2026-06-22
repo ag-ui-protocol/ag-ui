@@ -415,14 +415,37 @@ class TestADKAgent:
         async for event in adk_agent.run(sample_input):
             events.append(event)
 
-        # Should get RUN_STARTED, RUN_ERROR, and RUN_FINISHED
-        assert len(events) == 3
+        # Should get RUN_STARTED then RUN_ERROR, and NO trailing RUN_FINISHED.
+        # The AG-UI spec allows at most one terminal event per run; emitting
+        # RUN_FINISHED after RUN_ERROR makes @ag-ui/client's state machine throw
+        # ("The run has already errored"). See issue #1892.
+        assert len(events) == 2
         assert events[0].type == EventType.RUN_STARTED
         assert events[1].type == EventType.RUN_ERROR
-        assert events[2].type == EventType.RUN_FINISHED
         # Check that it's an error with meaningful content
         assert len(events[1].message) > 0
         assert events[1].code == 'BACKGROUND_EXECUTION_ERROR'
+
+    @pytest.mark.asyncio
+    async def test_errored_run_emits_single_terminal_event(self, adk_agent, sample_input):
+        """A run that errors mid-stream must emit exactly one terminal event.
+
+        Regression test for issue #1892: the background queue path emits
+        RUN_ERROR, after which the consumer loop must NOT fall through to its
+        unconditional RUN_FINISHED. Two terminal events violate the AG-UI spec
+        and are rejected by @ag-ui/client.
+        """
+        adk_agent._adk_agent.side_effect = Exception('boom mid-stream')
+
+        events = [event async for event in adk_agent.run(sample_input)]
+
+        terminal_types = [
+            e.type for e in events
+            if e.type in (EventType.RUN_FINISHED, EventType.RUN_ERROR)
+        ]
+        assert terminal_types == [EventType.RUN_ERROR], (
+            f"expected a single RUN_ERROR terminal event, got {terminal_types}"
+        )
 
     @pytest.mark.asyncio
     async def test_cleanup(self, adk_agent):
@@ -949,42 +972,30 @@ class TestADKAgent:
             assert agent_under_test.tools == []
             assert len(agent_under_test.sub_agents) == 2
 
-            # ag-ui#1389: AGUIToolset placeholders are NOT replaced wholesale —
-            # they get a ClientProxyToolset delegate bound to them, preserving
-            # object identity so ADK 2.0's eager Runner cache stays valid.
-            # Test the delegated behavior: each AGUIToolset.tool_filter and
-            # the underlying delegate's tool_filter must match the declared
-            # tool_filter from agent construction.
+            # AGUIToolset placeholders are replaced per-run by a
+            # ClientProxyToolset carrying the declared tool_filter, on the
+            # per-run agent copy (the originals are left untouched).
 
-            # hello_agent: AGUIToolset with hello_tool filter, delegate also has it
+            # hello_agent: AGUIToolset(hello_tool) -> ClientProxyToolset(hello_tool)
             assert agent_under_test.sub_agents[0].name == "hello_agent"
             assert len(agent_under_test.sub_agents[0].tools) == 1
             hello_toolset = agent_under_test.sub_agents[0].tools[0]
-            assert isinstance(hello_toolset, AGUIToolset)
+            assert isinstance(hello_toolset, ClientProxyToolset)
             assert hello_toolset.tool_filter == ['hello_tool']
-            assert hello_toolset._delegate is not None
-            assert isinstance(hello_toolset._delegate, ClientProxyToolset)
-            assert hello_toolset._delegate.tool_filter == ['hello_tool']
 
-            # deep_agent: AGUIToolset with deep_tool filter, delegate also has it
+            # deep_agent: AGUIToolset(deep_tool) -> ClientProxyToolset(deep_tool)
             assert agent_under_test.sub_agents[0].sub_agents[0].name == "deep_agent"
             assert len(agent_under_test.sub_agents[0].sub_agents[0].tools) == 1
             deep_toolset = agent_under_test.sub_agents[0].sub_agents[0].tools[0]
-            assert isinstance(deep_toolset, AGUIToolset)
+            assert isinstance(deep_toolset, ClientProxyToolset)
             assert deep_toolset.tool_filter == ['deep_tool']
-            assert deep_toolset._delegate is not None
-            assert isinstance(deep_toolset._delegate, ClientProxyToolset)
-            assert deep_toolset._delegate.tool_filter == ['deep_tool']
 
-            # goodbye_agent: AGUIToolset with goodbye_tool filter, delegate also has it
+            # goodbye_agent: AGUIToolset(goodbye_tool) -> ClientProxyToolset(goodbye_tool)
             assert agent_under_test.sub_agents[1].name == "goodbye_agent"
             assert len(agent_under_test.sub_agents[1].tools) == 1
             goodbye_toolset = agent_under_test.sub_agents[1].tools[0]
-            assert isinstance(goodbye_toolset, AGUIToolset)
+            assert isinstance(goodbye_toolset, ClientProxyToolset)
             assert goodbye_toolset.tool_filter == ['goodbye_tool']
-            assert goodbye_toolset._delegate is not None
-            assert isinstance(goodbye_toolset._delegate, ClientProxyToolset)
-            assert goodbye_toolset._delegate.tool_filter == ['goodbye_tool']
 
     @pytest.mark.asyncio
     async def test_non_deepcopyable_tool_does_not_crash(self):
@@ -1038,27 +1049,24 @@ class TestADKAgent:
             submethod_mocked.assert_called_once()
             agent_under_test = submethod_mocked.call_args.kwargs['adk_agent']
 
-            # The unpicklable toolset should be preserved (shared by reference).
-            # ag-ui#1389: AGUIToolsets now also stay by reference (bind-delegation
-            # pattern) instead of being replaced, so both tools should be
-            # present in agent.tools — just the AGUIToolset now has a bound
-            # ClientProxyToolset delegate.
+            # The AGUIToolset is replaced per-run by a ClientProxyToolset; the
+            # unpicklable toolset is preserved by reference (shared, not copied),
+            # so both tools are present and no pickling occurred.
             assert len(agent_under_test.tools) == 2
+            assert not any(isinstance(t, AGUIToolset) for t in agent_under_test.tools)
 
-            agui_toolsets = [
-                t for t in agent_under_test.tools if isinstance(t, AGUIToolset)
+            proxies = [
+                t for t in agent_under_test.tools if isinstance(t, ClientProxyToolset)
             ]
-            assert len(agui_toolsets) == 1
-            assert agui_toolsets[0]._delegate is not None
-            assert isinstance(agui_toolsets[0]._delegate, ClientProxyToolset)
+            assert len(proxies) == 1
 
-            non_proxy_non_agui_tools = [
+            others = [
                 t for t in agent_under_test.tools
-                if not isinstance(t, (ClientProxyToolset, AGUIToolset))
+                if not isinstance(t, ClientProxyToolset)
             ]
-            assert len(non_proxy_non_agui_tools) == 1
-            assert non_proxy_non_agui_tools[0] is unpicklable
-            assert non_proxy_non_agui_tools[0].errlog is sys.stderr
+            assert len(others) == 1
+            assert others[0] is unpicklable
+            assert others[0].errlog is sys.stderr
 
     @pytest.mark.asyncio
     async def test_original_agent_not_mutated_after_run(self):
