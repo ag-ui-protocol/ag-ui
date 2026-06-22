@@ -12,8 +12,9 @@ import {
   AudioInputContent,
   VideoInputContent,
   DocumentInputContent,
+  InputContent,
 } from "@ag-ui/client";
-import { aguiMessagesToLangChain, langchainMessagesToAgui } from "./utils";
+import { aguiMessagesToLangChain, langchainMessagesToAgui, AGUI_TYPE_KEY } from "./utils";
 
 describe("Multimodal Message Conversion", () => {
   describe("aguiMessagesToLangChain", () => {
@@ -378,5 +379,107 @@ describe("Multimodal Message Conversion", () => {
       expect(content).toHaveLength(1);
       expect(content[0].type).toBe("text");
     });
+  });
+
+  describe("Metadata + media type round-trip", () => {
+    it("forward preserves metadata and tags type", () => {
+      const aguiMessage: UserMessage = {
+        id: "fwd-image",
+        role: "user",
+        content: [
+          {
+            type: "image",
+            source: { type: "url", value: "https://example.com/photo.jpg" },
+            metadata: { alt: "a cat", id: 42 },
+          } as ImageInputContent,
+        ],
+      };
+
+      const lcMessages = aguiMessagesToLangChain([aguiMessage]);
+
+      const block = (lcMessages[0].content as Array<any>)[0];
+      expect(block.type).toBe("image_url");
+      expect(block.metadata).toEqual({ alt: "a cat", id: 42, [AGUI_TYPE_KEY]: "image" });
+    });
+
+    it("forward embeds __agui_type in metadata for non-image media", () => {
+      const aguiMessage: UserMessage = {
+        id: "fwd-audio",
+        role: "user",
+        content: [
+          {
+            type: "audio",
+            source: { type: "url", value: "https://example.com/a.mp3" },
+            metadata: { duration: 12 },
+          } as AudioInputContent,
+        ],
+      };
+
+      const lcMessages = aguiMessagesToLangChain([aguiMessage]);
+
+      const block = (lcMessages[0].content as Array<any>)[0];
+      expect(block.type).toBe("image_url");
+      expect(block.metadata).toEqual({ duration: 12, [AGUI_TYPE_KEY]: "audio" });
+    });
+
+    it("reverse restores type + metadata from a tagged block", () => {
+      const lcMessage: LangGraphMessage = {
+        id: "rev-tagged",
+        type: "human",
+        content: [
+          {
+            type: "image_url",
+            image_url: { url: "https://example.com/v.mp4" },
+            metadata: { fps: 30, [AGUI_TYPE_KEY]: "video" },
+          },
+        ] as any,
+      };
+
+      const aguiMessages = langchainMessagesToAgui([lcMessage]);
+
+      const part = (aguiMessages[0].content as Array<any>)[0];
+      expect(part.type).toBe("video");
+      expect(part.source).toEqual({ type: "url", value: "https://example.com/v.mp4" });
+      expect(part.metadata).toEqual({ fps: 30 });
+    });
+
+    it("reverse falls back to image for untagged blocks", () => {
+      const lcMessage: LangGraphMessage = {
+        id: "rev-untagged",
+        type: "human",
+        content: [
+          { type: "image_url", image_url: { url: "https://example.com/x.jpg" } },
+        ] as any,
+      };
+
+      const aguiMessages = langchainMessagesToAgui([lcMessage]);
+
+      const part = (aguiMessages[0].content as Array<any>)[0];
+      expect(part.type).toBe("image");
+      expect(part.metadata).toBeUndefined();
+    });
+
+    it.each(["image", "audio", "video", "document"] as const)(
+      "round-trips %s through LangChain preserving type, source, and metadata",
+      (mediaType) => {
+        const source = { type: "data", value: "ZGF0YQ==", mimeType: `${mediaType}/x` } as const;
+        const metadata = { kind: mediaType, n: 7 };
+        const original: UserMessage = {
+          id: `rt-${mediaType}`,
+          role: "user",
+          content: [{ type: mediaType, source, metadata } as InputContent],
+        };
+
+        const lcMessages = aguiMessagesToLangChain([original]);
+        const roundTripped = langchainMessagesToAgui([
+          { id: original.id, type: "human", content: lcMessages[0].content } as LangGraphMessage,
+        ]);
+
+        const part = (roundTripped[0].content as Array<any>)[0];
+        expect(part.type).toBe(mediaType);
+        expect(part.source).toEqual(source);
+        expect(part.metadata).toEqual(metadata);
+      }
+    );
   });
 });
