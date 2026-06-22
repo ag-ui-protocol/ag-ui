@@ -43,8 +43,10 @@ import {
   RENDER_A2UI_TOOL_DEF,
   buildA2UIEnvelope,
   prepareA2UIRequest,
+  resolveA2UICatalog,
   resolveA2UIToolParams,
   runA2UIGenerationWithRecovery,
+  splitA2UISchemaContext,
   wrapErrorEnvelope,
   type A2UIGuidelines,
   type A2UIRecoveryConfig,
@@ -70,16 +72,6 @@ const RENDER_A2UI_TOOL_NAME = RENDER_A2UI_TOOL_DEF.function.name;
 export const A2UI_AUTOINJECT_MARKER = Symbol.for(
   "@ag-ui/aws-strands.a2uiAutoInjected",
 );
-
-/**
- * Context-entry description the `@ag-ui/a2ui-middleware` stamps onto the A2UI
- * catalog it injects into `RunAgentInput.context`. Defined locally (rather than
- * importing the middleware) so this backend adapter does not depend on the
- * runtime paint-gate package. MUST stay in sync with
- * `A2UI_SCHEMA_CONTEXT_DESCRIPTION` in `@ag-ui/a2ui-middleware`.
- */
-const A2UI_SCHEMA_CONTEXT_DESCRIPTION =
-  "A2UI Component Schema — available components for generating UI surfaces. Use these component names and properties when creating A2UI operations.";
 
 /** Tool arguments exposed to the main agent's planner. */
 interface GenerateA2UIArgs {
@@ -277,6 +269,7 @@ export function getA2UITools<TModel = Model>(
                 cancelSignal: (ctx.agent as { cancelSignal?: AbortSignal })
                   .cancelSignal,
                 onStreamEvent: push,
+                catalogId: defaultCatalogId,
               });
             },
             buildEnvelope: (args) =>
@@ -387,6 +380,14 @@ async function invokeRenderSubagent(
     cancelSignal?: AbortSignal;
     /** Called for each render_a2ui streaming step (start / args delta / end). */
     onStreamEvent?: (e: A2UIRenderStreamEvent) => void;
+    /**
+     * Host-resolved `defaultCatalogId`, stamped into the streamed args. The
+     * model never emits `catalogId` (render schema omits it; host owns the
+     * catalog), so without this the middleware's progressive paint falls back
+     * to the basic catalog and the renderer throws "Catalog not found". The id
+     * matches what `buildA2UIEnvelope` stamps on the final surface.
+     */
+    catalogId?: string;
   } = {},
 ): Promise<Record<string, unknown> | null> {
   let captured: Record<string, unknown> | null = null;
@@ -416,9 +417,13 @@ async function invokeRenderSubagent(
     systemPrompt: prompt,
   });
   const emit = options.onStreamEvent;
+  const catalogId = options.catalogId;
   // Tracks the in-flight render_a2ui block between toolUseStart and blockStop.
   let liveRenderCallId: string | null = null;
   let sawRenderStart = false;
+  // Whether the host catalog id has been spliced into the streamed args for
+  // the current call yet (reset per render start).
+  let catalogPrefixed = false;
   try {
     // Stream (not invoke) so the render_a2ui arg deltas can be surfaced to the
     // AG-UI wire as they generate — the middleware's building/progressive-paint
@@ -459,6 +464,7 @@ async function invokeRenderSubagent(
         // a falsy live id would disable every close/delta guard below.
         liveRenderCallId = e.start.toolUseId || `a2ui-render-${++a2uiRenderSeq}`;
         sawRenderStart = true;
+        catalogPrefixed = false;
         emit({
           kind: "start",
           toolCallId: liveRenderCallId,
@@ -470,7 +476,22 @@ async function invokeRenderSubagent(
         e.delta?.type === "toolUseInputDelta" &&
         typeof e.delta.input === "string"
       ) {
-        emit({ kind: "args", toolCallId: liveRenderCallId, delta: e.delta.input });
+        let delta = e.delta.input;
+        // Stamp the host catalog id into the FIRST chunk by splicing it right
+        // after the opening brace, so the accumulated args become
+        // `{"catalogId": "<id>", ...}` — valid JSON the middleware's progressive
+        // paint reads the id from. The model never emits catalogId itself.
+        if (catalogId && !catalogPrefixed) {
+          const brace = delta.indexOf("{");
+          if (brace !== -1) {
+            delta =
+              delta.slice(0, brace + 1) +
+              `"catalogId": ${JSON.stringify(catalogId)}, ` +
+              delta.slice(brace + 1);
+            catalogPrefixed = true;
+          }
+        }
+        emit({ kind: "args", toolCallId: liveRenderCallId, delta });
       } else if (liveRenderCallId && e?.type === "modelContentBlockStopEvent") {
         emit({ kind: "end", toolCallId: liveRenderCallId });
         liveRenderCallId = null;
@@ -520,7 +541,11 @@ async function invokeRenderSubagent(
       emit({
         kind: "args",
         toolCallId: syntheticId,
-        delta: JSON.stringify(captured),
+        delta: JSON.stringify(
+          catalogId && captured
+            ? { ...(captured as Record<string, unknown>), catalogId }
+            : captured,
+        ),
       });
       emit({ kind: "end", toolCallId: syntheticId });
     }
@@ -759,18 +784,48 @@ export function planA2UIInjection<TModel = Model>(
   }
 
   const renderToolName = typeof flag === "string" ? flag : RENDER_A2UI_TOOL_NAME;
-  const catalog = config?.catalog ?? resolveCatalogFromContext(input);
+
+  // Lift the A2UI schema + remaining context under state["ag-ui"] so the
+  // sub-agent prompt carries the component schema + context, same as the
+  // LangGraph adapter routes context into graph state. Uses the shared toolkit
+  // split so both adapters agree on the schema-context description.
+  const [schemaValue, regularContext] = splitA2UISchemaContext(
+    input.context as Array<Record<string, unknown>> | undefined,
+  );
+  const baseState: Record<string, unknown> =
+    input.state && typeof input.state === "object" && !Array.isArray(input.state)
+      ? { ...(input.state as Record<string, unknown>) }
+      : {};
+  const agUi: Record<string, unknown> = { context: regularContext };
+  if (schemaValue !== undefined) agUi.a2ui_schema = schemaValue;
+  baseState["ag-ui"] = agUi;
+
+  // Resolve the frontend-registered catalog from run state (native a2ui_schema
+  // or an "A2UI catalog" context entry) so surfaces bind to the host's catalog
+  // without the host hardcoding it. Backend config WINS when set.
+  const resolved = resolveA2UICatalog(baseState);
+  const [runtimeSchema, runtimeCatalogId] = resolved ?? [undefined, undefined];
+
+  // Explicit `config.catalog` still feeds the semantic-validation catalog;
+  // recovery stays structural-only when absent (the catalog is never
+  // auto-resolved from context for VALIDATION, only the id/guide below).
+  const catalog = config?.catalog;
+  const defaultCatalogId = config?.defaultCatalogId ?? runtimeCatalogId;
+  let guidelines = config?.guidelines;
+  if (guidelines === undefined && runtimeSchema !== undefined) {
+    guidelines = { compositionGuide: runtimeSchema };
+  }
 
   const tool = getA2UITools(
     {
       model: args.model as unknown as Model,
       toolName,
       catalog,
-      defaultCatalogId: config?.defaultCatalogId,
-      guidelines: config?.guidelines,
+      defaultCatalogId,
+      guidelines,
       recovery: config?.recovery,
     },
-    { aguiMessages: input.messages as AguiMessage[], state: input.state },
+    { aguiMessages: input.messages as AguiMessage[], state: baseState },
   );
   // Tag as ours so the per-run hook can refresh (not "user-prevails") it.
   (tool as { [A2UI_AUTOINJECT_MARKER]?: true })[A2UI_AUTOINJECT_MARKER] = true;
@@ -786,42 +841,4 @@ export function isAutoInjectedA2UITool(tool: unknown): boolean {
     (tool as { [A2UI_AUTOINJECT_MARKER]?: boolean })[A2UI_AUTOINJECT_MARKER] ===
       true
   );
-}
-
-/** Parse the A2UI catalog the middleware injected into `RunAgentInput.context`. */
-function resolveCatalogFromContext(
-  input: RunAgentInput,
-): A2UIValidationCatalog | undefined {
-  for (const entry of input.context ?? []) {
-    if (entry.description !== A2UI_SCHEMA_CONTEXT_DESCRIPTION) continue;
-    // Catalog-aware (semantic) recovery silently degrades to structural-only
-    // without these breadcrumbs (mirrors the Python adapter).
-    if (!entry.value) {
-      DEFAULT_LOGGER.warn(
-        `[@ag-ui/aws-strands] A2UI schema context entry has an empty value; ` +
-          "catalog-aware recovery disabled.",
-      );
-      continue;
-    }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(entry.value);
-    } catch (err) {
-      DEFAULT_LOGGER.warn(
-        `[@ag-ui/aws-strands] A2UI schema context entry present but unparseable; ` +
-          `catalog-aware recovery disabled: ${String(err)}`,
-      );
-      continue;
-    }
-    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return parsed as A2UIValidationCatalog;
-    }
-    // Parseable but wrong shape (array/scalar) would blow up deep in
-    // catalog-aware validation instead of degrading gracefully here.
-    DEFAULT_LOGGER.warn(
-      `[@ag-ui/aws-strands] A2UI schema context entry is valid JSON but not an ` +
-        "object; catalog-aware recovery disabled.",
-    );
-  }
-  return undefined;
 }

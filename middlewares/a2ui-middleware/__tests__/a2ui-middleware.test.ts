@@ -746,6 +746,110 @@ describe("A2UIMiddleware", () => {
       expect(surfaceIds.has("s-second")).toBe(true);
     });
 
+    it("paints a streamed surface exactly once when the final envelope re-wraps it under a different toolCallId (surfaceId dedup)", async () => {
+      // Root cause: with the streaming path painting surface S (componentsEmitted
+      // true, outerCallId null because generate_a2ui is itself an a2ui tool name
+      // and never becomes the tracked outer call), the call-id linkage dedup
+      // never matches the final envelope's toolCallId. The surfaceId guard must
+      // still suppress the redundant final re-paint of S → exactly ONE anchor.
+      const middleware = new A2UIMiddleware({ a2uiToolNames: ["render_a2ui", "generate_a2ui"] });
+
+      const innerCallId = "tc-render-inner";
+      const outerResultCallId = "tc-generate-outer"; // DIFFERENT id; no linkage to inner
+      const innerArgs = JSON.stringify({
+        surfaceId: "s-dup",
+        components: [
+          { id: "root", component: "Row", children: { componentId: "card", path: "/items" } },
+          { id: "card", component: "HotelCard", name: { path: "name" } },
+        ],
+        data: { items: [{ name: "A" }] },
+      });
+
+      // Final envelope from generate_a2ui re-wraps the SAME surface s-dup.
+      const finalEnvelope = JSON.stringify({
+        a2ui_operations: [
+          { version: "v0.9", createSurface: { surfaceId: "s-dup", catalogId: "https://a2ui.org/specification/v0_9/basic_catalog.json" } },
+          { version: "v0.9", updateComponents: { surfaceId: "s-dup", components: [
+            { id: "root", component: "Row", children: { componentId: "card", path: "/items" } },
+            { id: "card", component: "HotelCard", name: { path: "name" } },
+          ] } },
+        ],
+      });
+
+      const mockAgent = new MockAgent([
+        { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
+        // Inner render_a2ui streams surface s-dup (outerCallId stays null).
+        { type: EventType.TOOL_CALL_START, toolCallId: innerCallId, toolCallName: "render_a2ui" },
+        { type: EventType.TOOL_CALL_ARGS, toolCallId: innerCallId, delta: innerArgs } as BaseEvent,
+        { type: EventType.TOOL_CALL_END, toolCallId: innerCallId },
+        // generate_a2ui returns the final envelope for the SAME surface under a
+        // DIFFERENT toolCallId — call-id linkage cannot match this.
+        { type: EventType.TOOL_CALL_START, toolCallId: outerResultCallId, toolCallName: "generate_a2ui" },
+        { type: EventType.TOOL_CALL_RESULT, toolCallId: outerResultCallId, content: finalEnvelope } as BaseEvent,
+        { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
+      ]);
+
+      const events = await collectEvents(middleware.run(createRunAgentInput(), mockAgent));
+
+      // Count distinct painted messageIds (DOM anchors) that carry a
+      // createSurface/updateComponents for s-dup.
+      const anchorIds = new Set<string>();
+      for (const snap of events.filter(isPaint)) {
+        const ops = (snap as any).content.a2ui_operations as any[];
+        const touchesS = ops.some(
+          (op) => op.createSurface?.surfaceId === "s-dup" || op.updateComponents?.surfaceId === "s-dup",
+        );
+        if (touchesS) anchorIds.add((snap as any).messageId);
+      }
+      // Exactly one anchor for s-dup: the streaming one. The final re-paint is suppressed.
+      expect(anchorIds.size).toBe(1);
+      expect([...anchorIds][0]).toBe(`a2ui-surface-${innerCallId}`);
+    });
+
+    it("still paints an UNRELATED surface from a later tool result after a streamed surface (no over-suppression by surfaceId)", async () => {
+      // The surfaceId guard must only suppress surfaces THIS run already
+      // streamed. A different surfaceId in a later tool result must still paint.
+      const middleware = new A2UIMiddleware({ a2uiToolNames: ["render_a2ui", "generate_a2ui"] });
+
+      const innerCallId = "tc-render-inner";
+      const otherCallId = "tc-other";
+      const innerArgs = JSON.stringify({
+        surfaceId: "s-streamed",
+        components: [{ id: "root", component: "Text", text: "hi" }],
+        data: {},
+      });
+      const otherEnvelope = JSON.stringify({
+        a2ui_operations: [
+          { version: "v0.9", createSurface: { surfaceId: "s-other", catalogId: "https://a2ui.org/specification/v0_9/basic_catalog.json" } },
+          { version: "v0.9", updateComponents: { surfaceId: "s-other", components: [{ id: "root", component: "Text", text: "other" }] } },
+        ],
+      });
+
+      const mockAgent = new MockAgent([
+        { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
+        { type: EventType.TOOL_CALL_START, toolCallId: innerCallId, toolCallName: "render_a2ui" },
+        { type: EventType.TOOL_CALL_ARGS, toolCallId: innerCallId, delta: innerArgs } as BaseEvent,
+        { type: EventType.TOOL_CALL_END, toolCallId: innerCallId },
+        // Unrelated tool returns a DIFFERENT surface in its result envelope.
+        { type: EventType.TOOL_CALL_START, toolCallId: otherCallId, toolCallName: "some_other_tool" },
+        { type: EventType.TOOL_CALL_RESULT, toolCallId: otherCallId, content: otherEnvelope } as BaseEvent,
+        { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
+      ]);
+
+      const events = await collectEvents(middleware.run(createRunAgentInput(), mockAgent));
+      const surfaceIds = new Set<string>();
+      for (const snap of events.filter(isPaint)) {
+        const ops = (snap as any).content.a2ui_operations as any[];
+        for (const op of ops) {
+          if (op.createSurface) surfaceIds.add(op.createSurface.surfaceId);
+          if (op.updateComponents) surfaceIds.add(op.updateComponents.surfaceId);
+        }
+      }
+      expect(surfaceIds.has("s-streamed")).toBe(true);
+      // The unrelated surface in the later result must still paint.
+      expect(surfaceIds.has("s-other")).toBe(true);
+    });
+
     it("should produce distinct messageIds for different render_a2ui calls with the same surfaceId", async () => {
       const middleware = new A2UIMiddleware();
       const toolCallId1 = "tc-first";

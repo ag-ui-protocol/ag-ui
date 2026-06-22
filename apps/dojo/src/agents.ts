@@ -33,6 +33,19 @@ import { A2UIMiddleware } from "@ag-ui/a2ui-middleware";
 
 const envVars = getEnvVars();
 
+// Catalog the dojo's dynamic A2UI demos render against (HotelCard / ProductCard
+// / TeamMemberCard / Row).
+const A2UI_DOJO_CATALOG_ID = "https://a2ui.org/demos/dojo/dynamic_catalog.json";
+
+// Per-agent A2UI inject whitelist for the adk-middleware integration. These
+// subagent demos wire no a2ui tool themselves and rely on the adapter
+// auto-injecting `generate_a2ui` when it sees `injectA2UITool`. Injection is
+// applied per-agent (NOT integration-wide) so `a2ui_fixed_schema` — which uses
+// direct tools — never gets `generate_a2ui` injected. These agents are excluded
+// from the runtime-level a2ui config in route.ts to avoid double-applying the
+// middleware (the per-request clone copies construction-time `.use()`).
+export const ADK_A2UI_INJECT_AGENTS: string[] = ["a2ui_dynamic_schema"];
+
 export const agentsIntegrations = {
   "middleware-starter": async () => ({
     agentic_chat: new MiddlewareStarterAgent(),
@@ -58,8 +71,8 @@ export const agentsIntegrations = {
     agentic_chat: new ServerStarterAgent({ url: envVars.serverStarterUrl }),
   }),
 
-  "adk-middleware": async () =>
-    mapAgents(
+  "adk-middleware": async () => {
+    const agents = mapAgents(
       (path) => new ADKAgent({ url: `${envVars.adkMiddlewareUrl}/${path}` }),
       {
         agentic_chat: "chat",
@@ -69,8 +82,22 @@ export const agentsIntegrations = {
         backend_tool_rendering: "backend_tool_rendering",
         shared_state: "adk-shared-state-agent",
         predictive_state_updates: "adk-predictive-state-agent",
+        a2ui_fixed_schema: "adk-a2ui-fixed-schema",
+        a2ui_dynamic_schema: "adk-a2ui-dynamic-schema",
+        a2ui_recovery: "adk-a2ui-recovery",
       },
-    ),
+    );
+    // Whitelist-driven per-agent A2UI injection (see ADK_A2UI_INJECT_AGENTS).
+    for (const id of ADK_A2UI_INJECT_AGENTS) {
+      (agents as Record<string, AbstractAgent>)[id]?.use(
+        new A2UIMiddleware({
+          injectA2UITool: true,
+          defaultCatalogId: A2UI_DOJO_CATALOG_ID,
+        }),
+      );
+    }
+    return agents;
+  },
 
   "server-starter-all-features": async () =>
     mapAgents(

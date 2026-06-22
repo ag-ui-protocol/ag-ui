@@ -73,6 +73,7 @@ from ag_ui.core import (
     ReasoningEncryptedValueEvent,
 )
 from ag_ui.encoder import EventEncoder
+from ag_ui_a2ui_toolkit import split_a2ui_schema_context
 
 ProcessedEvents = Union[
     TextMessageStartEvent,
@@ -888,22 +889,10 @@ class LangGraphAgent:
         # The A2UI schema goes into state["ag-ui"]["a2ui_schema"] so agents
         # can read it directly from state (e.g., for the generate_a2ui tool),
         # instead of it being dumped into the system prompt with all other context.
-        # This string MUST stay byte-identical to the A2UI middleware's exported
-        # A2UI_SCHEMA_CONTEXT_DESCRIPTION (middlewares/a2ui-middleware/src/index.ts).
-        # The match below is exact-equality, so any drift silently routes the schema
-        # into the system prompt instead of state. Covered by
+        # The split (constant + matcher) lives in the shared a2ui toolkit so the
+        # LangGraph and Strands adapters agree on it. Covered by
         # test_a2ui_schema_context_routed_into_ag_ui_state.
-        A2UI_SCHEMA_CONTEXT_DESCRIPTION = "A2UI Component Schema \u2014 available components for generating UI surfaces. Use these component names and properties when creating A2UI operations."
-
-        all_context = input.context or []
-        a2ui_schema_value = None
-        regular_context = []
-        for entry in all_context:
-            desc = entry.get("description", "") if isinstance(entry, dict) else getattr(entry, "description", "")
-            if desc == A2UI_SCHEMA_CONTEXT_DESCRIPTION:
-                a2ui_schema_value = entry.get("value", "") if isinstance(entry, dict) else getattr(entry, "value", "")
-            else:
-                regular_context.append(entry)
+        a2ui_schema_value, regular_context = split_a2ui_schema_context(input.context)
 
         ag_ui_state: dict = {
             "tools": unique_tools,

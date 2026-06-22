@@ -99,6 +99,8 @@ from ag_ui.core import (
     UserMessage,
 )
 
+from ag_ui_a2ui_toolkit import split_a2ui_schema_context
+
 from .a2ui_tool import (
     A2UI_STREAM_KEY,
     is_auto_injected_a2ui_tool,
@@ -492,6 +494,24 @@ class StrandsAgent:
             ]:
                 registry.registry.pop(name, None)
                 getattr(registry, "dynamic_tools", {}).pop(name, None)
+            # Lift the A2UI component schema + remaining context under
+            # state["ag-ui"] so the generate_a2ui sub-agent prompt carries the
+            # "## Available Components" block + context — same routing the
+            # LangGraph adapter does in its state merge. Uses the shared toolkit
+            # split so both adapters agree on the schema-context description.
+            a2ui_schema_value, a2ui_regular_ctx = split_a2ui_schema_context(
+                input_data.context
+            )
+            a2ui_state = (
+                dict(input_data.state)
+                if isinstance(input_data.state, dict)
+                else {}
+            )
+            a2ui_ag_ui: dict = {"context": a2ui_regular_ctx}
+            if a2ui_schema_value is not None:
+                a2ui_ag_ui["a2ui_schema"] = a2ui_schema_value
+            a2ui_state["ag-ui"] = a2ui_ag_ui
+
             a2ui_plan = plan_a2ui_injection(
                 model=getattr(strands_agent, "model", None),
                 input=input_data,
@@ -499,6 +519,7 @@ class StrandsAgent:
                 config=self.config.a2ui,
                 log=logger,
                 strands_agent=strands_agent,
+                agui_state=a2ui_state,
             )
             if a2ui_plan:
                 # Register FIRST: if this raises, the except below degrades to
@@ -735,7 +756,24 @@ class StrandsAgent:
                     if msg.role == "tool" and hasattr(msg, "tool_call_id"):
                         tool_name = _tool_call_id_to_name.get(msg.tool_call_id)
                         if tool_name and tool_name in frontend_tool_names:
-                            user_message = f"{tool_name} executed successfully with no return value."
+                            # Forward the ACTUAL frontend tool result so the model
+                            # can act on the human's decision (e.g. an approval
+                            # resolving to {"approved": false}). Previously this
+                            # discarded ``msg.content`` and hardcoded a success
+                            # string, silently breaking HITL — the model was told
+                            # the tool "executed successfully with no return value"
+                            # regardless of what the human actually returned.
+                            # Only fall back to that synthetic acknowledgement when
+                            # the result is genuinely empty.
+                            result_text = (
+                                msg.content
+                                if isinstance(msg.content, str)
+                                else flatten_content_to_text(msg.content)
+                            )
+                            if result_text and result_text.strip():
+                                user_message = f"{tool_name} returned: {result_text}"
+                            else:
+                                user_message = f"{tool_name} executed successfully with no return value."
                         else:
                             # Could not resolve the executed tool's name from
                             # input messages or session history. Leave the

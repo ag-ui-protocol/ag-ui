@@ -167,7 +167,10 @@ describe("planA2UIInjection — auto-inject decision", () => {
     expect(plan).toBeNull();
   });
 
-  it("resolves the catalog from the injected A2UI schema context entry", () => {
+  it("ignores the catalog in the schema context entry (no validation auto-resolve)", () => {
+    // Mirrors the LangGraph adapter: a catalog carried in RunAgentInput.context
+    // is NOT auto-resolved into the validation catalog. Only an explicit
+    // config.catalog enables catalog-aware recovery.
     const input = minimalRunInput({
       forwardedProps: { injectA2UITool: true },
       context: [
@@ -181,6 +184,17 @@ describe("planA2UIInjection — auto-inject decision", () => {
       model: stubModel,
       input,
       existingToolNames: [],
+    });
+    expect(plan).not.toBeNull();
+    expect(plan!.catalog).toBeUndefined();
+  });
+
+  it("uses an explicit config.catalog unchanged", () => {
+    const plan = planA2UIInjection({
+      model: stubModel,
+      input: minimalRunInput({ forwardedProps: { injectA2UITool: true } }),
+      existingToolNames: [],
+      config: { catalog: CATALOG },
     });
     expect(plan).not.toBeNull();
     expect(plan!.catalog).toEqual(CATALOG);
@@ -487,53 +501,7 @@ describe("planA2UIInjection — nullish flag + catalog degradation", () => {
     expect(plan).toBeNull();
   });
 
-  const SCHEMA_DESC =
-    "A2UI Component Schema — available components for generating UI surfaces. Use these component names and properties when creating A2UI operations.";
-
-  function planWithCatalogValue(value: string) {
-    return planA2UIInjection({
-      model: {},
-      input: minimalRunInput({
-        forwardedProps: { injectA2UITool: true },
-        context: [{ description: SCHEMA_DESC, value }],
-      }),
-      existingToolNames: [],
-    });
-  }
-
-  it("degrades (with a breadcrumb) on unparseable catalog JSON", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      const plan = planWithCatalogValue("{not json");
-      expect(plan).not.toBeNull();
-      expect(plan!.catalog).toBeUndefined();
-      expect(warn).toHaveBeenCalled();
-    } finally {
-      warn.mockRestore();
-    }
-  });
-
-  it("degrades on parseable-but-non-object catalog JSON", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      const plan = planWithCatalogValue("[]");
-      expect(plan).not.toBeNull();
-      expect(plan!.catalog).toBeUndefined();
-      expect(warn).toHaveBeenCalled();
-    } finally {
-      warn.mockRestore();
-    }
-  });
-
-  it("degrades on an empty catalog value", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      const plan = planWithCatalogValue("");
-      expect(plan).not.toBeNull();
-      expect(plan!.catalog).toBeUndefined();
-      expect(warn).toHaveBeenCalled();
-    } finally {
-      warn.mockRestore();
-    }
-  });
+  // Catalog-id resolution + config-overrides-runtime precedence is unit-tested
+  // at the toolkit level (resolveA2UICatalog). The streamed-args catalogId stamp
+  // is covered by the aws-strands-typescript A2UI e2e specs.
 });

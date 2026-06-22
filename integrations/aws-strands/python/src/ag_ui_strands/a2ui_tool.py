@@ -40,15 +40,36 @@ from strands.types.tools import AgentTool, ToolSpec, ToolUse
 from ag_ui.core import RunAgentInput
 from ag_ui_a2ui_toolkit import (
     A2UI_OPERATIONS_KEY,
+    A2UIGuidelines,
+    A2UIToolParams,
+    BASIC_CATALOG_ID,
     GENERATE_A2UI_ARG_DESCRIPTIONS,
     GENERATE_A2UI_TOOL_NAME,
     RENDER_A2UI_TOOL_DEF,
     build_a2ui_envelope,
     prepare_a2ui_request,
+    resolve_a2ui_catalog,
     resolve_a2ui_tool_params,
     run_a2ui_generation_with_recovery,
     wrap_error_envelope,
 )
+
+# Re-export the toolkit constants/types for callers that import them from this
+# package — keeps the public surface aligned with the LangGraph adapter so
+# consumers can type their params bag without depending on the toolkit directly.
+# ``plan_a2ui_injection`` / ``is_auto_injected_a2ui_tool`` / ``A2UI_STREAM_KEY``
+# are Strands-specific additions (the auto-injection machinery LG handles in its
+# graph state merge instead).
+__all__ = [
+    "get_a2ui_tools",
+    "plan_a2ui_injection",
+    "is_auto_injected_a2ui_tool",
+    "A2UI_STREAM_KEY",
+    "A2UI_OPERATIONS_KEY",
+    "A2UIToolParams",
+    "A2UIGuidelines",
+    "BASIC_CATALOG_ID",
+]
 
 logger = logging.getLogger("ag_ui_strands")
 
@@ -67,16 +88,6 @@ A2UI_STREAM_KEY = "__a2uiRenderStream"
 #: so the per-run hook can tell its OWN prior-turn injection (safe to
 #: refresh) apart from a dev-wired tool (which always wins, never touched).
 _A2UI_AUTOINJECT_ATTR = "_a2ui_auto_injected"
-
-#: Context-entry description the ``@ag-ui/a2ui-middleware`` stamps onto the
-#: A2UI catalog it injects into ``RunAgentInput.context``. Kept locally so this
-#: backend adapter does not depend on the runtime paint-gate package. MUST stay
-#: in sync with ``A2UI_SCHEMA_CONTEXT_DESCRIPTION`` in ``@ag-ui/a2ui-middleware``.
-A2UI_SCHEMA_CONTEXT_DESCRIPTION = (
-    "A2UI Component Schema — available components for generating UI surfaces. "
-    "Use these component names and properties when creating A2UI operations."
-)
-
 
 def _log_abandoned_recovery_result(future: "asyncio.Future") -> None:
     """Consume the recovery future's outcome after generator abandonment so a
@@ -231,11 +242,20 @@ async def _stream_render_subagent(
     prompt: str,
     messages: list,
     push: Callable[[dict], None],
+    catalog_id: Optional[str] = None,
 ) -> Optional[dict]:
     """Run the structured-output sub-agent once: bind a ``render_a2ui`` tool,
     stream the model, push per-event render progress (start / args deltas /
     end) via ``push``, and return the captured ``render_a2ui`` args — or
-    ``None`` if the model produced no call."""
+    ``None`` if the model produced no call.
+
+    ``catalog_id`` (the host-resolved ``default_catalog_id``) is stamped into the
+    streamed args. The model never emits ``catalogId`` — the render schema omits
+    it and the host owns the catalog — so without this the progressive paint in
+    ``@ag-ui/a2ui-middleware`` (which reads ``catalogId`` off the streamed args)
+    falls back to the basic catalog and the renderer throws "Catalog not found".
+    The id matches what ``build_a2ui_envelope`` stamps on the final surface, so
+    the progressive and committed surfaces agree."""
     captured: dict | None = None
 
     def _capture(tool_use: ToolUse, **_kwargs: Any):
@@ -267,6 +287,9 @@ async def _stream_render_subagent(
 
     live_call_id: Optional[str] = None
     emitted_len = 0
+    # Whether the host ``catalog_id`` has been spliced into the streamed args
+    # for the current call yet (reset per call below).
+    catalog_prefixed = False
     # Per-invocation fallback id: providers that never stamp toolUseId must
     # not reuse one literal id across recovery attempts (two full lifecycles
     # under one toolCallId would mis-merge in id-keyed consumers).
@@ -300,6 +323,7 @@ async def _stream_render_subagent(
                     push({"kind": "end", "tool_call_id": live_call_id})
                 live_call_id = call_id
                 emitted_len = 0
+                catalog_prefixed = False
                 push(
                     {
                         "kind": "start",
@@ -309,11 +333,25 @@ async def _stream_render_subagent(
                 )
             raw = current.get("input")
             if isinstance(raw, str) and len(raw) > emitted_len:
+                delta = raw[emitted_len:]
+                # Stamp the host catalog id into the FIRST chunk by splicing it
+                # right after the opening brace, so the accumulated args become
+                # ``{"catalogId": "<id>", ...}`` — valid JSON the middleware's
+                # progressive paint reads the id from. The model never emits it.
+                if catalog_id and not catalog_prefixed:
+                    brace = delta.find("{")
+                    if brace != -1:
+                        delta = (
+                            delta[: brace + 1]
+                            + f'"catalogId": {json.dumps(catalog_id)}, '
+                            + delta[brace + 1 :]
+                        )
+                        catalog_prefixed = True
                 push(
                     {
                         "kind": "args",
                         "tool_call_id": live_call_id,
-                        "delta": raw[emitted_len:],
+                        "delta": delta,
                     }
                 )
                 emitted_len = len(raw)
@@ -346,7 +384,9 @@ async def _stream_render_subagent(
             {
                 "kind": "args",
                 "tool_call_id": live_call_id,
-                "delta": json.dumps(captured),
+                "delta": json.dumps(
+                    {**captured, "catalogId": catalog_id} if catalog_id else captured
+                ),
             }
         )
         push({"kind": "end", "tool_call_id": live_call_id})
@@ -362,7 +402,9 @@ async def _stream_render_subagent(
                 {
                     "kind": "args",
                     "tool_call_id": live_call_id,
-                    "delta": json.dumps(captured),
+                    "delta": json.dumps(
+                        {**captured, "catalogId": catalog_id} if catalog_id else captured
+                    ),
                 }
             )
         push({"kind": "end", "tool_call_id": live_call_id})
@@ -378,7 +420,7 @@ class _GenerateA2UITool(AgentTool):
     """Strands tool that delegates A2UI surface generation to a sub-agent
     running the toolkit recovery loop, streaming render progress as it goes."""
 
-    def __init__(self, params: dict, glue: Optional[dict] = None) -> None:
+    def __init__(self, params: A2UIToolParams, glue: Optional[dict] = None) -> None:
         super().__init__()
         cfg = resolve_a2ui_tool_params(params)
         self._cfg = cfg
@@ -496,7 +538,11 @@ class _GenerateA2UITool(AgentTool):
                 try:
                     return asyncio.run(
                         _stream_render_subagent(
-                            cfg["model"], prompt, strands_messages, _push
+                            cfg["model"],
+                            prompt,
+                            strands_messages,
+                            _push,
+                            catalog_id=cfg["default_catalog_id"],
                         )
                     )
                 except BaseException as err:  # noqa: BLE001 — classified below
@@ -617,7 +663,7 @@ class _GenerateA2UITool(AgentTool):
         )
 
 
-def get_a2ui_tools(params: dict, glue: Optional[dict] = None) -> AgentTool:
+def get_a2ui_tools(params: A2UIToolParams, glue: Optional[dict] = None) -> AgentTool:
     """Build a Strands tool that delegates A2UI surface generation to a
     sub-agent running the toolkit recovery loop. Add the returned tool to a
     Strands ``Agent``'s ``tools`` list yourself, or let ``plan_a2ui_injection``
@@ -653,52 +699,6 @@ def is_auto_injected_a2ui_tool(tool: Any) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _resolve_catalog_from_context(input: RunAgentInput) -> Optional[dict]:
-    for entry in input.context or []:
-        # Entries are pydantic Context models on the standard path, but this
-        # is exported API — accept dict-shaped entries too (mirrors the
-        # adapter's own context normalization in agent.py).
-        if isinstance(entry, dict):
-            description = entry.get("description")
-            value = entry.get("value")
-        else:
-            description = getattr(entry, "description", None)
-            value = getattr(entry, "value", None)
-        if description != A2UI_SCHEMA_CONTEXT_DESCRIPTION:
-            continue
-        if not value:
-            # Catalog-aware (semantic) recovery silently degrades to
-            # structural-only without these breadcrumbs.
-            logger.warning(
-                "A2UI schema context entry has an empty value; "
-                "catalog-aware recovery disabled."
-            )
-            continue
-        if isinstance(value, dict):
-            # A dict-shaped entry may carry an already-parsed catalog
-            # (Context.value is str on the validated protocol path).
-            return value
-        try:
-            parsed = json.loads(value)
-        except (TypeError, ValueError) as err:
-            logger.warning(
-                "A2UI schema context entry present but unparseable; "
-                "catalog-aware recovery disabled: %s",
-                err,
-            )
-            continue
-        if isinstance(parsed, dict):
-            return parsed
-        # Parseable but wrong shape (array/scalar) would blow up deep in
-        # catalog-aware validation instead of degrading gracefully here.
-        logger.warning(
-            "A2UI schema context entry is valid JSON but not an object; "
-            "catalog-aware recovery disabled (got %s)",
-            type(parsed).__name__,
-        )
-    return None
-
-
 def plan_a2ui_injection(
     *,
     model: Any,
@@ -707,6 +707,7 @@ def plan_a2ui_injection(
     config: Optional[dict] = None,
     log: Optional[logging.Logger] = None,
     strands_agent: Any = None,
+    agui_state: Optional[dict] = None,
 ) -> Optional[dict]:
     """Decide whether to auto-inject ``generate_a2ui`` for this run, mirroring
     the LangGraph contract ("no injectA2UITool, no injection"):
@@ -723,7 +724,17 @@ def plan_a2ui_injection(
        recognized and auto-injection proceeds alongside it.
     3. No inferable model (Graph/Swarm orchestrators) -> warn + skip.
     4. Otherwise build the tool (threading the run's AG-UI messages + state +
-       guidelines), resolve the catalog, and drop the injected render tool.
+       guidelines), using only an explicit ``config["catalog"]`` (mirrors the
+       LangGraph adapter — no auto-resolution from context), and drop the
+       injected render tool.
+
+    ``agui_state`` is the run state the caller (``agent.py``) assembles with the
+    A2UI component schema + remaining context lifted under ``state["ag-ui"]``
+    (via the toolkit's ``split_a2ui_schema_context``), mirroring how the
+    LangGraph adapter routes context into graph state. When provided it is
+    threaded to the sub-agent so ``build_context_prompt`` emits the
+    ``## Available Components`` block + context; absent it, the raw wire
+    ``input.state`` is used and the sub-agent prompt carries neither.
 
     Returns ``{"tool", "tool_name", "drop_tool_names", "catalog"}`` or ``None``.
     """
@@ -758,23 +769,40 @@ def plan_a2ui_injection(
         return None
 
     render_tool_name = flag if isinstance(flag, str) else RENDER_A2UI_TOOL_NAME
-    # Nullish (not falsy) fallback, mirroring the TS adapter's `??`.
+
+    # Resolve the frontend-registered catalog from run state (the ``ag-ui``
+    # ``a2ui_schema`` entry or an ``ag-ui.context`` "A2UI catalog" entry) so
+    # surfaces bind to the host's catalog without the host hardcoding it —
+    # mirrors the LangGraph adapter's auto-resolution. Backend config WINS when
+    # set, so an explicit ``default_catalog_id`` / ``guidelines`` override still
+    # applies.
+    resolved = resolve_a2ui_catalog(agui_state) if agui_state is not None else None
+    runtime_schema, runtime_catalog_id = resolved if resolved else (None, None)
+
+    # Explicit ``config["catalog"]`` still feeds the semantic-validation catalog
+    # (recovery stays structural-only when absent — catalog is never
+    # auto-resolved from context for VALIDATION, only the id/guide below).
     catalog = config.get("catalog")
-    if catalog is None:
-        catalog = _resolve_catalog_from_context(input)
+    default_catalog_id = config.get("default_catalog_id") or runtime_catalog_id
+    guidelines = config.get("guidelines")
+    if guidelines is None and runtime_schema:
+        guidelines = {"composition_guide": runtime_schema}
 
     tool = get_a2ui_tools(
         {
             "model": model,
             "tool_name": tool_name,
+            "tool_description": config.get("tool_description"),
             "catalog": catalog,
-            "default_catalog_id": config.get("default_catalog_id"),
-            "guidelines": config.get("guidelines"),
+            "default_catalog_id": default_catalog_id,
+            "default_surface_id": config.get("default_surface_id"),
+            "guidelines": guidelines,
             "recovery": config.get("recovery"),
+            "on_a2ui_attempt": config.get("on_a2ui_attempt"),
         },
         glue={
             "agui_messages": list(input.messages or []),
-            "state": input.state,
+            "state": agui_state if agui_state is not None else input.state,
             "strands_agent": strands_agent,
         },
     )

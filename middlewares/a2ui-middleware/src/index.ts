@@ -444,6 +444,19 @@ export class A2UIMiddleware extends Middleware {
       const lastTokenEmitByKey = new Map<string, number>();
       const estimateTokens = (args: string) => Math.round(args.length / 4);
 
+      // Surfaces already painted via the streaming/progressive path this run,
+      // tracked by surfaceId. The final-envelope (TOOL_CALL_RESULT carrying
+      // ``a2ui_operations``) commonly re-wraps the SAME surface that an inner
+      // ``render_a2ui`` already streamed. The call-id linkage dedup below only
+      // catches that when the streamed entry's outerCallId equals the result's
+      // toolCallId — which breaks with ``injectA2UITool``, where ``generate_a2ui``
+      // is itself an A2UI tool name so it never becomes the tracked outer call
+      // (the inner entry's outerCallId stays null). This surfaceId guard kills the
+      // redundant re-paint for ANY adapter: any final-envelope operation whose
+      // target surface is already in this set is dropped. Surfaces NOT in this
+      // set (unrelated tools in the same run) still paint normally.
+      const streamedSurfaceIds = new Set<string>();
+
       // Outer tool call context. Any non-A2UI tool call (e.g. ``generate_a2ui``
       // wrapping a subagent that emits ``render_a2ui`` calls) is treated as
       // the "outer" call. The outer id becomes the activity messageId
@@ -671,6 +684,8 @@ export class A2UIMiddleware extends Middleware {
                     if (streaming.schema) {
                       ops.push({ version: "v0.9", updateComponents: { surfaceId, components: streaming.schema.components } });
                       streaming.componentsEmitted = true;
+                      // Record the surfaceId so the final envelope doesn't re-paint it.
+                      streamedSurfaceIds.add(streaming.schema.surfaceId);
                     }
 
                     if (dataItems && dataItems.length > 0) {
@@ -773,15 +788,37 @@ export class A2UIMiddleware extends Middleware {
               if (!outerHasStreamedSurface) {
                 const parsed = tryParseA2UIOperations(resultEvent.content);
                 if (parsed) {
-                  // Emit all operations at once. Unlike the streaming path
-                  // (render_a2ui), explicit a2ui_operations arrive complete —
-                  // splitting schema and data would cause the renderer to
-                  // crash on unresolved path bindings before data exists.
-                  for (const activityEvent of this.createA2UIActivityEvents(
-                    parsed.operations,
-                    currentOuterCallId ?? resultEvent.toolCallId,
-                  )) {
-                    subscriber.next(activityEvent);
+                  // surfaceId-based dedup (framework-agnostic): drop any
+                  // operation whose target surface was already painted via the
+                  // streaming path this run. This kills the redundant final
+                  // re-paint even when the call-id linkage above misses (e.g.
+                  // injectA2UITool, where the inner render entry has a null
+                  // outerCallId). Operations for surfaces NOT yet streamed
+                  // (unrelated tools) pass through untouched.
+                  const operationsToEmit =
+                    streamedSurfaceIds.size > 0
+                      ? parsed.operations.filter((op) => {
+                          const opSurfaceId = getOperationSurfaceId(op);
+                          // Keep ops with no resolvable surface (can't be a dup)
+                          // and ops targeting surfaces not yet streamed.
+                          return opSurfaceId == null || !streamedSurfaceIds.has(opSurfaceId);
+                        })
+                      : parsed.operations;
+
+                  // If filtering removed everything, the final envelope was
+                  // entirely a re-paint of already-streamed surfaces — emit
+                  // nothing. Otherwise emit the surviving operations.
+                  if (operationsToEmit.length > 0) {
+                    // Emit all operations at once. Unlike the streaming path
+                    // (render_a2ui), explicit a2ui_operations arrive complete —
+                    // splitting schema and data would cause the renderer to
+                    // crash on unresolved path bindings before data exists.
+                    for (const activityEvent of this.createA2UIActivityEvents(
+                      operationsToEmit,
+                      currentOuterCallId ?? resultEvent.toolCallId,
+                    )) {
+                      subscriber.next(activityEvent);
+                    }
                   }
                 } else {
                   // Hard-failure path (OSS-162): an exhausted recovery loop
