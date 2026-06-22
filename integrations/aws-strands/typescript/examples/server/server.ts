@@ -14,6 +14,8 @@ import {
   addCapabilities,
 } from "@ag-ui/aws-strands/server";
 import { createModel } from "./model-factory";
+import { createA2UIDynamicSchemaAgent } from "./api/a2ui-dynamic-schema";
+import { createA2UIRecoveryAgent } from "./api/a2ui-recovery";
 
 function mountAgent(
   app: express.Express,
@@ -339,6 +341,14 @@ Do not respond with plain text — always use the tool.`,
       description: "Haiku generator with frontend-rendered tool",
     }),
   );
+
+  /* ---------------- a2ui (auto-injected tool) ---------------- */
+  // Both demos are PLAIN Strands agents with NO a2ui tool wiring (each in its
+  // own file under ./agents). The CopilotKit runtime sends `injectA2UITool`;
+  // the @ag-ui/aws-strands adapter infers the model and auto-injects
+  // `generate_a2ui` (which runs the toolkit's validate→retry recovery loop).
+  mountAgent(app, "/a2ui-dynamic-schema", await createA2UIDynamicSchemaAgent());
+  mountAgent(app, "/a2ui-recovery", await createA2UIRecoveryAgent());
 
   const port = Number(process.env.PORT ?? 8022);
   const host = process.env.HOST ?? "0.0.0.0";

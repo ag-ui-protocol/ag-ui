@@ -49,6 +49,9 @@ export const menuIntegrations = [
       "shared_state",
       "tool_based_generative_ui",
       "subgraphs",
+      "a2ui_dynamic_schema",
+      "a2ui_fixed_schema",
+      "a2ui_advanced",
     ],
   },
   {
@@ -87,6 +90,10 @@ export const menuIntegrations = [
       "shared_state",
       "tool_based_generative_ui",
       "subgraphs",
+      "a2ui_dynamic_schema",
+      "a2ui_fixed_schema",
+      "a2ui_advanced",
+      "a2ui_recovery",
     ],
   },
   // {
@@ -160,6 +167,9 @@ export const menuIntegrations = [
       "predictive_state_updates",
       "shared_state",
       "tool_based_generative_ui",
+      "a2ui_fixed_schema",
+      "a2ui_dynamic_schema",
+      "a2ui_recovery",
     ],
   },
   {
@@ -290,6 +300,8 @@ export const menuIntegrations = [
       "agentic_generative_ui",
       "shared_state",
       "human_in_the_loop",
+      "a2ui_dynamic_schema",
+      "a2ui_recovery",
     ],
   },
   {
@@ -305,6 +317,8 @@ export const menuIntegrations = [
       "shared_state",
       "human_in_the_loop",
       "tool_based_generative_ui",
+      "a2ui_dynamic_schema",
+      "a2ui_recovery",
     ],
   },
   {

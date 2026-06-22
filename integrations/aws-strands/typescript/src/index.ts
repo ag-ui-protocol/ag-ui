@@ -17,6 +17,21 @@ export type { StrandsToolRegistry } from "./client-proxy-tool";
 
 export { convertAguiContentToStrands, flattenContentToText } from "./utils";
 
+export {
+  getA2UITools,
+  planA2UIInjection,
+  isAutoInjectedA2UITool,
+  A2UI_STREAM_KEY,
+} from "./a2ui-tool";
+export type {
+  A2UIToolParams,
+  A2UIToolGlue,
+  A2UIInjectConfig,
+  A2UIInjectionPlan,
+  A2UIRenderStreamEvent,
+  PlanA2UIInjectionInput,
+} from "./a2ui-tool";
+
 // Server-side Express transport helpers (`createStrandsApp`,
 // `addStrandsExpressEndpoint`, `addPing`, `addCapabilities`,
 // `capabilitiesFor`, `DEFAULT_CAPABILITIES`, and associated types) live at

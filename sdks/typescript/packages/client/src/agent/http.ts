@@ -53,7 +53,12 @@ export class HttpAgent extends AbstractAgent {
     super(config);
     this.url = config.url;
     this.headers = structuredClone_(config.headers ?? {});
-    this.fetch = config.fetch ?? fetch;
+    // Bind the default fetch to the global object. Storing the bare `fetch`
+    // and later invoking it as `this.fetch(...)` sets the receiver to the agent
+    // instance; a browser's native fetch is a checked-receiver method and throws
+    // "Illegal invocation" when not called with `window` as `this`. (Node's fetch
+    // tolerates any receiver, so this only surfaces in the browser.)
+    this.fetch = config.fetch ?? ((url, requestInit) => fetch(url, requestInit));
   }
 
   run(input: RunAgentInput): Observable<BaseEvent> {

@@ -1,7 +1,12 @@
 {
   "name": "@ag-ui/aws-strands",
   "author": "AG-UI Contributors",
-  "version": "0.1.0",
+  "version": "0.2.1",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ag-ui-protocol/ag-ui.git"
+  },
   "description": "AWS Strands Agents integration for the AG-UI protocol",
   "publishConfig": {
     "access": "public"
@@ -26,6 +31,7 @@
     "unlink:global": "pnpm unlink --global"
   },
   "peerDependencies": {
+    "@ag-ui/a2ui-toolkit": ">=0.0.3",
     "@ag-ui/client": ">=0.0.37",
     "@ag-ui/core": ">=0.0.37",
     "@ag-ui/encoder": ">=0.0.37",
@@ -46,6 +52,7 @@
     }
   },
   "devDependencies": {
+    "@ag-ui/a2ui-toolkit": "workspace:*",
     "@ag-ui/client": "workspace:*",
     "@ag-ui/core": "workspace:*",
     "@ag-ui/encoder": "workspace:*",
