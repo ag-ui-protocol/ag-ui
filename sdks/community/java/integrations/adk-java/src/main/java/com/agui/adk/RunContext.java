@@ -5,8 +5,6 @@ import com.agui.core.message.BaseMessage;
 import com.agui.core.message.Role;
 import com.google.genai.types.Content;
 import com.google.genai.types.Part;
-import org.jetbrains.annotations.Nullable;
-
 import java.util.List;
 import java.util.UUID;
 
@@ -15,8 +13,6 @@ record RunContext(String appName, String userId, String sessionId, String runId,
     RunContext(RunAgentParameters parameters, String appName, String userId) {
         this(appName, userId, parameters.getThreadId(), extractRunId(parameters), extractContentFromLatestMessage(parameters));
     }
-
-    @Nullable
     private static Content extractContentFromLatestMessage(RunAgentParameters parameters) {
         List<BaseMessage> messages = parameters.getMessages();
         if (messages == null || messages.isEmpty()) {

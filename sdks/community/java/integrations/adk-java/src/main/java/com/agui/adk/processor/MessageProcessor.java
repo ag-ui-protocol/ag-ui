@@ -7,7 +7,7 @@ import com.google.genai.types.FunctionResponse;
 import com.google.genai.types.Part;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
-import org.jetbrains.annotations.NotNull;
+import javax.validation.constraints.NotNull;
 
 import java.util.ArrayList;
 import java.util.List;

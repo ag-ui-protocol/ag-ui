@@ -7,7 +7,7 @@ import com.agui.core.event.ToolCallResultEvent;
 import com.google.adk.events.Event;
 import com.google.genai.types.FunctionResponse;
 import io.reactivex.rxjava3.core.Flowable;
-import org.jetbrains.annotations.NotNull;
+import javax.validation.constraints.NotNull;
 
 import java.util.List;
 import java.util.UUID;

@@ -1,5 +1,5 @@
 module adk.java {
-    requires annotations;
+    requires java.validation;
     requires com.google.genai;
     requires com.google.gson;
     requires core;

@@ -8,7 +8,7 @@ import com.agui.core.event.TextMessageStartEvent;
 import com.google.adk.events.Event;
 import com.google.genai.types.Content;
 import io.reactivex.rxjava3.core.Flowable;
-import org.jetbrains.annotations.NotNull;
+import javax.validation.constraints.NotNull;
 
 import java.util.Optional;
 import java.util.UUID;

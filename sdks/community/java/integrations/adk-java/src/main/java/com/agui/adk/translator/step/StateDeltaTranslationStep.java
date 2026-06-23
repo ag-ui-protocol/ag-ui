@@ -5,7 +5,7 @@ import com.agui.core.event.BaseEvent;
 import com.agui.core.event.StateDeltaEvent;
 import com.google.adk.events.Event;
 import io.reactivex.rxjava3.core.Flowable;
-import org.jetbrains.annotations.NotNull;
+import javax.validation.constraints.NotNull;
 
 import java.util.List;
 import java.util.Map;
