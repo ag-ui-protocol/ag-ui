@@ -287,6 +287,79 @@ describe("prepareStream payload partitioning", () => {
     expect(payload.context).toBeUndefined();
   });
 
+  // Regression: langgraph-api 0.6.0+ rejects requests with HTTP 400
+  // "Cannot specify both configurable and context" when BOTH fields are
+  // present and non-empty in the run-create payload. See langgraph_api
+  // models/run.py (the run-create validator). The partition logic in
+  // prepareStream guarantees these two fields are mutually exclusive at
+  // the payload level. This test asserts that invariant across the four
+  // scenarios that mirror real-world Runtime usage.
+  it("test 6b: payload never carries both populated configurable AND populated context (LG 0.6.0 invariant)", async () => {
+    const scenarios: Array<{
+      name: string;
+      configurable: Record<string, unknown>;
+      contextSchema: string[];
+    }> = [
+      {
+        name: "headers-only (no context_schema)",
+        configurable: { copilotkit_forwarded_headers: { "x-trace": "1" } },
+        contextSchema: [],
+      },
+      {
+        name: "headers + ctx key (header dropped, ctx wins)",
+        configurable: {
+          copilotkit_forwarded_headers: { "x-trace": "1" },
+          my_ctx: "v",
+        },
+        contextSchema: ["my_ctx"],
+      },
+      {
+        name: "only ctx keys (all moved to context)",
+        configurable: { my_ctx: "v" },
+        contextSchema: ["my_ctx"],
+      },
+      {
+        name: "only non-ctx keys (all stay in configurable)",
+        configurable: { thread_scoped: "v" },
+        contextSchema: [],
+      },
+    ];
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    for (const scenario of scenarios) {
+      const { agent, capturedPayload } = buildMockedAgent(
+        { assistantConfig: { configurable: scenario.configurable } },
+        {
+          config: Object.keys(scenario.configurable),
+          context: scenario.contextSchema,
+        },
+      );
+
+      await runPrepareStream(agent);
+
+      const payload = capturedPayload.value!;
+      const cfgKeys =
+        (payload.config as any)?.configurable &&
+        Object.keys((payload.config as any).configurable).length > 0
+          ? Object.keys((payload.config as any).configurable)
+          : [];
+      const ctxKeys =
+        payload.context && Object.keys(payload.context as object).length > 0
+          ? Object.keys(payload.context as object)
+          : [];
+
+      // LG 0.6.0 invariant: not both fields populated simultaneously.
+      const bothPopulated = cfgKeys.length > 0 && ctxKeys.length > 0;
+      expect(
+        bothPopulated,
+        `scenario "${scenario.name}" populated both configurable (${cfgKeys.join(",")}) AND context (${ctxKeys.join(",")}) — would trigger LG 0.6.0 HTTP 400`,
+      ).toBe(false);
+    }
+
+    warnSpy.mockRestore();
+  });
+
   it("test 7: mergeConfigs preserves context_schema keys in allowlist", async () => {
     const { agent } = buildMockedAgent(
       {},
