@@ -37,6 +37,12 @@
             <artifactId>adk-java</artifactId>
             <version>1.4.0</version>
         </dependency>
+        <!-- adk-java declares google-adk as provided; the example app must declare it explicitly. -->
+        <dependency>
+            <groupId>com.google.adk</groupId>
+            <artifactId>google-adk</artifactId>
+            <version>1.4.0</version>
+        </dependency>
         <dependency>
             <groupId>com.ag-ui</groupId>
             <artifactId>spring</artifactId>

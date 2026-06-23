@@ -10,8 +10,22 @@ This section provides a production-grade integration pattern for Spring Boot app
 
 Add the necessary dependencies to your `pom.xml`.
 
+`adk-java` declares `com.google.adk:google-adk` as a **`provided`** dependency — consumers must add it explicitly. This lets you pick the google-adk version that matches your project (or whatever another dependency already pulls in) without having to wait for a re-release of `adk-java` every time Google publishes a new version.
+
 **`pom.xml`**
 ```xml
+<dependency>
+    <groupId>com.ag-ui</groupId>
+    <artifactId>adk-java</artifactId>
+    <version>1.4.0</version>
+</dependency>
+<!-- REQUIRED: adk-java declares google-adk as provided, so you supply it here. -->
+<dependency>
+    <groupId>com.google.adk</groupId>
+    <artifactId>google-adk</artifactId>
+    <version>1.4.0</version>  <!-- any version compatible with your code -->
+</dependency>
+
 <dependency>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-starter-webflux</artifactId>
@@ -25,6 +39,8 @@ Add the necessary dependencies to your `pom.xml`.
     <artifactId>reactor-adapter</artifactId>
 </dependency>
 ```
+
+`adk-java` is built and tested against `google-adk 1.4.0`. Newer minor/patch versions are expected to be source-compatible; if Google ships a breaking change, you can pin `google-adk` to a known-good version while waiting for a new `adk-java` release.
 
 ### 1.2. Configure Beans in Spring
 
