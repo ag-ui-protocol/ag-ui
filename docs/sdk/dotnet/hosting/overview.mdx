@@ -1,0 +1,175 @@
+---
+title: "Hosting AG-UI from ASP.NET Core"
+description: "Expose a Microsoft.Extensions.AI IChatClient as an AG-UI endpoint"
+---
+
+<Warning>
+  This page follows the current .NET SDK draft in PR #1963. Recheck API names, sample paths, and package versions before publishing final release docs.
+</Warning>
+
+You have an ASP.NET Core app that can resolve an `IChatClient`. The AG-UI hosting package turns that client into an AG-UI endpoint: it accepts `RunAgentInput`, converts the request into MEAI messages and options, calls the chat client, and streams AG-UI events back over Server-Sent Events.
+
+## Install the hosting packages
+
+The current PR splits protocol types from ASP.NET Core hosting. Once preview packages are published, a hosting app references:
+
+```bash
+dotnet add package AGUI.Abstractions
+dotnet add package AGUI.Hosting.AspNetCore
+```
+
+Until NuGet packages are published, the samples in Javier's PR use project references to `sdks/dotnet/src/AGUI.Abstractions` and `sdks/dotnet/src/AGUI.Hosting.AspNetCore`.
+
+## Register AG-UI and your chat client
+
+Call `AddAGUI()` during service registration. It configures ASP.NET Core JSON options with the AG-UI source-generated serializer context and registers interrupt request/response content types for MEAI polymorphic `AIContent` deserialization.
+
+```csharp
+using Azure.AI.OpenAI;
+using Azure.Identity;
+using Microsoft.Extensions.AI;
+
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddAGUI();
+
+builder.Services.AddChatClient(new AzureOpenAIClient(
+        new Uri(builder.Configuration["AZURE_OPENAI_ENDPOINT"]!),
+        new DefaultAzureCredential())
+    .GetChatClient(builder.Configuration["AZURE_OPENAI_DEPLOYMENT_NAME"]!)
+    .AsIChatClient())
+    .UseFunctionInvocation(configure: fic => fic.TerminateOnUnknownCalls = true);
+
+var app = builder.Build();
+
+app.MapAGUI("/agui");
+
+app.Run();
+```
+
+`UseFunctionInvocation(...)` is optional, but most agent endpoints use it so MEAI can execute server-side tools and participate in client-tool approval flows.
+
+## Map the AG-UI endpoint
+
+The current SDK PR exposes the conversion APIs, while the sample app defines its own `MapAGUI(...)` endpoint extension. The endpoint shape is small enough to copy into your app.
+
+```csharp
+using System.Net.ServerSentEvents;
+using AGUI.Abstractions;
+using AGUI.Hosting.AspNetCore;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Options;
+
+using JsonOptions = Microsoft.AspNetCore.Http.Json.JsonOptions;
+
+internal static class AGUIEndpoint
+{
+    internal static IEndpointConventionBuilder MapAGUI(
+        this IEndpointRouteBuilder endpoints,
+        string pattern)
+    {
+        return endpoints.MapPost(pattern, (
+            [FromBody] RunAgentInput input,
+            [FromServices] IChatClient chatClient,
+            [FromServices] IOptions<JsonOptions> jsonOptions,
+            CancellationToken cancellationToken) =>
+        {
+            var jsonSerializerOptions = jsonOptions.Value.SerializerOptions;
+
+            var context = input.ToChatRequestContext(jsonSerializerOptions);
+
+            var updates = chatClient.GetStreamingResponseAsync(
+                context.Messages,
+                context.ChatOptions,
+                cancellationToken);
+
+            var events = updates.AsAGUIEventStreamAsync(context, cancellationToken);
+
+            return TypedResults.ServerSentEvents(WrapAsSseItems(events, cancellationToken));
+        });
+    }
+
+    private static async IAsyncEnumerable<SseItem<BaseEvent>> WrapAsSseItems(
+        IAsyncEnumerable<BaseEvent> events,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await foreach (var evt in events.WithCancellation(cancellationToken).ConfigureAwait(false))
+        {
+            yield return new SseItem<BaseEvent>(evt);
+        }
+    }
+}
+```
+
+This endpoint does three things:
+
+1. `ToChatRequestContext(...)` converts AG-UI protocol input to `ChatMessage`, `ChatOptions`, serializer options, stream options, and client-tool bookkeeping.
+2. `GetStreamingResponseAsync(...)` calls your configured `IChatClient`.
+3. `AsAGUIEventStreamAsync(...)` converts the MEAI update stream to AG-UI `BaseEvent` values.
+
+## Add server-side tools
+
+`ToChatRequestContext(...)` installs client-declared tools into `context.ChatOptions.Tools`. If your server also owns tools, append them after creating the context and before calling the chat client.
+
+```csharp
+var context = input.ToChatRequestContext(jsonSerializerOptions);
+
+context.ChatOptions.Tools ??= [];
+context.ChatOptions.Tools.Add(
+    AIFunctionFactory.Create(
+        SearchRestaurants,
+        serializerOptions: jsonSerializerOptions));
+
+var updates = chatClient.GetStreamingResponseAsync(
+    context.Messages,
+    context.ChatOptions,
+    cancellationToken);
+```
+
+The hosting converter emits the normal AG-UI tool call and tool result events for MEAI `FunctionCallContent` and `FunctionResultContent`.
+
+## Customize event mapping
+
+Use `AGUIStreamOptions` when your server needs to emit protocol events that are not produced by the default MEAI mapping.
+
+```csharp
+var streamOptions = new AGUIStreamOptions()
+    .MapResultAsStateSnapshot("update_recipe")
+    .MapResultAsStateDelta("patch_recipe")
+    .MapContent(content =>
+    {
+        if (content.RawRepresentation is BaseEvent evt)
+        {
+            return [evt];
+        }
+
+        return null;
+    });
+
+var context = input.ToChatRequestContext(jsonSerializerOptions, streamOptions);
+```
+
+The current options surface supports:
+
+| Method | Use it to |
+| --- | --- |
+| `MapCall(toolName, mapper)` | Emit extra AG-UI events after a matching tool call. |
+| `MapResult(toolName, mapper)` | Emit extra AG-UI events after a matching tool result. |
+| `MapResultAsStateSnapshot(toolName)` | Turn a JSON tool result into a `StateSnapshotEvent`. |
+| `MapResultAsStateDelta(toolName)` | Turn a JSON tool result into a `StateDeltaEvent`. |
+| `MapInterrupt(mapper)` | Convert custom `AIContent` into an AG-UI interrupt outcome. |
+| `MapContent(mapper)` | Convert otherwise-unmapped `AIContent` into custom AG-UI events. |
+
+## What the default converter emits
+
+`AsAGUIEventStreamAsync(...)` handles the common bridge automatically:
+
+- It emits `RunStartedEvent` and `RunFinishedEvent` when the stream does not provide them directly.
+- It opens, streams, and closes text message events.
+- It emits tool call start, args, end, and result events.
+- It preserves raw `BaseEvent` values carried on `ChatResponseUpdate.RawRepresentation`.
+- It converts MEAI approval requests into AG-UI interrupt outcomes when the run needs to pause.
+- It suppresses duplicate client-tool calls and results during continuation turns.
+
+If a framework, including Microsoft Agent Framework, has its own workflow or step events, keep that mapping in the framework adapter and pass the resulting AG-UI events through `AGUIStreamOptions` or raw representations.

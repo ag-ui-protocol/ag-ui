@@ -119,6 +119,21 @@
                 "pages": ["sdk/python/encoder/overview"]
               }
             ]
+          },
+          {
+            "group": ".NET",
+            "pages": [
+              "sdk/dotnet/overview",
+              {
+                "group": "Hosting",
+                "pages": ["sdk/dotnet/hosting/overview"]
+              },
+              {
+                "group": "Client",
+                "pages": ["sdk/dotnet/client/overview"]
+              },
+              "sdk/dotnet/testing/conformance"
+            ]
           }
         ]
       }
