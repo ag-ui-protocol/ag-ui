@@ -11,13 +11,13 @@
     </parent>
 
     <artifactId>adk-java</artifactId>
-    <version>${adk-java.version}</version>
+    <version>1.4.0</version>
 
     <name>AG-UI ADK Java</name>
     <description>AG-UI ADK Java Integration</description>
 
     <properties>
-        <adk-java.version>1.4.0</adk-java.version>
+        <google-adk.version>1.4.0</google-adk.version>
         <ag-ui.version>0.0.1</ag-ui.version>
         <maven.deploy.skip>false</maven.deploy.skip>
         <mockito.version>5.21.0</mockito.version>
@@ -45,7 +45,7 @@
         <dependency>
             <groupId>com.google.adk</groupId>
             <artifactId>google-adk</artifactId>
-            <version>${adk-java.version}</version>
+            <version>${google-adk.version}</version>
         </dependency>
         <!-- Test dependencies -->
         <dependency>

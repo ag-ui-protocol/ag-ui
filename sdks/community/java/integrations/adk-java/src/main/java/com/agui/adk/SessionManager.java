@@ -12,6 +12,7 @@ import com.google.adk.sessions.Session;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.Single;
+import io.reactivex.rxjava3.schedulers.Schedulers;
 import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,6 +32,10 @@ public final class SessionManager {
     private static final String PENDING_TOOL_CALL_IDS_KEY = "pendingToolCallIds";
     private final BaseSessionService sessionService;
     private final BaseMemoryService memoryService;
+    // Per-session monitor used to serialize read-modify-write of session state
+    // (processedMessageIds, pendingToolCallIds) for the SAME session within this JVM.
+    // Distinct sessions still run in parallel. Entries removed on deleteSession.
+    private final ConcurrentMap<String, Object> sessionWriteLocks = new ConcurrentHashMap<>();
 
     record SessionWithProcessedIds(Session session, Set<String> processedIds) {}
     private record ToolProcessingAccumulator(List<ToolResult> validResults, Set<String> processedIds) {}
@@ -72,25 +77,43 @@ public final class SessionManager {
     }
 
     private Completable processAndAppendEvent(Session session, List<String> ids) {
-        Set<String> updatedProcessedIds = getUpdatedProcessedIds(session);
-        updatedProcessedIds.addAll(ids);
-        ConcurrentMap<String, Object> stateDelta = new ConcurrentHashMap<>();
-        stateDelta.put(PROCESSED_MESSAGE_IDS_KEY, updatedProcessedIds);
-        EventActions actions = EventActions.builder().stateDelta(stateDelta).build();
+        // Read-modify-write must be atomic per session to avoid lost updates when two runs
+        // for the same session race. fromAction holds the lock through blockingAwait so the
+        // write completes before the next thread re-reads the state. subscribeOn(io()) keeps
+        // the blocking call off Netty/event-loop threads.
+        return Completable.fromAction(() -> {
+            synchronized (writeLockFor(session)) {
+                Set<String> updatedProcessedIds = getUpdatedProcessedIds(session);
+                updatedProcessedIds.addAll(ids);
+                Map<String, Object> stateDelta = new HashMap<>();
+                stateDelta.put(PROCESSED_MESSAGE_IDS_KEY, updatedProcessedIds);
+                EventActions actions = EventActions.builder().stateDelta(stateDelta).build();
 
-        Event event = Event.builder()
-                .invocationId("processed_messages_" + Instant.now().toEpochMilli())
-                .author("system")
-                .actions(actions)
-                .timestamp(Instant.now().toEpochMilli())
-                .build();
+                Event event = Event.builder()
+                        .invocationId("processed_messages_" + Instant.now().toEpochMilli())
+                        .author("system")
+                        .actions(actions)
+                        .timestamp(Instant.now().toEpochMilli())
+                        .build();
 
-        return sessionService.appendEvent(session, event).ignoreElement();
+                sessionService.appendEvent(session, event).ignoreElement().blockingAwait();
+            }
+        }).subscribeOn(Schedulers.io());
+    }
+
+    // Sentinel key used when session.id() is null (transient/unpersisted sessions, test doubles).
+    // All such sessions share the same lock, which is conservative — slightly less parallel,
+    // but correct: a Session without an id has no stable identity to discriminate against.
+    private static final String NULL_SESSION_LOCK_KEY = "";
+
+    private Object writeLockFor(Session session) {
+        String key = session.id() != null ? session.id() : NULL_SESSION_LOCK_KEY;
+        return sessionWriteLocks.computeIfAbsent(key, k -> new Object());
     }
 
     @NotNull
     private static Set<String> getUpdatedProcessedIds(Session session) {
-        ConcurrentMap<String, Object> sessionState = session.state();
+        Map<String, Object> sessionState = session.state();
         Object storedValue = sessionState.get(PROCESSED_MESSAGE_IDS_KEY);
 
         Set<String> updatedProcessedIds = new HashSet<>();
@@ -187,19 +210,25 @@ public final class SessionManager {
     }
 
     private Completable updatePendingToolCallIds(Session session, Set<String> updatedPendingIds) {
-        ConcurrentMap<String, Object> stateDelta = new ConcurrentHashMap<>();
-        stateDelta.put(PENDING_TOOL_CALL_IDS_KEY, updatedPendingIds);
+        // Same per-session serialization rationale as processAndAppendEvent. Even though the
+        // caller passes a pre-computed Set, two concurrent writes for the same session would
+        // race at appendEvent — one stateDelta would clobber the other.
+        return Completable.fromAction(() -> {
+            synchronized (writeLockFor(session)) {
+                Map<String, Object> stateDelta = new HashMap<>();
+                stateDelta.put(PENDING_TOOL_CALL_IDS_KEY, updatedPendingIds);
+                EventActions actions = EventActions.builder().stateDelta(stateDelta).build();
 
-        EventActions actions = EventActions.builder().stateDelta(stateDelta).build();
+                Event event = Event.builder()
+                        .invocationId("updated_pending_tool_calls_" + Instant.now().toEpochMilli())
+                        .author("system")
+                        .actions(actions)
+                        .timestamp(Instant.now().toEpochMilli())
+                        .build();
 
-        Event event = Event.builder()
-                .invocationId("updated_pending_tool_calls_" + Instant.now().toEpochMilli())
-                .author("system")
-                .actions(actions)
-                .timestamp(Instant.now().toEpochMilli())
-                .build();
-
-        return sessionService.appendEvent(session, event).ignoreElement();
+                sessionService.appendEvent(session, event).ignoreElement().blockingAwait();
+            }
+        }).subscribeOn(Schedulers.io());
     }
 
     private Completable deleteSession(Session session) {
@@ -207,7 +236,16 @@ public final class SessionManager {
                 .doOnError(ex -> logger.error("Failed to save session {} to memory.", session.id(), ex))
                 .andThen(
                         sessionService.deleteSession(session.id(), session.appName(), session.userId())
-                                .doOnComplete(() -> logger.info("Session {} deleted.", session.id()))
+                                .doOnComplete(() -> {
+                                    // Release the per-session lock entry so the registry stays bounded.
+                                    // Guard the remove because session.id() may be null in test doubles
+                                    // and for transient sessions that were never persisted.
+                                    String sid = session.id();
+                                    if (sid != null) {
+                                        sessionWriteLocks.remove(sid);
+                                    }
+                                    logger.info("Session {} deleted.", session.id());
+                                })
                                 .doOnError(ex -> logger.error("Failed to delete session {}.", session.id(), ex))
                 );
     }

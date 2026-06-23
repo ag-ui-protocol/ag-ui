@@ -4,7 +4,6 @@ import com.agui.core.agent.RunAgentParameters;
 import com.agui.core.message.AssistantMessage;
 import com.agui.core.message.UserMessage;
 import com.google.genai.types.Content;
-import org.jetbrains.annotations.Nullable;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -46,7 +45,6 @@ class RunContextTest {
         assertEquals("Hello", extractFromPartsOf(latestMessage));
     }
 
-    @Nullable
     private static String extractFromPartsOf(Content latestMessage) {
         return latestMessage.parts().filter(items -> !items.isEmpty())
                 .flatMap(items -> items.get(0).text()).orElse(null);

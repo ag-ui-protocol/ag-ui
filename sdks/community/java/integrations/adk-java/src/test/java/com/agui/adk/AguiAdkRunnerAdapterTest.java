@@ -21,7 +21,6 @@ import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
 import io.reactivex.rxjava3.subscribers.TestSubscriber;
-import org.jetbrains.annotations.NotNull;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -309,7 +308,6 @@ class AguiAdkRunnerAdapterTest {
         assertThat(subscribed).isTrue();
     }
 
-    @NotNull
     private static UserMessage createUserMessage(String messageId) {
         UserMessage userMessage = new UserMessage();
         userMessage.setId(messageId);

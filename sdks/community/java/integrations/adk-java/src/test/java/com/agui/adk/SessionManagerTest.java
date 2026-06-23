@@ -19,6 +19,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
@@ -90,17 +91,19 @@ class SessionManagerTest {
     }
 
     @Test
-    void shouldAppendMessageIdsToState_whenMarkingAsProcessed() {
+    void shouldAppendMessageIdsToState_whenMarkingAsProcessed() throws InterruptedException {
         // Arrange
         when(sessionService.appendEvent(any(), any())).thenReturn(Single.just(mock(Event.class)));
         when(session.state()).thenReturn(new ConcurrentHashMap<>());
         List<String> messageIds = List.of("msg-1", "msg-2");
 
-        // Act
+        // Act — markMessagesProcessed now serializes via subscribeOn(Schedulers.io()), so the
+        // TestObserver must await completion before assertions run.
         TestObserver<Void> testObserver = new TestObserver<>();
         sessionManager.markMessagesProcessed(session, messageIds).subscribe(testObserver);
 
         // Assert
+        testObserver.await(5, TimeUnit.SECONDS);
         testObserver.assertComplete();
         testObserver.assertNoErrors();
 

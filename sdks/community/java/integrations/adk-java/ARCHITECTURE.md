@@ -61,6 +61,33 @@ A single `SessionManager` instance will manage all sessions, providing a central
 
 ## Thread Safety
 
--   A new `EventTranslator` will be used for each `runAgent` execution to avoid conflicts.
--   The `SessionManager` will use thread-safe collections and proper synchronization to manage session data.
--   Each agent execution is handled within the context of reactive streams, which inherently manage concurrency and isolation for each stream.
+-   A new `EventTranslator` is created for each `runAgent` execution to avoid conflicts between concurrent runs.
+-   Each agent execution is handled inside a reactive stream (RxJava `Flowable`/`Single`), which isolates subscriber state across runs.
+-   The `SessionManager` uses thread-safe collections (`ConcurrentHashMap`) for its internal state and an explicit **per-session monitor** to serialize read-modify-write of mutable session state (the `processedMessageIds` and `pendingToolCallIds` entries).
+
+### Per-session write lock
+
+The session state held by Google ADK (`Session.state()`) is updated via the event API (`BaseSessionService.appendEvent`). That API takes a full `stateDelta` and **does not merge** at the key-level for collection values: writing `processedMessageIds = {A, B}` overwrites whatever was there. Two concurrent runs for the **same session** would therefore race:
+
+```
+T1: read {A}  → compute {A, B} → appendEvent({A, B})
+T2: read {A}  → compute {A, C} → appendEvent({A, C})   ← B is lost
+```
+
+To prevent this, `SessionManager` keeps a `ConcurrentMap<String, Object> sessionWriteLocks` indexed by `session.id()` and serializes the read-modify-write pair under that monitor:
+
+```java
+synchronized (writeLockFor(session)) {
+    Set<String> updated = getUpdatedProcessedIds(session);   // read
+    updated.addAll(ids);                                     // mutate
+    sessionService.appendEvent(session, event).blockingAwait(); // write — completes under lock
+}
+```
+
+The mutating Completable runs on `Schedulers.io()` so the blocking call never sits on a Netty event loop. Distinct sessions are unaffected: their reads/writes still execute in parallel.
+
+The lock entry is removed when the session is permanently deleted (`deleteSession` callback), bounding the registry to the set of active sessions.
+
+### Scope of guarantee
+
+This serialization is **JVM-local**. If the middleware is deployed in a cluster and requests for the same session can land on different instances, the per-session lock does not protect across JVMs. Sticky session routing (e.g. by `threadId` at the load balancer) is the simplest mitigation. A distributed lock or an ADK-side optimistic-concurrency mechanism would be needed for a true multi-instance guarantee.

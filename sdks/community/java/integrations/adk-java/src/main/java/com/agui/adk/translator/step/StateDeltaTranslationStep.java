@@ -10,7 +10,6 @@ import org.jetbrains.annotations.NotNull;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentMap;
 
 /**
  * A processing step for handling the 'stateDelta' part of an ADK Event.
@@ -27,12 +26,12 @@ public enum StateDeltaTranslationStep implements EventTranslationStep {
     }
 
     @NotNull
-    private static Flowable<BaseEvent> createStateDeltaEventFlowable(ConcurrentMap<String, Object> delta) {
+    private static Flowable<BaseEvent> createStateDeltaEventFlowable(Map<String, Object> delta) {
         return Flowable.fromCallable(() -> createStateDeltaEvent(delta));
     }
 
     @NotNull
-    private static StateDeltaEvent createStateDeltaEvent(ConcurrentMap<String, Object> delta) {
+    private static StateDeltaEvent createStateDeltaEvent(Map<String, Object> delta) {
         List<Map<String, Object>> patches = delta.entrySet().stream()
                 .map(StateDeltaTranslationStep::createAddPatchMap)
                 .toList();
