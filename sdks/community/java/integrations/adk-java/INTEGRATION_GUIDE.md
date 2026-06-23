@@ -31,14 +31,12 @@ Add the necessary dependencies to your `pom.xml`.
     <artifactId>spring-boot-starter-webflux</artifactId>
 </dependency>
 <dependency>
-    <groupId>org.springframework.boot</groupId>
-    <artifactId>spring-boot-starter-security</artifactId>
-</dependency>
-<dependency>
     <groupId>io.projectreactor.addons</groupId>
     <artifactId>reactor-adapter</artifactId>
 </dependency>
 ```
+
+Spring Security is **optional** — it's only needed if you want to authenticate requests and source the `userId` from the authenticated principal. See § 1.4 for the wiring snippet.
 
 `adk-java` is built and tested against `google-adk 1.4.0`. Newer minor/patch versions are expected to be source-compatible; if Google ships a breaking change, you can pin `google-adk` to a known-good version while waiting for a new `adk-java` release.
 
@@ -136,7 +134,9 @@ public class AdkConfiguration {
 
 ### 1.3. Implement the Handler
 
-Inject the `AguiAdkRunnerAdapter` and the `ObjectMapper`. The handler composes `request.bodyToMono(...)` with `ReactiveSecurityContextHolder.getContext().map(...)` via `Mono.zip(...)`, then invokes `adapter.runAgent(params, userId)` with the resolved principal.
+Inject the `AguiAdkRunnerAdapter` and the `ObjectMapper`. The adapter accepts the `userId` as a **`Single<String>`** so any reactive source works — Spring Security, a remote auth lookup, a database, anything `Mono`-shaped.
+
+The example below uses `ServerRequest.principal()` (a standard WebFlux method that does **not** require Spring Security on the classpath) with a per-thread anonymous fallback. The Reactor `Mono<String>` is bridged to RxJava `Single<String>` for the adapter API.
 
 **`ChatHandler.java`**
 ```java
@@ -148,17 +148,19 @@ import com.agui.core.event.BaseEvent;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.reactivex.rxjava3.core.Flowable;
+import io.reactivex.rxjava3.core.Single;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
-import org.springframework.security.core.context.ReactiveSecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.server.ServerRequest;
 import org.springframework.web.reactive.function.server.ServerResponse;
 import reactor.adapter.rxjava.RxJava3Adapter;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+
+import java.security.Principal;
 
 @Component
 public class ChatHandler {
@@ -174,14 +176,18 @@ public class ChatHandler {
     }
 
     public Mono<ServerResponse> handleRun(ServerRequest request) {
-        Mono<RunAgentParameters> paramsMono = request.bodyToMono(RunAgentParameters.class);
-        Mono<String> userIdMono = ReactiveSecurityContextHolder.getContext()
-                .map(ctx -> ctx.getAuthentication().getName());
+        return request.bodyToMono(RunAgentParameters.class).flatMap(params -> {
+            // request.principal() returns the authenticated principal if Spring Security is wired,
+            // or Mono.empty() otherwise. The defaultIfEmpty branch gives Dojo-style anonymous
+            // access without requiring auth configuration.
+            Mono<String> userIdMono = request.principal()
+                    .map(Principal::getName)
+                    .defaultIfEmpty("anonymous-" + params.getThreadId());
 
-        return Mono.zip(paramsMono, userIdMono).flatMap(tuple -> {
-            RunAgentParameters params = tuple.getT1();
-            String userId = tuple.getT2();
-            Flowable<BaseEvent> flow = adapter.runAgent(params, userId);
+            // Bridge Reactor Mono -> RxJava Single for the adapter's reactive API.
+            Single<String> userIdSingle = Single.fromPublisher(userIdMono);
+
+            Flowable<BaseEvent> flow = adapter.runAgent(params, userIdSingle);
             Flux<ServerSentEvent<String>> sse = RxJava3Adapter.flowableToFlux(flow)
                     .map(this::serializeAsSse);
             return ServerResponse.ok()
@@ -203,11 +209,27 @@ public class ChatHandler {
 }
 ```
 
-### 1.4. Wiring Spring Security's reactive principal
+### 1.4. Adding Spring Security (optional)
+
+The example above works without Spring Security — the handler falls back to an anonymous per-thread userId. To source the `userId` from an authenticated principal, add `spring-boot-starter-security` to your pom and configure a `SecurityWebFilterChain`. The same `request.principal()` call in the handler will then return the authenticated principal automatically.
+
+#### Why resolve the principal in the handler (not inside the adapter)
 
 `adk-java` deliberately keeps its public API on RxJava — it does not import Reactor types. The reason: Spring Security's `ReactiveSecurityContextHolder.getContext()` reads the principal from the Reactor `ContextView`, which only propagates through Reactor subscribers. A naive `Mono → Single` bridge inside the adapter would hand the upstream `Mono` an RxJava Subscriber with no `ContextView`, and the principal lookup would silently return empty.
 
-The fix is structural: resolve the principal **inside the Reactor pipeline** (the WebFlux handler), then pass the resolved `String` across the Reactor→RxJava boundary. The `Mono.zip(...)` pattern in § 1.3 is the canonical shape.
+The fix is structural: resolve the principal **inside the Reactor pipeline** (the WebFlux handler), then pass the resolved `String` across the Reactor→RxJava boundary via `Single.fromPublisher(mono)`. Safe because the value has already been materialized in the Reactor flow before the bridge.
+
+#### Variant: resolve via ReactiveSecurityContextHolder explicitly
+
+```java
+import org.springframework.security.core.context.ReactiveSecurityContextHolder;
+// ...
+Mono<String> userIdMono = ReactiveSecurityContextHolder.getContext()
+        .map(ctx -> ctx.getAuthentication().getName())
+        .defaultIfEmpty("anonymous-" + params.getThreadId());
+```
+
+Identical behavior to `request.principal()` when Spring Security is configured — pick whichever is more readable in your codebase.
 
 #### Minimal SecurityConfig
 
@@ -264,16 +286,15 @@ Mono<String> userIdMono = ReactiveSecurityContextHolder.getContext()
 
 **Caveat**: every unauthenticated caller will share the same `"anonymous"` session identity in the ADK store. Use a per-request derived fallback (e.g., a request-scoped UUID, or the `threadId`) if you need isolation.
 
-#### Reactive userId via the `Single<String>` overload
+#### Sync userId
 
-If your principal source is naturally typed as something other than `Mono<String>` and you can bridge it to RxJava `Single<String>` **without losing the upstream context**, use the second overload:
+When the userId is already known (no async lookup needed), wrap it in `Single.just(...)`:
 
 ```java
-Single<String> userId = ...; // e.g. Single.fromCallable(...) for a synchronous source
-adapter.runAgent(params, userId);
+adapter.runAgent(params, Single.just("alice"));
 ```
 
-The `Single` is subscribed only when the returned `Flowable` is subscribed (cold semantics). If the `Single` emits empty or errors, `RUN_ERROR` is the result — same contract as the `String` overload.
+The `Single` is subscribed lazily — only when the returned `Flowable` is subscribed (cold semantics). If the `Single` emits empty, errors, or yields a `null`/blank value, the adapter produces a single `RUN_ERROR` event and completes.
 
 This structure provides a clear path from basic library usage to a clean, production-ready Spring Boot integration.
 
@@ -320,6 +341,7 @@ import com.google.adk.sessions.BaseSessionService;
 import com.google.adk.sessions.InMemorySessionService;
 import com.google.adk.util.ObjectMapperFactory;
 import io.reactivex.rxjava3.core.Flowable;
+import io.reactivex.rxjava3.core.Single;
 import io.reactivex.rxjava3.disposables.Disposable;
 
 import java.io.IOException;
@@ -370,8 +392,10 @@ public class AdkRunnerExample {
     public Disposable runAndPrintEvents(RunAgentParameters params, String userId) {
         System.out.println("Starting agent run for thread: " + params.getThreadId() + " (user: " + userId + ")");
 
-        // 7. Run the agent — userId is an explicit argument
-        Flowable<BaseEvent> eventFlowable = runnerAdapter.runAgent(params, userId);
+        // 7. Run the agent — userId is a per-call argument supplied as a Single<String>.
+        //    For a known value, wrap with Single.just(...). For an async source (DB lookup,
+        //    auth service call, etc.), pass the Single produced by that source.
+        Flowable<BaseEvent> eventFlowable = runnerAdapter.runAgent(params, Single.just(userId));
 
         // 8. Subscribe to the stream to process and serialize events
         return eventFlowable.subscribe(

@@ -99,7 +99,7 @@ class AguiAdkRunnerAdapterTest {
 
         // Act
         TestSubscriber<BaseEvent> testSubscriber = new TestSubscriber<>();
-        aguiAdkRunnerAdapter.runAgent(params, TEST_USER_ID).subscribe(testSubscriber);
+        aguiAdkRunnerAdapter.runAgent(params, Single.just(TEST_USER_ID)).subscribe(testSubscriber);
 
         testSubscriber.await();
 
@@ -126,7 +126,7 @@ class AguiAdkRunnerAdapterTest {
 
         // Act
         TestSubscriber<BaseEvent> testSubscriber = new TestSubscriber<>();
-        aguiAdkRunnerAdapter.runAgent(params, TEST_USER_ID).subscribe(testSubscriber);
+        aguiAdkRunnerAdapter.runAgent(params, Single.just(TEST_USER_ID)).subscribe(testSubscriber);
 
         testSubscriber.await();
 
@@ -138,7 +138,6 @@ class AguiAdkRunnerAdapterTest {
         assertThat(results).hasSize(2);
         assertThat(results.get(0)).isInstanceOf(RunStartedEvent.class);
         assertThat(results.get(1)).isInstanceOf(RunErrorEvent.class);
-        // Cannot assert on message content as it is not exposed by RunErrorEvent in a known way
     }
 
     @Test
@@ -156,7 +155,7 @@ class AguiAdkRunnerAdapterTest {
 
         // Act
         TestSubscriber<BaseEvent> testSubscriber = new TestSubscriber<>();
-        aguiAdkRunnerAdapter.runAgent(params, TEST_USER_ID).subscribe(testSubscriber);
+        aguiAdkRunnerAdapter.runAgent(params, Single.just(TEST_USER_ID)).subscribe(testSubscriber);
 
         testSubscriber.await();
 
@@ -172,39 +171,17 @@ class AguiAdkRunnerAdapterTest {
     }
 
     @Test
-    void shouldEmitRunError_whenStringUserIdIsNull() throws InterruptedException {
-        // Arrange
+    void shouldEmitRunError_whenSingleEmitsBlank() throws InterruptedException {
+        // Arrange — Single emits a blank string. Internal guard rejects it.
         RunAgentParameters params = createAgentParameters(new UserMessage());
 
         // Act
         TestSubscriber<BaseEvent> testSubscriber = new TestSubscriber<>();
-        aguiAdkRunnerAdapter.runAgent(params, (String) null).subscribe(testSubscriber);
+        aguiAdkRunnerAdapter.runAgent(params, Single.just("   ")).subscribe(testSubscriber);
 
         testSubscriber.await();
 
-        // Assert
-        testSubscriber.assertComplete();
-        testSubscriber.assertNoErrors();
-
-        List<BaseEvent> results = testSubscriber.values();
-        assertThat(results).hasSize(1);
-        assertThat(results.get(0)).isInstanceOf(RunErrorEvent.class);
-        // No RUN_STARTED, no session interaction
-        verifyNoInteractions(sessionManager);
-    }
-
-    @Test
-    void shouldEmitRunError_whenStringUserIdIsBlank() throws InterruptedException {
-        // Arrange
-        RunAgentParameters params = createAgentParameters(new UserMessage());
-
-        // Act
-        TestSubscriber<BaseEvent> testSubscriber = new TestSubscriber<>();
-        aguiAdkRunnerAdapter.runAgent(params, "   ").subscribe(testSubscriber);
-
-        testSubscriber.await();
-
-        // Assert
+        // Assert — single RUN_ERROR, no RUN_STARTED, no session interaction
         testSubscriber.assertComplete();
         testSubscriber.assertNoErrors();
 
@@ -215,8 +192,8 @@ class AguiAdkRunnerAdapterTest {
     }
 
     @Test
-    void shouldEmitRunError_whenSingleUserIdEmitsEmpty() throws InterruptedException {
-        // Arrange — synthesise an empty source via Maybe.empty().toSingle() pattern.
+    void shouldEmitRunError_whenSingleEmitsEmpty() throws InterruptedException {
+        // Arrange — synthesise an empty source via Maybe.empty().toFlowable().
         // Pure Single cannot legally emit empty; reachable only via fromPublisher(empty).
         RunAgentParameters params = createAgentParameters(new UserMessage());
         Single<String> emptyUid = Single.fromPublisher(Maybe.<String>empty().toFlowable());
@@ -238,7 +215,7 @@ class AguiAdkRunnerAdapterTest {
     }
 
     @Test
-    void shouldEmitRunError_whenSingleUserIdEmitsError() throws InterruptedException {
+    void shouldEmitRunError_whenSingleEmitsError() throws InterruptedException {
         // Arrange
         RunAgentParameters params = createAgentParameters(new UserMessage());
         Single<String> failingUid = Single.error(new RuntimeException("auth failed"));
@@ -260,7 +237,7 @@ class AguiAdkRunnerAdapterTest {
     }
 
     @Test
-    void shouldDelegateToStringOverload_whenSingleEmitsValue() throws InterruptedException {
+    void shouldExecuteRun_whenSingleEmitsValidUserId() throws InterruptedException {
         // Arrange — minimal happy path: empty session, no unseen messages, just verify lifecycle.
         String messageId = "msg-already-processed";
         UserMessage userMessage = createUserMessage(messageId);
@@ -278,7 +255,7 @@ class AguiAdkRunnerAdapterTest {
 
         testSubscriber.await();
 
-        // Assert — same outcome as the String overload happy path
+        // Assert
         testSubscriber.assertComplete();
         testSubscriber.assertNoErrors();
         List<BaseEvent> results = testSubscriber.values();

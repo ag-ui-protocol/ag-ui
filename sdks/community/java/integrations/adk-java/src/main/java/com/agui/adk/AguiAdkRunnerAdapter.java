@@ -56,7 +56,25 @@ public final class AguiAdkRunnerAdapter {
         this.messageProcessor = messageProcessor;
     }
 
-    public Flowable<BaseEvent> runAgent(RunAgentParameters parameters, String userId) {
+    /**
+     * Reactive entry point — the single supported way to invoke a run.
+     *
+     * <p>The {@code userId} is supplied as a {@link Single} so the caller can derive it from any
+     * reactive source (e.g. {@code ReactiveSecurityContextHolder}, a {@code WebClient} call to an
+     * auth service, an R2DBC lookup) without ever blocking the calling thread. Sync callers wrap a
+     * known value with {@code Single.just(uid)}.
+     *
+     * <p>Empty / blank / errored {@code userId} resolution produces exactly one {@code RUN_ERROR}
+     * event and completes; no {@code RUN_STARTED} is emitted and no session is created.
+     */
+    public Flowable<BaseEvent> runAgent(RunAgentParameters parameters, Single<String> userId) {
+        return userId.toFlowable()
+                .concatMap(uid -> runInternal(parameters, uid))
+                .switchIfEmpty(Flowable.just(runErrorEvent("userId resolution produced no value")))
+                .onErrorResumeNext((Throwable error) -> Flowable.just(runErrorEvent("Failed to resolve userId: " + error.getMessage())));
+    }
+
+    private Flowable<BaseEvent> runInternal(RunAgentParameters parameters, String userId) {
         if (userId == null || userId.isBlank()) {
             return Flowable.just(runErrorEvent("userId must not be null or blank"));
         }
@@ -79,13 +97,6 @@ public final class AguiAdkRunnerAdapter {
                 return Flowable.just(runErrorEvent(e.getMessage()));
             }
         }).cache();
-    }
-
-    public Flowable<BaseEvent> runAgent(RunAgentParameters parameters, Single<String> userId) {
-        return userId.toFlowable()
-                .concatMap(uid -> runAgent(parameters, uid))
-                .switchIfEmpty(Flowable.just(runErrorEvent("userId resolution produced no value")))
-                .onErrorResumeNext((Throwable error) -> Flowable.just(runErrorEvent("Failed to resolve userId: " + error.getMessage())));
     }
 
 

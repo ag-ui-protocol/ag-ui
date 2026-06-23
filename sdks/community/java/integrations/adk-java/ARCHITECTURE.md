@@ -39,7 +39,7 @@ A singleton class for centralized session control, similar to the Python impleme
 
 ## Parameter and Session Flow
 
-1.  **Client Request**: The AG-UI server receives a request and calls `AguiAdkRunnerAdapter.runAgent(RunAgentParameters, String userId)` (or the `Single<String>` overload).
+1.  **Client Request**: The AG-UI server receives a request and calls `AguiAdkRunnerAdapter.runAgent(RunAgentParameters, Single<String> userId)`. The reactive userId signature lets the caller derive the value from any async source (Spring Security, auth service, DB lookup) without blocking; sync callers wrap a known value with `Single.just(uid)`.
 2.  **Parameter Extraction**:
     *   The `userId` is supplied by the caller per request — typically resolved from the authenticated principal in a Spring WebFlux handler (see `INTEGRATION_GUIDE.md` § 1.4). The adapter itself does not source the `userId`.
     *   The `sessionId` will be the `thread_id` from `RunAgentParameters`.
