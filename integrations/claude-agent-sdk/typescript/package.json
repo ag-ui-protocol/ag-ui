@@ -7,6 +7,7 @@
     "url": "https://github.com/ag-ui-protocol/ag-ui.git"
   },
   "description": "AG-UI integration for Anthropic Claude Agent SDK",
+  "license": "MIT",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
