@@ -54,19 +54,11 @@
           },
           {
             "group": "Draft Proposals",
-            "pages": [
-              "drafts/overview",
-
-              "drafts/generative-ui",
-              "drafts/meta-events"
-            ]
+            "pages": ["drafts/overview", "drafts/generative-ui", "drafts/meta-events"]
           },
           {
             "group": "Tutorials",
-            "pages": [
-              "tutorials/cursor",
-              "tutorials/debugging"
-            ]
+            "pages": ["tutorials/cursor", "tutorials/debugging"]
           },
           {
             "group": "Development",
@@ -125,8 +117,36 @@
               },
               {
                 "group": "ag_ui.encoder",
+                "pages": ["sdk/python/encoder/overview"]
+              }
+            ]
+          },
+          {
+            "group": ".NET",
+            "pages": [
+              {
+                "group": "AGUI.Abstractions",
                 "pages": [
-                  "sdk/python/encoder/overview"
+                  "sdk/dotnet/abstractions/overview",
+                  "sdk/dotnet/abstractions/types",
+                  "sdk/dotnet/abstractions/events",
+                  "sdk/dotnet/abstractions/multimodal-inputs"
+                ]
+              },
+              {
+                "group": "AGUI.Client",
+                "pages": [
+                  "sdk/dotnet/client/overview",
+                  "sdk/dotnet/client/chat-client",
+                  "sdk/dotnet/client/transport"
+                ]
+              },
+              {
+                "group": "AGUI.Hosting.AspNetCore",
+                "pages": [
+                  "sdk/dotnet/hosting/overview",
+                  "sdk/dotnet/hosting/endpoints",
+                  "sdk/dotnet/hosting/extensibility"
                 ]
               }
             ]
@@ -145,6 +165,11 @@
           "anchor": "Python SDK",
           "href": "https://docs.ag-ui.com/sdk/python/core/overview",
           "icon": "python"
+        },
+        {
+          "anchor": ".NET SDK",
+          "href": "https://docs.ag-ui.com/sdk/dotnet/abstractions/overview",
+          "icon": "/logo/dotnet.svg"
         }
       ]
     }
@@ -176,6 +201,9 @@
     "posthog": {
       "apiKey": "phc_XZdymVYjrph9Mi0xZYGNyCKexxgblXRR1jMENCtdz5Q",
       "apiHost": "https://eu.posthog.com"
+    },
+    "ga4": {
+      "measurementId": "G-VLHBBW8BC9"
     }
   },
   "footer": {

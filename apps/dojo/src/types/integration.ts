@@ -17,6 +17,7 @@ export type Feature =
   | "a2ui_fixed_schema"
   | "a2ui_dynamic_schema"
   | "a2ui_advanced"
+  | "a2ui_recovery"
   | "crew_chat"
   | "error_flow";
 

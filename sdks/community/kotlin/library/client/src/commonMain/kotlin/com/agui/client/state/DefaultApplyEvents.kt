@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package com.agui.client.state
 
 import com.agui.client.agent.AbstractAgent
@@ -5,6 +7,9 @@ import com.agui.client.agent.AgentEventParams
 import com.agui.client.agent.AgentState
 import com.agui.client.agent.AgentStateMutation
 import com.agui.client.agent.AgentSubscriber
+import com.agui.client.agent.ReasoningEncryptedValue
+import com.agui.client.agent.ReasoningStreamState
+import com.agui.client.agent.ReasoningTelemetryState
 import com.agui.client.agent.ThinkingTelemetryState
 import com.agui.client.agent.runSubscribersWithMutation
 import com.agui.core.types.*
@@ -50,6 +55,20 @@ fun defaultApplyEvents(
     var thinkingBuffer: StringBuilder? = null
     var initialMessagesEmitted = false
 
+    // Reasoning telemetry — per-messageId streams, ordered by first appearance.
+    class MutableReasoningStream(
+        val messageId: String,
+        var isActive: Boolean = true,
+        val text: StringBuilder = StringBuilder(),
+        val encryptedValues: MutableList<ReasoningEncryptedValue> = mutableListOf()
+    )
+    val reasoningStreams = linkedMapOf<String, MutableReasoningStream>()
+    var reasoningVisible = false
+    var lastActiveReasoningMessageId: String? = null
+
+    fun reasoningStream(messageId: String): MutableReasoningStream =
+        reasoningStreams.getOrPut(messageId) { MutableReasoningStream(messageId) }
+
     logger.d {
         "defaultApplyEvents start: initial messages=${messages.joinToString { "${it.messageRole}:${it.id}" }} state=$state"
     }
@@ -75,6 +94,20 @@ fun defaultApplyEvents(
             isThinking = active,
             title = thinkingTitle,
             messages = snapshot
+        )
+    }
+
+    fun currentReasoningState(): ReasoningTelemetryState? {
+        if (!reasoningVisible && reasoningStreams.isEmpty()) return null
+        return ReasoningTelemetryState(
+            streams = reasoningStreams.values.map {
+                ReasoningStreamState(
+                    messageId = it.messageId,
+                    isActive = it.isActive,
+                    text = it.text.toString(),
+                    encryptedValues = it.encryptedValues.toList()
+                )
+            }
         )
     }
 
@@ -265,6 +298,12 @@ fun defaultApplyEvents(
                     emit(AgentState(thinking = ThinkingTelemetryState(isThinking = false, title = null, messages = emptyList())))
                     emitted = true
                 }
+
+                reasoningStreams.clear()
+                reasoningVisible = false
+                lastActiveReasoningMessageId = null
+                emit(AgentState(reasoning = ReasoningTelemetryState(streams = emptyList())))
+                emitted = true
             }
 
             is StateSnapshotEvent -> {
@@ -359,6 +398,105 @@ fun defaultApplyEvents(
                 currentThinkingState()?.let {
                     emit(AgentState(thinking = it))
                     emitted = true
+                }
+            }
+
+            is ReasoningStartEvent -> {
+                reasoningVisible = true
+                val stream = reasoningStream(event.messageId)
+                stream.isActive = true
+                lastActiveReasoningMessageId = event.messageId
+                currentReasoningState()?.let {
+                    emit(AgentState(reasoning = it))
+                    emitted = true
+                }
+            }
+
+            is ReasoningMessageStartEvent -> {
+                reasoningVisible = true
+                val stream = reasoningStream(event.messageId)
+                stream.isActive = true
+                lastActiveReasoningMessageId = event.messageId
+                currentReasoningState()?.let {
+                    emit(AgentState(reasoning = it))
+                    emitted = true
+                }
+            }
+
+            is ReasoningMessageContentEvent -> {
+                reasoningVisible = true
+                val stream = reasoningStream(event.messageId)
+                stream.isActive = true
+                stream.text.append(event.delta)
+                lastActiveReasoningMessageId = event.messageId
+                currentReasoningState()?.let {
+                    emit(AgentState(reasoning = it))
+                    emitted = true
+                }
+            }
+
+            is ReasoningMessageEndEvent -> {
+                // Per-message end; keep stream open until REASONING_END.
+                currentReasoningState()?.let {
+                    emit(AgentState(reasoning = it))
+                    emitted = true
+                }
+            }
+
+            is ReasoningMessageChunkEvent -> {
+                val messageId = event.messageId ?: lastActiveReasoningMessageId
+                if (messageId != null) {
+                    reasoningVisible = true
+                    val stream = reasoningStream(messageId)
+                    stream.isActive = true
+                    event.delta?.let { stream.text.append(it) }
+                    lastActiveReasoningMessageId = messageId
+                    currentReasoningState()?.let {
+                        emit(AgentState(reasoning = it))
+                        emitted = true
+                    }
+                } else {
+                    logger.w {
+                        "Received REASONING_MESSAGE_CHUNK with no messageId and no active reasoning stream; dropping."
+                    }
+                }
+            }
+
+            is ReasoningEndEvent -> {
+                val stream = reasoningStream(event.messageId)
+                stream.isActive = false
+                if (lastActiveReasoningMessageId == event.messageId) {
+                    lastActiveReasoningMessageId = null
+                }
+                currentReasoningState()?.let {
+                    emit(AgentState(reasoning = it))
+                    emitted = true
+                }
+            }
+
+            is ReasoningEncryptedValueEvent -> {
+                // The encrypted-value event has no messageId; attach to the most recently active stream.
+                val targetMessageId = lastActiveReasoningMessageId
+                    ?: reasoningStreams.values.lastOrNull { it.isActive }?.messageId
+                    ?: reasoningStreams.values.lastOrNull()?.messageId
+                if (targetMessageId != null) {
+                    reasoningVisible = true
+                    val stream = reasoningStream(targetMessageId)
+                    stream.encryptedValues.add(
+                        ReasoningEncryptedValue(
+                            subtype = event.subtype,
+                            entityId = event.entityId,
+                            encryptedValue = event.encryptedValue
+                        )
+                    )
+                    currentReasoningState()?.let {
+                        emit(AgentState(reasoning = it))
+                        emitted = true
+                    }
+                } else {
+                    logger.w {
+                        "Received REASONING_ENCRYPTED_VALUE with no reasoning stream to attach to; dropping (subtype=${event.subtype}, entityId=${event.entityId})."
+                    }
                 }
             }
 

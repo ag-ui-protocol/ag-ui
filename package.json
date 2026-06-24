@@ -34,14 +34,21 @@
     "tsx": "^4.20.6",
     "typescript": "5.8.2"
   },
-  "packageManager": "pnpm@10.13.1",
+  "packageManager": "pnpm@10.33.4",
   "engines": {
     "node": ">=18"
   },
   "version": "0.0.1",
   "pnpm": {
     "overrides": {
-      "langium": "3.2.0"
+      "langium": "3.2.0",
+      "@copilotkit/runtime>@ag-ui/a2ui-middleware": "0.0.8",
+      "@copilotkit/runtime>@langchain/core": "0.3.80",
+      "@langchain/openai>@langchain/core": "0.3.80",
+      "zod": "3.25.76",
+      "@strands-agents/sdk>zod": "^4.4.3",
+      "@ag-ui/aws-strands>zod": "^4.4.3",
+      "@ag-ui/aws-strands-examples>zod": "^4.4.3"
     }
   }
 }

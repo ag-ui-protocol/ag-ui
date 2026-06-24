@@ -65,6 +65,7 @@ object Strings {
     const val AGENT_ERROR_PREFIX = "Agent error: "
     const val FAILED_TO_CONNECT_PREFIX = "Failed to connect: "
     const val CONNECTED_TO_PREFIX = "Connected to "
+    const val REASONING_PLACEHOLDER = "Reasoning…"
 
     // Validation messages
     const val NAME_REQUIRED = "Name is required"

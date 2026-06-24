@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package com.agui.client.verify
 
 import com.agui.core.types.*

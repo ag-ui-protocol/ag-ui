@@ -109,6 +109,11 @@ const ALL_TARGETS = {
     name: "AWS Strands",
     cwd: path.join(integrationsRoot, "aws-strands/python/examples"),
   },
+  "aws-strands-typescript": {
+    command: "pnpm install",
+    name: "AWS Strands (TypeScript)",
+    cwd: path.join(integrationsRoot, "aws-strands/typescript/examples"),
+  },
   "adk-middleware": {
     command: "uv sync",
     name: "ADK Middleware",
@@ -148,6 +153,11 @@ const ALL_TARGETS = {
     command: "dotnet restore AGUIDojoServer/AGUIDojoServer.csproj && dotnet build AGUIDojoServer/AGUIDojoServer.csproj",
     name: "Microsoft Agent Framework (.NET)",
     cwd: path.join(integrationsRoot, "microsoft-agent-framework/dotnet/examples"),
+  },
+  "ag-ui-dotnet": {
+    command: "dotnet restore AGUIDojoServer/AGUIDojoServer.csproj && dotnet build AGUIDojoServer/AGUIDojoServer.csproj",
+    name: "AG-UI .NET SDK",
+    cwd: path.join(gitRoot, "sdks/dotnet/samples/AGUIClientServer"),
   },
 };
 
