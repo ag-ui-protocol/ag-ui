@@ -1,0 +1,65 @@
+name: zizmor
+
+# Static analysis for GitHub Actions workflows. Catches injection vulnerabilities,
+# over-broad permissions, unpinned action references, dangerous trigger combos,
+# and other CI/CD anti-patterns. Findings are uploaded as SARIF to GitHub's
+# code-scanning surface so they show up next to CodeQL alerts.
+#
+# Runs on:
+#   - PRs that touch CI config (path-filtered to avoid noise on unrelated PRs)
+#   - pushes to main (so the main-branch baseline stays current)
+#   - weekly cron (catches new zizmor rule releases against unchanged workflows)
+#
+# Install path: `uvx zizmor` rather than zizmorcore/zizmor-action — keeps the
+# third-party-action surface narrow and reuses `astral-sh/setup-uv`, which is
+# already pinned and used by other workflows in this repo.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/**
+      - .github/dependabot.yml
+  pull_request:
+    paths:
+      - .github/workflows/**
+      - .github/dependabot.yml
+  schedule:
+    - cron: "0 7 * * 1" # Mon 07:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write # SARIF upload to GitHub code scanning
+
+jobs:
+  zizmor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+
+      - name: Run zizmor
+        # --persona=auditor surfaces medium-confidence findings that the default
+        # persona suppresses; SARIF goes to the Security tab for triage rather
+        # than failing the build during this initial rollout. Gate via branch
+        # protection on code-scanning alerts once the baseline is established.
+        continue-on-error: true
+        run: |
+          uvx zizmor \
+            --config .github/zizmor.yml \
+            --persona=auditor \
+            --format=sarif \
+            .github/workflows \
+            > zizmor.sarif
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@7fd177fa680c9881b53cdab4d346d32574c9f7f4 # v3.35.4
+        with:
+          sarif_file: zizmor.sarif
+          category: zizmor

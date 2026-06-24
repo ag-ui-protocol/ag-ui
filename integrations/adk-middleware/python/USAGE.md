@@ -118,7 +118,7 @@ app = App(
     name="my_assistant",
     root_agent=Agent(
         name="assistant",
-        model="gemini-2.5-flash",
+        model="gemini-3.5-flash",
         instruction="You are a helpful assistant.",
         tools=[
             AGUIToolset(), # Add the tools provided by the AG-UI client
@@ -182,7 +182,7 @@ from google.adk import tools as adk_tools
 # Create agent with memory tools - THIS IS CORRECT
 my_agent = Agent(
     name="assistant",
-    model="gemini-2.0-flash", 
+    model="gemini-3.5-flash", 
     instruction="You are a helpful assistant.",
     tools=[
         AGUIToolset(), # Add the tools provided by the AG-UI client
@@ -341,7 +341,7 @@ def context_aware_instructions(ctx: ReadonlyContext) -> str:
 # Create agent with dynamic instructions
 my_agent = LlmAgent(
     name="assistant",
-    model="gemini-2.0-flash",
+    model="gemini-3.5-flash",
     instruction=context_aware_instructions,  # Callable, not string
 )
 ```
@@ -436,7 +436,7 @@ from google.adk.agents import LlmAgent
 
 agent = LlmAgent(
     name="writer",
-    model="gemini-2.0-flash",
+    model="gemini-3.5-flash",
     instruction="Use write_document to write documents.",
     tools=[write_document, AGUIToolset()],
 )

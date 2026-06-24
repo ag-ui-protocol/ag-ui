@@ -99,6 +99,7 @@ async function getFeatureFrontendFiles(featureId: string) {
 
 const integrationsFolderPath = "../../../integrations";
 const middlewaresFolderPath = "../../../middlewares";
+const sdksFolderPath = "../../../sdks";
 const agentFilesMapper: Record<
   string,
   (agentKeys: string[]) => Record<string, string[]>
@@ -346,6 +347,23 @@ const agentFilesMapper: Record<
       {},
     );
   },
+  "aws-strands-typescript": (agentKeys: string[]) => {
+    // TS example filenames use hyphens — map underscore keys (agentic_chat)
+    // to hyphenated filenames (agentic-chat.ts).
+    return agentKeys.reduce(
+      (acc, agentId) => ({
+        ...acc,
+        [agentId]: [
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/aws-strands/typescript/examples/server/api/${agentId.replace(/_/g, "-")}.ts`,
+          ),
+        ],
+      }),
+      {},
+    );
+  },
   "microsoft-agent-framework-python": (agentKeys: string[]) => {
     return agentKeys.reduce(
       (acc, agentId) => ({
@@ -380,6 +398,26 @@ const agentFilesMapper: Record<
             __dirname,
             integrationsFolderPath,
             `/microsoft-agent-framework/dotnet/examples/AGUIDojoServer/Program.cs`,
+          ),
+        ],
+      }),
+      {},
+    );
+  },
+  "ag-ui-dotnet": (agentKeys: string[]) => {
+    return agentKeys.reduce(
+      (acc, agentId) => ({
+        ...acc,
+        [agentId]: [
+          path.join(
+            __dirname,
+            sdksFolderPath,
+            `/dotnet/samples/AGUIClientServer/AGUIDojoServer/Program.cs`,
+          ),
+          path.join(
+            __dirname,
+            sdksFolderPath,
+            `/dotnet/samples/AGUIClientServer/AGUIDojoServer/ChatClientAgentFactory.cs`,
           ),
         ],
       }),
@@ -451,6 +489,16 @@ const agentFilesMapper: Record<
       {},
     );
   },
+  // watsonx uses a single TS agent for all features — no per-feature server files
+  "watsonx": () => ({
+    agentic_chat: [
+      path.join(
+        __dirname,
+        integrationsFolderPath,
+        `/watsonx/typescript/src/index.ts`,
+      ),
+    ],
+  }),
   "langroid": (agentKeys: string[]) => {
     return agentKeys.reduce(
       (acc, agentId) => ({

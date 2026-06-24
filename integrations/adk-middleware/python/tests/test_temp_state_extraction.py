@@ -28,9 +28,10 @@ from google.adk.agents import LlmAgent
 from google.adk.sessions import InMemorySessionService
 from google.adk.sessions.state import State as ADKState
 from google.adk.tools import ToolContext
+from tests.constants import LIVE_TEST_MODEL
 
 
-DEFAULT_MODEL = "gemini-2.0-flash"
+DEFAULT_MODEL = LIVE_TEST_MODEL
 
 
 async def _collect(agent: ADKAgent, run_input: RunAgentInput) -> List[BaseEvent]:

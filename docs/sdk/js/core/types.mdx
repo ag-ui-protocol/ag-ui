@@ -16,6 +16,10 @@ documents these types and their properties.
 Input parameters for running an agent. In the HTTP API, this is the body of the
 `POST` request.
 
+`tools` contains tools provided by the client for this run. Backend-defined
+tools should remain in the backend agent or framework configuration, and may be
+advertised separately through agent capabilities.
+
 ```typescript
 type RunAgentInput = {
   threadId: string
@@ -36,7 +40,7 @@ type RunAgentInput = {
 | `parentRunId`    | `string (optional)` | ID of the run that spawned this run            |
 | `state`          | `any`               | Current state of the agent                     |
 | `messages`       | `Message[]`         | Array of messages in the conversation          |
-| `tools`          | `Tool[]`            | Array of tools available to the agent          |
+| `tools`          | `Tool[]`            | Client-provided tools available for this run   |
 | `context`        | `Context[]`         | Array of context objects provided to the agent |
 | `forwardedProps` | `any`               | Additional properties forwarded to the agent   |
 
@@ -404,19 +408,19 @@ interface AgentCapabilities {
 }
 ```
 
-| Property         | Type                              | Description                                  |
-| ---------------- | --------------------------------- | -------------------------------------------- |
-| `identity`       | `IdentityCapabilities`            | Agent identity and metadata                  |
-| `transport`      | `TransportCapabilities`           | Supported transport mechanisms               |
-| `tools`          | `ToolsCapabilities`               | Agent-provided tools and tool calling config |
-| `output`         | `OutputCapabilities`              | Output format support                        |
-| `state`          | `StateCapabilities`               | State and memory management                  |
-| `multiAgent`     | `MultiAgentCapabilities`          | Multi-agent coordination                     |
-| `reasoning`      | `ReasoningCapabilities`           | Reasoning and thinking support               |
-| `multimodal`     | `MultimodalCapabilities`          | Multimodal input/output support              |
-| `execution`      | `ExecutionCapabilities`           | Execution control and limits                 |
-| `humanInTheLoop` | `HumanInTheLoopCapabilities`      | Human-in-the-loop support                    |
-| `custom`         | `Record<string, unknown>`         | Integration-specific capabilities            |
+| Property         | Type                         | Description                                  |
+| ---------------- | ---------------------------- | -------------------------------------------- |
+| `identity`       | `IdentityCapabilities`       | Agent identity and metadata                  |
+| `transport`      | `TransportCapabilities`      | Supported transport mechanisms               |
+| `tools`          | `ToolsCapabilities`          | Agent-provided tools and tool calling config |
+| `output`         | `OutputCapabilities`         | Output format support                        |
+| `state`          | `StateCapabilities`          | State and memory management                  |
+| `multiAgent`     | `MultiAgentCapabilities`     | Multi-agent coordination                     |
+| `reasoning`      | `ReasoningCapabilities`      | Reasoning and thinking support               |
+| `multimodal`     | `MultimodalCapabilities`     | Multimodal input/output support              |
+| `execution`      | `ExecutionCapabilities`      | Execution control and limits                 |
+| `humanInTheLoop` | `HumanInTheLoopCapabilities` | Human-in-the-loop support                    |
+| `custom`         | `Record<string, unknown>`    | Integration-specific capabilities            |
 
 See [Capabilities](/concepts/capabilities) for the full category type
 definitions and usage patterns.

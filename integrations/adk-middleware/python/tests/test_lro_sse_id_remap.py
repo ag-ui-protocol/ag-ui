@@ -18,11 +18,14 @@ Integration tests require GOOGLE_API_KEY or Vertex AI auth.
 
 import asyncio
 import json
+import logging
 import os
 import uuid
 import warnings
 import pytest
-from typing import Dict, List, Optional
+import pytest_asyncio
+from pathlib import Path
+from typing import AsyncGenerator, Dict, List, Optional
 from unittest.mock import MagicMock, AsyncMock, patch
 
 from ag_ui.core import (
@@ -44,6 +47,7 @@ from ag_ui.core import (
 from ag_ui_adk import ADKAgent
 from ag_ui_adk.event_translator import EventTranslator
 from ag_ui_adk.session_manager import SessionManager
+from tests.constants import LIVE_TEST_MODEL
 
 
 # =============================================================================
@@ -276,6 +280,112 @@ class TestEventTranslatorLroTracking:
         translator.lro_emitted_ids_by_name["some_tool"] = ["some-id"]
         translator.reset()
         assert translator.lro_emitted_ids_by_name == {}
+
+
+class TestLroDuplicateEmissionSuppression:
+    """Regression: a single logical LRO call streamed by ADK as a partial event
+    then a final event (with *different* IDs, per #1168) must emit exactly ONE
+    TOOL_CALL trio — not two. Otherwise the dojo renders the HITL card twice.
+    """
+
+    @pytest.fixture
+    def translator(self):
+        return EventTranslator()
+
+    def _event(self, fcs, *, partial):
+        """Build an ADK-style event. ``fcs`` is a list of (name, id) tuples."""
+        parts = []
+        for name, fid in fcs:
+            fc = MagicMock()
+            fc.id = fid
+            fc.name = name
+            fc.args = {"steps": [{"description": "x", "status": "enabled"}]}
+            part = MagicMock()
+            part.function_call = fc
+            part.text = None
+            parts.append(part)
+        evt = MagicMock()
+        evt.content = MagicMock()
+        evt.content.parts = parts
+        evt.long_running_tool_ids = [fid for _, fid in fcs]
+        evt.partial = partial
+        return evt
+
+    async def _starts(self, translator, evt):
+        ids = []
+        async for e in translator.translate_lro_function_calls(evt):
+            if e.type == EventType.TOOL_CALL_START:
+                ids.append(e.tool_call_id)
+        return ids
+
+    @pytest.mark.asyncio
+    async def test_partial_then_final_emits_once(self, translator):
+        """The non-partial twin (different id) is suppressed — one emission total."""
+        partial_ids = await self._starts(
+            translator, self._event([("generate_task_steps", "adk-AAA")], partial=True)
+        )
+        final_ids = await self._starts(
+            translator, self._event([("generate_task_steps", "adk-BBB")], partial=False)
+        )
+        assert partial_ids == ["adk-AAA"]
+        assert final_ids == [], "final twin must be suppressed (no duplicate render)"
+
+    @pytest.mark.asyncio
+    async def test_parallel_same_name_calls_not_oversuppressed(self, translator):
+        """Two genuinely parallel calls each emit once (partials), finals suppressed."""
+        partial_ids = await self._starts(
+            translator,
+            self._event(
+                [("generate_task_steps", "adk-A1"), ("generate_task_steps", "adk-A2")],
+                partial=True,
+            ),
+        )
+        final_ids = await self._starts(
+            translator,
+            self._event(
+                [("generate_task_steps", "adk-B1"), ("generate_task_steps", "adk-B2")],
+                partial=False,
+            ),
+        )
+        assert partial_ids == ["adk-A1", "adk-A2"]
+        assert final_ids == []  # both finals are twins of the two partials
+
+    @pytest.mark.asyncio
+    async def test_final_only_still_emits(self, translator):
+        """Non-streaming case (no partial twin): the final must still emit once."""
+        final_ids = await self._starts(
+            translator, self._event([("generate_task_steps", "adk-ONLY")], partial=False)
+        )
+        assert final_ids == ["adk-ONLY"]
+
+    @pytest.mark.asyncio
+    async def test_second_partial_replay_suppressed(self, translator):
+        """ADK can replay the call in a SECOND partial chunk (e.g. streaming
+        chunk + aggregated partial) with yet another ID — also a twin."""
+        first = await self._starts(
+            translator, self._event([("generate_task_steps", "adk-P1")], partial=True)
+        )
+        second = await self._starts(
+            translator, self._event([("generate_task_steps", "adk-P2")], partial=True)
+        )
+        final = await self._starts(
+            translator, self._event([("generate_task_steps", "adk-F1")], partial=False)
+        )
+        assert first == ["adk-P1"]
+        assert second == [], "second partial replay must be suppressed"
+        assert final == [], "final replay must be suppressed"
+
+    @pytest.mark.asyncio
+    async def test_reset_clears_replay_ledger(self, translator):
+        """After reset(), a same-name call in a new run emits again."""
+        await self._starts(
+            translator, self._event([("generate_task_steps", "adk-RUN1")], partial=True)
+        )
+        translator.reset()
+        ids = await self._starts(
+            translator, self._event([("generate_task_steps", "adk-RUN2")], partial=True)
+        )
+        assert ids == ["adk-RUN2"]
 
     @pytest.mark.asyncio
     async def test_lro_adk_request_credential_oauth2(self, translator):
@@ -1026,7 +1136,7 @@ class TestLROSSEIdRemapIntegration:
 
         agent = LlmAgent(
             name="approval_agent",
-            model="gemini-2.0-flash",
+            model=LIVE_TEST_MODEL,
             instruction=(
                 "When asked to do anything, ALWAYS use the get_approval tool first. "
                 "Pass the action description as the 'action' parameter."
@@ -1146,7 +1256,7 @@ class TestLROSSEIdRemapIntegration:
 
         agent = LlmAgent(
             name="approval_agent",
-            model="gemini-2.0-flash",
+            model=LIVE_TEST_MODEL,
             instruction=(
                 "When asked to do anything, ALWAYS use the get_approval tool first. "
                 "Pass the action description as the 'action' parameter."
@@ -1240,6 +1350,423 @@ class TestLROSSEIdRemapIntegration:
         run2_types = [str(e.type).split(".")[-1] for e in run2_events]
         assert "RUN_ERROR" not in run2_types, (
             f"Baseline (no streaming) failed. Events: {run2_types}"
+        )
+
+
+# =============================================================================
+# Stale-session regression for the lro_tool_call_id_remap writer (issue #1754)
+# =============================================================================
+
+# The middleware writes ``lro_tool_call_id_remap`` to ``session.state`` from
+# inside the producer's ``async for adk_event in runner.run_async(...)`` loop
+# in ``_run_adk_in_background`` (``adk_agent.py:2497`` LRO drain branch and
+# ``:2604`` main branch). That write goes through ``update_session_state`` ->
+# ``session_service.append_event``, which bumps the storage marker on the
+# session row that ADK's Runner still holds in ``invocation_context.session``.
+# On resumable HITL (``ResumabilityConfig(is_resumable=True)``) ADK does NOT
+# hard-stop the runner after the LRO event, so a subsequent ADK
+# ``append_event`` on the stale in-memory session raises
+# ``ValueError: The session has been modified in storage since it was loaded``
+# from ``DatabaseSessionService``'s OCC check (ADK >= 1.27).
+#
+# Same OCC failure shape as #1732, but a separate writer that PR #1735's
+# consumer-side fix can't reach (the writes live inside the producer task).
+# See follow-up issue #1754.
+
+
+_STALE_MARKER_1754 = (
+    "The session has been modified in storage since it was loaded"
+)
+
+
+class _StaleSessionDetector1754(logging.Handler):
+    """Catch the stale-session ValueError surfaced through the adk_agent logger.
+
+    The ValueError is raised by ADK's runner
+    (``DatabaseSessionService.append_event``) and propagates out of the
+    background task, where ``_run_adk_in_background`` logs it via
+    ``logger.error('Background execution error: ...', exc_info=True)`` before
+    emitting a ``RunErrorEvent``. We listen on the root logger for the marker
+    string so the test can detect the bug from outside ADKAgent.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.ERROR)
+        self.tripped: bool = False
+        self.first: Optional[str] = None
+
+    def emit(self, record: logging.LogRecord) -> None:
+        msg = record.getMessage()
+        if _STALE_MARKER_1754 in msg:
+            self.tripped = True
+            if self.first is None:
+                self.first = f"{record.name}: {msg}"
+
+
+def _make_db_url_1754(tmp_path: Path) -> str:
+    """Default to a temporary sqlite+aiosqlite file (same OCC code path as
+    Postgres). Override with ``AGUI_DATABASE_URL`` to run against a real
+    Postgres in CI/local."""
+    override = os.getenv("AGUI_DATABASE_URL")
+    if override:
+        return override
+    db_path = tmp_path / f"repro_1754_{uuid.uuid4().hex}.db"
+    return f"sqlite+aiosqlite:///{db_path}"
+
+
+# Backend tool callable used by the deterministic scripted-LLM test. Returning
+# a result (not None) is required: it forces ADK to build a function_response
+# event AFTER the LRO event, which is the subsequent ``append_event`` call
+# that exposes the stale in-memory session marker.
+def log_action(action: str = "") -> str:
+    """Backend tool callable used by the deterministic #1754 test."""
+    return f"logged: {action}"
+
+
+def _scripted_lro_plus_backend_llm(backend_tool_name: str, frontend_tool_name: str):
+    """Stub LLM that emits the exact event shape needed to trip #1754.
+
+    Drives a single turn that yields:
+      1. ``partial=True`` with two parallel ``function_call`` parts (the
+         backend tool plus the frontend tool). Both calls are emitted
+         without IDs, so ADK's ``populate_client_function_call_id``
+         assigns fresh UUIDs.
+      2. ``partial=False`` with the same two function_call parts. ADK
+         assigns NEW UUIDs again — divergent from chunk #1.
+
+    The middleware's ``_extract_lro_id_remap`` sees the chunk-1 → chunk-2
+    ID divergence and calls ``_store_lro_id_remap`` mid-runner (the bug
+    site). ADK then dispatches both tools: the backend tool returns a
+    result, so ADK builds a ``function_response`` event and calls
+    ``append_event`` on it — that's the subsequent ADK write that fails
+    OCC because the in-memory session is now stale.
+    """
+    from google.adk.models.base_llm import BaseLlm
+    from google.adk.models.llm_response import LlmResponse
+    from google.genai import types as genai_types
+
+    class _ScriptedLroPlusBackend(BaseLlm):
+        backend_tool: str = backend_tool_name
+        frontend_tool: str = frontend_tool_name
+
+        async def generate_content_async(
+            self, llm_request, stream: bool = False
+        ) -> AsyncGenerator[LlmResponse, None]:
+            def _make_response(*, partial: bool) -> LlmResponse:
+                return LlmResponse(
+                    content=genai_types.Content(
+                        role="model",
+                        parts=[
+                            genai_types.Part(
+                                function_call=genai_types.FunctionCall(
+                                    name=self.backend_tool,
+                                    args={"action": "archive_files"},
+                                )
+                            ),
+                            genai_types.Part(
+                                function_call=genai_types.FunctionCall(
+                                    name=self.frontend_tool,
+                                    args={"action": "archive_files"},
+                                )
+                            ),
+                        ],
+                    ),
+                    partial=partial,
+                    turn_complete=not partial,
+                )
+
+            # Chunk: ADK skips function_call execution for partial=True
+            # but the middleware still translates these into TOOL_CALL_*
+            # events, populating ``lro_emitted_ids_by_name`` with id_A.
+            yield _make_response(partial=True)
+            # Final: ADK assigns NEW UUIDs (id_B), appends this event,
+            # then dispatches both tools and builds the function_response.
+            yield _make_response(partial=False)
+
+    return _ScriptedLroPlusBackend(model="scripted-lro-plus-backend")
+
+
+class TestLroIdRemapStaleSessionRegression:
+    """Deterministic regression test for issue #1754.
+
+    Drives a resumable HITL turn with a scripted LLM that emits a
+    partial -> final pair containing parallel function_calls (one
+    backend, one frontend). The scripted shape guarantees:
+
+      - LRO ID divergence between partial and final events (because ADK
+        assigns fresh UUIDs to function_calls without explicit IDs each
+        time ``populate_client_function_call_id`` runs).
+      - The middleware calls ``_store_lro_id_remap`` mid-runner.
+      - ADK builds a ``function_response`` event for the backend tool
+        AFTER the middleware's write, then calls ``append_event`` on it.
+        That second ADK ``append_event`` is where the stale in-memory
+        session triggers the OCC error.
+
+    Real ADK runner + real ``DatabaseSessionService`` are used so the
+    OCC check actually fires. No real LLM is needed.
+    """
+
+    @pytest.fixture(autouse=True)
+    def reset_session_manager(self):
+        SessionManager.reset_instance()
+        yield
+        SessionManager.reset_instance()
+
+    @pytest_asyncio.fixture
+    async def detector(self):
+        handler = _StaleSessionDetector1754()
+        root = logging.getLogger()
+        prev_level = root.level
+        root.addHandler(handler)
+        root.setLevel(logging.ERROR)
+        try:
+            yield handler
+        finally:
+            root.removeHandler(handler)
+            root.setLevel(prev_level)
+
+    @pytest.mark.asyncio
+    async def test_resumable_hitl_lro_remap_does_not_trip_stale_session(
+        self, detector, tmp_path
+    ):
+        """End-to-end #1754 reproducer.
+
+        Without the producer-side buffer-and-flush fix, this test fails
+        with ``ValueError: The session has been modified in storage since
+        it was loaded`` — same shape as #1732, different writer.
+        """
+        from ag_ui_adk.agui_toolset import AGUIToolset
+        from google.adk.agents import LlmAgent
+        from google.adk.apps import App, ResumabilityConfig
+        from google.adk.sessions import DatabaseSessionService
+
+        db_url = _make_db_url_1754(tmp_path)
+        session_service = DatabaseSessionService(db_url=db_url)
+        app_name = f"repro_1754_{uuid.uuid4().hex[:8]}"
+
+        frontend_tool = AGUITool(
+            name="approve_action",
+            description="Ask the user to approve an action.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string"},
+                },
+                "required": ["action"],
+            },
+        )
+
+        scripted_model = _scripted_lro_plus_backend_llm(
+            backend_tool_name="log_action",
+            frontend_tool_name="approve_action",
+        )
+
+        agent = LlmAgent(
+            name="hitl_lro_remap_agent",
+            model=scripted_model,
+            instruction="Call the tools when asked.",
+            # ``log_action`` is a real Python callable -> wrapped as
+            # a regular FunctionTool (is_long_running=False) by ADK.
+            # ``AGUIToolset()`` is the placeholder swapped at runtime
+            # for ClientProxyToolset built from RunAgentInput.tools.
+            tools=[log_action, AGUIToolset()],
+        )
+
+        adk_app = App(
+            name=app_name,
+            root_agent=agent,
+            resumability_config=ResumabilityConfig(is_resumable=True),
+        )
+
+        adk_agent = ADKAgent.from_app(
+            adk_app,
+            user_id="user_1",
+            session_service=session_service,
+        )
+
+        thread_id = f"thread_{uuid.uuid4().hex[:8]}"
+        events: List[BaseEvent] = []
+        saw_run_error = False
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            async for event in adk_agent.run(
+                RunAgentInput(
+                    thread_id=thread_id,
+                    run_id=str(uuid.uuid4()),
+                    state={},
+                    messages=[
+                        UserMessage(
+                            id=str(uuid.uuid4()),
+                            content="Please archive the project files.",
+                        )
+                    ],
+                    tools=[frontend_tool],
+                    context=[],
+                    forwarded_props={},
+                )
+            ):
+                events.append(event)
+                if type(event).__name__ == "RunErrorEvent":
+                    saw_run_error = True
+                    logging.getLogger(__name__).error(
+                        f"RunErrorEvent: code={getattr(event, 'code', None)} "
+                        f"message={getattr(event, 'message', None)}"
+                    )
+
+        # (1) The #1754 regression assertion. Without the producer-side
+        # fix, _store_lro_id_remap bumps the DB version mid-runner and
+        # ADK's next append_event (for the backend tool's function_response)
+        # raises the OCC ValueError, which gets logged by
+        # _run_adk_in_background as "Background execution error: ...".
+        assert not detector.tripped, (
+            f"Stale-session error logged during resumable HITL + LRO-remap "
+            f"turn: {detector.first}. This is the regression from issue "
+            f"#1754 (same OCC shape as #1732, different writer)."
+        )
+
+        # (2) No RUN_ERROR surfaces to the client.
+        assert not saw_run_error, (
+            "RunErrorEvent surfaced from resumable HITL + LRO-remap turn — "
+            "#1754 regression. Check test logs for the underlying "
+            "ValueError message."
+        )
+
+        # (3) If a remap was captured (chunk-1 IDs differ from chunk-2),
+        # it must be persisted by run-end so future tool-result
+        # submissions can translate the client-facing IDs back to
+        # ADK-persisted IDs.
+        metadata = adk_agent._get_session_metadata(thread_id, "user_1")
+        if metadata is None:
+            return
+        session_id, lookup_app_name, user_id = metadata
+        session = await session_service.get_session(
+            session_id=session_id,
+            app_name=lookup_app_name,
+            user_id=user_id,
+        )
+        assert session is not None
+        stored_remap = session.state.get("lro_tool_call_id_remap", {})
+        assert isinstance(stored_remap, dict), (
+            f"lro_tool_call_id_remap must be a dict; got {type(stored_remap)}"
+        )
+        for k, v in stored_remap.items():
+            assert isinstance(k, str) and isinstance(v, str), (
+                f"lro_tool_call_id_remap entries must be str->str; got "
+                f"{type(k)}->{type(v)}"
+            )
+
+
+class TestLroNoDuplicateToolCallEndToEnd:
+    """End-to-end regression: a long-running client tool streamed by ADK as a
+    partial then final event (with different IDs, #1168) must surface exactly
+    ONE TOOL_CALL_START to the client — not two. The duplicate is cross-path:
+    the EventTranslator emits from the partial event while ADK separately
+    invokes the ClientProxyTool for the final, each with a different ID, so the
+    ID-based dedupe on both sides misses. Drives the real ADK runner + real
+    ClientProxyTool + real EventTranslator (no real LLM, no DB).
+    """
+
+    @pytest.fixture(autouse=True)
+    def reset_session_manager(self):
+        SessionManager.reset_instance()
+        yield
+        SessionManager.reset_instance()
+
+    def _scripted_lro_llm(self, tool_name: str, shape: str = "partial-final"):
+        from google.adk.models.base_llm import BaseLlm
+        from google.adk.models.llm_response import LlmResponse
+        from google.genai import types as gt
+
+        class _ScriptedLro(BaseLlm):
+            name_: str = tool_name
+            shape_: str = shape
+
+            async def generate_content_async(
+                self, llm_request, stream: bool = False
+            ) -> AsyncGenerator:
+                def mk(partial, turn_complete=None):
+                    return LlmResponse(
+                        content=gt.Content(
+                            role="model",
+                            parts=[gt.Part(function_call=gt.FunctionCall(
+                                name=self.name_, args={"action": "archive"}))],
+                        ),
+                        partial=partial,
+                        turn_complete=(not partial) if turn_complete is None else turn_complete,
+                    )
+                # Each yield gets a FRESH ID from ADK's
+                # populate_client_function_call_id — guaranteed divergence.
+                if self.shape_ == "two-partials":
+                    # streaming chunk + aggregated partial + persisted final
+                    yield mk(partial=True)
+                    yield mk(partial=True)
+                    yield mk(partial=False)
+                elif self.shape_ == "two-partials-no-final":
+                    # the "last event is partial, which is not expected" shape
+                    yield mk(partial=True)
+                    yield mk(partial=True, turn_complete=True)
+                else:  # partial-final
+                    yield mk(partial=True)
+                    yield mk(partial=False)
+
+        return _ScriptedLro(model=f"scripted-lro-{shape}")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "shape", ["partial-final", "two-partials", "two-partials-no-final"]
+    )
+    async def test_partial_plus_proxy_emits_single_tool_call(self, shape):
+        from ag_ui_adk.agui_toolset import AGUIToolset
+        from google.adk.agents import LlmAgent
+        from google.adk.apps import App, ResumabilityConfig
+
+        frontend_tool = AGUITool(
+            name="approve_action",
+            description="Ask the user to approve an action.",
+            parameters={
+                "type": "object",
+                "properties": {"action": {"type": "string"}},
+                "required": ["action"],
+            },
+        )
+        agent = LlmAgent(
+            name="hitl_dupe_agent",
+            model=self._scripted_lro_llm("approve_action", shape),
+            instruction="Call the tool when asked.",
+            tools=[AGUIToolset()],
+        )
+        adk_app = App(
+            name=f"app_{uuid.uuid4().hex[:8]}",
+            root_agent=agent,
+            resumability_config=ResumabilityConfig(is_resumable=True),
+        )
+        adk_agent = ADKAgent.from_app(
+            adk_app, user_id="u1", use_in_memory_services=True,
+        )
+
+        starts = []
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            async for event in adk_agent.run(
+                RunAgentInput(
+                    thread_id=f"t_{uuid.uuid4().hex[:8]}",
+                    run_id=str(uuid.uuid4()),
+                    state={},
+                    messages=[UserMessage(id=str(uuid.uuid4()), content="archive please")],
+                    tools=[frontend_tool],
+                    context=[],
+                    forwarded_props={},
+                )
+            ):
+                if event.type == EventType.TOOL_CALL_START:
+                    starts.append((event.tool_call_id, getattr(event, "tool_call_name", None)))
+
+        approve_starts = [s for s in starts if s[1] == "approve_action"]
+        assert len(approve_starts) == 1, (
+            f"Expected exactly one TOOL_CALL_START for approve_action, got "
+            f"{len(approve_starts)}: {approve_starts}. The partial→proxy "
+            f"cross-path duplicate (#1168) has regressed."
         )
 
 

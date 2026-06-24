@@ -4,9 +4,11 @@ const { execSync } = require("child_process");
 const path = require("path");
 const concurrently = require("concurrently");
 
-// Pinned: @langchain/langgraph-api@1.1.14 regressed schema extraction, causing
-// worker timeouts on CI runners. Re-evaluate when a newer version fixes the issue.
-const LANGGRAPH_CLI_VERSION = "1.1.13";
+// 1.2.3: the in-memory dev server provisions persistence itself, so graphs no
+// longer need to compile their own checkpointer for threads.getState (1.1.13
+// 500'd with "No checkpointer set" once the compiled MemorySaver was removed).
+// Supersedes the old 1.1.13 pin that dodged the 1.1.14 schema-extraction regression.
+const LANGGRAPH_CLI_VERSION = "1.2.3";
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -175,6 +177,14 @@ const ALL_SERVICES = {
       env: { PORT: 8017 },
     },
   ],
+  "aws-strands-typescript": [
+    {
+      command: "pnpm run dojo",
+      name: "AWS Strands (TypeScript)",
+      cwd: path.join(integrationsRoot, "aws-strands/typescript/examples"),
+      env: { PORT: 8022 },
+    },
+  ],
   "adk-middleware": [
     {
       command: "uv run dev",
@@ -264,6 +274,15 @@ const ALL_SERVICES = {
       env: { PORT: 8016 },
     },
   ],
+  "ag-ui-dotnet": [
+    {
+      command:
+        'dotnet run --project AGUIDojoServer/AGUIDojoServer.csproj --urls "http://localhost:8023" --no-build',
+      name: "AG-UI .NET SDK",
+      cwd: path.join(gitRoot, "sdks/dotnet/samples/AGUIClientServer"),
+      env: { PORT: 8023 },
+    },
+  ],
   dojo: [
     {
       command: "pnpm run start",
@@ -289,7 +308,9 @@ const ALL_SERVICES = {
         A2A_MIDDLEWARE_ORCHESTRATOR_URL: "http://localhost:8014",
         AGENT_FRAMEWORK_PYTHON_URL: "http://localhost:8015",
         AGENT_FRAMEWORK_DOTNET_URL: "http://localhost:8016",
+        AGUI_DOTNET_URL: "http://localhost:8023",
         AWS_STRANDS_URL: "http://localhost:8017",
+        AWS_STRANDS_TYPESCRIPT_URL: "http://localhost:8022",
         CLAUDE_AGENT_SDK_PYTHON_URL: "http://localhost:8019",
         CLAUDE_AGENT_SDK_TYPESCRIPT_URL: "http://localhost:8020",
         LANGROID_URL: "http://localhost:8021",
@@ -323,7 +344,9 @@ const ALL_SERVICES = {
         A2A_MIDDLEWARE_ORCHESTRATOR_URL: "http://localhost:8014",
         AGENT_FRAMEWORK_PYTHON_URL: "http://localhost:8015",
         AGENT_FRAMEWORK_DOTNET_URL: "http://localhost:8016",
+        AGUI_DOTNET_URL: "http://localhost:8023",
         AWS_STRANDS_URL: "http://localhost:8017",
+        AWS_STRANDS_TYPESCRIPT_URL: "http://localhost:8022",
         CLAUDE_AGENT_SDK_PYTHON_URL: "http://localhost:8019",
         CLAUDE_AGENT_SDK_TYPESCRIPT_URL: "http://localhost:8020",
         LANGROID_URL: "http://localhost:8021",
