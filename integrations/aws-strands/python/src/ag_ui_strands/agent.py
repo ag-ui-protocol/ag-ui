@@ -204,9 +204,21 @@ def _build_strands_history(input_messages: List[Any]) -> List[Dict[str, Any]]:
     than a fresh prompt that re-fires the same tool every turn.
     """
     out: List[Dict[str, Any]] = []
+    # Buffer consecutive tool results so parallel tool calls land in a single
+    # following user message. Amazon Bedrock Converse rejects history where the
+    # toolResults for one assistant turn's multiple toolUse blocks are split
+    # across several user messages — they must all sit in one user message. See #1847.
+    pending_tool_results: List[Dict[str, Any]] = []
+
+    def flush_tool_results() -> None:
+        if pending_tool_results:
+            out.append({"role": "user", "content": list(pending_tool_results)})
+            pending_tool_results.clear()
+
     for msg in input_messages or []:
         role = getattr(msg, "role", None)
         if role == "user":
+            flush_tool_results()
             content = msg.content
             if isinstance(content, list):
                 has_media = any(
@@ -223,6 +235,7 @@ def _build_strands_history(input_messages: List[Any]) -> List[Dict[str, Any]]:
             else:
                 out.append({"role": "user", "content": [{"text": _coerce_text(content)}]})
         elif role == "assistant":
+            flush_tool_results()
             blocks: List[Dict[str, Any]] = []
             text = _coerce_text(msg.content)
             if text:
@@ -253,20 +266,16 @@ def _build_strands_history(input_messages: List[Any]) -> List[Dict[str, Any]]:
                 blocks = [{"text": ""}]
             out.append({"role": "assistant", "content": blocks})
         elif role == "tool":
-            out.append(
+            pending_tool_results.append(
                 {
-                    "role": "user",
-                    "content": [
-                        {
-                            "toolResult": {
-                                "toolUseId": getattr(msg, "tool_call_id", "") or "",
-                                "content": [{"text": _coerce_text(msg.content)}],
-                                "status": "success",
-                            }
-                        }
-                    ],
+                    "toolResult": {
+                        "toolUseId": getattr(msg, "tool_call_id", "") or "",
+                        "content": [{"text": _coerce_text(msg.content)}],
+                        "status": "success",
+                    }
                 }
             )
+    flush_tool_results()
     return out
 
 
