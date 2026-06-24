@@ -2316,6 +2316,12 @@ class ADKAgent:
         reference, which avoids errors with non-deep-copyable tools (e.g.
         ADK ``McpToolset`` whose ``errlog`` field holds an unpicklable
         ``TextIOWrapper``).
+
+        ADK 2.x ``Workflow`` nodes live in ``agent.graph.nodes``, not in
+        ``sub_agents``.  The copy gives the workflow its own ``graph.nodes``
+        list and recursively copies each node so that per-run tool replacement
+        (``_update_agent_tools_recursive``) reaches them without mutating the
+        shared singleton.
         """
         try:
             copied = agent.model_copy(deep=False)
@@ -2342,6 +2348,25 @@ class ADKAgent:
                 if isinstance(sub, BaseAgent) and sub is not original:
                     sub.parent_agent = copied
             copied.sub_agents = copied_subs
+
+        # ADK 2.x Workflow: nodes live in agent.graph.nodes, not sub_agents.
+        # model_copy(deep=False) leaves copied.graph pointing at the shared
+        # singleton, so we must also copy the graph before mutating its nodes
+        # list — otherwise concurrent requests race on the same list.
+        # model_copy on Graph does NOT call model_post_init (Pydantic contract),
+        # so Graph's "nodes already set" guard never fires and _terminal_node_names
+        # is preserved via __pydantic_private__.
+        graph = getattr(copied, 'graph', None)
+        graph_nodes = getattr(graph, 'nodes', None)
+        if isinstance(graph_nodes, (list, tuple)):
+            try:
+                copied_graph = graph.model_copy(deep=False)
+            except AttributeError:
+                copied_graph = graph
+            copied_nodes = [ADKAgent._shallow_copy_agent_tree(n) for n in graph_nodes]
+            # object.__setattr__ bypasses Pydantic validation.
+            object.__setattr__(copied_graph, 'nodes', copied_nodes)
+            object.__setattr__(copied, 'graph', copied_graph)
 
         return copied
 
@@ -2579,6 +2604,16 @@ class ADKAgent:
                 logger.info(f"[TOOL_SETUP] Agent {agent.name} has {len(sub_agents)} sub-agents")
                 for sub_agent in sub_agents:
                     _update_agent_tools_recursive(sub_agent)
+
+            # ADK 2.x Workflow: nodes live in agent.graph.nodes, not sub_agents.
+            # _shallow_copy_agent_tree already gave the copy its own nodes list;
+            # recurse here so AGUIToolset is replaced in each graph node.
+            graph = getattr(agent, "graph", None)
+            graph_nodes = getattr(graph, "nodes", None)
+            if graph_nodes and isinstance(graph_nodes, (list, tuple)):
+                logger.info(f"[TOOL_SETUP] Agent {agent.name} has {len(graph_nodes)} workflow graph nodes")
+                for graph_node in graph_nodes:
+                    _update_agent_tools_recursive(graph_node)
 
         _update_agent_tools_recursive(adk_agent)
 
