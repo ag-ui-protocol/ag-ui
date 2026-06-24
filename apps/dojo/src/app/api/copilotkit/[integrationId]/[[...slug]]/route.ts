@@ -7,7 +7,11 @@ import { handle } from "hono/vercel";
 import type { NextRequest } from "next/server";
 import type { AbstractAgent } from "@ag-ui/client";
 
-import { agentsIntegrations, ADK_A2UI_INJECT_AGENTS } from "@/agents";
+import {
+  agentsIntegrations,
+  ADK_A2UI_INJECT_AGENTS,
+  STRANDS_A2UI_INJECT_AGENTS,
+} from "@/agents";
 import { IntegrationId } from "@/menu";
 import { getPostHogClient } from "@/lib/posthog-server";
 
@@ -33,31 +37,36 @@ async function getHandler(integrationId: string) {
 
   const agents = await getAgents();
 
-  // The AWS Strands a2ui demos are plain Strands agents with no a2ui tool
-  // wiring: the runtime sends `injectA2UITool` and the adapter injects
-  // `generate_a2ui` itself, inferring the model from the wrapped agent.
-  // Scope it to the Strands integrations only (both adapters implement the
-  // injection):
-  // the LangGraph a2ui demos define their tools in-backend and must keep their
-  // existing (no-injection) a2ui config so their passing tests are unaffected.
-  const injectsA2UITool =
-    integrationId === "aws-strands-typescript" || integrationId === "aws-strands" || integrationId.includes("langgraph");
+  // The LangGraph a2ui demos rely on the runtime forwarding `injectA2UITool`
+  // integration-wide (their tools are defined in-backend but the dojo demos
+  // expect injection). The AWS Strands integrations no longer inject here:
+  // their dynamic/recovery demos apply per-agent A2UIMiddleware (with
+  // injectA2UITool) in agents.ts via STRANDS_A2UI_INJECT_AGENTS, while
+  // `a2ui_fixed_schema` wires its OWN backend tools and must NOT get
+  // `generate_a2ui` injected alongside them.
+  const injectsA2UITool = integrationId.includes("langgraph");
 
   // Agents whose A2UI rendering the runtime auto-applies A2UIMiddleware for.
-  // adk-middleware's inject-whitelisted agents (ADK_A2UI_INJECT_AGENTS) apply
-  // their OWN per-agent A2UIMiddleware (with injectA2UITool) in agents.ts, so
-  // they're excluded here — otherwise the middleware would be applied twice (the
-  // per-request clone preserves the construction-time `.use()`).
+  // Inject-whitelisted agents (ADK_A2UI_INJECT_AGENTS / STRANDS_A2UI_INJECT_AGENTS)
+  // apply their OWN per-agent A2UIMiddleware (with injectA2UITool) in agents.ts,
+  // so they're excluded here — otherwise the middleware would be applied twice
+  // (the per-request clone preserves the construction-time `.use()`).
   const allA2UIAgents = [
     "a2ui_fixed_schema",
     "a2ui_dynamic_schema",
     "a2ui_advanced",
     "a2ui_recovery",
   ];
-  const a2uiAgents =
+  const perAgentInjectIds =
     integrationId === "adk-middleware"
-      ? allA2UIAgents.filter((id) => !ADK_A2UI_INJECT_AGENTS.includes(id))
-      : allA2UIAgents;
+      ? ADK_A2UI_INJECT_AGENTS
+      : integrationId === "aws-strands" ||
+          integrationId === "aws-strands-typescript"
+        ? STRANDS_A2UI_INJECT_AGENTS
+        : [];
+  const a2uiAgents = allA2UIAgents.filter(
+    (id) => !perAgentInjectIds.includes(id),
+  );
 
   const runtime = new CopilotRuntime({
     agents: agents as Record<string, AbstractAgent>,

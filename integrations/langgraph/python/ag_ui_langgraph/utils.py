@@ -2,6 +2,7 @@ import json
 import logging
 import re
 from enum import Enum
+from uuid import UUID
 
 from pydantic import TypeAdapter
 from pydantic_core import PydanticSerializationError
@@ -698,6 +699,10 @@ def make_json_safe(value: Any, _seen: set[int] | None = None) -> Any:
     # --- 2. Enum → use underlying value -----------------------------------
     if isinstance(value, Enum):
         return make_json_safe(value.value, _seen)
+
+    # --- 2b. UUID → canonical string form ---------------------------------
+    if isinstance(value, UUID):
+        return str(value)
 
     # --- 3. Dicts ----------------------------------------------------------
     if isinstance(value, dict):

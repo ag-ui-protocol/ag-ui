@@ -1,0 +1,28 @@
+using System.Text.Json.Serialization;
+
+namespace AGUI.Abstractions;
+
+/// <summary>
+/// Compact reasoning message chunk event with optional fields.
+/// </summary>
+// Keep in sync with sdks/typescript/packages/core/src/events.ts
+public sealed class ReasoningMessageChunkEvent : BaseEvent
+{
+    /// <inheritdoc/>
+    [JsonPropertyName("type")]
+    public override string Type => AGUIEventTypes.ReasoningMessageChunk;
+
+    /// <summary>
+    /// Gets or sets the optional message identifier.
+    /// </summary>
+    [JsonPropertyName("messageId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? MessageId { get; set; }
+
+    /// <summary>
+    /// Gets or sets the optional content delta.
+    /// </summary>
+    [JsonPropertyName("delta")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Delta { get; set; }
+}

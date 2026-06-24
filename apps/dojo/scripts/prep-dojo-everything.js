@@ -154,6 +154,11 @@ const ALL_TARGETS = {
     name: "Microsoft Agent Framework (.NET)",
     cwd: path.join(integrationsRoot, "microsoft-agent-framework/dotnet/examples"),
   },
+  "ag-ui-dotnet": {
+    command: "dotnet restore AGUIDojoServer/AGUIDojoServer.csproj && dotnet build AGUIDojoServer/AGUIDojoServer.csproj",
+    name: "AG-UI .NET SDK",
+    cwd: path.join(gitRoot, "sdks/dotnet/samples/AGUIClientServer"),
+  },
 };
 
 function printDryRunServices(procs) {

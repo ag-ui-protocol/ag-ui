@@ -2,6 +2,9 @@ syntax = "proto3";
 
 package ag_ui;
 
+// C#-only option (ignored by the TypeScript and Python generators).
+option csharp_namespace = "AGUI.ProtocolBuffers";
+
 import "google/protobuf/struct.proto";
 
 message ToolCall {
