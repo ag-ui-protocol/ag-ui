@@ -541,4 +541,40 @@ describe("event emission details (fake-only)", () => {
     expect(textChunks[0].messageId).not.toBe(textChunks[1].messageId);
   });
 
+  describe("custom-data / missing-payload chunks (#1635)", () => {
+    it("skips a custom-data chunk lacking a payload instead of aborting the stream", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      const agent = makeLocalMastraAgent({
+        streamChunks: [
+          { type: "text-delta", payload: { text: "Hello" } },
+          // Mastra 1.31 custom-data chunk: carries `data`, no `payload`.
+          {
+            type: "data-workspace-metadata",
+            data: { workspaceId: "ws-1", title: "My Workspace" },
+          },
+          { type: "text-delta", payload: { text: " world" } },
+          { type: "finish", payload: { finishReason: "stop" } },
+        ],
+      });
+
+      const events = await collectEvents(agent, makeInput());
+
+      // The stream must NOT abort: RUN_FINISHED is still emitted.
+      expect(events.some((e) => e.type === EventType.RUN_FINISHED)).toBe(true);
+
+      // Both text deltas (before and after the custom-data chunk) flow through.
+      const joinedText = events
+        .filter(
+          (e): e is TextMessageChunkEvent =>
+            e.type === EventType.TEXT_MESSAGE_CHUNK,
+        )
+        .map((e) => e.delta ?? "")
+        .join("");
+      expect(joinedText).toContain("Hello");
+      expect(joinedText).toContain("world");
+
+      warnSpy.mockRestore();
+    });
+  });
 });
