@@ -11,7 +11,7 @@
     </parent>
 
     <artifactId>adk-java</artifactId>
-    <version>1.4.0</version>
+    <version>1.5.0</version>
 
     <name>AG-UI ADK Java</name>
     <description>AG-UI ADK Java Integration</description>
@@ -20,7 +20,7 @@
         <!-- Version of com.google.adk:google-adk this module is built and tested against.
              Consumers supply their own google-adk version (provided scope) — this property
              documents the baseline we validate; it is NOT a hard requirement. -->
-        <google-adk.version>1.4.0</google-adk.version>
+        <google-adk.version>1.5.0</google-adk.version>
         <ag-ui.version>0.0.1</ag-ui.version>
         <maven.deploy.skip>false</maven.deploy.skip>
         <mockito.version>5.21.0</mockito.version>

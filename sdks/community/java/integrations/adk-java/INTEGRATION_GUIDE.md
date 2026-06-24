@@ -17,13 +17,13 @@ Add the necessary dependencies to your `pom.xml`.
 <dependency>
     <groupId>com.ag-ui</groupId>
     <artifactId>adk-java</artifactId>
-    <version>1.4.0</version>
+    <version>1.5.0</version>
 </dependency>
 <!-- REQUIRED: adk-java declares google-adk as provided, so you supply it here. -->
 <dependency>
     <groupId>com.google.adk</groupId>
     <artifactId>google-adk</artifactId>
-    <version>1.4.0</version>  <!-- any version compatible with your code -->
+    <version>1.5.0</version>  <!-- any version compatible with your code -->
 </dependency>
 
 <dependency>
@@ -38,7 +38,7 @@ Add the necessary dependencies to your `pom.xml`.
 
 Spring Security is **optional** — it's only needed if you want to authenticate requests and source the `userId` from the authenticated principal. See § 1.4 for the wiring snippet.
 
-`adk-java` is built and tested against `google-adk 1.4.0`. Newer minor/patch versions are expected to be source-compatible; if Google ships a breaking change, you can pin `google-adk` to a known-good version while waiting for a new `adk-java` release.
+`adk-java` is built and tested against `google-adk 1.5.0`. Newer minor/patch versions are expected to be source-compatible; if Google ships a breaking change, you can pin `google-adk` to a known-good version while waiting for a new `adk-java` release.
 
 ### 1.2. Configure Beans in Spring
 
