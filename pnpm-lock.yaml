@@ -557,6 +557,9 @@ importers:
       publint:
         specifier: ^0.3.12
         version: 0.3.17
+      rxjs:
+        specifier: 7.8.1
+        version: 7.8.1
       tsdown:
         specifier: ^0.20.1
         version: 0.20.1(publint@0.3.17)(typescript@5.9.3)
@@ -572,6 +575,9 @@ importers:
 
   integrations/aws-strands/typescript/examples:
     dependencies:
+      '@ag-ui/a2ui-toolkit':
+        specifier: workspace:*
+        version: link:../../../../sdks/typescript/packages/a2ui-toolkit
       '@ag-ui/aws-strands':
         specifier: workspace:*
         version: link:..

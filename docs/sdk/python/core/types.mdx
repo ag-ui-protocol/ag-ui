@@ -18,6 +18,10 @@ documents these types and their properties.
 Input parameters for running an agent. In the HTTP API, this is the body of the
 `POST` request.
 
+`tools` contains tools provided by the client for this run. Backend-defined
+tools should remain in the backend agent or framework configuration, and may be
+advertised separately through agent capabilities.
+
 ```python
 class RunAgentInput(ConfiguredBaseModel):
     thread_id: str
@@ -37,7 +41,7 @@ class RunAgentInput(ConfiguredBaseModel):
 | `parent_run_id`   | `Optional[str]` | (Optional) ID of the run that spawned this run |
 | `state`           | `Any`           | Current state of the agent                     |
 | `messages`        | `List[Message]` | List of messages in the conversation           |
-| `tools`           | `List[Tool]`    | List of tools available to the agent           |
+| `tools`           | `List[Tool]`    | Client-provided tools available for this run   |
 | `context`         | `List[Context]` | List of context objects provided to the agent  |
 | `forwarded_props` | `Any`           | Additional properties forwarded to the agent   |
 

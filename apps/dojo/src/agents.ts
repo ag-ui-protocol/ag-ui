@@ -46,6 +46,19 @@ const A2UI_DOJO_CATALOG_ID = "https://a2ui.org/demos/dojo/dynamic_catalog.json";
 // middleware (the per-request clone copies construction-time `.use()`).
 export const ADK_A2UI_INJECT_AGENTS: string[] = ["a2ui_dynamic_schema"];
 
+// Per-agent A2UI inject whitelist for the AWS Strands integrations (TS + Py).
+// These demos are plain Strands agents with no a2ui tool of their own and rely
+// on the adapter auto-injecting `generate_a2ui`. `a2ui_fixed_schema` is
+// deliberately excluded: it wires its OWN backend tools (search_flights /
+// search_hotels) that return a fixed-layout envelope, so it must NOT get
+// `generate_a2ui` injected alongside them. Injection is applied per-agent here
+// (NOT integration-wide) and these agents are excluded from the runtime-level
+// a2ui config in route.ts to avoid double-applying the middleware.
+export const STRANDS_A2UI_INJECT_AGENTS: string[] = [
+  "a2ui_dynamic_schema",
+  "a2ui_recovery",
+];
+
 export const agentsIntegrations = {
   "middleware-starter": async () => ({
     agentic_chat: new MiddlewareStarterAgent(),
@@ -308,9 +321,14 @@ export const agentsIntegrations = {
       (path) => new AgnoAgent({ url: `${envVars.agnoUrl}/${path}/agui` }),
       {
         agentic_chat: "agentic_chat",
-        tool_based_generative_ui: "tool_based_generative_ui",
+        agentic_chat_reasoning: "agentic_chat_reasoning",
+        agentic_chat_multimodal: "agentic_chat_multimodal",
+        agentic_generative_ui: "agentic_generative_ui",
         backend_tool_rendering: "backend_tool_rendering",
         human_in_the_loop: "human_in_the_loop",
+        predictive_state_updates: "predictive_state_updates",
+        shared_state: "shared_state",
+        tool_based_generative_ui: "tool_based_generative_ui",
       },
     ),
 
@@ -458,63 +476,87 @@ export const agentsIntegrations = {
     };
   },
 
-  "aws-strands": async () => ({
-    ...mapAgents(
-      (path) =>
-        new AWSStrandsAgent({ url: `${envVars.awsStrandsUrl}/${path}/` }),
-      {
-        agentic_chat: "agentic-chat",
-        agentic_chat_reasoning: "agentic-chat-reasoning",
-        agentic_chat_multimodal: "agentic-chat-multimodal",
-        // v1 page reuses the agentic-chat endpoint (menu advertises the
-        // feature; this mapping was missing).
-        v1_agentic_chat: "agentic-chat",
-        backend_tool_rendering: "backend-tool-rendering",
-        agentic_generative_ui: "agentic-generative-ui",
-        shared_state: "shared-state",
-        // A2UI demos: plain Strands agents with no a2ui wiring (the
-        // runtime sends `injectA2UITool` and the adapter injects generate_a2ui).
-        a2ui_dynamic_schema: "a2ui-dynamic-schema",
-        a2ui_recovery: "a2ui-recovery",
-      },
-    ),
-    human_in_the_loop: new AWSStrandsAgent({
-      url: `${envVars.awsStrandsUrl}/human-in-the-loop`,
-      debug: true,
-    }),
-  }),
+  "aws-strands": async () => {
+    const agents = {
+      ...mapAgents(
+        (path) =>
+          new AWSStrandsAgent({ url: `${envVars.awsStrandsUrl}/${path}/` }),
+        {
+          agentic_chat: "agentic-chat",
+          agentic_chat_reasoning: "agentic-chat-reasoning",
+          agentic_chat_multimodal: "agentic-chat-multimodal",
+          // v1 page reuses the agentic-chat endpoint (menu advertises the
+          // feature; this mapping was missing).
+          v1_agentic_chat: "agentic-chat",
+          backend_tool_rendering: "backend-tool-rendering",
+          agentic_generative_ui: "agentic-generative-ui",
+          shared_state: "shared-state",
+          // A2UI dynamic/recovery: plain Strands agents with no a2ui wiring;
+          // they get per-agent `generate_a2ui` injection below. fixed_schema
+          // wires its own backend tools, so it is NOT in the inject whitelist.
+          a2ui_dynamic_schema: "a2ui-dynamic-schema",
+          a2ui_fixed_schema: "a2ui-fixed-schema",
+          a2ui_recovery: "a2ui-recovery",
+        },
+      ),
+      human_in_the_loop: new AWSStrandsAgent({
+        url: `${envVars.awsStrandsUrl}/human-in-the-loop`,
+        debug: true,
+      }),
+    };
+    for (const id of STRANDS_A2UI_INJECT_AGENTS) {
+      (agents as Record<string, AbstractAgent>)[id]?.use(
+        new A2UIMiddleware({
+          injectA2UITool: true,
+          defaultCatalogId: A2UI_DOJO_CATALOG_ID,
+        }),
+      );
+    }
+    return agents;
+  },
 
-  "aws-strands-typescript": async () => ({
+  "aws-strands-typescript": async () => {
     // TS example server mounts every endpoint on hyphenated paths (matching the
     // Python reference server) so the same curl payloads drive both adapters.
     // v1_agentic_chat reuses the agentic-chat endpoint — the dojo page renders
     // the same agent via the v1 CopilotChat UI instead of the v2 shell.
-    ...mapAgents(
-      (path) =>
-        new AWSStrandsAgent({
-          url: `${envVars.awsStrandsTypescriptUrl}/${path}/`,
+    const agents = {
+      ...mapAgents(
+        (path) =>
+          new AWSStrandsAgent({
+            url: `${envVars.awsStrandsTypescriptUrl}/${path}/`,
+          }),
+        {
+          agentic_chat: "agentic-chat",
+          agentic_chat_reasoning: "agentic-chat-reasoning",
+          agentic_chat_multimodal: "agentic-chat-multimodal",
+          v1_agentic_chat: "agentic-chat",
+          backend_tool_rendering: "backend-tool-rendering",
+          agentic_generative_ui: "agentic-generative-ui",
+          shared_state: "shared-state",
+          tool_based_generative_ui: "tool-based-generative-ui",
+          // A2UI dynamic/recovery are auto-injected per-agent below;
+          // fixed_schema wires its own backend tools (no injection).
+          a2ui_dynamic_schema: "a2ui-dynamic-schema",
+          a2ui_fixed_schema: "a2ui-fixed-schema",
+          a2ui_recovery: "a2ui-recovery",
+        },
+      ),
+      human_in_the_loop: new AWSStrandsAgent({
+        url: `${envVars.awsStrandsTypescriptUrl}/human-in-the-loop`,
+        debug: true,
+      }),
+    };
+    for (const id of STRANDS_A2UI_INJECT_AGENTS) {
+      (agents as Record<string, AbstractAgent>)[id]?.use(
+        new A2UIMiddleware({
+          injectA2UITool: true,
+          defaultCatalogId: A2UI_DOJO_CATALOG_ID,
         }),
-      {
-        agentic_chat: "agentic-chat",
-        agentic_chat_reasoning: "agentic-chat-reasoning",
-        agentic_chat_multimodal: "agentic-chat-multimodal",
-        v1_agentic_chat: "agentic-chat",
-        backend_tool_rendering: "backend-tool-rendering",
-        agentic_generative_ui: "agentic-generative-ui",
-        shared_state: "shared-state",
-        tool_based_generative_ui: "tool-based-generative-ui",
-        // A2UI demos (auto-injected, see above). The example server mounts
-        // plain Strands agents (no a2ui wiring); the runtime sends
-        // `injectA2UITool` and the adapter injects `generate_a2ui` itself.
-        a2ui_dynamic_schema: "a2ui-dynamic-schema",
-        a2ui_recovery: "a2ui-recovery",
-      },
-    ),
-    human_in_the_loop: new AWSStrandsAgent({
-      url: `${envVars.awsStrandsTypescriptUrl}/human-in-the-loop`,
-      debug: true,
-    }),
-  }),
+      );
+    }
+    return agents;
+  },
 
   ag2: async () =>
     mapAgents((path) => new Ag2Agent({ url: `${envVars.ag2Url}/${path}` }), {

@@ -1,7 +1,7 @@
 [project]
 name = "ag_ui_adk"
 description = "ADK Middleware for AG-UI Protocol"
-version = "0.6.5"
+version = "0.7.0"
 license-files = ["LICENSE"]
 readme = "README.md"
 authors = [
