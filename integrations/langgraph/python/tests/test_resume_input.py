@@ -334,7 +334,7 @@ class TestRunEmitsLegacyWarningOnce(unittest.IsolatedAsyncioTestCase):
         # real graph work by stubbing prepare_stream to return an
         # events_to_dispatch payload — that triggers the early ``return`` at
         # the top of ``_handle_stream_events``.
-        # ``run`` does ``input.copy(update={...})``; on a MagicMock that
+        # ``run`` does ``input.model_copy(update={...})``; on a MagicMock that
         # returns a fresh mock with stringified attributes, so route the
         # copy back through the configured fixture to preserve thread_id
         # and forwarded_props.
@@ -398,3 +398,85 @@ class TestRunEmitsLegacyWarningOnce(unittest.IsolatedAsyncioTestCase):
             len(conflict), 1,
             f"conflict warning must fire exactly once, got {len(conflict)}: {warn_calls}",
         )
+
+
+class TestInterruptOutcomeResumeRoundTrip(unittest.IsolatedAsyncioTestCase):
+    """End-to-end mirror of the TypeScript
+    ``interrupt-outcome-resume-roundtrip`` integration test.
+
+    The Python suite already covers the structured outcome emission
+    (``TestActiveInterruptsNoResumeEmitsOutcome``) and the canonical
+    ``input.resume[]`` translation (``TestInputResumeResolvedSingle``) as
+    separate units, but never as one sequential flow on the same agent. This
+    drives both phases against the same ``emit_interrupt_outcome=True`` agent:
+
+      phase 1 (no resume)  -> prepare_stream short-circuits with a
+                              RUN_FINISHED whose outcome.type == "interrupt".
+      phase 2 (resume[])   -> prepare_stream forwards Command(resume=payload)
+                              to the graph and does NOT re-emit the interrupt
+                              outcome, i.e. the run actually resumes.
+
+    Fails if the opt-in emission regresses (phase 1) or if the resume[]
+    translation regresses (phase 2)."""
+
+    def _checkpoint(self):
+        return [
+            HumanMessage(id="h1", content="do something"),
+            AIMessage(
+                id="ai1",
+                content="",
+                tool_calls=[{"id": "tc-1", "name": "approval", "args": {}}],
+            ),
+        ]
+
+    async def test_interrupt_outcome_then_resume_round_trip(self):
+        agent = make_agent(emit_interrupt_outcome=True)
+        agent.active_run = {"id": "run-1", "mode": "start"}
+        agent.prepare_regenerate_stream = AsyncMock()
+        config = {"configurable": {"thread_id": "t1"}}
+        frontend_messages = [UserMessage(id="h1", role="user", content="do something")]
+
+        # The platform reports an open interrupt on the thread.
+        interrupt_state = _make_state(
+            messages=self._checkpoint(),
+            tasks=[FakeTask(interrupts=[
+                FakeInterrupt(value={"reason": "confirm", "message": "ok?"}, id="int-1"),
+            ])],
+        )
+
+        # ── Phase 1: no resume -> structured interrupt outcome ──────────────
+        run1 = _make_input(messages=frontend_messages, forwarded_props={})
+        result1 = await agent.prepare_stream(run1, interrupt_state, config)
+
+        # The run short-circuits (no graph stream) and surfaces the interrupt.
+        self.assertIsNone(result1.get("stream"))
+        finished1 = [
+            e for e in result1.get("events_to_dispatch", [])
+            if getattr(e, "type", None) == EventType.RUN_FINISHED
+        ]
+        self.assertEqual(len(finished1), 1)
+        self.assertEqual(finished1[0].outcome.type, "interrupt")
+        self.assertEqual(finished1[0].outcome.interrupts[0].id, "int-1")
+        self.assertEqual(finished1[0].outcome.interrupts[0].reason, "confirm")
+
+        # ── Phase 2: resume via canonical input.resume[] -> run resumes ─────
+        run2 = _make_input(
+            messages=frontend_messages,
+            resume=[ResumeEntry(interrupt_id="int-1", status="resolved", payload={"approved": True})],
+        )
+        result2 = await agent.prepare_stream(run2, interrupt_state, config)
+
+        # The resume actually streams to the graph (no short-circuit) ...
+        self.assertIsNotNone(result2.get("stream"))
+        # ... carrying the canonical Command(resume=payload) verbatim.
+        stream_input = agent.graph.astream_events.call_args.kwargs["input"]
+        self.assertIsInstance(stream_input, Command)
+        self.assertEqual(stream_input.resume, {"approved": True})
+
+        # The resume run must NOT re-emit the interrupt outcome.
+        finished2 = [
+            e for e in result2.get("events_to_dispatch", [])
+            if getattr(e, "type", None) == EventType.RUN_FINISHED
+            and getattr(getattr(e, "outcome", None), "type", None) == "interrupt"
+        ]
+        self.assertEqual(finished2, [])
