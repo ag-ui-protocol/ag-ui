@@ -218,12 +218,19 @@ def create_strands_app(
 
     app = FastAPI(title=f"AWS Strands - {agent.name}")
 
-    # Add CORS middleware
+    # Add CORS middleware.
+    #
+    # allow_credentials is intentionally False. With Starlette's CORSMiddleware,
+    # allow_origins=["*"] together with allow_credentials=True does NOT emit a
+    # literal "*" — it reflects the request's Origin back per-request, which is a
+    # credentialed any-origin posture (a security hole). Keeping credentials off
+    # makes "*" a true non-credentialed wildcard, matching the TypeScript adapter
+    # (see #1931) and closing #1939.
     from fastapi.middleware.cors import CORSMiddleware
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
-        allow_credentials=True,
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )
