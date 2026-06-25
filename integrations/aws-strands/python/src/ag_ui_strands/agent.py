@@ -19,6 +19,8 @@ from strands.session import SessionManager
 # AG-UI injects messages at runtime via RunAgentInput.
 # "hooks" is excluded: Agent stores hooks as a HookRegistry after init, not
 # the original list the constructor expects — forwarding it causes a TypeError.
+# "plugins" is excluded: they are recovered from Strands' plugin registry and
+# forwarded explicitly so plugin-provided tools can be filtered from self._tools.
 # "session_manager" is excluded: it is supplied per-thread via
 # StrandsAgentConfig.session_manager_provider (see run()). Forwarding a
 # template-level session_manager would make every thread share one session_id.
@@ -29,6 +31,7 @@ _AGUI_EXPLICIT_PARAMS = {
     "tools",
     "messages",
     "hooks",
+    "plugins",
     "session_manager",
 }
 
@@ -65,6 +68,59 @@ def _has_strands_session_manager(agent: Any) -> bool:
         getattr(agent, "session_manager", None) is not None
         or getattr(agent, "_session_manager", None) is not None
     )
+
+
+def _strands_agent_accepts_kwarg(name: str) -> bool:
+    try:
+        parameters = inspect.signature(StrandsAgentCore.__init__).parameters
+    except (TypeError, ValueError):
+        return False
+    return name in parameters or any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values()
+    )
+
+
+def _register_plugins_on_agent(agent: Any, plugins: List[Any]) -> bool:
+    registry = getattr(agent, "_plugin_registry", None)
+    add_and_init = getattr(registry, "add_and_init", None)
+    if not callable(add_and_init):
+        return False
+    for plugin in plugins:
+        add_and_init(plugin)
+    return True
+
+
+def _extract_agent_plugins(agent: Any) -> List[Any]:
+    registry = getattr(agent, "_plugin_registry", None)
+    plugins_by_name = getattr(registry, "_plugins", None)
+    if not isinstance(plugins_by_name, dict):
+        return []
+    return [
+        plugin
+        for name, plugin in plugins_by_name.items()
+        if not (isinstance(name, str) and name.startswith("strands:"))
+    ]
+
+
+def _plugin_tool_names(plugins: List[Any]) -> set:
+    names = set()
+    for plugin in plugins:
+        for tool in getattr(plugin, "tools", []) or []:
+            name = getattr(tool, "tool_name", None)
+            if isinstance(name, str):
+                names.add(name)
+    return names
+
+
+def _filter_plugin_tools(tools: List[Any], plugins: List[Any]) -> List[Any]:
+    plugin_tool_names = _plugin_tool_names(plugins)
+    if not plugin_tool_names:
+        return tools
+    return [
+        tool
+        for tool in tools
+        if getattr(tool, "tool_name", None) not in plugin_tool_names
+    ]
 
 
 logger = logging.getLogger(__name__)
@@ -280,15 +336,25 @@ class StrandsAgent:
         description: str = "",
         config: "StrandsAgentConfig | None" = None,
         hooks: "list | None" = None,
+        plugins: "list | None" = None,
     ):
         # Store template agent configuration for creating fresh instances
         self._model = agent.model
         self._system_prompt = agent.system_prompt
-        self._tools = (
+        # Plugin providers have the same lifecycle problem as hook providers:
+        # Strands consumes them during Agent construction. Newer Strands keeps
+        # the initialized providers in an internal plugin registry, so recover
+        # them from the template unless the caller passed an explicit list.
+        self._plugins = list(plugins) if plugins else _extract_agent_plugins(agent)
+        template_tools = (
             list(agent.tool_registry.registry.values())
             if hasattr(agent, "tool_registry")
             else []
         )
+        # The template tool registry already contains plugin-provided tools.
+        # When plugins are forwarded to per-thread agents those tools will be
+        # registered again by Strands; filter them here to avoid duplicate names.
+        self._tools = _filter_plugin_tools(template_tools, self._plugins)
         self._agent_kwargs = _extract_agent_kwargs(agent)
 
         # Hook providers forwarded to each per-thread StrandsAgentCore.
@@ -421,13 +487,25 @@ class StrandsAgent:
                     core_kwargs = dict(self._agent_kwargs)
                     if self._hooks:
                         core_kwargs["hooks"] = list(self._hooks)
-                    self._agents_by_thread[thread_id] = StrandsAgentCore(
+                    plugins_forwarded = False
+                    if self._plugins and _strands_agent_accepts_kwarg("plugins"):
+                        core_kwargs["plugins"] = list(self._plugins)
+                        plugins_forwarded = True
+                    strands_agent = StrandsAgentCore(
                         model=self._model,
                         system_prompt=self._system_prompt,
                         tools=self._tools,
                         session_manager=session_manager,
                         **core_kwargs,
                     )
+                    if self._plugins and not plugins_forwarded:
+                        if not _register_plugins_on_agent(strands_agent, self._plugins):
+                            logger.warning(
+                                "plugins were supplied to StrandsAgent but the installed "
+                                "Strands Agent does not expose plugin registration; "
+                                "per-thread agents will be created without plugins."
+                            )
+                    self._agents_by_thread[thread_id] = strands_agent
         strands_agent = self._agents_by_thread[thread_id]
 
         # Forward ``RunAgentInput.context`` to the per-thread Strands agent's
