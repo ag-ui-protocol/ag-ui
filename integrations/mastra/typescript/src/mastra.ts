@@ -38,10 +38,79 @@ import {
 
 type RemoteMastraAgent = ReturnType<MastraClient["getAgent"]>;
 
+/**
+ * Walks `finish.payload.response.uiMessages` to pull the final assistant text
+ * after Mastra's output processors have run.
+ *
+ * Returns `undefined` when:
+ *   - `uiMessages` is absent (older Mastra, or a non-finish chunk),
+ *   - no assistant message is present,
+ *   - the assistant message contains no text parts (tool-only response),
+ * so callers can fall back to the buffered raw text.
+ *
+ * Accepts both string content and array-of-parts content shapes
+ * (Mastra's UIMessage tolerates either depending on how the agent assembled
+ * its response).
+ */
+function extractLastAssistantText(
+  uiMessages: unknown,
+): string | undefined {
+  if (!Array.isArray(uiMessages)) return undefined;
+  for (let i = uiMessages.length - 1; i >= 0; i--) {
+    const message = uiMessages[i];
+    if (!message || (message as { role?: string }).role !== "assistant") {
+      continue;
+    }
+    const content = (message as { content?: unknown }).content;
+    if (typeof content === "string") {
+      return content.length > 0 ? content : undefined;
+    }
+    if (Array.isArray(content)) {
+      const text = content
+        .filter(
+          (part: any): part is { type: "text"; text: string } =>
+            part?.type === "text" && typeof part.text === "string",
+        )
+        .map((part) => part.text)
+        .join("");
+      return text.length > 0 ? text : undefined;
+    }
+    // Some UIMessage shapes expose pre-joined text via a `text` field.
+    const text = (message as { text?: unknown }).text;
+    if (typeof text === "string" && text.length > 0) return text;
+    return undefined;
+  }
+  return undefined;
+}
+
 export interface MastraAgentConfig extends AgentConfig {
   agent: LocalMastraAgent | RemoteMastraAgent;
   resourceId?: string;
   requestContext?: RequestContext;
+  /**
+   * When the configured agent uses `outputProcessors` that rewrite assistant
+   * text (e.g. character-voice transforms, redaction, format normalization),
+   * the processor-modified text is available only on the `finish` chunk's
+   * `payload.response.uiMessages` — added upstream in
+   * https://github.com/mastra-ai/mastra/pull/11549 to surface processor
+   * output through streaming.
+   *
+   * Set to `true` to buffer intermediate `text-delta` chunks and emit only
+   * the processor-modified text from the `finish` chunk. When the finish
+   * chunk has no usable `uiMessages` (older Mastra, or processors that did
+   * not modify text), the buffered raw text is emitted as a fallback so no
+   * text is dropped.
+   *
+   * Default: `false` (current behavior — text-delta chunks stream to the
+   * client in real time, processor rewrites are not surfaced).
+   *
+   * Trade-off: enabling this loses real-time text streaming. Required when
+   * downstream consumers (e.g. CopilotKit chat UI) must render the
+   * post-processor text rather than the raw LLM output.
+   *
+   * Tracking: https://github.com/ag-ui-protocol/ag-ui/issues/1726
+   */
+  useProcessedFinalText?: boolean;
 }
 
 interface MastraAgentStreamOptions {
@@ -72,13 +141,16 @@ export class MastraAgent extends AbstractAgent {
   resourceId?: string;
   requestContext?: RequestContext;
   public headers?: Record<string, string>;
+  useProcessedFinalText: boolean;
 
   constructor(private config: MastraAgentConfig) {
-    const { agent, resourceId, requestContext, ...rest } = config;
+    const { agent, resourceId, requestContext, useProcessedFinalText, ...rest } =
+      config;
     super(rest);
     this.agent = agent;
     this.resourceId = resourceId;
     this.requestContext = requestContext ?? new RequestContext();
+    this.useProcessedFinalText = useProcessedFinalText ?? false;
   }
 
   public clone() {
@@ -546,11 +618,29 @@ export class MastraAgent extends AbstractAgent {
       args: any;
     } | null = null;
 
+    // Buffered raw text accumulated from text-delta chunks while
+    // `useProcessedFinalText` is enabled. Released on each finish/step-finish
+    // chunk: replaced by the processor-modified uiMessages text when available,
+    // otherwise emitted verbatim so no text is dropped.
+    let bufferedText = "";
+
     const flush = () => {
       if (pendingToolCall) {
         callbacks.onToolCallPart?.(pendingToolCall);
         pendingToolCall = null;
       }
+    };
+
+    const releaseBufferedText = (chunkPayload: any) => {
+      if (!this.useProcessedFinalText) return;
+      const processedText = extractLastAssistantText(
+        chunkPayload?.response?.uiMessages,
+      );
+      const textToEmit = processedText ?? bufferedText;
+      if (textToEmit) {
+        callbacks.onTextPart?.(textToEmit);
+      }
+      bufferedText = "";
     };
 
     const handleChunk = (chunk: any): boolean => {
@@ -580,7 +670,13 @@ export class MastraAgent extends AbstractAgent {
           break;
         case "text-delta": {
           flush();
-          callbacks.onTextPart?.(chunk.payload.text);
+          if (this.useProcessedFinalText) {
+            // Hold deltas until finish — the processor-modified text
+            // arrives via finish.payload.response.uiMessages.
+            bufferedText += chunk.payload.text;
+          } else {
+            callbacks.onTextPart?.(chunk.payload.text);
+          }
           break;
         }
         case "tool-call": {
@@ -635,6 +731,11 @@ export class MastraAgent extends AbstractAgent {
         case "finish":
         case "step-finish": {
           flush();
+          // Release buffered text BEFORE rotating messageId so the emitted
+          // text-delta inherits the current step's messageId (the
+          // processor-modified text logically belongs to the step that just
+          // finished, not the next one).
+          releaseBufferedText(chunk.payload);
           callbacks.onFinishMessagePart?.();
           break;
         }
