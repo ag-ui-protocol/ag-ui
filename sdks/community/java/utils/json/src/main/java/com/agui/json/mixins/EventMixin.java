@@ -26,6 +26,7 @@ import com.agui.core.event.*;
  * <li>Message events: TEXT_MESSAGE_START, TEXT_MESSAGE_CONTENT, TEXT_MESSAGE_CHUNK, TEXT_MESSAGE_END</li>
  * <li>Tool execution: TOOL_CALL_START, TOOL_CALL_ARGS, TOOL_CALL_CHUNK, TOOL_CALL_END, TOOL_CALL_RESULT</li>
  * <li>Thinking process: THINKING_START, THINKING_END, THINKING_TEXT_MESSAGE_START, THINKING_TEXT_MESSAGE_CONTENT, THINKING_TEXT_MESSAGE_END</li>
+ * <li>Reasoning messages: REASONING_MESSAGE_START, REASONING_MESSAGE_CONTENT, REASONING_MESSAGE_END</li>
  * <li>State management: STATE_SNAPSHOT, STATE_DELTA, MESSAGES_SNAPSHOT</li>
  * <li>Generic: CUSTOM, RAW</li>
  * </ul>
@@ -58,6 +59,9 @@ import com.agui.core.event.*;
     @JsonSubTypes.Type(value = CustomEvent.class, name = "CUSTOM"),
     @JsonSubTypes.Type(value = MessagesSnapshotEvent.class, name = "MESSAGES_SNAPSHOT"),
     @JsonSubTypes.Type(value = RawEvent.class, name = "RAW"),
+    @JsonSubTypes.Type(value = ReasoningMessageContentEvent.class, name = "REASONING_MESSAGE_CONTENT"),
+    @JsonSubTypes.Type(value = ReasoningMessageEndEvent.class, name = "REASONING_MESSAGE_END"),
+    @JsonSubTypes.Type(value = ReasoningMessageStartEvent.class, name = "REASONING_MESSAGE_START"),
     @JsonSubTypes.Type(value = RunErrorEvent.class, name = "RUN_ERROR"),
     @JsonSubTypes.Type(value = RunFinishedEvent.class, name = "RUN_FINISHED"),
     @JsonSubTypes.Type(value = RunStartedEvent.class, name = "RUN_STARTED"),
