@@ -186,6 +186,56 @@ describe("defaultApplyEvents with tool calls", () => {
     expect((finalMessages[ownerIndex + 1] as any).toolCallId).toBe("tool1");
   });
 
+  it("should not duplicate a replayed tool call start", async () => {
+    const events$ = new Subject<BaseEvent>();
+    const initialState: RunAgentInput = {
+      messages: [
+        {
+          id: "msg1",
+          role: "assistant",
+          toolCalls: [
+            {
+              id: "tool1",
+              type: "function",
+              function: { name: "search", arguments: '{"query": ' },
+            },
+          ],
+        },
+      ],
+      state: {},
+      threadId: "test-thread",
+      runId: "test-run",
+      tools: [],
+      context: [],
+    };
+    const agent = createAgent(initialState.messages);
+    const result$ = defaultApplyEvents(initialState, events$, agent, []);
+    const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
+
+    events$.next({
+      type: EventType.TOOL_CALL_START,
+      toolCallId: "tool1",
+      toolCallName: "search",
+      parentMessageId: "msg1",
+    } as ToolCallStartEvent);
+    events$.next({
+      type: EventType.TOOL_CALL_ARGS,
+      toolCallId: "tool1",
+      delta: '"weather"}',
+    } as ToolCallArgsEvent);
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    events$.complete();
+
+    const stateUpdates = await stateUpdatesPromise;
+    expect(stateUpdates.length).toBe(1);
+
+    const assistantMsg = stateUpdates[0].messages?.[0] as AssistantMessage;
+    expect(assistantMsg.toolCalls?.length).toBe(1);
+    expect(assistantMsg.toolCalls?.[0]?.id).toBe("tool1");
+    expect(assistantMsg.toolCalls?.[0]?.function?.arguments).toBe('{"query": "weather"}');
+  });
+
   it("should handle multiple tool calls correctly", async () => {
     // Create a subject and state for events
     const events$ = new Subject<BaseEvent>();
