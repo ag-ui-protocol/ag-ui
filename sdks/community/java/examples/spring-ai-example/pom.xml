@@ -15,6 +15,7 @@
     <properties>
         <spring-ai.version>1.0.1</spring-ai.version>
         <ag-ui.version>0.0.1</ag-ui.version>
+        <maven.deploy.skip>true</maven.deploy.skip>
     </properties>
 
     <dependencies>
