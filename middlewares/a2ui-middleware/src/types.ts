@@ -133,6 +133,16 @@ export interface A2UIForwardedProps {
   a2uiAction?: {
     userAction: A2UIUserAction;
   };
+
+  /**
+   * By-reference data channel (OSS-2005). A host-supplied surface data model
+   * delivered out-of-band so the subagent emits path-bound components without
+   * re-serializing the dataset as output tokens. The framework adapter reads it
+   * and merges it into the emitted `updateDataModel`; the middleware's only role
+   * is letting the resulting data-only final op survive surface dedup. Lowercase
+   * snake key so it survives the langgraph camel→snake forwardedProps mangle.
+   */
+  a2ui_data?: Record<string, unknown>;
 }
 
 /**
