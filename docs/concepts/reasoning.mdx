@@ -406,15 +406,17 @@ const response = await agent.run({
 ## Migration from Thinking Events
 
 <Warning>
-  The `THINKING_*` events are deprecated and will be removed in version 1.0.0.
-  New implementations should use `REASONING_*` events.
+  The `THINKING_*` events were **removed in version 1.0.0**. Use `REASONING_*`
+  events instead. Legacy agents (`maxVersion <= 0.0.45`) that still emit
+  `THINKING_*` on the wire keep working — the client transparently rewrites them
+  to their `REASONING_*` equivalents before validation.
 </Warning>
 
-### Deprecated Events
+### Removed Events
 
-The following events are deprecated:
+The following events were removed; each maps 1:1 to a `REASONING_*` event:
 
-| Deprecated Event                | Replacement                 |
+| Removed Event                   | Replacement                 |
 | ------------------------------- | --------------------------- |
 | `THINKING_START`                | `REASONING_START`           |
 | `THINKING_END`                  | `REASONING_END`             |

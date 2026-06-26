@@ -75,30 +75,6 @@ const toProtoContentPart = (part: any): any => {
           metadata: part.metadata,
         },
       };
-    case "binary": {
-      const source = part.data
-        ? { data: { value: part.data, mimeType: part.mimeType } }
-        : part.url
-          ? { url: { value: part.url, mimeType: part.mimeType } }
-          : part.id
-            ? { url: { value: part.id, mimeType: part.mimeType } }
-            : undefined;
-
-      if (!source) {
-        return undefined;
-      }
-
-      return {
-        document: {
-          source,
-          metadata: {
-            legacyBinary: true,
-            filename: part.filename,
-            id: part.id,
-          },
-        },
-      };
-    }
     default:
       return undefined;
   }

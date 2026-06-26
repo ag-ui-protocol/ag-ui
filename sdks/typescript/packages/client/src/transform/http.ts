@@ -7,6 +7,7 @@ import { parseSSEStream } from "./sse";
 import { parseProtoStream } from "./proto";
 import * as proto from "@ag-ui/proto";
 import { type DebugLoggerInput, resolveDebugLogger } from "@/debug-logger";
+import { createLegacyThinkingMapper } from "@/middleware/backward-compatibility-0-0-45";
 
 /**
  * Transforms HTTP events into BaseEvents using the appropriate format parser based on content type.
@@ -23,6 +24,11 @@ export const transformHttpEventStream = (
 
   // Flag to track whether we've set up the parser
   let parserInitialized = false;
+
+  // Rewrites deprecated legacy THINKING events to REASONING before schema
+  // validation, so legacy (<= 0.0.45) agents still interoperate now that the
+  // THINKING_* event types are removed from the protocol (1.0.0).
+  const mapLegacyThinking = createLegacyThinkingMapper();
 
   // Subscribe to source and buffer events while we determine the content type
   source$.subscribe({
@@ -53,7 +59,8 @@ export const transformHttpEventStream = (
           parseSSEStream(bufferSubject, log).subscribe({
             next: (json) => {
               try {
-                const parsedEvent = EventSchemas.parse(json);
+                const normalized = mapLegacyThinking(json as BaseEvent);
+                const parsedEvent = EventSchemas.parse(normalized);
                 log?.event("HTTP", "Event validated:", parsedEvent, {
                   type: parsedEvent.type,
                   valid: true,

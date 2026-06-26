@@ -26,11 +26,6 @@ export const EventTypeSchema = z.enum([
   "TOOL_CALL_END",
   "TOOL_CALL_CHUNK",
   "TOOL_CALL_RESULT",
-  "THINKING_START",
-  "THINKING_END",
-  "THINKING_TEXT_MESSAGE_START",
-  "THINKING_TEXT_MESSAGE_CONTENT",
-  "THINKING_TEXT_MESSAGE_END",
   "STATE_SNAPSHOT",
   "STATE_DELTA",
   "MESSAGES_SNAPSHOT",
@@ -119,48 +114,13 @@ export const AudioInputPartSchema = AudioInputContentSchema;
 export const VideoInputPartSchema = VideoInputContentSchema;
 export const DocumentInputPartSchema = DocumentInputContentSchema;
 
-export const BinaryInputContentSchema = z
-  .object({
-    type: z.literal("binary"),
-    mimeType: z.string(),
-    id: z.string().optional(),
-    url: z.string().optional(),
-    data: z.string().optional(),
-    filename: z.string().optional(),
-  })
-  .refine((value) => Boolean(value.id || value.url || value.data), {
-    message: "BinaryInputContent requires at least one of id, url, or data.",
-  });
-
-export const InputContentSchema = z
-  .discriminatedUnion("type", [
-    TextInputContentSchema,
-    ImageInputContentSchema,
-    AudioInputContentSchema,
-    VideoInputContentSchema,
-    DocumentInputContentSchema,
-    z.object({
-      type: z.literal("binary"),
-      mimeType: z.string(),
-      id: z.string().optional(),
-      url: z.string().optional(),
-      data: z.string().optional(),
-      filename: z.string().optional(),
-    }),
-  ])
-  .refine(
-    (value) => {
-      if (value.type === "binary") {
-        return Boolean(
-          (value as { id?: string; url?: string; data?: string }).id ||
-            (value as { id?: string; url?: string; data?: string }).url ||
-            (value as { id?: string; url?: string; data?: string }).data,
-        );
-      }
-      return true;
-    },
-    { message: "BinaryInputContent requires at least one of id, url, or data." },
-  );
+export const InputContentSchema = z.discriminatedUnion("type", [
+  TextInputContentSchema,
+  ImageInputContentSchema,
+  AudioInputContentSchema,
+  VideoInputContentSchema,
+  DocumentInputContentSchema,
+]);
 
 export const InputContentPartSchema = InputContentSchema;
 
@@ -321,28 +281,6 @@ export const TextMessageChunkEventSchema = BaseEventSchema.extend({
   name: z.string().optional(),
 });
 
-/**
- * @deprecated Use ReasoningTextMessageStartEventSchema instead. Will be removed in 1.0.0.
- */
-export const ThinkingTextMessageStartEventSchema = BaseEventSchema.extend({
-  type: z.literal(EventType.THINKING_TEXT_MESSAGE_START),
-});
-
-/**
- * @deprecated Use ReasoningMessageContentEventSchema instead. Will be removed in 1.0.0.
- */
-export const ThinkingTextMessageContentEventSchema = BaseEventSchema.extend({
-  type: z.literal(EventType.THINKING_TEXT_MESSAGE_CONTENT),
-  delta: z.string(),
-});
-
-/**
- * @deprecated Use ReasoningMessageEndEventSchema instead. Will be removed in 1.0.0.
- */
-export const ThinkingTextMessageEndEventSchema = BaseEventSchema.extend({
-  type: z.literal(EventType.THINKING_TEXT_MESSAGE_END),
-});
-
 export const ToolCallStartEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.TOOL_CALL_START),
   toolCallId: z.string(),
@@ -375,21 +313,6 @@ export const ToolCallChunkEventSchema = BaseEventSchema.extend({
   toolCallName: z.string().optional(),
   parentMessageId: z.string().optional(),
   delta: z.string().optional(),
-});
-
-/**
- * @deprecated Use ReasoningStartEventSchema instead. Will be removed in 1.0.0.
- */
-export const ThinkingStartEventSchema = BaseEventSchema.extend({
-  type: z.literal(EventType.THINKING_START),
-  title: z.string().optional(),
-});
-
-/**
- * @deprecated Use ReasoningEndEventSchema instead. Will be removed in 1.0.0.
- */
-export const ThinkingEndEventSchema = BaseEventSchema.extend({
-  type: z.literal(EventType.THINKING_END),
 });
 
 export const StateSnapshotEventSchema = BaseEventSchema.extend({
@@ -540,11 +463,6 @@ export const EventSchemas = z.discriminatedUnion("type", [
   TextMessageContentEventSchema,
   TextMessageEndEventSchema,
   TextMessageChunkEventSchema,
-  ThinkingStartEventSchema,
-  ThinkingEndEventSchema,
-  ThinkingTextMessageStartEventSchema,
-  ThinkingTextMessageContentEventSchema,
-  ThinkingTextMessageEndEventSchema,
   ToolCallStartEventSchema,
   ToolCallArgsEventSchema,
   ToolCallEndEventSchema,

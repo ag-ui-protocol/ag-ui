@@ -2,7 +2,10 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { AbstractAgent } from "@/agent";
 import { BaseEvent, EventType, RunAgentInput } from "@ag-ui/core";
 import { Observable, from, lastValueFrom, toArray } from "rxjs";
-import { BackwardCompatibility_0_0_47 } from "../backward-compatibility-0-0-47";
+import {
+  BackwardCompatibility_0_0_47,
+  upgradeLegacyBinaryInput,
+} from "../backward-compatibility-0-0-47";
 
 class MockAgent extends AbstractAgent {
   private events: BaseEvent[];
@@ -230,7 +233,7 @@ describe("BackwardCompatibility_0_0_47", () => {
     ]);
   });
 
-  it("leaves binary with only id as-is", async () => {
+  it("drops binary with only id (no data/url has no new-format equivalent)", async () => {
     const agent = new MockAgent([]);
 
     const input = createInput([
@@ -252,13 +255,7 @@ describe("BackwardCompatibility_0_0_47", () => {
     });
 
     const msg = agent.receivedInput!.messages[0] as { content: unknown[] };
-    expect(msg.content).toEqual([
-      {
-        type: "binary",
-        mimeType: "image/png",
-        id: "file-123",
-      },
-    ]);
+    expect(msg.content).toEqual([]);
   });
 
   it("handles mixed content parts", async () => {
@@ -353,5 +350,29 @@ describe("BackwardCompatibility_0_0_47", () => {
       type: "image",
       source: { type: "data", value: "base64data", mimeType: "image/png" },
     });
+  });
+
+  // HttpAgent.requestInit and this middleware can both run, so the upgrade must
+  // be idempotent — already-upgraded parts pass through unchanged.
+  it("upgradeLegacyBinaryInput is idempotent when applied twice", () => {
+    const input = createInput([
+      {
+        id: "msg-1",
+        role: "user",
+        content: [
+          { type: "text", text: "look:" },
+          { type: "binary", mimeType: "image/png", data: "base64data" },
+        ],
+      },
+    ] as unknown as RunAgentInput["messages"]);
+
+    const once = upgradeLegacyBinaryInput(input);
+    const twice = upgradeLegacyBinaryInput(once);
+
+    expect(twice.messages[0]).toEqual(once.messages[0]);
+    expect((twice.messages[0] as { content: unknown[] }).content).toEqual([
+      { type: "text", text: "look:" },
+      { type: "image", source: { type: "data", value: "base64data", mimeType: "image/png" } },
+    ]);
   });
 });

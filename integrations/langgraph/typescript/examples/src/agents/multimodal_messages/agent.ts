@@ -9,7 +9,7 @@
  * Example usage:
  *
  * ```typescript
- * import { UserMessage, TextInputContent, BinaryInputContent } from "@ag-ui/core";
+ * import { UserMessage, ImageInputContent } from "@ag-ui/core";
  *
  * // Create a multimodal user message
  * const message: UserMessage = {
@@ -18,9 +18,8 @@
  *   content: [
  *     { type: "text", text: "What's in this image?" },
  *     {
- *       type: "binary",
- *       mimeType: "image/jpeg",
- *       url: "https://example.com/photo.jpg"
+ *       type: "image",
+ *       source: { type: "url", value: "https://example.com/photo.jpg", mimeType: "image/jpeg" },
  *     },
  *   ],
  * };
@@ -32,10 +31,8 @@
  *   content: [
  *     { type: "text", text: "Describe this picture" },
  *     {
- *       type: "binary",
- *       mimeType: "image/png",
- *       data: "iVBORw0KGgoAAAANSUhEUgAAAAUA...", // base64 encoded
- *       filename: "screenshot.png"
+ *       type: "image",
+ *       source: { type: "data", value: "iVBORw0KGgoAAAANSUhEUgAAAAUA...", mimeType: "image/png" },
  *     },
  *   ],
  * };

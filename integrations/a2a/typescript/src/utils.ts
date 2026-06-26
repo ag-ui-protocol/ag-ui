@@ -15,7 +15,6 @@ import type {
   A2APart,
   A2ATextPart,
   A2ADataPart,
-  A2AFilePart,
   A2AStreamEvent,
   ConvertAGUIMessagesOptions,
   ConvertedA2AMessages,
@@ -40,10 +39,6 @@ const SURFACE_OPERATION_KEYS = [
 
 type SurfaceOperationKey = (typeof SURFACE_OPERATION_KEYS)[number];
 
-const isBinaryContent = (
-  content: InputContent,
-): content is Extract<InputContent, { type: "binary" }> => content.type === "binary";
-
 const isTextContent = (content: InputContent): content is Extract<InputContent, { type: "text" }> =>
   content.type === "text";
 
@@ -51,32 +46,6 @@ const createTextPart = (text: string): A2ATextPart => ({
   kind: "text",
   text,
 });
-
-const createFilePart = (content: Extract<InputContent, { type: "binary" }>): A2AFilePart | null => {
-  if (content.url) {
-    return {
-      kind: "file",
-      file: {
-        uri: content.url,
-        mimeType: content.mimeType,
-        name: content.filename,
-      },
-    };
-  }
-
-  if (content.data) {
-    return {
-      kind: "file",
-      file: {
-        bytes: content.data,
-        mimeType: content.mimeType,
-        name: content.filename,
-      },
-    };
-  }
-
-  return null;
-};
 
 const extractSurfaceOperation = (
   payload: unknown,
@@ -123,11 +92,6 @@ const messageContentToParts = (message: Message): A2APart[] => {
         const value = chunk.text.trim();
         if (value.length > 0) {
           parts.push(createTextPart(value));
-        }
-      } else if (isBinaryContent(chunk)) {
-        const filePart = createFilePart(chunk);
-        if (filePart) {
-          parts.push(filePart);
         }
       } else {
         parts.push({ kind: "data", data: chunk } as A2ADataPart);

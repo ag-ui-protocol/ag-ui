@@ -114,14 +114,19 @@ export abstract class AbstractAgent {
       this.middlewares.unshift(new BackwardCompatibility_0_0_39());
     }
 
-    // Auto-insert BackwardCompatibility_0_0_45 for backward compatibility
-    // with legacy THINKING events (deprecated, will be removed in 1.0.0)
+    // Auto-insert BackwardCompatibility_0_0_45 to translate legacy THINKING
+    // events to REASONING for old agents. The THINKING_* types were removed in
+    // 1.0.0; the HTTP transport applies the same mapping unconditionally
+    // (see transform/http.ts), so this guard mainly covers non-HTTP agents.
     if (compareVersions(this.maxVersion, "0.0.45") <= 0) {
       this.middlewares.unshift(new BackwardCompatibility_0_0_45());
     }
 
-    // Auto-insert BackwardCompatibility_0_0_47 for backward compatibility
-    // with legacy BinaryInputContent (maps to dedicated image/audio/video/document types)
+    // Auto-insert BackwardCompatibility_0_0_47 to map legacy binary content to
+    // the dedicated image/audio/video/document types. The binary type was removed
+    // in 1.0.0; the HTTP transport applies the same upgrade unconditionally on
+    // outgoing input (see HttpAgent.requestInit), so this guard mainly covers
+    // non-HTTP agents.
     if (compareVersions(this.maxVersion, "0.0.47") <= 0) {
       this.middlewares.unshift(new BackwardCompatibility_0_0_47());
     }

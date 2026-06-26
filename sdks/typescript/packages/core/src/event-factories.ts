@@ -33,16 +33,6 @@ import type {
   TextMessageEndEventProps,
   TextMessageStartEvent,
   TextMessageStartEventProps,
-  ThinkingEndEvent,
-  ThinkingEndEventProps,
-  ThinkingStartEvent,
-  ThinkingStartEventProps,
-  ThinkingTextMessageContentEvent,
-  ThinkingTextMessageContentEventProps,
-  ThinkingTextMessageEndEvent,
-  ThinkingTextMessageEndEventProps,
-  ThinkingTextMessageStartEvent,
-  ThinkingTextMessageStartEventProps,
   ToolCallArgsEvent,
   ToolCallArgsEventProps,
   ToolCallChunkEvent,
@@ -98,33 +88,6 @@ export const createTextMessageChunkEvent = (
 ): TextMessageChunkEvent =>
   ({ type: EventType.TEXT_MESSAGE_CHUNK, ...props }) as TextMessageChunkEvent;
 
-/** @deprecated Use `createReasoningMessageStartEvent` instead. Will be removed in 1.0.0. */
-export const createThinkingTextMessageStartEvent = (
-  props: ThinkingTextMessageStartEventProps,
-): ThinkingTextMessageStartEvent =>
-  ({
-    type: EventType.THINKING_TEXT_MESSAGE_START,
-    ...props,
-  }) as ThinkingTextMessageStartEvent;
-
-/** @deprecated Use `createReasoningMessageContentEvent` instead. Will be removed in 1.0.0. */
-export const createThinkingTextMessageContentEvent = (
-  props: ThinkingTextMessageContentEventProps,
-): ThinkingTextMessageContentEvent =>
-  ({
-    type: EventType.THINKING_TEXT_MESSAGE_CONTENT,
-    ...props,
-  }) as ThinkingTextMessageContentEvent;
-
-/** @deprecated Use `createReasoningMessageEndEvent` instead. Will be removed in 1.0.0. */
-export const createThinkingTextMessageEndEvent = (
-  props: ThinkingTextMessageEndEventProps,
-): ThinkingTextMessageEndEvent =>
-  ({
-    type: EventType.THINKING_TEXT_MESSAGE_END,
-    ...props,
-  }) as ThinkingTextMessageEndEvent;
-
 /** Creates a TOOL_CALL_START event. */
 export const createToolCallStartEvent = (
   props: ToolCallStartEventProps,
@@ -154,18 +117,6 @@ export const createToolCallResultEvent = (
   props: ToolCallResultEventProps,
 ): ToolCallResultEvent =>
   ({ type: EventType.TOOL_CALL_RESULT, ...props }) as ToolCallResultEvent;
-
-/** @deprecated Use `createReasoningStartEvent` instead. Will be removed in 1.0.0. */
-export const createThinkingStartEvent = (
-  props: ThinkingStartEventProps,
-): ThinkingStartEvent =>
-  ({ type: EventType.THINKING_START, ...props }) as ThinkingStartEvent;
-
-/** @deprecated Use `createReasoningEndEvent` instead. Will be removed in 1.0.0. */
-export const createThinkingEndEvent = (
-  props: ThinkingEndEventProps,
-): ThinkingEndEvent =>
-  ({ type: EventType.THINKING_END, ...props }) as ThinkingEndEvent;
 
 /** Creates a STATE_SNAPSHOT event. */
 export const createStateSnapshotEvent = (

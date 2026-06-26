@@ -75,7 +75,7 @@ describe("BackwardCompatibility_0_0_45", () => {
     expect(result[0]).toEqual({
       type: EventType.REASONING_MESSAGE_START,
       messageId: "mock-uuid",
-      role: "assistant",
+      role: "reasoning",
     });
   });
 

@@ -191,39 +191,6 @@ export async function convertAguiContentToStrands(
       continue;
     }
 
-    if (item.type === "binary") {
-      // Deprecated legacy binary content — try to map to an image block.
-      const bin = item as {
-        type: "binary";
-        mimeType: string;
-        url?: string;
-        data?: string;
-      };
-      let bytes: Uint8Array | null = null;
-      if (bin.data) {
-        bytes = decodeBase64(bin.data, log);
-      } else if (bin.url) {
-        bytes = await fetchUrlBytes(bin.url, log);
-      }
-      if (!bytes) {
-        log.warn(
-          `${LOG_PREFIX} Skipping binary content: could not resolve bytes`,
-        );
-        continue;
-      }
-      const fmt = mimeToFormat(bin.mimeType, IMAGE_FORMATS, log);
-      if (!fmt) {
-        log.warn(
-          `${LOG_PREFIX} Skipping binary content: unsupported MIME type '${bin.mimeType}'`,
-        );
-        continue;
-      }
-      blocks.push(
-        new ImageBlock({ format: fmt as ImageFormat, source: { bytes } }),
-      );
-      continue;
-    }
-
     log.warn(
       `${LOG_PREFIX} Skipping unknown content type: ${(item as { type?: string }).type}`,
     );

@@ -46,7 +46,6 @@ import type {
   RunAgentInputSchema,
   RoleSchema,
   InputContentSchema,
-  BinaryInputContentSchema,
   // Event schemas
   BaseEventSchema,
   TextMessageStartEventSchema,
@@ -80,11 +79,6 @@ import type {
   ReasoningMessageChunkEventSchema,
   ReasoningEndEventSchema,
   ReasoningEncryptedValueEventSchema,
-  ThinkingStartEventSchema,
-  ThinkingEndEventSchema,
-  ThinkingTextMessageStartEventSchema,
-  ThinkingTextMessageContentEventSchema,
-  ThinkingTextMessageEndEventSchema,
   // Capability schemas
   SubAgentInfoSchema,
   IdentityCapabilitiesSchema,
@@ -123,7 +117,6 @@ import type {
   RunAgentInput,
   Role,
   InputContent,
-  BinaryInputContent,
 } from "../types";
 
 import type {
@@ -159,11 +152,6 @@ import type {
   ReasoningMessageChunkEvent,
   ReasoningEndEvent,
   ReasoningEncryptedValueEvent,
-  ThinkingStartEvent,
-  ThinkingEndEvent,
-  ThinkingTextMessageStartEvent,
-  ThinkingTextMessageContentEvent,
-  ThinkingTextMessageEndEvent,
 } from "../events";
 
 import type {
@@ -229,11 +217,6 @@ type _IReasoningMessageEndEvent = z.infer<typeof ReasoningMessageEndEventSchema>
 type _IReasoningMessageChunkEvent = z.infer<typeof ReasoningMessageChunkEventSchema>;
 type _IReasoningEndEvent = z.infer<typeof ReasoningEndEventSchema>;
 type _IReasoningEncryptedValueEvent = z.infer<typeof ReasoningEncryptedValueEventSchema>;
-type _IThinkingStartEvent = z.infer<typeof ThinkingStartEventSchema>;
-type _IThinkingEndEvent = z.infer<typeof ThinkingEndEventSchema>;
-type _IThinkingTextMessageStartEvent = z.infer<typeof ThinkingTextMessageStartEventSchema>;
-type _IThinkingTextMessageContentEvent = z.infer<typeof ThinkingTextMessageContentEventSchema>;
-type _IThinkingTextMessageEndEvent = z.infer<typeof ThinkingTextMessageEndEventSchema>;
 
 // ==========================================================================
 // Types tests
@@ -290,9 +273,6 @@ describe("schema inferred types match hand-written types (types.ts)", () => {
   });
   it("InputContent", () => {
     expectTypeOf<z.infer<typeof InputContentSchema>>().toEqualTypeOf<InputContent>();
-  });
-  it("BinaryInputContent", () => {
-    expectTypeOf<z.infer<typeof BinaryInputContentSchema>>().toEqualTypeOf<BinaryInputContent>();
   });
 });
 
@@ -423,21 +403,6 @@ describe("schema inferred types match hand-written types (events.ts)", () => {
   });
   it("ReasoningEncryptedValueEvent", () => {
     expectTypeOf<_IReasoningEncryptedValueEvent>().toExtend<ReasoningEncryptedValueEvent>();
-  });
-  it("ThinkingStartEvent", () => {
-    expectTypeOf<_IThinkingStartEvent>().toExtend<ThinkingStartEvent>();
-  });
-  it("ThinkingEndEvent", () => {
-    expectTypeOf<_IThinkingEndEvent>().toExtend<ThinkingEndEvent>();
-  });
-  it("ThinkingTextMessageStartEvent", () => {
-    expectTypeOf<_IThinkingTextMessageStartEvent>().toExtend<ThinkingTextMessageStartEvent>();
-  });
-  it("ThinkingTextMessageContentEvent", () => {
-    expectTypeOf<_IThinkingTextMessageContentEvent>().toExtend<ThinkingTextMessageContentEvent>();
-  });
-  it("ThinkingTextMessageEndEvent", () => {
-    expectTypeOf<_IThinkingTextMessageEndEvent>().toExtend<ThinkingTextMessageEndEvent>();
   });
 });
 
