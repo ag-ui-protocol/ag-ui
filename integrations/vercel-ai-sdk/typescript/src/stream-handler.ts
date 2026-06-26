@@ -1,0 +1,504 @@
+// Maps an AI SDK v6 streamText() fullStream into AG-UI events on an rxjs
+// Subscriber. Stateful per-run; create a new instance per run.
+
+import {
+  EventType,
+  randomUUID,
+  type AssistantMessage,
+  type BaseEvent,
+  type Message,
+  type ReasoningMessage,
+  type RunAgentInput,
+  type ToolCall,
+  type ToolMessage,
+} from "@ag-ui/client";
+import type { Subscriber } from "rxjs";
+import type { TextStreamPart, ToolSet } from "ai";
+
+function getErrorMessage(value: unknown): string {
+  if (value instanceof Error) return value.message;
+  if (typeof value === "string") return value;
+  if (value == null) return "unknown error";
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function safeJsonStringify(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value === undefined) return "";
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return "";
+  }
+}
+
+interface ToolCallPart {
+  toolCallId: string;
+  toolName: string;
+  input: unknown;
+  invalid?: boolean;
+  error?: unknown;
+  providerExecuted?: boolean;
+  dynamic?: boolean;
+}
+
+interface ToolResultPart {
+  toolCallId: string;
+  output: unknown;
+  preliminary?: boolean;
+}
+
+interface ToolErrorPart {
+  toolCallId: string;
+  error: unknown;
+}
+
+interface ToolOutputDeniedPart {
+  toolCallId: string;
+}
+
+interface ToolApprovalRequestPart {
+  approvalId: string;
+  toolCall: unknown;
+}
+
+interface ReasoningEndPart {
+  id: string;
+  providerMetadata?: { anthropic?: { signature?: unknown } } & Record<string, unknown>;
+}
+
+export class StreamHandler {
+  private currentStepAssistantId = randomUUID();
+  private currentAssistantMessage: AssistantMessage = {
+    id: this.currentStepAssistantId,
+    role: "assistant",
+    content: "",
+    toolCalls: [],
+  };
+  private currentMessagePushed = false;
+  private finalMessages: Message[];
+  private stepIndex = 0;
+  private completed = false;
+
+  private openTextIds = new Set<string>();
+  private openReasonings = new Map<string, ReasoningMessage>();
+  private seenToolCalls = new Set<string>();
+  private emittedToolResults = new Set<string>();
+
+  constructor(
+    private readonly input: RunAgentInput,
+    private readonly subscriber: Subscriber<BaseEvent>,
+  ) {
+    this.finalMessages = [...input.messages];
+    // Pre-seed: existing tool messages already account for prior tool calls.
+    for (const m of input.messages) {
+      if (m.role === "tool") this.emittedToolResults.add(m.toolCallId);
+    }
+  }
+
+  async process(stream: AsyncIterable<TextStreamPart<ToolSet>>): Promise<void> {
+    this.emit({
+      type: EventType.RUN_STARTED,
+      threadId: this.input.threadId,
+      runId: this.input.runId,
+    });
+
+    try {
+      for await (const part of stream) {
+        if (this.subscriber.closed) break;
+        this.handlePart(part);
+      }
+    } catch (error) {
+      this.emit({
+        type: EventType.RUN_ERROR,
+        message: getErrorMessage(error),
+        code: "stream_error",
+      });
+      this.complete();
+      return;
+    }
+
+    this.closeAllOpenReasonings();
+    this.closeAllOpenTexts();
+    this.synthesizeMissingToolResults();
+
+    this.emit({
+      type: EventType.MESSAGES_SNAPSHOT,
+      messages: this.finalMessages,
+    });
+    this.emit({
+      type: EventType.RUN_FINISHED,
+      threadId: this.input.threadId,
+      runId: this.input.runId,
+    });
+    this.complete();
+  }
+
+  private emit(event: Record<string, unknown> & { type: EventType }): void {
+    if (this.subscriber.closed) return;
+    this.subscriber.next(event as BaseEvent);
+  }
+
+  private complete(): void {
+    if (this.completed) return;
+    this.completed = true;
+    if (!this.subscriber.closed) this.subscriber.complete();
+  }
+
+  private ensureAssistantPushed(): void {
+    if (this.currentMessagePushed) return;
+    this.finalMessages.push(this.currentAssistantMessage);
+    this.currentMessagePushed = true;
+  }
+
+  private handlePart(part: TextStreamPart<ToolSet>): void {
+    switch (part.type) {
+      case "text-start":
+        return this.onTextStart(part);
+      case "text-delta":
+        return this.onTextDelta(part);
+      case "text-end":
+        return this.onTextEnd(part);
+      case "reasoning-start":
+        return this.onReasoningStart(part);
+      case "reasoning-delta":
+        return this.onReasoningDelta(part);
+      case "reasoning-end":
+        return this.onReasoningEnd(part as ReasoningEndPart);
+      case "tool-input-start":
+        return this.onToolInputStart(part);
+      case "tool-input-delta":
+        return this.onToolInputDelta(part);
+      case "tool-input-end":
+        return this.onToolInputEnd(part);
+      case "tool-call":
+        return this.onToolCall(part as unknown as ToolCallPart);
+      case "tool-result":
+        return this.onToolResult(part as unknown as ToolResultPart);
+      case "tool-error":
+        return this.onToolError(part as unknown as ToolErrorPart);
+      case "tool-output-denied":
+        return this.onToolOutputDenied(part as unknown as ToolOutputDeniedPart);
+      case "tool-approval-request":
+        return this.onToolApprovalRequest(part as unknown as ToolApprovalRequestPart);
+      case "start-step":
+        return this.onStartStep();
+      case "finish-step":
+        return this.onFinishStep();
+      case "abort":
+        // RUN_ERROR + complete is terminal; mirrors the thrown-error path
+        // and prevents the cleanup phase from emitting a misleading
+        // RUN_FINISHED for an aborted run.
+        this.emit({
+          type: EventType.RUN_ERROR,
+          message: "Stream aborted",
+          code: "aborted",
+        });
+        this.complete();
+        return;
+      case "error":
+        this.emit({
+          type: EventType.RUN_ERROR,
+          message: getErrorMessage((part as { error: unknown }).error),
+          code: "stream_error_part",
+        });
+        this.complete();
+        return;
+      // Skip: AI SDK lifecycle parts that map onto RUN_*/STEP_* boundaries.
+      case "start":
+      case "finish":
+      case "source":
+      case "file":
+      case "raw":
+        return;
+      default:
+        console.warn(
+          `[VercelAISDKAgent] Unrecognized stream part type: ${(part as { type?: string }).type}`,
+        );
+        return;
+    }
+  }
+
+  // text -----------------------------------------------------------------
+  private onTextStart(part: { id: string }): void {
+    this.closeAllOpenReasonings();
+    // Adopt the first text part's id as this step's assistant message id, so
+    // the streamed TEXT_MESSAGE_* events and the assistant message that lands
+    // in MESSAGES_SNAPSHOT share one id. Without this, the canonical client
+    // drops the streamed message on snapshot (its id is absent from the
+    // snapshot) and re-appends a fresh-UUID copy — a needless id churn. This
+    // matches the langgraph/mastra convention of reusing the streamed id.
+    //
+    // `currentMessagePushed` doubles as the step-identity lock: a tool-first
+    // step has already pushed the assistant message and emitted
+    // TOOL_CALL_START.parentMessageId pointing at the current id, so we must
+    // NOT re-key it here. Likewise, when a single step streams multiple text
+    // segments, only the FIRST segment's id is adopted; later segments keep
+    // their own TEXT_MESSAGE_* ids but collapse into this one assistant
+    // message in the snapshot (their accumulated content already lands in
+    // currentAssistantMessage.content). That collapse is intentional — one
+    // assistant turn is one snapshot message.
+    if (!this.currentMessagePushed) {
+      this.currentStepAssistantId = part.id;
+      this.currentAssistantMessage.id = part.id;
+    }
+    this.ensureAssistantPushed();
+    this.openTextIds.add(part.id);
+    this.emit({
+      type: EventType.TEXT_MESSAGE_START,
+      messageId: part.id,
+      role: "assistant",
+    });
+  }
+
+  private onTextDelta(part: { id: string; text: string }): void {
+    this.currentAssistantMessage.content =
+      `${this.currentAssistantMessage.content ?? ""}${part.text}`;
+    this.emit({
+      type: EventType.TEXT_MESSAGE_CONTENT,
+      messageId: part.id,
+      delta: part.text,
+    });
+  }
+
+  private onTextEnd(part: { id: string }): void {
+    this.openTextIds.delete(part.id);
+    this.emit({
+      type: EventType.TEXT_MESSAGE_END,
+      messageId: part.id,
+    });
+  }
+
+  private closeAllOpenTexts(): void {
+    for (const id of this.openTextIds) {
+      this.emit({ type: EventType.TEXT_MESSAGE_END, messageId: id });
+    }
+    this.openTextIds.clear();
+  }
+
+  // reasoning ------------------------------------------------------------
+  private onReasoningStart(part: { id: string }): void {
+    if (this.openReasonings.has(part.id)) return;
+    const msg: ReasoningMessage = { id: part.id, role: "reasoning", content: "" };
+    this.openReasonings.set(part.id, msg);
+    this.emit({ type: EventType.REASONING_START, messageId: part.id });
+    this.emit({
+      type: EventType.REASONING_MESSAGE_START,
+      messageId: part.id,
+      role: "reasoning",
+    });
+  }
+
+  private onReasoningDelta(part: { id: string; text: string }): void {
+    const msg = this.openReasonings.get(part.id);
+    if (msg) msg.content = `${msg.content ?? ""}${part.text}`;
+    this.emit({
+      type: EventType.REASONING_MESSAGE_CONTENT,
+      messageId: part.id,
+      delta: part.text,
+    });
+  }
+
+  private onReasoningEnd(part: ReasoningEndPart): void {
+    const msg = this.openReasonings.get(part.id);
+    this.emit({ type: EventType.REASONING_MESSAGE_END, messageId: part.id });
+    this.emit({ type: EventType.REASONING_END, messageId: part.id });
+
+    const sig = part.providerMetadata?.anthropic?.signature;
+    if (typeof sig === "string" && sig.length > 0) {
+      if (msg) msg.encryptedValue = sig;
+      this.emit({
+        type: EventType.REASONING_ENCRYPTED_VALUE,
+        subtype: "message",
+        entityId: part.id,
+        encryptedValue: sig,
+      });
+    }
+    if (msg) this.finalMessages.push(msg);
+    this.openReasonings.delete(part.id);
+  }
+
+  private closeAllOpenReasonings(): void {
+    if (this.openReasonings.size === 0) return;
+    for (const [id, msg] of this.openReasonings) {
+      this.emit({ type: EventType.REASONING_MESSAGE_END, messageId: id });
+      this.emit({ type: EventType.REASONING_END, messageId: id });
+      this.finalMessages.push(msg);
+    }
+    this.openReasonings.clear();
+  }
+
+  // tool input streaming --------------------------------------------------
+  private onToolInputStart(part: { id: string; toolName: string }): void {
+    this.closeAllOpenReasonings();
+    this.ensureAssistantPushed();
+    this.seenToolCalls.add(part.id);
+    this.emit({
+      type: EventType.TOOL_CALL_START,
+      toolCallId: part.id,
+      toolCallName: part.toolName,
+      parentMessageId: this.currentStepAssistantId,
+    });
+  }
+
+  private onToolInputDelta(part: { id: string; delta: string }): void {
+    this.emit({
+      type: EventType.TOOL_CALL_ARGS,
+      toolCallId: part.id,
+      delta: part.delta,
+    });
+  }
+
+  private onToolInputEnd(part: { id: string }): void {
+    this.emit({ type: EventType.TOOL_CALL_END, toolCallId: part.id });
+  }
+
+  // tool call/result/error ------------------------------------------------
+  private onToolCall(part: ToolCallPart): void {
+    this.closeAllOpenReasonings();
+    this.ensureAssistantPushed();
+
+    const argsString = safeJsonStringify(part.input);
+
+    // Defensive synthesis: provider didn't stream tool input parts, only
+    // emitted the final tool-call. Fabricate START/ARGS/END so the client
+    // still gets the full tool-call lifecycle.
+    if (!this.seenToolCalls.has(part.toolCallId)) {
+      this.seenToolCalls.add(part.toolCallId);
+      this.emit({
+        type: EventType.TOOL_CALL_START,
+        toolCallId: part.toolCallId,
+        toolCallName: part.toolName,
+        parentMessageId: this.currentStepAssistantId,
+      });
+      this.emit({
+        type: EventType.TOOL_CALL_ARGS,
+        toolCallId: part.toolCallId,
+        delta: argsString,
+      });
+      this.emit({
+        type: EventType.TOOL_CALL_END,
+        toolCallId: part.toolCallId,
+      });
+    }
+
+    const toolCall: ToolCall = {
+      id: part.toolCallId,
+      type: "function",
+      function: { name: part.toolName, arguments: argsString },
+    };
+    // Defensive dedup: a misbehaving provider could emit the same tool-call
+    // twice; without this, the assistant message would carry duplicate entries
+    // with the same id and break the MESSAGES_SNAPSHOT for downstream clients.
+    const existingToolCalls = this.currentAssistantMessage.toolCalls ?? [];
+    if (!existingToolCalls.some((tc) => tc.id === part.toolCallId)) {
+      this.currentAssistantMessage.toolCalls = [...existingToolCalls, toolCall];
+    }
+
+    // Note: invalid tool-calls are followed by a `tool-error` part in v6 —
+    // letting that path emit TOOL_CALL_RESULT avoids duplicates. The
+    // cleanup-phase synthesizer covers any provider that breaks this.
+  }
+
+  private onToolResult(part: ToolResultPart): void {
+    const content = safeJsonStringify(part.output);
+    if (part.preliminary) {
+      // Preliminary results are delivery-only; don't persist to history.
+      const msgId = randomUUID();
+      this.emit({
+        type: EventType.TOOL_CALL_RESULT,
+        messageId: msgId,
+        toolCallId: part.toolCallId,
+        content,
+        role: "tool",
+      });
+      return;
+    }
+    this.emitToolResult(part.toolCallId, content);
+  }
+
+  private onToolError(part: ToolErrorPart): void {
+    const errMsg = getErrorMessage(part.error);
+    this.emitToolResult(part.toolCallId, errMsg, errMsg);
+  }
+
+  private onToolOutputDenied(part: ToolOutputDeniedPart): void {
+    // Pass an `error` so a client can distinguish an actual denial from a
+    // tool that legitimately returned the string "denied" — mirrors how
+    // onToolError surfaces the failure on the ToolMessage.
+    this.emitToolResult(part.toolCallId, "denied", "tool output denied");
+  }
+
+  private emitToolResult(toolCallId: string, content: string, error?: string): void {
+    const msgId = randomUUID();
+    const toolMsg: ToolMessage = {
+      id: msgId,
+      role: "tool",
+      toolCallId,
+      content,
+      ...(error !== undefined ? { error } : {}),
+    };
+    this.finalMessages.push(toolMsg);
+    this.emittedToolResults.add(toolCallId);
+    this.emit({
+      type: EventType.TOOL_CALL_RESULT,
+      messageId: msgId,
+      toolCallId,
+      content,
+      role: "tool",
+    });
+  }
+
+  private onToolApprovalRequest(part: ToolApprovalRequestPart): void {
+    this.emit({
+      type: EventType.CUSTOM,
+      name: "tool_approval_request",
+      value: { approvalId: part.approvalId, toolCall: part.toolCall },
+    });
+  }
+
+  // step lifecycle --------------------------------------------------------
+  private onStartStep(): void {
+    this.stepIndex += 1;
+    this.emit({
+      type: EventType.STEP_STARTED,
+      stepName: `step-${this.stepIndex}`,
+    });
+  }
+
+  private onFinishStep(): void {
+    this.emit({
+      type: EventType.STEP_FINISHED,
+      stepName: `step-${this.stepIndex}`,
+    });
+    this.rotateAssistantMessage();
+  }
+
+  private rotateAssistantMessage(): void {
+    this.currentStepAssistantId = randomUUID();
+    this.currentAssistantMessage = {
+      id: this.currentStepAssistantId,
+      role: "assistant",
+      content: "",
+      toolCalls: [],
+    };
+    this.currentMessagePushed = false;
+    this.openTextIds.clear();
+    this.seenToolCalls.clear();
+  }
+
+  // cleanup ---------------------------------------------------------------
+  private synthesizeMissingToolResults(): void {
+    for (const message of this.finalMessages) {
+      if (message.role !== "assistant" || !message.toolCalls?.length) continue;
+      for (const tc of message.toolCalls) {
+        if (this.emittedToolResults.has(tc.id)) continue;
+        this.emitToolResult(tc.id, "Tool call missing result", "Tool call missing result");
+      }
+    }
+  }
+}

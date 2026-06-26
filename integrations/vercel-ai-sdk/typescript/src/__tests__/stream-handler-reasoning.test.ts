@@ -1,0 +1,251 @@
+import { describe, expect, it } from "vitest";
+import {
+  EventType,
+  type MessagesSnapshotEvent,
+  type ReasoningEncryptedValueEvent,
+  type ReasoningMessage,
+  type ReasoningMessageContentEvent,
+} from "@ag-ui/client";
+import { streamText } from "ai";
+import {
+  collectEvents,
+  eventsOfType,
+  finishStop,
+  makeMockModel,
+  responseMetadata,
+  streamStart,
+} from "./helpers";
+
+describe("StreamHandler — reasoning", () => {
+  it("emits the full reasoning event sequence (START / MESSAGE_START / CONTENT / MESSAGE_END / END)", async () => {
+    const model = makeMockModel([
+      streamStart,
+      responseMetadata(),
+      { type: "reasoning-start", id: "r1" },
+      { type: "reasoning-delta", id: "r1", delta: "Thinking " },
+      { type: "reasoning-delta", id: "r1", delta: "hard." },
+      { type: "reasoning-end", id: "r1" },
+      { type: "text-start", id: "t1" },
+      { type: "text-delta", id: "t1", delta: "42." },
+      { type: "text-end", id: "t1" },
+      finishStop(),
+    ]);
+
+    const events = await collectEvents(streamText({ model, prompt: "q" }).fullStream);
+    const reasoningEventTypes = events
+      .filter((e) =>
+        [
+          EventType.REASONING_START,
+          EventType.REASONING_MESSAGE_START,
+          EventType.REASONING_MESSAGE_CONTENT,
+          EventType.REASONING_MESSAGE_END,
+          EventType.REASONING_END,
+        ].includes(e.type as EventType),
+      )
+      .map((e) => e.type);
+
+    expect(reasoningEventTypes).toEqual([
+      EventType.REASONING_START,
+      EventType.REASONING_MESSAGE_START,
+      EventType.REASONING_MESSAGE_CONTENT,
+      EventType.REASONING_MESSAGE_CONTENT,
+      EventType.REASONING_MESSAGE_END,
+      EventType.REASONING_END,
+    ]);
+  });
+
+  it("uses the AI SDK reasoning-start.id as the messageId for all reasoning events", async () => {
+    const model = makeMockModel([
+      streamStart,
+      responseMetadata(),
+      { type: "reasoning-start", id: "r-xyz" },
+      { type: "reasoning-delta", id: "r-xyz", delta: "hi" },
+      { type: "reasoning-end", id: "r-xyz" },
+      finishStop(),
+    ]);
+
+    const events = await collectEvents(streamText({ model, prompt: "q" }).fullStream);
+    const reasoningEvents = events.filter(
+      (e) =>
+        e.type === EventType.REASONING_START ||
+        e.type === EventType.REASONING_MESSAGE_START ||
+        e.type === EventType.REASONING_MESSAGE_CONTENT ||
+        e.type === EventType.REASONING_MESSAGE_END ||
+        e.type === EventType.REASONING_END,
+    );
+    const ids = reasoningEvents.map((e) => (e as unknown as { messageId: string }).messageId);
+    expect(new Set(ids)).toEqual(new Set(["r-xyz"]));
+  });
+
+  it("preserves a reasoning Message in MESSAGES_SNAPSHOT (separate from any AssistantMessage)", async () => {
+    const model = makeMockModel([
+      streamStart,
+      responseMetadata(),
+      { type: "reasoning-start", id: "r1" },
+      { type: "reasoning-delta", id: "r1", delta: "thought" },
+      { type: "reasoning-end", id: "r1" },
+      { type: "text-start", id: "t1" },
+      { type: "text-delta", id: "t1", delta: "answer" },
+      { type: "text-end", id: "t1" },
+      finishStop(),
+    ]);
+
+    const events = await collectEvents(streamText({ model, prompt: "q" }).fullStream);
+    const snapshot = events.find((e) => e.type === EventType.MESSAGES_SNAPSHOT) as MessagesSnapshotEvent;
+    const reasoningMsg = snapshot.messages.find((m) => m.role === "reasoning") as ReasoningMessage | undefined;
+    expect(reasoningMsg).toBeDefined();
+    expect(reasoningMsg!.id).toBe("r1");
+    expect(reasoningMsg!.content).toBe("thought");
+
+    // assistant message is separate
+    const assistant = snapshot.messages.find((m) => m.role === "assistant");
+    expect(assistant).toBeDefined();
+    expect((assistant as { content?: string }).content).toBe("answer");
+  });
+
+  it("emits REASONING_ENCRYPTED_VALUE when reasoning-end carries Anthropic signature", async () => {
+    const model = makeMockModel([
+      streamStart,
+      responseMetadata(),
+      { type: "reasoning-start", id: "r-sig" },
+      { type: "reasoning-delta", id: "r-sig", delta: "thinking" },
+      {
+        type: "reasoning-end",
+        id: "r-sig",
+        providerMetadata: { anthropic: { signature: "sig_xyz_abc" } },
+      },
+      finishStop(),
+    ]);
+
+    const events = await collectEvents(streamText({ model, prompt: "q" }).fullStream);
+    const enc = eventsOfType<ReasoningEncryptedValueEvent>(events, EventType.REASONING_ENCRYPTED_VALUE);
+    expect(enc).toHaveLength(1);
+    expect(enc[0].subtype).toBe("message");
+    expect(enc[0].entityId).toBe("r-sig");
+    expect(enc[0].encryptedValue).toBe("sig_xyz_abc");
+  });
+
+  it("populates ReasoningMessage.encryptedValue when an Anthropic signature is present", async () => {
+    const model = makeMockModel([
+      streamStart,
+      responseMetadata(),
+      { type: "reasoning-start", id: "r-sig" },
+      { type: "reasoning-delta", id: "r-sig", delta: "hmm" },
+      {
+        type: "reasoning-end",
+        id: "r-sig",
+        providerMetadata: { anthropic: { signature: "sig_abc" } },
+      },
+      finishStop(),
+    ]);
+
+    const events = await collectEvents(streamText({ model, prompt: "q" }).fullStream);
+    const snapshot = events.find((e) => e.type === EventType.MESSAGES_SNAPSHOT) as MessagesSnapshotEvent;
+    const reasoning = snapshot.messages.find((m) => m.role === "reasoning") as ReasoningMessage;
+    expect(reasoning.encryptedValue).toBe("sig_abc");
+  });
+
+  it("emits REASONING_ENCRYPTED_VALUE between REASONING_END and the next TEXT_MESSAGE_START", async () => {
+    const model = makeMockModel([
+      streamStart,
+      responseMetadata(),
+      { type: "reasoning-start", id: "r1" },
+      { type: "reasoning-delta", id: "r1", delta: "x" },
+      {
+        type: "reasoning-end",
+        id: "r1",
+        providerMetadata: { anthropic: { signature: "sig" } },
+      },
+      { type: "text-start", id: "t1" },
+      { type: "text-delta", id: "t1", delta: "ok" },
+      { type: "text-end", id: "t1" },
+      finishStop(),
+    ]);
+
+    const events = await collectEvents(streamText({ model, prompt: "q" }).fullStream);
+    const reasoningEndIdx = events.findIndex((e) => e.type === EventType.REASONING_END);
+    const encIdx = events.findIndex((e) => e.type === EventType.REASONING_ENCRYPTED_VALUE);
+    const textStartIdx = events.findIndex((e) => e.type === EventType.TEXT_MESSAGE_START);
+    expect(reasoningEndIdx).toBeLessThan(encIdx);
+    expect(encIdx).toBeLessThan(textStartIdx);
+  });
+
+  it("aggregates reasoning content deltas in the final ReasoningMessage", async () => {
+    const model = makeMockModel([
+      streamStart,
+      responseMetadata(),
+      { type: "reasoning-start", id: "r1" },
+      { type: "reasoning-delta", id: "r1", delta: "Part A " },
+      { type: "reasoning-delta", id: "r1", delta: "Part B" },
+      { type: "reasoning-end", id: "r1" },
+      finishStop(),
+    ]);
+    const events = await collectEvents(streamText({ model, prompt: "q" }).fullStream);
+    const contentEvents = eventsOfType<ReasoningMessageContentEvent>(
+      events,
+      EventType.REASONING_MESSAGE_CONTENT,
+    );
+    expect(contentEvents.map((e) => e.delta).join("")).toBe("Part A Part B");
+
+    const snapshot = events.find((e) => e.type === EventType.MESSAGES_SNAPSHOT) as MessagesSnapshotEvent;
+    const reasoning = snapshot.messages.find((m) => m.role === "reasoning") as ReasoningMessage;
+    expect(reasoning.content).toBe("Part A Part B");
+  });
+
+  it("defensively closes an open reasoning when text-start arrives without reasoning-end", async () => {
+    // Drive the handler directly to bypass AI SDK's invariant enforcement —
+    // verifies our defensive close logic runs even if a misbehaving provider
+    // skips reasoning-end.
+    async function* parts(): AsyncIterable<unknown> {
+      yield { type: "start" };
+      yield { type: "start-step", request: {}, warnings: [] };
+      yield { type: "reasoning-start", id: "r-leak" };
+      yield { type: "reasoning-delta", id: "r-leak", text: "thinking..." };
+      // Note: no reasoning-end. Text starts directly.
+      yield { type: "text-start", id: "t1" };
+      yield { type: "text-delta", id: "t1", text: "Done." };
+      yield { type: "text-end", id: "t1" };
+      yield {
+        type: "finish-step",
+        response: {},
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        finishReason: "stop",
+        rawFinishReason: undefined,
+        providerMetadata: undefined,
+      };
+      yield { type: "finish", finishReason: "stop", rawFinishReason: undefined, totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } };
+    }
+
+    const events = await collectEvents(parts());
+    const reasoningEndIdx = events.findIndex((e) => e.type === EventType.REASONING_END);
+    const textStartIdx = events.findIndex((e) => e.type === EventType.TEXT_MESSAGE_START);
+    expect(reasoningEndIdx).toBeGreaterThan(-1);
+    expect(reasoningEndIdx).toBeLessThan(textStartIdx);
+
+    const snapshot = events.find((e) => e.type === EventType.MESSAGES_SNAPSHOT) as MessagesSnapshotEvent;
+    const reasoning = snapshot.messages.find((m) => m.role === "reasoning") as ReasoningMessage;
+    expect(reasoning.content).toBe("thinking...");
+  });
+
+  it("does NOT emit reasoning events when the stream contains no reasoning parts", async () => {
+    const model = makeMockModel([
+      streamStart,
+      responseMetadata(),
+      { type: "text-start", id: "t1" },
+      { type: "text-delta", id: "t1", delta: "hi" },
+      { type: "text-end", id: "t1" },
+      finishStop(),
+    ]);
+    const events = await collectEvents(streamText({ model, prompt: "q" }).fullStream);
+    const reasoning = events.filter(
+      (e) =>
+        e.type === EventType.REASONING_START ||
+        e.type === EventType.REASONING_MESSAGE_START ||
+        e.type === EventType.REASONING_MESSAGE_CONTENT ||
+        e.type === EventType.REASONING_MESSAGE_END ||
+        e.type === EventType.REASONING_END ||
+        e.type === EventType.REASONING_ENCRYPTED_VALUE,
+    );
+    expect(reasoning).toHaveLength(0);
+  });
+});

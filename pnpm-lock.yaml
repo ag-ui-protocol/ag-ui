@@ -1099,8 +1099,8 @@ importers:
   integrations/vercel-ai-sdk/typescript:
     dependencies:
       ai:
-        specifier: ^4.3.16
-        version: 4.3.19(react@19.2.3)(zod@3.25.76)
+        specifier: ^6.0.97
+        version: 6.0.156(zod@3.25.76)
       rxjs:
         specifier: 7.8.1
         version: 7.8.1
