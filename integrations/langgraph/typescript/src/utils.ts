@@ -39,7 +39,34 @@ export function getStreamPayloadInput({
   return input;
 }
 
-const MEDIA_CONTENT_TYPES = new Set(["image", "audio", "video", "document"]);
+const MEDIA_CONTENT_TYPES = new Set(["image", "audio", "video", "document"] as const);
+type MediaContentType = typeof MEDIA_CONTENT_TYPES extends Set<infer T> ? T : never;
+const DEFAULT_MEDIA_CONTENT_TYPE: MediaContentType = "image";
+export const AGUI_TYPE_KEY = "__agui_type" as const;
+
+/**
+ * Metadata carried through a LangChain content block. Survives the LangGraph
+ * checkpoint JSON round-trip as an inert extra key. `__agui_type` stashes the
+ * original AG-UI media type so the reverse converter can restore it; defaults
+ * to `"image"` when absent (legacy blocks written before this fix).
+ */
+type LangchainBlockMetadata = Record<string, unknown> & {
+  [AGUI_TYPE_KEY]?: MediaContentType;
+};
+
+/**
+ * The shape carried through LangChain content blocks. `metadata` is an inert
+ * extra key for LangChain/model providers that survives the LangGraph
+ * checkpoint JSON round-trip. The original AG-UI media type is stashed inside
+ * metadata as `__agui_type` so the reverse converter can restore it without
+ * adding a separate top-level field to the block.
+ */
+type LangchainMultimodalBlock = {
+  type: string;
+  text?: string;
+  image_url?: { url: string } | string;
+  metadata?: LangchainBlockMetadata;
+};
 
 function mediaSourceToUrl(source: InputContentDataSource | InputContentUrlSource): string | null {
   if (source.type === "data") {
@@ -53,12 +80,13 @@ function mediaSourceToUrl(source: InputContentDataSource | InputContentUrlSource
 /**
  * Convert LangChain's multimodal content to AG-UI format.
  *
- * LangChain only supports `text` and `image_url` content blocks.
- * `image_url` blocks are converted to `ImageInputContent` with the
- * appropriate source type (data or URL).
+ * LangChain only supports `text` and `image_url` content blocks. `image_url`
+ * blocks are converted back to the original AG-UI media type when the forward
+ * converter tagged them with `__agui_type` (and any carried `metadata` is
+ * restored); untagged blocks fall back to `DEFAULT_MEDIA_CONTENT_TYPE`.
  */
 function convertLangchainMultimodalToAgui(
-  content: Array<{ type: string; text?: string; image_url?: any }>
+  content: Array<LangchainMultimodalBlock>
 ): InputContent[] {
   const aguiContent: InputContent[] = [];
 
@@ -69,14 +97,24 @@ function convertLangchainMultimodalToAgui(
         text: item.text,
       });
     } else if (item.type === "image_url") {
-      // LangChain only uses `image_url` blocks for all media, so we always
-      // produce ImageInputContent here. The true media type is not recoverable.
       const imageUrl = typeof item.image_url === "string"
         ? item.image_url
         : item.image_url?.url;
 
       if (!imageUrl) continue;
 
+      // Restore the original media type from __agui_type in metadata, then
+      // strip it so the returned InputContent.metadata matches the original.
+      // Blocks without __agui_type fall back to image (preserves legacy behavior).
+      const rawMeta = item.metadata;
+      const restoredType: MediaContentType = rawMeta?.[AGUI_TYPE_KEY] ?? DEFAULT_MEDIA_CONTENT_TYPE;
+      let cleanMeta: LangchainBlockMetadata | undefined;
+      if (rawMeta !== undefined) {
+        const { [AGUI_TYPE_KEY]: _stripped, ...rest } = rawMeta;
+        cleanMeta = Object.keys(rest).length > 0 ? rest : undefined;
+      }
+
+      let source: InputContentDataSource | InputContentUrlSource;
       // Parse data URLs to extract base64 data
       if (imageUrl.startsWith("data:")) {
         // Format: data:mime_type;base64,data
@@ -84,25 +122,17 @@ function convertLangchainMultimodalToAgui(
         const mimeType = header.includes(":")
           ? header.split(":")[1].split(";")[0]
           : "image/png";
-
-        aguiContent.push({
-          type: "image",
-          source: {
-            type: "data",
-            value: data || "",
-            mimeType,
-          },
-        });
+        source = { type: "data", value: data || "", mimeType };
       } else {
         // Regular URL
-        aguiContent.push({
-          type: "image",
-          source: {
-            type: "url",
-            value: imageUrl,
-          },
-        });
+        source = { type: "url", value: imageUrl };
       }
+
+      const restored = { type: restoredType, source } as InputContent;
+      if (cleanMeta !== undefined) {
+        (restored as { metadata?: unknown }).metadata = cleanMeta;
+      }
+      aguiContent.push(restored);
     }
   }
 
@@ -119,8 +149,8 @@ function convertLangchainMultimodalToAgui(
  */
 function convertAguiMultimodalToLangchain(
   content: InputContent[]
-): Array<{ type: string; text?: string; image_url?: { url: string } }> {
-  const langchainContent: Array<{ type: string; text?: string; image_url?: { url: string } }> = [];
+): LangchainMultimodalBlock[] {
+  const langchainContent: LangchainMultimodalBlock[] = [];
 
   for (const item of content) {
     if (item.type === "text") {
@@ -133,9 +163,12 @@ function convertAguiMultimodalToLangchain(
       const mediaItem = item as ImageInputContent | AudioInputContent | VideoInputContent | DocumentInputContent;
       const url = mediaSourceToUrl(mediaItem.source);
       if (url) {
+        // Stash the original media type inside metadata as __agui_type so the
+        // reverse converter can restore it without a separate top-level field.
         langchainContent.push({
           type: "image_url",
           image_url: { url },
+          metadata: { ...(mediaItem.metadata as LangchainBlockMetadata ?? {}), [AGUI_TYPE_KEY]: mediaItem.type },
         });
       } else {
         console.warn(`[convertAguiMultimodalToLangchain] Dropping ${item.type} content: source could not be converted to URL`);
