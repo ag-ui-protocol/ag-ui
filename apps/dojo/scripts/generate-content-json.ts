@@ -99,6 +99,7 @@ async function getFeatureFrontendFiles(featureId: string) {
 
 const integrationsFolderPath = "../../../integrations";
 const middlewaresFolderPath = "../../../middlewares";
+const sdksFolderPath = "../../../sdks";
 const agentFilesMapper: Record<
   string,
   (agentKeys: string[]) => Record<string, string[]>
@@ -406,6 +407,26 @@ const agentFilesMapper: Record<
             __dirname,
             integrationsFolderPath,
             `/microsoft-agent-framework/dotnet/examples/AGUIDojoServer/Program.cs`,
+          ),
+        ],
+      }),
+      {},
+    );
+  },
+  "ag-ui-dotnet": (agentKeys: string[]) => {
+    return agentKeys.reduce(
+      (acc, agentId) => ({
+        ...acc,
+        [agentId]: [
+          path.join(
+            __dirname,
+            sdksFolderPath,
+            `/dotnet/samples/AGUIClientServer/AGUIDojoServer/Program.cs`,
+          ),
+          path.join(
+            __dirname,
+            sdksFolderPath,
+            `/dotnet/samples/AGUIClientServer/AGUIDojoServer/ChatClientAgentFactory.cs`,
           ),
         ],
       }),

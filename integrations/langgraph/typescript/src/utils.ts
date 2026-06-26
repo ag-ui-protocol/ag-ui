@@ -264,8 +264,9 @@ export function langchainMessagesToAgui(messages: LangGraphMessage[]): Message[]
         });
         break;
       }
-      case "generic":
       case "ai": {
+        // "generic" messages are treated the same as "ai" — LangGraph
+        // emits them for non-chat models that don't set a specific type.
         // Surface reasoning content blocks as standalone ReasoningMessages
         // placed BEFORE the assistant message (matching streaming order), so a
         // client with no persistent checkpoint can round-trip them.
@@ -311,6 +312,33 @@ export function langchainMessagesToAgui(messages: LangGraphMessage[]): Message[]
         });
         break;
       default:
+        if ((message as any).type === "generic") {
+          // Re-enter the "ai" branch for generic messages
+          const aiMsg = message as any;
+          if (Array.isArray(aiMsg.content)) {
+            aiMsg.content.forEach((block: any, index: number) => {
+              if (isReasoningBlock(block)) {
+                const reasoningMsg = reasoningBlockToAguiMessage(block, aiMsg.id, index);
+                if (reasoningMsg) out.push(reasoningMsg);
+              }
+            });
+          }
+          const aiContent = resolveMessageContent(aiMsg.content);
+          out.push({
+            id: aiMsg.id,
+            role: "assistant",
+            content: aiContent ? stringifyIfNeeded(aiContent) : '',
+            toolCalls: aiMsg.tool_calls?.map((tc: any) => ({
+              id: tc.id!,
+              type: "function",
+              function: {
+                name: tc.name,
+                arguments: JSON.stringify(tc.args ?? {}),
+              },
+            })),
+          });
+          break;
+        }
         throw new Error("message type returned from LangGraph is not supported.");
     }
   }

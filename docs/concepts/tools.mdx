@@ -8,9 +8,13 @@ description:
 
 Tools are a fundamental concept in the AG-UI protocol that enable AI agents to
 interact with external systems and incorporate human judgment into their
-workflows. By defining tools in the frontend and passing them to agents,
-developers can create sophisticated human-in-the-loop experiences that combine
-AI capabilities with human expertise.
+workflows.
+
+AG-UI distinguishes between tools that are defined by the agent backend and
+tools that are provided by the client at runtime. Backend-defined tools stay in
+the backend agent or framework configuration. Client-defined tools are passed in
+`RunAgentInput.tools` so the agent can call back into application-specific
+frontend behavior, such as UI actions, approvals, or user-mediated workflows.
 
 ## What Are Tools?
 
@@ -93,6 +97,12 @@ This approach has several advantages:
    tool implementation
 4. **Security**: Sensitive operations are controlled by the application, not the
    agent
+
+`RunAgentInput.tools` is only for these client-provided tools. It is not
+intended to contain every tool available to the backend agent. If your
+integration has backend tools, define them in the backend framework or advertise
+them through agent capabilities instead of sending their schemas from the
+client.
 
 ## Tool Call Lifecycle
 

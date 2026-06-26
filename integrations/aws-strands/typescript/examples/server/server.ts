@@ -15,6 +15,7 @@ import {
 } from "@ag-ui/aws-strands/server";
 import { createModel } from "./model-factory";
 import { createA2UIDynamicSchemaAgent } from "./api/a2ui-dynamic-schema";
+import { createA2UIFixedSchemaAgent } from "./api/a2ui-fixed-schema";
 import { createA2UIRecoveryAgent } from "./api/a2ui-recovery";
 
 function mountAgent(
@@ -349,6 +350,13 @@ Do not respond with plain text — always use the tool.`,
   // `generate_a2ui` (which runs the toolkit's validate→retry recovery loop).
   mountAgent(app, "/a2ui-dynamic-schema", await createA2UIDynamicSchemaAgent());
   mountAgent(app, "/a2ui-recovery", await createA2UIRecoveryAgent());
+
+  /* ---------------- a2ui (fixed schema, direct backend tools) ---------------- */
+  // Unlike the auto-injected demos above, the fixed-schema agent wires its OWN
+  // backend tools (search_flights / search_hotels) that return a fixed-layout
+  // a2ui_operations envelope. The runtime's A2UIMiddleware paints it directly;
+  // no generate_a2ui injection (see route.ts + STRANDS_A2UI_INJECT_AGENTS).
+  mountAgent(app, "/a2ui-fixed-schema", await createA2UIFixedSchemaAgent());
 
   const port = Number(process.env.PORT ?? 8022);
   const host = process.env.HOST ?? "0.0.0.0";

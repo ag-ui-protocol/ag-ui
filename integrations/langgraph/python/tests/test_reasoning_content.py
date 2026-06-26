@@ -3,6 +3,7 @@
 Covers all supported AI provider formats including the Bedrock Converse API
 fix for issue #1361.
 """
+import unittest
 import pytest
 
 from ag_ui_langgraph.utils import resolve_reasoning_content, resolve_encrypted_reasoning_content
@@ -19,7 +20,7 @@ class FakeChunk:
 # ---------------------------------------------------------------------------
 # resolve_reasoning_content
 # ---------------------------------------------------------------------------
-class TestResolveReasoningContent:
+class TestResolveReasoningContent(unittest.TestCase):
 
     def test_anthropic_old_format_thinking(self):
         """Old langchain-anthropic: { type: "thinking", thinking: "..." }"""
@@ -170,7 +171,7 @@ class TestResolveReasoningContent:
 # ---------------------------------------------------------------------------
 # resolve_encrypted_reasoning_content
 # ---------------------------------------------------------------------------
-class TestResolveEncryptedReasoningContent:
+class TestResolveEncryptedReasoningContent(unittest.TestCase):
 
     def test_redacted_thinking_block(self):
         chunk = FakeChunk(content=[{"type": "redacted_thinking", "data": "encrypted_data_here"}])

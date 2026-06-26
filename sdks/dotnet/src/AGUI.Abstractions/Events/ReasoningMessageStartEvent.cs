@@ -1,0 +1,26 @@
+using System.Text.Json.Serialization;
+
+namespace AGUI.Abstractions;
+
+/// <summary>
+/// Event indicating a reasoning message has started.
+/// </summary>
+// Keep in sync with sdks/typescript/packages/core/src/events.ts
+public sealed class ReasoningMessageStartEvent : BaseEvent
+{
+    /// <inheritdoc/>
+    [JsonPropertyName("type")]
+    public override string Type => AGUIEventTypes.ReasoningMessageStart;
+
+    /// <summary>
+    /// Gets or sets the message identifier.
+    /// </summary>
+    [JsonPropertyName("messageId")]
+    public string MessageId { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the role. Defaults to "reasoning".
+    /// </summary>
+    [JsonPropertyName("role")]
+    public string Role { get; set; } = "reasoning";
+}

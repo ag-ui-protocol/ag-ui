@@ -13,6 +13,7 @@ on:
       - ".github/workflows/dojo-e2e.yml"
       - "sdks/python/**"
       - "sdks/typescript/**"
+      - "sdks/dotnet/**"
   pull_request:
     branches: [main]
     paths:
@@ -24,6 +25,7 @@ on:
       - ".github/workflows/dojo-e2e.yml"
       - "sdks/python/**"
       - "sdks/typescript/**"
+      - "sdks/dotnet/**"
 
 permissions:
   contents: read
@@ -168,6 +170,10 @@ jobs:
             test_path: tests/microsoftAgentFrameworkDotnetTests
             services: ["dojo", "microsoft-agent-framework-dotnet"]
             wait_on: http://localhost:9999,tcp:localhost:8016
+          - suite: ag-ui-dotnet
+            test_path: tests/agUiDotnetTests
+            services: ["dojo", "ag-ui-dotnet"]
+            wait_on: http://localhost:9999,tcp:localhost:8023
           - suite: vercel-ai-sdk
             test_path: tests/vercelAISdkTests
             services: ["dojo"]
@@ -247,10 +253,12 @@ jobs:
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # v8.1.0
 
       - name: Set up .NET SDK
-        if: ${{ contains(join(matrix.services, ','), 'microsoft-agent-framework-dotnet') }}
+        if: ${{ contains(join(matrix.services, ','), 'microsoft-agent-framework-dotnet') || contains(join(matrix.services, ','), 'ag-ui-dotnet') }}
         uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9  # v4.3.1
         with:
-          dotnet-version: "9.0.x"
+          dotnet-version: |
+            9.0.x
+            10.0.x
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
