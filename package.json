@@ -50,5 +50,13 @@
       "@ag-ui/aws-strands>zod": "^4.4.3",
       "@ag-ui/aws-strands-examples>zod": "^4.4.3"
     }
+  },
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/owner/repo/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": ""
   }
 }
