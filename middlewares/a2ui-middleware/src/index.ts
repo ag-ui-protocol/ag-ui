@@ -457,6 +457,13 @@ export class A2UIMiddleware extends Middleware {
       // set (unrelated tools in the same run) still paint normally.
       const streamedSurfaceIds = new Set<string>();
 
+      // Surfaces whose DATA streamed (any updateDataModel emitted during the
+      // streaming path). A by-reference render (OSS-2005) streams components but
+      // NO data — the host's externalData arrives only in the backend's final
+      // envelope. So a surface in `streamedSurfaceIds` but NOT here is owed its
+      // data-only final op; the dedup below must let that op through.
+      const dataStreamedSurfaceIds = new Set<string>();
+
       // Outer tool call context. Any non-A2UI tool call (e.g. ``generate_a2ui``
       // wrapping a subagent that emits ``render_a2ui`` calls) is treated as
       // the "outer" call. The outer id becomes the activity messageId
@@ -690,6 +697,7 @@ export class A2UIMiddleware extends Middleware {
 
                     if (dataItems && dataItems.length > 0) {
                       streaming.dataItemsCount = dataItems.length;
+                      dataStreamedSurfaceIds.add(surfaceId);
                       ops.push({
                         version: "v0.9",
                         updateDataModel: { surfaceId, path: "/", value: { [streaming.dataItemsKey]: dataItems } },
@@ -721,6 +729,7 @@ export class A2UIMiddleware extends Middleware {
                     const data = extractCompleteObject(streaming.args, "data");
                     if (data) {
                       streaming.dataComplete = true;
+                      dataStreamedSurfaceIds.add(surfaceId);
                       const ops: Array<Record<string, unknown>> = [
                         { version: "v0.9", createSurface: { surfaceId, catalogId } },
                         { version: "v0.9", updateComponents: { surfaceId, components: streaming.schema!.components } },
@@ -801,7 +810,22 @@ export class A2UIMiddleware extends Middleware {
                           const opSurfaceId = getOperationSurfaceId(op);
                           // Keep ops with no resolvable surface (can't be a dup)
                           // and ops targeting surfaces not yet streamed.
-                          return opSurfaceId == null || !streamedSurfaceIds.has(opSurfaceId);
+                          if (opSurfaceId == null || !streamedSurfaceIds.has(opSurfaceId)) {
+                            return true;
+                          }
+                          // By-reference (OSS-2005): the surface streamed
+                          // components but never streamed data. The host's
+                          // externalData rides this final envelope as a
+                          // data-only updateDataModel — let it through so the
+                          // dataset actually paints. Redundant createSurface /
+                          // updateComponents for the streamed surface are still
+                          // dropped.
+                          const isDataOp =
+                            !!op && typeof op === "object" && "updateDataModel" in op;
+                          if (isDataOp && !dataStreamedSurfaceIds.has(opSurfaceId)) {
+                            return true;
+                          }
+                          return false;
                         })
                       : parsed.operations;
 
