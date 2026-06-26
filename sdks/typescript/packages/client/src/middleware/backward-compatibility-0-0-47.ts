@@ -38,7 +38,24 @@ function isLegacyBinaryContent(part: unknown): part is LegacyBinaryContent {
   );
 }
 
-function convertBinaryToNewFormat(binary: LegacyBinaryContent): NewContentPart | LegacyBinaryContent {
+function warnDroppedBinary() {
+  if (
+    typeof process !== "undefined" &&
+    typeof process.env !== "undefined" &&
+    process.env.SUPPRESS_TRANSFORMATION_WARNINGS
+  )
+    return;
+  console.warn(
+    "AG-UI dropped a legacy binary content part that only has an `id` (no `data` or `url`). " +
+      "The binary content type was removed in 1.0.0 and `id`-only parts have no equivalent in the " +
+      "image/audio/video/document model. Re-send it with `source: { type: \"data\" | \"url\", ... }`. " +
+      "To suppress this warning, set SUPPRESS_TRANSFORMATION_WARNINGS=true.",
+  );
+}
+
+// Returns null to signal that the part should be dropped (id-only binary, which
+// has no representation in the new data|url source model).
+function convertBinaryToNewFormat(binary: LegacyBinaryContent): NewContentPart | null {
   const contentType = mimeTypeToContentType(binary.mimeType);
 
   if (binary.data) {
@@ -57,9 +74,8 @@ function convertBinaryToNewFormat(binary: LegacyBinaryContent): NewContentPart |
     };
   }
 
-  // If only `id` is present, we can't map to the new source format.
-  // Return as-is — the schema still accepts BinaryInputContent.
-  return binary;
+  warnDroppedBinary();
+  return null;
 }
 
 function upgradeMessageContent(message: InputMessage): InputMessage {
@@ -69,38 +85,48 @@ function upgradeMessageContent(message: InputMessage): InputMessage {
     return message;
   }
 
-  const upgraded = rawContent.map((part: unknown) => {
+  const upgraded = rawContent.reduce<unknown[]>((parts, part: unknown) => {
     if (isLegacyBinaryContent(part)) {
-      return convertBinaryToNewFormat(part);
+      const converted = convertBinaryToNewFormat(part);
+      if (converted !== null) parts.push(converted);
+    } else {
+      parts.push(part);
     }
-    return part;
-  });
+    return parts;
+  }, []);
 
   return { ...message, content: upgraded } as InputMessage;
 }
 
 /**
- * Middleware that converts legacy BinaryInputContent entries (type: "binary")
- * to the new dedicated content types (image, audio, video, document) with
- * source discriminator.
+ * Upgrades any legacy binary content parts (`type: "binary"`) in a RunAgentInput's
+ * messages to the dedicated content types (image/audio/video/document) with a
+ * `source` discriminator. Shared by the HTTP transport (applied unconditionally on
+ * outgoing input, since the binary type was removed in 1.0.0) and the
+ * {@link BackwardCompatibility_0_0_47} middleware.
  *
  * Old format (v0.0.47 and below):
  *   { type: "binary", mimeType: "image/png", data: "base64..." }
- *
- * New format (v0.0.48+):
+ * New format:
  *   { type: "image", source: { type: "data", value: "base64...", mimeType: "image/png" } }
  *
- * Plain string content and TextInputContent pass through unchanged.
- * BinaryInputContent entries that only have `id` (no data/url) are left as-is
- * since they can't be mapped to the new source format.
+ * Plain string content and non-binary parts pass through unchanged. `id`-only
+ * binary parts (no data/url) are dropped with a warning.
+ */
+export function upgradeLegacyBinaryInput(input: RunAgentInput): RunAgentInput {
+  return {
+    ...input,
+    messages: input.messages.map(upgradeMessageContent),
+  };
+}
+
+/**
+ * Middleware that converts legacy BinaryInputContent entries to the new dedicated
+ * content types. The HTTP transport applies the same upgrade unconditionally on
+ * outgoing input (see HttpAgent.requestInit); this middleware covers non-HTTP agents.
  */
 export class BackwardCompatibility_0_0_47 extends Middleware {
   override run(input: RunAgentInput, next: AbstractAgent): Observable<BaseEvent> {
-    const upgradedInput: RunAgentInput = {
-      ...input,
-      messages: input.messages.map(upgradeMessageContent),
-    };
-
-    return this.runNext(upgradedInput, next);
+    return this.runNext(upgradeLegacyBinaryInput(input), next);
   }
 }

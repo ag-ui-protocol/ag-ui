@@ -4,6 +4,7 @@ import { HttpAgentConfig, HttpAgentFetchFn, RunAgentParameters } from "./types";
 import { RunAgentInput, BaseEvent } from "@ag-ui/core";
 import { structuredClone_ } from "@/utils";
 import { transformHttpEventStream } from "@/transform/http";
+import { upgradeLegacyBinaryInput } from "@/middleware/backward-compatibility-0-0-47";
 import { Observable } from "rxjs";
 import { AgentSubscriber } from "./subscriber";
 
@@ -31,7 +32,10 @@ export class HttpAgent extends AbstractAgent {
         "Content-Type": "application/json",
         Accept: "text/event-stream",
       },
-      body: JSON.stringify(input),
+      // Upgrade legacy binary content parts to the dedicated image/audio/video/
+      // document types before sending. The binary type was removed in 1.0.0, so
+      // this keeps apps that still construct binary content interoperable.
+      body: JSON.stringify(upgradeLegacyBinaryInput(input)),
       signal: this.abortController.signal,
     };
   }

@@ -127,11 +127,6 @@ export const transformChunks =
           case EventType.RUN_ERROR:
           case EventType.STEP_STARTED:
           case EventType.STEP_FINISHED:
-          case EventType.THINKING_START:
-          case EventType.THINKING_END:
-          case EventType.THINKING_TEXT_MESSAGE_START:
-          case EventType.THINKING_TEXT_MESSAGE_CONTENT:
-          case EventType.THINKING_TEXT_MESSAGE_END:
           case EventType.REASONING_START:
           case EventType.REASONING_MESSAGE_START:
           case EventType.REASONING_MESSAGE_CONTENT:

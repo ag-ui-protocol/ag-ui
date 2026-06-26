@@ -78,21 +78,6 @@ const toMastraContent = (content: Message["content"]): string | any[] => {
           mimeType: part.source.mimeType ?? "application/octet-stream",
         });
         break;
-      case "binary": {
-        // Deprecated BinaryInputContent
-        const binaryPart = part as Extract<InputContent, { type: "binary" }>;
-        if (binaryPart.url) {
-          parts.push({ type: "image", image: binaryPart.url });
-        } else if (binaryPart.data && binaryPart.mimeType) {
-          parts.push({
-            type: "image",
-            image: `data:${binaryPart.mimeType};base64,${binaryPart.data}`,
-          });
-        } else {
-          console.warn("[toMastraContent] Dropping BinaryInputContent: no url or data provided");
-        }
-        break;
-      }
       default:
         console.warn(`[toMastraContent] Unknown content type "${part.type}"; skipping`);
         break;

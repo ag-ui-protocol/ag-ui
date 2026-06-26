@@ -17,11 +17,6 @@ import {
   createTextMessageContentEvent,
   createTextMessageEndEvent,
   createTextMessageStartEvent,
-  createThinkingEndEvent,
-  createThinkingStartEvent,
-  createThinkingTextMessageContentEvent,
-  createThinkingTextMessageEndEvent,
-  createThinkingTextMessageStartEvent,
   createToolCallArgsEvent,
   createToolCallChunkEvent,
   createToolCallEndEvent,
@@ -109,17 +104,6 @@ describe("event factories", () => {
     expect(event.messageId).toBeUndefined();
   });
 
-  it("creates THINKING_TEXT_MESSAGE_START/CONTENT/END", () => {
-    const start = createThinkingTextMessageStartEvent({});
-    const content = createThinkingTextMessageContentEvent({ delta: "thinking…" });
-    const end = createThinkingTextMessageEndEvent({});
-
-    expect(start.type).toBe(EventType.THINKING_TEXT_MESSAGE_START);
-    expect(content.type).toBe(EventType.THINKING_TEXT_MESSAGE_CONTENT);
-    expect(content.delta).toBe("thinking…");
-    expect(end.type).toBe(EventType.THINKING_TEXT_MESSAGE_END);
-  });
-
   it("creates TOOL_CALL_START/ARGS/END/CHUNK/RESULT", () => {
     const start = createToolCallStartEvent({
       toolCallId: "tc-1",
@@ -147,15 +131,6 @@ describe("event factories", () => {
     expect(end.type).toBe(EventType.TOOL_CALL_END);
     expect(result.role).toBe("tool");
     expect(result.content).toBe('{"ok":true}');
-  });
-
-  it("creates THINKING_START/END", () => {
-    const start = createThinkingStartEvent({ title: "working" });
-    const end = createThinkingEndEvent({});
-
-    expect(start.type).toBe(EventType.THINKING_START);
-    expect(start.title).toBe("working");
-    expect(end.type).toBe(EventType.THINKING_END);
   });
 
   it("creates STATE_SNAPSHOT and STATE_DELTA", () => {

@@ -61,22 +61,12 @@ export type AudioInputPart = AudioInputContent;
 export type VideoInputPart = VideoInputContent;
 export type DocumentInputPart = DocumentInputContent;
 
-export interface BinaryInputContent {
-  type: "binary";
-  mimeType: string;
-  id?: string;
-  url?: string;
-  data?: string;
-  filename?: string;
-}
-
 export type InputContent =
   | TextInputContent
   | ImageInputContent
   | AudioInputContent
   | VideoInputContent
-  | DocumentInputContent
-  | BinaryInputContent;
+  | DocumentInputContent;
 
 export type InputContentPart = InputContent;
 

@@ -13,16 +13,6 @@ export enum EventType {
   TOOL_CALL_END = "TOOL_CALL_END",
   TOOL_CALL_CHUNK = "TOOL_CALL_CHUNK",
   TOOL_CALL_RESULT = "TOOL_CALL_RESULT",
-  /** @deprecated Use REASONING_START instead. Will be removed in 1.0.0. */
-  THINKING_START = "THINKING_START",
-  /** @deprecated Use REASONING_END instead. Will be removed in 1.0.0. */
-  THINKING_END = "THINKING_END",
-  /** @deprecated Use REASONING_MESSAGE_START instead. Will be removed in 1.0.0. */
-  THINKING_TEXT_MESSAGE_START = "THINKING_TEXT_MESSAGE_START",
-  /** @deprecated Use REASONING_MESSAGE_CONTENT instead. Will be removed in 1.0.0. */
-  THINKING_TEXT_MESSAGE_CONTENT = "THINKING_TEXT_MESSAGE_CONTENT",
-  /** @deprecated Use REASONING_MESSAGE_END instead. Will be removed in 1.0.0. */
-  THINKING_TEXT_MESSAGE_END = "THINKING_TEXT_MESSAGE_END",
   STATE_SNAPSHOT = "STATE_SNAPSHOT",
   STATE_DELTA = "STATE_DELTA",
   MESSAGES_SNAPSHOT = "MESSAGES_SNAPSHOT",
@@ -98,27 +88,6 @@ export interface TextMessageChunkEvent extends BaseEvent {
 }
 
 // ---------------------------------------------------------------------------
-// Deprecated Thinking events (aliased to Reasoning counterparts in 1.0.0)
-// ---------------------------------------------------------------------------
-
-/** @deprecated Use ReasoningTextMessageStartEvent instead. Will be removed in 1.0.0. */
-export interface ThinkingTextMessageStartEvent extends BaseEvent {
-  type: EventType.THINKING_TEXT_MESSAGE_START;
-}
-
-/** @deprecated Use ReasoningMessageContentEvent instead. Will be removed in 1.0.0. */
-export interface ThinkingTextMessageContentEvent extends BaseEvent {
-  type: EventType.THINKING_TEXT_MESSAGE_CONTENT;
-  // ThinkingTextMessageContentEventSchema omits messageId from TextMessageContentEventSchema
-  delta: string;
-}
-
-/** @deprecated Use ReasoningMessageEndEvent instead. Will be removed in 1.0.0. */
-export interface ThinkingTextMessageEndEvent extends BaseEvent {
-  type: EventType.THINKING_TEXT_MESSAGE_END;
-}
-
-// ---------------------------------------------------------------------------
 // Tool-call events
 // ---------------------------------------------------------------------------
 
@@ -154,21 +123,6 @@ export interface ToolCallChunkEvent extends BaseEvent {
   toolCallName?: string;
   parentMessageId?: string;
   delta?: string;
-}
-
-// ---------------------------------------------------------------------------
-// Deprecated Thinking start/end
-// ---------------------------------------------------------------------------
-
-/** @deprecated Use ReasoningStartEvent instead. Will be removed in 1.0.0. */
-export interface ThinkingStartEvent extends BaseEvent {
-  type: EventType.THINKING_START;
-  title?: string;
-}
-
-/** @deprecated Use ReasoningEndEvent instead. Will be removed in 1.0.0. */
-export interface ThinkingEndEvent extends BaseEvent {
-  type: EventType.THINKING_END;
 }
 
 // ---------------------------------------------------------------------------
@@ -327,11 +281,6 @@ export type AGUIEvent =
   | TextMessageContentEvent
   | TextMessageEndEvent
   | TextMessageChunkEvent
-  | ThinkingStartEvent
-  | ThinkingEndEvent
-  | ThinkingTextMessageStartEvent
-  | ThinkingTextMessageContentEvent
-  | ThinkingTextMessageEndEvent
   | ToolCallStartEvent
   | ToolCallArgsEvent
   | ToolCallEndEvent
@@ -366,16 +315,11 @@ export type AGUIEventByType = {
   [EventType.TEXT_MESSAGE_CONTENT]: TextMessageContentEvent;
   [EventType.TEXT_MESSAGE_END]: TextMessageEndEvent;
   [EventType.TEXT_MESSAGE_CHUNK]: TextMessageChunkEvent;
-  [EventType.THINKING_TEXT_MESSAGE_START]: ThinkingTextMessageStartEvent;
-  [EventType.THINKING_TEXT_MESSAGE_CONTENT]: ThinkingTextMessageContentEvent;
-  [EventType.THINKING_TEXT_MESSAGE_END]: ThinkingTextMessageEndEvent;
   [EventType.TOOL_CALL_START]: ToolCallStartEvent;
   [EventType.TOOL_CALL_ARGS]: ToolCallArgsEvent;
   [EventType.TOOL_CALL_END]: ToolCallEndEvent;
   [EventType.TOOL_CALL_CHUNK]: ToolCallChunkEvent;
   [EventType.TOOL_CALL_RESULT]: ToolCallResultEvent;
-  [EventType.THINKING_START]: ThinkingStartEvent;
-  [EventType.THINKING_END]: ThinkingEndEvent;
   [EventType.STATE_SNAPSHOT]: StateSnapshotEvent;
   [EventType.STATE_DELTA]: StateDeltaEvent;
   [EventType.MESSAGES_SNAPSHOT]: MessagesSnapshotEvent;
@@ -415,18 +359,11 @@ export type TextMessageContentEventProps = Omit<TextMessageContentEvent, "type">
 export type TextMessageEndEventProps = Omit<TextMessageEndEvent, "type">;
 export type TextMessageChunkEventProps = Omit<TextMessageChunkEvent, "type">;
 
-export type ThinkingTextMessageStartEventProps = Omit<ThinkingTextMessageStartEvent, "type">;
-export type ThinkingTextMessageContentEventProps = Omit<ThinkingTextMessageContentEvent, "type">;
-export type ThinkingTextMessageEndEventProps = Omit<ThinkingTextMessageEndEvent, "type">;
-
 export type ToolCallStartEventProps = Omit<ToolCallStartEvent, "type">;
 export type ToolCallArgsEventProps = Omit<ToolCallArgsEvent, "type">;
 export type ToolCallEndEventProps = Omit<ToolCallEndEvent, "type">;
 export type ToolCallChunkEventProps = Omit<ToolCallChunkEvent, "type">;
 export type ToolCallResultEventProps = Omit<ToolCallResultEvent, "type">;
-
-export type ThinkingStartEventProps = Omit<ThinkingStartEvent, "type">;
-export type ThinkingEndEventProps = Omit<ThinkingEndEvent, "type">;
 
 export type StateSnapshotEventProps = Omit<StateSnapshotEvent, "type">;
 export type StateDeltaEventProps = Omit<StateDeltaEvent, "type">;

@@ -1,0 +1,78 @@
+---
+title: "Migrating to @ag-ui/core 1.0.0"
+description: "Update your code for 1.0.0: the deprecated THINKING events and binary multimodal input are removed."
+---
+
+# Migrating to @ag-ui/core 1.0.0
+
+`@ag-ui/core` 1.0.0 removes two long-deprecated surfaces: the `THINKING_*` events
+(replaced by `REASONING_*`) and the `BinaryInputContent` multimodal input
+(replaced by the dedicated `image` / `audio` / `video` / `document` content types).
+
+<Callout type="info">
+Coming from 0.0.x? 1.0.0 also includes the 0.1.0 change that moved zod schemas to
+the `@ag-ui/core/schemas` subpath and made zod an optional peer dependency. See the
+[0.1.0 migration guide](/sdk/js/core/migration-0-1-0) for that step.
+</Callout>
+
+## Removed: THINKING events
+
+The `EventType.THINKING_*` enum members, the `Thinking*Event` types, the
+`Thinking*EventSchema` schemas, and the `createThinking*` factories no longer
+exist. Switch to the `REASONING_*` events — each maps 1:1:
+
+| Removed                         | Replacement                 |
+| ------------------------------- | --------------------------- |
+| `THINKING_START`                | `REASONING_START`           |
+| `THINKING_END`                  | `REASONING_END`             |
+| `THINKING_TEXT_MESSAGE_START`   | `REASONING_MESSAGE_START`   |
+| `THINKING_TEXT_MESSAGE_CONTENT` | `REASONING_MESSAGE_CONTENT` |
+| `THINKING_TEXT_MESSAGE_END`     | `REASONING_MESSAGE_END`     |
+
+```ts
+// Before
+import { createThinkingStartEvent } from "@ag-ui/core";
+const event = createThinkingStartEvent({ title: "Working" });
+
+// After
+import { createReasoningStartEvent } from "@ag-ui/core";
+const event = createReasoningStartEvent({ messageId: "r-1" });
+```
+
+<Callout type="info">
+**Consuming a legacy agent?** If you connect to an agent that still emits
+`THINKING_*` events on the wire (`maxVersion <= 0.0.45`), you don't need to do
+anything — `@ag-ui/client` transparently rewrites those events to their
+`REASONING_*` equivalents before they reach your code.
+</Callout>
+
+## Removed: binary multimodal input
+
+The deprecated `BinaryInputContent` (`type: "binary"`) message content is removed.
+The `BinaryInputContent` type, `BinaryInputContentSchema`, and its place in the
+`InputContent` union no longer exist. Use the dedicated content types with a
+`source` discriminator instead:
+
+```ts
+// Before
+const content = [
+  { type: "binary", mimeType: "image/png", data: "base64..." },
+  { type: "binary", mimeType: "image/jpeg", url: "https://example.com/p.jpg" },
+];
+
+// After
+const content = [
+  { type: "image", source: { type: "data", value: "base64...", mimeType: "image/png" } },
+  { type: "image", source: { type: "url", value: "https://example.com/p.jpg", mimeType: "image/jpeg" } },
+];
+```
+
+Map the mime type to the content type: `image/*` → `image`, `audio/*` → `audio`,
+`video/*` → `video`, everything else → `document`.
+
+<Callout type="info">
+**Still sending binary?** `@ag-ui/client` upgrades legacy binary parts to the new
+types on outgoing input automatically. Parts with `data` or `url` are converted;
+`id`-only binary parts (no `data`/`url`) have no equivalent in the new source model
+and are dropped with a warning — re-send those with a `data` or `url` source.
+</Callout>

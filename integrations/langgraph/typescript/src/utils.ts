@@ -112,10 +112,10 @@ function convertLangchainMultimodalToAgui(
 /**
  * Convert AG-UI multimodal content to LangChain's format.
  *
- * Handles the new typed content classes (ImageInputContent, AudioInputContent,
- * VideoInputContent, DocumentInputContent) as well as legacy BinaryInputContent
- * for backwards compatibility. All media types are routed through LangChain's
- * `image_url` format since that is the only media block type LangChain supports.
+ * Handles the typed content classes (ImageInputContent, AudioInputContent,
+ * VideoInputContent, DocumentInputContent). All media types are routed through
+ * LangChain's `image_url` format since that is the only media block type
+ * LangChain supports.
  */
 function convertAguiMultimodalToLangchain(
   content: InputContent[]
@@ -140,28 +140,6 @@ function convertAguiMultimodalToLangchain(
       } else {
         console.warn(`[convertAguiMultimodalToLangchain] Dropping ${item.type} content: source could not be converted to URL`);
       }
-    } else if (item.type === "binary") {
-      // Legacy BinaryInputContent — backwards compatibility
-      let url: string;
-
-      // Prioritize url, then data, then id
-      if (item.url) {
-        url = item.url;
-      } else if (item.data) {
-        // Construct data URL from base64 data
-        url = `data:${item.mimeType};base64,${item.data}`;
-      } else if (item.id) {
-        // Use id as a reference
-        url = item.id;
-      } else {
-        console.warn("[convertAguiMultimodalToLangchain] Dropping BinaryInputContent: no url, data, or id provided");
-        continue;
-      }
-
-      langchainContent.push({
-        type: "image_url",
-        image_url: { url },
-      });
     }
   }
 

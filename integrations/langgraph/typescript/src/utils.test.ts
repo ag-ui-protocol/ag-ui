@@ -7,7 +7,6 @@ import {
   Message,
   UserMessage,
   TextInputContent,
-  BinaryInputContent,
   ImageInputContent,
   AudioInputContent,
   VideoInputContent,
@@ -171,51 +170,6 @@ describe("Multimodal Message Conversion", () => {
       expect(content[1].image_url.url).toBe("https://example.com/doc.pdf");
     });
 
-    it("should handle BinaryInputContent for backwards compatibility", () => {
-      const aguiMessage: UserMessage = {
-        id: "test-binary-compat",
-        role: "user",
-        content: [
-          { type: "text", text: "What's in this image?" },
-          {
-            type: "binary",
-            mimeType: "image/jpeg",
-            url: "https://example.com/photo.jpg",
-          } as BinaryInputContent,
-        ],
-      };
-
-      const lcMessages = aguiMessagesToLangChain([aguiMessage]);
-
-      const content = lcMessages[0].content as Array<any>;
-      expect(content).toHaveLength(2);
-
-      expect(content[1].type).toBe("image_url");
-      expect(content[1].image_url.url).toBe("https://example.com/photo.jpg");
-    });
-
-    it("should handle BinaryInputContent with base64 data for backwards compat", () => {
-      const aguiMessage: UserMessage = {
-        id: "test-binary-data",
-        role: "user",
-        content: [
-          {
-            type: "binary",
-            mimeType: "image/png",
-            data: "iVBORw0KGgoAAAANSUhEUgAAAAUA",
-          } as BinaryInputContent,
-        ],
-      };
-
-      const lcMessages = aguiMessagesToLangChain([aguiMessage]);
-
-      const content = lcMessages[0].content as Array<any>;
-      expect(content).toHaveLength(1);
-      expect(content[0].type).toBe("image_url");
-      expect(content[0].image_url.url).toBe(
-        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA"
-      );
-    });
   });
 
   describe("langchainMessagesToAgui", () => {
@@ -315,28 +269,6 @@ describe("Multimodal Message Conversion", () => {
       expect((lcMessages[0].content as Array<any>)).toHaveLength(0);
     });
 
-    it("should handle BinaryInputContent with only id for backwards compat", () => {
-      const aguiMessage: UserMessage = {
-        id: "test-8",
-        role: "user",
-        content: [
-          {
-            type: "binary",
-            mimeType: "image/jpeg",
-            id: "img-123",
-          } as BinaryInputContent,
-        ],
-      };
-
-      const lcMessages = aguiMessagesToLangChain([aguiMessage]);
-
-      expect(lcMessages).toHaveLength(1);
-      const content = lcMessages[0].content as Array<any>;
-      expect(content).toHaveLength(1);
-      expect(content[0].type).toBe("image_url");
-      expect(content[0].image_url.url).toBe("img-123");
-    });
-
     it("should skip media content with unknown source type", () => {
       const aguiMessage: UserMessage = {
         id: "test-unknown-source",
@@ -356,27 +288,5 @@ describe("Multimodal Message Conversion", () => {
       expect(content[0].type).toBe("text");
     });
 
-    it("should skip binary content without any source", () => {
-      const aguiMessage: UserMessage = {
-        id: "test-9",
-        role: "user",
-        content: [
-          { type: "text", text: "Hello" },
-          {
-            type: "binary",
-            mimeType: "image/jpeg",
-            // No url, data, or id
-          } as BinaryInputContent,
-        ],
-      };
-
-      const lcMessages = aguiMessagesToLangChain([aguiMessage]);
-
-      expect(lcMessages).toHaveLength(1);
-      const content = lcMessages[0].content as Array<any>;
-      // Binary content should be skipped, only text remains
-      expect(content).toHaveLength(1);
-      expect(content[0].type).toBe("text");
-    });
   });
 });
