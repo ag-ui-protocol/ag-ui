@@ -908,10 +908,90 @@ class StrandsAgent:
                     # Skip lifecycle events
                     if event.get("init_event_loop") or event.get("start_event_loop"):
                         continue
-                    if event.get("complete") or event.get("force_stop"):
-                        logger.debug(
-                            f"Breaking event stream: received complete or force_stop event (thread_id={input_data.thread_id}, complete={event.get('complete')}, force_stop={event.get('force_stop')})"
-                        )
+                    # Terminal events for the run. Three shapes:
+                    #   - "force_stop": Strands caught an exception mid-cycle
+                    #   - "result": AgentResultEvent — the model finished its
+                    #     turn normally; carries an AgentResult with stop_reason
+                    #     (end_turn / max_tokens / tool_use / ...). Introduced by
+                    #     the typed-events refactor (strands #745 / #755, Aug 2025)
+                    #     as the functional replacement for the old "complete"
+                    #     flag, which modern Strands no longer emits.
+                    #   - "complete": legacy terminator from pre-typed-events
+                    #     Strands. Kept for safety against older versions.
+                    if event.get("complete") or event.get("force_stop") or event.get("result"):
+                        if event.get("force_stop"):
+                            # ForceStopEvent carries `force_stop=True` plus
+                            # `force_stop_reason=str(exc)` — the latter is the
+                            # actual diagnostic; the boolean alone is useless.
+                            # Strands' own `logger.exception("cycle failed")`
+                            # is killed by GeneratorExit when we break the
+                            # loop, so without this log line the underlying
+                            # cause vanishes from CloudWatch entirely.
+                            logger.warning(
+                                "Breaking event stream: force_stop received "
+                                "(thread_id=%s, reason=%s)",
+                                input_data.thread_id,
+                                event.get("force_stop_reason", event.get("force_stop")),
+                            )
+                        elif event.get("result"):
+                            stop_reason = getattr(event["result"], "stop_reason", None)
+                            logger.info(
+                                "agent_result: thread_id=%s stop_reason=%s",
+                                input_data.thread_id,
+                                stop_reason,
+                            )
+                            # Surface non-normal stops to the client as a CustomEvent
+                            # so a UI can render a hint (truncated / filtered / etc.).
+                            # end_turn and tool_use are the normal stops — no event.
+                            if stop_reason in ("max_tokens", "guardrail_intervened", "content_filtered"):
+                                yield CustomEvent(
+                                    type=EventType.CUSTOM,
+                                    name="AgentStopped",
+                                    value={"stop_reason": stop_reason},
+                                )
+                        else:
+                            logger.debug(
+                                f"Breaking event stream: complete received (thread_id={input_data.thread_id})"
+                            )
+                        # If the agent stopped with no content, surface an error
+                        # message rather than silently emitting RUN_FINISHED.
+                        # The reason comes from `force_stop_reason` (str(exc));
+                        # `force_stop` itself is just a True flag.  Strip the
+                        # "ExceptionClass:" prefix and the first line is usually
+                        # the relevant Bedrock/API error text.  Don't guess at
+                        # "conversation too long" — Strands re-raises the real
+                        # context-overflow exceptions separately, so a
+                        # force_stop here is almost never that case.
+                        if event.get("force_stop") and not message_started:
+                            err_id = str(uuid.uuid4())
+                            raw_reason = str(event.get("force_stop_reason", "")).strip()
+                            if raw_reason:
+                                summary = raw_reason.split("\n", 1)[0]
+                                if ": " in summary:
+                                    summary = summary.split(": ", 1)[1]
+                                if len(summary) > 240:
+                                    summary = summary[:237] + "…"
+                                err_text = f"The agent couldn't complete this request: {summary}"
+                            else:
+                                err_text = "The agent stopped unexpectedly. Please try again."
+                            yield TextMessageStartEvent(
+                                type=EventType.TEXT_MESSAGE_START,
+                                message_id=err_id,
+                                role="assistant",
+                            )
+                            yield TextMessageContentEvent(
+                                type=EventType.TEXT_MESSAGE_CONTENT,
+                                message_id=err_id,
+                                delta=err_text,
+                            )
+                            yield TextMessageEndEvent(
+                                type=EventType.TEXT_MESSAGE_END,
+                                message_id=err_id,
+                            )
+                            # Leave message_started = False: the error message is
+                            # fully closed above. Setting it True would cause the
+                            # post-loop cleanup to emit a spurious TextMessageEndEvent
+                            # with the original (never-started) message_id.
                         # Generator will end naturally, no need to break
                         break
 
