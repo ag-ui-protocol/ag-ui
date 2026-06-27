@@ -57,11 +57,18 @@ def create_langroid_app(agent: LangroidAgent, path: str = "/") -> FastAPI:
     """Create a FastAPI app with a single Langroid agent endpoint."""
     app = FastAPI(title=f"Langroid - {agent.name}")
     
-    # Add CORS middleware
+    # Add CORS middleware.
+    #
+    # allow_credentials is intentionally False. With Starlette's CORSMiddleware,
+    # allow_origins=["*"] together with allow_credentials=True does NOT emit a
+    # literal "*" — it reflects the request's Origin back per-request, which is a
+    # credentialed any-origin posture (a security hole). Keeping credentials off
+    # makes "*" a true non-credentialed wildcard. Companion to #1939 / #1931;
+    # closes #1940.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
-        allow_credentials=True,
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )
