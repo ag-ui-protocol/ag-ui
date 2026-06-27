@@ -129,6 +129,36 @@ class StrandsAgentConfig:
     the frontend produced. Disable only if you manage Strands history
     yourself (e.g. via a custom ``session_manager``).
     """
+    reuse_agent: bool = False
+    """Run the wrapped Agent directly instead of cloning a fresh per-thread
+    ``StrandsAgentCore`` from it.
+
+    By default the adapter treats the wrapped Agent as a *template* and builds
+    one fresh instance per ``thread_id`` so that concurrent threads in a single
+    long-lived process cannot corrupt each other's mutable state. That rebuild
+    goes through ``_extract_agent_kwargs``, which reconstructs the agent from the
+    constructor params it can read back off the instance — a lossy round-trip:
+    anything Strands does not retain as a public attribute is silently dropped.
+    ``plugins`` is the clearest casualty (Strands keeps them in a private
+    ``_plugin_registry`` and discards the original list), so a wrapped Agent
+    built with ``plugins=[...]`` loses them entirely.
+
+    In a per-invocation / per-session-isolated runtime — e.g. AWS Bedrock
+    AgentCore, where each session runs in its own microVM and the host already
+    constructs a fresh Agent per request — the per-thread clone is redundant:
+    isolation is provided by the runtime, and the clone's only observable effect
+    is dropping plugins (and any other construct that does not round-trip). Set
+    this ``True`` in those deployments to run the wrapped Agent as-is, which
+    preserves plugins without the ``agent.plugins = ...`` re-exposure workaround.
+
+    Precondition: one ``StrandsAgent`` must serve a single thread / one
+    concurrent run. The adapter mutates the agent in place each turn (it
+    overwrites ``.messages``, registers proxy/A2UI tools on ``.tool_registry``,
+    and writes ``.state``), so sharing one Agent across concurrent threads under
+    this flag would cause cross-talk. ``session_manager_provider`` is *not*
+    consulted in this mode; configure hooks and a ``session_manager`` directly on
+    the Strands ``Agent`` (``Agent(hooks=..., session_manager=...)``) instead.
+    """
     a2ui: Optional[Dict[str, Any]] = None
     """A2UI auto-injection config — everything A2UI-related in one
     place. When the CopilotKit runtime forwards ``injectA2UITool`` (or

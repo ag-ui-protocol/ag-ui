@@ -281,6 +281,9 @@ class StrandsAgent:
         config: "StrandsAgentConfig | None" = None,
         hooks: "list | None" = None,
     ):
+        # The wrapped Agent. Used directly when config.reuse_agent is True;
+        # otherwise it is the template the per-thread clones are built from.
+        self._template_agent = agent
         # Store template agent configuration for creating fresh instances
         self._model = agent.model
         self._system_prompt = agent.system_prompt
@@ -311,10 +314,14 @@ class StrandsAgent:
         # Detect the common footgun: session_manager set on the template Agent
         # (stored as `_session_manager` by Strands) with no per-thread provider.
         # Forwarding it would make every AG-UI thread share one session_id.
+        # Skipped when reuse_agent is set: in that mode the template Agent IS
+        # the agent that runs, so its own session_manager is honoured natively
+        # (not ignored), and the per-thread provider does not apply.
         template_session_manager = getattr(agent, "_session_manager", None)
         if (
             template_session_manager is not None
             and self.config.session_manager_provider is None
+            and not self.config.reuse_agent
         ):
             logger.warning(
                 "session_manager was set on the template Agent but will be ignored: "
@@ -349,7 +356,13 @@ class StrandsAgent:
         # session_manager_provider is configured, the SessionManager handles
         # conversation persistence; otherwise state is held in-memory per thread.
         thread_id = input_data.thread_id or "default"
-        if thread_id not in self._agents_by_thread:
+        # When reuse_agent is set, run the wrapped Agent directly — no per-thread
+        # clone. The clone exists to isolate concurrent threads in a shared
+        # process; in a per-invocation/per-session-isolated runtime (e.g.
+        # AgentCore microVMs) that isolation is already provided, and skipping
+        # the clone preserves constructs that _extract_agent_kwargs cannot
+        # round-trip (notably plugins). See StrandsAgentConfig.reuse_agent.
+        if not self.config.reuse_agent and thread_id not in self._agents_by_thread:
             async with self._thread_init_lock:
                 # Double-check inside the lock: another coroutine may have
                 # completed initialization while we were waiting.
@@ -428,7 +441,11 @@ class StrandsAgent:
                         session_manager=session_manager,
                         **core_kwargs,
                     )
-        strands_agent = self._agents_by_thread[thread_id]
+        strands_agent = (
+            self._template_agent
+            if self.config.reuse_agent
+            else self._agents_by_thread[thread_id]
+        )
 
         # Forward ``RunAgentInput.context`` to the per-thread Strands agent's
         # state so user tools can read it (e.g. catalog/component schemas
