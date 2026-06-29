@@ -51,6 +51,16 @@ export interface RunA2UIRecoveryInput {
   basePrompt: string;
   /** Inline catalog for semantic validation; omit for structural-only. */
   catalog?: A2UIValidationCatalog;
+  /**
+   * Host-supplied by-reference data model (OSS-2005). When the dataset rides
+   * out-of-band, the subagent emits path-bound components with no ``data`` arg.
+   * Validation must resolve those absolute binding paths against the MERGED
+   * data (``externalData`` over ``args.data``) — otherwise a by-reference
+   * render fails ``unresolved_binding`` and retries to exhaustion. Merged into
+   * validation only; the adapter's ``buildEnvelope`` performs the same merge
+   * for the emitted ops.
+   */
+  externalData?: Record<string, unknown>;
   config?: A2UIRecoveryConfig;
   /**
    * Run the sub-agent once with `prompt` (already augmented with prior errors on
@@ -125,10 +135,14 @@ export async function runA2UIGenerationWithRecovery(
     }
 
     const components = Array.isArray(args.components) ? (args.components as Array<Record<string, unknown>>) : [];
-    const data =
+    const argsData =
       args.data && typeof args.data === "object" && !Array.isArray(args.data)
         ? (args.data as Record<string, unknown>)
         : {};
+    // Resolve bindings against the MERGED data (host externalData wins per key),
+    // so a by-reference render whose data rides out-of-band does not
+    // false-positive `unresolved_binding`. (OSS-2005)
+    const data = { ...argsData, ...(input.externalData ?? {}) };
     const result = validateA2UIComponents({ components, data, catalog: input.catalog });
     const record: A2UIAttemptRecord = { attempt, ok: result.valid, errors: result.errors };
     attempts.push(record);
