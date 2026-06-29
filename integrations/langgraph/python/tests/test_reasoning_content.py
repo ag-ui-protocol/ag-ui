@@ -167,6 +167,45 @@ class TestResolveReasoningContent(unittest.TestCase):
         )
         assert resolve_reasoning_content(chunk) is None
 
+    # DeepSeek / Qwen / xAI: additional_kwargs.reasoning_content as a plain string
+    def test_deepseek_reasoning_content_string(self):
+        """additional_kwargs.reasoning_content string should return reasoning at index 0."""
+        chunk = FakeChunk(
+            content=[],
+            additional_kwargs={"reasoning_content": "thinking step by step"},
+        )
+        result = resolve_reasoning_content(chunk)
+        assert result is not None
+        assert result["type"] == "text"
+        assert result["text"] == "thinking step by step"
+        assert result["index"] == 0
+
+    def test_deepseek_reasoning_content_empty_string_returns_none(self):
+        """Empty reasoning_content string should return None (no false positive)."""
+        chunk = FakeChunk(
+            content=[],
+            additional_kwargs={"reasoning_content": ""},
+        )
+        assert resolve_reasoning_content(chunk) is None
+
+    def test_deepseek_reasoning_content_non_string_returns_none(self):
+        """Non-string reasoning_content in additional_kwargs should return None."""
+        chunk = FakeChunk(
+            content=[],
+            additional_kwargs={"reasoning_content": {"unexpected": "dict"}},
+        )
+        assert resolve_reasoning_content(chunk) is None
+
+    def test_content_block_takes_priority_over_additional_kwargs(self):
+        """A valid content reasoning block wins over additional_kwargs.reasoning_content."""
+        chunk = FakeChunk(
+            content=[{"type": "thinking", "thinking": "from content block"}],
+            additional_kwargs={"reasoning_content": "from additional_kwargs"},
+        )
+        result = resolve_reasoning_content(chunk)
+        assert result is not None
+        assert result["text"] == "from content block"
+
 
 # ---------------------------------------------------------------------------
 # resolve_encrypted_reasoning_content
