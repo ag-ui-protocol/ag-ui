@@ -125,6 +125,7 @@ export const menuIntegrations = [
       "v1_agentic_chat",
       "backend_tool_rendering",
       "human_in_the_loop",
+      "interrupt",
       "shared_state",
       "tool_based_generative_ui",
     ],
@@ -377,9 +378,6 @@ export const menuIntegrations = [
   {
     id: "watsonx",
     name: "IBM watsonx orchestrate",
-    features: [
-      "agentic_chat",
-      "v1_agentic_chat",
-    ],
+    features: ["agentic_chat", "v1_agentic_chat"],
   },
 ] as const satisfies MenuIntegrationConfig[];

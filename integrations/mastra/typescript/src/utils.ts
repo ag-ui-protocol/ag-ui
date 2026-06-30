@@ -101,7 +101,22 @@ const toMastraContent = (content: Message["content"]): string | any[] => {
   return parts;
 };
 
-export function convertAGUIMessagesToMastra(messages: Message[]): CoreMessageWithId[] {
+export function convertAGUIMessagesToMastra(
+  messages: Message[],
+  // Messages to resolve a tool message's toolName against. Defaults to
+  // `messages`, but callers that send only a diff (the new turn) must pass the
+  // full incoming history here: a tool-result's matching assistant tool-call
+  // may have been filtered out of `messages`, and resolving toolName to
+  // "unknown" makes Mastra store a broken tool result (the model then re-calls).
+  lookupMessages: Message[] = messages,
+): CoreMessageWithId[] {
+  // Preserve AG-UI message IDs on the CoreMessage objects (see CoreMessageWithId).
+  // Mastra's AIV4Adapter.fromCoreMessage reads `id` when present, which enables
+  // Mastra's MessageHistory processor to deduplicate re-sent history:
+  //   - processInput filters historical messages whose IDs match the input IDs
+  //   - storage.saveMessages upserts by ID, so re-sent history won't duplicate
+  // The `id` key is omitted when undefined so it doesn't defeat Mastra's
+  // `"id" in message` check.
   const result: CoreMessageWithId[] = [];
 
   for (const message of messages) {
@@ -123,17 +138,17 @@ export function convertAGUIMessagesToMastra(messages: Message[]): CoreMessageWit
         ...(message.id !== undefined ? { id: message.id } : {}),
         role: "assistant",
         content: parts,
-      });
+      } as CoreMessage);
     } else if (message.role === "user") {
       const userContent = toMastraContent(message.content);
       result.push({
         ...(message.id !== undefined ? { id: message.id } : {}),
         role: "user",
         content: userContent,
-      });
+      } as CoreMessage);
     } else if (message.role === "tool") {
       let toolName = "unknown";
-      for (const msg of messages) {
+      for (const msg of lookupMessages) {
         if (msg.role === "assistant") {
           for (const toolCall of msg.toolCalls ?? []) {
             if (toolCall.id === message.toolCallId) {
@@ -154,7 +169,7 @@ export function convertAGUIMessagesToMastra(messages: Message[]): CoreMessageWit
             result: message.content,
           },
         ],
-      });
+      } as CoreMessage);
     }
   }
 

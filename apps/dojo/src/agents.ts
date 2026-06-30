@@ -163,6 +163,7 @@ export const agentsIntegrations = {
       | "agentic_chat"
       | "backend_tool_rendering"
       | "human_in_the_loop"
+      | "interrupt"
       | "shared_state"
       | "tool_based_generative_ui",
       AbstractAgent
@@ -440,8 +441,8 @@ export const agentsIntegrations = {
         shared_state: "shared_state",
         tool_based_generative_ui: "tool_based_generative_ui",
         predictive_state_updates: "predictive_state_updates",
-    subgraphs: "subgraphs",
-      }
+        subgraphs: "subgraphs",
+      },
     ),
 
   "ag-ui-dotnet": async () =>
@@ -456,7 +457,7 @@ export const agentsIntegrations = {
         shared_state: "shared_state",
         tool_based_generative_ui: "tool_based_generative_ui",
         predictive_state_updates: "predictive_state_updates",
-      }
+      },
     ),
 
   a2a: async () => {

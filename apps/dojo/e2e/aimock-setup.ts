@@ -168,6 +168,47 @@ export async function setupLLMock(): Promise<void> {
     },
   });
 
+  // Mastra interrupt demo (mastra-agent-local `interrupt` feature). The agent
+  // exposes the suspend-backed `schedule_meeting` tool (unique to this agent),
+  // so matching on that tool name targets it precisely. Two turns:
+  //   1) no tool result yet -> emit the schedule_meeting tool call. Mastra runs
+  //      the tool, which calls suspend(); the bridge emits on_interrupt and the
+  //      picker renders.
+  //   2) after the user picks a slot, the tool resumes and returns its result
+  //      (a tool-role message is now present) -> emit the final confirmation.
+  const hasScheduleMeetingTool = (req: {
+    tools?: { function: { name: string } }[];
+  }) => req.tools?.some((t) => t.function.name === "schedule_meeting") ?? false;
+  const hasToolResult = (req: { messages: ChatMessage[] }) =>
+    req.messages.some((m) => m.role === "tool");
+
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => hasScheduleMeetingTool(req) && !hasToolResult(req),
+    },
+    response: {
+      toolCalls: [
+        {
+          name: "schedule_meeting",
+          arguments: JSON.stringify({
+            topic: "Intro call with the sales team",
+            attendee: "the sales team",
+          }),
+        },
+      ],
+    },
+  });
+
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => hasScheduleMeetingTool(req) && hasToolResult(req),
+    },
+    response: {
+      content:
+        "Your meeting is scheduled. Let me know if you need anything else!",
+    },
+  });
+
   // Load HITL fixtures — they share a "plan to make brownies" substring
   // with agentic-gen-ui fixtures, and first-match-wins. By loading HITL first,
   // "one step with eggs" matches HITL tests before "plan to make brownies"
