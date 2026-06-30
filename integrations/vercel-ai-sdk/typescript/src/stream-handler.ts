@@ -1,4 +1,4 @@
-// Maps an AI SDK v6 streamText() fullStream into AG-UI events on an rxjs
+// Maps an AI SDK v7 streamText() fullStream into AG-UI events on an rxjs
 // Subscriber. Stateful per-run; create a new instance per run.
 
 import {
@@ -64,6 +64,18 @@ interface ToolOutputDeniedPart {
 interface ToolApprovalRequestPart {
   approvalId: string;
   toolCall: unknown;
+}
+
+interface ToolApprovalResponsePart {
+  approvalId: string;
+  toolCall: unknown;
+  approved: boolean;
+  reason?: string;
+}
+
+interface CustomPart {
+  kind: string;
+  providerMetadata?: unknown;
 }
 
 interface ReasoningEndPart {
@@ -185,6 +197,10 @@ export class StreamHandler {
         return this.onToolOutputDenied(part as unknown as ToolOutputDeniedPart);
       case "tool-approval-request":
         return this.onToolApprovalRequest(part as unknown as ToolApprovalRequestPart);
+      case "tool-approval-response":
+        return this.onToolApprovalResponse(part as unknown as ToolApprovalResponsePart);
+      case "custom":
+        return this.onCustom(part as unknown as CustomPart);
       case "start-step":
         return this.onStartStep();
       case "finish-step":
@@ -208,11 +224,14 @@ export class StreamHandler {
         });
         this.complete();
         return;
-      // Skip: AI SDK lifecycle parts that map onto RUN_*/STEP_* boundaries.
+      // Skip: lifecycle parts handled at RUN_*/STEP_* boundaries (start,
+      // finish), plus structural content parts not mapped to AG-UI events
+      // (source citations, generated files, raw provider chunks).
       case "start":
       case "finish":
       case "source":
       case "file":
+      case "reasoning-file":
       case "raw":
         return;
       default:
@@ -399,7 +418,7 @@ export class StreamHandler {
       this.currentAssistantMessage.toolCalls = [...existingToolCalls, toolCall];
     }
 
-    // Note: invalid tool-calls are followed by a `tool-error` part in v6 —
+    // Note: invalid tool-calls are followed by a `tool-error` part in v7 —
     // letting that path emit TOOL_CALL_RESULT avoids duplicates. The
     // cleanup-phase synthesizer covers any provider that breaks this.
   }
@@ -458,6 +477,32 @@ export class StreamHandler {
       type: EventType.CUSTOM,
       name: "tool_approval_request",
       value: { approvalId: part.approvalId, toolCall: part.toolCall },
+    });
+  }
+
+  // Mirrors onToolApprovalRequest so the approval lifecycle is fully
+  // observable on the AG-UI side; carries the granted/denied outcome.
+  private onToolApprovalResponse(part: ToolApprovalResponsePart): void {
+    this.emit({
+      type: EventType.CUSTOM,
+      name: "tool_approval_response",
+      value: {
+        approvalId: part.approvalId,
+        toolCall: part.toolCall,
+        approved: part.approved,
+        ...(part.reason !== undefined ? { reason: part.reason } : {}),
+      },
+    });
+  }
+
+  // AI SDK provider `custom` parts are passed through as AG-UI CUSTOM
+  // events. The part's namespaced `kind` becomes the event name so clients
+  // can route by it; the provider metadata is the event value.
+  private onCustom(part: CustomPart): void {
+    this.emit({
+      type: EventType.CUSTOM,
+      name: part.kind,
+      value: part.providerMetadata ?? {},
     });
   }
 

@@ -1,4 +1,4 @@
-// Main agent class. Wires AI SDK v6 streamText into AG-UI by:
+// Main agent class. Wires AI SDK v7 streamText into AG-UI by:
 //   1. converting input messages/tools to AI SDK shapes
 //   2. driving streamText() with abort propagation
 //   3. delegating fullStream → AG-UI event mapping to StreamHandler

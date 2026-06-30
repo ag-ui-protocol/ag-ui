@@ -4,7 +4,7 @@ import type { Tool as AGUITool } from "@ag-ui/core";
 /**
  * Convert AG-UI tool definitions into an AI SDK ToolSet.
  *
- * AG-UI tools carry parameters as a raw JSON Schema. Vercel AI SDK v6 accepts
+ * AG-UI tools carry parameters as a raw JSON Schema. Vercel AI SDK v7 accepts
  * JSON Schema directly via the `jsonSchema()` helper, so we wrap each entry
  * without any manual schema transformation. This is intentionally minimal:
  * we do not attach an `execute` function — tools defined here will be surfaced

@@ -43,13 +43,13 @@
     "typescript": "^5.3.3"
   },
   "dependencies": {
-    "ai": "^6.0.97",
+    "ai": "^7.0.0",
     "zod": "^3.25.67"
   },
   "exports": {
     ".": {
-      "require": "./dist/index.js",
-      "import": "./dist/index.mjs"
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
     },
     "./package.json": "./package.json"
   }

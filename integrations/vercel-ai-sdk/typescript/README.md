@@ -21,7 +21,7 @@ Install the required peer dependencies along with at least one AI SDK provider:
 npm install @ag-ui/client rxjs ai @ai-sdk/openai
 ```
 
-The package targets `ai@^6.0.97` and requires `@ag-ui/client >=0.0.44` and `rxjs`. Any AI SDK v6 provider package works (`@ai-sdk/openai`, `@ai-sdk/anthropic`, `@ai-sdk/google`, etc.) — pick whichever one matches the model you want to use.
+The package targets `ai@^7.0.0` and requires `@ag-ui/client >=0.0.44` and `rxjs`. Any AI SDK v7 provider package works (`@ai-sdk/openai`, `@ai-sdk/anthropic`, `@ai-sdk/google`, etc.) — pick whichever one matches the model you want to use.
 
 ## Quick Start
 
@@ -128,7 +128,7 @@ const agent = new VercelAISDKAgent({
 });
 ```
 
-Under the hood this is wired up to AI SDK v6's stop-condition API:
+Under the hood this is wired up to AI SDK v7's stop-condition API:
 
 ```ts
 import { stepCountIs } from "ai";
@@ -164,7 +164,7 @@ Reasoning messages enter `MESSAGES_SNAPSHOT` as their own message entries (role 
 
 ## Provider Flexibility
 
-The integration consumes AI SDK v6's `fullStream` directly, so any v6-compatible provider package works without further configuration:
+The integration consumes AI SDK v7's `fullStream` directly, so any v7-compatible provider package works without further configuration:
 
 ```ts
 import { openai } from "@ai-sdk/openai";
@@ -182,7 +182,7 @@ new VercelAISDKAgent({ model: google("gemini-2.5-pro") });
 
 ```ts
 new VercelAISDKAgent({
-  model,        // LanguageModel — any AI SDK v6 model
+  model,        // LanguageModel — any AI SDK v7 model
   maxSteps,     // number, optional (default 1)
   toolChoice,   // AI SDK ToolChoice, optional (default "auto")
   agentId,      // inherited from AbstractAgent
@@ -209,11 +209,12 @@ import {
 
 ## Limitations & Future Work
 
-- The `source`, `file`, and `raw` AI SDK stream parts are not currently mapped to AG-UI events. They may be exposed as `CUSTOM` events in a future release.
-- `tool-approval-request` is emitted as a `CUSTOM` event with `name: "tool_approval_request"`. Clients are responsible for their own approval UX.
+- The `source`, `file`, `reasoning-file`, and `raw` AI SDK stream parts are not currently mapped to AG-UI events. They may be exposed as `CUSTOM` events in a future release.
+- The tool-approval lifecycle is surfaced as `CUSTOM` events: `tool-approval-request` → `name: "tool_approval_request"`, and `tool-approval-response` → `name: "tool_approval_response"` (carrying the `approved` flag and optional `reason`). Clients are responsible for their own approval UX.
+- Provider `custom` stream parts are passed through as `CUSTOM` events whose `name` is the part's namespaced `kind` (e.g. `"acme.telemetry"`), with the provider metadata as the event `value`.
 - This package only covers the backend direction (AI SDK `streamText` -> AG-UI events). The reverse direction (AG-UI backend -> AI SDK `useChat` frontend) is intentionally out of scope and would ship as a separate package.
-- Targets AI SDK v6 stable. v7 support will follow once v7 reaches GA.
+- Targets AI SDK v7 stable.
 
 ## License
 
-Apache-2.0 — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).
