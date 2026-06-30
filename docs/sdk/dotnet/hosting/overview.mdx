@@ -1,0 +1,79 @@
+---
+title: "Overview"
+description: "ASP.NET Core hosting package overview"
+---
+
+# AGUI.Hosting.AspNetCore
+
+`AGUI.Hosting.AspNetCore` is the .NET server-side hosting layer for AG-UI. It
+turns any `Microsoft.Extensions.AI.IChatClient` into an AG-UI endpoint that
+accepts `RunAgentInput` and streams AG-UI events to a frontend UI.
+
+```bash
+dotnet add package AGUI.Hosting.AspNetCore
+```
+
+## The core idea
+
+You do not learn a new agent programming model. You host an `IChatClient`.
+
+The package adapts AG-UI request bodies into `Microsoft.Extensions.AI`
+messages and options, calls your chat client, then converts the streamed
+`ChatResponseUpdate` values back into AG-UI protocol events.
+
+## What it depends on
+
+`AGUI.Hosting.AspNetCore` is intentionally small:
+
+- [AG-UI protocol types](/sdk/dotnet/abstractions/events) from
+  `AGUI.Abstractions`
+- `Microsoft.Extensions.AI.Abstractions`
+- ASP.NET Core, through `Microsoft.AspNetCore.App`
+
+It does not depend on the .NET AG-UI client package. The server and client
+packages share protocol types, but remain independent.
+
+<Note>
+  The hosting package targets `net10.0`, `net9.0`, and `net8.0`.
+</Note>
+
+## What the hosting layer handles
+
+The hosting layer handles the protocol details for you:
+
+- Converts `RunAgentInput.Messages` into `ChatMessage` values
+- Installs client-declared tools on `ChatOptions`
+- Stores the original input under
+  `ChatOptions.AdditionalProperties[AGUIConstants.RunAgentInputKey]`
+- Emits `RUN_STARTED` and `RUN_FINISHED`
+- Maps text, reasoning, tool calls, tool results, state, raw events, and
+  interrupts to AG-UI events
+- Streams the result as Server-Sent Events
+
+## Server and client together
+
+Use `AGUI.Hosting.AspNetCore` when you are building an AG-UI server. Use
+[AGUI.Client](/sdk/dotnet/client/overview) when .NET code needs to consume an
+AG-UI endpoint as an `IChatClient`.
+
+<CardGroup cols={2}>
+  <Card
+    title="Endpoints"
+    icon="server"
+    href="/sdk/dotnet/hosting/endpoints"
+    color="#3B82F6"
+    iconType="solid"
+  >
+    Build the canonical ASP.NET Core AG-UI endpoint
+  </Card>
+
+  <Card
+    title="Extensibility"
+    icon="layer-group"
+    href="/sdk/dotnet/hosting/extensibility"
+    color="#3B82F6"
+    iconType="solid"
+  >
+    Customize stream conversion with AGUIStreamOptions
+  </Card>
+</CardGroup>

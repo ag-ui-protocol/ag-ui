@@ -125,8 +125,10 @@ export const menuIntegrations = [
       "v1_agentic_chat",
       "backend_tool_rendering",
       "human_in_the_loop",
+      "interrupt",
       "shared_state",
       "tool_based_generative_ui",
+      "background_agents",
     ],
   },
   {
@@ -175,6 +177,21 @@ export const menuIntegrations = [
   {
     id: "microsoft-agent-framework-dotnet",
     name: "Microsoft Agent Framework (.NET)",
+    features: [
+      "agentic_chat",
+      "v1_agentic_chat",
+      "backend_tool_rendering",
+      "human_in_the_loop",
+      "agentic_generative_ui",
+      "predictive_state_updates",
+      "shared_state",
+      "tool_based_generative_ui",
+      "subgraphs",
+    ],
+  },
+  {
+    id: "ag-ui-dotnet",
+    name: "AG-UI .NET SDK",
     features: [
       "agentic_chat",
       "v1_agentic_chat",
@@ -363,9 +380,6 @@ export const menuIntegrations = [
   {
     id: "watsonx",
     name: "IBM watsonx orchestrate",
-    features: [
-      "agentic_chat",
-      "v1_agentic_chat",
-    ],
+    features: ["agentic_chat", "v1_agentic_chat"],
   },
 ] as const satisfies MenuIntegrationConfig[];

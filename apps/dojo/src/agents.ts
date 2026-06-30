@@ -163,8 +163,10 @@ export const agentsIntegrations = {
       | "agentic_chat"
       | "backend_tool_rendering"
       | "human_in_the_loop"
+      | "interrupt"
       | "shared_state"
-      | "tool_based_generative_ui",
+      | "tool_based_generative_ui"
+      | "background_agents",
       AbstractAgent
     >;
   },
@@ -435,6 +437,22 @@ export const agentsIntegrations = {
         new HttpAgent({ url: `${envVars.agentFrameworkDotnetUrl}/${path}` }),
       {
         agentic_chat: "agentic_chat",
+        backend_tool_rendering: "backend_tool_rendering",
+        human_in_the_loop: "human_in_the_loop",
+        agentic_generative_ui: "agentic_generative_ui",
+        shared_state: "shared_state",
+        tool_based_generative_ui: "tool_based_generative_ui",
+        predictive_state_updates: "predictive_state_updates",
+        subgraphs: "subgraphs",
+      },
+    ),
+
+  "ag-ui-dotnet": async () =>
+    mapAgents(
+      (path) => new HttpAgent({ url: `${envVars.aguiDotnetUrl}/${path}` }),
+      {
+        agentic_chat: "agentic_chat",
+        v1_agentic_chat: "agentic_chat",
         backend_tool_rendering: "backend_tool_rendering",
         human_in_the_loop: "human_in_the_loop",
         agentic_generative_ui: "agentic_generative_ui",

@@ -46,3 +46,6 @@ node_modules
 *.a
 *.lib
 *.wasm
+
+# VS Code
+*.lscache
