@@ -57,15 +57,15 @@
     "@ag-ui/client": ">=0.0.44",
     "@copilotkit/runtime": "0.0.0-mme-ag-ui-0-0-46-20260227141603",
     "@mastra/client-js": ">=1.0.0-0 <2.0.0-0",
-    "@mastra/core": ">=1.0.0-0 <2.0.0-0"
+    "@mastra/core": ">=1.29.0 <2.0.0-0"
   },
   "devDependencies": {
     "@ag-ui/core": "workspace:*",
     "@ag-ui/client": "workspace:*",
     "@copilotkit/runtime": "0.0.0-mme-ag-ui-0-0-46-20260227141603",
     "@copilotkit/shared": "0.0.0-mme-ag-ui-0-0-46-20260227141603",
-    "@mastra/client-js": "^1.0.1",
-    "@mastra/core": "^1.0.4",
+    "@mastra/client-js": "^1.28.0",
+    "@mastra/core": "^1.47.0",
     "@types/node": "^20.11.19",
     "@vitest/coverage-istanbul": "^4.0.18",
     "publint": "^0.3.12",

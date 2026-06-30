@@ -167,7 +167,10 @@ describe("planA2UIInjection — auto-inject decision", () => {
     expect(plan).toBeNull();
   });
 
-  it("resolves the catalog from the injected A2UI schema context entry", () => {
+  it("ignores the catalog in the schema context entry (no validation auto-resolve)", () => {
+    // Mirrors the LangGraph adapter: a catalog carried in RunAgentInput.context
+    // is NOT auto-resolved into the validation catalog. Only an explicit
+    // config.catalog enables catalog-aware recovery.
     const input = minimalRunInput({
       forwardedProps: { injectA2UITool: true },
       context: [
@@ -181,6 +184,17 @@ describe("planA2UIInjection — auto-inject decision", () => {
       model: stubModel,
       input,
       existingToolNames: [],
+    });
+    expect(plan).not.toBeNull();
+    expect(plan!.catalog).toBeUndefined();
+  });
+
+  it("uses an explicit config.catalog unchanged", () => {
+    const plan = planA2UIInjection({
+      model: stubModel,
+      input: minimalRunInput({ forwardedProps: { injectA2UITool: true } }),
+      existingToolNames: [],
+      config: { catalog: CATALOG },
     });
     expect(plan).not.toBeNull();
     expect(plan!.catalog).toEqual(CATALOG);
@@ -396,6 +410,79 @@ describe("A2UI sub-agent streaming → synthetic inner TOOL_CALL events", () => 
   });
 });
 
+describe("generate_a2ui sub-agent — single forced render turn (hang regression)", () => {
+  const A2UI_STREAM_KEY = "__a2uiRenderStream";
+
+  it("drives ONE forced render_a2ui model call (no agentic continuation) and returns the envelope", async () => {
+    // A full Agent loop would execute the render tool and then fire a SECOND
+    // model call that never settles — the outer generate_a2ui would hang and
+    // the run would never emit RUN_FINISHED. The fix streams the MODEL directly
+    // for a single forced turn; this locks that contract in.
+    const toolChoices: unknown[] = [];
+    const fakeModel = {
+      modelId: "fake",
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      async *stream(_messages: unknown, opts?: any) {
+        toolChoices.push(opts?.toolChoice);
+        yield {
+          type: "modelContentBlockStartEvent",
+          start: { type: "toolUseStart", toolUseId: "r1", name: "render_a2ui" },
+        };
+        yield {
+          type: "modelContentBlockDeltaEvent",
+          delta: {
+            type: "toolUseInputDelta",
+            input:
+              '{"surfaceId":"s1","components":[{"id":"root","component":"Row"}]}',
+          },
+        };
+        yield { type: "modelContentBlockStopEvent" };
+      },
+    };
+
+    const tool = getA2UITools({ model: fakeModel as never });
+    const ctx = {
+      toolUse: { toolUseId: "tu-1", input: {} },
+      agent: { messages: [] },
+    };
+    const events: unknown[] = [];
+    // The tool RETURNS the ToolResultBlock (not yielded), so iterate manually
+    // to capture the generator return value.
+    const gen = (
+      tool as { stream: (c: unknown) => AsyncGenerator<unknown, unknown> }
+    ).stream(ctx);
+    let result: unknown;
+    for (;;) {
+      const step = await gen.next();
+      if (step.done) {
+        result = step.value;
+        break;
+      }
+      events.push(step.value);
+    }
+
+    // Single forced turn — the model is called exactly once, forced to render.
+    expect(toolChoices).toEqual([{ tool: { name: "render_a2ui" } }]);
+
+    // Synthetic inner render events were streamed (progressive paint).
+    const payloads = events
+      .map(
+        (e) =>
+          (e as { data?: Record<string, { kind?: string }> }).data?.[
+            A2UI_STREAM_KEY
+          ],
+      )
+      .filter(Boolean) as Array<{ kind?: string }>;
+    expect(payloads.some((p) => p.kind === "start")).toBe(true);
+    expect(payloads.some((p) => p.kind === "end")).toBe(true);
+
+    // The committed envelope reaches the outer loop (so the run can finish).
+    const ret = result as { content?: Array<{ text?: string }> };
+    const text = ret?.content?.[0]?.text ?? JSON.stringify(ret);
+    expect(text).toContain("a2ui_operations");
+  });
+});
+
 describe("classifyA2UISubagentError (cancel / adapter-bug vs recoverable)", () => {
   it("rethrows on an aborted signal regardless of error", () => {
     expect(classifyA2UISubagentError(new Error("any"), true)).toBe("rethrow");
@@ -487,53 +574,7 @@ describe("planA2UIInjection — nullish flag + catalog degradation", () => {
     expect(plan).toBeNull();
   });
 
-  const SCHEMA_DESC =
-    "A2UI Component Schema — available components for generating UI surfaces. Use these component names and properties when creating A2UI operations.";
-
-  function planWithCatalogValue(value: string) {
-    return planA2UIInjection({
-      model: {},
-      input: minimalRunInput({
-        forwardedProps: { injectA2UITool: true },
-        context: [{ description: SCHEMA_DESC, value }],
-      }),
-      existingToolNames: [],
-    });
-  }
-
-  it("degrades (with a breadcrumb) on unparseable catalog JSON", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      const plan = planWithCatalogValue("{not json");
-      expect(plan).not.toBeNull();
-      expect(plan!.catalog).toBeUndefined();
-      expect(warn).toHaveBeenCalled();
-    } finally {
-      warn.mockRestore();
-    }
-  });
-
-  it("degrades on parseable-but-non-object catalog JSON", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      const plan = planWithCatalogValue("[]");
-      expect(plan).not.toBeNull();
-      expect(plan!.catalog).toBeUndefined();
-      expect(warn).toHaveBeenCalled();
-    } finally {
-      warn.mockRestore();
-    }
-  });
-
-  it("degrades on an empty catalog value", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      const plan = planWithCatalogValue("");
-      expect(plan).not.toBeNull();
-      expect(plan!.catalog).toBeUndefined();
-      expect(warn).toHaveBeenCalled();
-    } finally {
-      warn.mockRestore();
-    }
-  });
+  // Catalog-id resolution + config-overrides-runtime precedence is unit-tested
+  // at the toolkit level (resolveA2UICatalog). The streamed-args catalogId stamp
+  // is covered by the aws-strands-typescript A2UI e2e specs.
 });

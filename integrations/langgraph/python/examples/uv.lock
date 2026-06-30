@@ -11,17 +11,17 @@ overrides = [{ name = "langgraph", specifier = ">=1.1.3,<2" }]
 
 [[package]]
 name = "ag-ui-a2ui-toolkit"
-version = "0.0.1a3"
+version = "0.0.4"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/f3/21/5002b22aa3a8e22edd7318661d370b020086d2b89f4265c4ec39511cd164/ag_ui_a2ui_toolkit-0.0.1a3.tar.gz", hash = "sha256:54a213b18ca9ecb1f556a49a5ded7bf4fdcff14b5aed09ba5f85eed97a4b73f7", size = 7314, upload-time = "2026-05-28T18:33:57.765Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f0/ce/85f3960a83d962e5690bc0f27a3baf3bf1602edc2b0603085928c964ea14/ag_ui_a2ui_toolkit-0.0.4.tar.gz", hash = "sha256:172e2724e53df8173685a3fb896a6e5175eea06e1dc166c715db110ba4beba76", size = 18960, upload-time = "2026-06-17T13:34:28.695Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f7/76/40b350a5e5e319e055b7fe8d2626d28171d8ee44dffda2f6122b797265d4/ag_ui_a2ui_toolkit-0.0.1a3-py3-none-any.whl", hash = "sha256:c97f4a3968016338065ed3eb2178f5522620ec014bb6dc90318124ba9cd8bdbf", size = 8379, upload-time = "2026-05-28T18:33:56.981Z" },
+    { url = "https://files.pythonhosted.org/packages/47/7a/acf85b01cd996bd011b71e181fd9f3daff5396fc3b7d78ba9445bfc08ecf/ag_ui_a2ui_toolkit-0.0.4-py3-none-any.whl", hash = "sha256:236fc511e1ec2399bcda0c14a109b3fb0a0c3e3988c18ef1918745b1c1535e30", size = 21315, upload-time = "2026-06-17T13:34:29.505Z" },
 ]
 
 [[package]]
 name = "ag-ui-langgraph"
-version = "0.0.36"
-source = { editable = "../" }
+version = "0.0.41"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ag-ui-a2ui-toolkit" },
     { name = "ag-ui-protocol" },
@@ -30,42 +30,27 @@ dependencies = [
     { name = "langgraph" },
     { name = "pydantic" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/7e/2a/e94bf83b81a540c59718bb8f848641bd5afa2ebc17b191b00010a0b86837/ag_ui_langgraph-0.0.41.tar.gz", hash = "sha256:3ea1fcb49b147d9532b0a90f2a5554d6ffd0d9365590fa2557ba16a881aeeb7a", size = 316557, upload-time = "2026-06-09T06:18:20.4Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/44/dd/61220366e161d8f3eabe598bb955bd07254f518e5163ebd63de4769c850c/ag_ui_langgraph-0.0.41-py3-none-any.whl", hash = "sha256:ff5f4c3d03305ff51329543ff61bd686a3e0b5c3c4ea071b3575f328d13936ae", size = 33345, upload-time = "2026-06-09T06:18:19.117Z" },
+]
 
 [package.optional-dependencies]
 fastapi = [
     { name = "fastapi" },
 ]
 
-[package.metadata]
-requires-dist = [
-    { name = "ag-ui-a2ui-toolkit", specifier = ">=0.0.1a0" },
-    { name = "ag-ui-protocol", specifier = ">=0.1.15" },
-    { name = "fastapi", marker = "extra == 'fastapi'", specifier = ">=0.115.12" },
-    { name = "langchain", specifier = ">=1.2.0" },
-    { name = "langchain-core", specifier = ">=0.3.0" },
-    { name = "langgraph", specifier = ">=0.3.25,<2" },
-    { name = "pydantic", specifier = ">=2.0.0" },
-]
-provides-extras = ["fastapi"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "fastapi", specifier = ">=0.115.12" },
-    { name = "pytest", specifier = ">=9.0.2" },
-    { name = "pytest-asyncio", specifier = ">=1.3.0" },
-    { name = "pytest-cov", specifier = ">=7.1.0" },
-]
-
 [[package]]
 name = "ag-ui-protocol"
 version = "0.1.18"
-source = { directory = "../../../../sdks/python" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
 ]
-
-[package.metadata]
-requires-dist = [{ name = "pydantic", specifier = ">=2.11.2" }]
+sdist = { url = "https://files.pythonhosted.org/packages/4c/d7/5711eada86da9bd7684e58645653a1693ef20b66cc3efbb1deeafef80f8d/ag_ui_protocol-0.1.18.tar.gz", hash = "sha256:b37c672c3fd6bac12b316c39f45ad9db9f137bbb885489c79f268507029a22ff", size = 9937, upload-time = "2026-04-21T20:44:59.151Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d8/74/913c9b8fc566c6da650aecbddf25a5d8186b54138df265eb9eb546f56141/ag_ui_protocol-0.1.18-py3-none-any.whl", hash = "sha256:d151c0f0a34160647f1571163f7185746f4326b15a56d1560de5082a7a0e7a12", size = 12607, upload-time = "2026-04-21T20:45:00.097Z" },
+]
 
 [[package]]
 name = "aiohappyeyeballs"
@@ -1151,8 +1136,8 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ag-ui-langgraph", editable = "../" },
-    { name = "ag-ui-protocol", directory = "../../../../sdks/python" },
+    { name = "ag-ui-langgraph", specifier = ">=0.0.37" },
+    { name = "ag-ui-protocol", specifier = ">=0.1.18" },
     { name = "copilotkit", specifier = "==0.1.86" },
     { name = "dotenv", specifier = ">=0.9.9" },
     { name = "fastapi", specifier = ">=0.115.12" },
@@ -1163,7 +1148,7 @@ requires-dist = [
     { name = "langchain-google-genai", specifier = ">=2.1.12" },
     { name = "langchain-openai", specifier = ">=1.0.1" },
     { name = "langgraph", specifier = ">=1.1.3,<2" },
-    { name = "langgraph-api", specifier = ">=0.7.70,<0.7.97" },
+    { name = "langgraph-api", specifier = ">=0.7.70" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "uvicorn", specifier = ">=0.34.0" },
 ]

@@ -7,6 +7,17 @@
  * framework-specific glue: tool decorator, runtime state access, model
  * binding + invoke.
  *
+ * Streaming: the subagent's `render_a2ui` call must STREAM to the AG-UI wire so
+ * the a2ui middleware paints the surface progressively (the "building" skeleton
+ * keys off the inner tool-call's arg deltas, not the final result). On LangGraph
+ * this is FREE: the subagent runs `model.stream` inside the graph, so its nested
+ * `render_a2ui` tool-call arg deltas surface natively as `OnChatModelStream`
+ * events, which the generic `agent.ts` translator already turns into inner
+ * TOOL_CALL_START/ARGS/END. So this adapter emits NO A2UI-specific custom events
+ * — it just streams the subagent and hands the accumulated args to the recovery
+ * loop. (Frameworks whose SDK does NOT surface a nested model stream as wire
+ * events — e.g. Strands — own that explicit push in their own adapter.)
+ *
  * Example usage in a chat node:
  *
  *   import { getA2UITools } from "@ag-ui/langgraph";
@@ -39,12 +50,15 @@ import {
   type A2UIToolParams,
 } from "@ag-ui/a2ui-toolkit";
 
+/** Name of the render tool the A2UI middleware injects (and the subagent binds). */
+const RENDER_A2UI_TOOL_NAME = RENDER_A2UI_TOOL_DEF.function.name;
+
 /**
  * Loose type for the subagent model.
  *
  * Typed as `any` (rather than `BaseChatModel`) to tolerate `@langchain/core` version
  * skew between this package and the consumer — e.g. `ChatOpenAI` shipping its own
- * peer-pinned core. The factory only needs `bindTools` + `invoke`, which is checked
+ * peer-pinned core. The factory only needs `bindTools` + `stream`, which is checked
  * at runtime.
  */
 export type A2UISubagentModel = any;
@@ -68,6 +82,45 @@ interface GenerateA2UIArgs {
   target_surface_id?: string;
   /** Optional natural-language description of the changes to apply on update. */
   changes?: string;
+}
+
+/**
+ * Run the structured-output subagent once and return the captured `render_a2ui`
+ * args — or `null` if the model produced no call.
+ *
+ * Uses `stream` (not `invoke`) so the nested `render_a2ui` tool-call arg deltas
+ * surface natively as the graph's `OnChatModelStream` events — which the generic
+ * `agent.ts` translator already turns into inner TOOL_CALL_START/ARGS/END,
+ * painting the surface progressively. This adapter emits NO A2UI-specific
+ * events: it merely consumes the stream to accumulate the final structured args
+ * for the recovery loop.
+ */
+export async function streamRenderSubagent(
+  modelWithTool: A2UISubagentModel,
+  prompt: string,
+  messages: unknown[],
+): Promise<Record<string, unknown> | null> {
+  let accumulated: any = null;
+  const gen = await modelWithTool.stream([
+    new SystemMessage(prompt),
+    ...(messages as any[]),
+  ]);
+  for await (const chunk of gen) {
+    // Accumulate the streamed AIMessageChunks so the final parsed tool_calls
+    // reconstruct even when each frame carries only an incremental arg fragment.
+    // (Surfacing the deltas on the wire is langgraph's job, via the
+    // OnChatModelStream events this stream emits.)
+    accumulated = accumulated === null ? chunk : accumulated.concat(chunk);
+  }
+
+  const toolCalls: Array<{ name?: string; args?: Record<string, unknown> }> =
+    accumulated?.tool_calls ?? [];
+  for (const call of toolCalls) {
+    if (call.name == null || call.name === RENDER_A2UI_TOOL_NAME) {
+      return (call.args ?? {}) as Record<string, unknown>;
+    }
+  }
+  return null;
 }
 
 /**
@@ -96,7 +149,7 @@ export function getA2UITools<TModel = A2UISubagentModel>(
     onA2UIAttempt,
   } = resolveA2UIToolParams(params);
   // Loose-typed locally: the generic TModel only guarantees the shape the
-  // toolkit needs; bindTools/invoke are checked at runtime (see guard below).
+  // toolkit needs; bindTools/stream are checked at runtime (see guard below).
   const chatModel = model as A2UISubagentModel;
 
   return tool(
@@ -141,15 +194,8 @@ export function getA2UITools<TModel = A2UISubagentModel>(
         catalog,
         config: recovery,
         onAttempt: onA2UIAttempt,
-        invokeSubagent: async (prompt) => {
-          const response: any = await modelWithTool.invoke([
-            new SystemMessage(prompt),
-            ...messages,
-          ] as any);
-          const toolCalls: Array<{ args?: Record<string, unknown> }> =
-            response.tool_calls ?? [];
-          return toolCalls.length ? (toolCalls[0].args ?? {}) : null;
-        },
+        invokeSubagent: (prompt) =>
+          streamRenderSubagent(modelWithTool, prompt, messages),
         buildEnvelope: (args) =>
           buildA2UIEnvelope({
             args,

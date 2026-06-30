@@ -2,6 +2,10 @@ syntax = "proto3";
 
 package ag_ui;
 
+// C#-only option (ignored by the TypeScript and Python generators): controls the
+// namespace of the generated Google.Protobuf types consumed by the AGUI.Protobuf .NET package.
+option csharp_namespace = "AGUI.ProtocolBuffers";
+
 import "google/protobuf/struct.proto";
 import "patch.proto";
 import "types.proto";

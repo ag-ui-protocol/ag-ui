@@ -7,15 +7,11 @@ middleware detects in the TOOL_CALL_RESULT and renders automatically.
 """
 
 import os
-from typing import Any, List
+import sys
 
-from langchain_core.messages import SystemMessage
-from langchain_core.runnables import RunnableConfig
+from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
-from langgraph.graph import StateGraph, END, MessagesState
-from langgraph.prebuilt import ToolNode
 from ag_ui_langgraph import get_a2ui_tools
-
 
 CUSTOM_CATALOG_ID = "https://a2ui.org/demos/dojo/dynamic_catalog.json"
 
@@ -73,16 +69,6 @@ TOOLS = [
 ]
 
 
-class AgentState(MessagesState):
-    tools: List[Any]
-    copilotkit: dict  # CopilotKit context (actions, etc.)
-
-# LangGraph requires state keys declared in the schema.
-# "ag-ui" uses a hyphen which isn't valid as a Python identifier,
-# so we patch it into the annotations directly.
-AgentState.__annotations__["ag-ui"] = dict
-
-
 SYSTEM_PROMPT = """You are a helpful assistant that creates rich visual UI on the fly.
 
 When the user asks for visual content (product comparisons, dashboards, lists, cards, etc.),
@@ -90,36 +76,25 @@ use the generate_a2ui tool to create a dynamic A2UI surface.
 IMPORTANT: After calling the tool, do NOT repeat the data in your text response. The tool renders UI automatically. Just confirm what was rendered."""
 
 
-async def chat_node(state: AgentState, config: RunnableConfig):
-    model = base_model.bind_tools(TOOLS, parallel_tool_calls=False)
-
-    response = await model.ainvoke([
-        SystemMessage(content=SYSTEM_PROMPT),
-        *state["messages"],
-    ], config)
-
-    return {"messages": [response]}
-
-
-def route_after_chat(state: AgentState):
-    last_message = state["messages"][-1]
-    if hasattr(last_message, "tool_calls") and last_message.tool_calls:
-        return "tool_node"
-    return END
-
-
-workflow = StateGraph(AgentState)
-workflow.add_node("chat_node", chat_node)
-workflow.add_node("tool_node", ToolNode(tools=TOOLS))
-workflow.set_entry_point("chat_node")
-workflow.add_conditional_edges("chat_node", route_after_chat)
-workflow.add_edge("tool_node", "chat_node")
-
+# Converted from a manual StateGraph + ToolNode to create_agent to isolate the
+# graph-shape variable in the A2UI-streaming investigation. The same
+# get_a2ui_tools tool is bound directly (NOT auto-injected via
+# CopilotKitMiddleware), so the ONLY difference vs the prior version is
+# StateGraph -> create_agent.
 is_fast_api = os.environ.get("LANGGRAPH_FAST_API", "false").lower() == "true"
 
 if is_fast_api:
     from langgraph.checkpoint.memory import MemorySaver
-    memory = MemorySaver()
-    graph = workflow.compile(checkpointer=memory)
+
+    graph = create_agent(
+        model=base_model,
+        tools=TOOLS,
+        system_prompt=SYSTEM_PROMPT,
+        checkpointer=MemorySaver(),
+    )
 else:
-    graph = workflow.compile()
+    graph = create_agent(
+        model=base_model,
+        tools=TOOLS,
+        system_prompt=SYSTEM_PROMPT,
+    )

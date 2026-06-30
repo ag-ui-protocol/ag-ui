@@ -8,7 +8,7 @@ import {
   Assistant,
   Message as LangGraphMessage,
   Config,
-  Interrupt,
+  Interrupt as LangGraphInterrupt,
   Thread,
 } from "@langchain/langgraph-sdk";
 import { randomUUID } from "@ag-ui/client";
@@ -29,14 +29,19 @@ import {
 } from "./types";
 import {
   AbstractAgent,
+  AgentCapabilities,
   AgentConfig,
+  AgentSubscriber,
   CustomEvent,
   EventType,
+  Interrupt as AGUIInterrupt,
   MessagesSnapshotEvent,
   RawEvent,
+  ResumeEntry,
   RunAgentInput,
   RunErrorEvent,
   RunFinishedEvent,
+  RunFinishedInterruptOutcome,
   RunStartedEvent,
   StateDeltaEvent,
   StateSnapshotEvent,
@@ -56,6 +61,11 @@ import {
   ReasoningEndEvent,
   ReasoningEncryptedValueEvent,
 } from "@ag-ui/client";
+import {
+  langGraphInterruptsToAGUI,
+  buildLgCommandResumeFromAgui,
+  reconcileLegacyResumeInterrupts,
+} from "./interrupts";
 import { RunsStreamPayload } from "@langchain/langgraph-sdk/dist/types";
 import {
   aguiMessagesToLangChain,
@@ -68,7 +78,14 @@ import {
   resolveEncryptedReasoningContent,
 } from "@/utils";
 import { ToolMessage } from "@langchain/core/messages";
-import { ToolMessageFieldsWithToolCallId } from "@langchain/core/dist/messages/tool";
+
+type ToolMessageFieldsWithToolCallId = {
+  type?: string;
+  tool_call_id: string;
+  name?: string;
+  content: unknown;
+  id?: string;
+};
 
 export type ProcessedEvents =
   | TextMessageStartEvent
@@ -142,6 +159,27 @@ export interface LangGraphAgentConfig extends AgentConfig {
    * variable that could be mutated by a different clone or request.
    */
   headerFactory?: () => Record<string, string>;
+  /** Emit legacy CUSTOM(name="on_interrupt") events alongside the terminating
+   *  RUN_FINISHED. Default true during the migration window. (The RUN_FINISHED
+   *  carries outcome={type:"interrupt"} only when `emitInterruptOutcome` is
+   *  enabled — or when this flag is false, which forces the outcome on to avoid
+   *  surfacing the interrupt via neither channel.) */
+  enableLegacyOnInterruptEvent?: boolean;
+  /**
+   * Terminate interrupted runs with the AG-UI structured outcome
+   * `RUN_FINISHED.outcome={type:"interrupt", interrupts:[...]}`.
+   *
+   * Default **false**. Opt-in: released clients that drive interrupts through
+   * the legacy `forwardedProps.command.resume` channel (e.g. CopilotKit's
+   * `useLangGraphInterrupt`, as of v1.60.x) stop sending any resume directive
+   * once they observe the structured outcome, which silently strands the run.
+   * Until those clients adopt `RunAgentInput.resume[]`, emitting the outcome by
+   * default would break them — so it must be explicitly enabled by clients that
+   * understand the canonical resume protocol. When false, interrupted runs end
+   * with a plain `RUN_FINISHED` (plus the legacy on_interrupt event), exactly as
+   * before structured interrupts existed.
+   */
+  emitInterruptOutcome?: boolean;
 }
 
 const ROOT_SUBGRAPH_NAME = "root";
@@ -179,10 +217,14 @@ export class LangGraphAgent extends AbstractAgent {
   subscriber: Subscriber<ProcessedEvents>;
   constantSchemaKeys: string[] = DEFAULT_SCHEMA_KEYS;
   config: LangGraphAgentConfig;
+  enableLegacyOnInterruptEvent: boolean;
+  emitInterruptOutcome: boolean;
 
   constructor(config: LangGraphAgentConfig) {
     super(config);
     this.config = config;
+    this.enableLegacyOnInterruptEvent = config.enableLegacyOnInterruptEvent ?? true;
+    this.emitInterruptOutcome = config.emitInterruptOutcome ?? false;
     this.messagesInProcess = {};
     this.agentName = config.agentName;
     this.graphId = config.graphId;
@@ -237,6 +279,8 @@ export class LangGraphAgent extends AbstractAgent {
       constantSchemaKeys: [...this.constantSchemaKeys],
       headers: { ...this.headers },
       client: this.client,
+      enableLegacyOnInterruptEvent: this.enableLegacyOnInterruptEvent,
+      emitInterruptOutcome: this.emitInterruptOutcome,
 
       assistant: this.assistant,
       activeRun: this.activeRun ? structuredClone(this.activeRun) : undefined,
@@ -275,6 +319,64 @@ export class LangGraphAgent extends AbstractAgent {
   dispatchEvent(event: ProcessedEvents) {
     this.subscriber.next(event);
     return true;
+  }
+
+  private dispatchInterruptFinish(args: {
+    threadId: string;
+    runId: string;
+    lgInterrupts: LangGraphInterrupt[];
+  }) {
+    const { threadId, runId, lgInterrupts } = args;
+    const aguiInterrupts: AGUIInterrupt[] = this.interruptsToAGUI(lgInterrupts);
+
+    if (this.enableLegacyOnInterruptEvent) {
+      for (const lg of lgInterrupts) {
+        this.dispatchEvent({
+          type: EventType.CUSTOM,
+          name: LangGraphEventTypes.OnInterrupt,
+          value:
+            typeof lg.value === "string" ? lg.value : JSON.stringify(lg.value),
+          rawEvent: lg,
+        });
+      }
+    }
+
+    // Emit the structured outcome when opted in, OR whenever the legacy
+    // on_interrupt event is disabled — otherwise the interrupt would be
+    // surfaced by neither channel and silently swallowed. By default
+    // (legacy on, emitInterruptOutcome off) this is a plain RUN_FINISHED:
+    // released clients that resume via forwardedProps.command.resume stop
+    // sending a resume directive when they see the structured outcome, so it
+    // stays opt-in until they adopt RunAgentInput.resume[]. See
+    // LangGraphAgentConfig.emitInterruptOutcome.
+    const includeOutcome =
+      this.emitInterruptOutcome || !this.enableLegacyOnInterruptEvent;
+    this.dispatchEvent({
+      type: EventType.RUN_FINISHED,
+      threadId,
+      runId,
+      ...(includeOutcome
+        ? {
+            outcome: {
+              type: "interrupt",
+              interrupts: aguiInterrupts,
+            } satisfies RunFinishedInterruptOutcome,
+          }
+        : {}),
+    });
+  }
+
+  protected async onInitialize(
+    input: RunAgentInput,
+    subscribers: AgentSubscriber[],
+  ) {
+    // Back-compat: when emitInterruptOutcome is enabled, an interrupted run sets
+    // AbstractAgent.pendingInterrupts. A client still resuming via the legacy
+    // forwardedProps.command.resume channel never populates RunAgentInput.resume[],
+    // so the base lifecycle would reject the resume run. Drop the tracked
+    // interrupts for that case — runAgentStream resolves the legacy resume itself.
+    reconcileLegacyResumeInterrupts(this, input);
+    return super.onInitialize(input, subscribers);
   }
 
   run(input: RunAgentInput) {
@@ -418,6 +520,22 @@ export class LangGraphAgent extends AbstractAgent {
     const nodeNameInput = forwardedProps?.nodeName;
     const threadId = inputThreadId ?? randomUUID();
 
+    const aguiResume: ResumeEntry[] | undefined =
+      input.resume && input.resume.length ? input.resume : undefined;
+    const legacyResume = forwardedProps?.command?.resume;
+
+    if (aguiResume && legacyResume !== undefined) {
+      console.warn(
+        "[@ag-ui/langgraph] both input.resume and forwardedProps.command.resume were provided; input.resume wins.",
+      );
+    } else if (!aguiResume && legacyResume !== undefined) {
+      console.warn(
+        "[@ag-ui/langgraph] forwardedProps.command.resume is deprecated; send RunAgentInput.resume[] instead.",
+      );
+    }
+
+    const hasResume = aguiResume !== undefined || legacyResume !== undefined;
+
     if (!this.assistant) {
       this.assistant = await this.getAssistant();
     }
@@ -460,12 +578,12 @@ export class LangGraphAgent extends AbstractAgent {
       (m) => m.role !== "system",
     ).length;
 
-    // Skip regeneration detection when command.resume is set — a resume from
+    // Skip regeneration detection when a resume is set — a resume from
     // interrupt is explicitly NOT a regeneration. On the second interrupt-resume
     // cycle the LangGraph thread state has accumulated tool/AI messages from the
     // first interrupt while the frontend's input.messages hasn't, which would
     // otherwise trigger the regeneration path and ignore the resume.
-    if (!forwardedProps?.command?.resume && stateNonSystemCount > inputNonSystemCount) {
+    if (!hasResume && stateNonSystemCount > inputNonSystemCount) {
       // A higher checkpoint count than the frontend sent does NOT always mean a
       // regeneration. If an SSE stream dropped before MESSAGES_SNAPSHOT, the
       // client never learned the persisted message IDs and resends the new user
@@ -529,7 +647,7 @@ export class LangGraphAgent extends AbstractAgent {
     );
 
     const mode =
-      !forwardedProps?.command?.resume &&
+      !hasResume &&
       threadId &&
       this.activeRun!.nodeName != "__end__" &&
       this.activeRun!.nodeName
@@ -568,9 +686,25 @@ export class LangGraphAgent extends AbstractAgent {
     // this continuation path (instead of returning early via regenerate), so guard
     // against an undefined value here rather than throwing on destructure.
     const { command, ...restProps } = forwardedProps ?? {};
-    if (command?.resume && typeof command.resume === "string") {
+
+    // Collect interrupts from ALL tasks, not just tasks[0] (fixes #1409).
+    // The SDK doesn't export a Task type, so we use `any` here.
+    const interrupts = (agentState.tasks ?? []).flatMap(
+      (t: any) => t.interrupts ?? [],
+    ) as LangGraphInterrupt[];
+
+    let effectiveCommand = command;
+
+    if (aguiResume) {
+      effectiveCommand = {
+        ...(command ?? {}),
+        resume: this.buildCommandResumeFromAgui(aguiResume, {
+          openInterrupts: this.interruptsToAGUI(interrupts),
+        }),
+      };
+    } else if (effectiveCommand?.resume && typeof effectiveCommand.resume === "string") {
       try {
-        command.resume = JSON.parse(command.resume);
+        effectiveCommand.resume = JSON.parse(effectiveCommand.resume);
       } catch {
         // Keep as string if not valid JSON
       }
@@ -672,7 +806,7 @@ export class LangGraphAgent extends AbstractAgent {
 
     const payload: Record<string, unknown> = {
       ...restProps,
-      command,
+      command: effectiveCommand,
       streamMode,
       input: payloadInput,
       config: configForPayload,
@@ -680,12 +814,7 @@ export class LangGraphAgent extends AbstractAgent {
     };
 
     // If there are still outstanding unresolved interrupts, we must force resolution of them before moving forward
-    // Collect interrupts from ALL tasks, not just tasks[0] (fixes #1409).
-    // The SDK doesn't export a Task type, so we use `any` here.
-    const interrupts = (agentState.tasks ?? []).flatMap(
-      (t: any) => t.interrupts ?? [],
-    ) as Interrupt[];
-    if (interrupts?.length && !forwardedProps?.command?.resume) {
+    if (interrupts?.length && !hasResume) {
       this.dispatchEvent({
         type: EventType.RUN_STARTED,
         threadId,
@@ -693,23 +822,12 @@ export class LangGraphAgent extends AbstractAgent {
       });
       this.handleNodeChange(nodeNameInput);
 
-      interrupts.forEach((interrupt) => {
-        this.dispatchEvent({
-          type: EventType.CUSTOM,
-          name: LangGraphEventTypes.OnInterrupt,
-          value:
-            typeof interrupt.value === "string"
-              ? interrupt.value
-              : JSON.stringify(interrupt.value),
-          rawEvent: interrupt,
-        });
-      });
-
-      this.dispatchEvent({
-        type: EventType.RUN_FINISHED,
+      this.dispatchInterruptFinish({
         threadId,
         runId: input.runId,
+        lgInterrupts: interrupts,
       });
+
       return this.subscriber.complete();
     }
 
@@ -850,9 +968,18 @@ export class LangGraphAgent extends AbstractAgent {
         }
 
         const chunkData = chunk.data;
-        const metadata = chunkData.metadata ?? {};
+        // messages-tuple chunks arrive as [AIMessageChunk, metadata] arrays;
+        // events-mode chunks are objects with metadata/event properties. Read
+        // metadata from the right slot so langgraph_node is extracted in both
+        // cases (otherwise messages-tuple-only flows never call
+        // handleNodeChange and node-scoped behavior degrades to no-op).
+        const metadata = Array.isArray(chunkData)
+          ? (chunkData[1] ?? {})
+          : (chunkData.metadata ?? {});
         const currentNodeName = metadata.langgraph_node;
-        const eventType = chunkData.event;
+        const eventType = Array.isArray(chunkData)
+          ? undefined
+          : chunkData.event;
 
         // Subgraph detection via langgraph_checkpoint_ns
         // ns format: "" | "node:uuid" | "node:uuid|inner:uuid"
@@ -1011,7 +1138,7 @@ export class LangGraphAgent extends AbstractAgent {
       // Collect interrupts from ALL tasks, not just tasks[0] (fixes #1409)
       const interrupts = (tasks ?? []).flatMap(
         (t: any) => t.interrupts ?? [],
-      ) as Interrupt[];
+      ) as LangGraphInterrupt[];
       const isEndNode = state.next.length === 0;
       const writes = state.metadata?.writes ?? {};
 
@@ -1024,29 +1151,26 @@ export class LangGraphAgent extends AbstractAgent {
           : (state.next[0] ?? Object.keys(writes)[0]);
       }
 
-      interrupts.forEach((interrupt) => {
-        this.dispatchEvent({
-          type: EventType.CUSTOM,
-          name: LangGraphEventTypes.OnInterrupt,
-          value:
-            typeof interrupt.value === "string"
-              ? interrupt.value
-              : JSON.stringify(interrupt.value),
-          rawEvent: interrupt,
-        });
-      });
-
       this.handleNodeChange(newNodeName);
       // Immediately turn off new step
       this.handleNodeChange(undefined);
 
       await this.getStateAndMessagesSnapshots(threadId);
 
-      this.dispatchEvent({
-        type: EventType.RUN_FINISHED,
-        threadId,
-        runId: this.activeRun!.id,
-      });
+      if (interrupts.length) {
+        this.dispatchInterruptFinish({
+          threadId,
+          runId: this.activeRun!.id,
+          lgInterrupts: interrupts,
+        });
+      } else {
+        this.dispatchEvent({
+          type: EventType.RUN_FINISHED,
+          threadId,
+          runId: this.activeRun!.id,
+        });
+      }
+
       // Reset cancel flags when run completes
       this.cancelRequested = false;
       this.cancelSent = false;
@@ -1230,14 +1354,15 @@ export class LangGraphAgent extends AbstractAgent {
         if (isMessageContentEvent && shouldEmitMessages) {
           // No existing message yet, also init the message
           if (!currentStream) {
+            const messageId = this.getOrPinTextMessageId(event.data.chunk.id);
             this.dispatchEvent({
               type: EventType.TEXT_MESSAGE_START,
               role: "assistant",
-              messageId: event.data.chunk.id,
+              messageId,
               rawEvent: event,
             });
             this.setMessageInProgress(this.activeRun!.id, {
-              id: event.data.chunk.id,
+              id: messageId,
               toolCallId: null,
               toolCallName: null,
             });
@@ -1540,13 +1665,14 @@ export class LangGraphAgent extends AbstractAgent {
     // Handle text content streaming
     if (content) {
       if (!currentStream) {
+        const messageId = this.getOrPinTextMessageId(chunk.id);
         this.dispatchEvent({
           type: EventType.TEXT_MESSAGE_START,
           role: "assistant",
-          messageId: chunk.id,
+          messageId,
         });
         this.setMessageInProgress(this.activeRun!.id, {
-          id: chunk.id,
+          id: messageId,
           toolCallId: null,
           toolCallName: null,
         });
@@ -1559,6 +1685,19 @@ export class LangGraphAgent extends AbstractAgent {
         delta: content,
       });
     }
+  }
+
+  protected interruptsToAGUI(
+    list: readonly LangGraphInterrupt[],
+  ): AGUIInterrupt[] {
+    return langGraphInterruptsToAGUI(list);
+  }
+
+  protected buildCommandResumeFromAgui(
+    entries: readonly ResumeEntry[],
+    _ctx: { openInterrupts: AGUIInterrupt[] },
+  ): unknown {
+    return buildLgCommandResumeFromAgui(entries);
   }
 
   // Request cancellation of the current run via LangGraph Platform SDK
@@ -1577,6 +1716,19 @@ export class LangGraphAgent extends AbstractAgent {
         });
     }
     super.abortRun();
+  }
+
+  async getCapabilities(): Promise<AgentCapabilities> {
+    return {
+      identity: { type: "langgraph" },
+      humanInTheLoop: {
+        supported: true,
+        interrupts: true,
+        approveWithEdits: true,
+      },
+      state: { snapshots: true, deltas: false, persistentState: true },
+      transport: { streaming: true },
+    };
   }
 
   handleReasoningEvent(reasoningData: LangGraphReasoning) {
@@ -1945,8 +2097,29 @@ export class LangGraphAgent extends AbstractAgent {
       if (nodeName) {
         this.startStep(nodeName);
       }
+      // Clear the pinned text message id: a new node should mint its own
+      // bubble. See RunMetadata.currentTextMessageId.
+      if (this.activeRun) {
+        this.activeRun.currentTextMessageId = undefined;
+      }
     }
     this.activeRun!.nodeName = nodeName;
+  }
+
+  /**
+   * Returns the messageId to use for a TEXT_MESSAGE_START emission, pinning
+   * the first id per node. chunk.id changes per LLM invocation, so a
+   * text→tool→text sequence within one node would otherwise render as
+   * multiple bubbles; pinning keeps them in one. handleNodeChange clears
+   * the pin on every node transition, so different nodes (e.g. a supervisor
+   * routing to specialist agents) get fresh ids and stay in separate
+   * bubbles. See #1317.
+   */
+  private getOrPinTextMessageId(fallbackId: string): string {
+    const messageId =
+      this.activeRun!.currentTextMessageId ?? fallbackId;
+    this.activeRun!.currentTextMessageId = messageId;
+    return messageId;
   }
 
   startStep(nodeName: string) {

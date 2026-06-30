@@ -7,7 +7,11 @@ A2UI surface generation (``get_a2ui_tools`` / ``plan_a2ui_injection``).
 """
 from .agent import StrandsAgent
 from .a2ui_tool import (
+    A2UI_OPERATIONS_KEY,
     A2UI_STREAM_KEY,
+    A2UIGuidelines,
+    A2UIToolParams,
+    BASIC_CATALOG_ID,
     get_a2ui_tools,
     is_auto_injected_a2ui_tool,
     plan_a2ui_injection,
@@ -27,6 +31,10 @@ from .config import (
 __all__ = [
     "StrandsAgent",
     "A2UI_STREAM_KEY",
+    "A2UI_OPERATIONS_KEY",
+    "A2UIToolParams",
+    "A2UIGuidelines",
+    "BASIC_CATALOG_ID",
     "get_a2ui_tools",
     "is_auto_injected_a2ui_tool",
     "plan_a2ui_injection",

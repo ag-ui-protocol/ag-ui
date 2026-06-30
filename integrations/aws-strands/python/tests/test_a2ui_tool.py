@@ -158,7 +158,10 @@ def test_user_prevails_no_double_inject():
     assert plan is None
 
 
-def test_resolves_catalog_from_schema_context_entry():
+def test_ignores_catalog_in_schema_context_entry():
+    """Mirrors the LangGraph adapter: a catalog carried in RunAgentInput.context
+    is NOT auto-resolved. Only an explicit ``config["catalog"]`` enables
+    catalog-aware recovery; otherwise recovery stays structural-only."""
     plan = plan_a2ui_injection(
         model=STUB_MODEL,
         input=_input(
@@ -173,7 +176,152 @@ def test_resolves_catalog_from_schema_context_entry():
         existing_tool_names=[],
     )
     assert plan is not None
+    assert plan["catalog"] is None
+
+
+def test_uses_explicit_config_catalog():
+    """Explicit backend config catalog is threaded through unchanged."""
+    plan = plan_a2ui_injection(
+        model=STUB_MODEL,
+        input=_input(forwarded_props={"injectA2UITool": True}),
+        existing_tool_names=[],
+        config={"catalog": CATALOG},
+    )
+    assert plan is not None
     assert plan["catalog"] == CATALOG
+
+
+def test_resolves_catalog_id_from_runtime_state():
+    """When the host does NOT configure default_catalog_id, the catalog id is
+    auto-resolved from run state (native ag-ui.a2ui_schema) and bound — parity
+    with the LangGraph adapter, so the host wires nothing."""
+    agui_state = {
+        "ag-ui": {
+            "a2ui_schema": json.dumps({"catalogId": "runtime-cat", "components": []})
+        }
+    }
+    plan = plan_a2ui_injection(
+        model=STUB_MODEL,
+        input=_input(forwarded_props={"injectA2UITool": True}),
+        existing_tool_names=[],
+        agui_state=agui_state,
+    )
+    assert plan is not None
+    assert plan["tool"]._cfg["default_catalog_id"] == "runtime-cat"
+
+
+def test_config_default_catalog_id_overrides_runtime():
+    """Explicit backend config wins over the runtime-resolved catalog id."""
+    agui_state = {
+        "ag-ui": {"a2ui_schema": json.dumps({"catalogId": "runtime-cat"})}
+    }
+    plan = plan_a2ui_injection(
+        model=STUB_MODEL,
+        input=_input(forwarded_props={"injectA2UITool": True}),
+        existing_tool_names=[],
+        config={"default_catalog_id": "config-cat"},
+        agui_state=agui_state,
+    )
+    assert plan is not None
+    assert plan["tool"]._cfg["default_catalog_id"] == "config-cat"
+
+
+def test_runtime_schema_becomes_composition_guide():
+    """The proxy-path component schema is bound as the sub-agent
+    composition_guide when the host did not supply guidelines."""
+    agui_state = {
+        "ag-ui": {
+            "context": [
+                {"description": "A2UI catalog", "value": "- custom-cat\nSchema text"}
+            ]
+        }
+    }
+    plan = plan_a2ui_injection(
+        model=STUB_MODEL,
+        input=_input(forwarded_props={"injectA2UITool": True}),
+        existing_tool_names=[],
+        agui_state=agui_state,
+    )
+    assert plan is not None
+    assert plan["tool"]._cfg["default_catalog_id"] == "custom-cat"
+    assert "custom-cat" in plan["tool"]._cfg["guidelines"]["composition_guide"]
+
+
+def test_auto_inject_threads_all_config_knobs():
+    """plan_a2ui_injection must forward every backend ``config.a2ui`` knob the
+    toolkit honors (tool_description / default_surface_id / on_a2ui_attempt),
+    not just the model/catalog subset — parity with the dev-wired path."""
+    def sentinel(*_a, **_k):
+        return None
+
+    plan = plan_a2ui_injection(
+        model=STUB_MODEL,
+        input=_input(forwarded_props={"injectA2UITool": True}),
+        existing_tool_names=[],
+        config={
+            "tool_description": "custom desc",
+            "default_surface_id": "surf-9",
+            "default_catalog_id": "cat-9",
+            "on_a2ui_attempt": sentinel,
+        },
+    )
+    assert plan is not None
+    cfg = plan["tool"]._cfg
+    assert cfg["tool_description"] == "custom desc"
+    assert cfg["default_surface_id"] == "surf-9"
+    assert cfg["default_catalog_id"] == "cat-9"
+    assert cfg["on_a2ui_attempt"] is sentinel
+
+
+def test_plan_threads_agui_state_into_glue():
+    """The caller-assembled ``agui_state`` (schema + context under
+    state["ag-ui"]) is threaded into the built tool's glue, so the sub-agent
+    prompt can carry it — parity with the LangGraph adapter."""
+    state = {"ag-ui": {"context": [], "a2ui_schema": "SCHEMA"}}
+    plan = plan_a2ui_injection(
+        model=STUB_MODEL,
+        input=_input(forwarded_props={"injectA2UITool": True}),
+        existing_tool_names=[],
+        agui_state=state,
+    )
+    assert plan is not None
+    assert plan["tool"]._glue["state"] is state
+
+
+@pytest.mark.asyncio
+async def test_subagent_prompt_carries_ag_ui_schema_and_context(monkeypatch):
+    """state["ag-ui"] schema + context reach the sub-agent prompt as the
+    '## Available Components' block and context lines — the LangGraph-parity
+    fix: without it the sub-agent gets no component list and guesses."""
+    import ag_ui_strands.a2ui_tool as mod
+
+    seen = {}
+
+    async def fake_subagent(model, prompt, messages, push, **kwargs):
+        seen["prompt"] = prompt
+        return {"surfaceId": "s1", "components": [{"id": "root", "component": "Row"}]}
+
+    monkeypatch.setattr(mod, "_stream_render_subagent", fake_subagent)
+    tool = get_a2ui_tools(
+        {"model": STUB_MODEL},
+        glue={
+            "state": {
+                "ag-ui": {
+                    "context": [
+                        {"description": "App context", "value": "user on dashboard"}
+                    ],
+                    "a2ui_schema": json.dumps(CATALOG),
+                }
+            }
+        },
+    )
+    await _drive_stream(tool)
+
+    prompt = seen["prompt"]
+    assert "## Available Components" in prompt
+    assert "HotelCard" in prompt  # from CATALOG schema
+    assert "## App context" in prompt
+    assert "user on dashboard" in prompt
 
 
 def test_marker_distinguishes_auto_injected_from_dev_wired():
@@ -471,7 +619,7 @@ async def test_stream_drains_all_pushed_events_through_executor(monkeypatch):
     final ToolResultEvent must carry the envelope."""
     import ag_ui_strands.a2ui_tool as mod
 
-    async def fake_subagent(model, prompt, messages, push):
+    async def fake_subagent(model, prompt, messages, push, **kwargs):
         push({"kind": "start", "tool_call_id": "r1", "tool_call_name": "render_a2ui"})
         for i in range(5):
             push({"kind": "args", "tool_call_id": "r1", "delta": f"chunk{i}"})
@@ -495,6 +643,33 @@ async def test_stream_drains_all_pushed_events_through_executor(monkeypatch):
     # Final event is the ToolResultEvent wrapper; its text carries the envelope.
     text = str(events[-1])
     assert A2UI_OPS_KEY in text
+
+
+@pytest.mark.asyncio
+async def test_generate_tool_single_forced_render_call_and_returns_envelope():
+    """Regression for the dynamic-A2UI hang: driving the tool's real stream()
+    against a fake model, the sub-agent must fire EXACTLY ONE forced render_a2ui
+    model call (no agentic continuation that would never settle), and the tool
+    must yield the committed envelope so the outer Strands loop can emit
+    RUN_FINISHED instead of hanging on a still-Running generate_a2ui."""
+    calls: list = []
+
+    class FakeModel:
+        async def stream(self, messages, tool_specs=None, system_prompt=None, **kwargs):
+            calls.append(kwargs.get("tool_choice"))
+            yield _block_start()
+            yield _block_delta(
+                '{"surfaceId": "s1", "components": [{"id": "root", "component": "Row"}]}'
+            )
+            yield _BLOCK_STOP
+
+    tool = get_a2ui_tools({"model": FakeModel()})
+    events = await _drive_stream(tool)
+
+    # Single forced turn — the model is called once, forced to render_a2ui.
+    assert calls == [{"tool": {"name": RENDER_A2UI_TOOL_NAME}}]
+    # The committed envelope reaches the outer loop (the run can finish).
+    assert A2UI_OPS_KEY in str(events[-1])
 
 
 @pytest.mark.asyncio
@@ -529,7 +704,7 @@ async def test_stream_recoverable_subagent_error_yields_hard_failure(monkeypatch
     yields the structured hard-failure envelope — never a crash."""
     import ag_ui_strands.a2ui_tool as mod
 
-    async def boom(model, prompt, messages, push):
+    async def boom(model, prompt, messages, push, **kwargs):
         raise RuntimeError("model 429")
 
     monkeypatch.setattr(mod, "_stream_render_subagent", boom)
@@ -545,7 +720,7 @@ async def test_stream_programmer_error_propagates(monkeypatch):
     not masquerade as a failed attempt."""
     import ag_ui_strands.a2ui_tool as mod
 
-    async def bug(model, prompt, messages, push):
+    async def bug(model, prompt, messages, push, **kwargs):
         raise TypeError("adapter bug")
 
     monkeypatch.setattr(mod, "_stream_render_subagent", bug)
@@ -554,57 +729,57 @@ async def test_stream_programmer_error_propagates(monkeypatch):
         await _drive_stream(tool)
 
 
-def test_resolve_catalog_malformed_json_returns_none():
-    plan = plan_a2ui_injection(
-        model=STUB_MODEL,
-        input=_input(
-            forwarded_props={"injectA2UITool": True},
-            context=[
-                Context(description=A2UI_SCHEMA_CONTEXT_DESCRIPTION, value="{not json")
-            ],
-        ),
-        existing_tool_names=[],
-    )
-    assert plan is not None
-    assert plan["catalog"] is None
+# ---------------------------------------------------------------------------
+# _stream_render_subagent — the REAL streaming translation (faked model.stream)
+# ---------------------------------------------------------------------------
 
 
-# ---------------------------------------------------------------------------
-# _stream_render_subagent — the REAL streaming translation (faked Agent)
-# ---------------------------------------------------------------------------
+def _block_start(tool_use_id="r1", name=RENDER_A2UI_TOOL_NAME):
+    return {"contentBlockStart": {"start": {"toolUse": {"name": name, "toolUseId": tool_use_id}}}}
+
+
+def _block_delta(fragment):
+    return {"contentBlockDelta": {"delta": {"toolUse": {"input": fragment}}}}
+
+
+_BLOCK_STOP = {"contentBlockStop": {}}
+
+
+def _fake_stream_model(events):
+    """A minimal Strands ``Model`` stand-in whose ``stream`` replays raw
+    ``StreamEvent`` dicts. ``_stream_render_subagent`` now drives the model
+    DIRECTLY (single forced render_a2ui turn), so the fakes mirror the model
+    streaming protocol rather than the old ``Agent`` loop."""
+
+    class FakeModel:
+        async def stream(self, messages, tool_specs=None, system_prompt=None, **kwargs):
+            # The forced single turn must request exactly the render tool.
+            assert kwargs.get("tool_choice") == {"tool": {"name": RENDER_A2UI_TOOL_NAME}}
+            for ev in events:
+                yield ev
+
+    return FakeModel()
 
 
 @pytest.mark.asyncio
-async def test_render_subagent_streams_raw_arg_growth_as_deltas(monkeypatch):
-    """Direct coverage of ``_stream_render_subagent`` (OpenAI-chat provider
-    shape): the growing ``current_tool_use.input`` string must become start +
-    incremental args deltas + end, all under the live toolUseId."""
+async def test_render_subagent_streams_arg_fragments_as_deltas():
+    """Direct coverage of ``_stream_render_subagent``: a forced render_a2ui model
+    call's streamed toolUse input fragments become start + incremental args
+    deltas + end (all under the live toolUseId), and the accumulated JSON is
+    captured for the recovery loop."""
     import ag_ui_strands.a2ui_tool as mod
 
-    class FakeAgent:
-        def __init__(self, **kwargs):
-            self._tools = kwargs.get("tools") or []
-
-        async def stream_async(self, _msg):
-            yield {
-                "current_tool_use": {
-                    "name": RENDER_A2UI_TOOL_NAME,
-                    "toolUseId": "r1",
-                    "input": '{"surf',
-                }
-            }
-            yield {"unrelated_event": True}
-            yield {
-                "current_tool_use": {
-                    "name": RENDER_A2UI_TOOL_NAME,
-                    "toolUseId": "r1",
-                    "input": '{"surfaceId": "s1"}',
-                }
-            }
-
-    monkeypatch.setattr(mod, "Agent", FakeAgent)
+    events = [
+        _block_start(),
+        _block_delta('{"surf'),
+        {"unrelated_event": True},
+        _block_delta('aceId": "s1"}'),
+        _BLOCK_STOP,
+    ]
     pushed = []
-    captured = await mod._stream_render_subagent(STUB_MODEL, "prompt", [], pushed.append)
+    captured = await mod._stream_render_subagent(
+        _fake_stream_model(events), "prompt", [], pushed.append
+    )
 
     kinds = [p["kind"] for p in pushed]
     assert kinds == ["start", "args", "args", "end"]
@@ -613,48 +788,84 @@ async def test_render_subagent_streams_raw_arg_growth_as_deltas(monkeypatch):
         == '{"surfaceId": "s1"}'
     )
     assert all(p["tool_call_id"] == "r1" for p in pushed)
-    # The fake never invoked the render tool: no captured args -> the recovery
-    # loop records a no-call attempt.
+    assert captured == {"surfaceId": "s1"}
+
+
+@pytest.mark.asyncio
+async def test_render_subagent_single_chunk_input_is_captured():
+    """A provider that delivers the whole render_a2ui args in ONE toolUse delta
+    still emits start + one args delta + end, and parses the captured object."""
+    import ag_ui_strands.a2ui_tool as mod
+
+    full = '{"surfaceId": "s1", "components": [{"id": "root", "component": "Row"}]}'
+    events = [_block_start(), _block_delta(full), _BLOCK_STOP]
+    pushed = []
+    captured = await mod._stream_render_subagent(
+        _fake_stream_model(events), "prompt", [], pushed.append
+    )
+
+    assert [p["kind"] for p in pushed] == ["start", "args", "end"]
+    assert captured == {
+        "surfaceId": "s1",
+        "components": [{"id": "root", "component": "Row"}],
+    }
+
+
+@pytest.mark.asyncio
+async def test_render_subagent_no_render_call_returns_none():
+    """A turn that emits no render_a2ui block (e.g. text only) captures nothing
+    and pushes nothing — the recovery loop records a no-call attempt."""
+    import ag_ui_strands.a2ui_tool as mod
+
+    events = [
+        {"contentBlockStart": {"start": {"text": {}}}},
+        {"contentBlockDelta": {"delta": {"text": "hi"}}},
+        _BLOCK_STOP,
+    ]
+    pushed = []
+    captured = await mod._stream_render_subagent(
+        _fake_stream_model(events), "prompt", [], pushed.append
+    )
+    assert pushed == []
     assert captured is None
 
 
 @pytest.mark.asyncio
-async def test_render_subagent_dict_input_falls_back_to_single_delta(monkeypatch):
-    """Direct coverage of the parsed-dict provider shape (Anthropic/Gemini
-    deliver ``input`` as a dict with no raw string growth): the captured args
-    must be emitted as ONE args delta before ``end`` so the middleware still
-    sees the components before the result."""
+async def test_render_subagent_stamps_catalog_id_into_streamed_args():
+    """The host catalog id is spliced into the FIRST streamed chunk (after the
+    opening brace) so the middleware's progressive paint binds to the real
+    catalog instead of falling back to basic. The model never emits catalogId,
+    and the splice must NOT contaminate the captured args."""
     import ag_ui_strands.a2ui_tool as mod
 
-    args = {"surfaceId": "s1", "components": [{"id": "root", "component": "Row"}]}
-
-    class FakeAgent:
-        def __init__(self, **kwargs):
-            self._tools = kwargs.get("tools") or []
-
-        async def stream_async(self, _msg):
-            yield {
-                "current_tool_use": {
-                    "name": RENDER_A2UI_TOOL_NAME,
-                    "toolUseId": "r1",
-                    "input": dict(args),
-                }
-            }
-            # The model "invokes" the bound render tool, which captures args.
-            async for _ in self._tools[0].stream(
-                {"name": RENDER_A2UI_TOOL_NAME, "toolUseId": "r1", "input": dict(args)},
-                {},
-            ):
-                pass
-
-    monkeypatch.setattr(mod, "Agent", FakeAgent)
+    events = [_block_start(), _block_delta('{"surf'), _block_delta('aceId": "s1"}'), _BLOCK_STOP]
     pushed = []
-    captured = await mod._stream_render_subagent(STUB_MODEL, "prompt", [], pushed.append)
+    captured = await mod._stream_render_subagent(
+        _fake_stream_model(events), "prompt", [], pushed.append, catalog_id="my-cat"
+    )
+    args_str = "".join(p["delta"] for p in pushed if p["kind"] == "args")
+    # Streamed args are valid JSON carrying the stamped id.
+    assert json.loads(args_str) == {"catalogId": "my-cat", "surfaceId": "s1"}
+    # The committed args stay the model's own (envelope builder stamps the id).
+    assert captured == {"surfaceId": "s1"}
 
-    kinds = [p["kind"] for p in pushed]
-    assert kinds == ["start", "args", "end"]
-    assert json.loads(pushed[1]["delta"]) == args
-    assert captured == args
+
+@pytest.mark.asyncio
+async def test_render_subagent_stamps_catalog_id_in_single_chunk():
+    """The single-chunk shape also gets the catalog id spliced into the one
+    emitted delta, while the captured object stays catalogId-free."""
+    import ag_ui_strands.a2ui_tool as mod
+
+    full = '{"surfaceId": "s1", "components": [{"id": "root", "component": "Row"}]}'
+    events = [_block_start(), _block_delta(full), _BLOCK_STOP]
+    pushed = []
+    captured = await mod._stream_render_subagent(
+        _fake_stream_model(events), "prompt", [], pushed.append, catalog_id="my-cat"
+    )
+    delta = json.loads("".join(p["delta"] for p in pushed if p["kind"] == "args"))
+    assert delta["catalogId"] == "my-cat"
+    assert delta["surfaceId"] == "s1"
+    assert "catalogId" not in captured
 
 
 @pytest.mark.asyncio
@@ -699,23 +910,6 @@ def test_explicit_runtime_false_disables_backend_override():
     assert plan is None
 
 
-def test_resolve_catalog_non_dict_json_returns_none():
-    """Parseable-but-wrong-shape JSON (array/scalar) must degrade to no
-    catalog, not flow into catalog-aware validation as a non-dict."""
-    plan = plan_a2ui_injection(
-        model=STUB_MODEL,
-        input=_input(
-            forwarded_props={"injectA2UITool": True},
-            context=[
-                Context(description=A2UI_SCHEMA_CONTEXT_DESCRIPTION, value="[]")
-            ],
-        ),
-        existing_tool_names=[],
-    )
-    assert plan is not None
-    assert plan["catalog"] is None
-
-
 @pytest.mark.asyncio
 async def test_stream_update_intent_reuses_prior_surface(monkeypatch):
     """The auto-inject glue's purpose: `intent:"update"` resolves the prior surface
@@ -742,7 +936,7 @@ async def test_stream_update_intent_reuses_prior_surface(monkeypatch):
         }
     )
 
-    async def fake_subagent(model, prompt, messages, push):
+    async def fake_subagent(model, prompt, messages, push, **kwargs):
         return {"components": [{"id": "root", "component": "Column"}], "data": {}}
 
     monkeypatch.setattr(mod, "_stream_render_subagent", fake_subagent)
@@ -783,7 +977,7 @@ async def test_stream_abandonment_stops_further_recovery_attempts(
     attempts: list[int] = []
     gate = _threading.Event()
 
-    async def fake_subagent(model, prompt, messages, push):
+    async def fake_subagent(model, prompt, messages, push, **kwargs):
         attempts.append(1)
         push(
             {
@@ -815,21 +1009,6 @@ async def test_stream_abandonment_stops_further_recovery_attempts(
     assert not [
         r for r in caplog.records if "A2UI recovery loop failed" in r.getMessage()
     ], "intentional disconnect abort must not be logged as a failure"
-
-
-def test_resolve_catalog_empty_value_returns_none():
-    """An A2UI schema context entry with an empty value degrades to no
-    catalog (with a breadcrumb), same as the malformed/wrong-shape branches."""
-    plan = plan_a2ui_injection(
-        model=STUB_MODEL,
-        input=_input(
-            forwarded_props={"injectA2UITool": True},
-            context=[Context(description=A2UI_SCHEMA_CONTEXT_DESCRIPTION, value="")],
-        ),
-        existing_tool_names=[],
-    )
-    assert plan is not None
-    assert plan["catalog"] is None
 
 
 @pytest.mark.asyncio
@@ -873,7 +1052,7 @@ async def test_stream_update_intent_with_pydantic_glue_messages(monkeypatch):
         }
     )
 
-    async def fake_subagent(model, prompt, messages, push):
+    async def fake_subagent(model, prompt, messages, push, **kwargs):
         return {"components": [{"id": "root", "component": "Column"}], "data": {}}
 
     monkeypatch.setattr(mod, "_stream_render_subagent", fake_subagent)
@@ -911,98 +1090,62 @@ def test_get_a2ui_tools_requires_model():
 
 
 @pytest.mark.asyncio
-async def test_render_subagent_zero_frames_synthesizes_triplet(monkeypatch):
-    """A provider that invokes the bound render tool without emitting any
-    current_tool_use frames must still produce start/args/end so the
-    middleware paints before the result (no bulk paint)."""
+async def test_render_subagent_no_block_stop_still_closes_and_captures():
+    """A provider that ends the message without a per-block contentBlockStop
+    must still close the live synthetic call and capture the accumulated args,
+    so the middleware sees the end and the recovery loop gets the surface."""
     import ag_ui_strands.a2ui_tool as mod
 
-    args = {"surfaceId": "s1", "components": [{"id": "root", "component": "Row"}]}
-
-    class FakeAgent:
-        def __init__(self, **kwargs):
-            self._tools = kwargs.get("tools") or []
-
-        async def stream_async(self, _msg):
-            # No current_tool_use frames at all — only the tool invocation.
-            async for _ in self._tools[0].stream(
-                {"name": RENDER_A2UI_TOOL_NAME, "toolUseId": "r1", "input": dict(args)},
-                {},
-            ):
-                pass
-            if False:  # pragma: no cover — make this an async generator
-                yield None
-
-    monkeypatch.setattr(mod, "Agent", FakeAgent)
+    events = [_block_start(), _block_delta('{"surfaceId": "s1"}')]  # no stop
     pushed = []
-    captured = await mod._stream_render_subagent(STUB_MODEL, "prompt", [], pushed.append)
-
-    kinds = [p["kind"] for p in pushed]
-    assert kinds == ["start", "args", "end"]
-    assert json.loads(pushed[1]["delta"]) == args
-    assert captured == args
+    captured = await mod._stream_render_subagent(
+        _fake_stream_model(events), "prompt", [], pushed.append
+    )
+    assert [p["kind"] for p in pushed] == ["start", "args", "end"]
+    assert pushed[-1]["tool_call_id"] == "r1"
+    assert captured == {"surfaceId": "s1"}
 
 
 @pytest.mark.asyncio
-async def test_render_subagent_midstream_error_closes_live_call(monkeypatch):
-    """A provider stream dying mid-call (429, network drop) must close the
-    live synthetic call — an unclosed inner TOOL_CALL_START is a wire-protocol
-    violation and the next recovery attempt would open a fresh call on top."""
+async def test_render_subagent_midstream_error_closes_live_call():
+    """A model stream dying mid-call (429, network drop) must close the live
+    synthetic call before re-raising — an unclosed inner TOOL_CALL_START is a
+    wire-protocol violation and the next recovery attempt would open a fresh
+    call on top."""
     import ag_ui_strands.a2ui_tool as mod
 
-    class FakeAgent:
-        def __init__(self, **kwargs):
-            pass
-
-        async def stream_async(self, _msg):
-            yield {
-                "current_tool_use": {
-                    "name": RENDER_A2UI_TOOL_NAME,
-                    "toolUseId": "r1",
-                    "input": '{"surf',
-                }
-            }
+    class FakeModel:
+        async def stream(self, messages, **kwargs):
+            yield _block_start()
+            yield _block_delta('{"surf')
             raise RuntimeError("model 429")
 
-    monkeypatch.setattr(mod, "Agent", FakeAgent)
     pushed = []
     with pytest.raises(RuntimeError):
-        await mod._stream_render_subagent(STUB_MODEL, "prompt", [], pushed.append)
+        await mod._stream_render_subagent(FakeModel(), "prompt", [], pushed.append)
 
-    kinds = [p["kind"] for p in pushed]
-    assert kinds == ["start", "args", "end"]
+    assert [p["kind"] for p in pushed] == ["start", "args", "end"]
     assert pushed[-1]["tool_call_id"] == "r1"
 
 
 @pytest.mark.asyncio
-async def test_render_subagent_second_call_id_closes_first(monkeypatch):
-    """A second render call with a distinct real toolUseId must close the
-    first call and reset the delta accumulator (no cross-call mis-attribution)."""
+async def test_render_subagent_second_block_closes_first():
+    """A second render block with a distinct toolUseId must close the first and
+    reset the delta accumulator (no cross-call mis-attribution). The forced
+    single tool emits one block in practice; this guards the close-on-restart
+    invariant regardless of provider quirks."""
     import ag_ui_strands.a2ui_tool as mod
 
-    class FakeAgent:
-        def __init__(self, **kwargs):
-            pass
-
-        async def stream_async(self, _msg):
-            yield {
-                "current_tool_use": {
-                    "name": RENDER_A2UI_TOOL_NAME,
-                    "toolUseId": "r1",
-                    "input": '{"a": 1}',
-                }
-            }
-            yield {
-                "current_tool_use": {
-                    "name": RENDER_A2UI_TOOL_NAME,
-                    "toolUseId": "r2",
-                    "input": '{"b',
-                }
-            }
-
-    monkeypatch.setattr(mod, "Agent", FakeAgent)
+    events = [
+        _block_start("r1"),
+        _block_delta('{"a": 1}'),
+        _block_start("r2"),
+        _block_delta('{"b'),
+    ]
     pushed = []
-    await mod._stream_render_subagent(STUB_MODEL, "prompt", [], pushed.append)
+    await mod._stream_render_subagent(
+        _fake_stream_model(events), "prompt", [], pushed.append
+    )
 
     assert [(p["kind"], p["tool_call_id"]) for p in pushed] == [
         ("start", "r1"),
@@ -1023,7 +1166,7 @@ async def test_stream_non_dict_glue_state_degrades(monkeypatch):
     proceeds rather than crashing before the recovery loop engages."""
     import ag_ui_strands.a2ui_tool as mod
 
-    async def fake_subagent(model, prompt, messages, push):
+    async def fake_subagent(model, prompt, messages, push, **kwargs):
         return {"components": [{"id": "root", "component": "Row"}], "data": {}}
 
     monkeypatch.setattr(mod, "_stream_render_subagent", fake_subagent)
@@ -1066,7 +1209,7 @@ async def test_stream_update_intent_finds_same_run_surface(monkeypatch):
         }
     )
 
-    async def fake_subagent(model, prompt, messages, push):
+    async def fake_subagent(model, prompt, messages, push, **kwargs):
         return {"components": [{"id": "root", "component": "Column"}], "data": {}}
 
     monkeypatch.setattr(mod, "_stream_render_subagent", fake_subagent)
@@ -1102,3 +1245,130 @@ async def test_stream_update_intent_finds_same_run_surface(monkeypatch):
     text = str(events[-1])
     assert "updateComponents" in text
     assert "createSurface" not in text
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: the REAL Strands agent loop completes the dynamic-A2UI flow
+# (run-level regression for the hang — generate_a2ui returns + RUN_FINISHED).
+# ---------------------------------------------------------------------------
+
+from strands import Agent as StrandsAgentCore
+from strands.models.model import Model as StrandsModel
+
+
+def _tool_use_chunks(name, tool_use_id, args_json):
+    return [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockStart": {"start": {"toolUse": {"name": name, "toolUseId": tool_use_id}}}},
+        {"contentBlockDelta": {"delta": {"toolUse": {"input": args_json}}}},
+        {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "tool_use"}},
+    ]
+
+
+def _text_chunks(text):
+    return [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockDelta": {"delta": {"text": text}}},
+        {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "end_turn"}},
+    ]
+
+
+class _DynamicA2UIFakeModel(StrandsModel):
+    """Scripts the full dynamic-A2UI conversation across the OUTER Strands agent
+    loop AND the inner forced render turn, so an end-to-end run exercises the
+    real event loop (not a stubbed stream_async). The forced render turn (the
+    sub-agent) is identified by its tool_choice; the outer turn calls
+    generate_a2ui first, then narrates once its result is in history."""
+
+    def __init__(self):
+        self.render_calls = 0
+        self.outer_calls = 0
+
+    def get_config(self):
+        return {}
+
+    def update_config(self, **kwargs):
+        pass
+
+    async def structured_output(self, output_model, prompt=None, system_prompt=None, **kwargs):
+        raise NotImplementedError
+        yield  # pragma: no cover — make this an async generator
+
+    async def stream(
+        self, messages, tool_specs=None, system_prompt=None, *, tool_choice=None, **kwargs
+    ):
+        # Inner forced render turn (the generate_a2ui sub-agent).
+        if tool_choice == {"tool": {"name": RENDER_A2UI_TOOL_NAME}}:
+            self.render_calls += 1
+            for ch in _tool_use_chunks(
+                RENDER_A2UI_TOOL_NAME,
+                "render-1",
+                '{"surfaceId": "s1", "components": [{"id": "root", "component": "Row"}], "data": {}}',
+            ):
+                yield ch
+            return
+
+        # Outer agent turn. Narrate once generate_a2ui already ran (its toolUse
+        # is in history); else call generate_a2ui. The outer_calls guard keeps
+        # the loop terminating even if detection drifts.
+        self.outer_calls += 1
+        already_generated = any(
+            isinstance(m, dict)
+            and m.get("role") == "assistant"
+            and any(
+                isinstance(b, dict)
+                and (b.get("toolUse") or {}).get("name") == GENERATE_A2UI_TOOL_NAME
+                for b in (m.get("content") or [])
+            )
+            for m in messages
+        )
+        if already_generated or self.outer_calls >= 2:
+            for ch in _text_chunks("Here is your sales dashboard."):
+                yield ch
+        else:
+            for ch in _tool_use_chunks(GENERATE_A2UI_TOOL_NAME, "gen-1", '{"intent": "create"}'):
+                yield ch
+
+
+@pytest.mark.asyncio
+async def test_end_to_end_dynamic_a2ui_run_emits_run_finished():
+    """End-to-end through the REAL Strands agent loop: an auto-injected
+    generate_a2ui call paints an A2UI surface (render_a2ui streams), its
+    envelope returns to the outer loop as a TOOL_CALL_RESULT, the agent
+    narrates, and the run emits RUN_FINISHED — instead of hanging on a
+    still-Running generate_a2ui. Run-level regression for the dynamic-A2UI hang."""
+    model = _DynamicA2UIFakeModel()
+    core = StrandsAgentCore(model=model, system_prompt="You render UIs.", tools=[])
+    agent = StrandsAgent(core, name="strands-e2e", config=StrandsAgentConfig())
+
+    inp = _msg_input(
+        forwarded_props={"injectA2UITool": True},
+        tools=[RENDER_TOOL_INPUT],
+        messages=[UserMessage(id="u1", role="user", content="Show my sales dashboard")],
+    )
+    events = await _collect(agent, inp)
+    types = [e.type for e in events]
+
+    # generate_a2ui was auto-injected, called, and its result returned to the loop.
+    assert any(
+        e.type == EventType.TOOL_CALL_START
+        and getattr(e, "tool_call_name", None) == GENERATE_A2UI_TOOL_NAME
+        for e in events
+    )
+    assert EventType.TOOL_CALL_RESULT in types
+    # The A2UI surface painted (inner render_a2ui streamed as synthetic events).
+    assert any(
+        e.type == EventType.TOOL_CALL_START
+        and getattr(e, "tool_call_name", None) == RENDER_A2UI_TOOL_NAME
+        for e in events
+    )
+    # The agent narrated and the run COMPLETED (no hang, no error).
+    assert EventType.TEXT_MESSAGE_CONTENT in types
+    assert EventType.RUN_FINISHED in types
+    assert EventType.RUN_ERROR not in types
+    # Exactly one forced render turn — no agentic continuation in the sub-agent.
+    assert model.render_calls == 1
+    # Outer loop: one generate call + one narration.
+    assert model.outer_calls == 2

@@ -415,6 +415,13 @@ Client response:
 }
 ```
 
+## Framework integrations
+
+| Framework | Package | Interrupt support |
+| --- | --- | --- |
+| LangGraph | `@ag-ui/langgraph` / `ag-ui-langgraph` | ✅ Accepts `RunAgentInput.resume[]`. Can emit `RunFinishedEvent.outcome = {type:"interrupt"}` — opt-in via `emitInterruptOutcome` / `emit_interrupt_outcome` (default off; legacy clients that resume via `command.resume` stop resuming once they see the structured outcome). Legacy `CustomEvent(name="on_interrupt")` emitted by default; disable via `enableLegacyOnInterruptEvent: false`. Subclass hooks available for custom HITL translation. |
+| AWS Strands | `@ag-ui/aws-strands` | ✅ Forwards native Strands interrupts via `RunFinishedEvent.outcome`. |
+
 ## Related
 
 - [Events](/concepts/events) — how `RunFinished` fits into the broader event stream.

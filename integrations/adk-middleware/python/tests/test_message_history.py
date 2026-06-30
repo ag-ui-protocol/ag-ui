@@ -26,7 +26,12 @@ from ag_ui.core import (
     DocumentInputContent, InputContentUrlSource, TextInputContent,
 )
 
-from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint, adk_events_to_messages
+from ag_ui_adk import (
+    ADKAgent,
+    add_adk_fastapi_endpoint,
+    adk_events_to_messages,
+    resolve_agent_from_message_history,
+)
 from ag_ui_adk.event_translator import _translate_function_calls_to_tool_calls
 
 
@@ -436,12 +441,14 @@ class TestAdkEventsToMessages:
         assert len(messages) == 1
         assert isinstance(messages[0], AssistantMessage)
         assert messages[0].content == "Anonymous response"
+        assert messages[0].name is None
 
     def test_custom_agent_name_treated_as_assistant(self):
         """Events with custom agent names should be treated as assistant messages.
 
         This is critical: ADK agents set author to the agent's name (e.g., "my_agent"),
-        not "model". This test ensures we handle real ADK agent names correctly.
+        not "model". This test ensures we handle real ADK agent names correctly
+        and preserve them as AssistantMessage.name for agent resolver pinning.
         """
         # Test various realistic agent names
         agent_names = ["my_assistant", "weather_agent", "code_helper", "assistant"]
@@ -458,6 +465,7 @@ class TestAdkEventsToMessages:
             assert len(messages) == 1, f"Failed for agent_name={agent_name}"
             assert isinstance(messages[0], AssistantMessage), f"Failed for agent_name={agent_name}"
             assert messages[0].content == f"Response from {agent_name}"
+            assert messages[0].name == agent_name
 
     def test_model_author_treated_as_assistant(self):
         """Events with author='model' should still work as assistant messages."""
@@ -472,6 +480,45 @@ class TestAdkEventsToMessages:
         assert len(messages) == 1
         assert isinstance(messages[0], AssistantMessage)
         assert messages[0].content == "Model response"
+        assert messages[0].name is None
+
+    def test_agent_author_preserved_on_tool_call_message(self):
+        """Tool-call assistant messages should preserve the ADK agent author."""
+        fc = create_mock_function_call(
+            name="do_something",
+            args={},
+            fc_id="tool-call-1",
+        )
+        event = create_mock_adk_event(
+            event_id="fc-agent",
+            author="subagent1",
+            text="",
+            function_calls=[fc],
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 1
+        assert isinstance(messages[0], AssistantMessage)
+        assert messages[0].name == "subagent1"
+        assert messages[0].tool_calls is not None
+        assert messages[0].tool_calls[0].id == "tool-call-1"
+
+        agent = MagicMock(spec=ADKAgent)
+        resolved_agent = resolve_agent_from_message_history(
+            [
+                *messages,
+                ToolMessage(
+                    id="tool-result-1",
+                    role="tool",
+                    tool_call_id="tool-call-1",
+                    content='{"ok": true}',
+                ),
+            ],
+            {"subagent1": agent},
+        )
+
+        assert resolved_agent is agent
 
     def test_empty_text_with_function_calls(self):
         """Should create assistant message with just tool calls if no text."""
@@ -488,6 +535,7 @@ class TestAdkEventsToMessages:
         assert len(messages) == 1
         assert isinstance(messages[0], AssistantMessage)
         assert messages[0].content is None or messages[0].content == ""
+        assert messages[0].name is None
         assert len(messages[0].tool_calls) == 1
 
 

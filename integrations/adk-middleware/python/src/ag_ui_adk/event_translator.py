@@ -1452,13 +1452,18 @@ def adk_events_to_messages(events: List[ADKEvent]) -> List[Message]:
 
             # Only emit assistant message if there is visible content or tool calls
             if text_content or tool_calls:
+                assistant_name = (
+                    author
+                    if isinstance(author, str) and author != "model"
+                    else None
+                )
                 assistant_message = AssistantMessage(
                     id=event_id,
                     role="assistant",
+                    name=assistant_name,
                     content=text_content if text_content else None,
                     tool_calls=tool_calls
                 )
                 messages.append(assistant_message)
 
     return messages
-        

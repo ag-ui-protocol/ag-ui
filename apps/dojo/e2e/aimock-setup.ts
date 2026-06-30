@@ -1,6 +1,7 @@
 import { LLMock, type ChatMessage } from "@copilotkit/aimock";
 import * as path from "node:path";
 import { registerA2UIRecoveryFixtures } from "./a2ui-recovery-fixtures";
+import { registerA2UIADKFixtures } from "./a2ui-adk-fixtures";
 
 const MOCK_PORT = 5555;
 const FIXTURES_DIR = path.join(import.meta.dirname, "fixtures", "openai");
@@ -20,6 +21,11 @@ export async function setupLLMock(): Promise<void> {
     port: MOCK_PORT,
     latency: Number(process.env.AIMOCK_LATENCY) || 5,
   });
+
+  // OSS-158 ADK A2UI fixtures (Gemini-shaped, scoped to gemini models). MUST
+  // precede the OpenAI LangGraph recovery fixtures so a Gemini request matches
+  // here first; gpt-4o requests fall through to the LangGraph fixtures.
+  registerA2UIADKFixtures(mockServer);
 
   // OSS-162 A2UI recovery showcase fixtures (predicate fixtures, must precede
   // the generic loadFixtureFile below).
@@ -162,6 +168,47 @@ export async function setupLLMock(): Promise<void> {
     },
   });
 
+  // Mastra interrupt demo (mastra-agent-local `interrupt` feature). The agent
+  // exposes the suspend-backed `schedule_meeting` tool (unique to this agent),
+  // so matching on that tool name targets it precisely. Two turns:
+  //   1) no tool result yet -> emit the schedule_meeting tool call. Mastra runs
+  //      the tool, which calls suspend(); the bridge emits on_interrupt and the
+  //      picker renders.
+  //   2) after the user picks a slot, the tool resumes and returns its result
+  //      (a tool-role message is now present) -> emit the final confirmation.
+  const hasScheduleMeetingTool = (req: {
+    tools?: { function: { name: string } }[];
+  }) => req.tools?.some((t) => t.function.name === "schedule_meeting") ?? false;
+  const hasToolResult = (req: { messages: ChatMessage[] }) =>
+    req.messages.some((m) => m.role === "tool");
+
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => hasScheduleMeetingTool(req) && !hasToolResult(req),
+    },
+    response: {
+      toolCalls: [
+        {
+          name: "schedule_meeting",
+          arguments: JSON.stringify({
+            topic: "Intro call with the sales team",
+            attendee: "the sales team",
+          }),
+        },
+      ],
+    },
+  });
+
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => hasScheduleMeetingTool(req) && hasToolResult(req),
+    },
+    response: {
+      content:
+        "Your meeting is scheduled. Let me know if you need anything else!",
+    },
+  });
+
   // Load HITL fixtures — they share a "plan to make brownies" substring
   // with agentic-gen-ui fixtures, and first-match-wins. By loading HITL first,
   // "one step with eggs" matches HITL tests before "plan to make brownies"
@@ -169,6 +216,42 @@ export async function setupLLMock(): Promise<void> {
   // NOTE: LangGraph and Claude SDK predicate fixtures above take priority
   // over these for requests containing their specific tool names.
   mockServer.loadFixtureFile(path.join(FIXTURES_DIR, "human-in-the-loop.json"));
+
+  // OSS-93 Background Agents: the agent dispatches `run_deep_research` as a
+  // Mastra background task. Scoped by that tool name so it never hijacks other
+  // demos. Two turns: (1) on the first request (no tool result yet) emit the
+  // tool call so the background task starts; (2) once the placeholder tool
+  // result is in history, emit a short acknowledgement (the loop re-enters
+  // after the immediate ack). The tool execution + background-task lifecycle
+  // are real (only the LLM is mocked), so the activity card renders.
+  const hasBackgroundResearchTool = (req: {
+    tools?: { function: { name: string } }[];
+  }) => !!req.tools?.some((t) => t.function.name === "run_deep_research");
+  mockServer.addFixture({
+    match: {
+      predicate: (req) =>
+        hasBackgroundResearchTool(req) &&
+        !req.messages.some((m) => m.role === "tool"),
+    },
+    response: {
+      toolCalls: [
+        {
+          name: "run_deep_research",
+          arguments: JSON.stringify({ topic: "Solana ecosystem" }),
+        },
+      ],
+    },
+  });
+  mockServer.addFixture({
+    match: {
+      predicate: (req) =>
+        hasBackgroundResearchTool(req) &&
+        req.messages.some((m) => m.role === "tool"),
+    },
+    response: {
+      text: "I've kicked off the research on the Solana ecosystem in the background. You'll get the findings shortly.",
+    },
+  });
 
   const sysContent = (msgs: ChatMessage[]) =>
     msgs.find((m) => m.role === "system")?.content ?? "";
