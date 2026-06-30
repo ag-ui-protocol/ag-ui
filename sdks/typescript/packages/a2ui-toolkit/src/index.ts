@@ -514,6 +514,35 @@ export interface BuildSubagentPromptInput {
   guidelines?: A2UIGuidelines;
   /** When set, instructs the subagent to edit a prior surface in place. */
   editContext?: EditContext;
+  /**
+   * Compact outline of host-supplied by-reference data (OSS-2005). When set,
+   * the subagent is told to author path-bound components and OMIT the ``data``
+   * argument entirely — the host fills the data model. The outline carries the
+   * data SHAPE (keys + a truncated sample), not the rows, so the model binds
+   * correct paths without paying output tokens for the dataset.
+   */
+  externalDataOutline?: string;
+}
+
+/**
+ * Produce a compact, token-cheap outline of a by-reference data model for the
+ * subagent prompt: top-level keys preserved, arrays truncated to a single
+ * sample element plus a count note, scalars/objects kept as-is. The full
+ * dataset is NEVER inlined — that defeats the whole point (OSS-2005).
+ */
+export function summarizeExternalData(data: Record<string, unknown>): string {
+  const outline: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (Array.isArray(value)) {
+      outline[key] =
+        value.length > 0
+          ? [value[0], `…(${value.length} items total — supplied by host)`]
+          : [];
+    } else {
+      outline[key] = value;
+    }
+  }
+  return JSON.stringify(outline, null, 2);
 }
 
 /**
@@ -541,6 +570,17 @@ export function buildSubagentPrompt(input: BuildSubagentPromptInput): string {
   if (design) parts.push(`## Design Guidelines\n${design}`);
   if (input.contextPrompt) parts.push(input.contextPrompt);
   if (compositionGuide) parts.push(compositionGuide);
+
+  if (input.externalDataOutline) {
+    parts.push(
+      `## Data provided externally\n` +
+        `The surface's data model is supplied by the host, so you do NOT need to ` +
+        `produce it. Author components that BIND to these paths and OMIT the ` +
+        `\`data\` argument entirely. Do NOT copy or restate the rows (that wastes ` +
+        `output, and the host's data wins anyway). The available data shape ` +
+        `(arrays truncated to a single sample):\n${input.externalDataOutline}`,
+    );
+  }
 
   if (input.editContext) {
     const { surfaceId, prior, changes } = input.editContext;
@@ -572,6 +612,27 @@ export interface AssembleOpsInput {
   catalogId: string;
   components: Array<Record<string, unknown>>;
   data?: Record<string, unknown>;
+  /**
+   * Host-supplied "by-reference" data model (OSS-2005). When the agent already
+   * holds a dataset (e.g. rows a backend tool fetched), it is supplied
+   * out-of-band so the subagent never re-serializes it as output tokens. It is
+   * shallow-merged over ``data`` at the root, ``externalData`` winning per
+   * top-level key (the host's data is authoritative on a collision). Absent →
+   * the data path is unchanged from ``data`` alone.
+   */
+  externalData?: Record<string, unknown>;
+}
+
+/**
+ * Shallow-merge a host-supplied by-reference data model over the subagent's
+ * ``data`` at the root, ``externalData`` winning per top-level key. Returns the
+ * merged object (possibly empty).
+ */
+function mergeExternalData(
+  data: Record<string, unknown> | undefined,
+  externalData: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  return { ...(data ?? {}), ...(externalData ?? {}) };
 }
 
 /**
@@ -581,6 +642,10 @@ export interface AssembleOpsInput {
  * ``update`` skips ``createSurface`` so the frontend reconciles the existing
  * surface in place instead of erroring (per v0.9 spec, ``createSurface`` on
  * an existing id is invalid).
+ *
+ * The data op is emitted from ``data`` merged with any host ``externalData``
+ * (OSS-2005), so a by-reference render — where the subagent omits ``data`` —
+ * still paints the host's dataset.
  */
 export function assembleOps(input: AssembleOpsInput): A2UIOperation[] {
   const ops: A2UIOperation[] = [];
@@ -588,8 +653,9 @@ export function assembleOps(input: AssembleOpsInput): A2UIOperation[] {
     ops.push(createSurface(input.surfaceId, input.catalogId));
   }
   ops.push(updateComponents(input.surfaceId, input.components));
-  if (input.data && Object.keys(input.data).length > 0) {
-    ops.push(updateDataModel(input.surfaceId, input.data));
+  const data = mergeExternalData(input.data, input.externalData);
+  if (Object.keys(data).length > 0) {
+    ops.push(updateDataModel(input.surfaceId, data));
   }
   return ops;
 }
@@ -637,6 +703,10 @@ export const GENERATE_A2UI_ARG_DESCRIPTIONS = {
     "'create' to render a new surface; 'update' to modify a surface previously rendered in this conversation. Defaults to 'create'.",
   target_surface_id: "Required when intent='update'. The surface id of the prior render to modify.",
   changes: "Optional natural-language description of the changes to apply when intent='update'.",
+  data_ref:
+    "Optional. The tool-call-id of a prior tool result whose content is the dataset to render. " +
+    "Pass this id, NOT the rows, when a tool already fetched the data, so the UI binds to that " +
+    "data without you re-typing it. Use the id of the most recent tool result holding the data.",
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -741,6 +811,12 @@ export interface PrepareA2UIRequestInput {
    * editing when a knob is added.
    */
   guidelines?: A2UIGuidelines;
+  /**
+   * Host-supplied by-reference data (OSS-2005). When present, the subagent is
+   * told to bind to its shape and omit the ``data`` argument; only a truncated
+   * outline (not the rows) reaches the prompt.
+   */
+  externalData?: Record<string, unknown>;
 }
 
 export interface PreparedA2UIRequest {
@@ -775,12 +851,18 @@ export function prepareA2UIRequest(input: PrepareA2UIRequestInput): PreparedA2UI
     };
   }
 
+  const externalDataOutline =
+    input.externalData && Object.keys(input.externalData).length > 0
+      ? summarizeExternalData(input.externalData)
+      : undefined;
+
   const prompt = buildSubagentPrompt({
     contextPrompt: buildContextPrompt(input.state),
     guidelines: input.guidelines,
     editContext: prior
       ? { surfaceId: input.targetSurfaceId!, prior, changes: input.changes }
       : undefined,
+    externalDataOutline,
   });
 
   return { prompt, isUpdate, prior };
@@ -799,6 +881,13 @@ export interface BuildA2UIEnvelopeInput {
   defaultSurfaceId?: string;
   /** Catalog id used when there's no prior surface to inherit one from. */
   defaultCatalogId?: string;
+  /**
+   * Host-supplied by-reference data model (OSS-2005), shallow-merged over the
+   * subagent's ``args.data`` at the root with ``externalData`` winning per key.
+   * Lets the agent's already-fetched dataset paint without the subagent
+   * re-emitting it as output tokens. Absent → behaves exactly as before.
+   */
+  externalData?: Record<string, unknown>;
 }
 
 /**
@@ -851,9 +940,86 @@ export function buildA2UIEnvelope(input: BuildA2UIEnvelopeInput): string {
     catalogId,
     components,
     data,
+    externalData: input.externalData,
   });
 
   return wrapAsOperationsEnvelope(ops);
+}
+
+// ---------------------------------------------------------------------------
+// By-reference data resolution (OSS-2005)
+//
+// Resolves the host's out-of-band data model from the two universal channels so
+// every framework adapter sources it identically:
+//   Channel A — ``forwardedProps.a2ui_data``: a caller-supplied data blob.
+//   Channel B — ``data_ref``: the tool-call-id of a prior tool result whose
+//               content IS the dataset (the rows a backend tool already
+//               fetched). The id is cheap to pass; the rows never re-enter the
+//               LLM. Channel A wins on a collision.
+// ---------------------------------------------------------------------------
+
+export interface ResolveExternalDataInput {
+  /** ``forwardedProps.a2ui_data`` — a caller-supplied data blob (Channel A). */
+  a2uiData?: Record<string, unknown>;
+  /** Tool-call-id of a prior tool result holding the raw dataset (Channel B). */
+  dataRef?: string;
+  /** Conversation history, walked to resolve ``dataRef``. */
+  messages?: Array<any>;
+}
+
+/** Non-empty plain (non-array) object guard. */
+function isNonEmptyObject(v: unknown): v is Record<string, unknown> {
+  return (
+    typeof v === "object" &&
+    v !== null &&
+    !Array.isArray(v) &&
+    Object.keys(v as Record<string, unknown>).length > 0
+  );
+}
+
+/**
+ * Find the dataset held in the tool-result message whose tool-call id matches
+ * ``ref``. The content is a JSON string of the raw rows (NOT an a2ui envelope).
+ * Returns the parsed object, or ``undefined`` when not found / not an object.
+ */
+function findToolResultData(
+  messages: Array<any>,
+  ref: string,
+): Record<string, unknown> | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (!msg) continue;
+    const role = msg.type ?? msg.role;
+    if (role !== "tool" && role !== "ToolMessage") continue;
+    const id = msg.toolCallId ?? msg.tool_call_id ?? msg.id;
+    if (id !== ref) continue;
+    const content = msg.content;
+    if (typeof content !== "string") return undefined;
+    try {
+      const parsed = JSON.parse(content);
+      return isNonEmptyObject(parsed) ? parsed : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Resolve the host's by-reference data model from the two channels, Channel A
+ * (``a2uiData``) winning over Channel B (``dataRef``). Returns ``undefined``
+ * when neither supplies data — the caller then renders normally (the subagent's
+ * own ``data`` arg).
+ */
+export function resolveExternalData(
+  input: ResolveExternalDataInput,
+): Record<string, unknown> | undefined {
+  if (isNonEmptyObject(input.a2uiData)) return input.a2uiData;
+  if (input.dataRef) {
+    const data = findToolResultData(input.messages ?? [], input.dataRef);
+    if (data) return data;
+  }
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------

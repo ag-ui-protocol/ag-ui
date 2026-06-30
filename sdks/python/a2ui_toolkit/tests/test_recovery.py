@@ -50,6 +50,41 @@ class TestAugment(unittest.TestCase):
         self.assertIn(format_validation_errors(self.errors), out)
 
 
+# By-reference render (OSS-2005): path-bound components, no data arg; the
+# dataset rides external_data. The root List binds absolute `/items`.
+BYREF_ARGS = {"surfaceId": "s1", "components": [ROOT, GOOD_CARD]}
+BYREF_DATA = {"items": [{"name": "Ritz", "rating": 4.8}]}
+
+
+class TestRecoveryByReferenceData(unittest.TestCase):
+    def test_validates_against_external_data_no_spurious_retries(self):
+        calls = []
+        def invoke(prompt, attempt):
+            calls.append(attempt)
+            return BYREF_ARGS
+        res = run_a2ui_generation_with_recovery(
+            base_prompt="P",
+            catalog=CATALOG,
+            invoke_subagent=invoke,
+            build_envelope=build_envelope,
+            external_data=BYREF_DATA,
+        )
+        self.assertTrue(res["ok"])
+        self.assertEqual(calls, [1])
+
+    def test_without_external_data_fails_binding_validation(self):
+        res = run_a2ui_generation_with_recovery(
+            base_prompt="P",
+            catalog=CATALOG,
+            invoke_subagent=lambda p, a: BYREF_ARGS,
+            build_envelope=build_envelope,
+        )
+        self.assertFalse(res["ok"])
+        self.assertTrue(
+            any(e["code"] == "unresolved_binding" for r in res["attempts"] for e in r["errors"])
+        )
+
+
 class TestRecoveryLoop(unittest.TestCase):
     def test_valid_first_attempt(self):
         calls = []
