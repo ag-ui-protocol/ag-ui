@@ -390,6 +390,54 @@ describe("Event Compaction", () => {
       expect(compacted[5].type).toBe(EventType.RUN_FINISHED);
     });
 
+    it("should seed later state flushes from the previous compacted state", () => {
+      const events = [
+        { type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" },
+        { type: EventType.STATE_SNAPSHOT, snapshot: { run_log: [] } },
+        {
+          type: EventType.STATE_DELTA,
+          delta: [{ op: "add", path: "/run_log/-", value: { kind: "token", text: "hi" } }],
+        },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" },
+        { type: EventType.RUN_STARTED, threadId: "t1", runId: "r2" },
+        {
+          type: EventType.STATE_DELTA,
+          delta: [{ op: "add", path: "/run_log/-", value: { kind: "token", text: "there" } }],
+        },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r2" },
+      ];
+
+      const compacted = compactEvents(events);
+
+      expect(compacted).toHaveLength(6);
+      expect((compacted[1] as StateSnapshotEvent).snapshot).toEqual({
+        run_log: [{ kind: "token", text: "hi" }],
+      });
+      expect((compacted[4] as StateSnapshotEvent).snapshot).toEqual({
+        run_log: [
+          { kind: "token", text: "hi" },
+          { kind: "token", text: "there" },
+        ],
+      });
+    });
+
+    it("should let snapshots replace the running compacted state", () => {
+      const events = [
+        { type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" },
+        { type: EventType.STATE_SNAPSHOT, snapshot: { stale: true } },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" },
+        { type: EventType.RUN_STARTED, threadId: "t1", runId: "r2" },
+        { type: EventType.STATE_SNAPSHOT, snapshot: { fresh: true } },
+        { type: EventType.STATE_DELTA, delta: [{ op: "add", path: "/extra", value: 1 }] },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r2" },
+      ];
+
+      const compacted = compactEvents(events);
+
+      expect(compacted).toHaveLength(6);
+      expect((compacted[4] as StateSnapshotEvent).snapshot).toEqual({ fresh: true, extra: 1 });
+    });
+
     it("should not emit state snapshot when no state events in run", () => {
       const events = [
         { type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" },
