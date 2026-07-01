@@ -20,7 +20,8 @@ export type Feature =
   | "a2ui_advanced"
   | "a2ui_recovery"
   | "crew_chat"
-  | "error_flow";
+  | "error_flow"
+  | "background_agents";
 
 export interface MenuIntegrationConfig {
   id: string;

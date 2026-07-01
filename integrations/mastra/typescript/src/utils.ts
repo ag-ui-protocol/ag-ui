@@ -207,14 +207,25 @@ export interface GetLocalAgentsOptions {
   mastra: Mastra;
   resourceId: string;
   requestContext?: RequestContext;
+  /**
+   * Enable Mastra's `untilIdle` run mode (background-task lifecycle piped into
+   * the run's fullStream). `true` enables it for every agent; pass an array of
+   * agent ids to enable it only for those. See `MastraAgentConfig.untilIdle`.
+   */
+  untilIdle?: boolean | string[];
 }
 
 export function getLocalAgents({
   mastra,
   resourceId,
   requestContext,
+  untilIdle,
 }: GetLocalAgentsOptions): Record<string, AbstractAgent> {
   const agents = mastra.listAgents() || {};
+
+  const wantsUntilIdle = (agentId: string): boolean =>
+    untilIdle === true ||
+    (Array.isArray(untilIdle) && untilIdle.includes(agentId));
 
   const agentAGUI = Object.entries(agents).reduce(
     (acc, [agentId, agent]) => {
@@ -223,6 +234,7 @@ export function getLocalAgents({
         agent,
         resourceId,
         requestContext,
+        untilIdle: wantsUntilIdle(agentId) ? true : undefined,
       });
       return acc;
     },

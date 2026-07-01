@@ -17,8 +17,11 @@ rendered with CopilotKit's v2 `useInterrupt` hook.
 
 ## Mastra notes
 
-This is wired for **Mastra (Local)**. Mastra's tool `suspend()` is the native
-HITL primitive; the `@ag-ui/mastra` adapter bridges `tool-call-suspended` to
-`on_interrupt`. The interrupt value keeps Mastra's own shape — the renderer
-reads `event.value.suspendPayload`. Resume requires a local agent (remote
-resume is not yet supported).
+This is wired for both **Mastra (Local)** and the remote **Mastra** integration.
+Mastra's tool `suspend()` is the native HITL primitive; the `@ag-ui/mastra`
+adapter bridges `tool-call-suspended` to `on_interrupt`. The interrupt value
+keeps Mastra's own shape (the renderer reads `event.value.suspendPayload`).
+Resume works for local agents (via the agent resume stream) and for remote
+agents (round-tripped over `@mastra/client-js`' `resumeStream`). Remote resume
+requires the remote Mastra instance to have storage configured, since the
+suspended run's snapshot is loaded from storage on resume.

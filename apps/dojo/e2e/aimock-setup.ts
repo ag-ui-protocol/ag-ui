@@ -217,6 +217,42 @@ export async function setupLLMock(): Promise<void> {
   // over these for requests containing their specific tool names.
   mockServer.loadFixtureFile(path.join(FIXTURES_DIR, "human-in-the-loop.json"));
 
+  // OSS-93 Background Agents: the agent dispatches `run_deep_research` as a
+  // Mastra background task. Scoped by that tool name so it never hijacks other
+  // demos. Two turns: (1) on the first request (no tool result yet) emit the
+  // tool call so the background task starts; (2) once the placeholder tool
+  // result is in history, emit a short acknowledgement (the loop re-enters
+  // after the immediate ack). The tool execution + background-task lifecycle
+  // are real (only the LLM is mocked), so the activity card renders.
+  const hasBackgroundResearchTool = (req: {
+    tools?: { function: { name: string } }[];
+  }) => !!req.tools?.some((t) => t.function.name === "run_deep_research");
+  mockServer.addFixture({
+    match: {
+      predicate: (req) =>
+        hasBackgroundResearchTool(req) &&
+        !req.messages.some((m) => m.role === "tool"),
+    },
+    response: {
+      toolCalls: [
+        {
+          name: "run_deep_research",
+          arguments: JSON.stringify({ topic: "Solana ecosystem" }),
+        },
+      ],
+    },
+  });
+  mockServer.addFixture({
+    match: {
+      predicate: (req) =>
+        hasBackgroundResearchTool(req) &&
+        req.messages.some((m) => m.role === "tool"),
+    },
+    response: {
+      text: "I've kicked off the research on the Solana ecosystem in the background. You'll get the findings shortly.",
+    },
+  });
+
   const sysContent = (msgs: ChatMessage[]) =>
     msgs.find((m) => m.role === "system")?.content ?? "";
   // Case-insensitive check for system prompt content — Python booleans are

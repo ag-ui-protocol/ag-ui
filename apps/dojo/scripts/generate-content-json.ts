@@ -174,6 +174,18 @@ const agentFilesMapper: Record<
         `/mastra/typescript/examples/src/mastra/agents/human-in-the-loop.ts`,
       ),
     ],
+    interrupt: [
+      path.join(
+        __dirname,
+        integrationsFolderPath,
+        `/mastra/typescript/examples/src/mastra/agents/interrupt.ts`,
+      ),
+      path.join(
+        __dirname,
+        integrationsFolderPath,
+        `/mastra/typescript/examples/src/mastra/tools/schedule-meeting-tool.ts`,
+      ),
+    ],
     tool_based_generative_ui: [
       path.join(
         __dirname,

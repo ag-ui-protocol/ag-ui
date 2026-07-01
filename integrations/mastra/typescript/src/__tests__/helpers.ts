@@ -29,21 +29,42 @@ export class FakeMemory {
 export class FakeLocalAgent {
   memory: FakeMemory;
   streamChunks: any[];
+  resumeChunks: any[] | undefined;
   /** Messages passed to the most recent stream() call (post-diff-filter). */
   lastStreamMessages: any[] | null = null;
+  /** Options passed to the most recent stream() call. */
+  lastStreamOpts: any = null;
+  /** Options passed to the most recent resumeStream() call. */
+  lastResumeOpts: any = null;
 
-  constructor(opts: { memory?: FakeMemory; streamChunks?: any[] } = {}) {
+  constructor(
+    opts: { memory?: FakeMemory; streamChunks?: any[]; resumeChunks?: any[] } = {},
+  ) {
     this.memory = opts.memory ?? new FakeMemory();
     this.streamChunks = opts.streamChunks ?? [];
+    this.resumeChunks = opts.resumeChunks;
   }
 
   async getMemory(_opts?: any) {
     return this.memory;
   }
 
-  async stream(messages: any, _opts?: any) {
+  async stream(messages: any, opts?: any) {
     this.lastStreamMessages = messages;
+    this.lastStreamOpts = opts;
     const chunks = this.streamChunks;
+    return {
+      fullStream: (async function* () {
+        for (const chunk of chunks) {
+          yield chunk;
+        }
+      })(),
+    };
+  }
+
+  async resumeStream(_resumeData: any, opts?: any) {
+    this.lastResumeOpts = opts;
+    const chunks = this.resumeChunks ?? [];
     return {
       fullStream: (async function* () {
         for (const chunk of chunks) {
@@ -57,14 +78,40 @@ export class FakeLocalAgent {
 export class FakeRemoteAgent {
   streamChunks: any[];
   lastStreamMessages: any[] | null = null;
+  // Chunks replayed by resumeStream's processDataStream. When undefined, the
+  // remote agent has no resume capability (mirrors older @mastra/client-js).
+  resumeChunks: any[] | undefined;
+  // Records every resumeStream(resumeData, opts) call for assertions.
+  resumeCalls: Array<{ resumeData: any; opts: any }> = [];
 
-  constructor(opts: { streamChunks?: any[] } = {}) {
+  constructor(opts: { streamChunks?: any[]; resumeChunks?: any[] } = {}) {
     this.streamChunks = opts.streamChunks ?? [];
+    this.resumeChunks = opts.resumeChunks;
   }
 
-  async stream(messages: any, _opts?: any) {
+  /** Options passed to the most recent stream() call. */
+  lastStreamOpts: any = null;
+
+  async stream(messages: any, opts?: any) {
     this.lastStreamMessages = messages;
+    this.lastStreamOpts = opts;
     const chunks = this.streamChunks;
+    return {
+      processDataStream: async ({
+        onChunk,
+      }: {
+        onChunk: (chunk: any) => Promise<void>;
+      }) => {
+        for (const chunk of chunks) {
+          await onChunk(chunk);
+        }
+      },
+    };
+  }
+
+  async resumeStream(resumeData: any, opts: any) {
+    this.resumeCalls.push({ resumeData, opts });
+    const chunks = this.resumeChunks ?? [];
     return {
       processDataStream: async ({
         onChunk,
@@ -118,21 +165,32 @@ export function collectError(
 // --- Agent factories (centralizes the `as any` cast) ---
 
 export function makeLocalMastraAgent(
-  opts: { memory?: FakeMemory; streamChunks?: any[] } = {},
+  opts: {
+    memory?: FakeMemory;
+    streamChunks?: any[];
+    resumeChunks?: any[];
+    emitInterruptOutcome?: boolean;
+  } = {},
 ) {
   return new MastraAgent({
     agentId: "test-agent",
     agent: new FakeLocalAgent(opts) as any,
     resourceId: "resource-1",
+    emitInterruptOutcome: opts.emitInterruptOutcome,
   });
 }
 
 export function makeRemoteMastraAgent(
-  opts: { streamChunks?: any[] } = {},
+  opts: {
+    streamChunks?: any[];
+    resumeChunks?: any[];
+    emitInterruptOutcome?: boolean;
+  } = {},
 ) {
   return new MastraAgent({
     agentId: "test-agent",
     agent: new FakeRemoteAgent(opts) as any,
     resourceId: "resource-1",
+    emitInterruptOutcome: opts.emitInterruptOutcome,
   });
 }
