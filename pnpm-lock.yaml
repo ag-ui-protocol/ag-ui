@@ -923,12 +923,18 @@ importers:
 
   integrations/mastra/typescript:
     dependencies:
+      '@ag-ui/a2ui-toolkit':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/a2ui-toolkit
       '@ai-sdk/ui-utils':
         specifier: ^1.1.19
         version: 1.2.11(zod@3.25.76)
       rxjs:
         specifier: 7.8.1
         version: 7.8.1
+      zod:
+        specifier: 3.25.76
+        version: 3.25.76
     devDependencies:
       '@ag-ui/client':
         specifier: workspace:*
@@ -972,6 +978,9 @@ importers:
 
   integrations/mastra/typescript/examples:
     dependencies:
+      '@ag-ui/mastra':
+        specifier: workspace:*
+        version: link:..
       '@mastra/client-js':
         specifier: ^1.28.0
         version: 1.28.0(@cfworker/json-schema@4.1.1)(express@5.2.1)(rxjs@7.8.2)(zod@3.25.76)
@@ -13170,7 +13179,7 @@ snapshots:
     dependencies:
       '@ai-sdk/provider': 3.0.8
       '@standard-schema/spec': 1.1.0
-      eventsource-parser: 3.0.6
+      eventsource-parser: 3.1.0
       zod: 3.25.76
 
   '@ai-sdk/provider-utils@4.0.23(zod@3.25.76)':

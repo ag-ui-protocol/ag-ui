@@ -40,6 +40,7 @@ import {
   GetNetworkOptions,
   getNetwork,
 } from "./utils";
+import { planA2UIInjection, type A2UIInjectConfig } from "./a2ui-tool";
 
 type RemoteMastraAgent = ReturnType<MastraClient["getAgent"]>;
 
@@ -147,6 +148,15 @@ export interface MastraAgentConfig extends AgentConfig {
    * `RunAgentInput.resume` channels regardless of this flag.
    */
   emitInterruptOutcome?: boolean;
+  /**
+   * A2UI auto-injection config (local agents). When the runtime/middleware
+   * forwards `injectA2UITool`, the bridge injects a backend-owned `generate_a2ui`
+   * tool (recovery + subagent) per run so the developer wires nothing — the
+   * easy-devex path. Set `injectA2UITool:false` here to force it off; set
+   * `model`/`defaultCatalogId`/`guidelines`/`recovery` to customize. A `model` is
+   * required for auto-inject unless one can be inferred from the wrapped agent.
+   */
+  a2ui?: A2UIInjectConfig;
 }
 
 interface MastraAgentStreamOptions {
@@ -226,6 +236,8 @@ export class MastraAgent extends AbstractAgent {
   public headers?: Record<string, string>;
   /** See MastraAgentConfig.emitInterruptOutcome. Default true. */
   emitInterruptOutcome: boolean;
+  /** See MastraAgentConfig.a2ui — A2UI auto-injection config. */
+  a2ui?: A2UIInjectConfig;
 
   constructor(private config: MastraAgentConfig) {
     const {
@@ -234,6 +246,7 @@ export class MastraAgent extends AbstractAgent {
       requestContext,
       untilIdle,
       emitInterruptOutcome,
+      a2ui,
       ...rest
     } = config;
     super(rest);
@@ -242,6 +255,7 @@ export class MastraAgent extends AbstractAgent {
     this.resourceId = resourceId;
     this.requestContext = requestContext ?? new RequestContext();
     this.untilIdle = untilIdle;
+    this.a2ui = a2ui;
   }
 
   public clone() {
@@ -1224,6 +1238,46 @@ export class MastraAgent extends AbstractAgent {
           callbacks.onError(error);
           return true;
         }
+        // A2UI progressive streaming (pillar 2): the auto-injected / explicit
+        // `generate_a2ui` tool runs its `render_a2ui` subagent via `.stream()`
+        // and pushes the render call's arg deltas onto this stream as custom
+        // `data-a2ui-render` chunks (see @ag-ui/mastra a2ui-tool renderSubagent).
+        // Translate them into synthetic INNER `render_a2ui` TOOL_CALL_* events so
+        // the @ag-ui/a2ui-middleware paints the "building" skeleton + fills the
+        // surface incrementally instead of bulk-painting the final envelope.
+        case "data-a2ui-render": {
+          const p = chunk.payload as {
+            phase?: string;
+            toolCallId?: string;
+            toolName?: string;
+            argsTextDelta?: string;
+          };
+          if (!p.toolCallId) break;
+          if (p.phase === "start") {
+            // Flush the buffered OUTER `generate_a2ui` tool-call onto the wire
+            // FIRST, so the A2UIMiddleware has registered it as the active outer
+            // call before this inner `render_a2ui` starts. That keys the streamed
+            // surface to the outer call, so the final generate_a2ui result
+            // envelope lands on the SAME activity id and REPLACES the streamed
+            // surface (single paint) instead of duplicating it — and lets the
+            // envelope be intercepted (no residual generate_a2ui tool card).
+            flush();
+            callbacks.onToolCallStart?.({
+              toolCallId: p.toolCallId,
+              toolName: p.toolName ?? "render_a2ui",
+            });
+          } else if (p.phase === "delta") {
+            if (p.argsTextDelta != null) {
+              callbacks.onToolCallArgs?.({
+                toolCallId: p.toolCallId,
+                argsTextDelta: p.argsTextDelta,
+              });
+            }
+          } else if (p.phase === "end") {
+            callbacks.onToolCallEnd?.({ toolCallId: p.toolCallId });
+          }
+          break;
+        }
         case "tool-call-suspended": {
           // Always discard the pending tool-call: if it matches, the tool
           // was suspended before execution; if it doesn't match, the pending
@@ -1513,7 +1567,14 @@ export class MastraAgent extends AbstractAgent {
    * within stream processing (error chunks) or from the catch block (thrown exceptions).
    */
   private async streamMastraAgent(
-    { threadId, runId, messages, tools, context: inputContext }: RunAgentInput,
+    {
+      threadId,
+      runId,
+      messages,
+      tools,
+      context: inputContext,
+      forwardedProps,
+    }: RunAgentInput,
     {
       onMessageId,
       onTextPart,
@@ -1575,6 +1636,46 @@ export class MastraAgent extends AbstractAgent {
 
     if (this.isLocalMastraAgent(this.agent)) {
       try {
+        // Auto-inject the backend-owned `generate_a2ui` tool (pillar 1: easy
+        // devex) when the runtime/middleware forwarded `injectA2UITool`. The dev
+        // wires NO tool; recovery + subagent ride along. Injected per-run as a
+        // server toolset so its execute runs in-process (where the loop lives);
+        // the middleware-injected `render_a2ui` client tool is dropped so the
+        // model calls `generate_a2ui`. Opt out via `injectA2UITool:false`;
+        // customize via the `a2ui` config. USER-PREVAILS if the agent already
+        // wires `generate_a2ui`. Best-effort: a failure degrades to no A2UI, the
+        // turn still runs.
+        let a2uiToolsets: Record<string, unknown> | undefined;
+        try {
+          const existing = await this.agent.listTools({ requestContext });
+          const existingToolNames = [
+            ...Object.keys(existing ?? {}),
+            ...clientToolNames,
+          ];
+          const plan = planA2UIInjection({
+            model:
+              this.a2ui?.model ?? (this.agent as { model?: unknown }).model,
+            input: {
+              forwardedProps,
+              context: inputContext,
+              messages,
+              threadId,
+              runId,
+            } as RunAgentInput,
+            existingToolNames,
+            config: this.a2ui,
+          });
+          if (plan) {
+            a2uiToolsets = { a2ui: { [plan.toolName]: plan.tool } };
+            for (const drop of plan.dropToolNames) delete clientTools[drop];
+          }
+        } catch (error) {
+          console.warn(
+            "[MastraAgent] A2UI auto-injection skipped (continuing without A2UI):",
+            error,
+          );
+        }
+
         const streamOptions: Record<string, unknown> = {
           memory: {
             thread: threadId,
@@ -1583,6 +1684,7 @@ export class MastraAgent extends AbstractAgent {
           runId,
           clientTools,
           requestContext,
+          ...(a2uiToolsets ? { toolsets: a2uiToolsets } : {}),
         };
         // Pipe the background-task lifecycle into this run's fullStream (and
         // re-enter the loop on completion) when opted in. Only meaningful for
