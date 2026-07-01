@@ -1095,13 +1095,17 @@ export class MastraAgent extends AbstractAgent {
     };
 
     const handleChunk = (chunk: any): boolean => {
+      // Chunks without a `payload` are not fatal. Mastra 1.31+ emits
+      // custom-data chunks (e.g. `data-*` types via context.writer.custom)
+      // that carry `data` instead of `payload`, plus new lifecycle chunk
+      // types this switch doesn't recognize. Skip them gracefully (warn,
+      // return false) so the rest of the stream — including RUN_FINISHED —
+      // still flows, rather than aborting the run.
       if (!chunk || !chunk.payload) {
-        callbacks.onError(
-          new Error(
-            `Malformed stream chunk: type=${chunk?.type ?? "undefined"}, missing payload`,
-          ),
+        console.warn(
+          `[MastraAgent] Skipping stream chunk without payload: type=${chunk?.type ?? "undefined"}`,
         );
-        return true;
+        return false;
       }
       switch (chunk.type) {
         case "reasoning-start": {
