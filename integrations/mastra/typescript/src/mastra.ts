@@ -227,6 +227,25 @@ export class MastraAgent extends AbstractAgent {
   /** See MastraAgentConfig.emitInterruptOutcome. Default true. */
   emitInterruptOutcome: boolean;
 
+  /**
+   * Suffix appended to a turn's base (Mastra-stored) messageId to key the
+   * SEPARATE AG-UI message that carries assistant text streamed AFTER a tool
+   * call in the same turn. See {@link continuationMessageId} and the ordering
+   * note in {@link makeStreamCallbacks}.
+   */
+  private static readonly ASSISTANT_TEXT_CONTINUATION_SUFFIX = "-agui-text";
+
+  /**
+   * Deterministic id for the "trailing text" continuation message split off a
+   * turn whose tool call already rendered under `baseId`. Deterministic (a pure
+   * function of the stored turn id) so re-sent history dedups: `selectNewMessages`
+   * recomputes it from each stored id and filters the continuation message out,
+   * so the split text is never re-forwarded (and duplicated) on later turns.
+   */
+  private static continuationMessageId(baseId: string): string {
+    return `${baseId}${MastraAgent.ASSISTANT_TEXT_CONTINUATION_SUFFIX}`;
+  }
+
   constructor(private config: MastraAgentConfig) {
     const {
       agent,
@@ -808,6 +827,25 @@ export class MastraAgent extends AbstractAgent {
     let reasoningMessageId: string | null = null;
     let isReasoning = false;
 
+    // --- Assistant message-ordering fix (backend tool -> trailing text) ------
+    // Mastra assigns ONE messageId to an entire assistant turn and re-announces
+    // it on each step-start, so a backend tool call and the model's final
+    // narration text (streamed in a later step) both land under it. Under a
+    // single AG-UI messageId CopilotKit draws a message's text BEFORE its tool
+    // calls, so the narration renders ABOVE the tool card (and, for A2UI, above
+    // the generated surface) even though it streamed LAST. To restore
+    // card -> result -> text order, any assistant text that would stream under a
+    // messageId that already carries a tool call is split into a SEPARATE
+    // continuation message, keyed by a deterministic id derived from that id
+    // (so re-sent history still dedups; see selectNewMessages).
+    //
+    // Keying off the tool call's own parent id (rather than a per-turn flag)
+    // keeps the split correct whether Mastra re-announces the same id across the
+    // step boundary (the real bug: text collapses onto the tool id) or omits
+    // the id and relies on messageId rotation (each step already gets a fresh
+    // id, so nothing collides and no split happens).
+    const toolCallParentIds = new Set<string>();
+
     const closeReasoning = () => {
       if (isReasoning && reasoningMessageId) {
         subscriber.next({
@@ -859,18 +897,31 @@ export class MastraAgent extends AbstractAgent {
       },
       onTextPart: (text) => {
         closeReasoning();
+        // If this text would stream under a messageId that already carries a
+        // tool call, split it into its own continuation message so it renders
+        // BELOW the tool card/result (see the ordering note above). Text under
+        // a fresh id (no tool call on it) keeps that id — including text that
+        // legitimately precedes a tool call in the same message.
+        const currentId = getMessageId();
+        const textMessageId = toolCallParentIds.has(currentId)
+          ? MastraAgent.continuationMessageId(currentId)
+          : currentId;
         subscriber.next({
           type: EventType.TEXT_MESSAGE_CHUNK,
           role: "assistant",
-          messageId: getMessageId(),
+          messageId: textMessageId,
           delta: text,
         } as TextMessageChunkEvent);
       },
       onToolCallStart: (streamPart) => {
         closeReasoning();
+        const parentMessageId = getMessageId();
+        // Record the id this tool call renders under; trailing text on the same
+        // id is then split to a continuation message (see onTextPart).
+        toolCallParentIds.add(parentMessageId);
         subscriber.next({
           type: EventType.TOOL_CALL_START,
-          parentMessageId: getMessageId(),
+          parentMessageId,
           toolCallId: streamPart.toolCallId,
           toolCallName: streamPart.toolName,
         } as ToolCallStartEvent);
@@ -1462,9 +1513,17 @@ export class MastraAgent extends AbstractAgent {
         resourceId,
         perPage: false,
       });
-      const storedIds = new Set(
-        (stored ?? []).map((m: { id?: string }) => m.id).filter(Boolean),
-      );
+      const storedIds = new Set<string>();
+      for (const m of (stored ?? []) as Array<{ id?: string }>) {
+        if (!m?.id) continue;
+        storedIds.add(m.id);
+        // The bridge streams assistant text that follows a tool call under a
+        // deterministic continuation id derived from the turn's base id (see
+        // makeStreamCallbacks). Mastra stores the whole turn under the base id,
+        // so the continuation id never appears in recall — treat it as stored
+        // here, otherwise the split text is re-sent (and duplicated) each turn.
+        storedIds.add(MastraAgent.continuationMessageId(m.id));
+      }
       if (storedIds.size === 0) return messages; // first turn / empty thread
       const fresh = messages.filter((m) => !(m.id && storedIds.has(m.id)));
       // Never send an empty turn (a no-op run). If everything was already
