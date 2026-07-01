@@ -74,6 +74,11 @@ const ALL_TARGETS = {
     name: "CrewAI",
     cwd: path.join(integrationsRoot, "crew-ai/python"),
   },
+  'langroid': {
+    command: 'uv sync',
+    name: 'Langroid',
+    cwd: path.join(integrationsRoot, 'langroid/python/examples'),
+  },
   "langgraph-fastapi": {
     command: "uv sync",
     name: "LG FastAPI",
@@ -104,6 +109,11 @@ const ALL_TARGETS = {
     name: "AWS Strands",
     cwd: path.join(integrationsRoot, "aws-strands/python/examples"),
   },
+  "aws-strands-typescript": {
+    command: "pnpm install",
+    name: "AWS Strands (TypeScript)",
+    cwd: path.join(integrationsRoot, "aws-strands/typescript/examples"),
+  },
   "adk-middleware": {
     command: "uv sync",
     name: "ADK Middleware",
@@ -124,6 +134,16 @@ const ALL_TARGETS = {
     name: "Dojo (dev)",
     cwd: gitRoot,
   },
+  "claude-agent-sdk-python": {
+    command: "uv sync",
+    name: "Claude Agent SDK (Python)",
+    cwd: path.join(integrationsRoot, "claude-agent-sdk/python/examples"),
+  },
+  "claude-agent-sdk-typescript": {
+    command: "pnpm install",
+    name: "Claude Agent SDK (TypeScript)",
+    cwd: path.join(integrationsRoot, "claude-agent-sdk/typescript"),
+  },
   "microsoft-agent-framework-python": {
     command: "uv sync",
     name: "Microsoft Agent Framework (Python)",
@@ -133,6 +153,11 @@ const ALL_TARGETS = {
     command: "dotnet restore AGUIDojoServer/AGUIDojoServer.csproj && dotnet build AGUIDojoServer/AGUIDojoServer.csproj",
     name: "Microsoft Agent Framework (.NET)",
     cwd: path.join(integrationsRoot, "microsoft-agent-framework/dotnet/examples"),
+  },
+  "ag-ui-dotnet": {
+    command: "dotnet restore AGUIDojoServer/AGUIDojoServer.csproj && dotnet build AGUIDojoServer/AGUIDojoServer.csproj",
+    name: "AG-UI .NET SDK",
+    cwd: path.join(gitRoot, "sdks/dotnet/samples/AGUIClientServer"),
   },
 };
 
@@ -175,7 +200,37 @@ async function main() {
     printDryRunServices(procs);
   }
 
-  const { result } = concurrently(procs);
+  // Separate pnpm targets from others to avoid concurrent install races.
+  // Multiple pnpm installs within the same workspace race on the shared
+  // node_modules/.pnpm/ directory, causing ENOENT errors.
+  const pnpmProcs = [];
+  const otherProcs = [];
+
+  for (const proc of procs) {
+    if (proc.command.startsWith("pnpm")) {
+      pnpmProcs.push(proc);
+    } else {
+      otherProcs.push(proc);
+    }
+  }
+
+  // Run pnpm targets sequentially to avoid races on shared node_modules
+  for (const proc of pnpmProcs) {
+    console.log(`\n=== [${proc.name}] ${proc.command} ===`);
+    try {
+      execSync(proc.command, { cwd: proc.cwd, stdio: "inherit" });
+    } catch (err) {
+      console.error(`[${proc.name}] Failed: ${err.message}`);
+      process.exit(1);
+    }
+  }
+
+  // Run remaining targets concurrently (uv, poetry, dotnet — all independent)
+  if (otherProcs.length === 0) {
+    process.exit(0);
+  }
+
+  const { result } = concurrently(otherProcs);
 
   result
     .then(() => process.exit(0))

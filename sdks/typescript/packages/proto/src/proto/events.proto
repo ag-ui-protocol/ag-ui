@@ -2,6 +2,10 @@ syntax = "proto3";
 
 package ag_ui;
 
+// C#-only option (ignored by the TypeScript and Python generators): controls the
+// namespace of the generated Google.Protobuf types consumed by the AGUI.Protobuf .NET package.
+option csharp_namespace = "AGUI.ProtocolBuffers";
+
 import "google/protobuf/struct.proto";
 import "patch.proto";
 import "types.proto";
@@ -35,6 +39,7 @@ message TextMessageStartEvent {
   BaseEvent base_event = 1;
   string message_id = 2;
   optional string role = 3;
+  optional string name = 4;
 }
 
 message TextMessageContentEvent {
@@ -104,6 +109,8 @@ message RunFinishedEvent {
   string thread_id = 2;
   string run_id = 3;
   optional google.protobuf.Value result = 4;
+  string outcome = 5;
+  repeated Interrupt interrupts = 6;
 }
 
 message RunErrorEvent {
@@ -127,6 +134,7 @@ message TextMessageChunkEvent {
   optional string message_id = 2;
   optional string role = 3;
   optional string delta = 4;
+  optional string name = 5;
 }
 
 message ToolCallChunkEvent {

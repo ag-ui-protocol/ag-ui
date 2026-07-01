@@ -1,6 +1,11 @@
 {
   "name": "@ag-ui/langgraph",
-  "version": "0.0.24",
+  "version": "0.0.42",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ag-ui-protocol/ag-ui.git"
+  },
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
@@ -26,8 +31,10 @@
     "unlink:global": "pnpm unlink --global"
   },
   "dependencies": {
-    "@langchain/core": "^0.3.80",
-    "@langchain/langgraph-sdk": "^0.1.2",
+    "@ag-ui/a2ui-toolkit": "workspace:*",
+    "@langchain/core": "^1.1.40",
+    "@langchain/langgraph-sdk": "^1.8.8",
+    "langchain": ">=1.2.0",
     "partial-json": "^0.1.7",
     "rxjs": "7.8.1"
   },
@@ -50,6 +57,10 @@
     ".": {
       "require": "./dist/index.js",
       "import": "./dist/index.mjs"
+    },
+    "./middlewares": {
+      "require": "./dist/middlewares/index.js",
+      "import": "./dist/middlewares/index.mjs"
     },
     "./package.json": "./package.json"
   }

@@ -85,10 +85,10 @@ kotlin {
         val commonMain by getting {
             dependencies {
                 // Ktor for networking
-                implementation("io.ktor:ktor-client-core:3.1.3")
-                implementation("io.ktor:ktor-client-content-negotiation:3.1.3")
-                implementation("io.ktor:ktor-serialization-kotlinx-json:3.1.3")
-                implementation("io.ktor:ktor-client-logging:3.1.3")
+                implementation("io.ktor:ktor-client-core:3.2.4")
+                implementation("io.ktor:ktor-client-content-negotiation:3.2.4")
+                implementation("io.ktor:ktor-serialization-kotlinx-json:3.2.4")
+                implementation("io.ktor:ktor-client-logging:3.2.4")
                 
                 // Kotlinx libraries
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
@@ -104,13 +104,13 @@ kotlin {
             dependencies {
                 implementation(kotlin("test"))
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
-                implementation("io.ktor:ktor-client-mock:3.1.3")
+                implementation("io.ktor:ktor-client-mock:3.2.4")
             }
         }
         
         val androidMain by getting {
             dependencies {
-                implementation("io.ktor:ktor-client-android:3.1.3")
+                implementation("io.ktor:ktor-client-android:3.2.4")
                 implementation("org.slf4j:slf4j-android:1.7.36")
             }
         }
@@ -125,13 +125,13 @@ kotlin {
             iosSimulatorArm64Main.dependsOn(this)
             
             dependencies {
-                implementation("io.ktor:ktor-client-darwin:3.1.3")
+                implementation("io.ktor:ktor-client-darwin:3.2.4")
             }
         }
         
         val jvmMain by getting {
             dependencies {
-                implementation("io.ktor:ktor-client-java:3.1.3")
+                implementation("io.ktor:ktor-client-java:3.2.4")
                 implementation("org.slf4j:slf4j-simple:2.0.9")
             }
         }

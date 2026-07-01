@@ -18,6 +18,10 @@ documents these types and their properties.
 Input parameters for running an agent. In the HTTP API, this is the body of the
 `POST` request.
 
+`tools` contains tools provided by the client for this run. Backend-defined
+tools should remain in the backend agent or framework configuration, and may be
+advertised separately through agent capabilities.
+
 ```python
 class RunAgentInput(ConfiguredBaseModel):
     thread_id: str
@@ -37,7 +41,7 @@ class RunAgentInput(ConfiguredBaseModel):
 | `parent_run_id`   | `Optional[str]` | (Optional) ID of the run that spawned this run |
 | `state`           | `Any`           | Current state of the agent                     |
 | `messages`        | `List[Message]` | List of messages in the conversation           |
-| `tools`           | `List[Tool]`    | List of tools available to the agent           |
+| `tools`           | `List[Tool]`    | Client-provided tools available for this run   |
 | `context`         | `List[Context]` | List of context objects provided to the agent  |
 | `forwarded_props` | `Any`           | Additional properties forwarded to the agent   |
 
@@ -134,6 +138,27 @@ class UserMessage(BaseMessage):
 | `content` | `Union[str, List["InputContent"]]` | Either a plain text string or an ordered list of multimodal fragments |
 | `name`    | `Optional[str]`                    | Optional name of the sender                                           |
 
+### InputContentSource
+
+Represents how a non-text part is supplied.
+
+```python
+InputContentSource = Annotated[
+    Union[InputContentDataSource, InputContentUrlSource],
+    Field(discriminator="type"),
+]
+
+class InputContentDataSource(ConfiguredBaseModel):
+    type: Literal["data"]
+    value: str
+    mime_type: str
+
+class InputContentUrlSource(ConfiguredBaseModel):
+    type: Literal["url"]
+    value: str
+    mime_type: Optional[str] = None
+```
+
 ### TextInputContent
 
 Represents a text fragment inside a multimodal user message.
@@ -173,6 +198,33 @@ class BinaryInputContent(ConfiguredBaseModel):
 | `filename`  | `Optional[str]`     | Optional filename hint                        |
 
 > **Validation:** At least one of `id`, `url`, or `data` must be provided.
+>
+> **Deprecated:** `BinaryInputContent` remains available as a temporary
+> compatibility model. Prefer modality-specific parts below.
+
+### ImageInputContent / AudioInputContent / VideoInputContent / DocumentInputContent
+
+```python
+class ImageInputContent(ConfiguredBaseModel):
+    type: Literal["image"]
+    source: InputContentSource
+    metadata: Optional[Any] = None
+
+class AudioInputContent(ConfiguredBaseModel):
+    type: Literal["audio"]
+    source: InputContentSource
+    metadata: Optional[Any] = None
+
+class VideoInputContent(ConfiguredBaseModel):
+    type: Literal["video"]
+    source: InputContentSource
+    metadata: Optional[Any] = None
+
+class DocumentInputContent(ConfiguredBaseModel):
+    type: Literal["document"]
+    source: InputContentSource
+    metadata: Optional[Any] = None
+```
 
 ### ToolMessage
 

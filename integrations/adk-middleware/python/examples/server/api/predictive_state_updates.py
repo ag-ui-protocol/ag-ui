@@ -8,6 +8,7 @@ Key concepts:
 1. PredictStateMapping: Configuration that tells the UI which tool arguments map to state keys
 2. When a tool is called that matches the mapping, a PredictState CustomEvent is emitted
 3. The UI uses this metadata to update state as tool arguments stream in
+
 4. The middleware emits a write_document tool call after write_document_local completes,
    which triggers the frontend's write_document action to show a confirmation dialog
    (controlled by emit_confirm_tool=True, which is the default)

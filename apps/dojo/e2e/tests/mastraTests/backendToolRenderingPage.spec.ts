@@ -20,10 +20,10 @@ test("[Mastra] Backend Tool Rendering displays weather cards", async ({ page }) 
 
   // Try test ID first, fallback to text
   try {
-    await expect(weatherCard).toBeVisible({ timeout: 10000 });
+    await expect(weatherCard).toBeVisible();
   } catch (e) {
     // Fallback to checking for "Current Weather" text
-    await expect(currentWeatherText.first()).toBeVisible({ timeout: 10000 });
+    await expect(currentWeatherText.first()).toBeVisible();
   }
 
   // Verify weather content is present (use flexible selectors)

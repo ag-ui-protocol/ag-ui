@@ -3,6 +3,8 @@ package events
 import (
 	"encoding/json"
 	"fmt"
+
+	"github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/types"
 )
 
 // RunStartedEvent indicates that an agent run has started
@@ -89,12 +91,33 @@ func (e *RunStartedEvent) ToJSON() ([]byte, error) {
 	return json.Marshal(e)
 }
 
+// RunFinishedOutcomeType discriminates between outcome variants.
+type RunFinishedOutcomeType string
+
+const (
+	// RunFinishedOutcomeTypeSuccess indicates the run completed normally.
+	RunFinishedOutcomeTypeSuccess RunFinishedOutcomeType = "success"
+	// RunFinishedOutcomeTypeInterrupt indicates the run paused on one or more interrupts.
+	RunFinishedOutcomeTypeInterrupt RunFinishedOutcomeType = "interrupt"
+)
+
+// RunFinishedOutcome represents the outcome of a finished run.
+// Type discriminates between success and interrupt variants.
+type RunFinishedOutcome struct {
+	// Type is the outcome discriminator ("success" or "interrupt").
+	Type RunFinishedOutcomeType `json:"type"`
+	// Interrupts is the list of interrupts that caused the run to pause.
+	// Only populated when Type is "interrupt". Must contain at least one entry.
+	Interrupts []types.Interrupt `json:"interrupts,omitempty"`
+}
+
 // RunFinishedEvent indicates that an agent run has finished successfully
 type RunFinishedEvent struct {
 	*BaseEvent
-	ThreadIDValue string      `json:"threadId"`
-	RunIDValue    string      `json:"runId"`
-	Result        interface{} `json:"result,omitempty"`
+	ThreadIDValue string              `json:"threadId"`
+	RunIDValue    string              `json:"runId"`
+	Result        interface{}         `json:"result,omitempty"`
+	Outcome       *RunFinishedOutcome `json:"outcome,omitempty"`
 }
 
 // NewRunFinishedEvent creates a new run finished event
@@ -146,6 +169,30 @@ func WithAutoThreadIDFinished() RunFinishedOption {
 func WithResult(result interface{}) RunFinishedOption {
 	return func(e *RunFinishedEvent) {
 		e.Result = result
+	}
+}
+
+// WithOutcome sets the outcome for the run finished event
+func WithOutcome(outcome RunFinishedOutcome) RunFinishedOption {
+	return func(e *RunFinishedEvent) {
+		e.Outcome = &outcome
+	}
+}
+
+// WithSuccessOutcome sets the outcome to success for the run finished event
+func WithSuccessOutcome() RunFinishedOption {
+	return func(e *RunFinishedEvent) {
+		e.Outcome = &RunFinishedOutcome{Type: RunFinishedOutcomeTypeSuccess}
+	}
+}
+
+// WithInterruptOutcome sets the outcome to interrupt with the given interrupts
+func WithInterruptOutcome(interrupts []types.Interrupt) RunFinishedOption {
+	return func(e *RunFinishedEvent) {
+		e.Outcome = &RunFinishedOutcome{
+			Type:       RunFinishedOutcomeTypeInterrupt,
+			Interrupts: interrupts,
+		}
 	}
 }
 

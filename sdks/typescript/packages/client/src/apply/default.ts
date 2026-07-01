@@ -42,19 +42,63 @@ import {
   type ToolMessage,
   UserMessage,
 } from "@ag-ui/core";
-import * as jsonpatch from "fast-json-patch";
+import jsonpatch from "fast-json-patch";
 import { EMPTY, of } from "rxjs";
 import type { Observable } from "rxjs";
 import { concatMap, defaultIfEmpty, mergeAll, mergeMap } from "rxjs/operators";
 import untruncateJson from "untruncate-json";
 import { structuredClone_ } from "../utils";
+import { type DebugLoggerInput, resolveDebugLogger } from "@/debug-logger";
+
+/**
+ * Resolves (or creates) the assistant message that a tool call should attach to.
+ *
+ * Resolution order:
+ * 1. `parentMessageId` matches an existing assistant message — return it.
+ * 2. `parentMessageId` matches a non-assistant message (collision) — create new, keyed by `toolCallId`.
+ * 3. `parentMessageId` not found — create new, keyed by `parentMessageId`.
+ * 4. No `parentMessageId` — create new, keyed by `toolCallId`.
+ */
+function resolveOrCreateAssistantMessage(
+  messages: Message[],
+  parentMessageId: string | undefined,
+  toolCallId: string,
+): AssistantMessage {
+  if (parentMessageId) {
+    const existing = messages.find((m) => m.id === parentMessageId);
+    if (existing?.role === "assistant") {
+      return existing as AssistantMessage;
+    }
+
+    if (existing) {
+      console.warn(
+        `TOOL_CALL_START: parentMessageId '${parentMessageId}' matches a '${existing.role}' message, ` +
+          `not assistant — falling back to toolCallId`,
+      );
+    }
+
+    const created: AssistantMessage = {
+      id: existing ? toolCallId : parentMessageId,
+      role: "assistant",
+      toolCalls: [],
+    };
+    messages.push(created);
+    return created;
+  }
+
+  const created: AssistantMessage = { id: toolCallId, role: "assistant", toolCalls: [] };
+  messages.push(created);
+  return created;
+}
 
 export const defaultApplyEvents = (
   input: RunAgentInput,
   events$: Observable<BaseEvent>,
   agent: AbstractAgent,
   subscribers: AgentSubscriber[],
+  debugLogger?: DebugLoggerInput,
 ): Observable<AgentStateMutation> => {
+  const log = resolveDebugLogger(debugLogger);
   let messages = structuredClone_(agent.messages);
   let state = structuredClone_(input.state);
   let currentMutation: AgentStateMutation = {};
@@ -91,6 +135,18 @@ export const defaultApplyEvents = (
       applyMutation(mutation);
 
       if (mutation.stopPropagation === true) {
+        log?.event("APPLY", "Event dropped:", event, {
+          type: event.type,
+          reason: "stopPropagation by subscriber",
+        });
+      } else {
+        log?.event("APPLY", "Event applied:", event, {
+          type: event.type,
+          subscribers: subscribers.length,
+        });
+      }
+
+      if (mutation.stopPropagation === true) {
         return emitUpdates();
       }
 
@@ -112,7 +168,7 @@ export const defaultApplyEvents = (
           applyMutation(mutation);
 
           if (mutation.stopPropagation !== true) {
-            const { messageId, role = "assistant" } = event as TextMessageStartEvent;
+            const { messageId, role = "assistant", name } = event as TextMessageStartEvent;
 
             // Check if a message with this ID already exists (e.g., created by TOOL_CALL_START
             // with the same parentMessageId)
@@ -125,6 +181,7 @@ export const defaultApplyEvents = (
                 id: messageId,
                 role: role,
                 content: "",
+                ...(name !== undefined && { name }),
               };
 
               // Add the new message to the messages array
@@ -236,24 +293,11 @@ export const defaultApplyEvents = (
           if (mutation.stopPropagation !== true) {
             const { toolCallId, toolCallName, parentMessageId } = event as ToolCallStartEvent;
 
-            let targetMessage: AssistantMessage;
-
-            // Use last message if parentMessageId exists, we have messages, and the parentMessageId matches the last message's id
-            if (
-              parentMessageId &&
-              messages.length > 0 &&
-              messages[messages.length - 1].id === parentMessageId
-            ) {
-              targetMessage = messages[messages.length - 1] as AssistantMessage;
-            } else {
-              // Create a new message otherwise
-              targetMessage = {
-                id: parentMessageId || toolCallId,
-                role: "assistant",
-                toolCalls: [],
-              };
-              messages.push(targetMessage);
-            }
+            const targetMessage = resolveOrCreateAssistantMessage(
+              messages,
+              parentMessageId,
+              toolCallId,
+            );
 
             targetMessage.toolCalls ??= [];
 
@@ -419,7 +463,30 @@ export const defaultApplyEvents = (
               content: content,
             };
 
-            messages.push(toolMessage);
+            // Place the tool result immediately after the assistant message that
+            // issued the matching tool call — not at the end. A result event can
+            // arrive after a trailing assistant text message (e.g. a
+            // chat -> tool -> chat loop streams the follow-up text before the
+            // result is recorded). Appending would leave the history as
+            // assistant(tool_call) -> text -> tool, which violates the provider
+            // contract that an assistant tool_call is immediately followed by its
+            // tool result and surfaces downstream as a 400. Skip past any tool
+            // results already recorded for the same assistant so parallel results
+            // keep their order. Fall back to append when no owner is found.
+            const ownerIndex = messages.findIndex(
+              (m) =>
+                m.role === "assistant" &&
+                (m as AssistantMessage).toolCalls?.some((tc) => tc.id === toolCallId),
+            );
+            if (ownerIndex === -1) {
+              messages.push(toolMessage);
+            } else {
+              let insertAt = ownerIndex + 1;
+              while (insertAt < messages.length && messages[insertAt].role === "tool") {
+                insertAt++;
+              }
+              messages.splice(insertAt, 0, toolMessage);
+            }
 
             await Promise.all(
               subscribers.map((subscriber) => {
@@ -524,14 +591,34 @@ export const defaultApplyEvents = (
             const { messages: newMessages } = event as MessagesSnapshotEvent;
 
             // Edit-based merge: update existing messages with snapshot data while
-            // preserving activity messages (which the backend doesn't know about).
+            // preserving client-only messages the backend leaves out of the
+            // snapshot.
             const snapshotMap = new Map(newMessages.map((m) => [m.id, m]));
 
-            // Step 1 + 2: Keep activity messages as-is, keep messages present in
-            // the snapshot (replaced with snapshot version), drop everything else.
+            // `activity` messages are always client-only — backends never include
+            // them in MESSAGES_SNAPSHOT — so they are always preserved.
+            //
+            // `reasoning` messages are only sometimes client-only. Most backends
+            // never include reasoning in the snapshot (it exists purely as
+            // streamed REASONING_* events), so dropping local reasoning here
+            // would lose it. But a backend that round-trips reasoning (e.g.
+            // LangGraph re-deriving it from checkpointed content blocks)
+            // re-delivers the streamed reasoning under its own canonical id —
+            // message ids are generally NOT stable between streamed events and
+            // the snapshot. Preserving the streamed copy next to the snapshot
+            // copy would render the same reasoning twice. So when the snapshot
+            // itself carries reasoning, treat it as the source of truth for
+            // reasoning messages too and apply the normal replace semantics.
+            const snapshotHasReasoning = newMessages.some((m) => m.role === "reasoning");
+            const isPreservedClientOnly = (m: Message) =>
+              m.role === "activity" || (m.role === "reasoning" && !snapshotHasReasoning);
+
+            // Step 1 + 2: Keep preserved client-only messages as-is, keep
+            // messages present in the snapshot (replaced with snapshot version),
+            // drop everything else.
             messages = messages
-              .filter((m) => m.role === "activity" || snapshotMap.has(m.id))
-              .map((m) => (m.role === "activity" ? m : snapshotMap.get(m.id)!));
+              .filter((m) => isPreservedClientOnly(m) || snapshotMap.has(m.id))
+              .map((m) => (isPreservedClientOnly(m) ? m : snapshotMap.get(m.id)!));
 
             // Step 3: Append messages from the snapshot that we don't have yet.
             const existingIds = new Set(messages.map((m) => m.id));
@@ -758,21 +845,39 @@ export const defaultApplyEvents = (
         }
 
         case EventType.RUN_FINISHED: {
+          const e = event as RunFinishedEvent;
+          const finishedParams =
+            e.outcome?.type === "interrupt"
+              ? ({
+                  event: e,
+                  outcome: "interrupt" as const,
+                  interrupts: e.outcome.interrupts,
+                } as const)
+              : ({ event: e, outcome: "success" as const, result: e.result } as const);
           const mutation = await runSubscribersWithMutation(
             subscribers,
             messages,
             state,
             (subscriber, messages, state) =>
               subscriber.onRunFinishedEvent?.({
-                event: event as RunFinishedEvent,
+                ...finishedParams,
                 messages,
                 state,
                 agent,
                 input,
-                result: (event as RunFinishedEvent).result,
               }),
           );
           applyMutation(mutation);
+
+          // Update pending interrupts AFTER subscribers run, and only if no
+          // subscriber suppressed the event — matches the lifecycle pattern
+          // used by every other case in this switch. Defensive-copy the
+          // interrupt list so consumers that hold the original event payload
+          // can't mutate the agent's tracked state through array aliasing.
+          if (mutation.stopPropagation !== true) {
+            agent.pendingInterrupts =
+              finishedParams.outcome === "interrupt" ? [...finishedParams.interrupts] : [];
+          }
 
           return emitUpdates();
         }

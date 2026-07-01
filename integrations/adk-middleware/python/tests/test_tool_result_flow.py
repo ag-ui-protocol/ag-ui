@@ -14,6 +14,7 @@ from ag_ui.core import (
 
 from ag_ui_adk import ADKAgent
 from ag_ui_adk.session_manager import SessionManager
+from tests.constants import LIVE_TEST_MODEL
 
 
 class TestToolResultFlow:
@@ -40,7 +41,7 @@ class TestToolResultFlow:
         from google.adk.agents import LlmAgent
         return LlmAgent(
             name="test_agent",
-            model="gemini-2.0-flash",
+            model=LIVE_TEST_MODEL,
             instruction="Test agent for tool flow testing"
         )
 
@@ -495,7 +496,7 @@ class TestToolResultFlow:
             )
 
         # Mock pending tool call check to return True so tool result is accepted
-        async def mock_has_pending_tool_calls(session_id):
+        async def mock_has_pending_tool_calls(*_args, **_kwargs):
             return True
 
         with patch.object(
@@ -767,7 +768,7 @@ class TestConfirmChangesFiltering:
         from google.adk.agents import LlmAgent
         return LlmAgent(
             name="test_agent",
-            model="gemini-2.0-flash",
+            model=LIVE_TEST_MODEL,
             instruction="Test agent for confirm_changes filtering"
         )
 
@@ -1031,7 +1032,7 @@ class TestClientToolResultPersistence:
         from google.adk.agents import LlmAgent
         return LlmAgent(
             name="test_agent",
-            model="gemini-2.0-flash",
+            model=LIVE_TEST_MODEL,
             instruction="Test agent for persistence testing"
         )
 
@@ -1413,7 +1414,7 @@ class TestDatabaseSessionServiceCompatibility:
         from google.adk.agents import LlmAgent
         return LlmAgent(
             name="test_agent",
-            model="gemini-2.0-flash",
+            model=LIVE_TEST_MODEL,
             instruction="Test agent for DatabaseSessionService compatibility"
         )
 

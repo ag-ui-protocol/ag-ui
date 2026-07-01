@@ -6,6 +6,7 @@ See: https://docs.ag2.ai/latest/docs/user-guide/ag-ui/
 """
 
 import json
+import os
 
 import httpx
 from fastapi import FastAPI
@@ -42,6 +43,23 @@ def get_weather_condition(code: int) -> str:
     return conditions.get(code, "Unknown")
 
 
+def _mock_weather(location: str) -> str:
+    """Return deterministic canned weather data for tests.
+
+    Used when ``AG_UI_MOCK_WEATHER`` is set so e2e runs don't depend on the
+    live open-meteo API (which rate-limits CI's shared egress IPs).
+    """
+    return json.dumps({
+        "temperature": 21.0,
+        "feels_like": 20.0,
+        "humidity": 65.0,
+        "wind_speed": 12.0,
+        "wind_gust": 18.0,
+        "conditions": get_weather_condition(1),
+        "location": location,
+    })
+
+
 async def get_weather(location: str) -> str:
     """Get current weather for a location.
 
@@ -51,6 +69,9 @@ async def get_weather(location: str) -> str:
     Returns:
         Dictionary with temperature, conditions, humidity, wind_speed, feels_like, location.
     """
+    if os.getenv("AG_UI_MOCK_WEATHER"):
+        return _mock_weather(location)
+
     async with httpx.AsyncClient() as client:
         geocoding_url = (
             f"https://geocoding-api.open-meteo.com/v1/search?name={location}&count=1"
@@ -100,6 +121,7 @@ Your primary function is to help users get weather details for specific location
 
 Use the get_weather tool to fetch current weather data.""",
     llm_config=LLMConfig({"model": "gpt-4o-mini", "stream": True}),
+    human_input_mode="NEVER",
     functions=[get_weather],
 )
 

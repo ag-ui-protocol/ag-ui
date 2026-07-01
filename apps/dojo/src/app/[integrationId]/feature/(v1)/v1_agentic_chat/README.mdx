@@ -1,0 +1,28 @@
+# 🤖 V1 Agentic Chat
+
+## What This Demo Shows
+
+This demo verifies **CopilotKit v1 API compatibility**. It uses the original v1
+components (`CopilotKit` provider and `CopilotChat`) to ensure that v1 APIs
+continue to work correctly against the current runtime.
+
+1. **V1 Provider**: Uses `CopilotKit` from `@copilotkit/react-core` with the
+   `agent` prop for agent selection
+2. **V1 Chat UI**: Uses `CopilotChat` from `@copilotkit/react-ui` with v1
+   styling
+3. **Same Backend**: Connects to the same runtime endpoint as v2, validating
+   backward compatibility
+
+## How to Interact
+
+This is a standard chat interface — type a message and the agent will respond
+conversationally, just like the v2 agentic chat demo.
+
+## ✨ V1 Compatibility
+
+**What's happening technically:**
+
+- The v1 `CopilotKit` provider connects to the same `/api/copilotkit/[integration]` endpoint
+- The v1 chat UI renders with v1 CSS classes (`.copilotKitInput`, `.copilotKitAssistantMessage`, etc.)
+- The agent selected via the `agent` prop maps to the same `agentic_chat` backend agent
+- This ensures that applications built with v1 APIs continue to function after runtime upgrades

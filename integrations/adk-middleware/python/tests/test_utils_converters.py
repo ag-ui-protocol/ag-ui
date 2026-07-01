@@ -15,6 +15,12 @@ from ag_ui.core import (
     FunctionCall,
     TextInputContent,
     BinaryInputContent,
+    ImageInputContent,
+    AudioInputContent,
+    VideoInputContent,
+    DocumentInputContent,
+    InputContentDataSource,
+    InputContentUrlSource,
 )
 from google.adk.events import Event as ADKEvent
 from google.genai import types
@@ -123,6 +129,205 @@ class TestConvertAGUIMessagesToADK:
         assert len(event.content.parts) == 1
         assert event.content.parts[0].text == "Please look at the image at this URL."
 
+    def test_convert_user_message_image_input_data_source(self):
+        """Test converting ImageInputContent with inline base64 data source."""
+        raw = b"fake-image-bytes"
+        b64 = base64.b64encode(raw).decode("ascii")
+        user_msg = UserMessage(
+            id="user_img_data",
+            role="user",
+            content=[
+                TextInputContent(text="Describe this image."),
+                ImageInputContent(
+                    source=InputContentDataSource(
+                        value=b64,
+                        mime_type="image/png",
+                    ),
+                ),
+            ],
+        )
+
+        adk_events = convert_ag_ui_messages_to_adk([user_msg])
+        event = adk_events[0]
+
+        assert len(event.content.parts) == 2
+        assert event.content.parts[0].text == "Describe this image."
+        assert event.content.parts[1].inline_data.mime_type == "image/png"
+        assert event.content.parts[1].inline_data.data == raw
+
+    def test_convert_user_message_image_input_url_source(self):
+        """Test converting ImageInputContent with URL source uses file_data."""
+        user_msg = UserMessage(
+            id="user_img_url",
+            role="user",
+            content=[
+                TextInputContent(text="What is in this image?"),
+                ImageInputContent(
+                    source=InputContentUrlSource(
+                        value="https://example.com/photo.png",
+                        mime_type="image/png",
+                    ),
+                ),
+            ],
+        )
+
+        adk_events = convert_ag_ui_messages_to_adk([user_msg])
+        event = adk_events[0]
+
+        assert len(event.content.parts) == 2
+        assert event.content.parts[0].text == "What is in this image?"
+        assert event.content.parts[1].file_data.file_uri == "https://example.com/photo.png"
+        assert event.content.parts[1].file_data.mime_type == "image/png"
+
+    def test_convert_user_message_audio_input_data_source(self):
+        """Test converting AudioInputContent with inline base64 data source."""
+        raw = b"fake-audio-bytes"
+        b64 = base64.b64encode(raw).decode("ascii")
+        user_msg = UserMessage(
+            id="user_audio_data",
+            role="user",
+            content=[
+                AudioInputContent(
+                    source=InputContentDataSource(
+                        value=b64,
+                        mime_type="audio/wav",
+                    ),
+                ),
+            ],
+        )
+
+        adk_events = convert_ag_ui_messages_to_adk([user_msg])
+        event = adk_events[0]
+
+        assert len(event.content.parts) == 1
+        assert event.content.parts[0].inline_data.mime_type == "audio/wav"
+        assert event.content.parts[0].inline_data.data == raw
+
+    def test_convert_user_message_video_input_url_source(self):
+        """Test converting VideoInputContent with URL source."""
+        user_msg = UserMessage(
+            id="user_video_url",
+            role="user",
+            content=[
+                VideoInputContent(
+                    source=InputContentUrlSource(
+                        value="https://example.com/clip.mp4",
+                        mime_type="video/mp4",
+                    ),
+                ),
+            ],
+        )
+
+        adk_events = convert_ag_ui_messages_to_adk([user_msg])
+        event = adk_events[0]
+
+        assert len(event.content.parts) == 1
+        assert event.content.parts[0].file_data.file_uri == "https://example.com/clip.mp4"
+        assert event.content.parts[0].file_data.mime_type == "video/mp4"
+
+    def test_convert_user_message_document_input_data_source(self):
+        """Test converting DocumentInputContent with inline base64 data source."""
+        raw = b"%PDF-fake-document"
+        b64 = base64.b64encode(raw).decode("ascii")
+        user_msg = UserMessage(
+            id="user_doc_data",
+            role="user",
+            content=[
+                TextInputContent(text="Summarize this document."),
+                DocumentInputContent(
+                    source=InputContentDataSource(
+                        value=b64,
+                        mime_type="application/pdf",
+                    ),
+                ),
+            ],
+        )
+
+        adk_events = convert_ag_ui_messages_to_adk([user_msg])
+        event = adk_events[0]
+
+        assert len(event.content.parts) == 2
+        assert event.content.parts[0].text == "Summarize this document."
+        assert event.content.parts[1].inline_data.mime_type == "application/pdf"
+        assert event.content.parts[1].inline_data.data == raw
+
+    def test_convert_user_message_url_source_without_mime_type(self):
+        """Test converting URL source without mime_type still works (ADK auto-detects)."""
+        user_msg = UserMessage(
+            id="user_img_url_no_mime",
+            role="user",
+            content=[
+                ImageInputContent(
+                    source=InputContentUrlSource(
+                        value="https://example.com/photo.jpg",
+                    ),
+                ),
+            ],
+        )
+
+        adk_events = convert_ag_ui_messages_to_adk([user_msg])
+        event = adk_events[0]
+
+        assert len(event.content.parts) == 1
+        assert event.content.parts[0].file_data.file_uri == "https://example.com/photo.jpg"
+        assert event.content.parts[0].file_data.mime_type is None
+
+    def test_convert_user_message_media_broken_base64_ignored(self):
+        """Test that media content with broken base64 data is ignored."""
+        user_msg = UserMessage(
+            id="user_media_broken",
+            role="user",
+            content=[
+                TextInputContent(text="Check this."),
+                ImageInputContent(
+                    source=InputContentDataSource(
+                        value="This Is Not Valid Base64!!!",
+                        mime_type="image/png",
+                    ),
+                ),
+            ],
+        )
+
+        adk_events = convert_ag_ui_messages_to_adk([user_msg])
+        event = adk_events[0]
+
+        assert len(event.content.parts) == 1
+        assert event.content.parts[0].text == "Check this."
+
+    def test_convert_user_message_mixed_media_types(self):
+        """Test converting a message with multiple different media types."""
+        img_raw = b"fake-image"
+        img_b64 = base64.b64encode(img_raw).decode("ascii")
+        user_msg = UserMessage(
+            id="user_mixed",
+            role="user",
+            content=[
+                TextInputContent(text="Analyze these files."),
+                ImageInputContent(
+                    source=InputContentDataSource(
+                        value=img_b64,
+                        mime_type="image/png",
+                    ),
+                ),
+                DocumentInputContent(
+                    source=InputContentUrlSource(
+                        value="https://example.com/report.pdf",
+                        mime_type="application/pdf",
+                    ),
+                ),
+            ],
+        )
+
+        adk_events = convert_ag_ui_messages_to_adk([user_msg])
+        event = adk_events[0]
+
+        assert len(event.content.parts) == 3
+        assert event.content.parts[0].text == "Analyze these files."
+        assert event.content.parts[1].inline_data.mime_type == "image/png"
+        assert event.content.parts[1].inline_data.data == img_raw
+        assert event.content.parts[2].file_data.file_uri == "https://example.com/report.pdf"
+        assert event.content.parts[2].file_data.mime_type == "application/pdf"
+
     def test_convert_system_message(self):
         """Test converting a SystemMessage to ADK event."""
         system_msg = SystemMessage(
@@ -153,9 +358,42 @@ class TestConvertAGUIMessagesToADK:
         assert len(adk_events) == 1
         event = adk_events[0]
         assert event.id == "assistant_1"
-        assert event.author == "assistant"
+        assert event.author == "model"
         assert event.content.role == "model"  # ADK uses "model" for assistant
         assert event.content.parts[0].text == "I'm doing well, thank you!"
+
+    def test_convert_named_assistant_message_uses_name_as_author(self):
+        """Test converting named AssistantMessage to ADK event author."""
+        assistant_msg = AssistantMessage(
+            id="assistant_named_1",
+            role="assistant",
+            name="subagent1",
+            content="Handled by subagent1.",
+        )
+
+        adk_events = convert_ag_ui_messages_to_adk([assistant_msg])
+
+        assert len(adk_events) == 1
+        event = adk_events[0]
+        assert event.id == "assistant_named_1"
+        assert event.author == "subagent1"
+        assert event.content.role == "model"
+        assert event.content.parts[0].text == "Handled by subagent1."
+
+    def test_convert_unnamed_assistant_round_trip_does_not_synthesize_name(self):
+        """Test plain assistant messages round-trip without name='assistant'."""
+        assistant_msg = AssistantMessage(
+            id="assistant_plain_1",
+            role="assistant",
+            content="Plain assistant response.",
+        )
+
+        adk_event = convert_ag_ui_messages_to_adk([assistant_msg])[0]
+        round_trip_message = convert_adk_event_to_ag_ui_message(adk_event)
+
+        assert adk_event.author == "model"
+        assert isinstance(round_trip_message, AssistantMessage)
+        assert round_trip_message.name is None
 
     def test_convert_assistant_message_with_tool_calls(self):
         """Test converting an AssistantMessage with tool calls."""
@@ -216,7 +454,15 @@ class TestConvertAGUIMessagesToADK:
         assert func_part.function_call.args == {"expression": "2 + 2"}
 
     def test_convert_tool_message(self):
-        """Test converting a ToolMessage to ADK event."""
+        """Test the fallback path: a ToolMessage with no prior AssistantMessage
+        in the same batch falls back to using tool_call_id as the
+        FunctionResponse.name. Preserves backwards-compatible behaviour for
+        malformed inputs / orphan tool messages.
+
+        For the corrected round-trip path (AssistantMessage with the matching
+        tool_call present in the batch), see
+        `test_tool_message_uses_function_name_from_prior_assistant_call`.
+        """
         tool_msg = ToolMessage(
             id="tool_1",
             role="tool",
@@ -233,9 +479,142 @@ class TestConvertAGUIMessagesToADK:
         assert event.content.role == "function"
 
         func_response = event.content.parts[0].function_response
+        # Fallback: no prior AssistantMessage with the matching tool_call.id
+        # in this batch, so the converter degrades gracefully to using the
+        # tool_call_id as the function name. Gemini will not be able to
+        # correlate the response back to a call by name in this case, but at
+        # least the conversion doesn't crash.
         assert func_response.name == "call_123"
         assert func_response.id == "call_123"
         assert func_response.response == {"result": '{"temperature": 72, "condition": "sunny"}'}
+
+    def test_tool_message_uses_function_name_from_prior_assistant_call(self):
+        """When a ToolMessage is preceded by an AssistantMessage carrying a
+        tool_call with the matching id, FunctionResponse.name MUST be set to
+        the called function's name (not the tool_call_id).
+
+        Gemini's wire contract is that FunctionResponse.name equals the
+        originating FunctionCall.name; downstream consumers that recover the
+        call id by name (real Gemini's session correlator, the aimock
+        gemini->openai translator, etc.) hit a UUID-shaped name with no
+        matching prior call when this is wrong, silently breaking the
+        round-trip.
+        """
+        assistant_msg = AssistantMessage(
+            id="assistant_1",
+            role="assistant",
+            tool_calls=[
+                ToolCall(
+                    id="call_weather_001",
+                    type="function",
+                    function=FunctionCall(
+                        name="get_weather",
+                        arguments='{"city": "Tokyo"}',
+                    ),
+                )
+            ],
+        )
+        tool_msg = ToolMessage(
+            id="tool_1",
+            role="tool",
+            content='{"temperature": 72, "condition": "sunny"}',
+            tool_call_id="call_weather_001",
+        )
+
+        adk_events = convert_ag_ui_messages_to_adk([assistant_msg, tool_msg])
+
+        # Two events: assistant turn + tool turn.
+        assert len(adk_events) == 2
+        tool_event = adk_events[1]
+        assert tool_event.content.role == "function"
+        func_response = tool_event.content.parts[0].function_response
+        # Critical: name = function name, NOT tool_call_id.
+        assert func_response.name == "get_weather"
+        # id continues to carry the tool_call_id for clients that key on it.
+        assert func_response.id == "call_weather_001"
+
+    def test_multiple_tool_messages_each_use_their_own_function_name(self):
+        """Each ToolMessage looks up its OWN function name by tool_call_id —
+        not a shared / first-found name. Exercises the per-id mapping when an
+        AssistantMessage carries multiple tool_calls and multiple ToolMessages
+        follow in any order.
+        """
+        assistant_msg = AssistantMessage(
+            id="assistant_1",
+            role="assistant",
+            tool_calls=[
+                ToolCall(
+                    id="call_a",
+                    type="function",
+                    function=FunctionCall(name="get_weather", arguments="{}"),
+                ),
+                ToolCall(
+                    id="call_b",
+                    type="function",
+                    function=FunctionCall(name="get_time", arguments="{}"),
+                ),
+            ],
+        )
+        # Tool messages out of declaration order — id-based lookup must still
+        # resolve each to the correct function name.
+        tool_b = ToolMessage(
+            id="tool_b",
+            role="tool",
+            content="2pm",
+            tool_call_id="call_b",
+        )
+        tool_a = ToolMessage(
+            id="tool_a",
+            role="tool",
+            content="sunny",
+            tool_call_id="call_a",
+        )
+
+        adk_events = convert_ag_ui_messages_to_adk([assistant_msg, tool_b, tool_a])
+
+        # 3 events total; events[1] is tool_b, events[2] is tool_a.
+        b_response = adk_events[1].content.parts[0].function_response
+        a_response = adk_events[2].content.parts[0].function_response
+        assert b_response.name == "get_time"
+        assert b_response.id == "call_b"
+        assert a_response.name == "get_weather"
+        assert a_response.id == "call_a"
+
+    def test_tool_message_lookup_falls_back_when_id_unknown(self):
+        """If a ToolMessage's tool_call_id doesn't match any prior
+        AssistantMessage's tool_call in the same batch, the converter falls
+        back to the pre-fix behaviour (name = tool_call_id) rather than
+        crashing. Exercises the same defensive guard as
+        `test_convert_tool_message` but with a prior AssistantMessage that
+        contains an UNRELATED tool_call — proving the lookup is keyed on id,
+        not just presence.
+        """
+        assistant_msg = AssistantMessage(
+            id="assistant_1",
+            role="assistant",
+            tool_calls=[
+                ToolCall(
+                    id="call_known",
+                    type="function",
+                    function=FunctionCall(name="get_weather", arguments="{}"),
+                )
+            ],
+        )
+        # ToolMessage's tool_call_id references a DIFFERENT id (the
+        # AssistantMessage's tool_call.id is "call_known", not "call_orphan").
+        tool_msg = ToolMessage(
+            id="tool_orphan",
+            role="tool",
+            content="orphan result",
+            tool_call_id="call_orphan",
+        )
+
+        adk_events = convert_ag_ui_messages_to_adk([assistant_msg, tool_msg])
+
+        orphan_response = adk_events[1].content.parts[0].function_response
+        # Falls back to tool_call_id since no matching prior call.
+        assert orphan_response.name == "call_orphan"
+        assert orphan_response.id == "call_orphan"
 
     def test_convert_tool_message_with_dict_content(self):
         """Test converting a ToolMessage with dict content (not JSON string)."""
@@ -372,7 +751,28 @@ class TestConvertADKEventToAGUIMessage:
         assert result.id == "assistant_1"
         assert result.role == "assistant"
         assert result.content == "I can help you with that."
+        assert result.name is None
         assert result.tool_calls is None
+
+    def test_convert_agent_author_to_assistant_name(self):
+        """Test preserving concrete ADK agent authors as AssistantMessage.name."""
+        mock_event = MagicMock()
+        mock_event.id = "assistant_agent_1"
+        mock_event.author = "subagent1"
+        mock_event.content = MagicMock()
+
+        mock_part = MagicMock()
+        mock_part.text = "Handled by subagent1."
+        mock_part.function_call = None
+        mock_event.content.parts = [mock_part]
+
+        result = convert_adk_event_to_ag_ui_message(mock_event)
+
+        assert isinstance(result, AssistantMessage)
+        assert result.id == "assistant_agent_1"
+        assert result.role == "assistant"
+        assert result.name == "subagent1"
+        assert result.content == "Handled by subagent1."
 
     def test_convert_assistant_event_with_function_call(self):
         """Test converting assistant event with function call."""
@@ -393,13 +793,14 @@ class TestConvertADKEventToAGUIMessage:
 
         assert isinstance(result, AssistantMessage)
         assert result.content is None
+        assert result.name is None
         assert len(result.tool_calls) == 1
 
         tool_call = result.tool_calls[0]
         assert tool_call.id == "call_123"
         assert tool_call.type == "function"
         assert tool_call.function.name == "get_weather"
-        assert tool_call.function.arguments == '{"location": "Boston"}'
+        assert json.loads(tool_call.function.arguments) == {"location": "Boston"}
 
     def test_convert_assistant_event_with_text_and_function_call(self):
         """Test converting assistant event with both text and function call."""

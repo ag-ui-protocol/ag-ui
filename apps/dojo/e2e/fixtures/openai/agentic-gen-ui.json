@@ -1,0 +1,32 @@
+{
+  "fixtures": [
+    {
+      "match": { "userMessage": "plan to make brownies" },
+      "response": {
+        "toolCalls": [
+          {
+            "name": "generate_task_steps_generative_ui",
+            "arguments": "{\"steps\":[{\"description\":\"Gather ingredients: cocoa, butter, eggs, sugar, flour\",\"status\":\"pending\"},{\"description\":\"Melt butter and mix with cocoa and sugar\",\"status\":\"pending\"},{\"description\":\"Add eggs and flour, mix until smooth\",\"status\":\"pending\"},{\"description\":\"Pour into greased pan and bake at 350F for 25 minutes\",\"status\":\"pending\"}]}"
+          }
+        ]
+      }
+    },
+    {
+      "match": { "userMessage": "Go to Mars" },
+      "response": {
+        "toolCalls": [
+          {
+            "name": "generate_task_steps_generative_ui",
+            "arguments": "{\"steps\":[{\"description\":\"Design and build a spacecraft capable of Mars transit\",\"status\":\"pending\"},{\"description\":\"Assemble crew and run mission simulations\",\"status\":\"pending\"},{\"description\":\"Launch from Earth and navigate to Mars\",\"status\":\"pending\"},{\"description\":\"Land on Mars surface and establish base camp\",\"status\":\"pending\"}]}"
+          }
+        ]
+      }
+    },
+    {
+      "match": { "userMessage": "help" },
+      "response": {
+        "content": "Hello! I can help you with anything you need. Just tell me what you'd like to accomplish and I'll create a plan for you."
+      }
+    }
+  ]
+}

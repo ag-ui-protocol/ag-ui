@@ -9,6 +9,7 @@ import type { NextRequest } from "next/server";
 import type { AbstractAgent } from "@ag-ui/client";
 import { agentsIntegrations } from "@/agents";
 import type { IntegrationId } from "@/menu";
+ 
 
 type RouteParams = {
   params: Promise<{
@@ -45,7 +46,7 @@ async function createHandler(integrationId: string): Promise<any> {
   // Fallback to basic BuiltInAgent if no agents found
   if (Object.keys(agents).length === 0) {
     agents = {
-      default: new BuiltInAgent({ model: "openai/gpt-4o" }) as unknown as AbstractAgent,
+      default: new BuiltInAgent({ model: "openai/gpt-5-mini" }) as unknown as AbstractAgent,
     };
   } else {
     // Also set the first agent as "default" for backwards compatibility

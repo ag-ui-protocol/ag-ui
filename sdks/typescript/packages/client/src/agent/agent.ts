@@ -1,27 +1,45 @@
 import { defaultApplyEvents } from "@/apply/default";
-import { Message, State, RunAgentInput, BaseEvent, ToolCall, AssistantMessage } from "@ag-ui/core";
+import {
+  Message,
+  State,
+  RunAgentInput,
+  BaseEvent,
+  ToolCall,
+  AssistantMessage,
+  AgentCapabilities,
+  Interrupt,
+} from "@ag-ui/core";
 
-import { AgentConfig, RunAgentParameters } from "./types";
+import {
+  AgentConfig,
+  AgentDebugConfig,
+  RunAgentParameters,
+  ResolvedAgentDebugConfig,
+  resolveAgentDebugConfig,
+} from "./types";
+import { DebugLogger, createDebugLogger } from "@/debug-logger";
 import { v4 as uuidv4 } from "uuid";
 import { structuredClone_ } from "@/utils";
 import { compareVersions } from "compare-versions";
 import { catchError, map, tap } from "rxjs/operators";
 import { finalize } from "rxjs/operators";
 import { takeUntil } from "rxjs/operators";
-import { pipe, Observable, from, of, EMPTY, Subject } from "rxjs";
+import { pipe, Observable, from, of, EMPTY, Subject, defer } from "rxjs";
 import { verifyEvents } from "@/verify";
 import { convertToLegacyEvents } from "@/legacy/convert";
 import { LegacyRuntimeProtocolEvent } from "@/legacy/types";
 import { lastValueFrom } from "rxjs";
 import { transformChunks } from "@/chunks";
 import { AgentStateMutation, AgentSubscriber, runSubscribersWithMutation } from "./subscriber";
-import { AGUIConnectNotImplementedError } from "@ag-ui/core";
+import { AGUIConnectNotImplementedError, AGUIError } from "@ag-ui/core";
+import { isInterruptExpired } from "@/interrupts";
 import {
   Middleware,
   MiddlewareFunction,
   FunctionMiddleware,
   BackwardCompatibility_0_0_39,
   BackwardCompatibility_0_0_45,
+  BackwardCompatibility_0_0_47,
 } from "@/middleware";
 import packageJson from "../../package.json";
 
@@ -36,9 +54,14 @@ export abstract class AbstractAgent {
   public threadId: string;
   public messages: Message[];
   public state: State;
-  public debug: boolean = false;
+  private _debug: ResolvedAgentDebugConfig;
+  private _debugLogger: DebugLogger | undefined;
   public subscribers: AgentSubscriber[] = [];
   public isRunning: boolean = false;
+  /** Interrupts emitted by the most recent run that have not yet been resolved.
+   *  Populated when RUN_FINISHED arrives with outcome.type === "interrupt".
+   *  Cleared when a subsequent run completes successfully. */
+  public pendingInterrupts: Interrupt[] = [];
   private middlewares: Middleware[] = [];
   // Emits to immediately detach from the active run (stop processing its stream)
   private activeRunDetach$?: Subject<void>;
@@ -46,6 +69,29 @@ export abstract class AbstractAgent {
 
   get maxVersion() {
     return packageJson.version;
+  }
+
+  get debug(): ResolvedAgentDebugConfig {
+    return this._debug;
+  }
+
+  set debug(value: AgentDebugConfig | ResolvedAgentDebugConfig) {
+    this._debug = resolveAgentDebugConfig(value as AgentDebugConfig);
+    this._debugLogger = createDebugLogger(this._debug);
+  }
+
+  get debugLogger(): DebugLogger | undefined {
+    return this._debugLogger;
+  }
+
+  set debugLogger(value: DebugLogger | boolean | undefined) {
+    if (typeof value === "boolean") {
+      this._debugLogger = value
+        ? createDebugLogger(resolveAgentDebugConfig(true))
+        : undefined;
+    } else {
+      this._debugLogger = value;
+    }
   }
 
   constructor({
@@ -61,7 +107,8 @@ export abstract class AbstractAgent {
     this.threadId = threadId ?? uuidv4();
     this.messages = structuredClone_(initialMessages ?? []);
     this.state = structuredClone_(initialState ?? {});
-    this.debug = debug ?? false;
+    this._debug = resolveAgentDebugConfig(debug);
+    this._debugLogger = createDebugLogger(this._debug);
 
     if (compareVersions(this.maxVersion, "0.0.39") <= 0) {
       this.middlewares.unshift(new BackwardCompatibility_0_0_39());
@@ -72,6 +119,13 @@ export abstract class AbstractAgent {
     if (compareVersions(this.maxVersion, "0.0.45") <= 0) {
       this.middlewares.unshift(new BackwardCompatibility_0_0_45());
     }
+
+    // Auto-insert BackwardCompatibility_0_0_47 for backward compatibility
+    // with legacy BinaryInputContent (maps to dedicated image/audio/video/document types)
+    if (compareVersions(this.maxVersion, "0.0.47") <= 0) {
+      this.middlewares.unshift(new BackwardCompatibility_0_0_47());
+    }
+
   }
 
   public subscribe(subscriber: AgentSubscriber) {
@@ -84,6 +138,12 @@ export abstract class AbstractAgent {
   }
 
   abstract run(input: RunAgentInput): Observable<BaseEvent>;
+
+  /**
+   * Returns the agent's current capabilities.
+   * Optional — subclasses implement this to advertise what they support.
+   */
+  getCapabilities?(): Promise<AgentCapabilities>;
 
   public use(...middlewares: (Middleware | MiddlewareFunction)[]): this {
     const normalizedMiddlewares = middlewares.map((middleware) =>
@@ -101,13 +161,21 @@ export abstract class AbstractAgent {
       this.isRunning = true;
       this.agentId = this.agentId ?? uuidv4();
       const input = this.prepareRunAgentInput(parameters);
+
+      this.debugLogger?.lifecycle("LIFECYCLE", "Run started:", {
+        agentId: this.agentId,
+        threadId: this.threadId,
+      });
+
       let result: any = undefined;
       const currentMessageIds = new Set(this.messages.map((message) => message.id));
 
       const subscribers: AgentSubscriber[] = [
         {
           onRunFinishedEvent: (params) => {
-            result = params.result;
+            if (params.outcome === "success") {
+              result = params.result;
+            }
           },
         },
         ...this.subscribers,
@@ -134,23 +202,37 @@ export abstract class AbstractAgent {
             (nextAgent: AbstractAgent, middleware) =>
               ({
                 run: (i: RunAgentInput) => middleware.run(i, nextAgent),
+                get messages() {
+                  return nextAgent.messages;
+                },
+                get state() {
+                  return nextAgent.state;
+                },
               }) as AbstractAgent,
             this, // Original agent is the final 'next'
           );
 
           return chainedAgent.run(input);
         },
-        transformChunks(this.debug),
-        verifyEvents(this.debug),
+        transformChunks(this.debugLogger),
+        verifyEvents(this.debugLogger),
         // Stop processing immediately when this run is detached
         (source$) => source$.pipe(takeUntil(this.activeRunDetach$!)),
         (source$) => this.apply(input, source$, subscribers),
         (source$) => this.processApplyEvents(input, source$, subscribers),
         catchError((error) => {
+          this.debugLogger?.lifecycle("LIFECYCLE", "Run errored:", {
+            agentId: this.agentId,
+            error: error instanceof Error ? error.message : String(error),
+          });
           this.isRunning = false;
           return this.onError(input, error, subscribers);
         }),
         finalize(() => {
+          this.debugLogger?.lifecycle("LIFECYCLE", "Run finished:", {
+            agentId: this.agentId,
+            threadId: this.threadId,
+          });
           this.isRunning = false;
           void this.onFinalize(input, subscribers);
           resolveActiveRunCompletion?.();
@@ -187,7 +269,9 @@ export abstract class AbstractAgent {
       const subscribers: AgentSubscriber[] = [
         {
           onRunFinishedEvent: (params) => {
-            result = params.result;
+            if (params.outcome === "success") {
+              result = params.result;
+            }
           },
         },
         ...this.subscribers,
@@ -204,9 +288,9 @@ export abstract class AbstractAgent {
       });
 
       const pipeline = pipe(
-        () => this.connect(input),
-        transformChunks(this.debug),
-        verifyEvents(this.debug),
+        () => defer(() => this.connect(input)),
+        transformChunks(this.debugLogger),
+        verifyEvents(this.debugLogger),
         // Stop processing immediately when this run is detached
         (source$) => source$.pipe(takeUntil(this.activeRunDetach$!)),
         (source$) => this.apply(input, source$, subscribers),
@@ -228,7 +312,9 @@ export abstract class AbstractAgent {
         }),
       );
 
-      await lastValueFrom(pipeline(of(null))); // wait for stream completion before toggling isRunning
+      // defaultValue prevents EmptyError when catchError returns EMPTY
+      // (e.g. ConnectNotImplementedError path)
+      await lastValueFrom(pipeline(of(null)), { defaultValue: undefined });
       const newMessages = structuredClone_(this.messages).filter(
         (message: Message) => !currentMessageIds.has(message.id),
       );
@@ -255,7 +341,7 @@ export abstract class AbstractAgent {
     events$: Observable<BaseEvent>,
     subscribers: AgentSubscriber[],
   ): Observable<AgentStateMutation> {
-    return defaultApplyEvents(input, events$, this, subscribers);
+    return defaultApplyEvents(input, events$, this, subscribers, this.debugLogger);
   }
 
   protected processApplyEvents(
@@ -303,10 +389,28 @@ export abstract class AbstractAgent {
       forwardedProps: structuredClone_(parameters?.forwardedProps ?? {}),
       state: structuredClone_(this.state),
       messages: messagesWithoutActivity,
+      ...(parameters?.resume !== undefined ? { resume: structuredClone_(parameters.resume) } : {}),
     };
   }
 
   protected async onInitialize(input: RunAgentInput, subscribers: AgentSubscriber[]) {
+    if (this.pendingInterrupts.length > 0) {
+      const resumeIds = new Set((input.resume ?? []).map((r) => r.interruptId));
+      const uncovered = this.pendingInterrupts
+        .map((i) => i.id)
+        .filter((id) => !resumeIds.has(id));
+      if (uncovered.length > 0) {
+        throw new AGUIError(
+          `Thread has ${uncovered.length} pending interrupt(s) not addressed by resume: ${uncovered.join(", ")}`,
+        );
+      }
+      for (const i of this.pendingInterrupts) {
+        if (isInterruptExpired(i)) {
+          throw new AGUIError(`Interrupt ${i.id} expired at ${i.expiresAt}`);
+        }
+      }
+    }
+
     const onRunInitializedMutation = await runSubscribersWithMutation(
       subscribers,
       this.messages,
@@ -383,8 +487,21 @@ export abstract class AbstractAgent {
         }
 
         if (mutation.stopPropagation !== true) {
-          console.error("Agent execution failed:", error);
-          throw error;
+          // Silently ignore abort errors (e.g. from navigation during active requests).
+          // AbortController.abort(reason) can produce:
+          //   - A DOMException with name "AbortError"
+          //   - The reason value itself as a plain string (e.g. "component unmounted")
+          const errStr = String(error);
+          const isAbort =
+            error.name === "AbortError" ||
+            error.message === "Fetch is aborted" ||
+            error.message === "signal is aborted without reason" ||
+            error.message === "component unmounted" ||
+            errStr === "component unmounted";
+          if (!isAbort) {
+            console.error("Agent execution failed:", error);
+            throw error;
+          }
         }
 
         // Return an empty mutation instead of null to prevent EmptyError
@@ -439,10 +556,12 @@ export abstract class AbstractAgent {
     cloned.threadId = this.threadId;
     cloned.messages = structuredClone_(this.messages);
     cloned.state = structuredClone_(this.state);
-    cloned.debug = this.debug;
+    cloned._debug = this._debug;
+    cloned._debugLogger = this._debugLogger;
     cloned.isRunning = this.isRunning;
     cloned.subscribers = [...this.subscribers];
     cloned.middlewares = [...this.middlewares];
+    cloned.pendingInterrupts = structuredClone_(this.pendingInterrupts);
 
     return cloned;
   }
@@ -582,6 +701,12 @@ export abstract class AbstractAgent {
         (nextAgent: AbstractAgent, middleware) =>
           ({
             run: (i: RunAgentInput) => middleware.run(i, nextAgent),
+            get messages() {
+              return nextAgent.messages;
+            },
+            get state() {
+              return nextAgent.state;
+            },
           }) as AbstractAgent,
         this,
       );
@@ -590,15 +715,13 @@ export abstract class AbstractAgent {
     })();
 
     return runObservable.pipe(
-      transformChunks(this.debug),
-      verifyEvents(this.debug),
+      transformChunks(this.debugLogger),
+      verifyEvents(this.debugLogger),
       convertToLegacyEvents(this.threadId, input.runId, this.agentId),
       (events$: Observable<LegacyRuntimeProtocolEvent>) => {
         return events$.pipe(
           map((event) => {
-            if (this.debug) {
-              console.debug("[LEGACY]:", JSON.stringify(event));
-            }
+            this.debugLogger?.event("LEGACY", "Event:", event, { type: event.type });
             return event;
           }),
         );

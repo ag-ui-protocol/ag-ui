@@ -1,5 +1,6 @@
 import {
   BaseEvent,
+  Interrupt,
   Message,
   RunAgentInput,
   RunErrorEvent,
@@ -41,8 +42,11 @@ export interface AgentStateMutation {
 }
 
 export interface AgentSubscriberParams {
-  messages: Message[];
-  state: State;
+  messages: ReadonlyArray<Readonly<Message>>;
+  // NOTE: State resolves to `any` at the type level (z.infer<typeof z.any()>), so Readonly<State>
+  // provides no compile-time mutation protection. Runtime enforcement via deepFreeze in
+  // dev/test mode is the only guard against in-place mutation of state.
+  state: Readonly<State>;
   agent: AbstractAgent;
   input: RunAgentInput;
 }
@@ -71,7 +75,11 @@ export interface AgentSubscriber {
     params: { event: RunStartedEvent } & AgentSubscriberParams,
   ): MaybePromise<AgentStateMutation | void>;
   onRunFinishedEvent?(
-    params: { event: RunFinishedEvent; result?: any } & AgentSubscriberParams,
+    params: (
+      | { event: RunFinishedEvent; outcome: "success"; result?: unknown }
+      | { event: RunFinishedEvent; outcome: "interrupt"; interrupts: Interrupt[] }
+    ) &
+      AgentSubscriberParams,
   ): MaybePromise<AgentStateMutation | void>;
   onRunErrorEvent?(
     params: { event: RunErrorEvent } & AgentSubscriberParams,
@@ -205,41 +213,140 @@ export interface AgentSubscriber {
   ): MaybePromise<void>;
 }
 
+function deepFreeze<T>(obj: T): T {
+  Object.freeze(obj);
+  if (obj !== null && typeof obj === "object") {
+    for (const value of Object.values(obj)) {
+      if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
+        deepFreeze(value);
+      }
+    }
+  }
+  return obj;
+}
+
+// Above this many string characters across messages+state, the dev-only
+// clone+deepFreeze guard is skipped. That guard exists to surface accidental
+// in-place mutation during development — it is NOT required for correctness.
+// Paying a full recursive structuredClone + deepFreeze of the entire messages
+// array AND state object on every streamed event is what exhausts the renderer
+// heap when tool-call arguments stream large payloads (V8 fatal:
+// "JavaScript heap out of memory" from structuredClone).
+const DEV_FREEZE_CHAR_LIMIT = 512 * 1024;
+
+// Cheap, bounded size probe: returns true as soon as the combined string length
+// of messages+state (counting both string values AND object key names, since
+// keys also contribute to clone cost) exceeds `limit`. Does NOT recursively
+// structuredClone or materialize copies — only a bounded iterative traversal
+// stack plus a visited-set guard, so it is safe for arbitrarily nested or
+// cyclic structures. (`State` is typed `any`, so cycles are possible.)
+function payloadExceeds(messages: unknown, state: unknown, limit: number): boolean {
+  let chars = 0;
+  const stack: unknown[] = [messages, state];
+  const seen = new WeakSet<object>();
+  while (stack.length > 0) {
+    const value = stack.pop();
+    if (typeof value === "string") {
+      chars += value.length;
+      if (chars > limit) return true;
+    } else if (value !== null && typeof value === "object") {
+      if (seen.has(value as object)) continue;
+      seen.add(value as object);
+      if (Array.isArray(value)) {
+        for (let i = 0; i < value.length; i++) stack.push(value[i]);
+      } else {
+        // Own enumerable keys only — avoids walking the prototype chain and
+        // triggering inherited getters (matches deepFreeze's Object.values).
+        const keys = Object.keys(value as Record<string, unknown>);
+        for (let i = 0; i < keys.length; i++) {
+          const key = keys[i];
+          // Key names contribute to clone cost too; count them as we go.
+          chars += key.length;
+          if (chars > limit) return true;
+          stack.push((value as Record<string, unknown>)[key]);
+        }
+      }
+    }
+  }
+  return false;
+}
+
 export async function runSubscribersWithMutation(
   subscribers: AgentSubscriber[],
   initialMessages: Message[],
   initialState: State,
   executor: (
     subscriber: AgentSubscriber,
-    messages: Message[],
-    state: State,
+    messages: ReadonlyArray<Readonly<Message>>,
+    state: Readonly<State>,
   ) => MaybePromise<AgentStateMutation | void>,
 ): Promise<AgentStateMutation> {
-  let messages: Message[] = initialMessages;
-  let state: State = initialState;
+  const hasProcess = typeof process !== "undefined" && typeof process.env !== "undefined";
+  const isTestEnvironment =
+    hasProcess && (process.env.NODE_ENV === "test" || Boolean(process.env.VITEST_WORKER_ID));
+  const isDev =
+    hasProcess &&
+    (process.env.NODE_ENV === "development" ||
+      process.env.NODE_ENV === "test" ||
+      Boolean(process.env.VITEST_WORKER_ID));
+
+  // The dev-only clone+deepFreeze guard (which surfaces accidental in-place
+  // mutation) is the dominant per-event allocation. Skip it in production, and
+  // in dev when the payload is large — otherwise streaming large tool-call
+  // arguments deep-clones the whole messages+state on every event and exhausts
+  // the heap (V8 fatal: "JavaScript heap out of memory" from structuredClone).
+  let freezeInputs = isDev && !payloadExceeds(initialMessages, initialState, DEV_FREEZE_CHAR_LIMIT);
+
+  // Only the freeze path needs an isolated baseline copy. Otherwise pass the
+  // inputs through and lazily clone only when a subscriber actually returns a
+  // mutation — so the common "no mutation" event costs zero clones.
+  let messages: Message[] = freezeInputs ? structuredClone_(initialMessages) : initialMessages;
+  let state: State = freezeInputs ? structuredClone_(initialState) : initialState;
+  let messagesMutated = false;
+  let stateMutated = false;
 
   let stopPropagation: boolean | undefined = undefined;
 
   for (const subscriber of subscribers) {
     try {
-      const mutation = await executor(
-        subscriber,
-        structuredClone_(messages),
-        structuredClone_(state),
-      );
+      // Subscribers receive shared references and must not mutate them in-place.
+      // Mutations should only be communicated via the return value.
+      // In dev/test mode (small payloads): deep-freeze inputs so accidental
+      // in-place mutations surface as TypeErrors immediately.
+      if (freezeInputs) {
+        deepFreeze(messages);
+        deepFreeze(state);
+      }
+      const mutation = await executor(subscriber, messages, state);
 
       if (mutation === undefined) {
         // Nothing returned – keep going
         continue;
       }
 
-      // Merge messages/state so next subscriber sees latest view
-      if (mutation.messages !== undefined) {
-        messages = mutation.messages;
+      // Replace with a defensive copy of the subscriber's mutation,
+      // but skip if the subscriber returned the same reference (no-op).
+      let payloadChanged = false;
+      if (mutation.messages !== undefined && mutation.messages !== messages) {
+        messages = structuredClone_(mutation.messages);
+        messagesMutated = true;
+        payloadChanged = true;
       }
 
-      if (mutation.state !== undefined) {
-        state = mutation.state;
+      if (mutation.state !== undefined && mutation.state !== state) {
+        state = structuredClone_(mutation.state);
+        stateMutated = true;
+        payloadChanged = true;
+      }
+
+      // If a subscriber's mutation has grown the payload past the limit, drop
+      // the freeze guard for the remaining iterations. Otherwise we'd pay a
+      // full deepFreeze + final unfreeze-clone of the now-huge structure on
+      // every later subscriber — exactly the cost this PR removes.
+      if (freezeInputs && payloadChanged) {
+        if (payloadExceeds(messages, state, DEV_FREEZE_CHAR_LIMIT)) {
+          freezeInputs = false;
+        }
       }
 
       stopPropagation = mutation.stopPropagation;
@@ -248,21 +355,36 @@ export async function runSubscribersWithMutation(
         break;
       }
     } catch (error) {
-      // Log subscriber errors but continue processing (silence during tests)
-      const isTestEnvironment =
-        process.env.NODE_ENV === "test" || process.env.VITEST_WORKER_ID !== undefined;
-
-      if (!isTestEnvironment) {
+      if (isDev && error instanceof TypeError) {
+        // Likely a freeze violation: subscriber attempted to mutate frozen inputs in-place.
+        // In test environments, re-throw so tests fail fast and the violation is visible.
+        // In development (non-test), log a specific message to distinguish freeze violations
+        // from ordinary subscriber errors.
+        if (isTestEnvironment) {
+          throw error;
+        }
+        console.error(
+          "AG-UI: Subscriber attempted to mutate frozen inputs in-place. " +
+            "Return mutations via AgentStateMutation instead of mutating directly.",
+          error,
+        );
+      } else if (!isTestEnvironment) {
         console.error("Subscriber error:", error);
       }
-      // Continue to next subscriber unless we want to stop propagation
+      // Skip this subscriber's mutation and continue
       continue;
     }
   }
 
+  // A mutated copy may have been frozen in-place on a later subscriber pass;
+  // clone it before returning so callers receive a mutable copy.
   return {
-    ...(JSON.stringify(messages) !== JSON.stringify(initialMessages) ? { messages } : {}),
-    ...(JSON.stringify(state) !== JSON.stringify(initialState) ? { state } : {}),
+    ...(messagesMutated
+      ? { messages: Object.isFrozen(messages) ? structuredClone_(messages) : messages }
+      : {}),
+    ...(stateMutated
+      ? { state: Object.isFrozen(state) ? structuredClone_(state) : state }
+      : {}),
     ...(stopPropagation !== undefined ? { stopPropagation } : {}),
   };
 }

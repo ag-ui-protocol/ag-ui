@@ -1,6 +1,10 @@
 import { chromium, FullConfig } from "@playwright/test";
+import { setupLLMock } from "./aimock-setup";
 
 async function globalSetup(config: FullConfig) {
+  // Start the LLMock server before any tests run
+  await setupLLMock();
+
   console.log("🧹 Setting up test isolation...");
 
   // Launch browser to clear any persistent state
@@ -11,30 +15,24 @@ async function globalSetup(config: FullConfig) {
   await context.clearCookies();
   await context.clearPermissions();
 
-  // Clear any cached data
-  const page = await context.newPage();
-  await page.evaluate(() => {
-    // Clear all storage types
-    localStorage.clear();
-    sessionStorage.clear();
-
-    // Clear IndexedDB
-    if (window.indexedDB) {
-      indexedDB.deleteDatabase("test-db");
+  // Try to clear cached data — requires navigating to a real page first
+  // (about:blank doesn't allow localStorage access)
+  const baseUrl = process.env.BASE_URL;
+  if (baseUrl) {
+    const page = await context.newPage();
+    try {
+      await page.goto(baseUrl, { timeout: 10_000 });
+      await page.evaluate(() => {
+        localStorage.clear();
+        sessionStorage.clear();
+        if (window.indexedDB) {
+          indexedDB.deleteDatabase("test-db");
+        }
+      });
+    } catch {
+      // Page may not be ready yet — individual tests handle their own cleanup
     }
-
-    // Clear WebSQL (if supported)
-    if (window.openDatabase) {
-      try {
-        const db = window.openDatabase("", "", "", "");
-        db.transaction((tx) => {
-          tx.executeSql("DELETE FROM test_table");
-        });
-      } catch (e) {
-        // Ignore WebSQL errors
-      }
-    }
-  });
+  }
 
   await browser.close();
 

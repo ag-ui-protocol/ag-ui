@@ -125,6 +125,18 @@ agent.use(loggingMiddleware, authMiddleware, filterMiddleware);
 
 Middleware executes in the order added, with each wrapping the next. Middleware is applied in `runAgent()`; `connectAgent()` currently calls `connect()` directly. See the [Middleware documentation](/sdk/js/client/middleware) for more details.
 
+### getCapabilities()
+
+Returns the agent's current capabilities. Optional — subclasses implement this
+to advertise what they support. Returns `undefined` if not implemented.
+
+```typescript
+getCapabilities?(): Promise<AgentCapabilities>
+```
+
+See [Capabilities](/concepts/capabilities) for the full `AgentCapabilities`
+type definition and usage patterns.
+
 ### abortRun()
 
 Cancels the current agent execution.

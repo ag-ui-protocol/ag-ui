@@ -4,15 +4,24 @@ export type Feature =
   | "agentic_chat"
   | "agentic_generative_ui"
   | "human_in_the_loop"
+  | "interrupt"
   | "predictive_state_updates"
   | "shared_state"
   | "tool_based_generative_ui"
   | "backend_tool_rendering"
   | "agentic_chat_reasoning"
+  | "agentic_chat_multimodal"
   | "subgraphs"
   | "a2a_chat"
   | "vnext_chat"
-  | "a2ui_chat";
+  | "v1_agentic_chat"
+  | "a2ui_fixed_schema"
+  | "a2ui_dynamic_schema"
+  | "a2ui_advanced"
+  | "a2ui_recovery"
+  | "crew_chat"
+  | "error_flow"
+  | "background_agents";
 
 export interface MenuIntegrationConfig {
   id: string;
@@ -25,7 +34,7 @@ export interface MenuIntegrationConfig {
  */
 type IntegrationFeature<
   T extends readonly MenuIntegrationConfig[],
-  Id extends string
+  Id extends string,
 > = Extract<T[number], { id: Id }>["features"][number];
 
 /** Type representing all valid integration IDs */

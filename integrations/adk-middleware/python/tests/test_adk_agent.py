@@ -415,14 +415,37 @@ class TestADKAgent:
         async for event in adk_agent.run(sample_input):
             events.append(event)
 
-        # Should get RUN_STARTED, RUN_ERROR, and RUN_FINISHED
-        assert len(events) == 3
+        # Should get RUN_STARTED then RUN_ERROR, and NO trailing RUN_FINISHED.
+        # The AG-UI spec allows at most one terminal event per run; emitting
+        # RUN_FINISHED after RUN_ERROR makes @ag-ui/client's state machine throw
+        # ("The run has already errored"). See issue #1892.
+        assert len(events) == 2
         assert events[0].type == EventType.RUN_STARTED
         assert events[1].type == EventType.RUN_ERROR
-        assert events[2].type == EventType.RUN_FINISHED
         # Check that it's an error with meaningful content
         assert len(events[1].message) > 0
         assert events[1].code == 'BACKGROUND_EXECUTION_ERROR'
+
+    @pytest.mark.asyncio
+    async def test_errored_run_emits_single_terminal_event(self, adk_agent, sample_input):
+        """A run that errors mid-stream must emit exactly one terminal event.
+
+        Regression test for issue #1892: the background queue path emits
+        RUN_ERROR, after which the consumer loop must NOT fall through to its
+        unconditional RUN_FINISHED. Two terminal events violate the AG-UI spec
+        and are rejected by @ag-ui/client.
+        """
+        adk_agent._adk_agent.side_effect = Exception('boom mid-stream')
+
+        events = [event async for event in adk_agent.run(sample_input)]
+
+        terminal_types = [
+            e.type for e in events
+            if e.type in (EventType.RUN_FINISHED, EventType.RUN_ERROR)
+        ]
+        assert terminal_types == [EventType.RUN_ERROR], (
+            f"expected a single RUN_ERROR terminal event, got {terminal_types}"
+        )
 
     @pytest.mark.asyncio
     async def test_cleanup(self, adk_agent):
@@ -432,7 +455,7 @@ class TestADKAgent:
         mock_execution.cancel = AsyncMock()
 
         async with adk_agent._execution_lock:
-            adk_agent._active_executions["test_thread"] = mock_execution
+            adk_agent._active_executions[("test_thread", "test_user")] = mock_execution
 
         await adk_agent.close()
 
@@ -469,7 +492,7 @@ class TestADKAgent:
         captured_agent = None
         original_run_background = adk_agent._run_adk_in_background
 
-        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue, client_proxy_toolsets, tool_results=None, message_batch=None):
+        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue, client_proxy_toolsets, long_running_tool_ids=None, tool_results=None, message_batch=None):
             nonlocal captured_agent
             captured_agent = adk_agent
             # Just put a completion event in the queue and return
@@ -524,7 +547,7 @@ class TestADKAgent:
         captured_agent = None
         original_run_background = adk_agent._run_adk_in_background
 
-        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue, client_proxy_toolsets, tool_results=None, message_batch=None):
+        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue, client_proxy_toolsets, long_running_tool_ids=None, tool_results=None, message_batch=None):
             nonlocal captured_agent
             captured_agent = adk_agent
             # Just put a completion event in the queue and return
@@ -581,7 +604,7 @@ class TestADKAgent:
         captured_agent = None
         original_run_background = adk_agent._run_adk_in_background
 
-        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue, client_proxy_toolsets, tool_results=None, message_batch=None):
+        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue, client_proxy_toolsets, long_running_tool_ids=None, tool_results=None, message_batch=None):
             nonlocal captured_agent
             captured_agent = adk_agent
             # Just put a completion event in the queue and return
@@ -640,7 +663,7 @@ class TestADKAgent:
         captured_agent = None
         original_run_background = adk_agent._run_adk_in_background
 
-        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue, client_proxy_toolsets, tool_results=None, message_batch=None):
+        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue, client_proxy_toolsets, long_running_tool_ids=None, tool_results=None, message_batch=None):
             nonlocal captured_agent
             captured_agent = adk_agent
             # Just put a completion event in the queue and return
@@ -691,7 +714,7 @@ class TestADKAgent:
         # Mock the background execution to capture the agent
         captured_agent = None
 
-        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue, client_proxy_toolsets, tool_results=None, message_batch=None):
+        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue, client_proxy_toolsets, long_running_tool_ids=None, tool_results=None, message_batch=None):
             nonlocal captured_agent
             captured_agent = adk_agent
             await event_queue.put(None)
@@ -724,7 +747,7 @@ class TestADKAgent:
 
         captured_agent = None
 
-        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue, client_proxy_toolsets, tool_results=None, message_batch=None):
+        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue, client_proxy_toolsets, long_running_tool_ids=None, tool_results=None, message_batch=None):
             nonlocal captured_agent
             captured_agent = adk_agent
             await event_queue.put(None)
@@ -949,23 +972,265 @@ class TestADKAgent:
             assert agent_under_test.tools == []
             assert len(agent_under_test.sub_agents) == 2
 
-            # assert that the hello_agent has only the hello_tool via ClientProxyToolset
+            # AGUIToolset placeholders are replaced per-run by a
+            # ClientProxyToolset carrying the declared tool_filter, on the
+            # per-run agent copy (the originals are left untouched).
+
+            # hello_agent: AGUIToolset(hello_tool) -> ClientProxyToolset(hello_tool)
             assert agent_under_test.sub_agents[0].name == "hello_agent"
             assert len(agent_under_test.sub_agents[0].tools) == 1
-            assert isinstance(agent_under_test.sub_agents[0].tools[0], ClientProxyToolset)
-            assert agent_under_test.sub_agents[0].tools[0].tool_filter == ['hello_tool']
+            hello_toolset = agent_under_test.sub_agents[0].tools[0]
+            assert isinstance(hello_toolset, ClientProxyToolset)
+            assert hello_toolset.tool_filter == ['hello_tool']
 
-            # assert that the deep_agent has only the deep_tool via ClientProxyToolset
+            # deep_agent: AGUIToolset(deep_tool) -> ClientProxyToolset(deep_tool)
             assert agent_under_test.sub_agents[0].sub_agents[0].name == "deep_agent"
             assert len(agent_under_test.sub_agents[0].sub_agents[0].tools) == 1
-            assert isinstance(agent_under_test.sub_agents[0].sub_agents[0].tools[0], ClientProxyToolset)
-            assert agent_under_test.sub_agents[0].sub_agents[0].tools[0].tool_filter == ['deep_tool']
+            deep_toolset = agent_under_test.sub_agents[0].sub_agents[0].tools[0]
+            assert isinstance(deep_toolset, ClientProxyToolset)
+            assert deep_toolset.tool_filter == ['deep_tool']
 
-            # assert that the goodbye_agent has only the goodbye_tool via ClientProxyToolset
+            # goodbye_agent: AGUIToolset(goodbye_tool) -> ClientProxyToolset(goodbye_tool)
             assert agent_under_test.sub_agents[1].name == "goodbye_agent"
             assert len(agent_under_test.sub_agents[1].tools) == 1
-            assert isinstance(agent_under_test.sub_agents[1].tools[0], ClientProxyToolset)
-            assert agent_under_test.sub_agents[1].tools[0].tool_filter == ['goodbye_tool']
+            goodbye_toolset = agent_under_test.sub_agents[1].tools[0]
+            assert isinstance(goodbye_toolset, ClientProxyToolset)
+            assert goodbye_toolset.tool_filter == ['goodbye_tool']
+
+    @pytest.mark.asyncio
+    async def test_non_deepcopyable_tool_does_not_crash(self):
+        """Agents with non-deep-copyable tools (e.g. McpToolset) must not crash.
+
+        Regression test for https://github.com/ag-ui-protocol/ag-ui/issues/1264
+        """
+        import sys
+        from google.adk.tools.base_toolset import BaseToolset as ADKBaseToolset
+
+        class UnpicklableToolset(ADKBaseToolset):
+            """Mock toolset that holds an unpicklable attribute like McpToolset."""
+            def __init__(self):
+                super().__init__()
+                self.errlog = sys.stderr  # _io.TextIOWrapper – cannot be pickled
+
+            async def get_tools(self, readonly_context=None):
+                return []
+
+        unpicklable = UnpicklableToolset()
+
+        root_agent = Agent(
+            name="root_agent",
+            instruction="Root agent",
+            tools=[AGUIToolset(), unpicklable],
+        )
+
+        with patch.object(ADKAgent, "_run_adk_in_background") as submethod_mocked:
+            adk_agent = ADKAgent(
+                adk_agent=root_agent,
+                app_name="test_app",
+                user_id="test_user",
+                use_in_memory_services=True,
+            )
+            input = RunAgentInput(
+                thread_id="test_thread",
+                run_id="test_run",
+                messages=[
+                    UserMessage(id="msg_1", role="user", content="Hello")
+                ],
+                context=[],
+                state={},
+                tools=[],
+                forwarded_props={},
+            )
+            # Should not raise TypeError: cannot pickle 'TextIOWrapper' instances
+            async for e in adk_agent.run(input):
+                if not isinstance(e, RunStartedEvent):
+                    break
+
+            submethod_mocked.assert_called_once()
+            agent_under_test = submethod_mocked.call_args.kwargs['adk_agent']
+
+            # The AGUIToolset is replaced per-run by a ClientProxyToolset; the
+            # unpicklable toolset is preserved by reference (shared, not copied),
+            # so both tools are present and no pickling occurred.
+            assert len(agent_under_test.tools) == 2
+            assert not any(isinstance(t, AGUIToolset) for t in agent_under_test.tools)
+
+            proxies = [
+                t for t in agent_under_test.tools if isinstance(t, ClientProxyToolset)
+            ]
+            assert len(proxies) == 1
+
+            others = [
+                t for t in agent_under_test.tools
+                if not isinstance(t, ClientProxyToolset)
+            ]
+            assert len(others) == 1
+            assert others[0] is unpicklable
+            assert others[0].errlog is sys.stderr
+
+    @pytest.mark.asyncio
+    async def test_original_agent_not_mutated_after_run(self):
+        """Running the agent must not mutate the original ADK agent."""
+        root_agent = Agent(
+            name="root_agent",
+            instruction="Original instruction",
+            tools=[AGUIToolset()],
+            sub_agents=[
+                Agent(
+                    name="child",
+                    instruction="Child instruction",
+                    tools=[AGUIToolset(tool_filter=['child_tool'])],
+                )
+            ],
+        )
+        original_instruction = root_agent.instruction
+        original_tools = list(root_agent.tools)
+        original_child_tools = list(root_agent.sub_agents[0].tools)
+
+        with patch.object(ADKAgent, "_run_adk_in_background"):
+            adk_agent = ADKAgent(
+                adk_agent=root_agent,
+                app_name="test_app",
+                user_id="test_user",
+                use_in_memory_services=True,
+            )
+            input = RunAgentInput(
+                thread_id="test_thread",
+                run_id="test_run",
+                messages=[
+                    SystemMessage(id="sys_1", role="system", content="Extra instruction"),
+                    UserMessage(id="msg_1", role="user", content="Hello"),
+                ],
+                context=[],
+                state={},
+                tools=[],
+                forwarded_props={},
+            )
+            async for e in adk_agent.run(input):
+                if not isinstance(e, RunStartedEvent):
+                    break
+
+        # Original agent must be unmodified
+        assert root_agent.instruction == original_instruction
+        assert root_agent.tools == original_tools
+        assert all(isinstance(t, AGUIToolset) for t in root_agent.tools)
+        assert root_agent.sub_agents[0].tools == original_child_tools
+        assert all(isinstance(t, AGUIToolset) for t in root_agent.sub_agents[0].tools)
+
+    def test_shallow_copy_reparents_sub_agents(self):
+        """Copied sub-agents must point at the copied parent, not the original.
+
+        Regression for issue #1719: without re-parenting, ADK's
+        transfer_to_agent walks parent_agent up to the original tree whose
+        tools were never replaced, so the per-run copy is bypassed.
+        """
+        child = Agent(name="child", instruction="child")
+        root = Agent(name="root", instruction="root", sub_agents=[child])
+
+        assert child.parent_agent is root
+
+        copied_root = ADKAgent._shallow_copy_agent_tree(root)
+        copied_child = copied_root.sub_agents[0]
+
+        assert copied_root is not root
+        assert copied_child is not child
+        assert copied_child.parent_agent is copied_root
+        # Original tree must remain untouched.
+        assert child.parent_agent is root
+
+
+class TestSessionManagerDispatch:
+    """Regression tests for session_manager / session_service dispatch (issue #1601)."""
+
+    @pytest.fixture(autouse=True)
+    def reset_session_manager(self):
+        try:
+            SessionManager.reset_default()
+        except RuntimeError:
+            pass
+        yield
+        try:
+            SessionManager.reset_default()
+        except RuntimeError:
+            pass
+
+    @pytest.fixture
+    def mock_agent(self):
+        agent = Mock(spec=Agent)
+        agent.name = "test_agent"
+        return agent
+
+    def test_distinct_session_services_get_distinct_managers(self, mock_agent):
+        """Two ADKAgents with distinct session_services no longer share a manager (#1601)."""
+        from google.adk.sessions import InMemorySessionService
+        from ag_ui_adk.request_state_service import RequestStateSessionService
+
+        svc1 = InMemorySessionService()
+        svc2 = InMemorySessionService()
+
+        agent1 = ADKAgent(adk_agent=mock_agent, app_name="a", user_id="u", session_service=svc1)
+        agent2 = ADKAgent(adk_agent=mock_agent, app_name="a", user_id="u", session_service=svc2)
+
+        assert agent1._session_manager is not agent2._session_manager
+
+        # The wrapped service inside each manager should point to the caller's service.
+        wrapped1 = agent1._session_manager._session_service
+        wrapped2 = agent2._session_manager._session_service
+        assert isinstance(wrapped1, RequestStateSessionService)
+        assert isinstance(wrapped2, RequestStateSessionService)
+        assert wrapped1.inner is svc1
+        assert wrapped2.inner is svc2
+
+    def test_no_session_service_uses_shared_default(self, mock_agent):
+        """Multiple ADKAgents without explicit services share the process-wide default."""
+        agent1 = ADKAgent(adk_agent=mock_agent, app_name="a", user_id="u")
+        agent2 = ADKAgent(adk_agent=mock_agent, app_name="a", user_id="u")
+        assert agent1._session_manager is agent2._session_manager
+        assert agent1._session_manager is SessionManager.get_default()
+
+    def test_explicit_session_manager_is_used_as_is(self, mock_agent):
+        """A pre-built SessionManager passed in is honored."""
+        manager = SessionManager()
+        agent = ADKAgent(adk_agent=mock_agent, app_name="a", user_id="u", session_manager=manager)
+        assert agent._session_manager is manager
+
+    def test_session_manager_and_session_service_together_raises(self, mock_agent):
+        """Passing both session_manager and session_service is rejected."""
+        from google.adk.sessions import InMemorySessionService
+        manager = SessionManager()
+        with pytest.raises(ValueError, match="Cannot specify both"):
+            ADKAgent(
+                adk_agent=mock_agent,
+                app_name="a",
+                user_id="u",
+                session_manager=manager,
+                session_service=InMemorySessionService(),
+            )
+
+    def test_direct_construction_yields_distinct_instances(self):
+        """SessionManager() is no longer a singleton: each call returns a new instance."""
+        m1 = SessionManager()
+        m2 = SessionManager()
+        assert m1 is not m2
+
+    def test_get_default_returns_same_instance_on_repeated_calls(self):
+        """The shared default is sticky once built."""
+        m1 = SessionManager.get_default()
+        m2 = SessionManager.get_default()
+        assert m1 is m2
+
+    def test_reset_default_and_alias_clear_shared_default(self):
+        """reset_default() and the reset_instance alias both let a new default be built."""
+        m1 = SessionManager.get_default()
+        SessionManager.reset_default()
+        m2 = SessionManager.get_default()
+        assert m1 is not m2
+
+        m3 = SessionManager.get_default()
+        SessionManager.reset_instance()  # legacy alias
+        m4 = SessionManager.get_default()
+        assert m3 is not m4
+
 
 class TestThreadIdSessionIdMapping:
     """Test cases for thread_id to session_id mapping and initial state."""
@@ -1235,4 +1500,199 @@ class TestThreadIdSessionIdMapping:
         # Verify empty state is passed
         assert len(ensure_session_calls) == 1
         assert ensure_session_calls[0]["initial_state"] == {}
+
+
+
+    @pytest.mark.asyncio
+    async def test_hydrates_session_cache_from_db_simple(self, adk_agent):
+        """Minimal test: run() should hydrate `_session_lookup_cache` from DB."""
+        class DummySession:
+            def __init__(self, id_):
+                self.id = id_
+
+        class DummySessionManager:
+            async def _find_session_by_thread_id(self, app_name, user_id, thread_id):
+                return DummySession("session-1")
+
+        # Replace the session manager with our dummy
+        adk_agent._session_manager = DummySessionManager()
+
+        # Make _get_unseen_messages return empty so run() short-circuits into _start_new_execution
+        async def fake_get_unseen(input):
+            return []
+
+        # Provide a no-op async generator for _start_new_execution
+        async def fake_start_new_execution(input, message_batch=None, tool_results=None):
+            if False:
+                yield None
+
+        class Input:
+            def __init__(self, thread_id):
+                self.thread_id = thread_id
+                self.run_id = "run1"
+                self.messages = []
+
+        inp = Input("thread-123")
+
+        with patch.object(adk_agent, "_get_unseen_messages", new=fake_get_unseen), \
+             patch.object(adk_agent, "_start_new_execution", new=fake_start_new_execution):
+            # Consume the run generator (will yield nothing) to trigger hydration logic
+            _ = [e async for e in adk_agent.run(inp)]
+
+        user_id = adk_agent._get_user_id(inp)
+        cache_key = (inp.thread_id, user_id)
+
+        assert cache_key in adk_agent._session_lookup_cache
+        session_id, app_name, uid = adk_agent._session_lookup_cache[cache_key]
+        assert session_id == "session-1"
+        assert uid == user_id
+
+    @pytest.mark.asyncio
+    async def test_hydration_miss_records_cache_checked_key(self, adk_agent):
+        """When hydration finds no session, _cache_checked_keys is populated
+        so _ensure_session_exists skips the redundant _find_session_by_thread_id."""
+        class DummySessionManager:
+            async def _find_session_by_thread_id(self, app_name, user_id, thread_id):
+                return None  # no existing session
+
+        adk_agent._session_manager = DummySessionManager()
+
+        async def fake_get_unseen(input):
+            return []
+
+        async def fake_start_new_execution(input, message_batch=None, tool_results=None):
+            if False:
+                yield None
+
+        class Input:
+            def __init__(self):
+                self.thread_id = "new-thread"
+                self.run_id = "run1"
+                self.messages = []
+
+        inp = Input()
+
+        with patch.object(adk_agent, "_get_unseen_messages", new=fake_get_unseen), \
+             patch.object(adk_agent, "_start_new_execution", new=fake_start_new_execution):
+            _ = [e async for e in adk_agent.run(inp)]
+
+        user_id = adk_agent._get_user_id(inp)
+        cache_key = (inp.thread_id, user_id)
+        assert cache_key in adk_agent._cache_checked_keys
+
+    @pytest.mark.asyncio
+    async def test_stale_pending_calls_cleared_on_first_access(self, adk_agent):
+        """_verify_pending_tool_calls clears stale calls when no active execution."""
+        # Pre-populate cache to simulate hydrated session
+        cache_key = ("thread-1", "test_user")
+        adk_agent._session_lookup_cache[cache_key] = ("session-1", "test_app", "test_user")
+
+        # Set up session manager to return pending calls
+        get_state_calls = []
+        set_state_calls = []
+
+        async def mock_get_state(session_id, app_name, user_id, key, default=None):
+            get_state_calls.append(key)
+            if key == "pending_tool_calls":
+                return ["stale-tool-1", "stale-tool-2"]
+            return default
+
+        async def mock_set_state(session_id, app_name, user_id, key, value):
+            set_state_calls.append((key, value))
+            return True
+
+        adk_agent._session_manager.get_state_value = mock_get_state
+        adk_agent._session_manager.set_state_value = mock_set_state
+
+        # No active execution for this thread
+        assert cache_key not in adk_agent._active_executions
+
+        await adk_agent._verify_pending_tool_calls(cache_key, "session-1", "test_app", "test_user")
+
+        # Should have cleared the stale calls
+        assert ("pending_tool_calls", []) in set_state_calls
+        # Should be marked as verified
+        assert cache_key in adk_agent._sessions_verified_locally
+
+    @pytest.mark.asyncio
+    async def test_pending_calls_preserved_with_active_execution(self, adk_agent):
+        """_verify_pending_tool_calls does NOT clear calls when execution is active."""
+        cache_key = ("thread-1", "test_user")
+        adk_agent._session_lookup_cache[cache_key] = ("session-1", "test_app", "test_user")
+
+        set_state_calls = []
+
+        async def mock_get_state(session_id, app_name, user_id, key, default=None):
+            if key == "pending_tool_calls":
+                return ["active-tool-1"]
+            return default
+
+        async def mock_set_state(session_id, app_name, user_id, key, value):
+            set_state_calls.append((key, value))
+            return True
+
+        adk_agent._session_manager.get_state_value = mock_get_state
+        adk_agent._session_manager.set_state_value = mock_set_state
+
+        # Simulate active execution
+        mock_execution = Mock()
+        mock_execution.is_complete = False
+        adk_agent._active_executions[cache_key] = mock_execution
+
+        await adk_agent._verify_pending_tool_calls(cache_key, "session-1", "test_app", "test_user")
+
+        # Should NOT have cleared anything
+        assert len(set_state_calls) == 0
+        # Should still be marked as verified
+        assert cache_key in adk_agent._sessions_verified_locally
+
+    @pytest.mark.asyncio
+    async def test_verify_pending_calls_runs_only_once(self, adk_agent):
+        """_verify_pending_tool_calls is a no-op on subsequent calls for same key."""
+        cache_key = ("thread-1", "test_user")
+        get_state_calls = []
+
+        async def mock_get_state(session_id, app_name, user_id, key, default=None):
+            get_state_calls.append(key)
+            return default
+
+        adk_agent._session_manager.get_state_value = mock_get_state
+
+        # First call — should check state
+        await adk_agent._verify_pending_tool_calls(cache_key, "session-1", "test_app", "test_user")
+        assert len(get_state_calls) == 1
+
+        # Second call — should be a no-op
+        await adk_agent._verify_pending_tool_calls(cache_key, "session-1", "test_app", "test_user")
+        assert len(get_state_calls) == 1  # no additional call
+
+    @pytest.mark.asyncio
+    async def test_ensure_session_passes_skip_find_after_hydration_miss(self, adk_agent):
+        """_ensure_session_exists passes skip_find=True when _cache_checked_keys has the key."""
+        cache_key = ("new-thread", "test_user")
+        adk_agent._cache_checked_keys.add(cache_key)
+
+        class FakeSession:
+            id = "created-session"
+
+        get_or_create_calls = []
+        original_get_or_create = adk_agent._session_manager.get_or_create_session
+
+        async def tracking_get_or_create(**kwargs):
+            get_or_create_calls.append(kwargs)
+            return FakeSession(), "created-session"
+
+        adk_agent._session_manager.get_or_create_session = tracking_get_or_create
+
+        # Mock _verify_pending_tool_calls to avoid side effects
+        async def noop_verify(*args):
+            pass
+        adk_agent._verify_pending_tool_calls = noop_verify
+
+        await adk_agent._ensure_session_exists("test_app", "test_user", "new-thread", {})
+
+        assert len(get_or_create_calls) == 1
+        assert get_or_create_calls[0]["skip_find"] is True
+        # Key should be consumed
+        assert cache_key not in adk_agent._cache_checked_keys
 

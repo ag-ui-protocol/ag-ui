@@ -103,3 +103,45 @@ describe("Event role defaults", () => {
     }).toThrow();
   });
 });
+
+describe("Event name field", () => {
+  it("should allow TextMessageStartEvent with name", () => {
+    const eventData = {
+      type: EventType.TEXT_MESSAGE_START,
+      messageId: "test-msg",
+      name: "research-agent",
+    };
+    const parsed = TextMessageStartEventSchema.parse(eventData);
+    expect(parsed.name).toBe("research-agent");
+  });
+
+  it("should allow TextMessageStartEvent without name", () => {
+    const eventData = {
+      type: EventType.TEXT_MESSAGE_START,
+      messageId: "test-msg",
+    };
+    const parsed = TextMessageStartEventSchema.parse(eventData);
+    expect(parsed.name).toBeUndefined();
+  });
+
+  it("should allow TextMessageChunkEvent with name", () => {
+    const eventData = {
+      type: EventType.TEXT_MESSAGE_CHUNK,
+      messageId: "test-msg",
+      delta: "Hello",
+      name: "research-agent",
+    };
+    const parsed = TextMessageChunkEventSchema.parse(eventData);
+    expect(parsed.name).toBe("research-agent");
+  });
+
+  it("should allow TextMessageChunkEvent without name", () => {
+    const eventData = {
+      type: EventType.TEXT_MESSAGE_CHUNK,
+      messageId: "test-msg",
+      delta: "Hello",
+    };
+    const parsed = TextMessageChunkEventSchema.parse(eventData);
+    expect(parsed.name).toBeUndefined();
+  });
+});

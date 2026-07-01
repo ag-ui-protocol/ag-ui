@@ -35,6 +35,7 @@ from ag_ui.core import (
 )
 from ag_ui_adk import ADKAgent
 from ag_ui_adk.session_manager import SessionManager
+from tests.constants import LIVE_TEST_MODEL
 
 
 # =============================================================================
@@ -313,16 +314,22 @@ def _has_google_auth():
 
 class TestLROSSEPersistenceIntegration:
     """Integration tests that verify persistence with real ADK.
-    
+
     These tests require one of:
     - GOOGLE_API_KEY environment variable (for Google AI Studio)
     - GOOGLE_GENAI_USE_VERTEXAI=TRUE with gcloud auth and GOOGLE_CLOUD_PROJECT (for Vertex AI)
+    - LLMock server (started automatically by the llmock_server fixture)
     """
 
-    pytestmark = pytest.mark.skipif(
-        not _has_google_auth(),
-        reason="No Google authentication available (set GOOGLE_API_KEY or configure Vertex AI)"
-    )
+    @pytest.fixture(autouse=True)
+    def setup_llmock(self, llmock_server):
+        """Ensure LLMock is running when no real API key is set."""
+
+    @pytest.fixture(autouse=True)
+    def skip_without_auth(self):
+        """Skip if no authentication is available."""
+        if not _has_google_auth():
+            pytest.skip("No Google authentication available")
 
     @pytest.fixture(autouse=True)
     def reset_session_manager(self):
@@ -369,7 +376,7 @@ class TestLROSSEPersistenceIntegration:
         # Create agent that will use the LRO tool
         agent = LlmAgent(
             name="greeter",
-            model="gemini-2.0-flash",
+            model=LIVE_TEST_MODEL,
             instruction="When asked to greet someone, use the get_greeting tool with their name.",
             tools=[AGUIToolset()],
         )
@@ -451,7 +458,7 @@ class TestLROSSEPersistenceIntegration:
 
         agent = LlmAgent(
             name="greeter",
-            model="gemini-2.0-flash",
+            model=LIVE_TEST_MODEL,
             instruction="When asked to greet someone, use the get_greeting tool with their name.",
             tools=[AGUIToolset()],
         )

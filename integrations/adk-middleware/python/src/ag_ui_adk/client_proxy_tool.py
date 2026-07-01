@@ -20,9 +20,92 @@ from ag_ui.core import (
 )
 
 from .config import PredictStateMapping
+from .serialization import serialize_tool_args
 
 logger = logging.getLogger(__name__)
 
+
+# Build an allowlist of keys accepted by google.genai.types.Schema,
+# including both snake_case field names and their camelCase aliases.
+# This is more robust than a denylist — new JSON Schema fields that
+# aren't in genai.Schema are automatically filtered without maintenance.
+try:
+    from google.genai._common import alias_generators
+    _ALLOWED_SCHEMA_KEYS = frozenset(
+        set(types.Schema.model_fields.keys())
+        | {alias_generators.to_camel(f) for f in types.Schema.model_fields}
+    )
+except (ImportError, AttributeError):
+    # Fallback if genai internals change — use a static allowlist
+    _ALLOWED_SCHEMA_KEYS = frozenset({
+        "type", "format", "description", "nullable", "enum", "example",
+        "items", "properties", "required", "default", "title", "pattern",
+        "minimum", "maximum", "minItems", "maxItems", "minLength", "maxLength",
+        "minProperties", "maxProperties", "anyOf",
+        "ref", "defs", "propertyOrdering",
+    })
+
+
+# Keys that ``google.genai.types.Schema`` accepts as model fields (so the
+# allowlist above keeps them) but the Gemini ``generateContent`` function-calling
+# API rejects with a 400 ("Unknown name ... Cannot find field"). They must be
+# stripped explicitly. ``zod-to-json-schema`` (used by CopilotKit / AG-UI
+# frontend tools) emits ``additionalProperties: false`` on every object, so any
+# client-supplied tool trips this — manifesting as a RUN_ERROR and no tool call
+# reaching the UI. See ag-ui-protocol/ag-ui HITL dojo "nothing renders" report.
+_GENAI_REJECTED_SCHEMA_KEYS = frozenset({
+    "additionalProperties", "additional_properties",
+})
+
+
+def _clean_schema_for_genai(schema: Any) -> Any:
+    """Recursively clean a JSON Schema dict for google.genai.types.Schema.
+
+    Three transformations:
+    1. Strip ``$``-prefixed keys (``$schema``, ``$id``, ``$ref``, ``$defs``,
+       ``$comment``) — these are JSON Schema infrastructure, never in genai.
+    2. Map ``examples`` → ``example`` (first element only) and
+       ``const`` → ``enum`` (single-value list), preserving useful context.
+    3. Filter remaining keys to only those accepted by ``types.Schema``,
+       using an allowlist derived from ``types.Schema.model_fields``.
+    """
+    if isinstance(schema, dict):
+        result = {}
+        for k, v in schema.items():
+            # Always strip $-prefixed keys
+            if k.startswith("$"):
+                continue
+            # Strip keys the Gemini API rejects even though genai.Schema accepts
+            # them as model fields (e.g. additionalProperties from zod schemas).
+            if k in _GENAI_REJECTED_SCHEMA_KEYS:
+                continue
+            # Map examples -> example (preserve first element as opaque data)
+            if k == "examples" and isinstance(v, list) and v:
+                result["example"] = v[0]
+                continue
+            # Map const -> enum (single-value list, stringified for genai)
+            if k == "const":
+                result["enum"] = [v if isinstance(v, str) else json.dumps(v)]
+                continue
+            # Only keep keys that genai.types.Schema accepts
+            if k not in _ALLOWED_SCHEMA_KEYS:
+                continue
+            # "properties" and "defs" are dict-of-schemas — recurse into
+            # values but preserve the user-defined keys (property names).
+            if k in ("properties", "defs") and isinstance(v, dict):
+                result[k] = {
+                    prop_name: _clean_schema_for_genai(prop_schema)
+                    for prop_name, prop_schema in v.items()
+                }
+            # "default", "example", "enum" are opaque values — don't recurse
+            elif k in ("default", "example", "enum"):
+                result[k] = v
+            else:
+                result[k] = _clean_schema_for_genai(v)
+        return result
+    if isinstance(schema, list):
+        return [_clean_schema_for_genai(item) for item in schema]
+    return schema
 
 
 class ClientProxyTool(BaseTool):
@@ -44,6 +127,9 @@ class ClientProxyTool(BaseTool):
         accumulated_predict_state: Optional[Dict[str, Any]] = None,
         emitted_tool_call_ids: Optional[Set[str]] = None,
         translator_emitted_tool_call_ids: Optional[Set[str]] = None,
+        long_running_tool_ids: Optional[Set[str]] = None,
+        translator_lro_emitted_ids_by_name: Optional[Dict[str, List[str]]] = None,
+        lro_finalized_by_name: Optional[Dict[str, int]] = None,
     ):
         """Initialize the client proxy tool.
 
@@ -62,6 +148,10 @@ class ClientProxyTool(BaseTool):
                 suppress duplicate emissions from ADK confirmed/LRO events.
             translator_emitted_tool_call_ids: Shared set of tool call IDs already
                 emitted by EventTranslator. Checked before emitting to avoid duplicates.
+            long_running_tool_ids: Shared set of tool call IDs that represent
+                HITL (long-running) tool calls. Populated synchronously before
+                TOOL_CALL_START is enqueued so the consumer can persist
+                pending_tool_calls only for HITL IDs. See issue #1652.
         """
         # Initialize BaseTool with name and description
         # All client-side tools are long-running for architectural simplicity
@@ -78,6 +168,9 @@ class ClientProxyTool(BaseTool):
         self._accumulated_predict_state = accumulated_predict_state if accumulated_predict_state is not None else {}
         self._emitted_tool_call_ids = emitted_tool_call_ids if emitted_tool_call_ids is not None else set()
         self._translator_emitted_tool_call_ids = translator_emitted_tool_call_ids if translator_emitted_tool_call_ids is not None else set()
+        self._long_running_tool_ids = long_running_tool_ids if long_running_tool_ids is not None else set()
+        self._translator_lro_emitted_ids_by_name = translator_lro_emitted_ids_by_name if translator_lro_emitted_ids_by_name is not None else {}
+        self._lro_finalized_by_name = lro_finalized_by_name if lro_finalized_by_name is not None else {}
 
         # Create dynamic function with proper parameter signatures for ADK inspection
         # This allows ADK to extract parameters from user requests correctly
@@ -133,6 +226,11 @@ class ClientProxyTool(BaseTool):
         if not isinstance(parameters, dict):
             parameters = {"type": "object", "properties": {}}
             logger.warning(f"Tool {self.name} had non-dict parameters, using empty schema")
+
+        # Clean JSON Schema for genai.types.Schema compatibility:
+        # strips $-prefixed keys, maps examples->example and const->enum,
+        # filters to only genai-accepted fields via allowlist.
+        parameters = _clean_schema_for_genai(parameters)
 
         # Create FunctionDeclaration
         function_declaration = types.FunctionDeclaration(
@@ -198,6 +296,23 @@ class ClientProxyTool(BaseTool):
                 logger.debug(f"Skipping TOOL_CALL emission for {tool_call_id} — already emitted by EventTranslator")
                 return None
 
+            # Cross-path twin suppression: under SSE streaming the translator
+            # emits this long-running call from the *partial* event with one ID
+            # and ADK then invokes this proxy with a *different* ID (#1168), so
+            # the ID guard above can't recognize them as the same logical call —
+            # the dojo then renders the HITL card twice. Match this invocation to
+            # an already-emitted partial by tool name, positionally (FIFO), so
+            # genuinely parallel same-name calls each still emit once.
+            emitted_partials = self._translator_lro_emitted_ids_by_name.get(self.name, [])
+            finalized = self._lro_finalized_by_name.get(self.name, 0)
+            if finalized < len(emitted_partials):
+                self._lro_finalized_by_name[self.name] = finalized + 1
+                logger.debug(
+                    f"Skipping proxy TOOL_CALL emission for '{self.name}' — twin of "
+                    f"streamed partial {emitted_partials[finalized]} (proxy id {tool_call_id})"
+                )
+                return None
+
             # Check if this tool has predictive state configuration
             # Emit PredictState CustomEvent BEFORE TOOL_CALL_START (once per tool name)
             mappings_for_tool = [m for m in self.predict_state_mappings if m.tool == self.name]
@@ -213,6 +328,12 @@ class ClientProxyTool(BaseTool):
                 self._emitted_predict_state.add(self.name)
                 logger.debug(f"Emitted PredictState CustomEvent for tool '{self.name}': {predict_state_payload}")
 
+            # Mark this tool call as HITL/long-running BEFORE enqueuing any
+            # TOOL_CALL_* event so the consumer's gate sees it when it later
+            # dequeues TOOL_CALL_END. All ClientProxyTool emissions are
+            # long-running (is_long_running=True at construction). See #1652.
+            self._long_running_tool_ids.add(tool_call_id)
+
             # Emit TOOL_CALL_START event
             start_event = ToolCallStartEvent(
                 type=EventType.TOOL_CALL_START,
@@ -223,7 +344,7 @@ class ClientProxyTool(BaseTool):
             logger.debug(f"Emitted TOOL_CALL_START for {tool_call_id}")
 
             # Emit TOOL_CALL_ARGS event
-            args_json = json.dumps(args)
+            args_json = serialize_tool_args(args)
             args_event = ToolCallArgsEvent(
                 type=EventType.TOOL_CALL_ARGS,
                 tool_call_id=tool_call_id,

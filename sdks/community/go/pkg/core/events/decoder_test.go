@@ -323,6 +323,73 @@ func TestEventDecoder(t *testing.T) {
 		require.True(t, ok)
 	})
 
+	t.Run("DecodeEvent_ReasoningEvents", func(t *testing.T) {
+		decoder := NewEventDecoder(nil)
+
+		// ReasoningStart
+		data := []byte(`{"messageId": "reasoning-001"}`)
+		event, err := decoder.DecodeEvent("REASONING_START", data)
+		require.NoError(t, err)
+		reasoningStart, ok := event.(*ReasoningStartEvent)
+		require.True(t, ok)
+		assert.Equal(t, "reasoning-001", reasoningStart.MessageID)
+
+		// ReasoningMessageStart
+		data = []byte(`{"messageId": "msg-123", "role": "assistant"}`)
+		event, err = decoder.DecodeEvent("REASONING_MESSAGE_START", data)
+		require.NoError(t, err)
+		reasoningMsgStart, ok := event.(*ReasoningMessageStartEvent)
+		require.True(t, ok)
+		assert.Equal(t, "msg-123", reasoningMsgStart.MessageID)
+		assert.Equal(t, "assistant", reasoningMsgStart.Role)
+
+		// ReasoningMessageContent
+		data = []byte(`{"messageId": "msg-123", "delta": "Thinking..."}`)
+		event, err = decoder.DecodeEvent("REASONING_MESSAGE_CONTENT", data)
+		require.NoError(t, err)
+		reasoningMsgContent, ok := event.(*ReasoningMessageContentEvent)
+		require.True(t, ok)
+		assert.Equal(t, "msg-123", reasoningMsgContent.MessageID)
+		assert.Equal(t, "Thinking...", reasoningMsgContent.Delta)
+
+		// ReasoningMessageEnd
+		data = []byte(`{"messageId": "msg-123"}`)
+		event, err = decoder.DecodeEvent("REASONING_MESSAGE_END", data)
+		require.NoError(t, err)
+		reasoningMsgEnd, ok := event.(*ReasoningMessageEndEvent)
+		require.True(t, ok)
+		assert.Equal(t, "msg-123", reasoningMsgEnd.MessageID)
+
+		// ReasoningMessageChunk
+		data = []byte(`{"messageId": "msg-123", "delta": ""}`)
+		event, err = decoder.DecodeEvent("REASONING_MESSAGE_CHUNK", data)
+		require.NoError(t, err)
+		reasoningMsgChunk, ok := event.(*ReasoningMessageChunkEvent)
+		require.True(t, ok)
+		require.NotNil(t, reasoningMsgChunk.MessageID)
+		require.NotNil(t, reasoningMsgChunk.Delta)
+		assert.Equal(t, "msg-123", *reasoningMsgChunk.MessageID)
+		assert.Equal(t, "", *reasoningMsgChunk.Delta)
+
+		// ReasoningEncryptedValue
+		data = []byte(`{"subtype": "message", "entityId": "msg-123", "encryptedValue": "encrypted..."}`)
+		event, err = decoder.DecodeEvent("REASONING_ENCRYPTED_VALUE", data)
+		require.NoError(t, err)
+		reasoningEncrypted, ok := event.(*ReasoningEncryptedValueEvent)
+		require.True(t, ok)
+		assert.Equal(t, ReasoningEncryptedValueSubtypeMessage, reasoningEncrypted.Subtype)
+		assert.Equal(t, "msg-123", reasoningEncrypted.EntityID)
+		assert.Equal(t, "encrypted...", reasoningEncrypted.EncryptedValue)
+
+		// ReasoningEnd
+		data = []byte(`{"messageId": "reasoning-001"}`)
+		event, err = decoder.DecodeEvent("REASONING_END", data)
+		require.NoError(t, err)
+		reasoningEnd, ok := event.(*ReasoningEndEvent)
+		require.True(t, ok)
+		assert.Equal(t, "reasoning-001", reasoningEnd.MessageID)
+	})
+
 	t.Run("DecodeEvent_CustomEvent", func(t *testing.T) {
 		decoder := NewEventDecoder(nil)
 		data := []byte(`{"name": "custom-event", "value": {"key": "value"}}`)

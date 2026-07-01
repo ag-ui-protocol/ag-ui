@@ -2,6 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+For requests to add A2UI rendering to AG-UI applications or to scaffold an
+AG-UI + A2UI quickstart, use `skills/ag-ui-a2ui-integration/SKILL.md`.
+
 ## Common Development Commands
 
 ### TypeScript SDK (Main Development)

@@ -51,15 +51,3 @@ body:
       description: Anything else — mockups, code snippets, related issues, links, etc.
     validations:
       required: false
-
-  - type: checkboxes
-    id: contribution
-    attributes:
-      label: Would you like to work on this?
-      description: We welcome contributions! Let us know if you’d like to help implement this feature.
-      options:
-        - label: Yes, I’d love to work on it!
-        - label: I’m open to collaborating but need guidance.
-        - label: No, I’m just sharing the idea.
-    validations:
-      required: false

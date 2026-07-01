@@ -22,7 +22,7 @@ export const humanInTheLoopAgent = new Agent({
     - Keep steps concise but descriptive
     - Make sure steps are in logical order
   `,
-  model: "openai/gpt-4o-mini",
+  model: "openai/gpt-4.1-mini",
   memory: new Memory({
     storage: getStorage(),
   }),

@@ -23,10 +23,11 @@ from ag_ui_adk.session_manager import SessionManager
 from google.adk.agents import LlmAgent
 from google.adk.agents.readonly_context import ReadonlyContext
 from google.adk.tools import ToolContext
+from tests.constants import LIVE_TEST_MODEL
 
 
 # Default model for live tests
-DEFAULT_MODEL = "gemini-2.0-flash"
+DEFAULT_MODEL = LIVE_TEST_MODEL
 
 
 async def collect_events(agent: ADKAgent, run_input: RunAgentInput) -> List[BaseEvent]:
@@ -44,6 +45,10 @@ def get_event_types(events: List[BaseEvent]) -> List[str]:
 
 class TestContextInInstructionProvider:
     """Integration tests for context access in instruction providers."""
+
+    @pytest.fixture(autouse=True)
+    def setup_llmock(self, llmock_server):
+        """Ensure LLMock is running when no real API key is set."""
 
     @pytest.fixture(autouse=True)
     def reset_session_manager(self):
@@ -119,6 +124,10 @@ class TestContextInInstructionProvider:
 
 class TestContextInTools:
     """Integration tests for context access in tools."""
+
+    @pytest.fixture(autouse=True)
+    def setup_llmock(self, llmock_server):
+        """Ensure LLMock is running when no real API key is set."""
 
     @pytest.fixture(autouse=True)
     def reset_session_manager(self):
@@ -203,6 +212,10 @@ class TestContextInStateSnapshot:
     """Integration tests for context in state snapshot events."""
 
     @pytest.fixture(autouse=True)
+    def setup_llmock(self, llmock_server):
+        """Ensure LLMock is running when no real API key is set."""
+
+    @pytest.fixture(autouse=True)
     def reset_session_manager(self):
         """Reset singleton SessionManager between tests."""
         SessionManager.reset_instance()
@@ -272,6 +285,10 @@ class TestContextInStateSnapshot:
 
 class TestContextPersistenceAcrossRuns:
     """Test that context is properly updated across multiple runs."""
+
+    @pytest.fixture(autouse=True)
+    def setup_llmock(self, llmock_server):
+        """Ensure LLMock is running when no real API key is set."""
 
     @pytest.fixture(autouse=True)
     def reset_session_manager(self):

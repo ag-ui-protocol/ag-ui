@@ -16,6 +16,7 @@ from ag_ui_adk import ADKAgent
 from ag_ui_adk.execution_state import ExecutionState
 from ag_ui_adk.client_proxy_tool import ClientProxyTool
 from ag_ui_adk.client_proxy_toolset import ClientProxyToolset
+from tests.constants import LIVE_TEST_MODEL
 
 
 class TestToolErrorHandling:
@@ -28,7 +29,7 @@ class TestToolErrorHandling:
         from google.adk.agents import LlmAgent
         return LlmAgent(
             name="test_agent",
-            model="gemini-2.0-flash",
+            model=LIVE_TEST_MODEL,
             instruction="Test agent for error testing"
         )
 
@@ -99,7 +100,7 @@ class TestToolErrorHandling:
         )
 
         # Add to active executions
-        adk_middleware._active_executions["test_thread"] = execution
+        adk_middleware._active_executions[("test_thread", "test_user")] = execution
 
         # Submit invalid JSON as tool result
         input_data = RunAgentInput(
@@ -147,7 +148,7 @@ class TestToolErrorHandling:
             event_queue=event_queue
         )
 
-        adk_middleware._active_executions["test_thread"] = execution
+        adk_middleware._active_executions[("test_thread", "test_user")] = execution
 
         # Submit tool result for non-existent call
         input_data = RunAgentInput(
@@ -265,7 +266,7 @@ class TestToolErrorHandling:
             event_queue=event_queue
         )
 
-        adk_middleware._active_executions["test_thread"] = execution
+        adk_middleware._active_executions[("test_thread", "test_user")] = execution
 
         # Submit results for both - one valid, one invalid
         input_data = RunAgentInput(
@@ -407,7 +408,7 @@ class TestToolErrorHandling:
             event_queue=event_queue
         )
 
-        adk_middleware._active_executions["test_thread"] = execution
+        adk_middleware._active_executions[("test_thread", "test_user")] = execution
 
         # Test concurrent execution state management
         # In the all-long-running architecture, we don't track individual tool futures
@@ -433,7 +434,7 @@ class TestToolErrorHandling:
             event_queue=event_queue
         )
 
-        adk_middleware._active_executions["test_thread"] = execution
+        adk_middleware._active_executions[("test_thread", "test_user")] = execution
 
         # Submit tool message with empty content (which should be handled gracefully)
         input_data = RunAgentInput(

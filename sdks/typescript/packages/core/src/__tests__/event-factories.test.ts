@@ -6,6 +6,8 @@ import {
   createRawEvent,
   createRunErrorEvent,
   createRunFinishedEvent,
+  createRunFinishedInterruptEvent,
+  createRunFinishedSuccessEvent,
   createRunStartedEvent,
   createStateDeltaEvent,
   createStateSnapshotEvent,
@@ -43,10 +45,10 @@ describe("event factories", () => {
     expect(event.role).toBe("user");
   });
 
-  it("rejects empty deltas in TEXT_MESSAGE_CONTENT", () => {
-    expect(() => createTextMessageContentEvent({ messageId: "msg-3", delta: "" })).toThrow(
-      /Delta must not be an empty string/,
-    );
+  it("accepts empty deltas in TEXT_MESSAGE_CONTENT", () => {
+    const event = createTextMessageContentEvent({ messageId: "msg-3", delta: "" });
+    expect(event.type).toBe(EventType.TEXT_MESSAGE_CONTENT);
+    expect(event.delta).toBe("");
   });
 
   it("creates TEXT_MESSAGE_CONTENT when delta provided", () => {
@@ -61,6 +63,42 @@ describe("event factories", () => {
 
     expect(event.type).toBe(EventType.TEXT_MESSAGE_END);
     expect(event.messageId).toBe("msg-5");
+  });
+
+  it("creates TEXT_MESSAGE_START with name", () => {
+    const event = createTextMessageStartEvent({
+      messageId: "msg-1",
+      name: "research-agent",
+    });
+    expect(event.type).toBe(EventType.TEXT_MESSAGE_START);
+    expect(event.messageId).toBe("msg-1");
+    expect(event.role).toBe("assistant");
+    expect(event.name).toBe("research-agent");
+  });
+
+  it("creates TEXT_MESSAGE_START without name", () => {
+    const event = createTextMessageStartEvent({
+      messageId: "msg-1",
+    });
+    expect(event.name).toBeUndefined();
+  });
+
+  it("creates TEXT_MESSAGE_CHUNK with name", () => {
+    const event = createTextMessageChunkEvent({
+      messageId: "msg-1",
+      delta: "Hello",
+      name: "research-agent",
+    });
+    expect(event.type).toBe(EventType.TEXT_MESSAGE_CHUNK);
+    expect(event.name).toBe("research-agent");
+  });
+
+  it("creates TEXT_MESSAGE_CHUNK without name", () => {
+    const event = createTextMessageChunkEvent({
+      messageId: "msg-1",
+      delta: "Hello",
+    });
+    expect(event.name).toBeUndefined();
   });
 
   it("creates TEXT_MESSAGE_CHUNK with optional fields", () => {
@@ -194,5 +232,72 @@ describe("event factories", () => {
     expect(started.type).toBe(EventType.STEP_STARTED);
     expect(finished.type).toBe(EventType.STEP_FINISHED);
     expect(finished.stepName).toBe("fetch");
+  });
+});
+
+describe("createRunFinishedSuccessEvent", () => {
+  it("produces a RUN_FINISHED event with outcome={ type: 'success' }", () => {
+    const e = createRunFinishedSuccessEvent({
+      threadId: "t-1",
+      runId: "r-1",
+      result: { ok: true },
+    });
+    expect(e.type).toBe(EventType.RUN_FINISHED);
+    expect(e.outcome).toEqual({ type: "success" });
+    expect(e.result).toEqual({ ok: true });
+  });
+});
+
+describe("createRunFinishedInterruptEvent", () => {
+  it("produces a RUN_FINISHED event with outcome={ type: 'interrupt', interrupts }", () => {
+    const e = createRunFinishedInterruptEvent({
+      threadId: "t-1",
+      runId: "r-1",
+      interrupts: [{ id: "int-1", reason: "tool_call" }],
+    });
+    expect(e.type).toBe(EventType.RUN_FINISHED);
+    expect(e.outcome?.type).toBe("interrupt");
+    if (e.outcome?.type === "interrupt") {
+      expect(e.outcome.interrupts).toHaveLength(1);
+    }
+  });
+
+  it("rejects empty interrupts array", () => {
+    expect(() =>
+      createRunFinishedInterruptEvent({
+        threadId: "t-1",
+        runId: "r-1",
+        interrupts: [],
+      }),
+    ).toThrow();
+  });
+});
+
+describe("createRunFinishedEvent", () => {
+  it("produces a RUN_FINISHED event with no outcome (legacy shape)", () => {
+    const e = createRunFinishedEvent({ threadId: "t-1", runId: "r-1", result: { ok: true } });
+    expect(e.outcome).toBeUndefined();
+    expect(e.result).toEqual({ ok: true });
+  });
+
+  it("accepts an explicit outcome={ type: 'success' }", () => {
+    const e = createRunFinishedEvent({
+      threadId: "t-1",
+      runId: "r-1",
+      outcome: { type: "success" },
+    });
+    expect(e.outcome).toEqual({ type: "success" });
+  });
+
+  it("accepts an explicit outcome={ type: 'interrupt', interrupts }", () => {
+    const e = createRunFinishedEvent({
+      threadId: "t-1",
+      runId: "r-1",
+      outcome: {
+        type: "interrupt",
+        interrupts: [{ id: "int-1", reason: "tool_call" }],
+      },
+    });
+    expect(e.outcome?.type).toBe("interrupt");
   });
 });

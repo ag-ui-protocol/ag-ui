@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -84,6 +85,105 @@ func TestRunEvents(t *testing.T) {
 		jsonData, err := event.ToJSON()
 		require.NoError(t, err)
 		assert.Contains(t, string(jsonData), threadID)
+	})
+
+	t.Run("RunFinishedEventWithSuccessOutcome", func(t *testing.T) {
+		threadID := "thread-123"
+		runID := "run-456"
+
+		event := NewRunFinishedEventWithOptions(threadID, runID, WithSuccessOutcome())
+
+		assert.Equal(t, EventTypeRunFinished, event.Type())
+		require.NotNil(t, event.Outcome)
+		assert.Equal(t, RunFinishedOutcomeTypeSuccess, event.Outcome.Type)
+		assert.Nil(t, event.Outcome.Interrupts)
+		assert.NoError(t, event.Validate())
+
+		jsonData, err := event.ToJSON()
+		require.NoError(t, err)
+		assert.Contains(t, string(jsonData), `"type":"success"`)
+	})
+
+	t.Run("RunFinishedEventWithInterruptOutcome", func(t *testing.T) {
+		threadID := "thread-123"
+		runID := "run-456"
+		interrupts := []types.Interrupt{
+			{
+				ID:         "int-1",
+				Reason:     "tool_call",
+				Message:    "Approve this action?",
+				ToolCallID: "tc-1",
+				ResponseSchema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"approved": map[string]any{"type": "boolean"},
+					},
+				},
+				Metadata: map[string]any{
+					"adk": map[string]any{"confirmationCallId": "fc-1"},
+				},
+			},
+		}
+
+		event := NewRunFinishedEventWithOptions(threadID, runID, WithInterruptOutcome(interrupts))
+
+		assert.Equal(t, EventTypeRunFinished, event.Type())
+		require.NotNil(t, event.Outcome)
+		assert.Equal(t, RunFinishedOutcomeTypeInterrupt, event.Outcome.Type)
+		require.Len(t, event.Outcome.Interrupts, 1)
+		assert.Equal(t, "int-1", event.Outcome.Interrupts[0].ID)
+		assert.Equal(t, "tool_call", event.Outcome.Interrupts[0].Reason)
+		assert.Equal(t, "Approve this action?", event.Outcome.Interrupts[0].Message)
+		assert.Equal(t, "tc-1", event.Outcome.Interrupts[0].ToolCallID)
+		assert.NoError(t, event.Validate())
+
+		jsonData, err := event.ToJSON()
+		require.NoError(t, err)
+		assert.Contains(t, string(jsonData), `"type":"interrupt"`)
+		assert.Contains(t, string(jsonData), `"int-1"`)
+	})
+
+	t.Run("RunFinishedEventWithoutOutcome", func(t *testing.T) {
+		threadID := "thread-123"
+		runID := "run-456"
+
+		event := NewRunFinishedEvent(threadID, runID)
+
+		assert.Nil(t, event.Outcome)
+		assert.NoError(t, event.Validate())
+
+		jsonData, err := event.ToJSON()
+		require.NoError(t, err)
+		assert.NotContains(t, string(jsonData), "outcome")
+	})
+
+	t.Run("RunFinishedEventOutcomeJSON", func(t *testing.T) {
+		jsonData := []byte(`{
+			"type": "RUN_FINISHED",
+			"threadId": "t-1",
+			"runId": "r-1",
+			"outcome": {
+				"type": "interrupt",
+				"interrupts": [
+					{
+						"id": "int-1",
+						"reason": "tool_call",
+						"toolCallId": "tc-1"
+					}
+				]
+			}
+		}`)
+
+		event, err := EventFromJSON(jsonData)
+		require.NoError(t, err)
+
+		finished, ok := event.(*RunFinishedEvent)
+		require.True(t, ok)
+		require.NotNil(t, finished.Outcome)
+		assert.Equal(t, RunFinishedOutcomeTypeInterrupt, finished.Outcome.Type)
+		require.Len(t, finished.Outcome.Interrupts, 1)
+		assert.Equal(t, "int-1", finished.Outcome.Interrupts[0].ID)
+		assert.Equal(t, "tc-1", finished.Outcome.Interrupts[0].ToolCallID)
 	})
 
 	t.Run("RunErrorEvent", func(t *testing.T) {
@@ -538,6 +638,30 @@ func TestEventSequenceValidation(t *testing.T) {
 		assert.NoError(t, ValidateSequence(events))
 	})
 
+	t.Run("ValidSequence_ReasoningMessageLifecycle", func(t *testing.T) {
+		events := []Event{
+			NewReasoningStartEvent("reasoning-1"),
+			NewReasoningMessageStartEvent("reasoning-msg-1", "assistant"),
+			NewReasoningMessageContentEvent("reasoning-msg-1", "Thinking..."),
+			NewReasoningMessageEndEvent("reasoning-msg-1"),
+			NewReasoningEncryptedValueEvent(ReasoningEncryptedValueSubtypeMessage, "reasoning-msg-1", "encrypted-reasoning"),
+			NewReasoningEndEvent("reasoning-1"),
+		}
+
+		assert.NoError(t, ValidateSequence(events))
+	})
+
+	t.Run("ValidSequence_AllowsChunkAndResultEvents", func(t *testing.T) {
+		events := []Event{
+			NewTextMessageChunkEvent(nil, nil, nil).WithChunkMessageID("msg-1").WithChunkDelta("Hello"),
+			NewToolCallChunkEvent().WithToolCallChunkID("tool-1").WithToolCallChunkDelta("{\"location\":\"SF\"}"),
+			NewToolCallResultEvent("msg-1", "tool-1", "ok"),
+			NewReasoningMessageChunkEvent(nil, nil).WithChunkMessageID("reasoning-msg-1").WithChunkDelta("Thinking..."),
+		}
+
+		assert.NoError(t, ValidateSequence(events))
+	})
+
 	t.Run("InvalidSequence_DuplicateRunStart", func(t *testing.T) {
 		events := []Event{
 			NewRunStartedEvent("thread-1", "run-1"),
@@ -582,6 +706,31 @@ func TestEventSequenceValidation(t *testing.T) {
 		assert.Error(t, ValidateSequence(events))
 	})
 
+	t.Run("InvalidSequence_DuplicateReasoningMessageStart", func(t *testing.T) {
+		events := []Event{
+			NewReasoningMessageStartEvent("reasoning-msg-1", "assistant"),
+			NewReasoningMessageStartEvent("reasoning-msg-1", "assistant"),
+		}
+
+		assert.Error(t, ValidateSequence(events))
+	})
+
+	t.Run("InvalidSequence_ContentWithoutReasoningMessageStart", func(t *testing.T) {
+		events := []Event{
+			NewReasoningMessageContentEvent("reasoning-msg-1", "Thinking..."),
+		}
+
+		assert.Error(t, ValidateSequence(events))
+	})
+
+	t.Run("InvalidSequence_EndNonExistentReasoningMessage", func(t *testing.T) {
+		events := []Event{
+			NewReasoningMessageEndEvent("reasoning-msg-1"),
+		}
+
+		assert.Error(t, ValidateSequence(events))
+	})
+
 	t.Run("InvalidSequence_DuplicateToolCallStart", func(t *testing.T) {
 		events := []Event{
 			NewToolCallStartEvent("tool-1", "get_weather"),
@@ -609,6 +758,12 @@ func TestJSONSerialization(t *testing.T) {
 			NewTextMessageContentEvent("msg-1", "Hello"),
 			NewTextMessageChunkEvent(strPtr("msg-1"), strPtr("assistant"), strPtr("Chunk")),
 			NewToolCallStartEvent("tool-1", "get_weather", WithParentMessageID("msg-1")),
+			NewReasoningStartEvent("reasoning-1"),
+			NewReasoningMessageStartEvent("reasoning-msg-1", "assistant"),
+			NewReasoningMessageContentEvent("reasoning-msg-1", "Thinking..."),
+			NewReasoningMessageEndEvent("reasoning-msg-1"),
+			NewReasoningEncryptedValueEvent(ReasoningEncryptedValueSubtypeMessage, "reasoning-msg-1", "encrypted-reasoning"),
+			NewReasoningEndEvent("reasoning-1"),
 			NewStateSnapshotEvent(map[string]any{"counter": 42}),
 			NewActivitySnapshotEvent("activity-1", "PLAN", map[string]any{"status": "draft"}),
 			NewActivityDeltaEvent("activity-1", "PLAN", []JSONPatchOperation{{Op: "replace", Path: "/status", Value: "done"}}),

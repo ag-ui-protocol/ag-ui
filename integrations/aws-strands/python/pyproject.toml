@@ -1,12 +1,15 @@
 [project]
 name = "ag_ui_strands"
-version = "0.1.1"
+license = "MIT"
+version = "0.2.2"
+license-files = ["LICENSE"]
 authors = [
     { name = "AG-UI Contributors" }
 ]
 requires-python = ">=3.12, <3.14"
 dependencies = [
-    "ag-ui-protocol>=0.1.10",
+    "ag-ui-a2ui-toolkit>=0.0.4",
+    "ag-ui-protocol>=0.1.18",
     "fastapi>=0.115.12",
     "strands-agents>=1.15.0",
 ]
@@ -20,3 +23,11 @@ packages = ["src/ag_ui_strands"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[dependency-groups]
+dev = [
+    "pytest-asyncio>=1.3.0",
+]

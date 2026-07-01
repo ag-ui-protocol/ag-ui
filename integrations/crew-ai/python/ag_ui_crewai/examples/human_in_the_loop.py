@@ -3,7 +3,7 @@ An example demonstrating agentic generative UI.
 """
 
 from crewai.flow.flow import Flow, start, router, listen
-from litellm import completion
+from litellm import acompletion
 from pydantic import BaseModel
 from typing import Literal, List
 from ..sdk import (
@@ -93,7 +93,7 @@ class HumanInTheLoopFlow(Flow[AgentState]):
         #    Note: In order to stream the response, wrap the completion call in
         #    copilotkit_stream and set stream=True.
         response = await copilotkit_stream(
-            completion(
+            await acompletion(
 
                 # 1.1 Specify the model to use
                 model="openai/gpt-4o",

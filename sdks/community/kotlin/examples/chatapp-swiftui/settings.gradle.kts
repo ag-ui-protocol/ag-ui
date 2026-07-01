@@ -6,16 +6,6 @@ project(":chatapp-shared").projectDir = File(rootDir, "../chatapp-shared")
 include(":shared")
 project(":shared").projectDir = File(rootDir, "shared")
 
-// Include local library for development (using local modules with new Activity types)
-includeBuild("../../library") {
-    dependencySubstitution {
-        substitute(module("com.ag-ui.community:kotlin-core")).using(project(":kotlin-core"))
-        substitute(module("com.ag-ui.community:kotlin-client")).using(project(":kotlin-client"))
-        substitute(module("com.ag-ui.community:kotlin-tools")).using(project(":kotlin-tools"))
-        substitute(module("com.ag-ui.community:kotlin-a2ui")).using(project(":kotlin-a2ui"))
-    }
-}
-
 pluginManagement {
     repositories {
         google()

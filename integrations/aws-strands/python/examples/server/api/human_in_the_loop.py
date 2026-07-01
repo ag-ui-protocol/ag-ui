@@ -1,84 +1,39 @@
 """Human in the Loop example for AWS Strands.
 
-This example demonstrates how to create a Strands agent with a generate_task_steps tool
-for human-in-the-loop interactions, where users can review and approve task steps before execution.
+The ``generate_task_steps`` tool is declared on the frontend via
+``useHumanInTheLoop``. The ag_ui_strands adapter auto-registers it as a
+proxy tool when ``RunAgentInput.tools`` arrives, so the backend does not
+register a native ``@tool`` here — Strands invokes the proxy, the
+adapter halts the run after the proxy returns, the user reviews and
+approves the plan in the UI, and the tool result is fed back to the
+agent on the next turn.
+
+No backend ``@tool`` stub. No agent-side AG-UI event emission.
 """
+
 import os
 from pathlib import Path
-from typing import List, Literal
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
 
 # Suppress OpenTelemetry context warnings
 os.environ["OTEL_SDK_DISABLED"] = "true"
 os.environ["OTEL_PYTHON_DISABLED_INSTRUMENTATIONS"] = "all"
 
-from strands import Agent, tool
-from strands.models.gemini import GeminiModel
+from strands import Agent
 from ag_ui_strands import StrandsAgent, create_strands_app
+from server.model_factory import create_model
 
 # Load environment variables from .env file
 env_path = Path(__file__).parent.parent.parent / '.env'
 load_dotenv(dotenv_path=env_path)
 
-# Use Gemini model
-model = GeminiModel(
-    client_args={
-        "api_key": os.getenv("GOOGLE_API_KEY", "your-api-key-here"),
-    },
-    model_id="gemini-2.5-flash",
-    params={
-        "temperature": 0.7,
-        "max_output_tokens": 2048,
-        "top_p": 0.9,
-        "top_k": 40
-    }
-)
-
-
-class Step(BaseModel):
-    """A single step in a task plan."""
-
-    description: str = Field(
-        ...,
-        description="A brief description of the step in imperative form",
-        optional=False
-    )
-    status: Literal["enabled", "disabled"] = Field(
-        default="enabled",
-        description="The status of the step",
-        optional=False,
-    )
-
-
-@tool
-def generate_task_steps(
-    steps: List[Step],
-) -> str:
-    """Generate a list of steps for the user to review and approve.
-
-    This tool creates a task plan that will be displayed to the user for review.
-    The user can enable/disable steps before confirming execution.
-    The user can approve or disapprove the plan. That result will come back to you as a json object
-    - when disapproved: `{ accepted: false }`
-    - when approved: `{ accepted: true, steps: [{{steps that are approved}}] }`
-
-    Note that the approved list of steps comes back, it may not be the entire list.
-
-    Args:
-        steps: A list of 10 step objects, each containing a description and status.
-               Each step should be brief (a few words) and in imperative form
-               (e.g., "Dig hole", "Open door", "Mix ingredients").
-
-    Returns:
-        A confirmation message.
-    """
-    return f"Generated {len(steps)} steps for user review"
+# Create model from MODEL_PROVIDER env var (default: openai)
+model = create_model()
 
 
 strands_agent = Agent(
     model=model,
-    tools=[generate_task_steps],
+    tools=[],
     system_prompt="""You are a task planning assistant specialized in creating clear, actionable step-by-step plans.
 
 **Your Primary Role:**

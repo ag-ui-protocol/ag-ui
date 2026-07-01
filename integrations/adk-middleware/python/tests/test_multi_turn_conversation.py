@@ -32,10 +32,11 @@ from ag_ui_adk import ADKAgent
 from ag_ui_adk.session_manager import SessionManager
 from google.adk.agents import Agent, LlmAgent
 from google.genai import types
+from tests.constants import LIVE_TEST_MODEL
 
 
 # Default model for live tests
-DEFAULT_MODEL = "gemini-2.0-flash"
+DEFAULT_MODEL = LIVE_TEST_MODEL
 
 
 def create_mock_adk_event(text: str, is_final: bool = False, partial: bool = True):
@@ -69,6 +70,10 @@ def get_event_types(events: List[BaseEvent]) -> List[str]:
 
 class TestMultiTurnConversation:
     """Test cases for multi-turn conversation support."""
+
+    @pytest.fixture(autouse=True)
+    def setup_llmock(self, llmock_server):
+        """Ensure LLMock is running when no real API key is set."""
 
     @pytest.fixture(autouse=True)
     def reset_session_manager(self):

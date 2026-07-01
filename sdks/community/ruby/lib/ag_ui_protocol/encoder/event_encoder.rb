@@ -39,11 +39,10 @@ module AgUiProtocol
     # ### Implementation Details
     #
     # Internally, the encoder converts events to JSON and formats them as Server-Sent
-    # Events with the following structure:
+    # Events with the following structure (each event terminated by two literal
+    # newline characters, shown here as escape sequences):
     #
-    # ```
-    # data: {json-serialized event}\n\n
-    # ```
+    #   data: {json-serialized event}\n\n
     #
     # This format allows clients to receive a continuous stream of events and process
     # them as they arrive.

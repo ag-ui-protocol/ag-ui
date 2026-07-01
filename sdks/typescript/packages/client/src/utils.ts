@@ -8,6 +8,10 @@ export const structuredClone_ = <T>(obj: T): T => {
   try {
     return JSON.parse(JSON.stringify(obj));
   } catch (err) {
+    // Preserve array vs object type in shallow fallback
+    if (Array.isArray(obj)) {
+      return [...obj] as unknown as T;
+    }
     return { ...obj } as T;
   }
 };
@@ -22,7 +26,6 @@ export function randomUUID(): string {
 
 // Note: semver helpers were removed in favor of using
 // the external `compare-versions` library directly at call sites.
-
 
 /**
  * Parses a semantic version string into its numeric components.

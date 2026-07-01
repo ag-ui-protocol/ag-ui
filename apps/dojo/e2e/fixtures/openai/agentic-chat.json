@@ -1,0 +1,100 @@
+{
+  "fixtures": [
+    {
+      "match": { "userMessage": "I am duaa" },
+      "response": { "content": "Hello duaa! How can I assist you today?" }
+    },
+    {
+      "match": { "userMessage": "background color to blue" },
+      "response": {
+        "toolCalls": [
+          {
+            "name": "change_background",
+            "arguments": "{\"background\":\"blue\"}"
+          }
+        ]
+      }
+    },
+    {
+      "match": { "userMessage": "background color to pink" },
+      "response": {
+        "toolCalls": [
+          {
+            "name": "change_background",
+            "arguments": "{\"background\":\"pink\"}"
+          }
+        ]
+      }
+    },
+    {
+      "match": { "userMessage": "stock price of AAPL" },
+      "response": {
+        "content": "The current stock price of Apple Inc. (AAPL) is $150.25."
+      }
+    },
+    {
+      "match": { "userMessage": "capital of France" },
+      "response": { "content": "The capital of France is Paris." }
+    },
+    {
+      "match": { "userMessage": "What was my first question" },
+      "response": {
+        "content": "Your first question was about the capital of France."
+      }
+    },
+    {
+      "match": { "userMessage": "favorite fruit is Mango" },
+      "response": {
+        "content": "That's great! Mango is a wonderful tropical fruit known for its sweet, juicy flavor."
+      }
+    },
+    {
+      "match": { "userMessage": "listening to Kaavish" },
+      "response": {
+        "content": "Kaavish is a wonderful musical group known for their unique blend of Eastern and Western sounds!"
+      }
+    },
+    {
+      "match": { "userMessage": "fact about Moon" },
+      "response": {
+        "content": "The Moon is Earth's only natural satellite, orbiting at an average distance of about 384,400 km. It takes approximately 27.3 days to complete one orbit."
+      }
+    },
+    {
+      "match": { "userMessage": "remind me what my favorite fruit" },
+      "response": { "content": "Your favorite fruit is Mango!" }
+    },
+    {
+      "match": { "userMessage": "counting down" },
+      "response": {
+        "content": "counting down:\n10\n9\n8\n7\n6\n5\n4\n3\n2\n1\n\u2713"
+      }
+    },
+    {
+      "match": { "userMessage": "tell me a joke" },
+      "response": {
+        "content": "Why did the scarecrow win an award? Because he was outstanding in his field!"
+      }
+    },
+    {
+      "match": { "userMessage": "say hello" },
+      "response": { "content": "Hello there! Nice to chat with you." }
+    },
+    {
+      "match": { "userMessage": "Hey there" },
+      "response": { "content": "Hello! How can I assist you today?" }
+    },
+    {
+      "match": { "userMessage": "Hi" },
+      "response": { "content": "Hello! How can I assist you today?" }
+    },
+    {
+      "match": { "userMessage": "my name is Alex" },
+      "response": { "content": "Hello Alex! Nice to meet you. How can I help you today?" }
+    },
+    {
+      "match": { "userMessage": "What is my name" },
+      "response": { "content": "Your name is Alex!" }
+    }
+  ]
+}

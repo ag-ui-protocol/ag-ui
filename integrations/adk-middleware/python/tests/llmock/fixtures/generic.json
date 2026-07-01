@@ -1,0 +1,59 @@
+{
+  "fixtures": [
+    {
+      "match": { "userMessage": "Say hello in exactly 3 words" },
+      "response": { "content": "Hello to you!" }
+    },
+    {
+      "match": { "userMessage": "Say hello in one word" },
+      "response": { "content": "Hello!" }
+    },
+    {
+      "match": { "userMessage": "My name is Alice" },
+      "response": { "content": "Nice to meet you, Alice! How can I help you today?" }
+    },
+    {
+      "match": { "userMessage": "What is my name" },
+      "response": { "content": "Your name is Alice!" }
+    },
+    {
+      "match": { "userMessage": "What color is this" },
+      "response": { "content": "This appears to be a red pixel." }
+    },
+    {
+      "match": { "userMessage": "Hello" },
+      "response": { "content": "Hello! How can I help you today?" }
+    },
+    {
+      "match": { "userMessage": "Hello again" },
+      "response": { "content": "Hello again! What can I do for you?" }
+    },
+    {
+      "match": { "userMessage": "first message" },
+      "response": { "content": "I received your message. How can I help?" }
+    },
+    {
+      "match": { "userMessage": "second message" },
+      "response": { "content": "I see this is your second message. What would you like to discuss?" }
+    },
+    {
+      "match": { "userMessage": "Third message" },
+      "response": { "content": "Third message received. I'm here to help!" }
+    },
+    {
+      "match": { "userMessage": "Fourth message" },
+      "response": { "content": "Fourth message received. Anything else?" }
+    },
+    {
+      "match": { "userMessage": "context_checking_tool" },
+      "response": {
+        "toolCalls": [
+          {
+            "name": "context_checking_tool",
+            "arguments": "{}"
+          }
+        ]
+      }
+    }
+  ]
+}
