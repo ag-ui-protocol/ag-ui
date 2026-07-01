@@ -9,6 +9,7 @@ import { toolBasedGenerativeUIAgent } from "./agents/tool-based-generative-ui";
 import { backendToolRenderingAgent } from "./agents/backend-tool-rendering";
 import { humanInTheLoopAgent } from "./agents/human-in-the-loop";
 import { interruptAgent } from "./agents/interrupt";
+import { sharedStateAgent } from "./agents/shared-state";
 
 export const mastra = new Mastra({
   server: {
@@ -23,6 +24,7 @@ export const mastra = new Mastra({
     backend_tool_rendering: backendToolRenderingAgent,
     human_in_the_loop: humanInTheLoopAgent,
     interrupt: interruptAgent,
+    shared_state: sharedStateAgent,
   },
   // File-backed (not ":memory:"): suspend/resume persists the agentic-loop
   // workflow snapshot to instance storage and loads it on resumeStream. An
