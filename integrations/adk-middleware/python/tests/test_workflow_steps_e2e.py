@@ -42,6 +42,25 @@ class StopAgent(BaseAgent):
                     actions=EventActions(escalate=True))
 
 
+class CustomFlow(BaseAgent):
+    """An ADK *custom agent* (https://adk.dev/agents/custom-agents/): a BaseAgent
+    that orchestrates its sub-agents with code-based control flow in
+    `_run_async_impl`, instead of using SequentialAgent/ParallelAgent/LoopAgent."""
+
+    def __init__(self, name, a, b, c):
+        super().__init__(name=name, sub_agents=[a, b, c])
+
+    async def _run_async_impl(self, ctx):
+        async for e in self.sub_agents[0].run_async(ctx):
+            yield e
+        # code-based decision branching (this is the "dynamic" style done by hand)
+        if True:
+            async for e in self.sub_agents[1].run_async(ctx):
+                yield e
+        async for e in self.sub_agents[2].run_async(ctx):
+            yield e
+
+
 async def _run_steps(agent_obj, emit=True):
     """Run agent_obj through ADKAgent and return the (type, step_name) step list."""
     agent = ADKAgent(adk_agent=agent_obj, app_name="demo", user_id="u",
@@ -143,6 +162,17 @@ async def test_adk_2_0_workflow_graph_emits_steps():
     assert steps == [
         (EventType.STEP_STARTED, "wa"), (EventType.STEP_FINISHED, "wa"),
         (EventType.STEP_STARTED, "wb"), (EventType.STEP_FINISHED, "wb"),
+    ]
+
+
+async def test_custom_agent_orchestrator_emits_steps():
+    """ADK custom agent (code-based orchestration) emits one step per sub-agent."""
+    flow = CustomFlow("custom_flow", SayAgent(name="alpha"), SayAgent(name="beta"), SayAgent(name="gamma"))
+    _full, steps = await _run_steps(flow)
+    assert steps == [
+        (EventType.STEP_STARTED, "alpha"), (EventType.STEP_FINISHED, "alpha"),
+        (EventType.STEP_STARTED, "beta"), (EventType.STEP_FINISHED, "beta"),
+        (EventType.STEP_STARTED, "gamma"), (EventType.STEP_FINISHED, "gamma"),
     ]
 
 
