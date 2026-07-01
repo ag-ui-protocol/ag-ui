@@ -21,7 +21,7 @@ jobs:
 
     defaults:
       run:
-        working-directory: sdks/community/java
+        working-directory: sdks/community/java/ag-ui
 
     steps:
       - name: Checkout code
