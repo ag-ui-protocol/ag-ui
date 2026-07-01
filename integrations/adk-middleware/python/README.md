@@ -323,6 +323,57 @@ add_adk_fastapi_endpoint(app, technical_agent_wrapper, path="/agents/technical")
 add_adk_fastapi_endpoint(app, creative_agent_wrapper, path="/agents/creative")
 ```
 
+### Workflow step events (SequentialAgent / ParallelAgent / LoopAgent)
+
+For workflow and multi-agent runs you can surface each ADK node/sub-agent as an
+AG-UI **step**, so the frontend gets observable per-step progress. Set
+`emit_workflow_steps=True`:
+
+```python
+from google.adk.agents import SequentialAgent, LlmAgent
+from ag_ui_adk import ADKAgent
+
+pipeline = SequentialAgent(
+    name="research_pipeline",
+    sub_agents=[
+        LlmAgent(name="planner", model="gemini-2.5-flash", instruction="Plan the work."),
+        LlmAgent(name="researcher", model="gemini-2.5-flash", instruction="Do the research."),
+        LlmAgent(name="writer", model="gemini-2.5-flash", instruction="Write the answer."),
+    ],
+)
+
+agent = ADKAgent(adk_agent=pipeline, app_name="demo", user_id="demo", emit_workflow_steps=True)
+```
+
+The run now emits, in order:
+
+```
+RUN_STARTED
+  STEP_STARTED   { stepName: "planner" }
+  … planner's TEXT_MESSAGE_* / TOOL_CALL_* …
+  STEP_FINISHED  { stepName: "planner" }
+  STEP_STARTED   { stepName: "researcher" }
+  …
+  STEP_FINISHED  { stepName: "writer" }
+RUN_FINISHED
+```
+
+Each ADK event's `author` (the node/sub-agent name) becomes the AG-UI `stepName`,
+following the AG-UI spec's recommendation that *"the stepName could be the name of
+a node"*. This mirrors how the LangGraph integration maps graph nodes to steps.
+
+Notes:
+
+- **Opt-in and non-breaking.** Defaults to `False`; existing streams are unchanged.
+- **Only for workflows/multi-agent.** A plain single `LlmAgent` (no sub-agents)
+  emits no steps even when the flag is `True`. It activates for `SequentialAgent`,
+  `ParallelAgent`, `LoopAgent`, coordinator/sub-agent and dynamic-transfer
+  topologies. `LoopAgent` naturally re-emits a step pair per iteration; dynamic
+  `transfer_to_agent` shows up as a new step when the author changes.
+- **`ParallelAgent` is best-effort.** Concurrent branches interleave in the flat
+  event stream, so their steps close at the run boundary rather than at the exact
+  end of each branch.
+
 ## Context Support
 
 The middleware automatically passes `context` from `RunAgentInput` to your ADK agents, following the pattern established by LangGraph. Context is stored in session state under the `_ag_ui_context` key and is accessible in both tools and instruction providers.

@@ -11,6 +11,7 @@ from google.genai import types
 
 from ag_ui.core import (
     BaseEvent, EventType,
+    StepStartedEvent, StepFinishedEvent,
     TextMessageStartEvent, TextMessageContentEvent, TextMessageEndEvent,
     ToolCallStartEvent, ToolCallArgsEvent, ToolCallEndEvent,
     ToolCallResultEvent, StateSnapshotEvent, StateDeltaEvent,
@@ -199,6 +200,7 @@ class EventTranslator:
         is_resumable: bool = False,
         streaming_function_call_arguments: bool = False,
         output_schema_agent_names: Optional[set] = None,
+        emit_workflow_steps: bool = False,
     ):
         """Initialize the event translator.
 
@@ -221,9 +223,19 @@ class EventTranslator:
                 TextMessageEvents. This prevents structured output from
                 output_schema agents (e.g. classifiers in Workflow pipelines)
                 from leaking into user-visible messages. (GitHub #1390)
+            emit_workflow_steps: When True, emit STEP_STARTED/STEP_FINISHED around
+                ADK node/sub-agent boundaries (author transitions). Enabled by
+                ADKAgent only for workflow/multi-agent topologies so a plain
+                single LlmAgent run stays unchanged.
         """
         # Agent names with output_schema — suppress their text from the chat UI (GitHub #1390)
         self._output_schema_agent_names: set[str] = output_schema_agent_names if output_schema_agent_names is not None else set()
+        # Workflow step lifecycle: when True, emit STEP_STARTED/STEP_FINISHED
+        # around ADK sub-agent/node boundaries (author transitions). Only set
+        # True by ADKAgent for workflow/multi-agent topologies.
+        self._emit_workflow_steps = emit_workflow_steps
+        # Name of the currently open workflow step (the ADK author/node), or None.
+        self._current_step_name: Optional[str] = None
         # Whether the agent uses ADK's native resumability (ResumabilityConfig).
         # When True, ClientProxyTool handles tool call emission and the translator
         # must skip client tool names to avoid duplicates.
@@ -331,6 +343,52 @@ class EventTranslator:
             True if there are deferred events waiting to be emitted
         """
         return len(self._deferred_confirm_events) > 0
+
+    def step_boundary_events(self, adk_event: ADKEvent) -> Iterable[BaseEvent]:
+        """Emit STEP_STARTED/STEP_FINISHED at ADK node/sub-agent boundaries.
+
+        In an ADK workflow/multi-agent run, each event's ``author`` is the node
+        (sub-agent) that produced it. A change of author means the previous node
+        finished and a new one started, so we close the open step and open a new
+        one. This mirrors the LangGraph integration (node name → step) and follows
+        the AG-UI spec, which recommends steps for multi-stage runs — *"the
+        stepName could be the name of a node"* — and requires each
+        STEP_FINISHED.step_name to match its STEP_STARTED.
+
+        No-op unless ``emit_workflow_steps`` was enabled. User-authored and
+        author-less events are ignored, and consecutive events from the same node
+        (e.g. streaming chunks) do not re-emit steps.
+
+        Call this once per ADK event, before translating its content, so
+        STEP_STARTED precedes the node's text/tool events.
+
+        Yields:
+            A StepFinishedEvent (for the previous node) and/or a StepStartedEvent.
+        """
+        if not self._emit_workflow_steps:
+            return
+        author = getattr(adk_event, 'author', None)
+        if not author or author == "user":
+            return
+        if author == self._current_step_name:
+            return
+        if self._current_step_name is not None:
+            yield StepFinishedEvent(step_name=self._current_step_name)
+        yield StepStartedEvent(step_name=author)
+        self._current_step_name = author
+
+    def finalize_step_events(self) -> Iterable[BaseEvent]:
+        """Close any open workflow step (call right before the run completes).
+
+        Ensures STEP_FINISHED is paired before RUN_FINISHED. Idempotent: emits at
+        most one StepFinishedEvent and resets the tracker.
+
+        Yields:
+            A StepFinishedEvent for the open step, if any.
+        """
+        if self._current_step_name is not None:
+            yield StepFinishedEvent(step_name=self._current_step_name)
+            self._current_step_name = None
 
     async def translate(
         self, 
