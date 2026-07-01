@@ -153,6 +153,15 @@ def test_workflow_orchestrators_are_workflows():
         assert ADKAgent._agent_has_workflow(agent) is True
 
 
+def test_adk_2_0_workflow_graph_is_workflow():
+    try:
+        from google.adk.workflow import Workflow
+    except ImportError:
+        import pytest
+        pytest.skip("ADK 2.0 Workflow graph engine not available on this ADK version")
+    assert ADKAgent._agent_has_workflow(Workflow(name="wf_root")) is True
+
+
 def test_llm_agent_with_sub_agents_is_workflow():
     from google.adk.agents import LlmAgent
     agent = MagicMock(spec=LlmAgent)

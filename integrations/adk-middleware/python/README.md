@@ -367,9 +367,10 @@ Notes:
 - **Opt-in and non-breaking.** Defaults to `False`; existing streams are unchanged.
 - **Only for workflows/multi-agent.** A plain single `LlmAgent` (no sub-agents)
   emits no steps even when the flag is `True`. It activates for `SequentialAgent`,
-  `ParallelAgent`, `LoopAgent`, coordinator/sub-agent and dynamic-transfer
-  topologies. `LoopAgent` naturally re-emits a step pair per iteration; dynamic
-  `transfer_to_agent` shows up as a new step when the author changes.
+  `ParallelAgent`, `LoopAgent`, the ADK 2.0 `Workflow` graph, and
+  coordinator/sub-agent and dynamic-transfer topologies. `LoopAgent` naturally
+  re-emits a step pair per iteration; dynamic `transfer_to_agent` shows up as a
+  new step when the author changes.
 - **`ParallelAgent` is best-effort.** Concurrent branches interleave in the flat
   event stream, so their steps close at the run boundary rather than at the exact
   end of each branch.
