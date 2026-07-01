@@ -165,6 +165,55 @@ async def test_adk_2_0_workflow_graph_emits_steps():
     ]
 
 
+class RichAgent(BaseAgent):
+    """A node that does everything: reasons (thought), talks, calls a tool,
+    returns the tool result, and writes session state — so we can verify a step
+    correctly brackets the full variety of AG-UI events, not just plain text."""
+
+    async def _run_async_impl(self, ctx):
+        a = self.name
+        fid = f"fc-{a}"
+        yield Event(author=a, content=types.Content(role="model",
+                    parts=[types.Part(text=f"{a} is thinking", thought=True)]))
+        yield Event(author=a, content=types.Content(role="model",
+                    parts=[types.Part(text=f"{a} says hi")]))
+        yield Event(author=a, content=types.Content(role="model",
+                    parts=[types.Part(function_call=types.FunctionCall(id=fid, name="calc", args={"x": 1}))]))
+        yield Event(author=a, content=types.Content(role="user",
+                    parts=[types.Part(function_response=types.FunctionResponse(id=fid, name="calc", response={"r": 2}))]))
+        yield Event(author=a, actions=EventActions(state_delta={f"{a}_done": True}))
+
+
+async def test_steps_bracket_reasoning_tools_and_state():
+    """Each STEP_STARTED/STEP_FINISHED must wrap that node's reasoning, text,
+    tool call, tool result and state events — in order, without leaking across
+    sub-agents."""
+    from ag_ui_adk.event_translator import _check_thought_support
+
+    wf = SequentialAgent(name="seq", sub_agents=[RichAgent(name="alpha"), RichAgent(name="beta")])
+    full, steps = await _run_steps(wf)
+
+    assert [n for t, n in steps if t == EventType.STEP_STARTED] == ["alpha", "beta"]
+    assert _well_formed(steps)
+
+    def segment(name):
+        i = full.index((EventType.STEP_STARTED, name))
+        j = full.index((EventType.STEP_FINISHED, name))
+        assert i < j
+        return [t for t, _ in full[i + 1:j]]
+
+    for name in ("alpha", "beta"):
+        seg = segment(name)
+        # No other node's steps leak inside this node's bracket.
+        assert (EventType.STEP_STARTED not in seg) and (EventType.STEP_FINISHED not in seg)
+        assert EventType.TEXT_MESSAGE_CONTENT in seg
+        assert EventType.TOOL_CALL_START in seg
+        assert EventType.TOOL_CALL_RESULT in seg
+        assert EventType.STATE_DELTA in seg
+        if _check_thought_support():  # older google-genai has no part.thought
+            assert EventType.REASONING_MESSAGE_CONTENT in seg
+
+
 async def test_custom_agent_orchestrator_emits_steps():
     """ADK custom agent (code-based orchestration) emits one step per sub-agent."""
     flow = CustomFlow("custom_flow", SayAgent(name="alpha"), SayAgent(name="beta"), SayAgent(name="gamma"))
