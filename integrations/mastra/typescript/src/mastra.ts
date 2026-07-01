@@ -268,6 +268,15 @@ export interface MastraAgentConfig extends AgentConfig {
    * `RunAgentInput.resume` channels regardless of this flag.
    */
   emitInterruptOutcome?: boolean;
+  /**
+   * For REMOTE agents only: the `MastraClient` used to reach the agent. When
+   * set, the bridge syncs `input.state` into the remote server's working memory
+   * (via `client.updateWorkingMemory`) before streaming, so a client-side edit
+   * to shared state reaches a remote agent the same way it does a local one.
+   * Set by `getRemoteAgents`; unused for local agents (which sync through their
+   * own `Memory` instance).
+   */
+  remoteClient?: MastraClient;
 }
 
 interface MastraAgentStreamOptions {
@@ -363,6 +372,8 @@ export class MastraAgent extends AbstractAgent {
   public headers?: Record<string, string>;
   /** See MastraAgentConfig.emitInterruptOutcome. Default true. */
   emitInterruptOutcome: boolean;
+  /** See MastraAgentConfig.remoteClient. Set for remote agents only. */
+  remoteClient?: MastraClient;
 
   constructor(private config: MastraAgentConfig) {
     const {
@@ -371,6 +382,7 @@ export class MastraAgent extends AbstractAgent {
       requestContext,
       untilIdle,
       emitInterruptOutcome,
+      remoteClient,
       ...rest
     } = config;
     super(rest);
@@ -379,6 +391,7 @@ export class MastraAgent extends AbstractAgent {
     this.resourceId = resourceId;
     this.requestContext = requestContext ?? new RequestContext();
     this.untilIdle = untilIdle;
+    this.remoteClient = remoteClient;
   }
 
   public clone() {
@@ -657,60 +670,13 @@ export class MastraAgent extends AbstractAgent {
         // Sync AG-UI input state into Mastra's working memory before streaming,
         // so a client-side edit to shared state (e.g. unchecking a dietary
         // preference in the recipe UI, then hitting "Improve") is what the agent
-        // reads on the next run. Working memory lives in Mastra's RESOURCE store
-        // (default scope "resource"), written via `updateWorkingMemory` — NOT
-        // `thread.metadata`. That is the same store `getWorkingMemory` and the
-        // model's own `updateWorkingMemory` tool read from, so the sync MUST go
-        // through this API; writing to thread.metadata (as a prior version did)
-        // is invisible to the agent, so client edits silently had no effect.
-        if (this.isLocalMastraAgent(this.agent)) {
-          try {
-            const memory = await this.agent.getMemory({
-              requestContext: this.requestContext,
-            });
-
-            const rest = this.workingMemoryStateSlice(input.state);
-            if (memory && Object.keys(rest).length > 0) {
-              const resourceId = this.resourceId ?? input.threadId;
-              const memoryConfig = { workingMemory: { enabled: true } };
-
-              // Merge the client state over existing working memory: keys the
-              // client doesn't manage are preserved, while its shared-state keys
-              // (e.g. `recipe`) overwrite wholesale — so an unchecked preference
-              // is actually removed, not left lingering from the prior state.
-              let existing: Record<string, any> = {};
-              try {
-                const raw = await memory.getWorkingMemory({
-                  resourceId,
-                  threadId: input.threadId,
-                  memoryConfig,
-                });
-                if (typeof raw === "string") {
-                  const parsed = JSON.parse(raw);
-                  if (
-                    parsed &&
-                    typeof parsed === "object" &&
-                    !Array.isArray(parsed) &&
-                    !("$schema" in parsed)
-                  ) {
-                    existing = parsed;
-                  }
-                }
-              } catch {
-                // No/invalid existing working memory — start from client state.
-              }
-
-              await memory.updateWorkingMemory({
-                resourceId,
-                threadId: input.threadId,
-                workingMemory: JSON.stringify({ ...existing, ...rest }),
-                memoryConfig,
-              });
-            }
-          } catch (error) {
-            subscriber.error(error);
-            return;
-          }
+        // reads on the next run. Works for both local and remote agents (see
+        // syncInputStateToWorkingMemory).
+        try {
+          await this.syncInputStateToWorkingMemory(input);
+        } catch (error) {
+          subscriber.error(error);
+          return;
         }
 
         try {
@@ -1773,6 +1739,142 @@ export class MastraAgent extends AbstractAgent {
     const { messages, ...rest } = state as Record<string, any>;
     void messages;
     return rest;
+  }
+
+  /**
+   * Coerces a working-memory value read back from Mastra (a JSON string for
+   * schema/json working memory, or already an object, or a `{ workingMemory }`
+   * envelope from the remote HTTP route) into a plain object for merging.
+   * Returns `{}` for markdown/non-JSON/template ($schema) values.
+   */
+  private coerceWorkingMemoryObject(raw: unknown): Record<string, any> {
+    let value: unknown = raw;
+    if (
+      value &&
+      typeof value === "object" &&
+      "workingMemory" in (value as Record<string, unknown>)
+    ) {
+      value = (value as Record<string, unknown>).workingMemory;
+    }
+    if (typeof value === "string") {
+      try {
+        value = JSON.parse(value);
+      } catch {
+        return {};
+      }
+    }
+    if (
+      value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      !("$schema" in (value as Record<string, unknown>))
+    ) {
+      return value as Record<string, any>;
+    }
+    return {};
+  }
+
+  /**
+   * Syncs the run's `input.state` (the client's shared state, minus `messages`)
+   * into Mastra's resource-scoped working memory BEFORE streaming, so a UI edit
+   * reaches the agent on the next run. Merges the client state over the existing
+   * working memory: keys the client doesn't manage are preserved, while its
+   * shared-state keys (e.g. `recipe`) overwrite wholesale — so a removed value
+   * (an unchecked preference) is actually removed, not left lingering.
+   *
+   * Working memory lives in the RESOURCE store (default scope "resource"),
+   * written via `updateWorkingMemory` — NOT `thread.metadata`, which the model
+   * never reads. Local agents write through their own `Memory`; remote agents
+   * write through the `MastraClient` (`remoteClient`) so the SAME edit reaches a
+   * remote server. No-op when there is no client state or (for remote) no client.
+   */
+  private async syncInputStateToWorkingMemory(
+    input: RunAgentInput,
+  ): Promise<void> {
+    const rest = this.workingMemoryStateSlice(input.state);
+    if (Object.keys(rest).length === 0) return;
+
+    const resourceId = this.resourceId ?? input.threadId;
+    const memoryConfig = { workingMemory: { enabled: true } };
+
+    if (this.isLocalMastraAgent(this.agent)) {
+      const memory = await this.agent.getMemory({
+        requestContext: this.requestContext,
+      });
+      if (!memory) return;
+
+      let existing: Record<string, any> = {};
+      try {
+        existing = this.coerceWorkingMemoryObject(
+          await memory.getWorkingMemory({
+            resourceId,
+            threadId: input.threadId,
+            memoryConfig,
+          }),
+        );
+      } catch {
+        // No/invalid existing working memory — start from the client state.
+      }
+
+      await memory.updateWorkingMemory({
+        resourceId,
+        threadId: input.threadId,
+        workingMemory: JSON.stringify({ ...existing, ...rest }),
+        memoryConfig,
+      });
+      return;
+    }
+
+    // Remote agent: write through the MastraClient (working-memory HTTP route).
+    // Requires the client (set by getRemoteAgents) and the agent id.
+    if (!this.remoteClient || !this.agentId) return;
+    const client = this.remoteClient;
+    const agentId = this.agentId;
+
+    let existing: Record<string, any> = {};
+    try {
+      existing = this.coerceWorkingMemoryObject(
+        await client.getWorkingMemory({
+          agentId,
+          threadId: input.threadId,
+          resourceId,
+        }),
+      );
+    } catch {
+      // No/invalid (or not-yet-created) working memory — start from client state.
+    }
+
+    const workingMemory = JSON.stringify({ ...existing, ...rest });
+    const write = () =>
+      client.updateWorkingMemory({
+        agentId,
+        threadId: input.threadId,
+        resourceId,
+        workingMemory,
+      });
+
+    try {
+      await write();
+    } catch {
+      // The remote working-memory HTTP route requires the thread to exist. On
+      // the first turn it may not yet (unlike local Memory, which upserts). So
+      // create the thread and retry once. Best-effort: if it still fails, skip
+      // rather than fail the run — the stream creates the thread, and later
+      // turns will sync.
+      try {
+        await client.createMemoryThread({
+          agentId,
+          threadId: input.threadId,
+          resourceId,
+        } as unknown as Parameters<MastraClient["createMemoryThread"]>[0]);
+        await write();
+      } catch (error) {
+        console.warn(
+          `[MastraAgent] Failed to sync input.state to remote working memory for thread ${input.threadId}:`,
+          error,
+        );
+      }
+    }
   }
 
   /**

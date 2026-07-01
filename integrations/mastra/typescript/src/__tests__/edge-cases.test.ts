@@ -184,6 +184,103 @@ describe("working memory edge cases", () => {
   });
 });
 
+describe("remote working-memory sync (client -> agent shared state)", () => {
+  // A minimal MastraClient stand-in exposing the working-memory HTTP methods
+  // the bridge uses for remote agents.
+  class FakeRemoteClient {
+    workingMemoryValue: string | undefined;
+    getCalls: any[] = [];
+    updateCalls: Array<{
+      agentId: string;
+      threadId: string;
+      resourceId?: string;
+      workingMemory: string;
+    }> = [];
+    constructor(initial?: string) {
+      this.workingMemoryValue = initial;
+    }
+    async getWorkingMemory(args: any) {
+      this.getCalls.push(args);
+      return this.workingMemoryValue;
+    }
+    async updateWorkingMemory(args: any) {
+      this.updateCalls.push(args);
+      this.workingMemoryValue = args.workingMemory;
+    }
+  }
+
+  const makeRemote = (client: FakeRemoteClient, streamChunks: any[] = []) =>
+    new MastraAgent({
+      agentId: "remote-agent",
+      agent: new FakeRemoteAgent({ streamChunks }) as any,
+      resourceId: "resource-1",
+      remoteClient: client as any,
+    });
+
+  it("writes input.state to the remote server's working memory via the client", async () => {
+    const client = new FakeRemoteClient();
+    const agent = makeRemote(client);
+
+    const events = await collectEvents(
+      agent,
+      makeInput({ state: { recipe: { title: "Soup" } } }),
+    );
+
+    expect(events.some((e) => e.type === EventType.RUN_FINISHED)).toBe(true);
+    expect(client.updateCalls).toHaveLength(1);
+    expect(client.updateCalls[0]).toMatchObject({
+      agentId: "remote-agent",
+      threadId: "thread-1",
+      resourceId: "resource-1",
+    });
+    expect(JSON.parse(client.updateCalls[0].workingMemory)).toEqual({
+      recipe: { title: "Soup" },
+    });
+  });
+
+  it("merges input.state over the remote's existing working memory", async () => {
+    const client = new FakeRemoteClient(
+      JSON.stringify({ existing: "data", recipe: { title: "Old" } }),
+    );
+    const agent = makeRemote(client);
+
+    await collectEvents(
+      agent,
+      makeInput({ state: { recipe: { title: "New" } } }),
+    );
+
+    expect(JSON.parse(client.updateCalls.at(-1)!.workingMemory)).toEqual({
+      existing: "data",
+      recipe: { title: "New" },
+    });
+  });
+
+  it("no-ops when input.state is empty (no client write)", async () => {
+    const client = new FakeRemoteClient();
+    const agent = makeRemote(client);
+
+    const events = await collectEvents(agent, makeInput({ state: {} }));
+
+    expect(events.some((e) => e.type === EventType.RUN_FINISHED)).toBe(true);
+    expect(client.updateCalls).toHaveLength(0);
+  });
+
+  it("does not crash a remote agent without a client (sync is skipped)", async () => {
+    const agent = new MastraAgent({
+      agentId: "remote-agent",
+      agent: new FakeRemoteAgent({ streamChunks: [] }) as any,
+      resourceId: "resource-1",
+      // no remoteClient
+    });
+
+    const events = await collectEvents(
+      agent,
+      makeInput({ state: { recipe: { title: "Soup" } } }),
+    );
+    expect(events.some((e) => e.type === EventType.RUN_FINISHED)).toBe(true);
+  });
+});
+
 describe("error handling", () => {
   it("propagates error chunk from local agent stream to subscriber", async () => {
     const agent = makeLocalMastraAgent({
