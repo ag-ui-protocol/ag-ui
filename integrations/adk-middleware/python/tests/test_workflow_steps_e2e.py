@@ -184,34 +184,52 @@ class RichAgent(BaseAgent):
         yield Event(author=a, actions=EventActions(state_delta={f"{a}_done": True}))
 
 
-async def test_steps_bracket_reasoning_tools_and_state():
-    """Each STEP_STARTED/STEP_FINISHED must wrap that node's reasoning, text,
-    tool call, tool result and state events — in order, without leaking across
-    sub-agents."""
+def _assert_full_variety_bracketed(full, names):
+    """Every named node's STEP bracket must wrap that node's reasoning (if the
+    google-genai SDK supports thoughts), text, tool call, tool result and state,
+    with no other node's steps leaking inside."""
     from ag_ui_adk.event_translator import _check_thought_support
-
-    wf = SequentialAgent(name="seq", sub_agents=[RichAgent(name="alpha"), RichAgent(name="beta")])
-    full, steps = await _run_steps(wf)
-
-    assert [n for t, n in steps if t == EventType.STEP_STARTED] == ["alpha", "beta"]
-    assert _well_formed(steps)
-
-    def segment(name):
+    for name in names:
         i = full.index((EventType.STEP_STARTED, name))
         j = full.index((EventType.STEP_FINISHED, name))
-        assert i < j
-        return [t for t, _ in full[i + 1:j]]
-
-    for name in ("alpha", "beta"):
-        seg = segment(name)
-        # No other node's steps leak inside this node's bracket.
-        assert (EventType.STEP_STARTED not in seg) and (EventType.STEP_FINISHED not in seg)
+        assert i < j, f"{name}: STEP_STARTED must precede STEP_FINISHED"
+        seg = [t for t, _ in full[i + 1:j]]
+        assert (EventType.STEP_STARTED not in seg) and (EventType.STEP_FINISHED not in seg), \
+            f"{name}: another node's step leaked inside the bracket"
         assert EventType.TEXT_MESSAGE_CONTENT in seg
         assert EventType.TOOL_CALL_START in seg
         assert EventType.TOOL_CALL_RESULT in seg
         assert EventType.STATE_DELTA in seg
-        if _check_thought_support():  # older google-genai has no part.thought
+        if _check_thought_support():
             assert EventType.REASONING_MESSAGE_CONTENT in seg
+
+
+async def test_steps_bracket_reasoning_tools_and_state():
+    """SequentialAgent of rich sub-agents: each step wraps that sub-agent's
+    reasoning, text, tool call, tool result and state, without cross-node leak."""
+    wf = SequentialAgent(name="seq", sub_agents=[RichAgent(name="alpha"), RichAgent(name="beta")])
+    full, steps = await _run_steps(wf)
+    assert [n for t, n in steps if t == EventType.STEP_STARTED] == ["alpha", "beta"]
+    assert _well_formed(steps)
+    _assert_full_variety_bracketed(full, ["alpha", "beta"])
+
+
+async def test_workflow_graph_nodes_bracket_full_event_variety():
+    """ADK 2.0 Workflow graph with rich nodes: each graph node's step wraps its
+    reasoning, text, tool call, tool result and state (the node runner does not
+    break the bracketing)."""
+    try:
+        from google.adk.workflow import Workflow, Edge, START, node
+    except ImportError:
+        pytest.skip("ADK 2.0 Workflow graph engine not available on this ADK version")
+
+    na = node(RichAgent(name="na"))
+    nb = node(RichAgent(name="nb"))
+    wf = Workflow(name="g", edges=[Edge(from_node=START, to_node=na), Edge(from_node=na, to_node=nb)])
+    full, steps = await _run_steps(wf)
+    assert [n for t, n in steps if t == EventType.STEP_STARTED] == ["na", "nb"]
+    assert _well_formed(steps)
+    _assert_full_variety_bracketed(full, ["na", "nb"])
 
 
 async def test_custom_agent_orchestrator_emits_steps():
