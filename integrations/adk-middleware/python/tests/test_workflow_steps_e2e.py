@@ -2,10 +2,12 @@
 """End-to-end workflow-step tests over REAL ADK orchestrators (no LLM).
 
 These drive the full ADKAgent producer/consumer with `emit_workflow_steps=True`
-using real `SequentialAgent` / `ParallelAgent` / `LoopAgent` instances whose
-leaves are trivial `BaseAgent`s (each yields text events authored by itself, no
-model call). They verify the STEP_STARTED/STEP_FINISHED stream for every
-topology, complementing the unit tests in test_workflow_steps.py.
+using real `SequentialAgent` / `ParallelAgent` / `LoopAgent` / custom-agent /
+ADK 2.0 `Workflow` graph topologies. Every leaf is a **rich** node: it emits a
+thought (REASONING_*), text (TEXT_MESSAGE_*), a tool call (TOOL_CALL_*), a tool
+result (TOOL_CALL_RESULT) and a state delta (STATE_DELTA) — so the tests verify
+that STEP_STARTED/STEP_FINISHED correctly brackets the full variety of AG-UI
+events for every topology, not just plain text.
 """
 
 import asyncio
@@ -21,25 +23,37 @@ from ag_ui_adk import ADKAgent
 _STEP = (EventType.STEP_STARTED, EventType.STEP_FINISHED)
 
 
-class SayAgent(BaseAgent):
-    """Yields two text events authored by itself, sleeping between them so that
-    concurrent branches (ParallelAgent) actually interleave."""
+def _rich_events(name, escalate=False):
+    """The full event variety a realistic node produces, all authored by ``name``:
+    reasoning (thought) → text → tool call → tool result → state delta."""
+    fid = f"fc-{name}"
+    yield Event(author=name, content=types.Content(role="model",
+                parts=[types.Part(text=f"{name} is thinking", thought=True)]))
+    yield Event(author=name, content=types.Content(role="model",
+                parts=[types.Part(text=f"{name} says hi")]))
+    yield Event(author=name, content=types.Content(role="model",
+                parts=[types.Part(function_call=types.FunctionCall(id=fid, name="calc", args={"x": 1}))]))
+    yield Event(author=name, content=types.Content(role="user",
+                parts=[types.Part(function_response=types.FunctionResponse(id=fid, name="calc", response={"r": 2}))]))
+    yield Event(author=name, actions=EventActions(state_delta={f"{name}_done": True}, escalate=escalate))
+
+
+class RichAgent(BaseAgent):
+    """A node that reasons, talks, calls a tool, returns the result and writes
+    state. Sleeps between events so ParallelAgent branches actually interleave."""
 
     async def _run_async_impl(self, ctx):
-        yield Event(author=self.name,
-                    content=types.Content(role="model", parts=[types.Part(text=f"{self.name}#1")]))
-        await asyncio.sleep(0.01)
-        yield Event(author=self.name,
-                    content=types.Content(role="model", parts=[types.Part(text=f"{self.name}#2")]))
+        for e in _rich_events(self.name):
+            await asyncio.sleep(0)
+            yield e
 
 
-class StopAgent(BaseAgent):
-    """Emits one event and escalates (terminates an enclosing LoopAgent)."""
+class RichStopAgent(BaseAgent):
+    """Like RichAgent, but escalates on its last event (terminates a LoopAgent)."""
 
     async def _run_async_impl(self, ctx):
-        yield Event(author=self.name,
-                    content=types.Content(role="model", parts=[types.Part(text=f"{self.name}#stop")]),
-                    actions=EventActions(escalate=True))
+        for e in _rich_events(self.name, escalate=True):
+            yield e
 
 
 class CustomFlow(BaseAgent):
@@ -53,7 +67,7 @@ class CustomFlow(BaseAgent):
     async def _run_async_impl(self, ctx):
         async for e in self.sub_agents[0].run_async(ctx):
             yield e
-        # code-based decision branching (this is the "dynamic" style done by hand)
+        # code-based decision branching (the "dynamic" style done by hand)
         if True:
             async for e in self.sub_agents[1].run_async(ctx):
                 yield e
@@ -62,7 +76,8 @@ class CustomFlow(BaseAgent):
 
 
 async def _run_steps(agent_obj, emit=True):
-    """Run agent_obj through ADKAgent and return the (type, step_name) step list."""
+    """Run agent_obj through ADKAgent; return (full_stream, steps_only) as
+    lists of (event_type, step_name)."""
     agent = ADKAgent(adk_agent=agent_obj, app_name="demo", user_id="u",
                      use_in_memory_services=True, emit_workflow_steps=emit)
     inp = RunAgentInput(thread_id="t", run_id="r", state={},
@@ -90,105 +105,24 @@ def _well_formed(step_seq):
     return open_name is None
 
 
-async def test_sequential_agent_emits_ordered_steps():
-    full, steps = await _run_steps(
-        SequentialAgent(name="seq", sub_agents=[SayAgent(name="a"), SayAgent(name="b"), SayAgent(name="c")])
-    )
-    assert steps == [
-        (EventType.STEP_STARTED, "a"), (EventType.STEP_FINISHED, "a"),
-        (EventType.STEP_STARTED, "b"), (EventType.STEP_FINISHED, "b"),
-        (EventType.STEP_STARTED, "c"), (EventType.STEP_FINISHED, "c"),
-    ]
-    # Steps live inside the run brackets.
-    assert full[0][0] == EventType.RUN_STARTED
-    assert full[-1][0] == EventType.RUN_FINISHED
-
-
-async def test_loop_agent_re_emits_steps_per_iteration():
-    _full, steps = await _run_steps(
-        LoopAgent(name="loop", max_iterations=2, sub_agents=[SayAgent(name="x"), SayAgent(name="y")])
-    )
-    assert [n for t, n in steps if t == EventType.STEP_STARTED] == ["x", "y", "x", "y"]
-    assert _well_formed(steps)
-
-
-async def test_loop_agent_escalate_stops_early():
-    _full, steps = await _run_steps(
-        LoopAgent(name="loop2", max_iterations=5, sub_agents=[SayAgent(name="w"), StopAgent(name="stopper")])
-    )
-    # One iteration only (stopper escalates); still well-formed.
-    assert [n for t, n in steps if t == EventType.STEP_STARTED] == ["w", "stopper"]
-    assert _well_formed(steps)
-
-
-async def test_parallel_agent_steps_are_well_formed_best_effort():
-    """ParallelAgent: concurrent branches interleave in the flat stream, so steps
-    are best-effort — well-formed (each FINISHED matches its STARTED) and both
-    branches appear, but they may open/close more than once. This test pins that
-    documented contract rather than a strict order."""
-    _full, steps = await _run_steps(
-        ParallelAgent(name="par", sub_agents=[SayAgent(name="p"), SayAgent(name="q")])
-    )
-    assert steps, "parallel run should emit some steps"
-    assert _well_formed(steps)
-    assert {n for _t, n in steps} == {"p", "q"}
-
-
-async def test_nested_sequential_of_parallel_then_agent():
-    nested = SequentialAgent(name="root", sub_agents=[
-        ParallelAgent(name="par", sub_agents=[SayAgent(name="p"), SayAgent(name="q")]),
-        SayAgent(name="c"),
-    ])
-    _full, steps = await _run_steps(nested)
-    assert _well_formed(steps)
-    # The final sequential leaf closes last.
-    assert steps[-2:] == [(EventType.STEP_STARTED, "c"), (EventType.STEP_FINISHED, "c")]
-
-
-async def test_adk_2_0_workflow_graph_emits_steps():
-    """ADK 2.0 Workflow graph engine: START -> wa -> wb emits a step per node."""
-    try:
-        from google.adk.workflow import Workflow, Edge, START, node
-    except ImportError:
-        pytest.skip("ADK 2.0 Workflow graph engine not available on this ADK version")
-
-    wa = node(SayAgent(name="wa"))
-    wb = node(SayAgent(name="wb"))
-    wf = Workflow(name="graph", edges=[
-        Edge(from_node=START, to_node=wa),
-        Edge(from_node=wa, to_node=wb),
-    ])
-    _full, steps = await _run_steps(wf)
-    assert steps == [
-        (EventType.STEP_STARTED, "wa"), (EventType.STEP_FINISHED, "wa"),
-        (EventType.STEP_STARTED, "wb"), (EventType.STEP_FINISHED, "wb"),
-    ]
-
-
-class RichAgent(BaseAgent):
-    """A node that does everything: reasons (thought), talks, calls a tool,
-    returns the tool result, and writes session state — so we can verify a step
-    correctly brackets the full variety of AG-UI events, not just plain text."""
-
-    async def _run_async_impl(self, ctx):
-        a = self.name
-        fid = f"fc-{a}"
-        yield Event(author=a, content=types.Content(role="model",
-                    parts=[types.Part(text=f"{a} is thinking", thought=True)]))
-        yield Event(author=a, content=types.Content(role="model",
-                    parts=[types.Part(text=f"{a} says hi")]))
-        yield Event(author=a, content=types.Content(role="model",
-                    parts=[types.Part(function_call=types.FunctionCall(id=fid, name="calc", args={"x": 1}))]))
-        yield Event(author=a, content=types.Content(role="user",
-                    parts=[types.Part(function_response=types.FunctionResponse(id=fid, name="calc", response={"r": 2}))]))
-        yield Event(author=a, actions=EventActions(state_delta={f"{a}_done": True}))
-
-
-def _assert_full_variety_bracketed(full, names):
-    """Every named node's STEP bracket must wrap that node's reasoning (if the
-    google-genai SDK supports thoughts), text, tool call, tool result and state,
-    with no other node's steps leaking inside."""
+def _rich_types(seg):
+    """The rich event types expected from a node, honoring thought-support."""
     from ag_ui_adk.event_translator import _check_thought_support
+    expected = {
+        EventType.TEXT_MESSAGE_CONTENT,
+        EventType.TOOL_CALL_START,
+        EventType.TOOL_CALL_RESULT,
+        EventType.STATE_DELTA,
+    }
+    if _check_thought_support():
+        expected.add(EventType.REASONING_MESSAGE_CONTENT)
+    return expected
+
+
+def _assert_bracketed(full, names):
+    """Each named node's STEP bracket wraps that node's full event variety
+    (reasoning/text/tool call/result/state) with no other node's steps inside.
+    Only valid for serial topologies (a node's events are contiguous)."""
     for name in names:
         i = full.index((EventType.STEP_STARTED, name))
         j = full.index((EventType.STEP_FINISHED, name))
@@ -196,28 +130,64 @@ def _assert_full_variety_bracketed(full, names):
         seg = [t for t, _ in full[i + 1:j]]
         assert (EventType.STEP_STARTED not in seg) and (EventType.STEP_FINISHED not in seg), \
             f"{name}: another node's step leaked inside the bracket"
-        assert EventType.TEXT_MESSAGE_CONTENT in seg
-        assert EventType.TOOL_CALL_START in seg
-        assert EventType.TOOL_CALL_RESULT in seg
-        assert EventType.STATE_DELTA in seg
-        if _check_thought_support():
-            assert EventType.REASONING_MESSAGE_CONTENT in seg
+        assert _rich_types(seg).issubset(set(seg)), f"{name}: step did not bracket the full event variety"
 
 
-async def test_steps_bracket_reasoning_tools_and_state():
-    """SequentialAgent of rich sub-agents: each step wraps that sub-agent's
-    reasoning, text, tool call, tool result and state, without cross-node leak."""
-    wf = SequentialAgent(name="seq", sub_agents=[RichAgent(name="alpha"), RichAgent(name="beta")])
-    full, steps = await _run_steps(wf)
-    assert [n for t, n in steps if t == EventType.STEP_STARTED] == ["alpha", "beta"]
+def _assert_rich_present(full):
+    """The run carried the full rich event variety somewhere (used for
+    interleaved ParallelAgent, where per-bracket containment doesn't apply)."""
+    seen = {t for t, _ in full}
+    assert _rich_types(seen).issubset(seen), "rich event variety missing from the run"
+
+
+# ---------------------------------------------------------------------------
+# Serial topologies — each node's step brackets its full event variety
+# ---------------------------------------------------------------------------
+
+async def test_sequential_agent_brackets_each_rich_sub_agent():
+    full, steps = await _run_steps(
+        SequentialAgent(name="seq", sub_agents=[RichAgent(name="a"), RichAgent(name="b"), RichAgent(name="c")])
+    )
+    assert steps == [
+        (EventType.STEP_STARTED, "a"), (EventType.STEP_FINISHED, "a"),
+        (EventType.STEP_STARTED, "b"), (EventType.STEP_FINISHED, "b"),
+        (EventType.STEP_STARTED, "c"), (EventType.STEP_FINISHED, "c"),
+    ]
+    assert full[0][0] == EventType.RUN_STARTED and full[-1][0] == EventType.RUN_FINISHED
+    _assert_bracketed(full, ["a", "b", "c"])
+
+
+async def test_loop_agent_re_emits_rich_steps_per_iteration():
+    full, steps = await _run_steps(
+        LoopAgent(name="loop", max_iterations=2, sub_agents=[RichAgent(name="x"), RichAgent(name="y")])
+    )
+    assert [n for t, n in steps if t == EventType.STEP_STARTED] == ["x", "y", "x", "y"]
     assert _well_formed(steps)
-    _assert_full_variety_bracketed(full, ["alpha", "beta"])
+    _assert_bracketed(full, ["x", "y"])  # first iteration's brackets
 
 
-async def test_workflow_graph_nodes_bracket_full_event_variety():
-    """ADK 2.0 Workflow graph with rich nodes: each graph node's step wraps its
-    reasoning, text, tool call, tool result and state (the node runner does not
-    break the bracketing)."""
+async def test_loop_agent_escalate_stops_early_rich():
+    full, steps = await _run_steps(
+        LoopAgent(name="loop2", max_iterations=5, sub_agents=[RichAgent(name="w"), RichStopAgent(name="stopper")])
+    )
+    assert [n for t, n in steps if t == EventType.STEP_STARTED] == ["w", "stopper"]
+    assert _well_formed(steps)
+    _assert_bracketed(full, ["w", "stopper"])
+
+
+async def test_custom_agent_brackets_each_rich_sub_agent():
+    flow = CustomFlow("custom_flow", RichAgent(name="alpha"), RichAgent(name="beta"), RichAgent(name="gamma"))
+    full, steps = await _run_steps(flow)
+    assert steps == [
+        (EventType.STEP_STARTED, "alpha"), (EventType.STEP_FINISHED, "alpha"),
+        (EventType.STEP_STARTED, "beta"), (EventType.STEP_FINISHED, "beta"),
+        (EventType.STEP_STARTED, "gamma"), (EventType.STEP_FINISHED, "gamma"),
+    ]
+    _assert_bracketed(full, ["alpha", "beta", "gamma"])
+
+
+async def test_adk_2_0_workflow_graph_brackets_each_rich_node():
+    """ADK 2.0 Workflow graph engine (START -> na -> nb) with rich nodes."""
     try:
         from google.adk.workflow import Workflow, Edge, START, node
     except ImportError:
@@ -225,33 +195,59 @@ async def test_workflow_graph_nodes_bracket_full_event_variety():
 
     na = node(RichAgent(name="na"))
     nb = node(RichAgent(name="nb"))
-    wf = Workflow(name="g", edges=[Edge(from_node=START, to_node=na), Edge(from_node=na, to_node=nb)])
+    wf = Workflow(name="graph", edges=[
+        Edge(from_node=START, to_node=na),
+        Edge(from_node=na, to_node=nb),
+    ])
     full, steps = await _run_steps(wf)
-    assert [n for t, n in steps if t == EventType.STEP_STARTED] == ["na", "nb"]
-    assert _well_formed(steps)
-    _assert_full_variety_bracketed(full, ["na", "nb"])
-
-
-async def test_custom_agent_orchestrator_emits_steps():
-    """ADK custom agent (code-based orchestration) emits one step per sub-agent."""
-    flow = CustomFlow("custom_flow", SayAgent(name="alpha"), SayAgent(name="beta"), SayAgent(name="gamma"))
-    _full, steps = await _run_steps(flow)
     assert steps == [
-        (EventType.STEP_STARTED, "alpha"), (EventType.STEP_FINISHED, "alpha"),
-        (EventType.STEP_STARTED, "beta"), (EventType.STEP_FINISHED, "beta"),
-        (EventType.STEP_STARTED, "gamma"), (EventType.STEP_FINISHED, "gamma"),
+        (EventType.STEP_STARTED, "na"), (EventType.STEP_FINISHED, "na"),
+        (EventType.STEP_STARTED, "nb"), (EventType.STEP_FINISHED, "nb"),
     ]
+    _assert_bracketed(full, ["na", "nb"])
 
+
+# ---------------------------------------------------------------------------
+# Parallel / nested — rich content flows; steps stay well-formed (best-effort)
+# ---------------------------------------------------------------------------
+
+async def test_parallel_agent_rich_steps_well_formed_best_effort():
+    """ParallelAgent: concurrent rich branches interleave, so a branch's step can
+    open/close more than once. The stream stays well-formed (each FINISHED matches
+    its STARTED), both branches appear, and the full rich variety flows."""
+    full, steps = await _run_steps(
+        ParallelAgent(name="par", sub_agents=[RichAgent(name="p"), RichAgent(name="q")])
+    )
+    assert steps and _well_formed(steps)
+    assert {n for _t, n in steps} == {"p", "q"}
+    _assert_rich_present(full)
+
+
+async def test_nested_sequential_of_parallel_then_rich_agent():
+    nested = SequentialAgent(name="root", sub_agents=[
+        ParallelAgent(name="par", sub_agents=[RichAgent(name="p"), RichAgent(name="q")]),
+        RichAgent(name="c"),
+    ])
+    full, steps = await _run_steps(nested)
+    assert _well_formed(steps)
+    assert steps[-2:] == [(EventType.STEP_STARTED, "c"), (EventType.STEP_FINISHED, "c")]
+    _assert_bracketed(full, ["c"])   # the trailing serial node brackets cleanly
+    _assert_rich_present(full)
+
+
+# ---------------------------------------------------------------------------
+# Backward-compat — no steps
+# ---------------------------------------------------------------------------
 
 async def test_single_agent_emits_no_steps():
     # A lone BaseAgent (no sub_agents) is not a workflow -> no steps even with flag on.
-    _full, steps = await _run_steps(SayAgent(name="solo"))
+    _full, steps = await _run_steps(RichAgent(name="solo"))
     assert steps == []
 
 
 async def test_flag_off_emits_no_steps_for_workflow():
     _full, steps = await _run_steps(
-        SequentialAgent(name="seq", sub_agents=[SayAgent(name="a"), SayAgent(name="b")]),
+        SequentialAgent(name="seq", sub_agents=[RichAgent(name="a"), RichAgent(name="b")]),
         emit=False,
     )
     assert steps == []
