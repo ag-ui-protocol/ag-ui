@@ -140,6 +140,9 @@ export const agentsIntegrations = {
       // for dojo vs @ag-ui/mastra, causing nominal type mismatch on private fields
       mastraClient: mastraClient as any,
       resourceId: "mastra-agent-remote",
+      // Surface Observational Memory background work as AG-UI activity events
+      // for the `observational_memory` demo only (default OFF for all others).
+      observationalMemory: ["observational_memory"],
     }) as Promise<
       Record<
         | "agentic_chat"
@@ -148,7 +151,8 @@ export const agentsIntegrations = {
         | "backend_tool_rendering"
         | "human_in_the_loop"
         | "interrupt"
-        | "tool_based_generative_ui",
+        | "tool_based_generative_ui"
+        | "observational_memory",
         AbstractAgent
       >
     >;
@@ -160,6 +164,9 @@ export const agentsIntegrations = {
       // for dojo vs @ag-ui/mastra, causing nominal type mismatch on private fields
       mastra: mastra as any,
       resourceId: "mastra-agent-local",
+      // Surface Observational Memory background work as AG-UI activity events
+      // for the `observational_memory` demo only (default OFF for all others).
+      observationalMemory: ["observational_memory"],
     }) as Record<
       | "agentic_chat"
       | "backend_tool_rendering"
@@ -167,7 +174,8 @@ export const agentsIntegrations = {
       | "interrupt"
       | "shared_state"
       | "tool_based_generative_ui"
-      | "background_agents",
+      | "background_agents"
+      | "observational_memory",
       AbstractAgent
     >;
   },

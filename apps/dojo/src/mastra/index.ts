@@ -6,6 +6,7 @@ import { sharedStateAgent } from "./agents/shared-state";
 import { toolBasedGenerativeUIAgent } from "./agents/tool-based-generative-ui";
 import { interruptAgent } from "./agents/interrupt";
 import { backgroundAgentsAgent } from "./agents/background-agents";
+import { observationalMemoryAgent } from "./agents/observational-memory";
 import { getStorage } from "./storage";
 
 export const mastra = new Mastra({
@@ -17,6 +18,7 @@ export const mastra = new Mastra({
     tool_based_generative_ui: toolBasedGenerativeUIAgent,
     interrupt: interruptAgent,
     background_agents: backgroundAgentsAgent,
+    observational_memory: observationalMemoryAgent,
   },
   // Instance-level storage is REQUIRED for suspend/resume (the `interrupt` demo:
   // Mastra persists the agentic-loop workflow snapshot on suspend and loads it
