@@ -1,7 +1,7 @@
 import { Agent } from "@mastra/core/agent";
 import { Memory } from "@mastra/memory";
+import { LibSQLStore } from "@mastra/libsql";
 import { z } from "zod";
-import { getStorage } from "../storage";
 
 export const sharedStateAgent = new Agent({
   id: "shared_state",
@@ -32,7 +32,10 @@ export const sharedStateAgent = new Agent({
   `,
   model: "openai/gpt-4.1-mini",
   memory: new Memory({
-    storage: getStorage(),
+    storage: new LibSQLStore({
+      id: "shared-state-memory",
+      url: "file:../mastra.db", // path is relative to the .mastra/output directory
+    }),
     options: {
       workingMemory: {
         enabled: true,

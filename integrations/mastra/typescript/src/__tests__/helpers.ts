@@ -8,6 +8,13 @@ export class FakeMemory {
   threads: Map<string, any> = new Map();
   workingMemoryValue: string | undefined = undefined;
   recallMessages: any[] = [];
+  /** Records every updateWorkingMemory call (the input.state -> WM sync). */
+  updateWorkingMemoryCalls: Array<{
+    resourceId?: string;
+    threadId?: string;
+    workingMemory: string;
+    memoryConfig?: any;
+  }> = [];
 
   async getThreadById({ threadId }: { threadId: string }) {
     return this.threads.get(threadId) ?? null;
@@ -19,6 +26,19 @@ export class FakeMemory {
 
   async getWorkingMemory(_opts: any): Promise<string | undefined> {
     return this.workingMemoryValue;
+  }
+
+  // Mirrors Mastra's resource-scoped working-memory store: the input.state
+  // sync writes HERE (not thread.metadata), and a later getWorkingMemory
+  // reflects it, so the round-trip the agent sees is faithful.
+  async updateWorkingMemory(args: {
+    resourceId?: string;
+    threadId?: string;
+    workingMemory: string;
+    memoryConfig?: any;
+  }): Promise<void> {
+    this.updateWorkingMemoryCalls.push(args);
+    this.workingMemoryValue = args.workingMemory;
   }
 
   async recall(_opts: any): Promise<{ messages: any[] }> {
@@ -38,7 +58,11 @@ export class FakeLocalAgent {
   lastResumeOpts: any = null;
 
   constructor(
-    opts: { memory?: FakeMemory; streamChunks?: any[]; resumeChunks?: any[] } = {},
+    opts: {
+      memory?: FakeMemory;
+      streamChunks?: any[];
+      resumeChunks?: any[];
+    } = {},
   ) {
     this.memory = opts.memory ?? new FakeMemory();
     this.streamChunks = opts.streamChunks ?? [];

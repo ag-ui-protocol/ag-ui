@@ -15,6 +15,7 @@ import type {
   RunFinishedEvent,
   RunFinishedInterruptOutcome,
   RunStartedEvent,
+  StateDeltaEvent,
   StateSnapshotEvent,
   TextMessageChunkEvent,
   ToolCallArgsEvent,
@@ -23,10 +24,11 @@ import type {
   ToolCallStartEvent,
 } from "@ag-ui/client";
 import { AbstractAgent, EventType } from "@ag-ui/client";
-import type { StorageThreadType } from "@mastra/core/memory";
 import type { Agent as LocalMastraAgent } from "@mastra/core/agent";
 import { RequestContext } from "@mastra/core/request-context";
 import { randomUUID } from "@ag-ui/client";
+import { compare } from "fast-json-patch";
+import { parsePartialJson } from "@ai-sdk/ui-utils";
 import { Observable } from "rxjs";
 import type { MastraClient } from "@mastra/client-js";
 import {
@@ -74,6 +76,125 @@ type RemoteMastraAgent = ReturnType<MastraClient["getAgent"]>;
  * to be co-designed with Mastra (see OSS-93) and may evolve.
  */
 export const MASTRA_BACKGROUND_TASK_ACTIVITY_TYPE = "mastra-background-task";
+
+/**
+ * Tool name(s) Mastra uses for the built-in working-memory update tool. When an
+ * agent has working memory enabled, Mastra injects this tool; the model calls
+ * it mid-run with the new working-memory content. The bridge maps those calls
+ * to AG-UI STATE_DELTA (see createChunkProcessor). Mastra registers it under
+ * the key `updateWorkingMemory` (the name that appears on the stream chunk;
+ * `UPDATE_WORKING_MEMORY_TOOL_NAME` in @mastra/core) with tool id
+ * `update-working-memory` — match both so the mapping is robust to either.
+ */
+const WORKING_MEMORY_TOOL_NAMES = new Set([
+  "updateWorkingMemory",
+  "update-working-memory",
+]);
+
+/**
+ * Deep-merges a working-memory update onto the existing state, mirroring
+ * @mastra/core's `deepMergeWorkingMemory` (the semantics schema/json working
+ * memory applies to partial updates): nested objects recurse, arrays are
+ * replaced wholesale, an explicit `null` deletes the key, scalars overwrite.
+ * Replicated here so the bridge can compute the post-update state — and thus an
+ * accurate RFC-6902 delta — synchronously, without a mid-stream memory re-read.
+ */
+function deepMergeWorkingMemory(
+  existing: Record<string, any> | undefined,
+  update: Record<string, any>,
+): Record<string, any> {
+  if (
+    !update ||
+    typeof update !== "object" ||
+    Object.keys(update).length === 0
+  ) {
+    return existing && typeof existing === "object" ? { ...existing } : {};
+  }
+  if (!existing || typeof existing !== "object") {
+    return update;
+  }
+  const result: Record<string, any> = { ...existing };
+  for (const key of Object.keys(update)) {
+    const updateValue = update[key];
+    const existingValue = result[key];
+    if (updateValue === null) {
+      delete result[key];
+    } else if (Array.isArray(updateValue)) {
+      result[key] = updateValue;
+    } else if (
+      typeof updateValue === "object" &&
+      updateValue !== null &&
+      typeof existingValue === "object" &&
+      existingValue !== null &&
+      !Array.isArray(existingValue)
+    ) {
+      result[key] = deepMergeWorkingMemory(existingValue, updateValue);
+    } else {
+      result[key] = updateValue;
+    }
+  }
+  return result;
+}
+
+/**
+ * Parses the `memory` argument of an `updateWorkingMemory` tool call into a
+ * plain object suitable for structured state diffing. The arg is a JSON string
+ * for schema/json working memory (the state-rendering case). Returns `undefined`
+ * for markdown-template working memory (non-JSON string) or any non-object
+ * payload — the caller then skips STATE_DELTA and relies on the run-end
+ * STATE_SNAPSHOT.
+ */
+function parseWorkingMemoryUpdate(
+  args: Record<string, any> | undefined,
+): Record<string, any> | undefined {
+  const raw = args?.memory ?? args;
+  let value: unknown = raw;
+  if (typeof raw === "string") {
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      return undefined;
+    }
+  }
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, any>;
+  }
+  return undefined;
+}
+
+/**
+ * Best-effort parse of the PARTIAL, still-streaming raw tool-input text of an
+ * `updateWorkingMemory` call — the accumulated `tool-call-delta` fragments, e.g.
+ * `{"memory":"{\"recipe\":{\"title\":\"Sp`. Uses `parsePartialJson` (repairs
+ * truncated JSON) twice: once for the outer `{ memory }` envelope, then for the
+ * inner `memory` payload (a nested JSON string for schema/json working memory).
+ * Returns the parseable prefix as an object so the bridge can emit an
+ * incremental STATE_DELTA as the model writes the update; `undefined` while the
+ * text is not yet a usable object (or is markdown-template working memory).
+ */
+function parseStreamingWorkingMemoryUpdate(
+  argsText: string,
+): Record<string, any> | undefined {
+  if (!argsText) return undefined;
+  const outer = parsePartialJson(argsText);
+  const outerVal = outer.value;
+  if (!outerVal || typeof outerVal !== "object" || Array.isArray(outerVal)) {
+    return undefined;
+  }
+  const mem = (outerVal as Record<string, any>).memory;
+  if (mem == null) return undefined;
+  if (typeof mem === "object" && !Array.isArray(mem)) {
+    return mem as Record<string, any>;
+  }
+  if (typeof mem === "string") {
+    const inner = parsePartialJson(mem);
+    const innerVal = inner.value;
+    if (innerVal && typeof innerVal === "object" && !Array.isArray(innerVal)) {
+      return innerVal as Record<string, any>;
+    }
+  }
+  return undefined;
+}
 
 // Shape of a remote resume response. Newer @mastra/client-js (>= the release
 // that added agent suspend/resume) exposes `resumeStream` on the remote Agent
@@ -147,6 +268,15 @@ export interface MastraAgentConfig extends AgentConfig {
    * `RunAgentInput.resume` channels regardless of this flag.
    */
   emitInterruptOutcome?: boolean;
+  /**
+   * For REMOTE agents only: the `MastraClient` used to reach the agent. When
+   * set, the bridge syncs `input.state` into the remote server's working memory
+   * (via `client.updateWorkingMemory`) before streaming, so a client-side edit
+   * to shared state reaches a remote agent the same way it does a local one.
+   * Set by `getRemoteAgents`; unused for local agents (which sync through their
+   * own `Memory` instance).
+   */
+  remoteClient?: MastraClient;
 }
 
 interface MastraAgentStreamOptions {
@@ -216,6 +346,22 @@ interface MastraAgentStreamOptions {
     activityType: string;
     patch: Array<Record<string, any>>;
   }) => void;
+  /**
+   * Emit a STATE_SNAPSHOT (full shared state). Emitted once per run as the FIRST
+   * working-memory state event, to establish the base the client/runtime patch
+   * against — the AG-UI runtime applies STATE_DELTA from an empty document at
+   * run start, so a leading snapshot is required or the first delta's paths are
+   * unresolvable. Subsequent changes ride STATE_DELTA.
+   */
+  onStateSnapshot?: (snapshot: Record<string, any>) => void;
+  /**
+   * Emit a STATE_DELTA (RFC 6902 JSON patch) when the agent updates its working
+   * memory mid-run. Emitted for every working-memory change AFTER the initial
+   * snapshot, with the patch from the previously-known state to the post-update
+   * state, so shared state renders live as it changes (the run-end
+   * STATE_SNAPSHOT still follows).
+   */
+  onStateDelta?: (delta: Array<Record<string, any>>) => void;
 }
 
 export class MastraAgent extends AbstractAgent {
@@ -226,6 +372,8 @@ export class MastraAgent extends AbstractAgent {
   public headers?: Record<string, string>;
   /** See MastraAgentConfig.emitInterruptOutcome. Default true. */
   emitInterruptOutcome: boolean;
+  /** See MastraAgentConfig.remoteClient. Set for remote agents only. */
+  remoteClient?: MastraClient;
 
   constructor(private config: MastraAgentConfig) {
     const {
@@ -234,6 +382,7 @@ export class MastraAgent extends AbstractAgent {
       requestContext,
       untilIdle,
       emitInterruptOutcome,
+      remoteClient,
       ...rest
     } = config;
     super(rest);
@@ -242,6 +391,7 @@ export class MastraAgent extends AbstractAgent {
     this.resourceId = resourceId;
     this.requestContext = requestContext ?? new RequestContext();
     this.untilIdle = untilIdle;
+    this.remoteClient = remoteClient;
   }
 
   public clone() {
@@ -517,79 +667,16 @@ export class MastraAgent extends AbstractAgent {
           return;
         }
 
-        // Sync AG-UI input state into Mastra's working memory before streaming
-        if (this.isLocalMastraAgent(this.agent)) {
-          try {
-            const memory = await this.agent.getMemory({
-              requestContext: this.requestContext,
-            });
-
-            if (memory && input.state && Object.keys(input.state).length > 0) {
-              let thread: StorageThreadType | null = await memory.getThreadById(
-                {
-                  threadId: input.threadId,
-                  // Mastra's abstract Memory.getThreadById type is narrower than
-                  // its runtime contract — concrete Memory subclasses (and
-                  // `AGENT_MEMORY_MISSING_RESOURCE_ID` checks along the thread
-                  // lifecycle) expect `resourceId`. We forward it here to stay
-                  // consistent with the sibling saveThread call below (which
-                  // also normalizes `thread.resourceId`) and the
-                  // `emitWorkingMemorySnapshot` call to `getWorkingMemory`, and
-                  // to match the rest of the run's memory options (`resource:`
-                  // on `.stream()` / `.resumeStream()` in `streamMastraAgent`).
-                  // @ts-expect-error upstream type omits resourceId; runtime accepts it
-                  resourceId: this.resourceId ?? input.threadId,
-                },
-              );
-
-              if (!thread) {
-                thread = {
-                  id: input.threadId,
-                  title: "",
-                  metadata: {},
-                  resourceId: this.resourceId ?? input.threadId,
-                  createdAt: new Date(),
-                  updatedAt: new Date(),
-                };
-              }
-
-              let existingMemory: Record<string, any> = {};
-              try {
-                existingMemory = JSON.parse(
-                  (thread.metadata?.workingMemory as string) ?? "{}",
-                );
-              } catch {
-                // Working memory metadata is not valid JSON - start fresh
-              }
-              const { messages, ...rest } = input.state;
-              const workingMemory = JSON.stringify({
-                ...existingMemory,
-                ...rest,
-              });
-
-              await memory.saveThread({
-                thread: {
-                  ...thread,
-                  // Ensure resourceId is always set on the persisted thread.
-                  // If storage returned a thread with a stale/missing
-                  // resourceId (migrated data, foreign writer, etc.) the
-                  // naive `...thread` spread would carry that through and
-                  // Mastra's Memory would reject the save with
-                  // AGENT_MEMORY_MISSING_RESOURCE_ID. Normalize to the run's
-                  // authoritative resourceId, matching the sibling
-                  // getThreadById call above.
-                  resourceId: this.resourceId ?? input.threadId,
-                  metadata: {
-                    ...thread.metadata,
-                    workingMemory,
-                  },
-                },
-              });
-            }
-          } catch (error) {
-            subscriber.error(error);
-            return;
-          }
+        // Sync AG-UI input state into Mastra's working memory before streaming,
+        // so a client-side edit to shared state (e.g. unchecking a dietary
+        // preference in the recipe UI, then hitting "Improve") is what the agent
+        // reads on the next run. Works for both local and remote agents (see
+        // syncInputStateToWorkingMemory).
+        try {
+          await this.syncInputStateToWorkingMemory(input);
+        } catch (error) {
+          subscriber.error(error);
+          return;
         }
 
         try {
@@ -944,6 +1031,18 @@ export class MastraAgent extends AbstractAgent {
           patch,
         } as ActivityDeltaEvent);
       },
+      onStateSnapshot: (snapshot) => {
+        subscriber.next({
+          type: EventType.STATE_SNAPSHOT,
+          snapshot,
+        } as StateSnapshotEvent);
+      },
+      onStateDelta: (delta) => {
+        subscriber.next({
+          type: EventType.STATE_DELTA,
+          delta,
+        } as StateDeltaEvent);
+      },
     };
   }
 
@@ -982,7 +1081,61 @@ export class MastraAgent extends AbstractAgent {
   private createChunkProcessor(
     callbacks: MastraAgentStreamOptions,
     clientToolNames: Set<string> = new Set(),
+    initialState: Record<string, any> = {},
   ) {
+    // Running client-side working-memory state, mapped to AG-UI shared state.
+    // Seeded from the run's input.state (the base the client already holds), so
+    // the first STATE_DELTA patches from what the UI shows, not from empty.
+    // Each `updateWorkingMemory` tool call advances it and emits the patch.
+    let workingMemoryState: Record<string, any> =
+      initialState && typeof initialState === "object"
+        ? { ...initialState }
+        : {};
+    // Tool call ids for `updateWorkingMemory` calls — used to suppress their
+    // normal tool render (the update surfaces as STATE_DELTA, not a tool pill)
+    // and to swallow the following `{ success: true }` tool-result.
+    const workingMemoryToolCalls = new Set<string>();
+    // The in-flight `updateWorkingMemory` call whose args are streaming: we
+    // accumulate its raw `tool-call-delta` text and re-parse the growing prefix
+    // so shared state renders progressively (field by field) rather than as one
+    // blob when the call completes.
+    let workingMemoryStream: { toolCallId: string; argsText: string } | null =
+      null;
+
+    // Whether we've emitted the leading STATE_SNAPSHOT for this run yet. The
+    // AG-UI runtime applies STATE_DELTA against a document that starts EMPTY at
+    // run start (it does not seed from input.state), so the first working-memory
+    // state event MUST be a full STATE_SNAPSHOT — it establishes the base the
+    // runtime and client patch against. Without it the first delta's paths (e.g.
+    // `replace /recipe/skill_level`) are unresolvable → the runtime throws
+    // OPERATION_PATH_UNRESOLVABLE, the run never finishes, and the Mastra thread
+    // lock is never released ("Thread already running" on the next run).
+    let stateSnapshotEmitted = false;
+
+    // Advance the tracked shared state to the post-update value. The FIRST
+    // change of a run is emitted as a STATE_SNAPSHOT (establishes the base);
+    // every change after that as a STATE_DELTA (RFC-6902 patch, no-op if
+    // nothing changed). Seeding `workingMemoryState` from input.state means the
+    // snapshot preserves fields the streamed prefix hasn't written yet (no
+    // transient collapse of the existing recipe). Shared by the streaming and
+    // final-chunk paths so both advance the same state.
+    const emitWorkingMemoryState = (
+      update: Record<string, any> | undefined,
+    ) => {
+      if (update === undefined) return;
+      const next = deepMergeWorkingMemory(workingMemoryState, update);
+      if (!stateSnapshotEmitted) {
+        stateSnapshotEmitted = true;
+        workingMemoryState = next;
+        callbacks.onStateSnapshot?.(next);
+        return;
+      }
+      const patch = compare(workingMemoryState, next);
+      if (patch.length > 0) {
+        workingMemoryState = next;
+        callbacks.onStateDelta?.(patch as Array<Record<string, any>>);
+      }
+    };
     // Only CLIENT (frontend) tools stream their args live — they are the
     // generative-UI tools that benefit from progressive rendering, and they
     // never suspend or background. SERVER tools take the buffered path below so
@@ -1131,6 +1284,19 @@ export class MastraAgent extends AbstractAgent {
         case "tool-call-input-streaming-start": {
           // A new tool call begins — flush any prior buffered (floor-path) call.
           flush();
+          // Working-memory update: capture its streaming args so we can emit
+          // progressive STATE_DELTAs (below). It never renders as a tool.
+          if (
+            chunk.payload.toolCallId &&
+            WORKING_MEMORY_TOOL_NAMES.has(chunk.payload.toolName)
+          ) {
+            workingMemoryStream = {
+              toolCallId: chunk.payload.toolCallId,
+              argsText: "",
+            };
+            workingMemoryToolCalls.add(chunk.payload.toolCallId);
+            break;
+          }
           if (
             chunk.payload.toolCallId &&
             isClientTool(chunk.payload.toolName)
@@ -1144,6 +1310,21 @@ export class MastraAgent extends AbstractAgent {
         }
         case "tool-call-delta": {
           const { toolCallId, argsTextDelta } = chunk.payload;
+          // Working-memory update streaming: accumulate the raw args text and
+          // re-parse the growing prefix, emitting an incremental STATE_DELTA as
+          // the model writes the update (progressive shared-state render).
+          if (
+            workingMemoryStream &&
+            toolCallId === workingMemoryStream.toolCallId
+          ) {
+            if (argsTextDelta != null) {
+              workingMemoryStream.argsText += argsTextDelta;
+              emitWorkingMemoryState(
+                parseStreamingWorkingMemoryUpdate(workingMemoryStream.argsText),
+              );
+            }
+            break;
+          }
           // Only forward deltas for a call we opened as a live (client) stream.
           // Server-tool deltas are ignored; their args ride the final
           // `tool-call` chunk into the buffered path.
@@ -1157,6 +1338,16 @@ export class MastraAgent extends AbstractAgent {
           break;
         }
         case "tool-call-input-streaming-end": {
+          if (
+            workingMemoryStream &&
+            chunk.payload.toolCallId === workingMemoryStream.toolCallId
+          ) {
+            // Args fully streamed; the authoritative final state is emitted from
+            // the following `tool-call` chunk (its assembled object). Stop
+            // accumulating; keep the id suppressed for the tool-result.
+            workingMemoryStream = null;
+            break;
+          }
           if (chunk.payload.toolCallId) {
             endStreamedToolCall(chunk.payload.toolCallId);
           }
@@ -1164,6 +1355,25 @@ export class MastraAgent extends AbstractAgent {
         }
         case "tool-call": {
           const { toolCallId, toolName, args } = chunk.payload;
+          // Working-memory update: Mastra's built-in `updateWorkingMemory` tool.
+          // The assembled args carry the final (authoritative) working memory —
+          // emit a STATE_DELTA to it (a no-op patch if the streamed deltas above
+          // already converged, or the whole change on the fall-back path where
+          // no arg-deltas streamed). Suppress the normal tool render; the
+          // `{ success: true }` result is swallowed below. A preceding buffered
+          // (floor-path) call still flushes first.
+          if (toolName && WORKING_MEMORY_TOOL_NAMES.has(toolName)) {
+            flush();
+            if (toolCallId) workingMemoryToolCalls.add(toolCallId);
+            if (
+              workingMemoryStream &&
+              workingMemoryStream.toolCallId === toolCallId
+            ) {
+              workingMemoryStream = null;
+            }
+            emitWorkingMemoryState(parseWorkingMemoryUpdate(args));
+            break;
+          }
           if (toolCallId && streamedStarted.has(toolCallId)) {
             // Client tool: args were already streamed live via deltas — close
             // the call (the streaming-end chunk may have been absent) and don't
@@ -1179,6 +1389,14 @@ export class MastraAgent extends AbstractAgent {
           break;
         }
         case "tool-result": {
+          // Swallow the `{ success: true }` result of a working-memory update —
+          // its tool-call was mapped to STATE_DELTA and never rendered, so a
+          // TOOL_CALL_RESULT here would have no matching call (and is internal
+          // plumbing regardless).
+          if (workingMemoryToolCalls.has(chunk.payload.toolCallId)) {
+            workingMemoryToolCalls.delete(chunk.payload.toolCallId);
+            break;
+          }
           // For a backgrounded call, the agent loop's inline tool-result is a
           // placeholder ack ("…running in the background; you will be notified
           // when it completes"), NOT the real outcome — the task is detached
@@ -1422,10 +1640,12 @@ export class MastraAgent extends AbstractAgent {
     stream: AsyncIterable<any>,
     callbacks: MastraAgentStreamOptions,
     clientToolNames: Set<string> = new Set(),
+    initialState: Record<string, any> = {},
   ): Promise<boolean> {
     const { handleChunk, flush } = this.createChunkProcessor(
       callbacks,
       clientToolNames,
+      initialState,
     );
     for await (const chunk of stream) {
       if (handleChunk(chunk)) return true;
@@ -1506,6 +1726,158 @@ export class MastraAgent extends AbstractAgent {
   }
 
   /**
+   * The shared-state slice of a run's input.state: everything except the
+   * `messages` list (which the bridge strips before syncing state to working
+   * memory). This is what the client holds as its coagent state, so it is the
+   * correct base for the first mid-run STATE_DELTA. Returns `{}` when there is
+   * no usable state.
+   */
+  private workingMemoryStateSlice(
+    state: RunAgentInput["state"],
+  ): Record<string, any> {
+    if (!state || typeof state !== "object") return {};
+    const { messages, ...rest } = state as Record<string, any>;
+    void messages;
+    return rest;
+  }
+
+  /**
+   * Coerces a working-memory value read back from Mastra (a JSON string for
+   * schema/json working memory, or already an object, or a `{ workingMemory }`
+   * envelope from the remote HTTP route) into a plain object for merging.
+   * Returns `{}` for markdown/non-JSON/template ($schema) values.
+   */
+  private coerceWorkingMemoryObject(raw: unknown): Record<string, any> {
+    let value: unknown = raw;
+    if (
+      value &&
+      typeof value === "object" &&
+      "workingMemory" in (value as Record<string, unknown>)
+    ) {
+      value = (value as Record<string, unknown>).workingMemory;
+    }
+    if (typeof value === "string") {
+      try {
+        value = JSON.parse(value);
+      } catch {
+        return {};
+      }
+    }
+    if (
+      value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      !("$schema" in (value as Record<string, unknown>))
+    ) {
+      return value as Record<string, any>;
+    }
+    return {};
+  }
+
+  /**
+   * Syncs the run's `input.state` (the client's shared state, minus `messages`)
+   * into Mastra's resource-scoped working memory BEFORE streaming, so a UI edit
+   * reaches the agent on the next run. Merges the client state over the existing
+   * working memory: keys the client doesn't manage are preserved, while its
+   * shared-state keys (e.g. `recipe`) overwrite wholesale — so a removed value
+   * (an unchecked preference) is actually removed, not left lingering.
+   *
+   * Working memory lives in the RESOURCE store (default scope "resource"),
+   * written via `updateWorkingMemory` — NOT `thread.metadata`, which the model
+   * never reads. Local agents write through their own `Memory`; remote agents
+   * write through the `MastraClient` (`remoteClient`) so the SAME edit reaches a
+   * remote server. No-op when there is no client state or (for remote) no client.
+   */
+  private async syncInputStateToWorkingMemory(
+    input: RunAgentInput,
+  ): Promise<void> {
+    const rest = this.workingMemoryStateSlice(input.state);
+    if (Object.keys(rest).length === 0) return;
+
+    const resourceId = this.resourceId ?? input.threadId;
+    const memoryConfig = { workingMemory: { enabled: true } };
+
+    if (this.isLocalMastraAgent(this.agent)) {
+      const memory = await this.agent.getMemory({
+        requestContext: this.requestContext,
+      });
+      if (!memory) return;
+
+      let existing: Record<string, any> = {};
+      try {
+        existing = this.coerceWorkingMemoryObject(
+          await memory.getWorkingMemory({
+            resourceId,
+            threadId: input.threadId,
+            memoryConfig,
+          }),
+        );
+      } catch {
+        // No/invalid existing working memory — start from the client state.
+      }
+
+      await memory.updateWorkingMemory({
+        resourceId,
+        threadId: input.threadId,
+        workingMemory: JSON.stringify({ ...existing, ...rest }),
+        memoryConfig,
+      });
+      return;
+    }
+
+    // Remote agent: write through the MastraClient (working-memory HTTP route).
+    // Requires the client (set by getRemoteAgents) and the agent id.
+    if (!this.remoteClient || !this.agentId) return;
+    const client = this.remoteClient;
+    const agentId = this.agentId;
+
+    let existing: Record<string, any> = {};
+    try {
+      existing = this.coerceWorkingMemoryObject(
+        await client.getWorkingMemory({
+          agentId,
+          threadId: input.threadId,
+          resourceId,
+        }),
+      );
+    } catch {
+      // No/invalid (or not-yet-created) working memory — start from client state.
+    }
+
+    const workingMemory = JSON.stringify({ ...existing, ...rest });
+    const write = () =>
+      client.updateWorkingMemory({
+        agentId,
+        threadId: input.threadId,
+        resourceId,
+        workingMemory,
+      });
+
+    try {
+      await write();
+    } catch {
+      // The remote working-memory HTTP route requires the thread to exist. On
+      // the first turn it may not yet (unlike local Memory, which upserts). So
+      // create the thread and retry once. Best-effort: if it still fails, skip
+      // rather than fail the run — the stream creates the thread, and later
+      // turns will sync.
+      try {
+        await client.createMemoryThread({
+          agentId,
+          threadId: input.threadId,
+          resourceId,
+        } as unknown as Parameters<MastraClient["createMemoryThread"]>[0]);
+        await write();
+      } catch (error) {
+        console.warn(
+          `[MastraAgent] Failed to sync input.state to remote working memory for thread ${input.threadId}:`,
+          error,
+        );
+      }
+    }
+  }
+
+  /**
    * Streams a local or remote Mastra agent, emitting AG-UI events via callbacks.
    * For local agents, iterates fullStream with processFullStream.
    * For remote agents, uses processDataStream with createChunkProcessor.
@@ -1513,7 +1885,14 @@ export class MastraAgent extends AbstractAgent {
    * within stream processing (error chunks) or from the catch block (thrown exceptions).
    */
   private async streamMastraAgent(
-    { threadId, runId, messages, tools, context: inputContext }: RunAgentInput,
+    {
+      threadId,
+      runId,
+      messages,
+      tools,
+      context: inputContext,
+      state,
+    }: RunAgentInput,
     {
       onMessageId,
       onTextPart,
@@ -1528,6 +1907,8 @@ export class MastraAgent extends AbstractAgent {
       onToolSuspended,
       onActivitySnapshot,
       onActivityDelta,
+      onStateSnapshot,
+      onStateDelta,
       onError,
       onRunFinished,
     }: MastraAgentStreamOptions,
@@ -1548,6 +1929,11 @@ export class MastraAgent extends AbstractAgent {
     const clientToolNames = new Set<string>(
       tools.map((tool) => tool.name as string),
     );
+    // Seed shared-state diffing from the state the client already holds (its
+    // coagent state, minus the message list the bridge strips before syncing to
+    // working memory). The first mid-run STATE_DELTA then patches from what the
+    // UI shows, not from empty. See createChunkProcessor.
+    const initialState = this.workingMemoryStateSlice(state);
     const resourceId = this.resourceId ?? threadId;
 
     // AG-UI clients (e.g. CopilotKit) re-send the entire conversation every
@@ -1621,9 +2007,12 @@ export class MastraAgent extends AbstractAgent {
               onToolSuspended,
               onActivitySnapshot,
               onActivityDelta,
+              onStateSnapshot,
+              onStateDelta,
               onError,
             },
             clientToolNames,
+            initialState,
           );
 
           if (!hadError) await onRunFinished?.();
@@ -1676,9 +2065,12 @@ export class MastraAgent extends AbstractAgent {
               onToolSuspended,
               onActivitySnapshot,
               onActivityDelta,
+              onStateSnapshot,
+              onStateDelta,
               onError,
             },
             clientToolNames,
+            initialState,
           );
 
           await response.processDataStream({

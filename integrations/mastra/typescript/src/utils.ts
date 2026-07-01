@@ -1,4 +1,9 @@
-import type { InputContent, InputContentDataSource, InputContentUrlSource, Message } from "@ag-ui/client";
+import type {
+  InputContent,
+  InputContentDataSource,
+  InputContentUrlSource,
+  Message,
+} from "@ag-ui/client";
 import { AbstractAgent } from "@ag-ui/client";
 import { MastraClient } from "@mastra/client-js";
 import type { Mastra } from "@mastra/core";
@@ -16,7 +21,9 @@ import { MastraAgent } from "./mastra";
  */
 type CoreMessageWithId = CoreMessage & { id?: string };
 
-function mediaSourceToUrl(source: InputContentDataSource | InputContentUrlSource): string {
+function mediaSourceToUrl(
+  source: InputContentDataSource | InputContentUrlSource,
+): string {
   if (source.type === "data") {
     return `data:${source.mimeType};base64,${source.value}`;
   }
@@ -89,12 +96,16 @@ const toMastraContent = (content: Message["content"]): string | any[] => {
             image: `data:${binaryPart.mimeType};base64,${binaryPart.data}`,
           });
         } else {
-          console.warn("[toMastraContent] Dropping BinaryInputContent: no url or data provided");
+          console.warn(
+            "[toMastraContent] Dropping BinaryInputContent: no url or data provided",
+          );
         }
         break;
       }
       default:
-        console.warn(`[toMastraContent] Unknown content type "${part.type}"; skipping`);
+        console.warn(
+          `[toMastraContent] Unknown content type "${part.type}"; skipping`,
+        );
         break;
     }
   }
@@ -195,6 +206,9 @@ export async function getRemoteAgents({
         agentId,
         agent,
         resourceId,
+        // Enables syncing input.state into the remote server's working memory
+        // (client -> agent shared state), mirroring the local path.
+        remoteClient: mastraClient,
       });
 
       return acc;
@@ -276,7 +290,12 @@ export interface GetNetworkOptions {
   requestContext?: RequestContext;
 }
 
-export function getNetwork({ mastra, networkId, resourceId, requestContext }: GetNetworkOptions) {
+export function getNetwork({
+  mastra,
+  networkId,
+  resourceId,
+  requestContext,
+}: GetNetworkOptions) {
   const network = mastra.getAgent(networkId);
   if (!network) {
     throw new Error(`Network ${networkId} not found`);

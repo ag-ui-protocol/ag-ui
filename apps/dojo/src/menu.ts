@@ -115,6 +115,7 @@ export const menuIntegrations = [
       "backend_tool_rendering",
       "human_in_the_loop",
       "interrupt",
+      "shared_state",
       "tool_based_generative_ui",
     ],
   },
