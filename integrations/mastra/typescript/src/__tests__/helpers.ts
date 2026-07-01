@@ -170,6 +170,7 @@ export function makeLocalMastraAgent(
     streamChunks?: any[];
     resumeChunks?: any[];
     emitInterruptOutcome?: boolean;
+    observationalMemory?: boolean;
   } = {},
 ) {
   return new MastraAgent({
@@ -177,6 +178,7 @@ export function makeLocalMastraAgent(
     agent: new FakeLocalAgent(opts) as any,
     resourceId: "resource-1",
     emitInterruptOutcome: opts.emitInterruptOutcome,
+    observationalMemory: opts.observationalMemory,
   });
 }
 
@@ -185,6 +187,7 @@ export function makeRemoteMastraAgent(
     streamChunks?: any[];
     resumeChunks?: any[];
     emitInterruptOutcome?: boolean;
+    observationalMemory?: boolean;
   } = {},
 ) {
   return new MastraAgent({
@@ -192,5 +195,6 @@ export function makeRemoteMastraAgent(
     agent: new FakeRemoteAgent(opts) as any,
     resourceId: "resource-1",
     emitInterruptOutcome: opts.emitInterruptOutcome,
+    observationalMemory: opts.observationalMemory,
   });
 }

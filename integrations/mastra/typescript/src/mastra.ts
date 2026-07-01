@@ -95,6 +95,63 @@ interface RemoteResumableAgent {
   ): Promise<RemoteResumeResponse | null | undefined>;
 }
 
+/**
+ * AG-UI `activityType` used for Mastra Observational Memory (OM). OM is a
+ * Mastra memory feature the developer enables on THEIR agent
+ * (`new Memory({ options: { observationalMemory: true } })`). When enabled,
+ * Mastra runs Observer/Reflector agents out of band that read the conversation,
+ * compress it into observations, and activate them into the context window. OM
+ * surfaces this background work on the agent's `fullStream` as typed
+ * `data-om-*` chunks (see `@mastra/core/channels/om` + the `@mastra/memory` OM
+ * processor). The bridge maps the substantive lifecycle of those chunks to
+ * AG-UI ACTIVITY_SNAPSHOT / ACTIVITY_DELTA events so the UI can render the
+ * "agent is observing / reflecting / compressing memory" activity distinctly
+ * from the streamed response. Renderers register against this string via
+ * CopilotKit's `renderActivityMessages` prop.
+ *
+ * Surfacing is OPT-IN per agent (`MastraAgentConfig.observationalMemory`,
+ * default OFF) — OM is the developer's own opt-in, so the bridge does not
+ * announce it unless asked. With the toggle OFF the `data-om-*` chunks are
+ * swallowed silently (they carry no assistant output), so an OM-enabled agent
+ * still streams cleanly through the bridge and emits no activity.
+ *
+ * The activity `content` shape (one activity per OM cycle; `messageId` is the
+ * Mastra `cycleId`). In the async path the buffering cycle and its activation
+ * share one `cycleId`, so they advance a single activity
+ * running -> completed -> activated:
+ *
+ *   {
+ *     cycleId: string;        // Mastra OM cycle id (== activity messageId)
+ *     operationType: "observation" | "reflection";
+ *     phase: "observation" | "buffering" | "activation";
+ *     status: "running" | "completed" | "failed" | "activated";
+ *     threadId?: string;
+ *     recordId?: string;
+ *     observations?: string;  // the observation/reflection summary text
+ *     currentTask?: string;       // task the Observer extracted
+ *     suggestedResponse?: string; // suggestion the Observer extracted
+ *     tokensToObserve?: number;   // observation/buffering: tokens in this batch
+ *     tokensObserved?: number;    // observation: tokens observed
+ *     bufferedTokens?: number;    // buffering: resulting tokens after compress
+ *     observationTokens?: number; // resulting observation tokens
+ *     tokensActivated?: number;   // activation: message tokens activated
+ *     chunksActivated?: number;   // activation: buffered chunks activated
+ *     messagesActivated?: number; // activation: messages observed via activation
+ *     generationCount?: number;   // activation: reflection generation count
+ *     triggeredBy?: "threshold" | "ttl" | "provider_change";
+ *     durationMs?: number;
+ *     startedAt?: string;     // ISO timestamp
+ *     completedAt?: string;   // ISO timestamp
+ *     error?: string;         // message on failure
+ *   }
+ *
+ * This shape is a sensible default proposed by the AG-UI bridge; it mirrors the
+ * background-task activity shape and may evolve alongside Mastra's OM data
+ * parts (see OSS-92).
+ */
+export const MASTRA_OBSERVATIONAL_MEMORY_ACTIVITY_TYPE =
+  "mastra-observational-memory";
+
 export interface MastraAgentConfig extends AgentConfig {
   agent: LocalMastraAgent | RemoteMastraAgent;
   resourceId?: string;
@@ -147,6 +204,21 @@ export interface MastraAgentConfig extends AgentConfig {
    * `RunAgentInput.resume` channels regardless of this flag.
    */
   emitInterruptOutcome?: boolean;
+  /**
+   * Surface Mastra Observational Memory (OM) background work as AG-UI activity
+   * events (activityType `mastra-observational-memory`). Default OFF.
+   *
+   * OM is the developer's own opt-in (enabled on their Mastra `Memory`), so the
+   * bridge stays silent about it unless explicitly asked. When `true`, the
+   * bridge maps the OM lifecycle chunks Mastra streams on `fullStream`
+   * (`data-om-observation-*`, `data-om-buffering-*`, `data-om-activation`) to
+   * ACTIVITY_SNAPSHOT / ACTIVITY_DELTA events. When `false`/unset, those chunks
+   * are swallowed (no activity emitted) but the stream still flows cleanly.
+   *
+   * Note: this toggle does NOT enable OM — that is configured on the agent's
+   * Memory. It only controls whether the bridge surfaces OM's activity.
+   */
+  observationalMemory?: boolean;
 }
 
 interface MastraAgentStreamOptions {
@@ -223,6 +295,7 @@ export class MastraAgent extends AbstractAgent {
   resourceId?: string;
   requestContext?: RequestContext;
   untilIdle?: boolean | { maxIdleMs?: number };
+  observationalMemory?: boolean;
   public headers?: Record<string, string>;
   /** See MastraAgentConfig.emitInterruptOutcome. Default true. */
   emitInterruptOutcome: boolean;
@@ -234,6 +307,7 @@ export class MastraAgent extends AbstractAgent {
       requestContext,
       untilIdle,
       emitInterruptOutcome,
+      observationalMemory,
       ...rest
     } = config;
     super(rest);
@@ -242,6 +316,7 @@ export class MastraAgent extends AbstractAgent {
     this.resourceId = resourceId;
     this.requestContext = requestContext ?? new RequestContext();
     this.untilIdle = untilIdle;
+    this.observationalMemory = observationalMemory;
   }
 
   public clone() {
@@ -983,6 +1058,10 @@ export class MastraAgent extends AbstractAgent {
     callbacks: MastraAgentStreamOptions,
     clientToolNames: Set<string> = new Set(),
   ) {
+    // Whether to surface Observational Memory background work as activity
+    // events. OFF by default — see MastraAgentConfig.observationalMemory.
+    const surfaceOM = !!this.observationalMemory;
+
     // Only CLIENT (frontend) tools stream their args live — they are the
     // generative-UI tools that benefit from progressive rendering, and they
     // never suspend or background. SERVER tools take the buffered path below so
@@ -1094,7 +1173,247 @@ export class MastraAgent extends AbstractAgent {
       });
     };
 
+    // --- Observational Memory (OM) activity ---------------------------------
+    // cycleIds for which an OM ACTIVITY_SNAPSHOT has been emitted. Guards
+    // against emitting a delta before its snapshot.
+    const knownOmCycles = new Set<string>();
+
+    const ensureOmSnapshot = (
+      cycleId: string,
+      content: Record<string, any>,
+    ) => {
+      if (!cycleId || knownOmCycles.has(cycleId)) return;
+      knownOmCycles.add(cycleId);
+      callbacks.onActivitySnapshot?.({
+        messageId: cycleId,
+        activityType: MASTRA_OBSERVATIONAL_MEMORY_ACTIVITY_TYPE,
+        content: { cycleId, ...content },
+      });
+    };
+
+    const emitOmDelta = (
+      cycleId: string,
+      patch: Array<Record<string, any>>,
+    ) => {
+      if (!cycleId || patch.length === 0) return;
+      callbacks.onActivityDelta?.({
+        messageId: cycleId,
+        activityType: MASTRA_OBSERVATIONAL_MEMORY_ACTIVITY_TYPE,
+        patch,
+      });
+    };
+
+    // Build a JSON-patch "add" op for each defined field on `data` under
+    // `keyMap` (sourceKey -> activity content path). Skips undefined values so
+    // the delta stays minimal. Date values are normalised to ISO strings.
+    const omPatch = (
+      data: Record<string, any>,
+      keyMap: Record<string, string>,
+    ): Array<Record<string, any>> => {
+      const patch: Array<Record<string, any>> = [];
+      for (const [src, path] of Object.entries(keyMap)) {
+        const value = data?.[src];
+        if (value === undefined) continue;
+        patch.push({ op: "add", path: `/${path}`, value: toISO(value) });
+      }
+      return patch;
+    };
+
+    // Map a single OM `data-om-*` chunk to activity events. Snapshot on the
+    // start of a cycle, delta on its end/failure; activation is terminal so it
+    // is a snapshot of its own. Only the substantive lifecycle is surfaced —
+    // `data-om-status` (periodic token-window gauge), `data-om-thread-update`
+    // (title changes) and the deprecated `data-om-observed` are intentionally
+    // ignored (still swallowed, never a stream-stopper). The cycleId round-trips
+    // as the activity messageId so start/end address the same activity message.
+    const handleOmChunk = (chunk: any): void => {
+      const data = chunk?.data ?? {};
+      const cycleId: string | undefined = data.cycleId;
+      switch (chunk.type) {
+        case "data-om-observation-start": {
+          if (!cycleId) break;
+          ensureOmSnapshot(cycleId, {
+            operationType: data.operationType,
+            phase: "observation",
+            status: "running",
+            ...(data.threadId !== undefined && { threadId: data.threadId }),
+            ...(data.recordId !== undefined && { recordId: data.recordId }),
+            ...(data.startedAt !== undefined && {
+              startedAt: toISO(data.startedAt),
+            }),
+            ...(data.tokensToObserve !== undefined && {
+              tokensToObserve: data.tokensToObserve,
+            }),
+          });
+          break;
+        }
+        case "data-om-buffering-start": {
+          if (!cycleId) break;
+          ensureOmSnapshot(cycleId, {
+            operationType: data.operationType,
+            phase: "buffering",
+            status: "running",
+            ...(data.threadId !== undefined && { threadId: data.threadId }),
+            ...(data.recordId !== undefined && { recordId: data.recordId }),
+            ...(data.startedAt !== undefined && {
+              startedAt: toISO(data.startedAt),
+            }),
+            ...(data.tokensToBuffer !== undefined && {
+              tokensToBuffer: data.tokensToBuffer,
+            }),
+          });
+          break;
+        }
+        case "data-om-observation-end": {
+          if (!cycleId) break;
+          // Defensive: seed a snapshot if the start chunk was missed.
+          ensureOmSnapshot(cycleId, {
+            operationType: data.operationType,
+            phase: "observation",
+            status: "running",
+          });
+          emitOmDelta(cycleId, [
+            { op: "add", path: "/status", value: "completed" },
+            ...omPatch(data, {
+              completedAt: "completedAt",
+              durationMs: "durationMs",
+              tokensObserved: "tokensObserved",
+              observationTokens: "observationTokens",
+              observations: "observations",
+              currentTask: "currentTask",
+              suggestedResponse: "suggestedResponse",
+            }),
+          ]);
+          break;
+        }
+        case "data-om-buffering-end": {
+          if (!cycleId) break;
+          ensureOmSnapshot(cycleId, {
+            operationType: data.operationType,
+            phase: "buffering",
+            status: "running",
+          });
+          emitOmDelta(cycleId, [
+            { op: "add", path: "/status", value: "completed" },
+            ...omPatch(data, {
+              completedAt: "completedAt",
+              durationMs: "durationMs",
+              tokensBuffered: "tokensBuffered",
+              bufferedTokens: "bufferedTokens",
+              observations: "observations",
+            }),
+          ]);
+          break;
+        }
+        case "data-om-observation-failed":
+        case "data-om-buffering-failed": {
+          if (!cycleId) break;
+          const phase =
+            chunk.type === "data-om-buffering-failed"
+              ? "buffering"
+              : "observation";
+          ensureOmSnapshot(cycleId, {
+            operationType: data.operationType,
+            phase,
+            status: "running",
+          });
+          emitOmDelta(cycleId, [
+            { op: "add", path: "/status", value: "failed" },
+            {
+              op: "add",
+              path: "/error",
+              value: data.error ?? "Unknown error",
+            },
+            ...omPatch(data, {
+              failedAt: "completedAt",
+              durationMs: "durationMs",
+            }),
+          ]);
+          break;
+        }
+        case "data-om-activation": {
+          // Activation moves buffered observations into the active context. In
+          // the async path it REUSES the buffering cycle's id (buffering-start/
+          // -end then activation all share one cycleId), so when the cycle is
+          // already known this is the terminal DELTA that advances that activity
+          // to "activated". When the cycle is unknown (defensive / a future path
+          // that activates without a prior buffering cycle on this stream) it is
+          // a self-contained snapshot.
+          if (!cycleId) break;
+          const activationPatch = (data: Record<string, any>) =>
+            omPatch(data, {
+              activatedAt: "completedAt",
+              chunksActivated: "chunksActivated",
+              tokensActivated: "tokensActivated",
+              observationTokens: "observationTokens",
+              messagesActivated: "messagesActivated",
+              generationCount: "generationCount",
+              triggeredBy: "triggeredBy",
+              observations: "observations",
+            });
+          if (knownOmCycles.has(cycleId)) {
+            emitOmDelta(cycleId, [
+              { op: "add", path: "/phase", value: "activation" },
+              { op: "add", path: "/status", value: "activated" },
+              ...activationPatch(data),
+            ]);
+          } else {
+            ensureOmSnapshot(cycleId, {
+              operationType: data.operationType,
+              phase: "activation",
+              status: "activated",
+              ...(data.threadId !== undefined && { threadId: data.threadId }),
+              ...(data.recordId !== undefined && { recordId: data.recordId }),
+              ...(data.activatedAt !== undefined && {
+                completedAt: toISO(data.activatedAt),
+              }),
+              ...(data.chunksActivated !== undefined && {
+                chunksActivated: data.chunksActivated,
+              }),
+              ...(data.tokensActivated !== undefined && {
+                tokensActivated: data.tokensActivated,
+              }),
+              ...(data.observationTokens !== undefined && {
+                observationTokens: data.observationTokens,
+              }),
+              ...(data.messagesActivated !== undefined && {
+                messagesActivated: data.messagesActivated,
+              }),
+              ...(data.generationCount !== undefined && {
+                generationCount: data.generationCount,
+              }),
+              ...(data.triggeredBy !== undefined && {
+                triggeredBy: data.triggeredBy,
+              }),
+              ...(data.observations !== undefined && {
+                observations: data.observations,
+              }),
+            });
+          }
+          break;
+        }
+        default:
+          // data-om-status / data-om-thread-update / data-om-observed and any
+          // future data-om-* part: swallow without surfacing.
+          break;
+      }
+    };
+
     const handleChunk = (chunk: any): boolean => {
+      // Observational Memory data parts arrive on fullStream as
+      // `{ type: "data-om-*", data: {...} }` (no `payload`). Handle them before
+      // the payload guard below so they neither trip the malformed-chunk error
+      // (which would stop the stream) nor the unrecognised-chunk warning. When
+      // surfacing is off they are swallowed silently — an OM-enabled agent
+      // still streams cleanly and emits no activity.
+      if (
+        typeof chunk?.type === "string" &&
+        chunk.type.startsWith("data-om-")
+      ) {
+        if (surfaceOM) handleOmChunk(chunk);
+        return false;
+      }
+
       if (!chunk || !chunk.payload) {
         callbacks.onError(
           new Error(

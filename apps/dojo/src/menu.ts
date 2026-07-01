@@ -116,6 +116,7 @@ export const menuIntegrations = [
       "human_in_the_loop",
       "interrupt",
       "tool_based_generative_ui",
+      "observational_memory",
     ],
   },
   {
@@ -130,6 +131,7 @@ export const menuIntegrations = [
       "shared_state",
       "tool_based_generative_ui",
       "background_agents",
+      "observational_memory",
     ],
   },
   {
