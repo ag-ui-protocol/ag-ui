@@ -5,7 +5,7 @@ This module contains the types for the Agent User Interaction Protocol Python SD
 import warnings
 from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Discriminator, model_validator
 from pydantic.alias_generators import to_camel
 
 
@@ -98,7 +98,7 @@ class InputContentUrlSource(ConfiguredBaseModel):
 
 InputContentSource = Annotated[
     Union[InputContentDataSource, InputContentUrlSource],
-    Field(discriminator="type"),
+    Discriminator("type"),
 ]
 
 
@@ -169,7 +169,7 @@ InputContent = Annotated[
         DocumentInputContent,
         BinaryInputContent,
     ],
-    Field(discriminator="type"),
+    Discriminator("type"),
 ]
 
 ImageInputPart = ImageInputContent
@@ -233,7 +233,7 @@ Message = Annotated[
         ActivityMessage,
         ReasoningMessage,
     ],
-    Field(discriminator="role")
+    Discriminator("role"),
 ]
 
 Role = Literal["developer", "system", "assistant", "user", "tool", "activity", "reasoning"]
