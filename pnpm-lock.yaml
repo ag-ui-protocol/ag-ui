@@ -926,6 +926,9 @@ importers:
       '@ai-sdk/ui-utils':
         specifier: ^1.1.19
         version: 1.2.11(zod@3.25.76)
+      fast-json-patch:
+        specifier: ^3.1.1
+        version: 3.1.1
       rxjs:
         specifier: 7.8.1
         version: 7.8.1

@@ -50,6 +50,7 @@
   },
   "dependencies": {
     "@ai-sdk/ui-utils": "^1.1.19",
+    "fast-json-patch": "^3.1.1",
     "rxjs": "7.8.1"
   },
   "peerDependencies": {

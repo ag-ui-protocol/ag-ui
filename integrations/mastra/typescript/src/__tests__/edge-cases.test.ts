@@ -22,9 +22,7 @@ describe("working memory edge cases", () => {
     const agent = makeLocalMastraAgent({ memory, streamChunks: [] });
 
     const events = await collectEvents(agent, makeInput());
-    const snapshots = events.filter(
-      (e) => e.type === EventType.STATE_SNAPSHOT,
-    );
+    const snapshots = events.filter((e) => e.type === EventType.STATE_SNAPSHOT);
 
     expect(snapshots).toHaveLength(1);
     expect((snapshots[0] as any).snapshot).toEqual({
@@ -42,9 +40,7 @@ describe("working memory edge cases", () => {
     const agent = makeLocalMastraAgent({ memory, streamChunks: [] });
 
     const events = await collectEvents(agent, makeInput());
-    const snapshots = events.filter(
-      (e) => e.type === EventType.STATE_SNAPSHOT,
-    );
+    const snapshots = events.filter((e) => e.type === EventType.STATE_SNAPSHOT);
 
     expect(snapshots).toHaveLength(1);
     expect((snapshots[0] as any).snapshot).toEqual({
@@ -62,9 +58,7 @@ describe("working memory edge cases", () => {
     const agent = makeLocalMastraAgent({ memory, streamChunks: [] });
 
     const events = await collectEvents(agent, makeInput());
-    const snapshots = events.filter(
-      (e) => e.type === EventType.STATE_SNAPSHOT,
-    );
+    const snapshots = events.filter((e) => e.type === EventType.STATE_SNAPSHOT);
 
     expect(snapshots).toHaveLength(0);
   });
@@ -76,24 +70,25 @@ describe("working memory edge cases", () => {
     const agent = makeLocalMastraAgent({ memory, streamChunks: [] });
 
     const events = await collectEvents(agent, makeInput());
-    const snapshots = events.filter(
-      (e) => e.type === EventType.STATE_SNAPSHOT,
-    );
+    const snapshots = events.filter((e) => e.type === EventType.STATE_SNAPSHOT);
 
     expect(snapshots).toHaveLength(0);
     expect(events.some((e) => e.type === EventType.RUN_FINISHED)).toBe(true);
   });
 
-  it("does not crash when thread metadata workingMemory is invalid JSON", async () => {
+  // The input.state -> working-memory sync writes through Mastra's
+  // resource-scoped store (memory.updateWorkingMemory), NOT thread.metadata:
+  // that is the store the agent (getWorkingMemory + its own updateWorkingMemory
+  // tool) actually reads, so a client edit reaches the model. These assert the
+  // synced payload via the recorded updateWorkingMemory call.
+  const lastSyncedWorkingMemory = (memory: FakeMemory) => {
+    const call = memory.updateWorkingMemoryCalls.at(-1);
+    return call ? JSON.parse(call.workingMemory) : undefined;
+  };
+
+  it("starts fresh when existing working memory is invalid JSON", async () => {
     const memory = new FakeMemory();
-    memory.threads.set("thread-1", {
-      id: "thread-1",
-      title: "",
-      metadata: { workingMemory: "not valid json {{{" },
-      resourceId: "resource-1",
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
+    memory.workingMemoryValue = "not valid json {{{";
 
     const agent = makeLocalMastraAgent({ memory, streamChunks: [] });
 
@@ -103,13 +98,10 @@ describe("working memory edge cases", () => {
     );
 
     expect(events.some((e) => e.type === EventType.RUN_FINISHED)).toBe(true);
-
-    const saved = memory.threads.get("thread-1");
-    const savedMemory = JSON.parse(saved.metadata.workingMemory);
-    expect(savedMemory).toEqual({ foo: "bar" });
+    expect(lastSyncedWorkingMemory(memory)).toEqual({ foo: "bar" });
   });
 
-  it("creates a new thread and saves state when no thread exists", async () => {
+  it("syncs state to working memory when none exists yet", async () => {
     const memory = new FakeMemory();
 
     const agent = makeLocalMastraAgent({ memory, streamChunks: [] });
@@ -120,25 +112,13 @@ describe("working memory edge cases", () => {
     );
 
     expect(events.some((e) => e.type === EventType.RUN_FINISHED)).toBe(true);
-
-    const saved = memory.threads.get("thread-1");
-    expect(saved).toBeDefined();
-    const savedMemory = JSON.parse(saved.metadata.workingMemory);
-    expect(savedMemory).toEqual({ userName: "Bob" });
+    expect(memory.updateWorkingMemoryCalls.length).toBeGreaterThan(0);
+    expect(lastSyncedWorkingMemory(memory)).toEqual({ userName: "Bob" });
   });
 
-  it("merges input state with existing JSON working memory", async () => {
+  it("merges input state over existing JSON working memory", async () => {
     const memory = new FakeMemory();
-    memory.threads.set("thread-1", {
-      id: "thread-1",
-      title: "",
-      metadata: {
-        workingMemory: JSON.stringify({ existing: "data", count: 1 }),
-      },
-      resourceId: "resource-1",
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
+    memory.workingMemoryValue = JSON.stringify({ existing: "data", count: 1 });
 
     const agent = makeLocalMastraAgent({ memory, streamChunks: [] });
 
@@ -148,17 +128,14 @@ describe("working memory edge cases", () => {
     );
 
     expect(events.some((e) => e.type === EventType.RUN_FINISHED)).toBe(true);
-
-    const saved = memory.threads.get("thread-1");
-    const savedMemory = JSON.parse(saved.metadata.workingMemory);
-    expect(savedMemory).toEqual({
+    expect(lastSyncedWorkingMemory(memory)).toEqual({
       existing: "data",
       count: 2,
       newField: "hello",
     });
   });
 
-  it("strips messages key from input state before saving to working memory", async () => {
+  it("strips messages key from input state before syncing to working memory", async () => {
     const memory = new FakeMemory();
 
     const agent = makeLocalMastraAgent({ memory, streamChunks: [] });
@@ -174,10 +151,7 @@ describe("working memory edge cases", () => {
     );
 
     expect(events.some((e) => e.type === EventType.RUN_FINISHED)).toBe(true);
-
-    const saved = memory.threads.get("thread-1");
-    const savedMemory = JSON.parse(saved.metadata.workingMemory);
-    expect(savedMemory).toEqual({ importantData: "keep" });
+    expect(lastSyncedWorkingMemory(memory)).toEqual({ importantData: "keep" });
   });
 
   it("skips state management when memory is null", async () => {
@@ -203,10 +177,7 @@ describe("working memory edge cases", () => {
 
     const agent = makeLocalMastraAgent({ memory, streamChunks: [] });
 
-    const events = await collectEvents(
-      agent,
-      makeInput({ state: {} }),
-    );
+    const events = await collectEvents(agent, makeInput({ state: {} }));
 
     expect(events.some((e) => e.type === EventType.RUN_FINISHED)).toBe(true);
     expect(memory.threads.size).toBe(0);
@@ -283,9 +254,7 @@ describe("error handling", () => {
 
 describe("remote agent path", () => {
   it("both local and remote agents produce the same event types for text streaming", async () => {
-    const chunks = [
-      { type: "text-delta", payload: { text: "hello" } },
-    ];
+    const chunks = [{ type: "text-delta", payload: { text: "hello" } }];
 
     const localEvents = await collectEvents(
       makeLocalMastraAgent({ streamChunks: chunks }),
@@ -308,9 +277,7 @@ describe("remote agent path", () => {
     });
 
     const events = await collectEvents(agent, makeInput());
-    const snapshots = events.filter(
-      (e) => e.type === EventType.STATE_SNAPSHOT,
-    );
+    const snapshots = events.filter((e) => e.type === EventType.STATE_SNAPSHOT);
 
     expect(snapshots).toHaveLength(0);
   });
@@ -359,7 +326,8 @@ describe("event emission details (fake-only)", () => {
     const events = await collectEvents(agent, makeInput());
 
     const textChunks = events.filter(
-      (e): e is TextMessageChunkEvent => e.type === EventType.TEXT_MESSAGE_CHUNK,
+      (e): e is TextMessageChunkEvent =>
+        e.type === EventType.TEXT_MESSAGE_CHUNK,
     );
     expect(textChunks).toHaveLength(2);
 
@@ -408,7 +376,8 @@ describe("event emission details (fake-only)", () => {
     const events = await collectEvents(agent, makeInput());
 
     const textChunks = events.filter(
-      (e): e is TextMessageChunkEvent => e.type === EventType.TEXT_MESSAGE_CHUNK,
+      (e): e is TextMessageChunkEvent =>
+        e.type === EventType.TEXT_MESSAGE_CHUNK,
     );
     expect(textChunks).toHaveLength(2);
 
@@ -491,12 +460,8 @@ describe("event emission details (fake-only)", () => {
     ]);
 
     expect((toolEvents[0] as any).toolCallName).toBe("get_weather");
-    expect((toolEvents[1] as any).delta).toBe(
-      JSON.stringify({ city: "NYC" }),
-    );
-    expect((toolEvents[3] as any).content).toBe(
-      JSON.stringify({ temp: 72 }),
-    );
+    expect((toolEvents[1] as any).delta).toBe(JSON.stringify({ city: "NYC" }));
+    expect((toolEvents[3] as any).content).toBe(JSON.stringify({ temp: 72 }));
   });
 
   it("tool-only step (no preceding text) still rotates messageId for next step", async () => {
@@ -533,12 +498,12 @@ describe("event emission details (fake-only)", () => {
     const events = await collectEvents(agent, makeInput());
 
     const textChunks = events.filter(
-      (e): e is TextMessageChunkEvent => e.type === EventType.TEXT_MESSAGE_CHUNK,
+      (e): e is TextMessageChunkEvent =>
+        e.type === EventType.TEXT_MESSAGE_CHUNK,
     );
     expect(textChunks).toHaveLength(2);
 
     // Step 1 and Step 3 text must have distinct messageIds
     expect(textChunks[0].messageId).not.toBe(textChunks[1].messageId);
   });
-
 });
