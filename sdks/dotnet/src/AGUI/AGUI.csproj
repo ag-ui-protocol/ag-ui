@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
+    <RootNamespace>AGUI</RootNamespace>
+    <PackageId>AGUI</PackageId>
+    <Title>AG-UI</Title>
+    <Description>Umbrella package for the AG-UI .NET SDK, including client, server, formatting, protobuf, and protocol abstractions.</Description>
+    <PackageTags>$(PackageTags);sdk;umbrella</PackageTags>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <IncludeSymbols>false</IncludeSymbols>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AGUI.Abstractions\AGUI.Abstractions.csproj" />
+    <ProjectReference Include="..\AGUI.Formatting\AGUI.Formatting.csproj" />
+    <ProjectReference Include="..\AGUI.Protobuf\AGUI.Protobuf.csproj" />
+    <ProjectReference Include="..\AGUI.Client\AGUI.Client.csproj" />
+    <ProjectReference Include="..\AGUI.Server\AGUI.Server.csproj" />
+  </ItemGroup>
+
+</Project>

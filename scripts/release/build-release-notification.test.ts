@@ -6,6 +6,7 @@ import type { BuildReleaseNotificationInput } from "./lib/build-release-notifica
 const RUN_URL = "https://github.com/ag-ui-protocol/ag-ui/actions/runs/123";
 const NPM_ORG_URL = "https://www.npmjs.com/org/ag-ui";
 const PY_BASE_URL = "https://pypi.org/project";
+const NUGET_BASE_URL = "https://www.nuget.org/packages";
 
 // A neutral baseline where nothing has acted. Each test overrides only the
 // fields relevant to its truth-table row.
@@ -23,11 +24,16 @@ function base(
     pyResult: "skipped",
     pyBuildResult: "skipped",
     pyPackages: [],
+    nugetIntended: "false",
+    nugetResult: "skipped",
+    nugetBuildResult: "skipped",
+    nugetPackages: [],
     scope: "",
     dryRun: false,
     runUrl: RUN_URL,
     npmOrgUrl: NPM_ORG_URL,
     pyBaseUrl: PY_BASE_URL,
+    nugetBaseUrl: NUGET_BASE_URL,
     ...overrides,
   };
 }
@@ -38,6 +44,9 @@ function ts(...names: string[]): { name: string; version: string }[] {
 }
 function py(...names: string[]): { name: string; version: string }[] {
   return names.map((name) => ({ name, version: "0.0.11" }));
+}
+function nuget(...names: string[]): { name: string; version: string }[] {
+  return names.map((name) => ({ name, version: "0.0.1" }));
 }
 
 // ---- dry-run ----------------------------------------------------------------
@@ -117,6 +126,20 @@ test("suppresses prerelease (canary) PyPI failure — no post (both lanes suppre
       pyIntended: "true",
       pyResult: "failure",
       pyBuildResult: "success",
+    }),
+  );
+  assert.equal(r.shouldPost, false);
+  assert.equal(r.message, "");
+});
+
+test("suppresses prerelease (canary) NuGet failure — no post", () => {
+  const r = buildReleaseNotification(
+    base({
+      mode: "prerelease",
+      nugetIntended: "true",
+      nugetResult: "failure",
+      nugetBuildResult: "success",
+      nugetPackages: nuget("AGUI.Client"),
     }),
   );
   assert.equal(r.shouldPost, false);
@@ -625,6 +648,75 @@ test("build-python failure WITHOUT intent → NO post (routine PR flake)", () =>
   );
   assert.equal(r.shouldPost, false);
   assert.equal(r.message, "");
+});
+
+// ---- NuGet lane: stable success/failure -------------------------------------
+test("NuGet success → count + names + link to umbrella package", () => {
+  const r = buildReleaseNotification(
+    base({
+      mode: "stable",
+      nugetResult: "success",
+      nugetBuildResult: "success",
+      nugetPackages: nuget("AGUI.Client", "AGUI"),
+    }),
+  );
+  assert.equal(r.shouldPost, true);
+  assert.equal(
+    r.message,
+    "📦 *ag-ui release* · 2 NuGet packages published (AGUI.Client, AGUI) · " +
+      `<${NUGET_BASE_URL}/AGUI/|NuGet>`,
+  );
+});
+
+test("NuGet success falls back to first package when umbrella package absent", () => {
+  const r = buildReleaseNotification(
+    base({
+      mode: "stable",
+      nugetResult: "success",
+      nugetBuildResult: "success",
+      nugetPackages: nuget("AGUI.Client"),
+    }),
+  );
+  assert.equal(r.shouldPost, true);
+  assert.match(r.message, /1 NuGet package published/);
+  assert.match(
+    r.message,
+    /<https:\/\/www\.nuget\.org\/packages\/AGUI\.Client\/\|NuGet>/,
+  );
+});
+
+test("NuGet publish failure with detected packages → lane-level red alert", () => {
+  const r = buildReleaseNotification(
+    base({
+      mode: "stable",
+      nugetIntended: "false",
+      nugetResult: "failure",
+      nugetBuildResult: "success",
+      nugetPackages: nuget("AGUI.Client"),
+    }),
+  );
+  assert.equal(r.shouldPost, true);
+  assert.equal(
+    r.message,
+    `🔴 *ag-ui NuGet release failed* · <${RUN_URL}|View run>`,
+  );
+});
+
+test("early build failure on intended NuGet release → NuGet failure line", () => {
+  const r = buildReleaseNotification(
+    base({
+      mode: "stable",
+      nugetIntended: "true",
+      nugetResult: "skipped",
+      nugetBuildResult: "failure",
+      nugetPackages: [],
+    }),
+  );
+  assert.equal(r.shouldPost, true);
+  assert.equal(
+    r.message,
+    `🔴 *ag-ui NuGet release failed* · <${RUN_URL}|View run>`,
+  );
 });
 
 test("python release intended (pyIntended='true', pyBuildResult='failure') → PyPI red ALERT", () => {

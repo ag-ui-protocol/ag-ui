@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/AGUI/AGUI.csproj" />
     <Project Path="src/AGUI.Abstractions/AGUI.Abstractions.csproj" />
     <Project Path="src/AGUI.Client/AGUI.Client.csproj" />
     <Project Path="src/AGUI.Formatting/AGUI.Formatting.csproj" />

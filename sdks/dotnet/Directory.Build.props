@@ -15,15 +15,14 @@
     <TargetFrameworks>$(TargetFrameworksCore);netstandard2.0;net472</TargetFrameworks>
     <IsAotCompatible Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net7.0'))">true</IsAotCompatible>
     <IsPackable>false</IsPackable>
-    <IsPackable Condition="'$(MSBuildProjectName)' == 'AGUI.Abstractions' Or '$(MSBuildProjectName)' == 'AGUI.Formatting' Or '$(MSBuildProjectName)' == 'AGUI.Protobuf' Or '$(MSBuildProjectName)' == 'AGUI.Client' Or '$(MSBuildProjectName)' == 'AGUI.Server'">true</IsPackable>
+    <IsPackable Condition="'$(MSBuildProjectName)' == 'AGUI.Abstractions' Or '$(MSBuildProjectName)' == 'AGUI.Formatting' Or '$(MSBuildProjectName)' == 'AGUI.Protobuf' Or '$(MSBuildProjectName)' == 'AGUI.Client' Or '$(MSBuildProjectName)' == 'AGUI.Server' Or '$(MSBuildProjectName)' == 'AGUI'">true</IsPackable>
     <!-- Public members should not use oblivious types. Not done with all nullable annotations. -->
     <NoWarn>$(NoWarn);RS0041</NoWarn>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(IsPackable)' == 'true'">
-    <VersionPrefix Condition="'$(VersionPrefix)' == ''">0.1.0</VersionPrefix>
-    <VersionSuffix Condition="'$(VersionSuffix)' == ''">preview</VersionSuffix>
-    <Authors>Markus Ecker</Authors>
+    <VersionPrefix Condition="'$(VersionPrefix)' == ''">0.0.1</VersionPrefix>
+    <Authors>AG-UI Protocol</Authors>
     <Company>AG-UI Protocol</Company>
     <Product>AG-UI .NET SDK</Product>
     <Copyright>Copyright (c) AG-UI Protocol 2025</Copyright>
@@ -37,6 +36,8 @@
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     <Deterministic>true</Deterministic>
+    <SignAssembly>true</SignAssembly>
+    <AssemblyOriginatorKeyFile>$(MSBuildThisFileDirectory)AGUI.snk</AssemblyOriginatorKeyFile>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
     <EnablePackageValidation>true</EnablePackageValidation>

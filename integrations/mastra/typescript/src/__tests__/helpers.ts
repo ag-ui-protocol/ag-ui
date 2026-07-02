@@ -8,6 +8,13 @@ export class FakeMemory {
   threads: Map<string, any> = new Map();
   workingMemoryValue: string | undefined = undefined;
   recallMessages: any[] = [];
+  /** Records every updateWorkingMemory call (the input.state -> WM sync). */
+  updateWorkingMemoryCalls: Array<{
+    resourceId?: string;
+    threadId?: string;
+    workingMemory: string;
+    memoryConfig?: any;
+  }> = [];
 
   async getThreadById({ threadId }: { threadId: string }) {
     return this.threads.get(threadId) ?? null;
@@ -21,6 +28,19 @@ export class FakeMemory {
     return this.workingMemoryValue;
   }
 
+  // Mirrors Mastra's resource-scoped working-memory store: the input.state
+  // sync writes HERE (not thread.metadata), and a later getWorkingMemory
+  // reflects it, so the round-trip the agent sees is faithful.
+  async updateWorkingMemory(args: {
+    resourceId?: string;
+    threadId?: string;
+    workingMemory: string;
+    memoryConfig?: any;
+  }): Promise<void> {
+    this.updateWorkingMemoryCalls.push(args);
+    this.workingMemoryValue = args.workingMemory;
+  }
+
   async recall(_opts: any): Promise<{ messages: any[] }> {
     return { messages: this.recallMessages };
   }
@@ -30,6 +50,10 @@ export class FakeLocalAgent {
   memory: FakeMemory;
   streamChunks: any[];
   resumeChunks: any[] | undefined;
+  // Execution traceId to expose on the stream response (Mastra observability
+  // v-next). Left undefined by default so it doesn't affect tests that don't
+  // opt into it. May be a plain string or a Promise (mirrors the real API).
+  traceId: string | Promise<string> | undefined;
   /** Messages passed to the most recent stream() call (post-diff-filter). */
   lastStreamMessages: any[] | null = null;
   /** Options passed to the most recent stream() call. */
@@ -38,11 +62,17 @@ export class FakeLocalAgent {
   lastResumeOpts: any = null;
 
   constructor(
-    opts: { memory?: FakeMemory; streamChunks?: any[]; resumeChunks?: any[] } = {},
+    opts: {
+      memory?: FakeMemory;
+      streamChunks?: any[];
+      resumeChunks?: any[];
+      traceId?: string | Promise<string>;
+    } = {},
   ) {
     this.memory = opts.memory ?? new FakeMemory();
     this.streamChunks = opts.streamChunks ?? [];
     this.resumeChunks = opts.resumeChunks;
+    this.traceId = opts.traceId;
   }
 
   async getMemory(_opts?: any) {
@@ -54,6 +84,7 @@ export class FakeLocalAgent {
     this.lastStreamOpts = opts;
     const chunks = this.streamChunks;
     return {
+      ...(this.traceId !== undefined ? { traceId: this.traceId } : {}),
       fullStream: (async function* () {
         for (const chunk of chunks) {
           yield chunk;
@@ -66,6 +97,10 @@ export class FakeLocalAgent {
     this.lastResumeOpts = opts;
     const chunks = this.resumeChunks ?? [];
     return {
+      // Mirror stream()'s optional traceId so resume-path traceId surfacing can
+      // be exercised. Additive; undefined by default so existing tests are
+      // unaffected.
+      ...(this.traceId !== undefined ? { traceId: this.traceId } : {}),
       fullStream: (async function* () {
         for (const chunk of chunks) {
           yield chunk;
@@ -81,12 +116,21 @@ export class FakeRemoteAgent {
   // Chunks replayed by resumeStream's processDataStream. When undefined, the
   // remote agent has no resume capability (mirrors older @mastra/client-js).
   resumeChunks: any[] | undefined;
+  // Execution traceId to expose on the stream response. Undefined by default.
+  traceId: string | Promise<string> | undefined;
   // Records every resumeStream(resumeData, opts) call for assertions.
   resumeCalls: Array<{ resumeData: any; opts: any }> = [];
 
-  constructor(opts: { streamChunks?: any[]; resumeChunks?: any[] } = {}) {
+  constructor(
+    opts: {
+      streamChunks?: any[];
+      resumeChunks?: any[];
+      traceId?: string | Promise<string>;
+    } = {},
+  ) {
     this.streamChunks = opts.streamChunks ?? [];
     this.resumeChunks = opts.resumeChunks;
+    this.traceId = opts.traceId;
   }
 
   /** Options passed to the most recent stream() call. */
@@ -97,6 +141,7 @@ export class FakeRemoteAgent {
     this.lastStreamOpts = opts;
     const chunks = this.streamChunks;
     return {
+      ...(this.traceId !== undefined ? { traceId: this.traceId } : {}),
       processDataStream: async ({
         onChunk,
       }: {
@@ -113,6 +158,10 @@ export class FakeRemoteAgent {
     this.resumeCalls.push({ resumeData, opts });
     const chunks = this.resumeChunks ?? [];
     return {
+      // Mirror stream()'s optional traceId so resume-path traceId surfacing can
+      // be exercised. Additive; undefined by default so existing tests are
+      // unaffected.
+      ...(this.traceId !== undefined ? { traceId: this.traceId } : {}),
       processDataStream: async ({
         onChunk,
       }: {
@@ -170,6 +219,7 @@ export function makeLocalMastraAgent(
     streamChunks?: any[];
     resumeChunks?: any[];
     emitInterruptOutcome?: boolean;
+    observationalMemory?: boolean;
   } = {},
 ) {
   return new MastraAgent({
@@ -177,6 +227,7 @@ export function makeLocalMastraAgent(
     agent: new FakeLocalAgent(opts) as any,
     resourceId: "resource-1",
     emitInterruptOutcome: opts.emitInterruptOutcome,
+    observationalMemory: opts.observationalMemory,
   });
 }
 
@@ -185,6 +236,7 @@ export function makeRemoteMastraAgent(
     streamChunks?: any[];
     resumeChunks?: any[];
     emitInterruptOutcome?: boolean;
+    observationalMemory?: boolean;
   } = {},
 ) {
   return new MastraAgent({
@@ -192,5 +244,6 @@ export function makeRemoteMastraAgent(
     agent: new FakeRemoteAgent(opts) as any,
     resourceId: "resource-1",
     emitInterruptOutcome: opts.emitInterruptOutcome,
+    observationalMemory: opts.observationalMemory,
   });
 }
