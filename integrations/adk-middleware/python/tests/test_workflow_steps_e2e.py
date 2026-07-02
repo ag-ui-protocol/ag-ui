@@ -247,6 +247,35 @@ async def test_nested_parallel_closes_before_next_sequential_node():
     _assert_rich_present(full)
 
 
+async def test_nested_parallel_all_branches_concurrent():
+    """ParallelAgent of a ParallelAgent + a leaf: every leaf is a concurrent
+    branch, so all their steps open together and the stream stays well-formed."""
+    wf = ParallelAgent(name="outer", sub_agents=[
+        ParallelAgent(name="inner", sub_agents=[RichAgent(name="x"), RichAgent(name="y")]),
+        RichAgent(name="z"),
+    ])
+    full, steps = await _run_steps(wf)
+    assert _well_formed(steps)
+    assert sorted(n for t, n in steps if t == EventType.STEP_STARTED) == ["x", "y", "z"]
+    _assert_rich_present(full)
+
+
+async def test_loop_of_parallel_merges_across_iterations():
+    """Documented behavior: a ParallelAgent inside a LoopAgent yields ONE step per
+    branch spanning the whole loop, not one per iteration. The concurrent branches
+    keep the same ADK `branch` (e.g. `par.p`) across iterations and the flat event
+    stream has no iteration-boundary signal, so there is nothing to close/reopen on
+    — unlike a *serial* loop body, where the author changes each iteration. Still
+    spec-valid (well-formed)."""
+    wf = LoopAgent(name="loop", max_iterations=2, sub_agents=[
+        ParallelAgent(name="par", sub_agents=[RichAgent(name="p"), RichAgent(name="q")]),
+    ])
+    _full, steps = await _run_steps(wf)
+    assert _well_formed(steps)
+    # one step per branch for the whole loop (not per iteration)
+    assert sorted(n for t, n in steps if t == EventType.STEP_STARTED) == ["p", "q"]
+
+
 async def test_steps_close_before_run_level_snapshots():
     """The final STEP_FINISHED must precede the run-level STATE_SNAPSHOT and
     MESSAGES_SNAPSHOT, so those run-level events are not nested inside the last

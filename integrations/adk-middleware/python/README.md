@@ -387,6 +387,12 @@ Notes:
 - **Ordering.** Steps close after their node's content but before the run-level
   `STATE_SNAPSHOT` / `MESSAGES_SNAPSHOT`, and any open step is also closed on an
   LRO/HITL pause, so `RUN_FINISHED` never follows an active step.
+- **A `ParallelAgent` inside a `LoopAgent`** yields one step per branch spanning
+  the whole loop, not one per iteration: the concurrent branches keep the same
+  `branch` across iterations and the flat event stream carries no iteration
+  boundary to close/reopen on (a *serial* loop body does re-emit per iteration,
+  because its author changes each time). Nested `ParallelAgent`s work as expected
+  (every leaf is its own concurrent branch). Both stay well-formed.
 
 ## Context Support
 
