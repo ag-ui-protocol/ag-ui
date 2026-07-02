@@ -63,7 +63,7 @@ describe("StreamHandler — error & cancel handling", () => {
     expect(events[events.length - 1].type).toBe(EventType.RUN_ERROR);
   });
 
-  it("invalid tool-call does NOT produce a duplicate TOOL_CALL_RESULT (lets v6's tool-error path emit it once)", async () => {
+  it("invalid tool-call does NOT produce a duplicate TOOL_CALL_RESULT (lets v7's tool-error path emit it once)", async () => {
     const model = makeMockModel([
       streamStart,
       responseMetadata(),
