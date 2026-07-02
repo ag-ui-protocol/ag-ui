@@ -378,6 +378,15 @@ Notes:
   Overlapping steps with distinct names are valid per the AG-UI verifier (active
   steps are tracked by name). When execution returns to an ancestor branch (the
   next sequential node after a parallel block), the parallel children close first.
+- **`AgentTool` is a tool call, not a step.** ADK runs an `AgentTool`'s wrapped
+  agent in an isolated inner `Runner` and returns only its final output, so the
+  sub-agent's events never reach the outer stream — it surfaces as `TOOL_CALL_*`
+  (authored by the parent), not as an author transition, and correctly gets no
+  step. Use `sub_agents` / `transfer_to_agent` (not `AgentTool`) when you want a
+  sub-agent to appear as its own step.
+- **Ordering.** Steps close after their node's content but before the run-level
+  `STATE_SNAPSHOT` / `MESSAGES_SNAPSHOT`, and any open step is also closed on an
+  LRO/HITL pause, so `RUN_FINISHED` never follows an active step.
 
 ## Context Support
 
