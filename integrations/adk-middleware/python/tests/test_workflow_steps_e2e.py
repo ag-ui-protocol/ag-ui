@@ -23,19 +23,20 @@ from ag_ui_adk import ADKAgent
 _STEP = (EventType.STEP_STARTED, EventType.STEP_FINISHED)
 
 
-def _rich_events(name, escalate=False):
-    """The full event variety a realistic node produces, all authored by ``name``:
-    reasoning (thought) → text → tool call → tool result → state delta."""
+def _rich_events(name, branch=None, escalate=False):
+    """The full event variety a realistic node produces, all authored by ``name``
+    and stamped with the context ``branch`` (as real ADK agents do — this is what
+    distinguishes concurrent ParallelAgent branches)."""
     fid = f"fc-{name}"
-    yield Event(author=name, content=types.Content(role="model",
-                parts=[types.Part(text=f"{name} is thinking", thought=True)]))
-    yield Event(author=name, content=types.Content(role="model",
-                parts=[types.Part(text=f"{name} says hi")]))
-    yield Event(author=name, content=types.Content(role="model",
-                parts=[types.Part(function_call=types.FunctionCall(id=fid, name="calc", args={"x": 1}))]))
-    yield Event(author=name, content=types.Content(role="user",
-                parts=[types.Part(function_response=types.FunctionResponse(id=fid, name="calc", response={"r": 2}))]))
-    yield Event(author=name, actions=EventActions(state_delta={f"{name}_done": True}, escalate=escalate))
+    def ev(**kw):
+        return Event(author=name, branch=branch, **kw)
+    yield ev(content=types.Content(role="model", parts=[types.Part(text=f"{name} is thinking", thought=True)]))
+    yield ev(content=types.Content(role="model", parts=[types.Part(text=f"{name} says hi")]))
+    yield ev(content=types.Content(role="model",
+             parts=[types.Part(function_call=types.FunctionCall(id=fid, name="calc", args={"x": 1}))]))
+    yield ev(content=types.Content(role="user",
+             parts=[types.Part(function_response=types.FunctionResponse(id=fid, name="calc", response={"r": 2}))]))
+    yield ev(actions=EventActions(state_delta={f"{name}_done": True}, escalate=escalate))
 
 
 class RichAgent(BaseAgent):
@@ -43,7 +44,7 @@ class RichAgent(BaseAgent):
     state. Sleeps between events so ParallelAgent branches actually interleave."""
 
     async def _run_async_impl(self, ctx):
-        for e in _rich_events(self.name):
+        for e in _rich_events(self.name, branch=ctx.branch):
             await asyncio.sleep(0)
             yield e
 
@@ -52,7 +53,7 @@ class RichStopAgent(BaseAgent):
     """Like RichAgent, but escalates on its last event (terminates a LoopAgent)."""
 
     async def _run_async_impl(self, ctx):
-        for e in _rich_events(self.name, escalate=True):
+        for e in _rich_events(self.name, branch=ctx.branch, escalate=True):
             yield e
 
 
@@ -91,18 +92,21 @@ async def _run_steps(agent_obj, emit=True):
 
 
 def _well_formed(step_seq):
-    """Each STEP_FINISHED matches the immediately-open STEP_STARTED; none left open."""
-    open_name = None
+    """Mirror the AG-UI client verifier (verify.ts): active steps are tracked by
+    name — a name can't be started while already active, can't be finished unless
+    active, and none may be left open. Overlapping steps with distinct names (as
+    ParallelAgent produces) are valid."""
+    active = set()
     for t, n in step_seq:
         if t == EventType.STEP_STARTED:
-            if open_name is not None:
+            if n in active:
                 return False
-            open_name = n
+            active.add(n)
         else:
-            if open_name != n:
+            if n not in active:
                 return False
-            open_name = None
-    return open_name is None
+            active.discard(n)
+    return not active
 
 
 def _rich_types(seg):
@@ -208,28 +212,36 @@ async def test_adk_2_0_workflow_graph_brackets_each_rich_node():
 
 
 # ---------------------------------------------------------------------------
-# Parallel / nested — rich content flows; steps stay well-formed (best-effort)
+# Parallel / nested — one step per concurrent branch (kept open via ADK branch)
 # ---------------------------------------------------------------------------
 
-async def test_parallel_agent_rich_steps_well_formed_best_effort():
-    """ParallelAgent: concurrent rich branches interleave, so a branch's step can
-    open/close more than once. The stream stays well-formed (each FINISHED matches
-    its STARTED), both branches appear, and the full rich variety flows."""
+async def test_parallel_agent_emits_one_step_per_branch():
+    """ParallelAgent: each concurrent branch gets exactly one step. ADK assigns a
+    distinct branch per sub-agent (e.g. "par.p"), so the sibling steps stay open
+    together and each opens/closes exactly once — no thrashing — while the rich
+    content flows. Overlapping distinct-named steps are valid per the verifier."""
     full, steps = await _run_steps(
         ParallelAgent(name="par", sub_agents=[RichAgent(name="p"), RichAgent(name="q")])
     )
-    assert steps and _well_formed(steps)
-    assert {n for _t, n in steps} == {"p", "q"}
+    assert _well_formed(steps)
+    starts = sorted(n for t, n in steps if t == EventType.STEP_STARTED)
+    finishes = sorted(n for t, n in steps if t == EventType.STEP_FINISHED)
+    assert starts == ["p", "q"] and finishes == ["p", "q"]  # each branch exactly once
     _assert_rich_present(full)
 
 
-async def test_nested_sequential_of_parallel_then_rich_agent():
+async def test_nested_parallel_closes_before_next_sequential_node():
     nested = SequentialAgent(name="root", sub_agents=[
         ParallelAgent(name="par", sub_agents=[RichAgent(name="p"), RichAgent(name="q")]),
         RichAgent(name="c"),
     ])
     full, steps = await _run_steps(nested)
     assert _well_formed(steps)
+    assert sorted(n for t, n in steps if t == EventType.STEP_STARTED) == ["c", "p", "q"]
+    # Both parallel branches finish before the next sequential node opens.
+    c_start = steps.index((EventType.STEP_STARTED, "c"))
+    finished_before_c = {n for t, n in steps[:c_start] if t == EventType.STEP_FINISHED}
+    assert {"p", "q"}.issubset(finished_before_c)
     assert steps[-2:] == [(EventType.STEP_STARTED, "c"), (EventType.STEP_FINISHED, "c")]
     _assert_bracketed(full, ["c"])   # the trailing serial node brackets cleanly
     _assert_rich_present(full)

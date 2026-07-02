@@ -271,8 +271,11 @@ class ADKAgent:
                 per-step progress as recommended by the AG-UI spec. Defaults to
                 False to preserve existing behavior. Steps are only emitted for
                 workflow/multi-agent topologies; a plain single LlmAgent run is
-                unchanged even when this is True. Note: ParallelAgent steps are
-                best-effort — concurrent branches close at the run boundary.
+                unchanged even when this is True. ParallelAgent is handled
+                precisely: steps are keyed by the ADK event ``branch`` (distinct
+                per parallel sub-agent), so concurrent branches each get one step
+                and stay open together, then close when execution returns to an
+                ancestor branch.
             streaming_function_call_arguments: Whether to enable streaming of function
                 call arguments from Gemini 3+ models via Vertex AI. When enabled,
                 TOOL_CALL_ARGS events are emitted incrementally as the model streams

@@ -18,10 +18,11 @@ from ag_ui_adk.event_translator import EventTranslator
 from ag_ui_adk.adk_agent import ADKAgent
 
 
-def _event(author):
-    """Minimal fake ADK event; step detection only reads ``author``."""
+def _event(author, branch=None):
+    """Minimal fake ADK event; step detection reads ``author`` and ``branch``."""
     e = MagicMock()
     e.author = author
+    e.branch = branch
     return e
 
 
@@ -111,6 +112,40 @@ def test_dynamic_transfer_between_agents_emits_steps():
         "coordinator", "specialist", "coordinator",
     ]
     _assert_well_formed(pairs)
+
+
+def _branched(translator, pairs):
+    """Feed (author, branch) events through the translator and finalize."""
+    out = []
+    for author, branch in pairs:
+        for ev in translator.step_boundary_events(_event(author, branch)):
+            out.append((ev.type, ev.step_name))
+    for ev in translator.finalize_step_events():
+        out.append((ev.type, ev.step_name))
+    return out
+
+
+def test_parallel_branches_open_together_and_close_once():
+    # Distinct ADK branches (ParallelAgent sets "par.p"/"par.q") → concurrent,
+    # overlapping steps: each opens exactly once and closes at finalize (LIFO).
+    translator = EventTranslator(emit_workflow_steps=True)
+    out = _branched(translator, [("p", "par.p"), ("q", "par.q"), ("p", "par.p"), ("q", "par.q")])
+    assert out == [
+        (EventType.STEP_STARTED, "p"), (EventType.STEP_STARTED, "q"),
+        (EventType.STEP_FINISHED, "q"), (EventType.STEP_FINISHED, "p"),
+    ]
+
+
+def test_return_to_ancestor_branch_closes_parallel_children():
+    # After a parallel block, an event on the ancestor (root) branch closes the
+    # still-open parallel children before opening the next node.
+    translator = EventTranslator(emit_workflow_steps=True)
+    out = _branched(translator, [("p", "par.p"), ("q", "par.q"), ("c", None)])
+    assert out == [
+        (EventType.STEP_STARTED, "p"), (EventType.STEP_STARTED, "q"),
+        (EventType.STEP_FINISHED, "q"), (EventType.STEP_FINISHED, "p"),
+        (EventType.STEP_STARTED, "c"), (EventType.STEP_FINISHED, "c"),
+    ]
 
 
 def test_single_author_yields_exactly_one_pair():

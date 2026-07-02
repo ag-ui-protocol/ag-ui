@@ -371,9 +371,13 @@ Notes:
   coordinator/sub-agent and dynamic-transfer topologies. `LoopAgent` naturally
   re-emits a step pair per iteration; dynamic `transfer_to_agent` shows up as a
   new step when the author changes.
-- **`ParallelAgent` is best-effort.** Concurrent branches interleave in the flat
-  event stream, so their steps close at the run boundary rather than at the exact
-  end of each branch.
+- **`ParallelAgent` is handled precisely.** Steps are keyed by the ADK event
+  `branch` (ADK assigns a distinct branch per parallel sub-agent, e.g. `par.p`),
+  so concurrent branches each get exactly one step and stay open together —
+  `RUN_STARTED … STEP_STARTED p, STEP_STARTED q … STEP_FINISHED q, STEP_FINISHED p …`.
+  Overlapping steps with distinct names are valid per the AG-UI verifier (active
+  steps are tracked by name). When execution returns to an ancestor branch (the
+  next sequential node after a parallel block), the parallel children close first.
 
 ## Context Support
 
