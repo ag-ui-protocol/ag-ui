@@ -247,6 +247,28 @@ async def test_nested_parallel_closes_before_next_sequential_node():
     _assert_rich_present(full)
 
 
+async def test_steps_close_before_run_level_snapshots():
+    """The final STEP_FINISHED must precede the run-level STATE_SNAPSHOT and
+    MESSAGES_SNAPSHOT, so those run-level events are not nested inside the last
+    node's step bracket."""
+    agent = ADKAgent(
+        adk_agent=SequentialAgent(name="seq", sub_agents=[RichAgent(name="a"), RichAgent(name="b")]),
+        app_name="demo", user_id="u", use_in_memory_services=True,
+        emit_workflow_steps=True, emit_messages_snapshot=True,
+    )
+    inp = RunAgentInput(thread_id="t", run_id="r", state={},
+                        messages=[UserMessage(id="u1", role="user", content="go")],
+                        tools=[], context=[], forwarded_props={})
+    types_seq = [ev.type async for ev in agent.run(inp)]
+
+    finished = [i for i, t in enumerate(types_seq) if t == EventType.STEP_FINISHED]
+    snapshots = [i for i, t in enumerate(types_seq)
+                 if t in (EventType.STATE_SNAPSHOT, EventType.MESSAGES_SNAPSHOT)]
+    assert finished and snapshots
+    assert max(finished) < min(snapshots)  # every step closes before any run-level snapshot
+    assert types_seq[-1] == EventType.RUN_FINISHED
+
+
 # ---------------------------------------------------------------------------
 # Backward-compat — no steps
 # ---------------------------------------------------------------------------

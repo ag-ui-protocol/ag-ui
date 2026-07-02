@@ -3353,12 +3353,26 @@ class ADKAgent:
                                 app_name,
                                 user_id,
                             )
+                            # Close any open workflow steps before this LRO/HITL
+                            # pause ends the run — otherwise RUN_FINISHED would
+                            # follow with steps still active. (No-op unless on.)
+                            for step_ev in event_translator.finalize_step_events():
+                                await event_queue.put(step_ev)
                             await event_queue.put(None)
                             return
 
             # Force close any streaming messages
             async for ag_ui_event in event_translator.force_close_streaming_message():
                 await event_queue.put(ag_ui_event)
+
+            # Close any open workflow steps now — after the last node's content
+            # (including its text stream just closed above) but BEFORE the
+            # run-level STATE_SNAPSHOT / MESSAGES_SNAPSHOT below, so those
+            # run-level events are not nested inside the final step's bracket.
+            # No new steps open after the runner loop, so this is the single
+            # close point for the normal path. (No-op unless workflow steps are on.)
+            for step_ev in event_translator.finalize_step_events():
+                await event_queue.put(step_ev)
 
             # Manage invocation_id lifecycle for resumable agents.
             # Composite agents: store after LRO pause so the next resume can
@@ -3462,10 +3476,6 @@ class ADKAgent:
             await self._finalize_hitl_buffer(
                 event_queue, input.thread_id, app_name, user_id
             )
-            # Close any open workflow step so STEP_FINISHED is paired before the
-            # consumer emits RUN_FINISHED (no-op unless workflow steps are active).
-            for step_ev in event_translator.finalize_step_events():
-                await event_queue.put(step_ev)
             logger.debug(f"Background task sending completion signal for thread {input.thread_id}")
             await event_queue.put(None)
             logger.debug(f"Background task completion signal sent for thread {input.thread_id}")
