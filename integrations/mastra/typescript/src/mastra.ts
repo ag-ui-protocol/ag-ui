@@ -27,7 +27,10 @@ import { AbstractAgent, EventType } from "@ag-ui/client";
 import type { Agent as LocalMastraAgent } from "@mastra/core/agent";
 import { RequestContext } from "@mastra/core/request-context";
 import { randomUUID } from "@ag-ui/client";
-import { compare } from "fast-json-patch";
+// fast-json-patch@3.1.1 is CJS with no exports map, so a named ESM import
+// (`import { compare }`) fails under Node ESM. Default-import then destructure.
+import fastJsonPatch from "fast-json-patch";
+const { compare } = fastJsonPatch;
 import { parsePartialJson } from "@ai-sdk/ui-utils";
 import { Observable } from "rxjs";
 import type { MastraClient } from "@mastra/client-js";
