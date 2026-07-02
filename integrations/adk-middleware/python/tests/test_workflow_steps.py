@@ -176,6 +176,16 @@ def test_finalize_is_idempotent():
     assert list(translator.finalize_step_events()) == []
 
 
+def test_reset_clears_open_steps():
+    # reset() promises clean state between runs — open workflow steps must not leak.
+    translator = EventTranslator(emit_workflow_steps=True)
+    list(translator.step_boundary_events(_event("a")))  # opens step "a"
+    translator.reset()
+    assert list(translator.finalize_step_events()) == []  # nothing left open
+    # A fresh run opens cleanly, with no stale STEP_FINISHED for "a".
+    assert [ev.type for ev in translator.step_boundary_events(_event("b"))] == [EventType.STEP_STARTED]
+
+
 # ---------------------------------------------------------------------------
 # ADKAgent topology gate
 # ---------------------------------------------------------------------------

@@ -1370,6 +1370,7 @@ class EventTranslator:
         to ensure clean state.
         """
         self._active_tool_calls.clear()
+        self._open_steps.clear()  # workflow step tracking is run-scoped
         self._streaming_message_id = None
         self._is_streaming = False
         self._current_stream_text = ""
