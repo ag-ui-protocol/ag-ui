@@ -62,6 +62,37 @@ export const A2UIActivityType = "a2ui-surface";
 export const A2UI_SCHEMA_CONTEXT_DESCRIPTION = "A2UI Component Schema — available components for generating UI surfaces. Use these component names and properties when creating A2UI operations.";
 
 /**
+ * Read the catalog id the frontend registered, from the A2UI schema context
+ * entry it ships on every run.
+ *
+ * The renderer sends `{ description: A2UI_SCHEMA_CONTEXT_DESCRIPTION, value:
+ * JSON.stringify({ catalogId, components }) }` as agent context (so the model
+ * knows the available components). The `catalogId` in that payload is, by
+ * construction, the id of the catalog the renderer actually registered — so a
+ * `createSurface` stamped with it provably resolves on the client.
+ *
+ * Used as the catalog fallback when the host did NOT configure an explicit
+ * `defaultCatalogId`, so a zero-config app whose only catalog declaration is the
+ * frontend `<CopilotKit a2ui={{ catalog }}>` never hits "Catalog not found".
+ *
+ * Returns undefined when the entry is absent or unparseable (the caller then
+ * falls back to the streamed/basic catalog as before).
+ */
+function extractFrontendCatalogId(input: RunAgentInput): string | undefined {
+  const entry = (input.context || []).find(
+    (c) => c.description === A2UI_SCHEMA_CONTEXT_DESCRIPTION,
+  );
+  if (!entry || typeof entry.value !== "string") return undefined;
+  try {
+    const parsed = JSON.parse(entry.value);
+    const id = (parsed as { catalogId?: unknown } | null)?.catalogId;
+    return typeof id === "string" && id.length > 0 ? id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Extract EventWithState type from Middleware.runNextWithState return type
  */
 type ExtractObservableType<T> = T extends Observable<infer U> ? U : never;
@@ -157,6 +188,13 @@ export class A2UIMiddleware extends Middleware {
    * Main middleware run method
    */
   run(input: RunAgentInput, next: AbstractAgent): Observable<BaseEvent> {
+    // Capture the frontend-registered catalog id BEFORE injectSchemaContext may
+    // replace the frontend schema entry with a server-side one — we want the id
+    // of the catalog the renderer actually registered, used as the zero-config
+    // catalog fallback when no `defaultCatalogId` is configured (see
+    // extractFrontendCatalogId and the catalogId resolution in processStream).
+    const frontendCatalogId = extractFrontendCatalogId(input);
+
     // Process user action from forwardedProps (append synthetic messages)
     const enhancedInput = this.processUserAction(input);
 
@@ -169,7 +207,7 @@ export class A2UIMiddleware extends Middleware {
       : withSchema;
 
     // Process the event stream using runNextWithState for automatic message tracking
-    return this.processStream(this.runNextWithState(finalInput, next));
+    return this.processStream(this.runNextWithState(finalInput, next), frontendCatalogId);
   }
 
   /**
@@ -333,7 +371,7 @@ export class A2UIMiddleware extends Middleware {
    * Process the event stream, holding back RUN_FINISHED to process pending A2UI tool calls.
    * Uses runNextWithState for automatic message tracking.
    */
-  private processStream(source: Observable<EventWithState>): Observable<BaseEvent> {
+  private processStream(source: Observable<EventWithState>, frontendCatalogId?: string): Observable<BaseEvent> {
     // Tool names recognized as A2UI rendering tools. When the middleware also
     // INJECTS the rendering tool (config.injectA2UITool truthy), the injected
     // name MUST be part of the intercept set — otherwise TOOL_CALL_START for
@@ -405,6 +443,19 @@ export class A2UIMiddleware extends Middleware {
       const attemptCountByKey = new Map<string, number>();
       const lastTokenEmitByKey = new Map<string, number>();
       const estimateTokens = (args: string) => Math.round(args.length / 4);
+
+      // Surfaces already painted via the streaming/progressive path this run,
+      // tracked by surfaceId. The final-envelope (TOOL_CALL_RESULT carrying
+      // ``a2ui_operations``) commonly re-wraps the SAME surface that an inner
+      // ``render_a2ui`` already streamed. The call-id linkage dedup below only
+      // catches that when the streamed entry's outerCallId equals the result's
+      // toolCallId — which breaks with ``injectA2UITool``, where ``generate_a2ui``
+      // is itself an A2UI tool name so it never becomes the tracked outer call
+      // (the inner entry's outerCallId stays null). This surfaceId guard kills the
+      // redundant re-paint for ANY adapter: any final-envelope operation whose
+      // target surface is already in this set is dropped. Surfaces NOT in this
+      // set (unrelated tools in the same run) still paint normally.
+      const streamedSurfaceIds = new Set<string>();
 
       // Outer tool call context. Any non-A2UI tool call (e.g. ``generate_a2ui``
       // wrapping a subagent that emits ``render_a2ui`` calls) is treated as
@@ -514,12 +565,17 @@ export class A2UIMiddleware extends Middleware {
                 // Nothing actionable until we know which surface we're building.
                 if (surfaceId) {
                   // Catalog ownership: the host/factory decides the catalog, not
-                  // the subagent. Prefer the configured defaultCatalogId; only
-                  // fall back to a streamed catalogId (legacy) or the basic
-                  // catalog when no catalog was configured. This keeps the
-                  // streamed createSurface from referencing a catalog the
-                  // frontend never registered (e.g. "basic" when the app uses a
-                  // custom catalog) — which throws "Catalog not found".
+                  // the subagent. Resolution order:
+                  //   1. configured defaultCatalogId — explicit host override.
+                  //   2. frontendCatalogId — the id of the catalog the renderer
+                  //      actually registered (shipped on the run as the A2UI
+                  //      schema context entry). Zero-config: an app whose only
+                  //      catalog declaration is `<CopilotKit a2ui={{ catalog }}>`
+                  //      gets the right id with no server-side setting.
+                  //   3. a streamed catalogId (legacy) or the basic catalog.
+                  // This keeps the streamed createSurface from referencing a
+                  // catalog the frontend never registered (e.g. "basic" when the
+                  // app uses a custom catalog) — which throws "Catalog not found".
                   //
                   // Treat an empty-string defaultCatalogId as unset: a `??`
                   // alone would propagate "" into the emitted createSurface and
@@ -532,6 +588,7 @@ export class A2UIMiddleware extends Middleware {
                   const streamedCatalogId = extractStringField(streaming.args, "catalogId");
                   const catalogId =
                     configCatalogId ??
+                    frontendCatalogId ??
                     (streamedCatalogId && streamedCatalogId !== "basic"
                       ? streamedCatalogId
                       : "https://a2ui.org/specification/v0_9/basic_catalog.json");
@@ -627,6 +684,8 @@ export class A2UIMiddleware extends Middleware {
                     if (streaming.schema) {
                       ops.push({ version: "v0.9", updateComponents: { surfaceId, components: streaming.schema.components } });
                       streaming.componentsEmitted = true;
+                      // Record the surfaceId so the final envelope doesn't re-paint it.
+                      streamedSurfaceIds.add(streaming.schema.surfaceId);
                     }
 
                     if (dataItems && dataItems.length > 0) {
@@ -729,15 +788,37 @@ export class A2UIMiddleware extends Middleware {
               if (!outerHasStreamedSurface) {
                 const parsed = tryParseA2UIOperations(resultEvent.content);
                 if (parsed) {
-                  // Emit all operations at once. Unlike the streaming path
-                  // (render_a2ui), explicit a2ui_operations arrive complete —
-                  // splitting schema and data would cause the renderer to
-                  // crash on unresolved path bindings before data exists.
-                  for (const activityEvent of this.createA2UIActivityEvents(
-                    parsed.operations,
-                    currentOuterCallId ?? resultEvent.toolCallId,
-                  )) {
-                    subscriber.next(activityEvent);
+                  // surfaceId-based dedup (framework-agnostic): drop any
+                  // operation whose target surface was already painted via the
+                  // streaming path this run. This kills the redundant final
+                  // re-paint even when the call-id linkage above misses (e.g.
+                  // injectA2UITool, where the inner render entry has a null
+                  // outerCallId). Operations for surfaces NOT yet streamed
+                  // (unrelated tools) pass through untouched.
+                  const operationsToEmit =
+                    streamedSurfaceIds.size > 0
+                      ? parsed.operations.filter((op) => {
+                          const opSurfaceId = getOperationSurfaceId(op);
+                          // Keep ops with no resolvable surface (can't be a dup)
+                          // and ops targeting surfaces not yet streamed.
+                          return opSurfaceId == null || !streamedSurfaceIds.has(opSurfaceId);
+                        })
+                      : parsed.operations;
+
+                  // If filtering removed everything, the final envelope was
+                  // entirely a re-paint of already-streamed surfaces — emit
+                  // nothing. Otherwise emit the surviving operations.
+                  if (operationsToEmit.length > 0) {
+                    // Emit all operations at once. Unlike the streaming path
+                    // (render_a2ui), explicit a2ui_operations arrive complete —
+                    // splitting schema and data would cause the renderer to
+                    // crash on unresolved path bindings before data exists.
+                    for (const activityEvent of this.createA2UIActivityEvents(
+                      operationsToEmit,
+                      currentOuterCallId ?? resultEvent.toolCallId,
+                    )) {
+                      subscriber.next(activityEvent);
+                    }
                   }
                 } else {
                   // Hard-failure path (OSS-162): an exhausted recovery loop

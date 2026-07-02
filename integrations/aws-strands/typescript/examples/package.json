@@ -15,6 +15,7 @@
     "tool-based-generative-ui": "tsx --env-file-if-exists=.env server/api/tool-based-generative-ui.ts"
   },
   "dependencies": {
+    "@ag-ui/a2ui-toolkit": "workspace:*",
     "@ag-ui/aws-strands": "workspace:*",
     "@ag-ui/core": "workspace:*",
     "@ag-ui/encoder": "workspace:*",

@@ -11,12 +11,16 @@ invoke). Nothing in this package depends on any agent framework.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Optional, TypedDict
 
 
 __all__ = [
     "A2UI_OPERATIONS_KEY",
     "BASIC_CATALOG_ID",
+    "A2UI_SCHEMA_CONTEXT_DESCRIPTION",
+    "split_a2ui_schema_context",
+    "resolve_a2ui_catalog",
     "RENDER_A2UI_TOOL_DEF",
     "DEFAULT_SURFACE_ID",
     "GENERATE_A2UI_TOOL_NAME",
@@ -74,6 +78,19 @@ A2UI_OPERATIONS_KEY = "a2ui_operations"
 
 BASIC_CATALOG_ID = "https://a2ui.org/specification/v0_9/basic_catalog.json"
 """Default catalog id used when the subagent does not specify one."""
+
+A2UI_SCHEMA_CONTEXT_DESCRIPTION = (
+    "A2UI Component Schema — available components for generating UI surfaces. "
+    "Use these component names and properties when creating A2UI operations."
+)
+"""Context-entry description the ``@ag-ui/a2ui-middleware`` stamps onto the A2UI
+component schema it injects into ``RunAgentInput.context``. Single home for the
+constant so every framework adapter splits on the same string. MUST stay
+byte-identical to ``A2UI_SCHEMA_CONTEXT_DESCRIPTION`` in
+``@ag-ui/a2ui-middleware`` (the TypeScript twin cannot import this Python copy).
+``split_a2ui_schema_context`` matches it by exact equality — any drift silently
+routes the schema into the generic context block instead of
+``## Available Components``."""
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +203,93 @@ def build_context_prompt(state: dict) -> str:
         parts.append(f"## Available Components\n{a2ui_schema}\n")
 
     return "\n".join(parts)
+
+
+def split_a2ui_schema_context(context: Optional[list]) -> tuple:
+    """Split AG-UI context entries into the A2UI component-schema entry and the
+    rest. The schema entry is the one whose ``description`` exactly equals
+    ``A2UI_SCHEMA_CONTEXT_DESCRIPTION`` (stamped by ``@ag-ui/a2ui-middleware``).
+
+    Returns ``(schema_value, regular_context)``: framework adapters route
+    ``schema_value`` to ``state["ag-ui"]["a2ui_schema"]`` (rendered as
+    ``## Available Components`` by ``build_context_prompt``) and
+    ``regular_context`` to ``state["ag-ui"]["context"]``. ``schema_value`` is
+    ``None`` when no schema entry is present. Entries are returned unchanged
+    (dicts or objects exposing ``.description``/``.value``) — the same dual
+    shape ``build_context_prompt`` already tolerates.
+    """
+    schema_value = None
+    regular_context: list = []
+    for entry in context or []:
+        if isinstance(entry, dict):
+            description = entry.get("description")
+            value = entry.get("value")
+        else:
+            description = getattr(entry, "description", None)
+            value = getattr(entry, "value", None)
+        if description == A2UI_SCHEMA_CONTEXT_DESCRIPTION:
+            schema_value = value
+        else:
+            regular_context.append(entry)
+    return schema_value, regular_context
+
+
+def resolve_a2ui_catalog(state: dict) -> "Optional[tuple]":
+    """Find the frontend-registered A2UI catalog in run ``state``, returning
+    ``(component_schema, catalog_id)`` — or ``None`` when no catalog is present
+    (so the adapter falls back to its configured default / the basic catalog).
+
+    Framework-agnostic, so every adapter resolves the catalog the same way
+    instead of each reimplementing it. Two delivery paths are supported because
+    the catalog lands in different places depending on how the agent is served:
+
+    Both live under ``state["ag-ui"]`` — the canonical key every adapter
+    populates:
+
+    - **Schema entry** → ``state["ag-ui"]["a2ui_schema"]``, a JSON string
+      ``{"catalogId": ..., "components": [...]}`` (routed there from
+      ``RunAgentInput.context`` by ``split_a2ui_schema_context``). The toolkit
+      reads ``a2ui_schema`` from state for the prompt itself, so only the
+      ``catalog_id`` is surfaced here (``component_schema`` is ``None``).
+    - **Catalog context entry** → an ``state["ag-ui"]["context"]`` entry whose
+      description mentions ``"A2UI catalog"`` (catalog id + component schemas as
+      text); the value lists catalogs as ``"- <catalogId>"`` lines, the first
+      being the custom catalog the client registered.
+
+    ``component_schema`` becomes the sub-agent ``composition_guide``;
+    ``catalog_id`` becomes ``default_catalog_id`` so generated surfaces bind to
+    the frontend's catalog (BYOC custom catalogs render their own components,
+    not the basic one).
+    """
+    ag_ui = state.get("ag-ui") or {}
+    a2ui_schema = ag_ui.get("a2ui_schema")
+    if a2ui_schema:
+        catalog_id = None
+        try:
+            parsed = (
+                json.loads(a2ui_schema)
+                if isinstance(a2ui_schema, str)
+                else a2ui_schema
+            )
+            if isinstance(parsed, dict):
+                catalog_id = parsed.get("catalogId")
+        except (TypeError, ValueError):
+            pass
+        return None, catalog_id
+
+    context = ag_ui.get("context") or []
+    for entry in context:
+        if not isinstance(entry, dict):
+            continue
+        description = entry.get("description") or ""
+        value = entry.get("value") or ""
+        if "A2UI catalog" not in description or not value:
+            continue
+        match = re.search(r"(?m)^\s*-\s+(\S+)", value)
+        catalog_id = match.group(1) if match else None
+        return value, catalog_id
+
+    return None
 
 
 # ---------------------------------------------------------------------------

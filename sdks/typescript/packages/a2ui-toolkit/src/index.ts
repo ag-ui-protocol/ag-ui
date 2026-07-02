@@ -127,6 +127,87 @@ export function buildContextPrompt(state: Record<string, unknown>): string {
   return parts.join("\n");
 }
 
+/**
+ * Context-entry description the ``@ag-ui/a2ui-middleware`` stamps onto the A2UI
+ * component schema it injects into ``RunAgentInput.context``. Single home for
+ * the constant so every framework adapter splits on the same string. MUST stay
+ * byte-identical to ``A2UI_SCHEMA_CONTEXT_DESCRIPTION`` in
+ * ``@ag-ui/a2ui-middleware`` (this is a wire contract, not prose).
+ */
+export const A2UI_SCHEMA_CONTEXT_DESCRIPTION =
+  "A2UI Component Schema — available components for generating UI surfaces. " +
+  "Use these component names and properties when creating A2UI operations.";
+
+/**
+ * Split AG-UI context entries into the A2UI component-schema entry and the
+ * rest. The schema entry is the one whose ``description`` exactly equals
+ * ``A2UI_SCHEMA_CONTEXT_DESCRIPTION``. Returns ``[schemaValue, regularContext]``:
+ * adapters route ``schemaValue`` to ``state["ag-ui"]["a2ui_schema"]`` (rendered
+ * as ``## Available Components`` by ``buildContextPrompt``) and ``regularContext``
+ * to ``state["ag-ui"]["context"]``. Entries are returned unchanged.
+ */
+export function splitA2UISchemaContext(
+  context: Array<Record<string, unknown>> | undefined | null,
+): [string | undefined, Array<Record<string, unknown>>] {
+  let schemaValue: string | undefined;
+  const regular: Array<Record<string, unknown>> = [];
+  for (const entry of context ?? []) {
+    const description = entry?.description as string | undefined;
+    if (description === A2UI_SCHEMA_CONTEXT_DESCRIPTION) {
+      schemaValue = entry?.value as string | undefined;
+    } else {
+      regular.push(entry);
+    }
+  }
+  return [schemaValue, regular];
+}
+
+/**
+ * Find the frontend-registered A2UI catalog in run ``state``, returning
+ * ``[componentSchema, catalogId]`` or ``undefined`` when no catalog is present.
+ * Framework-agnostic, so every adapter resolves the catalog the same way.
+ * Both delivery shapes live under the canonical ``state["ag-ui"]`` key:
+ * - Schema entry: ``state["ag-ui"]["a2ui_schema"]``, a JSON string
+ *   ``{"catalogId": ..., "components": [...]}`` (toolkit reads the schema from
+ *   state for the prompt itself, so only the id is surfaced here).
+ * - Catalog context entry: an ``state["ag-ui"]["context"]`` entry whose
+ *   description mentions ``"A2UI catalog"``; the value lists catalogs as
+ *   ``"- <catalogId>"`` lines, the first being the custom catalog.
+ */
+export function resolveA2UICatalog(
+  state: Record<string, unknown>,
+): [string | undefined, string | undefined] | undefined {
+  const agUi = (state["ag-ui"] as Record<string, unknown> | undefined) ?? {};
+  const a2uiSchema = agUi.a2ui_schema;
+  if (a2uiSchema) {
+    let catalogId: string | undefined;
+    try {
+      const parsed =
+        typeof a2uiSchema === "string" ? JSON.parse(a2uiSchema) : a2uiSchema;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        catalogId = (parsed as Record<string, unknown>).catalogId as
+          | string
+          | undefined;
+      }
+    } catch {
+      // Unparseable schema -> no id (degrade to the configured default).
+    }
+    return [undefined, catalogId];
+  }
+
+  const contextEntries =
+    (agUi.context as Array<Record<string, unknown>> | undefined) ?? [];
+  for (const entry of contextEntries) {
+    const description = (entry?.description as string | undefined) ?? "";
+    const value = (entry?.value as string | undefined) ?? "";
+    if (!description.includes("A2UI catalog") || !value) continue;
+    const match = value.match(/^\s*-\s+(\S+)/m);
+    return [value, match ? match[1] : undefined];
+  }
+
+  return undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Prior surface lookup (used for intent="update")
 // ---------------------------------------------------------------------------
