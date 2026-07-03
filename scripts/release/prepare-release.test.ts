@@ -42,7 +42,7 @@ test(
     assert.equal(result.status, 0, `stderr: ${result.stderr}`);
     const output = JSON.parse(result.stdout);
     assert.equal(output.scope, "sdk-dotnet");
-    assert.equal(output.packages.length, 6);
+    assert.equal(output.packages.length, 5);
     assert.deepEqual(
       output.packages.map((pkg: { name: string }) => pkg.name),
       [
@@ -51,7 +51,6 @@ test(
         "AGUI.Protobuf",
         "AGUI.Client",
         "AGUI.Server",
-        "AGUI",
       ],
     );
     for (const pkg of output.packages) {

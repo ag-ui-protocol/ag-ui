@@ -15,13 +15,13 @@
     <TargetFrameworks>$(TargetFrameworksCore);netstandard2.0;net472</TargetFrameworks>
     <IsAotCompatible Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net7.0'))">true</IsAotCompatible>
     <IsPackable>false</IsPackable>
-    <IsPackable Condition="'$(MSBuildProjectName)' == 'AGUI.Abstractions' Or '$(MSBuildProjectName)' == 'AGUI.Formatting' Or '$(MSBuildProjectName)' == 'AGUI.Protobuf' Or '$(MSBuildProjectName)' == 'AGUI.Client' Or '$(MSBuildProjectName)' == 'AGUI.Server' Or '$(MSBuildProjectName)' == 'AGUI'">true</IsPackable>
+    <IsPackable Condition="'$(MSBuildProjectName)' == 'AGUI.Abstractions' Or '$(MSBuildProjectName)' == 'AGUI.Formatting' Or '$(MSBuildProjectName)' == 'AGUI.Protobuf' Or '$(MSBuildProjectName)' == 'AGUI.Client' Or '$(MSBuildProjectName)' == 'AGUI.Server'">true</IsPackable>
     <!-- Public members should not use oblivious types. Not done with all nullable annotations. -->
     <NoWarn>$(NoWarn);RS0041</NoWarn>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(IsPackable)' == 'true'">
-    <VersionPrefix Condition="'$(VersionPrefix)' == ''">0.0.1</VersionPrefix>
+    <VersionPrefix Condition="'$(VersionPrefix)' == ''">0.0.3</VersionPrefix>
     <Authors>AG-UI Protocol</Authors>
     <Company>AG-UI Protocol</Company>
     <Product>AG-UI .NET SDK</Product>
@@ -31,6 +31,7 @@
     <RepositoryType>git</RepositoryType>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageIcon>icon.png</PackageIcon>
     <PackageReleaseNotes>Initial preview release of the AG-UI .NET SDK.</PackageReleaseNotes>
     <PackageTags>ag-ui;agent;ai;llm;protocol</PackageTags>
     <IncludeSymbols>true</IncludeSymbols>
@@ -50,6 +51,7 @@
   <ItemGroup Condition="'$(IsPackable)' == 'true'">
     <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="All" />
     <None Include="$(MSBuildThisFileDirectory)PACKAGE.md" Pack="true" PackagePath="\README.md" />
+    <None Include="$(MSBuildThisFileDirectory)..\..\docs\logo\AG-UI logo_dark.png" Pack="true" PackagePath="\icon.png" />
   </ItemGroup>
 
   <PropertyGroup Condition=" '$(TargetFramework)' == 'netstandard2.0' OR '$(TargetFramework)' == 'net472' ">

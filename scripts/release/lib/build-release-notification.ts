@@ -420,9 +420,7 @@ export function buildReleaseNotification(
   ) {
     const count = input.nugetPackages.length;
     const names = renderNameList(input.nugetPackages.map((p) => p.name));
-    const flagship =
-      input.nugetPackages.find((p) => p.name === "AGUI")?.name ??
-      input.nugetPackages[0].name;
+    const flagship = input.nugetPackages[0].name;
     lines.push(
       `📦 *ag-ui release* · ${pluralize(count, "NuGet package")} published ` +
         `(${names}) · ` +
