@@ -219,3 +219,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Dev
+.dev/
+CLAUDE.md
+examples/
