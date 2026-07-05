@@ -103,6 +103,7 @@ from agents.models.fake_id import FAKE_RESPONSES_ID
 from .helpers import (
     coerce_to_str,
     new_message_id,
+    new_reasoning_id,
     new_tool_call_id,
     new_tool_result_id,
     read_attr,
@@ -300,7 +301,7 @@ class SDKToAGUITranslator:
             name = read_attr(item, "name") or ""
             return self._open_tool_call(key, call_id, name)
         if item_type == SDKItemType.REASONING:
-            return self._open_reasoning(key, self._resolve_id(item_id, new_message_id))
+            return self._open_reasoning(key, self._resolve_id(item_id, new_reasoning_id))
         if item_type in HOSTED_TOOL_CALL_TYPES:
             call_id = self._resolve_id(item_id, new_tool_call_id)
             return self._open_tool_call(key, call_id, item_type)
@@ -386,7 +387,7 @@ class SDKToAGUITranslator:
         key = self._window_key(read_attr(data, "item_id"), read_attr(data, "output_index"))
         events: list[BaseEvent] = []
         if key not in self._open_reasonings:
-            events.extend(self._open_reasoning(key, new_message_id()))
+            events.extend(self._open_reasoning(key, new_reasoning_id()))
         if key not in self._open_reasoning_parts:
             events.extend(self._open_reasoning_part(key))
         events.append(
@@ -511,7 +512,7 @@ class SDKToAGUITranslator:
         return [
             ToolCallResultEvent(
                 type=EventType.TOOL_CALL_RESULT,
-                message_id=new_tool_result_id(),
+                message_id=new_tool_result_id(call_id),
                 tool_call_id=call_id,
                 content=coerce_to_str(item.output),
             )
@@ -533,7 +534,7 @@ class SDKToAGUITranslator:
             return events
         if action == "skip":
             return []
-        phase_id = self._resolve_id(raw_id, new_message_id)
+        phase_id = self._resolve_id(raw_id, new_reasoning_id)
         events = self._open_reasoning(phase_id, phase_id)
         parts = [read_attr(entry, "text") for entry in (read_attr(raw, "summary") or [])]
         parts += [read_attr(entry, "text") for entry in (read_attr(raw, "content") or [])]
@@ -574,7 +575,7 @@ class SDKToAGUITranslator:
         return [
             ToolCallResultEvent(
                 type=EventType.TOOL_CALL_RESULT,
-                message_id=new_tool_result_id(),
+                message_id=new_tool_result_id(call_id),
                 tool_call_id=call_id,
                 content=coerce_to_str(output),
             )
@@ -767,9 +768,10 @@ class SDKToAGUITranslator:
         seq = self._reasoning_part_seq.get(key, 0)
         self._reasoning_part_seq[key] = seq + 1
         # First part reuses the phase id (round-trip friendly); later parts
-        # get a stable derived suffix.
+        # get a stable derived suffix. Hyphen never appears in wire ids, so
+        # the suffix is unambiguously ours.
         phase_id = self._open_reasonings.get(key, key)
-        message_id = phase_id if seq == 0 else f"{phase_id}/{seq}"
+        message_id = phase_id if seq == 0 else f"{phase_id}-{seq}"
         self._open_reasoning_parts[key] = message_id
         return [
             ReasoningMessageStartEvent(

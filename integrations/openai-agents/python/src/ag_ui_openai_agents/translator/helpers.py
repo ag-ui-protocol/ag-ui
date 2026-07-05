@@ -23,14 +23,24 @@ def new_message_id() -> str:
     return f"msg_{uuid.uuid4().hex}"
 
 
+def new_reasoning_id() -> str:
+    """Generate a fresh reasoning id (``rs_<hex>``, matching the wire prefix)."""
+    return f"rs_{uuid.uuid4().hex}"
+
+
 def new_tool_call_id() -> str:
     """Generate a fresh tool call id (``call_<hex>``)."""
     return f"call_{uuid.uuid4().hex}"
 
 
-def new_tool_result_id() -> str:
-    """Generate a fresh tool result id (``toolresult_<hex>``)."""
-    return f"toolresult_{uuid.uuid4().hex}"
+def new_tool_result_id(call_id: str) -> str:
+    """Derive the tool result message id (``<call_id>-result``).
+
+    Deterministic — the wire has no id on ``function_call_output``, so the
+    result id is derived from the ``call_id`` it answers. Hyphen never
+    appears in wire ids, marking the suffix as ours.
+    """
+    return f"{call_id}-result"
 
 
 # ---------------------------------------------------------------------------
