@@ -1,23 +1,10 @@
-"""
-Non-streaming facade.
+"""Non-streaming translator.
 
-:class:`AGUINonStreamingTranslator` pairs with ``Runner.run`` /
-``Runner.run_sync`` and exposes exactly two public methods, one per
-direction:
-
-    ``to_sdk(run_input)``   AG-UI ``RunAgentInput`` → SDK-ready bundle
-    ``to_agui(result)``     finished SDK run → complete AG-UI event list
-
-All translation logic lives in the engine layer (:mod:`.engine`); this
-class only orchestrates it. Stateless and
-reusable — the engine instance a call needs is created inside it. Pass
-engine subclasses via ``inbound_cls`` / ``outbound_cls`` to customize one
-mapping without forking (design rule 4).
-
-The output is still a valid AG-UI event sequence — "non-streaming" only
-means it is produced in one shot after the run finishes, so there is no
-token-level text and no mid-tool ``STATE_DELTA``. For live output use the
-main :class:`~ag_ui_openai_agents.AGUITranslator`.
+AGUINonStreamingTranslator pairs with Runner.run / Runner.run_sync,
+exposing to_sdk(run_input) and to_agui(result). Stateless and reusable.
+Output is still a valid AG-UI event sequence, just produced in one shot
+after the run finishes (no token-level text, no mid-tool STATE_DELTA).
+For live output use the main AGUITranslator.
 """
 
 from __future__ import annotations
@@ -33,11 +20,9 @@ from .engine.types import TranslatedInput
 
 
 class AGUINonStreamingTranslator:
-    """
-    Pairs with ``Runner.run`` / ``Runner.run_sync``.
+    """Pairs with Runner.run / Runner.run_sync.
 
-    ::
-
+    Example:
         translator = AGUINonStreamingTranslator()
         bundle = translator.to_sdk(run_input)
         result = await Runner.run(agent, input=bundle.messages, ...)
@@ -54,11 +39,17 @@ class AGUINonStreamingTranslator:
         self._outbound_cls = outbound_cls
 
     def to_sdk(self, run_input: RunAgentInput) -> TranslatedInput:
-        """AG-UI ``RunAgentInput`` → SDK-ready bundle (items, tools, state...).
+        """Translate an AG-UI RunAgentInput into an SDK-ready bundle.
 
-        The bundle's ``tools`` holds :class:`agents.FunctionTool` proxies for
-        the client-declared tools — merge them with the agent's static tools
-        (``agent.clone(tools=[*agent.tools, *bundle.tools])``).
+        The bundle's tools field holds agents.FunctionTool proxies for the
+        client-declared tools — merge them with the agent's static tools
+        (agent.clone(tools=[*agent.tools, *bundle.tools])).
+
+        Args:
+            run_input: The incoming AG-UI RunAgentInput.
+
+        Returns:
+            TranslatedInput with items, tools, and passthrough state.
         """
         bundle = self._inbound.translate(run_input)
         if run_input.tools:
@@ -68,11 +59,18 @@ class AGUINonStreamingTranslator:
         return bundle
 
     def to_agui(self, result: Any) -> list[BaseEvent]:
-        """Finished SDK run → complete AG-UI event sequence.
+        """Translate a finished SDK run into a complete AG-UI event sequence.
 
-        Accepts a ``RunResult`` (its ``new_items`` are read) or a plain
-        ``list[RunItem]``. Every item emits full triplets — no windows stay
+        Accepts a RunResult (its new_items are read) or a plain
+        list[RunItem]. Every item emits full triplets — no windows stay
         open, so there is nothing to finalize.
+
+        Args:
+            result: A RunResult from Runner.run/run_sync, or a list of
+                RunItem.
+
+        Returns:
+            The complete list of AG-UI BaseEvent instances for the run.
         """
         items: list[RunItem] = (
             result if isinstance(result, list) else list(result.new_items)

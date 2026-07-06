@@ -1,10 +1,10 @@
 """OpenAI Agents SDK × AG-UI Protocol integration.
 
-Primary API — two-method facades, one per run mode::
+Primary API — translators, one per run mode:
 
     from ag_ui_openai_agents import AGUITranslator, AGUINonStreamingTranslator
 
-Advanced (per-mapping overrides) — the engine layer::
+Advanced (per-mapping overrides) — the engine layer:
 
     from ag_ui_openai_agents.engine import AGUIToSDKTranslator, SDKToAGUITranslator
 """
@@ -23,7 +23,7 @@ from .translator import AGUITranslator
 __version__ = "0.1.0"
 
 __all__ = [
-    # Facade translators (primary API — 2 methods each)
+    # Public translators (primary API — 2 methods each)
     "AGUITranslator",
     "AGUINonStreamingTranslator",
     # Engine translators (advanced / per-mapping overrides)

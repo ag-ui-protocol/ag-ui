@@ -1,63 +1,13 @@
-"""Outbound translator: OpenAI Agents SDK events → AG-UI ``BaseEvent``.
+"""Outbound translator: OpenAI Agents SDK events → AG-UI BaseEvent.
 
-Layered API (each tier is callable on its own — they build on each other),
-mirroring :class:`~.agui_to_sdk.AGUIToSDKTranslator`:
+Same layered shape as AGUIToSDKTranslator, just the other direction.
+Stateful per run — it tracks open text / tool-call / reasoning windows so
+AG-UI always sees strict START → CONTENT → END triplets. Make a fresh one
+per run; don't share across runs.
 
-    Tier 1 — One-shot:
-        translate(sdk_event)              → list[BaseEvent]  (dispatcher)
-        finalize()                        → list[BaseEvent]  (flush open windows)
-
-    Tier 2 — Bulk / per event family:
-        translate_items(items)            → list[BaseEvent]  (non-streaming runs)
-        translate_raw_response_event(e)   → list[BaseEvent]
-        translate_run_item_event(e)       → list[BaseEvent]
-        translate_agent_updated_event(e)  → list[BaseEvent]
-
-    Tier 3a — Raw Responses deltas (per raw ``type``):
-        translate_output_item_added / translate_output_item_done
-        translate_text_delta / translate_refusal_delta / translate_text_done
-        translate_function_call_arguments_delta
-        translate_reasoning_delta / translate_reasoning_part_done
-
-    Tier 3b — Single run item (per SDK type):
-        translate_item(item)              → list[BaseEvent]  (dispatcher)
-            translate_message_output_item
-            translate_tool_call_item
-            translate_tool_call_output_item
-            translate_reasoning_item
-            translate_handoff_call_item
-            translate_handoff_output_item
-            translate_mcp_approval_request_item
-            translate_mcp_list_tools_item
-            translate_mcp_approval_response_item
-
-    Tier 4 — Internal helpers (underscore-prefixed).
-
-The translator is **stateful per run** — it tracks open text / tool-call /
-reasoning windows so AG-UI always sees strict ``START → CONTENT → END``
-triplets. Instantiate a fresh one per AG-UI run; never share across runs.
-
-Works with every SDK execution mode:
-
-    Streaming (async)::
-
-        translator = SDKToAGUITranslator()
-        result = Runner.run_streamed(agent, input=items)
-        async for sdk_event in result.stream_events():
-            for event in translator.translate(sdk_event):
-                yield event
-        for event in translator.finalize():
-            yield event
-
-    Non-streaming (async or sync)::
-
-        result = await Runner.run(agent, input=items)   # or Runner.run_sync(...)
-        for event in SDKToAGUITranslator().translate_items(result.new_items):
-            yield event
-
-Run-envelope events (``RUN_STARTED`` / ``RUN_FINISHED`` / ``RUN_ERROR``,
-``STATE_SNAPSHOT`` / ``STATE_DELTA``, ``MESSAGES_SNAPSHOT``) are the run
-loop's job — the translator only translates.
+Run-envelope events (RUN_STARTED / RUN_FINISHED / RUN_ERROR,
+STATE_SNAPSHOT / STATE_DELTA, MESSAGES_SNAPSHOT) are the run loop's job
+— the translator only translates.
 """
 
 from __future__ import annotations
@@ -119,40 +69,43 @@ logger = logging.getLogger(__name__)
 
 
 class SDKToAGUITranslator:
-    """Translate OpenAI Agents SDK outputs into AG-UI :class:`BaseEvent` objects.
+    """Translate OpenAI Agents SDK outputs into AG-UI BaseEvent objects.
 
-    Wire ids are reused, never invented — with one caveat: some model backends
-    stamp every item with the SDK's ``FAKE_RESPONSES_ID`` placeholder instead
-    of a real id. Windows are therefore keyed by real item
-    id when available and by the raw event's ``output_index`` otherwise, and
-    placeholder ids are replaced with generated ones so AG-UI clients never see
-    two different messages sharing an id.
+    Wire ids are reused, never invented — with one caveat: some model
+    backends stamp every item with the SDK's FAKE_RESPONSES_ID
+    placeholder instead of a real id. Windows are therefore keyed by
+    real item id when available and by the raw event's output_index
+    otherwise, and placeholder ids are replaced with generated ones so
+    AG-UI clients never see two different messages sharing an id.
 
-    The pattern is "lazy open, eager close": a ``*_START`` is emitted when the
-    first signal for a window arrives (``output_item.added`` or, defensively,
-    a bare delta), and ``*_END`` fires on the first close signal —
-    ``output_item.done``, the run-item commit, or :meth:`finalize`, whichever
-    comes first. Run items double as the full emission path for non-streaming
-    runs: when no window was ever opened for an item, its run-item translator
-    emits the complete triplet from the finished item.
+    The pattern is "lazy open, eager close": a *_START is emitted when
+    the first signal for a window arrives (output_item.added or,
+    defensively, a bare delta), and *_END fires on the first close
+    signal — output_item.done, the run-item commit, or finalize(),
+    whichever comes first. Run items double as the full emission path
+    for non-streaming runs: when no window was ever opened for an item,
+    its run-item translator emits the complete triplet from the
+    finished item.
     """
 
     def __init__(self) -> None:
-        # Open windows, keyed by real item id or ``__idx_<output_index>``.
-        # Values are the ids already emitted in the *_START events.
-        self._open_texts: dict[str, str] = {}          # key → message_id
-        self._open_tool_calls: dict[str, str] = {}     # key → tool_call_id
-        self._open_reasonings: dict[str, str] = {}     # key → phase message_id
-        self._open_reasoning_parts: dict[str, str] = {}  # key → part message_id
-        # Close bookkeeping — lets run items tell "close me" (streamed) apart
-        # from "emit me whole" (non-streamed) even with placeholder ids.
+        # What's currently open. Key is the real item id when we have one,
+        # otherwise __idx_<output_index>. Value is the id we already sent in
+        # the matching *_START event, so we can pair the END to it.
+        self._open_texts: dict[str, str] = {}          # key -> message_id
+        self._open_tool_calls: dict[str, str] = {}     # key -> tool_call_id
+        self._open_reasonings: dict[str, str] = {}     # key -> phase message_id
+        self._open_reasoning_parts: dict[str, str] = {}  # key -> part message_id
+        # When a run item shows up, we need to know if we already streamed and
+        # closed it (nothing to do) or if this is a non-streaming run and we
+        # have to emit it whole. These track what's been closed so we can tell.
         self._closed_text_ids: list[str] = []
         self._closed_reasoning_ids: list[str] = []
         self._seen_call_ids: set[str] = set()
         self._emitted_encrypted_keys: set[str] = set()
         self._reasoning_part_seq: dict[str, int] = {}
-        # key → phase id, never popped — encrypted values can arrive after the
-        # phase was already force-closed and still need the right entity_id.
+        # Never cleared: an encrypted value can land after we've already closed
+        # the reasoning phase, and we still need the original id to attach it to.
         self._reasoning_phase_ids: dict[str, str] = {}
         self._current_step: str | None = None
 
@@ -161,11 +114,17 @@ class SDKToAGUITranslator:
     # ─────────────────────────────────────────────────────────────────────
 
     def translate(self, sdk_event: Any) -> list[BaseEvent]:
-        """Dispatch one SDK :class:`StreamEvent` to the right family translator.
+        """Dispatch one SDK StreamEvent to the right family translator.
 
-        Returns a **list** because one SDK event can produce several AG-UI
-        events (e.g. an ``output_item.added`` that force-opens a window).
-        Unknown event types translate to ``[]`` with a debug log.
+        Returns a list because one SDK event can produce several AG-UI
+        events (e.g. an output_item.added that force-opens a window).
+        Unknown event types translate to [] with a debug log.
+
+        Args:
+            sdk_event: One event from result.stream_events().
+
+        Returns:
+            Zero or more translated AG-UI events.
         """
         event_type = read_attr(sdk_event, "type")
         if event_type == SDKStreamEventType.RAW_RESPONSE:
@@ -178,10 +137,13 @@ class SDKToAGUITranslator:
         return []
 
     def finalize(self) -> list[BaseEvent]:
-        """Emit pending ``*_END`` markers when the SDK stream terminates.
+        """Emit pending *_END markers when the SDK stream terminates.
 
-        Always call this after the stream ends — even on error — so the AG-UI
-        client never sees a window that opened but never closed.
+        Always call this after the stream ends — even on error — so the
+        AG-UI client never sees a window that opened but never closed.
+
+        Returns:
+            Closing events for any windows still open.
         """
         events: list[BaseEvent] = []
         for key in list(self._open_texts):
@@ -207,9 +169,15 @@ class SDKToAGUITranslator:
     def translate_items(self, items: list[RunItem]) -> list[BaseEvent]:
         """Translate a finished run's items (non-streaming mode).
 
-        Feed ``result.new_items`` from ``Runner.run`` / ``Runner.run_sync``.
-        Each item emits its complete AG-UI sequence (full triplets — no
-        windows stay open), so no :meth:`finalize` call is needed after.
+        Feed result.new_items from Runner.run / Runner.run_sync. Each
+        item emits its complete AG-UI sequence (full triplets — no
+        windows stay open), so no finalize() call is needed after.
+
+        Args:
+            items: The run's finished RunItem list.
+
+        Returns:
+            The complete list of AG-UI events for the run.
         """
         events: list[BaseEvent] = []
         for item in items:
@@ -217,7 +185,14 @@ class SDKToAGUITranslator:
         return events
 
     def translate_raw_response_event(self, event: Any) -> list[BaseEvent]:
-        """Handle a ``RawResponsesStreamEvent`` (token-level Responses deltas)."""
+        """Handle a RawResponsesStreamEvent (token-level Responses deltas).
+
+        Args:
+            event: The SDK's RawResponsesStreamEvent.
+
+        Returns:
+            Zero or more translated AG-UI events.
+        """
         data = read_attr(event, "data")
         if data is None:
             return []
@@ -244,22 +219,36 @@ class SDKToAGUITranslator:
             RawResponseEventType.REASONING_TEXT_DONE,
         ):
             return self.translate_reasoning_part_done(data)
-        # response.created / .completed / content_part bookkeeping / audio — no
-        # AG-UI equivalent at this layer.
+        # Everything else (response.created/.completed, content_part chatter,
+        # audio) has nothing to show on the AG-UI side, so we drop it.
         return []
 
     def translate_run_item_event(self, event: Any) -> list[BaseEvent]:
-        """Handle a ``RunItemStreamEvent`` (semantic commit signals)."""
+        """Handle a RunItemStreamEvent (semantic commit signals).
+
+        Args:
+            event: The SDK's RunItemStreamEvent.
+
+        Returns:
+            Zero or more translated AG-UI events.
+        """
         item = read_attr(event, "item")
         if item is None:
             return []
         return self.translate_item(item)
 
     def translate_agent_updated_event(self, event: Any) -> list[BaseEvent]:
-        """``AgentUpdatedStreamEvent`` → ``STEP_FINISHED`` (prev) + ``STEP_STARTED``.
+        """Translate an AgentUpdatedStreamEvent into STEP_FINISHED + STEP_STARTED.
 
-        Each agent (including the first, and each handoff target) is surfaced
-        as an AG-UI step named after the agent.
+        Each agent (including the first, and each handoff target) is
+        surfaced as an AG-UI step named after the agent.
+
+        Args:
+            event: The SDK's AgentUpdatedStreamEvent.
+
+        Returns:
+            STEP_FINISHED for the previous step (if any) followed by
+            STEP_STARTED for the new one.
         """
         new_agent = read_attr(event, "new_agent")
         step_name = read_attr(new_agent, "name") or "agent"
@@ -278,16 +267,22 @@ class SDKToAGUITranslator:
         return events
 
     # ─────────────────────────────────────────────────────────────────────
-    # TIER 3a — Raw Responses deltas (per raw ``type``)
+    # TIER 3a — Raw Responses deltas (per raw type)
     # ─────────────────────────────────────────────────────────────────────
 
     def translate_output_item_added(self, data: Any) -> list[BaseEvent]:
-        """``response.output_item.added`` → open the matching AG-UI window.
+        """Translate response.output_item.added by opening the matching AG-UI window.
 
-        * ``message``       → ``TEXT_MESSAGE_START``
-        * ``function_call`` → ``TOOL_CALL_START``
-        * ``reasoning``     → ``REASONING_START``
-        * hosted tool calls → ``TOOL_CALL_START`` (tool name = item type)
+        message opens TEXT_MESSAGE_START, function_call opens
+        TOOL_CALL_START, reasoning opens REASONING_START, and hosted
+        tool calls open TOOL_CALL_START with the tool name set to the
+        item type.
+
+        Args:
+            data: The raw output_item.added payload.
+
+        Returns:
+            The opening event(s) for the window, if any.
         """
         item = read_attr(data, "item")
         item_type = read_attr(item, "type")
@@ -308,11 +303,17 @@ class SDKToAGUITranslator:
         return []
 
     def translate_output_item_done(self, data: Any) -> list[BaseEvent]:
-        """``response.output_item.done`` → close the matching AG-UI window.
+        """Translate response.output_item.done by closing the matching AG-UI window.
 
-        For reasoning items this also emits ``REASONING_ENCRYPTED_VALUE``
-        (subtype ``"message"``) when the finished item carries
-        ``encrypted_content``.
+        For reasoning items this also emits REASONING_ENCRYPTED_VALUE
+        (subtype "message") when the finished item carries
+        encrypted_content.
+
+        Args:
+            data: The raw output_item.done payload.
+
+        Returns:
+            The closing event(s) for the window, if any.
         """
         item = read_attr(data, "item")
         item_type = read_attr(item, "type")
@@ -329,38 +330,65 @@ class SDKToAGUITranslator:
         return []
 
     def translate_text_delta(self, data: Any) -> list[BaseEvent]:
-        """``response.output_text.delta`` → ``TEXT_MESSAGE_CONTENT`` (lazy start)."""
+        """Translate response.output_text.delta into TEXT_MESSAGE_CONTENT (lazy start).
+
+        Args:
+            data: The raw output_text.delta payload.
+
+        Returns:
+            Content event(s), opening the window first if needed.
+        """
         key = self._window_key(read_attr(data, "item_id"), read_attr(data, "output_index"))
         return self._emit_text_content(key, read_attr(data, "delta") or "")
 
     def translate_text_done(self, data: Any) -> list[BaseEvent]:
-        """``response.output_text.done`` → early ``TEXT_MESSAGE_END``.
+        """Translate response.output_text.done into an early TEXT_MESSAGE_END.
 
-        Some model backends skip ``output_item.done``; this closes the
-        window on the text-level done signal instead. Idempotent — closing an
-        already-closed window is a no-op.
+        Some model backends skip output_item.done; this closes the
+        window on the text-level done signal instead. Idempotent —
+        closing an already-closed window is a no-op.
+
+        Args:
+            data: The raw output_text.done payload.
+
+        Returns:
+            The closing event, or [] if already closed.
         """
         key = self._window_key(read_attr(data, "item_id"), read_attr(data, "output_index"))
         return self._close_text(key)
 
     def translate_refusal_delta(self, data: Any) -> list[BaseEvent]:
-        """``response.refusal.delta`` → ``TEXT_MESSAGE_CONTENT``.
+        """Translate response.refusal.delta into TEXT_MESSAGE_CONTENT.
 
-        Refusal text is user-visible assistant output, so it streams into the
-        same text window as regular content.
+        Refusal text is user-visible assistant output, so it streams
+        into the same text window as regular content.
+
+        Args:
+            data: The raw refusal.delta payload.
+
+        Returns:
+            Content event(s), opening the window first if needed.
         """
         key = self._window_key(read_attr(data, "item_id"), read_attr(data, "output_index"))
         return self._emit_text_content(key, read_attr(data, "delta") or "")
 
     def translate_function_call_arguments_delta(self, data: Any) -> list[BaseEvent]:
-        """``response.function_call_arguments.delta`` → ``TOOL_CALL_ARGS``."""
+        """Translate response.function_call_arguments.delta into TOOL_CALL_ARGS.
+
+        Args:
+            data: The raw function_call_arguments.delta payload.
+
+        Returns:
+            Args event(s), opening the window first if needed.
+        """
         delta = read_attr(data, "delta") or ""
         if not delta:
             return []
         key = self._window_key(read_attr(data, "item_id"), read_attr(data, "output_index"))
         events: list[BaseEvent] = []
         if key not in self._open_tool_calls:
-            # Defensive lazy open — provider skipped output_item.added.
+            # Some providers jump straight to args without an output_item.added,
+            # so open the call here if we haven't already.
             events.extend(self._open_tool_call(key, new_tool_call_id(), ""))
         events.append(
             ToolCallArgsEvent(
@@ -372,14 +400,20 @@ class SDKToAGUITranslator:
         return events
 
     def translate_reasoning_delta(self, data: Any) -> list[BaseEvent]:
-        """Reasoning deltas → ``REASONING_MESSAGE_CONTENT`` (lazy part start).
+        """Translate reasoning deltas into REASONING_MESSAGE_CONTENT (lazy part start).
 
-        Covers both sources — ``response.reasoning_summary_text.delta``
+        Covers both sources — response.reasoning_summary_text.delta
         (hosted models: model-written summaries) and
-        ``response.reasoning_text.delta`` (open-weight models: full chain of
-        thought). Whichever arrives streams; each part becomes its own
-        ``REASONING_MESSAGE_*`` window inside one ``REASONING_START/END``
+        response.reasoning_text.delta (open-weight models: full chain
+        of thought). Whichever arrives streams; each part becomes its
+        own REASONING_MESSAGE_* window inside one REASONING_START/END
         phase, matching the other AG-UI integrations.
+
+        Args:
+            data: The raw reasoning delta payload.
+
+        Returns:
+            Content event(s), opening the phase/part first if needed.
         """
         delta = read_attr(data, "delta") or ""
         if not delta:
@@ -400,7 +434,14 @@ class SDKToAGUITranslator:
         return events
 
     def translate_reasoning_part_done(self, data: Any) -> list[BaseEvent]:
-        """Summary-part / reasoning-text done → ``REASONING_MESSAGE_END``."""
+        """Translate a summary-part / reasoning-text done signal into REASONING_MESSAGE_END.
+
+        Args:
+            data: The raw part-done payload.
+
+        Returns:
+            The closing event, or [] if already closed.
+        """
         key = self._window_key(read_attr(data, "item_id"), read_attr(data, "output_index"))
         return self._close_reasoning_part(key)
 
@@ -409,11 +450,17 @@ class SDKToAGUITranslator:
     # ─────────────────────────────────────────────────────────────────────
 
     def translate_item(self, item: RunItem) -> list[BaseEvent]:
-        """Dispatch one SDK :class:`RunItem` to the right per-type translator.
+        """Dispatch one SDK RunItem to the right per-type translator.
 
-        During streaming these act as safety-net closers (raw events already
-        streamed the content); for non-streaming runs they emit the item's
-        full AG-UI sequence.
+        During streaming these act as safety-net closers (raw events
+        already streamed the content); for non-streaming runs they emit
+        the item's full AG-UI sequence.
+
+        Args:
+            item: A finished SDK RunItem.
+
+        Returns:
+            Zero or more translated AG-UI events.
         """
         if isinstance(item, MessageOutputItem):
             return self.translate_message_output_item(item)
@@ -437,12 +484,18 @@ class SDKToAGUITranslator:
         return []
 
     def translate_message_output_item(self, item: MessageOutputItem) -> list[BaseEvent]:
-        """Assistant message commit → close its window, or emit the full triplet.
+        """Handle an assistant message commit by closing its window or emitting the full triplet.
 
         Streamed: the raw deltas already carried the text — just close.
-        Non-streamed: emit ``TEXT_MESSAGE_START/CONTENT/END`` from the finished
-        item, using the SDK's own :class:`ItemHelpers` extractors (text first,
-        refusal as fallback — both are user-visible).
+        Non-streamed: emit TEXT_MESSAGE_START/CONTENT/END from the
+        finished item, using the SDK's own ItemHelpers extractors (text
+        first, refusal as fallback — both are user-visible).
+
+        Args:
+            item: The finished MessageOutputItem.
+
+        Returns:
+            Closing event, or the full START/CONTENT/END triplet.
         """
         raw = item.raw_item
         raw_id = read_attr(raw, "id")
@@ -465,13 +518,18 @@ class SDKToAGUITranslator:
         events.extend(self._close_text(message_id))
         return events
     def translate_tool_call_item(self, item: ToolCallItem) -> list[BaseEvent]:
-        """Tool call commit → close its window, or emit ``START/[ARGS]/END``.
+        """Handle a tool call commit by closing its window or emitting START/[ARGS]/END.
 
-        Reconciled by ``call_id`` (present and real regardless of backend),
-        using the SDK's built-in :attr:`ToolCallItem.call_id` /
-        :attr:`ToolCallItem.tool_name` properties where available —
-        ``getattr`` fallbacks because :class:`HandoffCallItem` routes through
-        here too and lacks them.
+        Reconciled by call_id (present and real regardless of backend),
+        using the SDK's built-in ToolCallItem.call_id / .tool_name
+        properties where available — getattr fallbacks because
+        HandoffCallItem routes through here too and lacks them.
+
+        Args:
+            item: The finished ToolCallItem (or a HandoffCallItem).
+
+        Returns:
+            Closing event, or the full START/[ARGS]/END sequence.
         """
         raw = item.raw_item
         call_id = (
@@ -504,7 +562,14 @@ class SDKToAGUITranslator:
         return events
 
     def translate_tool_call_output_item(self, item: ToolCallOutputItem) -> list[BaseEvent]:
-        """Tool result → ``TOOL_CALL_RESULT``."""
+        """Translate a tool result into TOOL_CALL_RESULT.
+
+        Args:
+            item: The finished ToolCallOutputItem.
+
+        Returns:
+            A single TOOL_CALL_RESULT event, or [] if call_id is missing.
+        """
         call_id = item.call_id
         if not call_id:
             logger.debug("Tool output without call_id; skipping TOOL_CALL_RESULT")
@@ -519,11 +584,17 @@ class SDKToAGUITranslator:
         ]
 
     def translate_reasoning_item(self, item: ReasoningItem) -> list[BaseEvent]:
-        """Reasoning commit → close its phase, or emit the full sequence.
+        """Handle a reasoning commit by closing its phase or emitting the full sequence.
 
-        Non-streamed emission walks the finished ``ResponseReasoningItem``:
-        one ``REASONING_MESSAGE_*`` window per summary/content entry, then
-        ``REASONING_ENCRYPTED_VALUE`` (when present), then ``REASONING_END``.
+        Non-streamed emission walks the finished ResponseReasoningItem:
+        one REASONING_MESSAGE_* window per summary/content entry, then
+        REASONING_ENCRYPTED_VALUE (when present), then REASONING_END.
+
+        Args:
+            item: The finished ReasoningItem.
+
+        Returns:
+            Closing event(s), or the full reasoning sequence.
         """
         raw = item.raw_item
         raw_id = read_attr(raw, "id")
@@ -555,16 +626,29 @@ class SDKToAGUITranslator:
         return events
 
     def translate_handoff_call_item(self, item: HandoffCallItem) -> list[BaseEvent]:
-        """Handoff request → surfaced as a tool call (it *is* a function call).
+        """Surface a handoff request as a tool call (it is a function call).
 
-        The same underlying item also arrives through the raw-event path, so
-        the call-id reconciliation in :meth:`translate_tool_call_item`
-        prevents a duplicate ``TOOL_CALL_START``.
+        The same underlying item also arrives through the raw-event
+        path, so the call-id reconciliation in translate_tool_call_item
+        prevents a duplicate TOOL_CALL_START.
+
+        Args:
+            item: The finished HandoffCallItem.
+
+        Returns:
+            Closing event, or the full START/[ARGS]/END sequence.
         """
         return self.translate_tool_call_item(item)  # type: ignore[arg-type]
 
     def translate_handoff_output_item(self, item: HandoffOutputItem) -> list[BaseEvent]:
-        """Handoff completion → ``TOOL_CALL_RESULT``."""
+        """Translate a handoff completion into TOOL_CALL_RESULT.
+
+        Args:
+            item: The finished HandoffOutputItem.
+
+        Returns:
+            A single TOOL_CALL_RESULT event, or [] if call_id is missing.
+        """
         raw = item.raw_item
         call_id = read_attr(raw, "call_id")
         if not call_id:
@@ -585,10 +669,17 @@ class SDKToAGUITranslator:
         self,
         item: MCPApprovalRequestItem,
     ) -> list[BaseEvent]:
-        """MCP approval request → ``CUSTOM`` event (``name="mcp_approval_request"``).
+        """Translate an MCP approval request into a CUSTOM event (name="mcp_approval_request").
 
-        AG-UI has no native approval shape yet; forwarding the raw request
-        lets a frontend implement approval UI without protocol changes.
+        AG-UI has no native approval shape yet; forwarding the raw
+        request lets a frontend implement approval UI without protocol
+        changes.
+
+        Args:
+            item: The finished MCPApprovalRequestItem.
+
+        Returns:
+            A single CUSTOM event carrying the raw request.
         """
         raw = item.raw_item
         value = raw.model_dump() if hasattr(raw, "model_dump") else raw
@@ -601,7 +692,14 @@ class SDKToAGUITranslator:
         ]
 
     def translate_mcp_list_tools_item(self, item: MCPListToolsItem) -> list[BaseEvent]:
-        """MCP tool listing → dropped (server-side bookkeeping). Overridable."""
+        """Drop an MCP tool listing item (server-side bookkeeping). Overridable.
+
+        Args:
+            item: The finished MCPListToolsItem.
+
+        Returns:
+            Always [].
+        """
         logger.debug("Dropping MCPListToolsItem id=%s", read_attr(item.raw_item, "id"))
         return []
 
@@ -609,7 +707,14 @@ class SDKToAGUITranslator:
         self,
         item: MCPApprovalResponseItem,
     ) -> list[BaseEvent]:
-        """MCP approval response → dropped (echo of client input). Overridable."""
+        """Drop an MCP approval response item (echo of client input). Overridable.
+
+        Args:
+            item: The finished MCPApprovalResponseItem.
+
+        Returns:
+            Always [].
+        """
         logger.debug("Dropping MCPApprovalResponseItem")
         return []
 
@@ -619,28 +724,50 @@ class SDKToAGUITranslator:
 
     @staticmethod
     def _is_real_id(item_id: Any) -> bool:
-        """True when the id is usable on the wire (not empty, not a placeholder).
+        """Check whether an id is usable on the wire (not empty, not a placeholder).
 
         Some model backends stamp every item with the SDK's
-        ``FAKE_RESPONSES_ID`` sentinel — sharing it across AG-UI events would
-        collide every message of the run. Checked against the SDK's own
-        constant, so it's a no-op (always real) on native OpenAI and correct
-        for any other backend without a provider-specific branch.
+        FAKE_RESPONSES_ID sentinel — sharing it across AG-UI events
+        would collide every message of the run. Checked against the
+        SDK's own constant, so it's a no-op (always real) on native
+        OpenAI and correct for any other backend without a
+        provider-specific branch.
+
+        Args:
+            item_id: The item's wire id, or None.
+
+        Returns:
+            True if the id is real and usable.
         """
         return bool(item_id) and item_id != FAKE_RESPONSES_ID
 
     @classmethod
     def _resolve_id(cls, item_id: Any, generate: Any) -> str:
-        """Return the id if real, else a freshly generated one."""
+        """Return the id if real, else a freshly generated one.
+
+        Args:
+            item_id: The item's wire id, or None.
+            generate: A zero-arg callable producing a fresh id.
+
+        Returns:
+            The real id, or a freshly generated one.
+        """
         return item_id if cls._is_real_id(item_id) else generate()
 
     @classmethod
     def _window_key(cls, item_id: Any, output_index: Any) -> str:
-        """Stable window key for correlating raw events of one output item.
+        """Compute a stable window key for correlating raw events of one output item.
 
-        Real item ids win; placeholder ids fall back to the stream position
-        (``output_index``), which the Responses API guarantees is unique per
-        item within a response.
+        Real item ids win; placeholder ids fall back to the stream
+        position (output_index), which the Responses API guarantees is
+        unique per item within a response.
+
+        Args:
+            item_id: The item's wire id, or None.
+            output_index: The item's position in the response.
+
+        Returns:
+            A stable key for this item's window.
         """
         if cls._is_real_id(item_id):
             return item_id
@@ -654,14 +781,20 @@ class SDKToAGUITranslator:
     ) -> tuple[str, str | None]:
         """Match a run-item commit against streamed window state.
 
-        Returns ``("close", key)`` when a streamed window is still open,
-        ``("skip", None)`` when the item was already fully streamed and
-        closed, or ``("new", None)`` when nothing was streamed (non-streaming
-        run) and the item must be emitted whole.
+        With a real id the match is exact. With a placeholder id run
+        items arrive in stream order, so the oldest open window (or one
+        queued closed id) is consumed instead.
 
-        With a real id the match is exact. With a placeholder id run items
-        arrive in stream order, so the oldest open window (or one queued
-        closed id) is consumed instead.
+        Args:
+            raw_id: The run item's raw wire id, or None.
+            open_windows: Currently open windows for this category.
+            closed_ids: Ids already closed via streaming, oldest first.
+
+        Returns:
+            ("close", key) when a streamed window is still open,
+            ("skip", None) when the item was already fully streamed and
+            closed, or ("new", None) when nothing was streamed
+            (non-streaming run) and the item must be emitted whole.
         """
         if self._is_real_id(raw_id):
             if raw_id in open_windows:
@@ -683,9 +816,9 @@ class SDKToAGUITranslator:
     def _open_text(self, key: str, message_id: str) -> list[BaseEvent]:
         if key in self._open_texts:
             return []
-        # The model has moved on to producing output — any reasoning phase is
-        # over, even if the provider's reasoning done-event is still in flight
-        # (some backends deliver it late).
+        # Once real output starts, the model is done thinking. Close any open
+        # reasoning now instead of waiting for the done-event — some backends
+        # send it late, and we don't want reasoning bleeding into the answer.
         events = self._close_all_reasonings()
         self._open_texts[key] = message_id
         events.append(
@@ -767,9 +900,9 @@ class SDKToAGUITranslator:
             return []
         seq = self._reasoning_part_seq.get(key, 0)
         self._reasoning_part_seq[key] = seq + 1
-        # First part reuses the phase id (round-trip friendly); later parts
-        # get a stable derived suffix. Hyphen never appears in wire ids, so
-        # the suffix is unambiguously ours.
+        # The first part just reuses the phase id (keeps round-trips clean);
+        # extra parts get a -1, -2, ... suffix. Wire ids never contain a
+        # hyphen, so anything with one is clearly something we made up.
         phase_id = self._open_reasonings.get(key, key)
         message_id = phase_id if seq == 0 else f"{phase_id}-{seq}"
         self._open_reasoning_parts[key] = message_id
@@ -813,7 +946,16 @@ class SDKToAGUITranslator:
         return events
 
     def _emit_encrypted_value(self, key: str, item: Any) -> list[BaseEvent]:
-        """Emit ``REASONING_ENCRYPTED_VALUE`` once per reasoning item, if present."""
+        """Emit REASONING_ENCRYPTED_VALUE once per reasoning item, if present.
+
+        Args:
+            key: The reasoning item's window key.
+            item: The raw reasoning item.
+
+        Returns:
+            A single REASONING_ENCRYPTED_VALUE event, or [] if absent
+            or already emitted.
+        """
         encrypted = read_attr(item, "encrypted_content")
         if not encrypted or key in self._emitted_encrypted_keys:
             return []

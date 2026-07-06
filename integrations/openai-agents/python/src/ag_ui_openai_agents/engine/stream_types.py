@@ -1,21 +1,9 @@
-"""
-Wire-level discriminator values for OpenAI Agents SDK streaming.
+"""Wire-level discriminator values for OpenAI Agents SDK streaming.
 
-Single home for every ``type`` string the translators dispatch on, grouped by
-the layer that produces it. Members are ``(str, Enum)`` (``StrEnum`` needs
-Python 3.11; this package supports 3.9+), so they compare equal to the raw
-wire strings — dispatch code can test ``kind == RawResponseEventType.TEXT_DELTA``
-against untyped event payloads with no conversion.
-
-The SDK is the source of truth for these values:
-
-- ``SDKStreamEventType``   — ``agents.stream_events.StreamEvent`` union
-- ``RawResponseEventType`` — ``openai.types.responses`` event ``type`` literals
-- ``SDKItemType``          — ``openai.types.responses`` output-item ``type``
-  literals (also mirrored by ``agents.items`` run-item wrappers)
-
-When a new SDK version adds values not listed here, translators degrade
-gracefully (debug log + skip) — see design rule 5 in ``CLAUDE.md``.
+Single home for every "type" string the translators dispatch on. Members
+are (str, Enum) (StrEnum needs Python 3.11; this package supports 3.9+),
+so they compare equal to the raw wire strings. The SDK's own Literal[...]
+annotations are the source of truth — see tests/test_stream_types_drift.py.
 """
 
 from __future__ import annotations
@@ -24,9 +12,7 @@ from enum import Enum
 
 
 class SDKStreamEventType(str, Enum):
-    """
-    Top-level ``StreamEvent.type`` values yielded by ``Runner.run_streamed``.
-    """
+    """Top-level StreamEvent.type values yielded by Runner.run_streamed."""
 
     RAW_RESPONSE = "raw_response_event"
     RUN_ITEM = "run_item_stream_event"
@@ -34,11 +20,10 @@ class SDKStreamEventType(str, Enum):
 
 
 class RawResponseEventType(str, Enum):
-    """
-    Raw Responses-API delta ``type`` values the outbound translator consumes.
+    """Raw Responses-API delta type values the outbound translator consumes.
 
-    Non-semantic bookkeeping kinds (``response.created`` / ``.completed``,
-    ``content_part.*``, audio) are deliberately absent — they translate to
+    Non-semantic bookkeeping kinds (response.created / .completed,
+    content_part.*, audio) are deliberately absent — they translate to
     nothing.
     """
 
@@ -55,18 +40,16 @@ class RawResponseEventType(str, Enum):
 
 
 class SDKItemType(str, Enum):
-    """
-    Output-item ``type`` values carried by ``output_item.added`` / ``.done``.
-    """
+    """Output-item type values carried by output_item.added / .done."""
 
     MESSAGE = "message"
     FUNCTION_CALL = "function_call"
     REASONING = "reasoning"
 
 
-# Hosted (server-side) tool calls surfaced as AG-UI tool calls. The API never
-# streams their arguments, so they get START/END only at the raw level; the
-# richer run-item layer fills in details when available.
+# Tools that run on OpenAI's side. We still show them as AG-UI tool calls, but
+# the API doesn't stream their arguments, so at the raw level all we can emit is
+# START/END. The run-item layer fills in the rest when it has it.
 HOSTED_TOOL_CALL_TYPES: frozenset[str] = frozenset(
     {
         "web_search_call",

@@ -1,28 +1,12 @@
-"""
-Streaming facade — the package's main translator.
+"""Streaming translator — the package's main API.
 
-:class:`AGUITranslator` pairs with ``Runner.run_streamed`` and exposes
-exactly two public methods, one per direction:
+AGUITranslator pairs with Runner.run_streamed, exposing only
+to_sdk(run_input) and to_agui(stream_events). Stateless and reusable —
+each to_agui call creates the fresh stateful engine that run needs.
+Lifecycle events (RUN_STARTED / RUN_FINISHED / RUN_ERROR) and session
+persistence are the caller's job, not the translator's.
 
-    ``to_sdk(run_input)``           AG-UI ``RunAgentInput`` → SDK-ready bundle
-    ``to_agui(stream_events)``      SDK event stream → live AG-UI event stream
-
-All translation logic lives in the engine layer (:mod:`.engine`); this
-class only orchestrates it. Window bookkeeping
-and the final flush happen inside the ``to_agui`` iterator — callers never
-see ``finalize``.
-
-The facade is stateless and reusable: each ``to_agui`` call creates the
-fresh stateful engine that run needs. Pass engine subclasses via
-``inbound_cls`` / ``outbound_cls`` to customize one mapping without forking
-(design rule 4).
-
-Lifecycle events (``RUN_STARTED``/``RUN_FINISHED``/``RUN_ERROR``),
-``STATE_SNAPSHOT`` and session persistence stay in the caller's run loop
-(design rule 2) — see ``examples/server.py``.
-
-Non-streaming runs (``Runner.run`` / ``run_sync``): use
-:class:`~ag_ui_openai_agents.AGUINonStreamingTranslator`.
+Non-streaming runs (Runner.run / run_sync): use AGUINonStreamingTranslator.
 """
 
 from __future__ import annotations
@@ -37,11 +21,9 @@ from .engine.types import TranslatedInput
 
 
 class AGUITranslator:
-    """
-    Main translator — pairs with ``Runner.run_streamed``.
+    """Main translator — pairs with Runner.run_streamed.
 
-    ::
-
+    Example:
         translator = AGUITranslator()
         bundle = translator.to_sdk(run_input)
         result = Runner.run_streamed(agent, input=bundle.messages, ...)
@@ -59,11 +41,17 @@ class AGUITranslator:
         self._outbound_cls = outbound_cls
 
     def to_sdk(self, run_input: RunAgentInput) -> TranslatedInput:
-        """AG-UI ``RunAgentInput`` → SDK-ready bundle (items, tools, state...).
+        """Translate an AG-UI RunAgentInput into an SDK-ready bundle.
 
-        The bundle's ``tools`` holds :class:`agents.FunctionTool` proxies for
-        the client-declared tools — merge them with the agent's static tools
-        (``agent.clone(tools=[*agent.tools, *bundle.tools])``).
+        The bundle's tools field holds agents.FunctionTool proxies for the
+        client-declared tools — merge them with the agent's static tools
+        (agent.clone(tools=[*agent.tools, *bundle.tools])).
+
+        Args:
+            run_input: The incoming AG-UI RunAgentInput.
+
+        Returns:
+            TranslatedInput with items, tools, and passthrough state.
         """
         bundle = self._inbound.translate(run_input)
         if run_input.tools:
@@ -73,12 +61,18 @@ class AGUITranslator:
         return bundle
 
     async def to_agui(self, stream_events: AsyncIterable[Any]) -> AsyncIterator[BaseEvent]:
-        """SDK event stream → live AG-UI event stream.
+        """Translate an SDK event stream into a live AG-UI event stream.
 
-        Feed ``result.stream_events()`` from ``Runner.run_streamed``. A fresh
-        stateful engine handles this run's windows; when the stream ends the
-        engine flush runs automatically — any still-open text / tool-call /
-        reasoning window is closed before the iterator finishes.
+        Feed result.stream_events() from Runner.run_streamed. A fresh
+        stateful engine handles this run's windows; when the stream ends
+        the engine flush runs automatically — any still-open text /
+        tool-call / reasoning window is closed before the iterator finishes.
+
+        Args:
+            stream_events: The SDK's async stream_events() iterator.
+
+        Yields:
+            AG-UI BaseEvent instances, ready to encode.
         """
         outbound = self._outbound_cls()
         async for sdk_event in stream_events:

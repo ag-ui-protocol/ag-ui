@@ -1,11 +1,11 @@
 """
-Tests for the two-method facade translators.
+Tests for the two-method translator APIs.
 
-Covers the facade contract only — engine mappings have their own coverage:
+Covers the public translator contract only — engine mappings have their own coverage:
 
 - ``to_sdk`` delegates to the inbound engine and populates ``tools``.
 - ``AGUITranslator.to_agui`` streams engine output live and appends the
-  engine flush, with a fresh engine per call (reusable facade).
+  engine flush, with a fresh engine per call (reusable translator).
 - ``AGUINonStreamingTranslator.to_agui`` accepts a ``RunResult``-shaped
   object or a plain item list.
 """

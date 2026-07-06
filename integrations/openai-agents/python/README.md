@@ -161,7 +161,7 @@ stay in your code — see the quick start above for the minimal shape.
 
 ## Advanced: the engine layer
 
-The facades delegate to two independent, symmetric engine translators in
+The public translators delegate to two independent, symmetric engine translators in
 `ag_ui_openai_agents.engine`:
 
 - `AGUIToSDKTranslator` — inbound; stateless, tiered per-type methods
@@ -170,7 +170,7 @@ The facades delegate to two independent, symmetric engine translators in
   windows), per-type methods (`translate_text_delta`, `translate_item`, ...)
 
 Every per-type method is a public override point. To customize one mapping,
-subclass the engine and inject it — the facade and every other mapping stay
+subclass the engine and inject it — the public translator and every other mapping stay
 untouched:
 
 ```python

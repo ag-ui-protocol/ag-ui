@@ -1,20 +1,9 @@
-"""
-Engine layer — the per-direction translation logic under the facades.
+"""Engine layer — the per-direction translation logic.
 
-Advanced API: subclass an engine to customize one mapping (design rule 4)
-and inject it into a facade via ``inbound_cls`` / ``outbound_cls``. For
-normal use import the facades from the package root instead
-(:class:`~ag_ui_openai_agents.AGUITranslator`,
-:class:`~ag_ui_openai_agents.AGUINonStreamingTranslator`).
-
-::
-
-    from ag_ui_openai_agents.engine import (
-        AGUIToSDKTranslator,         # inbound:  AG-UI primitives → SDK shapes
-        SDKToAGUITranslator,         # outbound: SDK formats → AG-UI primitives
-        TranslatedInput,             # Pydantic bundle returned by translate()/to_sdk()
-        ClientToolPending,           # sentinel raised by client-tool proxies
-    )
+Advanced use only: subclass an engine to customize a single mapping and
+inject it into a public translator via inbound_cls / outbound_cls. For everything
+else, import the translators from the package root instead (AGUITranslator,
+AGUINonStreamingTranslator).
 """
 
 from __future__ import annotations

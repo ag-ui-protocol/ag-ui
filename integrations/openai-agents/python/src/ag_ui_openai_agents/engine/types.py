@@ -1,9 +1,8 @@
-"""
-Public data containers for the translator package.
+"""Public data containers for the translator package.
 
-Holds typed result objects produced by the translators. Translator *behavior*
-lives in :mod:`agui_to_sdk` and :mod:`sdk_to_agui`; this module only describes
-the shapes those translators hand back.
+Holds typed result objects produced by the translators. Translator
+behavior lives in agui_to_sdk.py and sdk_to_agui.py; this module only
+describes the shapes those translators hand back.
 """
 
 from __future__ import annotations
@@ -16,108 +15,62 @@ from pydantic import BaseModel, ConfigDict, SkipValidation
 
 
 class TranslatedInput(BaseModel):
-    """
-    SDK-ready bundle produced by translating an AG-UI ``RunAgentInput``.
+    """SDK-ready bundle produced by translating an AG-UI RunAgentInput.
 
-    The field shape **mirrors** :class:`ag_ui.core.RunAgentInput` field-for-
-    field — same required/optional pattern — so callers familiar with the
-    wire format can map between the two without thinking. Two fields are
-    renamed because their *content* was translated, not just passed through:
-
-    * ``messages`` → ``input_items`` — now Responses-API input items.
-    * ``tools``    → ``function_tools`` — now SDK :class:`FunctionTool` proxies.
-
-    Everything else is passed through unchanged so downstream code decides
-    what to do with raw frontend payloads (e.g. ``context``, ``forwarded_props``).
-
-    Required fields (must always be provided):
-        thread_id, run_id, input_items, function_tools,
-        state, context, forwarded_props.
-
-    Optional fields (default to ``None``):
-        parent_run_id, resume.
+    The fields line up one-for-one with ag_ui.core.RunAgentInput — same
+    names, same required/optional split — so if you know the wire format
+    you already know this. The only real work happens on `messages` and
+    `tools` (translated into SDK shapes); everything else is handed
+    straight through for you to use however your app needs.
     """
 
     # ── Identity ─────────────────────────────────────────────────────────
     thread_id: str
-    """
-    Session key for this conversation. Same value across multi-turn runs and
-    used by the session manager for HITL resume.
-    """
+    """Conversation key. Stays the same across turns of one thread."""
 
     run_id: str
-    """
-    Unique id for this specific run. Tagged onto ``RUN_STARTED`` /
-    ``RUN_FINISHED`` events emitted back to the client.
-    """
+    """Id for this single run. Goes on the RUN_STARTED / RUN_FINISHED events."""
 
     parent_run_id: str | None = None
-    """
-    Optional parent run id — set when this run was triggered by another run
-    (e.g. a nested or branched agent invocation). ``None`` for top-level runs.
-    """
+    """Set when this run was kicked off by another run (nested/branched);
+    None for a top-level run."""
 
     # ── Translated payload (the actual work the translator does) ────────
     messages: list[TResponseInputItem]
-    """
-    Responses-API input list. Feed straight into
-    ``Runner.run_streamed(input=...)``. Built from
-    :attr:`ag_ui.core.RunAgentInput.messages`.
-
-    Validation is skipped to avoid Pydantic forward-ref resolution issues
-    with the agents SDK's internal types.
-    """
+    """Responses-API input items, ready to pass to Runner.run*(input=...).
+    Validation is skipped here because the SDK's own input types use forward
+    refs Pydantic can't resolve from this module."""
 
     tools: SkipValidation[list[FunctionTool]] = []
-    """
-    SDK :class:`FunctionTool` proxies for the AG-UI client tools. Merge with
-    the SDK agent's static tools before running. Built from
-    :attr:`ag_ui.core.RunAgentInput.tools`.
-
-    Populated by the facade translators' ``to_sdk``; the engine's
-    ``AGUIToSDKTranslator.translate`` leaves it empty pending the
-    tools-wiring review fix (call ``translate_tools`` when using the engine
-    directly).
-
-    Validation is skipped to avoid Pydantic forward-ref resolution issues
-    with the agents SDK's internal types.
-    """
+    """FunctionTool proxies for the client's tools. Merge these with your
+    agent's own tools before running. The public translators fill this in; if
+    you call the inbound engine directly, call translate_tools yourself.
+    Validation skipped for the same forward-ref reason as messages."""
 
     # ── Passthroughs (raw from the wire) ────────────────────────────────
     state: Any
-    """
-    The AG-UI user state as sent by the client. Typed ``Any`` because AG-UI
-    itself doesn't constrain its shape.
-    """
+    """Whatever the client sent as state. Any, since AG-UI doesn't pin a shape."""
 
     context: list[Context]
-    """
-    Ambient context items (CopilotKit's ``useCopilotReadable`` etc.) — each
-    a ``{description, value}`` pair. Not auto-folded anywhere; use
-    :meth:`AGUIToSDKTranslator.translate_context` to render for the model.
-    """
+    """Ambient {description, value} items from the frontend. Nothing folds these
+    into the prompt for you — run them through translate_context if you want the
+    model to see them."""
 
     forwarded_props: Any
-    """
-    Catch-all client-supplied props (model overrides, temperature, debug
-    flags, anything the client doesn't have a typed field for).
-    """
+    """Grab-bag of extra client props (model overrides, temperature, flags, ...)
+    that don't have a dedicated field."""
 
     resume: list[Any] | None = None
-    """
-    HITL resume entries from the client — each ``{interruptId, status,
-    payload?}``. Only present when continuing from a previous interrupt.
+    """Resume entries when continuing from an interrupt, else None. Read
+    defensively since not every RunAgentInput version carries this field yet."""
 
-    The Python AG-UI SDK does not expose this field yet; the translator reads
-    it defensively so the bundle is forward-compatible with the wire protocol.
-    """
-
-    # FunctionTool is not a Pydantic model, so we need to opt in.
+    # FunctionTool isn't a Pydantic model, so Pydantic won't accept it unless
+    # we explicitly allow arbitrary types.
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
-# FunctionTool's dataclass schema references the SDK-internal ``AgentBase``
-# forward ref; import it into scope and rebuild so ``tools`` resolves.
+# FunctionTool's schema points at AgentBase, which Pydantic can't see from
+# here. Pull it into scope and rebuild the model so the `tools` field resolves.
 from agents.agent import AgentBase  # noqa: E402,F401
 
 TranslatedInput.model_rebuild()

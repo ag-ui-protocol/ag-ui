@@ -16,26 +16,32 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 def new_message_id() -> str:
-    """Generate a fresh AG-UI message id (``msg_<hex>``)."""
+    """Generate a fresh AG-UI message id (msg_<hex>)."""
     return f"msg_{uuid.uuid4().hex}"
 
 
 def new_reasoning_id() -> str:
-    """Generate a fresh reasoning id (``rs_<hex>``, matching the wire prefix)."""
+    """Generate a fresh reasoning id (rs_<hex>, matching the wire prefix)."""
     return f"rs_{uuid.uuid4().hex}"
 
 
 def new_tool_call_id() -> str:
-    """Generate a fresh tool call id (``call_<hex>``)."""
+    """Generate a fresh tool call id (call_<hex>)."""
     return f"call_{uuid.uuid4().hex}"
 
 
 def new_tool_result_id(call_id: str) -> str:
-    """Derive the tool result message id (``<call_id>-result``).
+    """Derive the tool result message id (<call_id>-result).
 
-    Deterministic — the wire has no id on ``function_call_output``, so the
-    result id is derived from the ``call_id`` it answers. Hyphen never
+    Deterministic — the wire has no id on function_call_output, so the
+    result id is derived from the call_id it answers. Hyphen never
     appears in wire ids, marking the suffix as ours.
+
+    Args:
+        call_id: The tool call id being answered.
+
+    Returns:
+        The derived result message id.
     """
     return f"{call_id}-result"
 
@@ -45,11 +51,18 @@ def new_tool_result_id(call_id: str) -> str:
 # ---------------------------------------------------------------------------
 
 def read_attr(obj: Any, name: str) -> Any:
-    """Read ``name`` from a pydantic model **or** a dict — whichever we got.
+    """Read a field from a pydantic model or a dict — whichever we got.
 
-    The SDK and AG-UI both hand us a mix of dicts and pydantic objects depending
-    on whether something has been through JSON serialization yet. This shields
-    callers from caring.
+    The SDK and AG-UI both hand us a mix of dicts and pydantic objects
+    depending on whether something has been through JSON serialization
+    yet. This shields callers from caring.
+
+    Args:
+        obj: A pydantic model, a dict, or None.
+        name: The field/key name to read.
+
+    Returns:
+        The field value, or None if obj is None or the field is missing.
     """
     if obj is None:
         return None
@@ -59,7 +72,14 @@ def read_attr(obj: Any, name: str) -> Any:
 
 
 def coerce_to_str(value: Any) -> str:
-    """Best-effort stringification for tool outputs and content payloads."""
+    """Best-effort stringification for tool outputs and content payloads.
+
+    Args:
+        value: Any value — string, None, or JSON-serializable object.
+
+    Returns:
+        A string representation, empty string for None.
+    """
     if value is None:
         return ""
     if isinstance(value, str):
