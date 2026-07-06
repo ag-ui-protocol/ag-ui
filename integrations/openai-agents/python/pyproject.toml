@@ -11,7 +11,6 @@ dependencies = [
     "ag-ui-protocol>=0.1.18",
     "openai-agents>=0.8.4",
     "pydantic>=2.13.4",
-    "jsonpatch>=1.33",
 ]
 
 [dependency-groups]
