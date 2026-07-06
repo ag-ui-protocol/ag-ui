@@ -211,18 +211,17 @@ function _errorMessage(e: unknown): string {
  *
  * - If we've already seen this Strands tool (by internal id), reuse the
  *   existing AG-UI id so every envelope event carries the same id.
- * - Frontend tools get a fresh UUID to avoid cross-request collisions.
- * - Backend tools reuse Strands' own id so result lookup works.
+ * - Frontend and backend tools reuse Strands' own id so streamed events,
+ *   persisted snapshots, and restored tool results can all correlate.
+ * - If the provider omitted an id, fall back to a fresh UUID.
  */
 function _resolveToolUseId(
   seen: Map<string, SeenToolCall>,
   strandsToolId: string,
-  isFrontendTool: boolean,
 ): string {
   for (const [tid, data] of seen) {
     if (data.strandsToolId === strandsToolId) return tid;
   }
-  if (isFrontendTool) return uuid();
   return strandsToolId || uuid();
 }
 
@@ -1209,11 +1208,7 @@ export class StrandsAgent {
               const { name: toolName, toolUseId: strandsToolId } =
                 currentToolUse;
               const isFrontendTool = frontendToolNames.has(toolName);
-              const toolUseId = _resolveToolUseId(
-                toolCallsSeen,
-                strandsToolId,
-                isFrontendTool,
-              );
+              const toolUseId = _resolveToolUseId(toolCallsSeen, strandsToolId);
 
               let entry = toolCallsSeen.get(toolUseId);
               if (!entry) {
@@ -1381,11 +1376,7 @@ export class StrandsAgent {
                 }
               }
               const isFrontendTool = frontendToolNames.has(toolName);
-              const toolUseId = _resolveToolUseId(
-                toolCallsSeen,
-                strandsToolId,
-                isFrontendTool,
-              );
+              const toolUseId = _resolveToolUseId(toolCallsSeen, strandsToolId);
               const argsStr =
                 typeof parsedInput === "string"
                   ? parsedInput
@@ -1547,11 +1538,7 @@ export class StrandsAgent {
           if (kind === "toolUseBlock") {
             const block = event as unknown as ToolUseBlock;
             const isFrontendTool = frontendToolNames.has(block.name);
-            const toolUseId = _resolveToolUseId(
-              toolCallsSeen,
-              block.toolUseId,
-              isFrontendTool,
-            );
+            const toolUseId = _resolveToolUseId(toolCallsSeen, block.toolUseId);
             const argsStr =
               typeof block.input === "string"
                 ? block.input
