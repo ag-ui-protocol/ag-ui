@@ -97,6 +97,41 @@ describe("MESSAGES_SNAPSHOT — after tool-call end", () => {
     expect(assistant.toolCalls![0]!.function.name).toBe("backend_tool");
   });
 
+  it("uses Strands toolUseId for frontend tool events and snapshots", async () => {
+    const events: AgentStreamEvent[] = [
+      stream.toolUseStart("tooluse_frontend_1", "render_card"),
+      stream.toolUseDelta('{"title":"Hello"}'),
+      stream.blockStop(),
+    ];
+    const agent = scriptedStrandsAgent(events);
+    const output = await collect(
+      agent,
+      minimalRunInput({
+        tools: [
+          {
+            name: "render_card",
+            description: "Render a card in the frontend",
+            parameters: { type: "object", properties: {} },
+          },
+        ],
+      }),
+    );
+
+    const start = output.find(
+      (e) => e.type === EventType.TOOL_CALL_START,
+    ) as unknown as { toolCallId: string };
+    expect(start.toolCallId).toBe("tooluse_frontend_1");
+
+    const snapshots = output.filter(
+      (e) => e.type === EventType.MESSAGES_SNAPSHOT,
+    ) as unknown as Array<{ messages: Array<Record<string, unknown>> }>;
+    const last = snapshots[snapshots.length - 1]!.messages;
+    const assistant = last.find((m) => m.role === "assistant") as {
+      toolCalls?: Array<{ id: string }>;
+    };
+    expect(assistant.toolCalls![0]!.id).toBe("tooluse_frontend_1");
+  });
+
   it("skipMessagesSnapshot suppresses the per-tool snapshot", async () => {
     const block = new ToolUseBlock({
       name: "quiet_tool",

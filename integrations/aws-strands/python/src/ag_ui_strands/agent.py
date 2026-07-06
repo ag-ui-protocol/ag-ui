@@ -1276,8 +1276,8 @@ class StrandsAgent:
                         strands_tool_id = tool_use.get("toolUseId")
                         _raw_in = tool_use.get("input", "")
 
-                        # Generate unique ID for frontend tools (to avoid ID conflicts across requests)
-                        # Use Strands' ID for backend tools (so result lookup works)
+                        # Preserve Strands' ID for every tool so wire events,
+                        # snapshots, and restored tool results can correlate.
                         is_frontend_tool = tool_name in frontend_tool_names
 
                         # Check if we've already seen this tool (by Strands' internal ID)
@@ -1290,11 +1290,8 @@ class StrandsAgent:
                         if existing_entry:
                             # Reuse the existing ID
                             tool_use_id = existing_entry
-                        elif is_frontend_tool:
-                            # Generate new UUID for frontend tools
-                            tool_use_id = str(uuid.uuid4())
                         else:
-                            # Use Strands' ID for backend tools
+                            # Fall back only when the provider omitted an ID.
                             tool_use_id = strands_tool_id or str(uuid.uuid4())
 
                         logger.debug(
