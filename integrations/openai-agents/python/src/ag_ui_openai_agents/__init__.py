@@ -1,30 +1,35 @@
-"""OpenAI Agents SDK × AG-UI Protocol integration."""
+"""OpenAI Agents SDK × AG-UI Protocol integration.
+
+Primary API — two-method facades, one per run mode::
+
+    from ag_ui_openai_agents import AGUITranslator, AGUINonStreamingTranslator
+
+Advanced (per-mapping overrides) — the engine layer::
+
+    from ag_ui_openai_agents.engine import AGUIToSDKTranslator, SDKToAGUITranslator
+"""
 
 from __future__ import annotations
-#
-# from .agent import OpenAIAgentsAgent
-# from .endpoint import add_fastapi_endpoint, create_app
-from .translator import (
+
+from .engine import (
     AGUIToSDKTranslator,
     ClientToolPending,
     SDKToAGUITranslator,
-    StateDiffer,
     TranslatedInput,
 )
+from .non_streaming_translator import AGUINonStreamingTranslator
+from .translator import AGUITranslator
 
 __version__ = "0.1.0"
 
 __all__ = [
-    # Main agent wrapper
-    # "OpenAIAgentsAgent",
-    # # FastAPI wiring
-    # "add_fastapi_endpoint",
-    # "create_app",
-    # Translators (for advanced / manual use)
+    # Facade translators (primary API — 2 methods each)
+    "AGUITranslator",
+    "AGUINonStreamingTranslator",
+    # Engine translators (advanced / per-mapping overrides)
     "AGUIToSDKTranslator",
     "SDKToAGUITranslator",
     # Types & helpers
     "TranslatedInput",
     "ClientToolPending",
-    "StateDiffer",
 ]

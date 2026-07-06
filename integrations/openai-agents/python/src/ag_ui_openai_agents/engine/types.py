@@ -68,11 +68,16 @@ class TranslatedInput(BaseModel):
     with the agents SDK's internal types.
     """
 
-    # tools: SkipValidation[list[FunctionTool]]
+    tools: SkipValidation[list[FunctionTool]] = []
     """
     SDK :class:`FunctionTool` proxies for the AG-UI client tools. Merge with
     the SDK agent's static tools before running. Built from
     :attr:`ag_ui.core.RunAgentInput.tools`.
+
+    Populated by the facade translators' ``to_sdk``; the engine's
+    ``AGUIToSDKTranslator.translate`` leaves it empty pending the
+    tools-wiring review fix (call ``translate_tools`` when using the engine
+    directly).
 
     Validation is skipped to avoid Pydantic forward-ref resolution issues
     with the agents SDK's internal types.
@@ -110,5 +115,11 @@ class TranslatedInput(BaseModel):
     # FunctionTool is not a Pydantic model, so we need to opt in.
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
+
+# FunctionTool's dataclass schema references the SDK-internal ``AgentBase``
+# forward ref; import it into scope and rebuild so ``tools`` resolves.
+from agents.agent import AgentBase  # noqa: E402,F401
+
+TranslatedInput.model_rebuild()
 
 __all__ = ["TranslatedInput"]

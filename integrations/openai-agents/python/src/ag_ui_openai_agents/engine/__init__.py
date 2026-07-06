@@ -1,15 +1,19 @@
 """
-Bi-directional translation between AG-UI and the OpenAI Agents SDK.
+Engine layer — the per-direction translation logic under the facades.
 
-Two independent classes — one per direction — plus shared helpers and a
-typed result container. Import what you need::
+Advanced API: subclass an engine to customize one mapping (design rule 4)
+and inject it into a facade via ``inbound_cls`` / ``outbound_cls``. For
+normal use import the facades from the package root instead
+(:class:`~ag_ui_openai_agents.AGUITranslator`,
+:class:`~ag_ui_openai_agents.AGUINonStreamingTranslator`).
 
-    from ag_ui_openai_agents.translator import (
-        AGUIToSDKTranslator,     # inbound:  AG-UI primitives  → SDK shapes
-        SDKToAGUITranslator,     # outbound: SDK formats → AG-UI primitives
-        TranslatedInput,         # Pydantic bundle returned by translate()
-        ClientToolPending,       # sentinel raised by client-tool proxies
-        StateDiffer,             # JSON Patch helper for STATE_DELTA events
+::
+
+    from ag_ui_openai_agents.engine import (
+        AGUIToSDKTranslator,         # inbound:  AG-UI primitives → SDK shapes
+        SDKToAGUITranslator,         # outbound: SDK formats → AG-UI primitives
+        TranslatedInput,             # Pydantic bundle returned by translate()/to_sdk()
+        ClientToolPending,           # sentinel raised by client-tool proxies
     )
 """
 
@@ -17,13 +21,11 @@ from __future__ import annotations
 
 from .agui_to_sdk import AGUIToSDKTranslator, ClientToolPending
 from .helpers import (
-    StateDiffer,
     coerce_to_str,
     new_message_id,
     new_tool_call_id,
     new_tool_result_id,
     read_attr,
-    snapshot_state,
 )
 from .sdk_to_agui import SDKToAGUITranslator
 from .stream_types import (
@@ -35,7 +37,7 @@ from .stream_types import (
 from .types import TranslatedInput
 
 __all__ = [
-    # Translators
+    # Engine translators
     "AGUIToSDKTranslator",
     "SDKToAGUITranslator",
     # Result types
@@ -48,8 +50,6 @@ __all__ = [
     # Sentinels
     "ClientToolPending",
     # Shared helpers
-    "StateDiffer",
-    "snapshot_state",
     "new_message_id",
     "new_tool_call_id",
     "new_tool_result_id",

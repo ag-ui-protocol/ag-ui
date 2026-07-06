@@ -43,7 +43,7 @@ from openai.types.responses.response_reasoning_text_done_event import (
     ResponseReasoningTextDoneEvent,
 )
 
-from ag_ui_openai_agents.translator import (
+from ag_ui_openai_agents.engine import (
     HOSTED_TOOL_CALL_TYPES,
     RawResponseEventType,
     SDKItemType,
