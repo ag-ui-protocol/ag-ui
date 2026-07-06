@@ -79,11 +79,12 @@ function isValidBump(x: unknown): x is Bump {
 }
 
 // Normalize ecosystem labels from collect-accumulated-bumps.py output
-// ("typescript" / "python") to the npm / pypi labels the prompt and PR-body
-// table use. Anything else passes through unchanged.
+// ("typescript" / "python" / "dotnet") to the npm / pypi / nuget labels the
+// prompt and PR-body table use. Anything else passes through unchanged.
 function normalizeEcosystem(eco: string): string {
   if (eco === "typescript") return "npm";
   if (eco === "python") return "pypi";
+  if (eco === "dotnet") return "nuget";
   return eco;
 }
 
@@ -115,7 +116,7 @@ function buildPrompt(bumps: Bump[], version: string): string {
     `Audience: developers integrating ag-ui SDKs.`,
     ``,
     `Constraints:`,
-    `- Group output by ecosystem (npm, pypi) using "### <ecosystem>" headings.`,
+    `- Group output by ecosystem (npm, pypi, nuget) using "### <ecosystem>" headings.`,
     `- Under each ecosystem, list each package with its old -> new version.`,
     `- Add a brief (<=15 words) plain-English summary of what the bump likely`,
     `  contains given the package name. If you cannot infer, omit the summary.`,
