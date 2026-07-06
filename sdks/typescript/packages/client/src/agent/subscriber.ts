@@ -61,7 +61,7 @@ export interface AgentSubscriber {
   ): MaybePromise<Omit<AgentStateMutation, "stopPropagation"> | void>;
   onRunFailed?(
     params: { error: Error } & AgentSubscriberParams,
-  ): MaybePromise<Omit<AgentStateMutation, "stopPropagation"> | void>;
+  ): MaybePromise<AgentStateMutation | void>;
   onRunFinalized?(
     params: AgentSubscriberParams,
   ): MaybePromise<Omit<AgentStateMutation, "stopPropagation"> | void>;
