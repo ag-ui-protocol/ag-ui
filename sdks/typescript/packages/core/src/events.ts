@@ -256,7 +256,9 @@ export const RunFinishedEventSchema = BaseEventSchema.extend({
   // Accept `null` and treat it as omitted, so producers like the Pydantic-based
   // Python SDK that serialize via `model_dump()` (without `exclude_none=True`)
   // and emit `"outcome": null` for the legacy no-outcome case still validate.
-  outcome: RunFinishedOutcomeSchema.nullable().optional().transform((v) => v ?? undefined),
+  outcome: RunFinishedOutcomeSchema.nullable()
+    .optional()
+    .transform((v) => v ?? undefined),
 });
 
 export const RunErrorEventSchema = BaseEventSchema.extend({

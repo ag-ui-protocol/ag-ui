@@ -38,9 +38,7 @@ describe("verifyEvents subagent lifecycle", () => {
       } as RunFinishedEvent,
     ];
 
-    const events = await firstValueFrom(
-      verifyEvents(false)(from(inputEvents)).pipe(toArray()),
-    );
+    const events = await firstValueFrom(verifyEvents(false)(from(inputEvents)).pipe(toArray()));
 
     expect(events.length).toBe(4);
     expect(events[3].type).toBe(EventType.RUN_FINISHED);
@@ -219,9 +217,7 @@ describe("verifyEvents subagent lifecycle", () => {
       } as RunFinishedEvent,
     ];
 
-    const events = await firstValueFrom(
-      verifyEvents(false)(from(inputEvents)).pipe(toArray()),
-    );
+    const events = await firstValueFrom(verifyEvents(false)(from(inputEvents)).pipe(toArray()));
 
     expect(events.length).toBe(4);
     expect(events[3].type).toBe(EventType.RUN_FINISHED);

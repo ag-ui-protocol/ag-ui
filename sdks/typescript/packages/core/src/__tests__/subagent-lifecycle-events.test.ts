@@ -38,8 +38,6 @@ describe("subagent lifecycle events", () => {
     expect(() =>
       EventSchemas.parse({ type: EventType.SUBAGENT_STARTED, subagentId: "s" }),
     ).toThrow();
-    expect(() =>
-      EventSchemas.parse({ type: EventType.SUBAGENT_ERROR, subagentId: "s" }),
-    ).toThrow();
+    expect(() => EventSchemas.parse({ type: EventType.SUBAGENT_ERROR, subagentId: "s" })).toThrow();
   });
 });

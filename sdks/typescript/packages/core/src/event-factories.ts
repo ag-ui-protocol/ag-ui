@@ -394,7 +394,5 @@ export const createSubagentFinishedEvent = (
 /**
  * Creates a SUBAGENT_ERROR event.
  */
-export const createSubagentErrorEvent = (
-  props: SubagentErrorEventProps,
-): SubagentErrorEvent =>
+export const createSubagentErrorEvent = (props: SubagentErrorEventProps): SubagentErrorEvent =>
   buildEvent(EventType.SUBAGENT_ERROR, SubagentErrorEventSchema, props);

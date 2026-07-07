@@ -21,7 +21,7 @@ const createAgent = (messages: Message[] = []) =>
   ({
     messages: messages.map((message) => ({ ...message })),
     state: {},
-  } as unknown as AbstractAgent);
+  }) as unknown as AbstractAgent;
 
 describe("defaultApplyEvents with subagentId attribution", () => {
   it("should copy subagentId from TEXT_MESSAGE_START onto the newly created message", async () => {

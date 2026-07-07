@@ -19,7 +19,7 @@ const createAgent = (messages: Message[] = []) =>
   ({
     messages: messages.map((message) => ({ ...message })),
     state: {},
-  } as unknown as AbstractAgent);
+  }) as unknown as AbstractAgent;
 
 describe("defaultApplyEvents with subagent lifecycle events", () => {
   it("should invoke onSubagentStartedEvent, onSubagentErrorEvent, and onSubagentFinishedEvent hooks", async () => {

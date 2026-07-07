@@ -171,8 +171,12 @@ export const defaultApplyEvents = (
           applyMutation(mutation);
 
           if (mutation.stopPropagation !== true) {
-            const { messageId, role = "assistant", name, subagentId } =
-              event as TextMessageStartEvent;
+            const {
+              messageId,
+              role = "assistant",
+              name,
+              subagentId,
+            } = event as TextMessageStartEvent;
 
             // Check if a message with this ID already exists (e.g., created by TOOL_CALL_START
             // with the same parentMessageId)
