@@ -92,7 +92,6 @@ export const menuIntegrations = [
       "shared_state",
       "tool_based_generative_ui",
       "subgraphs",
-      "deepagents_subagents",
       "a2ui_dynamic_schema",
       "a2ui_fixed_schema",
       "a2ui_advanced",
@@ -200,7 +199,6 @@ export const menuIntegrations = [
       "shared_state",
       "tool_based_generative_ui",
       "subgraphs",
-      "deepagents_subagents",
     ],
   },
   {
