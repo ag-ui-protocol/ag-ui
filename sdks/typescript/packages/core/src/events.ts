@@ -58,6 +58,9 @@ export enum EventType {
   REASONING_MESSAGE_CHUNK = "REASONING_MESSAGE_CHUNK",
   REASONING_END = "REASONING_END",
   REASONING_ENCRYPTED_VALUE = "REASONING_ENCRYPTED_VALUE",
+  SUBAGENT_STARTED = "SUBAGENT_STARTED",
+  SUBAGENT_FINISHED = "SUBAGENT_FINISHED",
+  SUBAGENT_ERROR = "SUBAGENT_ERROR",
 }
 
 export const BaseEventSchema = z
@@ -322,6 +325,26 @@ export const ReasoningEncryptedValueEventSchema = BaseEventSchema.extend({
   encryptedValue: z.string(),
 });
 
+export const SubagentStartedEventSchema = BaseEventSchema.extend({
+  type: z.literal(EventType.SUBAGENT_STARTED),
+  subagentId: z.string(),
+  name: z.string(),
+  description: z.string().optional(),
+  parentSubagentId: z.string().optional(),
+});
+
+export const SubagentFinishedEventSchema = BaseEventSchema.extend({
+  type: z.literal(EventType.SUBAGENT_FINISHED),
+  subagentId: z.string(),
+});
+
+export const SubagentErrorEventSchema = BaseEventSchema.extend({
+  type: z.literal(EventType.SUBAGENT_ERROR),
+  subagentId: z.string(),
+  message: z.string(),
+  code: z.string().optional(),
+});
+
 export const EventSchemas = z.discriminatedUnion("type", [
   TextMessageStartEventSchema,
   TextMessageContentEventSchema,
@@ -356,6 +379,9 @@ export const EventSchemas = z.discriminatedUnion("type", [
   ReasoningMessageChunkEventSchema,
   ReasoningEndEventSchema,
   ReasoningEncryptedValueEventSchema,
+  SubagentStartedEventSchema,
+  SubagentFinishedEventSchema,
+  SubagentErrorEventSchema,
 ]);
 
 export type BaseEvent = z.infer<typeof BaseEventSchema>;
@@ -395,6 +421,9 @@ export type AGUIEventByType = {
   [EventType.REASONING_MESSAGE_CHUNK]: ReasoningMessageChunkEvent;
   [EventType.REASONING_END]: ReasoningEndEvent;
   [EventType.REASONING_ENCRYPTED_VALUE]: ReasoningEncryptedValueEvent;
+  [EventType.SUBAGENT_STARTED]: SubagentStartedEvent;
+  [EventType.SUBAGENT_FINISHED]: SubagentFinishedEvent;
+  [EventType.SUBAGENT_ERROR]: SubagentErrorEvent;
 };
 export type AGUIEventOf<T extends EventType> = AGUIEventByType[T];
 export type EventPayloadOf<T extends EventType> = Omit<AGUIEventOf<T>, keyof BaseEventFields>;
@@ -444,6 +473,9 @@ export type ReasoningEndEventProps = EventProps<typeof ReasoningEndEventSchema>;
 export type ReasoningEncryptedValueEventProps = EventProps<
   typeof ReasoningEncryptedValueEventSchema
 >;
+export type SubagentStartedEventProps = EventProps<typeof SubagentStartedEventSchema>;
+export type SubagentFinishedEventProps = EventProps<typeof SubagentFinishedEventSchema>;
+export type SubagentErrorEventProps = EventProps<typeof SubagentErrorEventSchema>;
 
 export type TextMessageStartEvent = z.infer<typeof TextMessageStartEventSchema>;
 export type TextMessageContentEvent = z.infer<typeof TextMessageContentEventSchema>;
@@ -482,3 +514,6 @@ export type ReasoningMessageChunkEvent = z.infer<typeof ReasoningMessageChunkEve
 export type ReasoningEndEvent = z.infer<typeof ReasoningEndEventSchema>;
 export type ReasoningEncryptedValueEvent = z.infer<typeof ReasoningEncryptedValueEventSchema>;
 export type ReasoningEncryptedValueSubtype = z.infer<typeof ReasoningEncryptedValueSubtypeSchema>;
+export type SubagentStartedEvent = z.infer<typeof SubagentStartedEventSchema>;
+export type SubagentFinishedEvent = z.infer<typeof SubagentFinishedEventSchema>;
+export type SubagentErrorEvent = z.infer<typeof SubagentErrorEventSchema>;
