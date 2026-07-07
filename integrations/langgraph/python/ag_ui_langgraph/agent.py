@@ -153,21 +153,17 @@ _SUBAGENT_ATTRIBUTABLE_EVENT_TYPES = frozenset({
 
 
 def reconcile_subagents(active_run, ns, lc_agent_name, subgraphs) -> list:
-    """Return SUBAGENT_STARTED/FINISHED events to emit for this event, updating
-    active_run["active_subagents"] (id->name) and ["current_subagent_id"].
-    Single-level model: deepagents runs each subagent's events contiguously."""
+    """Emit SUBAGENT_STARTED once per distinct subagent (deepagents runs task
+    subagents concurrently, so their events interleave -- a toggle is NOT a finish).
+    current_subagent_id tracks the CURRENT event's subagent for _dispatch_event
+    stamping. SUBAGENT_FINISHED is emitted by drain_subagents before RUN_FINISHED
+    (unique-started + all-closed-before-run-end is protocol-valid; precise per-subagent
+    finish timing is deferred for this step)."""
     ctx = derive_subagent_context(ns, lc_agent_name, subgraphs)
     new_id = ctx.subagent_id if ctx else None
-    current = active_run.get("current_subagent_id")
+    active_run["current_subagent_id"] = new_id
     events = []
-    if new_id == current:
-        return events
-    # leaving the current subagent
-    if current is not None:
-        events.append(SubagentFinishedEvent(type=EventType.SUBAGENT_FINISHED, subagent_id=current))
-        active_run["active_subagents"].pop(current, None)
-    # entering a new subagent
-    if new_id is not None:
+    if new_id is not None and new_id not in active_run["active_subagents"]:
         active_run["active_subagents"][new_id] = ctx.name
         events.append(SubagentStartedEvent(
             type=EventType.SUBAGENT_STARTED,
@@ -175,7 +171,6 @@ def reconcile_subagents(active_run, ns, lc_agent_name, subgraphs) -> list:
             name=ctx.name,
             parent_subagent_id=ctx.parent_subagent_id,
         ))
-    active_run["current_subagent_id"] = new_id
     return events
 
 

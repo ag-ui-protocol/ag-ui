@@ -7,7 +7,12 @@ from ag_ui.core import (
     TextMessageContentEvent,
     SubagentStartedEvent,
 )
-from ag_ui_langgraph.agent import LangGraphAgent, derive_subagent_context, reconcile_subagents
+from ag_ui_langgraph.agent import (
+    LangGraphAgent,
+    derive_subagent_context,
+    reconcile_subagents,
+    drain_subagents,
+)
 
 
 class TestDeriveSubagentContext(unittest.TestCase):
@@ -59,23 +64,55 @@ class TestReconcileSubagents(unittest.TestCase):
         evs = reconcile_subagents(ar, "tools:s1|model:y", "researcher", set())
         self.assertEqual(evs, [])
 
-    def test_exit_to_root_emits_finished(self):
+    def test_exit_to_root_emits_nothing_and_clears_current(self):
         ar = _run()
         reconcile_subagents(ar, "tools:s1|model:x", "researcher", set())
         evs = reconcile_subagents(ar, "model:root", None, set())
-        self.assertEqual([e.type for e in evs], [EventType.SUBAGENT_FINISHED])
-        self.assertEqual(evs[0].subagent_id, "tools:s1")
+        self.assertEqual(evs, [])
         self.assertIsNone(ar["current_subagent_id"])
+        # finish is deferred to drain_subagents -- the subagent stays active
+        self.assertIn("tools:s1", ar["active_subagents"])
 
-    def test_switch_subagents_finishes_then_starts(self):
+    def test_switch_subagents_emits_only_started_for_new(self):
         ar = _run()
         reconcile_subagents(ar, "tools:s1|model:x", "researcher", set())
         evs = reconcile_subagents(ar, "tools:s2|model:y", "writer", set())
-        self.assertEqual([e.type for e in evs], [EventType.SUBAGENT_FINISHED, EventType.SUBAGENT_STARTED])
+        self.assertEqual([e.type for e in evs], [EventType.SUBAGENT_STARTED])
+        self.assertEqual(evs[0].subagent_id, "tools:s2")
+        self.assertIn("tools:s1", ar["active_subagents"])
+        self.assertIn("tools:s2", ar["active_subagents"])
 
     def test_root_only_emits_nothing(self):
         ar = _run()
         self.assertEqual(reconcile_subagents(ar, "model:root", None, set()), [])
+
+    def test_interleaved_concurrent_subagents(self):
+        ar = _run()
+        all_events = []
+        all_events += reconcile_subagents(ar, "tools:s1|model:a", "researcher", set())
+        all_events += reconcile_subagents(ar, "tools:s2|model:b", "writer", set())
+        all_events += reconcile_subagents(ar, "tools:s1|model:c", "researcher", set())
+        all_events += reconcile_subagents(ar, "tools:s2|model:d", "writer", set())
+
+        self.assertEqual([e.type for e in all_events], [EventType.SUBAGENT_STARTED, EventType.SUBAGENT_STARTED])
+        self.assertEqual([e.subagent_id for e in all_events], ["tools:s1", "tools:s2"])
+        self.assertIn("tools:s1", ar["active_subagents"])
+        self.assertIn("tools:s2", ar["active_subagents"])
+
+        finish_events = drain_subagents(ar)
+        self.assertEqual(len(finish_events), 2)
+        self.assertEqual({e.type for e in finish_events}, {EventType.SUBAGENT_FINISHED})
+        self.assertEqual({e.subagent_id for e in finish_events}, {"tools:s1", "tools:s2"})
+        self.assertEqual(ar["active_subagents"], {})
+
+    def test_current_subagent_id_tracks_each_event(self):
+        ar = _run()
+        reconcile_subagents(ar, "tools:s1|model:a", "researcher", set())
+        self.assertEqual(ar["current_subagent_id"], "tools:s1")
+        reconcile_subagents(ar, "model:root", None, set())
+        self.assertIsNone(ar["current_subagent_id"])
+        reconcile_subagents(ar, "tools:s2|model:b", "writer", set())
+        self.assertEqual(ar["current_subagent_id"], "tools:s2")
 
 
 def _make_agent():
