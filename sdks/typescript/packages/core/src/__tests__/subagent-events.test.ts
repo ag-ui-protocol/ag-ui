@@ -65,6 +65,81 @@ describe("event subagentId attribution", () => {
     ).toBe("sub-9");
   });
 
+  it("declares subagentId as a typed field (rejects non-string), not passthrough", () => {
+    // BaseEventSchema is .passthrough(), so an undeclared key would survive .parse()
+    // regardless of the schema. A DECLARED z.string() field, however, rejects a
+    // non-string value — so safeParse failing on a numeric subagentId proves the
+    // field is genuinely declared on each schema (and guards against its removal).
+    const numericSubagentId = 123 as unknown as string;
+    expect(
+      TextMessageStartEventSchema.safeParse({
+        type: EventType.TEXT_MESSAGE_START,
+        messageId: "m1",
+        subagentId: numericSubagentId,
+      }).success,
+    ).toBe(false);
+    expect(
+      TextMessageChunkEventSchema.safeParse({
+        type: EventType.TEXT_MESSAGE_CHUNK,
+        messageId: "m1",
+        subagentId: numericSubagentId,
+      }).success,
+    ).toBe(false);
+    expect(
+      ToolCallStartEventSchema.safeParse({
+        type: EventType.TOOL_CALL_START,
+        toolCallId: "tc1",
+        toolCallName: "f",
+        subagentId: numericSubagentId,
+      }).success,
+    ).toBe(false);
+    expect(
+      ToolCallChunkEventSchema.safeParse({
+        type: EventType.TOOL_CALL_CHUNK,
+        toolCallId: "tc1",
+        subagentId: numericSubagentId,
+      }).success,
+    ).toBe(false);
+    expect(
+      ToolCallResultEventSchema.safeParse({
+        type: EventType.TOOL_CALL_RESULT,
+        messageId: "tm1",
+        toolCallId: "tc1",
+        content: "done",
+        subagentId: numericSubagentId,
+      }).success,
+    ).toBe(false);
+    expect(
+      ReasoningMessageChunkEventSchema.safeParse({
+        type: EventType.REASONING_MESSAGE_CHUNK,
+        messageId: "r1",
+        subagentId: numericSubagentId,
+      }).success,
+    ).toBe(false);
+    expect(
+      StateDeltaEventSchema.safeParse({
+        type: EventType.STATE_DELTA,
+        delta: [],
+        subagentId: numericSubagentId,
+      }).success,
+    ).toBe(false);
+    expect(
+      StepStartedEventSchema.safeParse({
+        type: EventType.STEP_STARTED,
+        stepName: "s",
+        subagentId: numericSubagentId,
+      }).success,
+    ).toBe(false);
+    expect(
+      CustomEventSchema.safeParse({
+        type: EventType.CUSTOM,
+        name: "n",
+        value: 1,
+        subagentId: numericSubagentId,
+      }).success,
+    ).toBe(false);
+  });
+
   it("accepts subagentId on standalone events", () => {
     expect(
       StateDeltaEventSchema.parse({
