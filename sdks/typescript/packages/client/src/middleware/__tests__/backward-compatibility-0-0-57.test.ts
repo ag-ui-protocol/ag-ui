@@ -7,7 +7,7 @@ import { BackwardCompatibility_0_0_57 } from "../backward-compatibility-0-0-57";
 // Mock agent that records the input it received and replays a scripted stream.
 // NOTE: the maxVersion override is inert in this file — these tests drive
 // `middleware.run(...)` directly and never exercise the version gate (that path
-// is covered by the e2e file via runAgent). It exists only to satisfy AbstractAgent.
+// is covered by the e2e file via runAgent). It is set only for documentation.
 class MockAgent extends AbstractAgent {
   public lastInput?: RunAgentInput;
   private events: BaseEvent[];
@@ -40,12 +40,32 @@ const createInput = (overrides: Partial<RunAgentInput> = {}): RunAgentInput => (
 
 describe("BackwardCompatibility_0_0_57", () => {
   // Silence (and capture) the drop-warning so it doesn't pollute test output.
+  // Also neutralize SUPPRESS_TRANSFORMATION_WARNINGS so the warn-emitting tests
+  // are deterministic regardless of the ambient env (a dev/CI env may export it,
+  // since the warning text itself instructs users to set it).
   let warnSpy: ReturnType<typeof vi.spyOn>;
+  let priorSuppress: string | undefined;
   beforeEach(() => {
     warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    priorSuppress = process.env.SUPPRESS_TRANSFORMATION_WARNINGS;
+    delete process.env.SUPPRESS_TRANSFORMATION_WARNINGS;
   });
   afterEach(() => {
     warnSpy.mockRestore();
+    if (priorSuppress === undefined) {
+      delete process.env.SUPPRESS_TRANSFORMATION_WARNINGS;
+    } else {
+      process.env.SUPPRESS_TRANSFORMATION_WARNINGS = priorSuppress;
+    }
+  });
+
+  it("keeps the drop-event string constants in sync with the EventType enum", () => {
+    // The shim matches SUBAGENT_* by string literal; assert those literals still
+    // equal the enum values so a future enum rename fails loudly here rather than
+    // silently disabling the filter.
+    expect(EventType.SUBAGENT_STARTED).toBe("SUBAGENT_STARTED");
+    expect(EventType.SUBAGENT_FINISHED).toBe("SUBAGENT_FINISHED");
+    expect(EventType.SUBAGENT_ERROR).toBe("SUBAGENT_ERROR");
   });
 
   it("strips subagentId from input messages before the agent sees them", async () => {
@@ -97,6 +117,22 @@ describe("BackwardCompatibility_0_0_57", () => {
 
     expect(warnSpy).toHaveBeenCalledTimes(1);
     expect(String(warnSpy.mock.calls[0]?.[0])).toContain("SUBAGENT_ERROR");
+  });
+
+  it("suppresses the drop-warning when SUPPRESS_TRANSFORMATION_WARNINGS is set", async () => {
+    process.env.SUPPRESS_TRANSFORMATION_WARNINGS = "true";
+    const middleware = new BackwardCompatibility_0_0_57();
+    const events: BaseEvent[] = [
+      { type: EventType.SUBAGENT_ERROR, subagentId: "s1", message: "boom" } as any,
+    ];
+
+    const result = await lastValueFrom(
+      middleware.run(createInput(), new MockAgent(events)).pipe(toArray()),
+    );
+
+    expect(warnSpy).not.toHaveBeenCalled();
+    // Suppressing the warning does not change the drop behavior.
+    expect(result).toHaveLength(0);
   });
 
   it("strips subagentId from surviving events (all carriers)", async () => {

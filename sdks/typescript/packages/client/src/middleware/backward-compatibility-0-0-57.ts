@@ -33,20 +33,28 @@ function stripMessages(messages: MessageLike[]): MessageLike[] {
 }
 
 /**
- * Middleware that removes subagent-support additions when talking to a pre-subagent
- * (<= 0.0.57) agent:
- *  - input:  strips `subagentId` from every top-level message before the agent sees it.
- *  - output: drops SUBAGENT_STARTED/FINISHED/ERROR lifecycle events entirely, and strips
- *            `subagentId` from every remaining event, from each message inside a
- *            MESSAGES_SNAPSHOT, and from each message inside a RUN_STARTED `input` echo.
+ * Client middleware that removes subagent-support additions when the REMOTE AGENT is
+ * pre-subagent (its `maxVersion` <= 0.0.57; the shim is auto-inserted by that gate).
+ * The old party is the upstream agent, not the downstream consumer (the current client
+ * supports subagents).
+ *
+ *  - input (client -> old agent): strips `subagentId` from every top-level message so a
+ *    pre-subagent agent never receives attribution it doesn't understand. This is the
+ *    substantive path — the client's replayed message history can carry `subagentId`.
+ *  - output (old agent -> client): defensive normalization. A genuinely pre-subagent
+ *    agent cannot emit `SUBAGENT_*` events or `subagentId`, and any `RUN_STARTED.input`
+ *    echo was already sanitized on the way in — so this path guards mixed/proxied
+ *    pipelines rather than doing load-bearing translation. It drops
+ *    SUBAGENT_STARTED/FINISHED/ERROR events and strips `subagentId` from every remaining
+ *    event, from MESSAGES_SNAPSHOT messages, and from RUN_STARTED `input` messages.
  *
  * Scope: this removes the protocol-level `subagentId` field and the SUBAGENT_* event
- * types only. It does NOT recurse into opaque `RAW.event` / `CUSTOM.value` payloads
- * (arbitrary user JSON is passed through untouched). Non-lifecycle events that a
- * subagent produced (TEXT_MESSAGE_*, TOOL_CALL_*, etc.) are kept with their
- * `subagentId` stripped — to a pre-subagent consumer they correctly flatten into the
- * parent thread, which is the intended downgrade (subagent separation cannot be
- * represented to a consumer that has no concept of it).
+ * types only. It does NOT recurse into opaque application payloads (`RAW.event`,
+ * `CUSTOM.value`, `STATE_SNAPSHOT.snapshot`, `STATE_DELTA.delta`, activity `content`,
+ * etc.). Non-lifecycle events a subagent produced (TEXT_MESSAGE_*, TOOL_CALL_*, ...) are
+ * kept with their `subagentId` stripped, so they flatten into the parent thread — the
+ * intended downgrade, since subagent separation cannot be represented to a consumer with
+ * no concept of it.
  *
  * The subagent feature is purely additive, so this shim is a pure removal in both
  * directions; there is no field/event to translate (unlike 0.0.45's THINKING->REASONING).
