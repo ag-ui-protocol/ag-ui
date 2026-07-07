@@ -223,11 +223,26 @@ consumers remain unaffected.
 
 ## Backwards compatibility
 
-- Every new field and event type is optional.
-- Old producers never set `subagentId`; old consumers ignore it and render a
-  flat stream — correct, just not grouped.
-- New event types land on a still-flat run; AG-UI consumers already tolerate
-  unknown event types.
+- **Phase 1 (optional `subagentId` fields) is transparently backwards-compatible.**
+  Old producers never set it; old consumers ignore it. Zod *strips* unknown
+  fields (asserted in `core/__tests__/backwards-compatibility.test.ts`), and the
+  backward-compat middlewares spread the rest of the message/input, so an extra
+  `subagentId` rides through untouched. This is why Phase 1 is separately shippable.
+- **Phase 2 (new `SUBAGENT_*` event types) is NOT silently ignored by an older
+  consumer.** Correction to an earlier draft claim: the decode path validates every
+  event against the closed `EventSchemas` discriminated union
+  (`client/src/transform/http.ts:55`, `proto/src/proto.ts:199,355`) and *errors the
+  stream* on an unknown `type` — a discriminated union rejects an unknown
+  discriminator. So a genuinely-old consumer (whose union predates `SUBAGENT_*`)
+  would throw, not gracefully skip. This is inherent to adding *any* new event type
+  in AG-UI (same for `REASONING_*`, `ACTIVITY_*`, `TOOL_CALL_RESULT`) and is governed
+  by **producer/consumer version negotiation**, not graceful-ignore. A consumer on
+  the same (post-change) SDK has `SUBAGENT_*` in its union and is unaffected.
+- **Downgrade path:** `BackwardCompatibility_0_0_57` (client middleware, gated at
+  `maxVersion <= 0.0.57`) adapts a subagent-aware client talking to a pre-subagent
+  remote agent — stripping `subagentId` from input messages and dropping `SUBAGENT_*`
+  events (and stripping `subagentId`) from the output. It does not retroactively fix
+  a genuinely-old consumer receiving new events from a new producer.
 - The run lifecycle is untouched, so no audited breakpoint is in play.
 - Subagent boundaries are not run boundaries, so run-boundary logic (stream
   auto-close, compaction flush, the single held `RUN_FINISHED`, the run
