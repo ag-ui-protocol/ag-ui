@@ -85,6 +85,14 @@ RunMetadata = TypedDict("RunMetadata", {
     # replaced. Not used by ManuallyEmitMessage events: those carry their
     # own message_id and bypass this field entirely.
     "current_text_message_id": NotRequired[Optional[str]],
+    # Deepagents subagent tracking. Maps a stable per-invocation subagent id
+    # (the leading `|`-separated checkpoint_ns segment, e.g. "tools:<uuid>")
+    # to the subagent's name (metadata's lc_agent_name), for every subagent
+    # invocation currently active on this run.
+    "active_subagents": NotRequired[Dict[str, str]],
+    # The subagent id (see above) whose events are currently being processed,
+    # or None when the current event originates at the root/supervisor level.
+    "current_subagent_id": NotRequired[Optional[str]],
 })
 
 MessagesInProgressRecord = Dict[str, Optional[MessageInProgress]]

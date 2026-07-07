@@ -3,6 +3,7 @@ import re
 import uuid
 import json
 from copy import deepcopy
+from dataclasses import dataclass
 from typing import Optional, List, Any, Union, AsyncGenerator, Generator, Literal, Dict, TypedDict
 from typing_extensions import NotRequired, Self
 import inspect
@@ -109,6 +110,30 @@ logger = logging.getLogger(__name__)
 ROOT_SUBGRAPH_NAME = "root"
 
 
+@dataclass
+class SubagentContext:
+    subagent_id: str
+    name: str
+    parent_subagent_id: Optional[str] = None
+
+
+def derive_subagent_context(ns: str, lc_agent_name: Optional[str], subgraphs) -> Optional[SubagentContext]:
+    """Return a SubagentContext when an event originates inside a deepagents
+    subagent, else None.
+
+    Signals (confirmed via spike): a subagent event has a nested ('|') checkpoint
+    namespace AND metadata lc_agent_name set. Declared subgraphs also nest but do
+    not set lc_agent_name, so they are excluded (their root segment is in `subgraphs`).
+    """
+    if not lc_agent_name or not ns or "|" not in ns:
+        return None
+    leading = ns.split("|")[0]
+    root_name = leading.split(":")[0]
+    if root_name in subgraphs:
+        return None  # declared subgraph, handled elsewhere
+    return SubagentContext(subagent_id=leading, name=lc_agent_name, parent_subagent_id=None)
+
+
 class PreparedStream(TypedDict):
     """Payload returned by prepare_stream / prepare_regenerate_stream.
 
@@ -204,6 +229,8 @@ class LangGraphAgent:
             "streamed_tool_call_ids": set(),
             "model_made_tool_call": False,
             "state_reliable": True,
+            "active_subagents": {},
+            "current_subagent_id": None,
         }
         self.active_run = INITIAL_ACTIVE_RUN
         try:
