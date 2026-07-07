@@ -1,9 +1,8 @@
 """Engine layer — the per-direction translation logic.
 
 Advanced use only: subclass an engine to customize a single mapping and
-inject it into a public translator via inbound_cls / outbound_cls. For everything
-else, import the translators from the package root instead (AGUITranslator,
-AGUINonStreamingTranslator).
+inject it into the public translator via inbound_cls / outbound_cls. For
+everything else, import AGUITranslator from the package root instead.
 """
 
 from __future__ import annotations

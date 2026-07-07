@@ -1,26 +1,23 @@
 """
-Tests for the two-method translator APIs.
+Tests for the two-method translator API.
 
 Covers the public translator contract only — engine mappings have their own coverage:
 
 - ``to_sdk`` delegates to the inbound engine and populates ``tools``.
 - ``AGUITranslator.to_agui`` streams engine output live and appends the
   engine flush, with a fresh engine per call (reusable translator).
-- ``AGUINonStreamingTranslator.to_agui`` accepts a ``RunResult``-shaped
-  object or a plain item list.
 """
 
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from ag_ui.core import CustomEvent, EventType, RunAgentInput, Tool, UserMessage
 from agents import FunctionTool
 from agents.result import RunResultStreaming
 
-from ag_ui_openai_agents import AGUINonStreamingTranslator, AGUITranslator
+from ag_ui_openai_agents import AGUITranslator
 
 
 def _run_input(with_tool: bool = False) -> RunAgentInput:
@@ -61,9 +58,6 @@ class _StubOutbound:
     def finalize(self):
         return [_event("finalized")]
 
-    def translate_items(self, items):
-        return [_event(f"item:{item}") for item in items]
-
 
 async def _fake_stream(*names: str):
     for name in names:
@@ -84,7 +78,7 @@ def test_to_sdk_translates_messages_and_tools():
 
 
 def test_to_sdk_without_tools_leaves_bundle_empty():
-    bundle = AGUINonStreamingTranslator().to_sdk(_run_input())
+    bundle = AGUITranslator().to_sdk(_run_input())
     assert bundle.tools == []
 
 
@@ -126,14 +120,3 @@ def test_streaming_to_agui_accepts_run_streaming_result():
 
     events = asyncio.run(collect())
     assert [e.name for e in events] == ["translated:sdk", "finalized"]
-
-
-# ── AGUINonStreamingTranslator.to_agui ───────────────────────────────────
-
-
-def test_non_streaming_to_agui_accepts_run_result_and_list():
-    translator = AGUINonStreamingTranslator(outbound_cls=_StubOutbound)
-
-    result = SimpleNamespace(new_items=["i1", "i2"])
-    assert [e.name for e in translator.to_agui(result)] == ["item:i1", "item:i2"]
-    assert [e.name for e in translator.to_agui(["i3"])] == ["item:i3"]

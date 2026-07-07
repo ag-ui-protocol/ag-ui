@@ -5,8 +5,6 @@ to_sdk(run_input) and to_agui(events). Stateless and reusable —
 each to_agui call creates the fresh stateful engine that run needs.
 Lifecycle events (RUN_STARTED / RUN_FINISHED / RUN_ERROR) and session
 persistence are the caller's job, not the translator's.
-
-Non-streaming runs (Runner.run / run_sync): use AGUINonStreamingTranslator.
 """
 
 from __future__ import annotations

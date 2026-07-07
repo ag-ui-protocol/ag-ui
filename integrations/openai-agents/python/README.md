@@ -5,15 +5,15 @@ with the [AG-UI Protocol](https://github.com/ag-ui-protocol/ag-ui). Build your
 agent with the OpenAI SDK as usual, then translate its execution into AG-UI
 events any AG-UI client (e.g. CopilotKit) can render live.
 
-The integration is a pair of **translators**. You keep using the OpenAI Agents
-SDK normally; the translators only map data at the AG-UI boundary:
+The integration is a **translator**. You keep using the OpenAI Agents
+SDK normally; the translator only maps data at the AG-UI boundary:
 
 ```
 AG-UI RunAgentInput    ──to_sdk()──▶  SDK input items + tools
 SDK streamed result    ──to_agui()─▶  AG-UI BaseEvents
 ```
 
-The recommended streaming flow is:
+The flow is:
 
 ```python
 translator = AGUITranslator()
@@ -119,14 +119,13 @@ orchestrator) lives in [`examples/`](examples/).
 
 ## Public API
 
-There are two public translators, one for each OpenAI Agents SDK run mode:
+There is one public translator; it pairs with the SDK's streaming run mode:
 
 | Class | Pairs with | `to_agui(...)` returns |
 |---|---|---|
-| `AGUITranslator` (main) | `Runner.run_streamed` | async iterator of AG-UI events, live |
-| `AGUINonStreamingTranslator` | `Runner.run` / `run_sync` | `list[BaseEvent]`, one shot |
+| `AGUITranslator` | `Runner.run_streamed` | async iterator of AG-UI events, live |
 
-Both are stateless and reusable — each `to_agui` call internally creates the
+It is stateless and reusable — each `to_agui` call internally creates the
 fresh per-run engine it needs. Create one instance and share it.
 
 ### Choose a Pattern
@@ -134,10 +133,9 @@ fresh per-run engine it needs. Create one instance and share it.
 | Need | Use |
 |---|---|
 | Live chat, tool-call progress, reasoning progress | `AGUITranslator` with `Runner.run_streamed` |
-| A finished event list after the model completes | `AGUINonStreamingTranslator` with `Runner.run` or `run_sync` |
 | FastAPI SSE | Return `StreamingResponse(_stream(...), media_type="text/event-stream")` |
 | WebSocket or another async transport | Iterate `translator.to_agui(result)` and send each event JSON |
-| Custom model settings, tracing, guardrails, handoffs | Pass normal OpenAI Agents SDK args to `Runner.run*` |
+| Custom model settings, tracing, guardrails, handoffs | Pass normal OpenAI Agents SDK args to `Runner.run_streamed` |
 | Custom AG-UI mapping behavior | Subclass an engine translator and inject it into the public translator |
 
 ### Streaming: Live AG-UI Output
@@ -180,43 +178,19 @@ async for event in translator.to_agui(result):
     ...
 ```
 
-### Non-Streaming: One-Shot AG-UI Output
-
-Same valid AG-UI event sequence, produced in one burst after the run
-finishes (no token-level deltas):
-
-```python
-translator = AGUINonStreamingTranslator()
-
-bundle = translator.to_sdk(run_input)
-result = await Runner.run(agent, input=bundle.messages)
-
-events = translator.to_agui(result)   # accepts RunResult or list[RunItem]
-```
-
-Use this when your server or product does not need live tokens. For chat UIs,
-the streaming translator is usually the better default.
-
-`Runner.run_sync` works the same way:
-
-```python
-result = Runner.run_sync(agent, input=bundle.messages)
-events = translator.to_agui(result)
-```
-
 ### What `to_sdk` gives you
 
 `TranslatedInput` mirrors `RunAgentInput` field for field:
 
 | AG-UI field | Lands in |
 |---|---|
-| `messages` | `bundle.messages` — Responses-API input items for `Runner.run*` |
+| `messages` | `bundle.messages` — Responses-API input items for `Runner.run_streamed` |
 | `tools` | `bundle.tools` — SDK `FunctionTool` proxies for client-declared tools; merge with `agent.clone(tools=[*agent.tools, *bundle.tools])` |
 | `state`, `context`, `forwarded_props` | passthrough — the library never injects them anywhere; render them into instructions/messages yourself if your app needs the model to see them |
 | `thread_id`, `run_id`, `parent_run_id`, `resume` | passthrough |
 
 The most important field is `bundle.messages`; pass it as `input=` to
-`Runner.run_streamed`, `Runner.run`, or `Runner.run_sync`.
+`Runner.run_streamed`.
 
 If `bundle.tools` is non-empty, merge those tools into the agent for this
 request:
@@ -229,7 +203,7 @@ if bundle.tools:
 
 ### What Your Code Still Owns
 
-The translators translate. Your run loop still owns orchestration:
+The translator translates. Your run loop still owns orchestration:
 
 | Concern | Owned by |
 |---|---|
@@ -326,7 +300,7 @@ Unknown SDK event types are skipped with a debug log instead of crashing the run
 
 ## Advanced: the engine layer
 
-The public translators delegate to two independent, symmetric engine translators in
+The public translator delegates to two independent, symmetric engine translators in
 `ag_ui_openai_agents.engine`:
 
 - `AGUIToSDKTranslator` — inbound; stateless, tiered per-type methods
@@ -378,7 +352,7 @@ call and sends the result back as a `tool` message in the next run's
   run. Plaintext reasoning cannot be re-ingested and is dropped inbound.
 - The Responses API has no `tool` role — AG-UI `tool` messages become
   `function_call_output` items linked by `call_id`.
-- Unknown/unsupported message and event types never crash the translators —
+- Unknown/unsupported message and event types never crash the translator —
   they are dropped with a debug log.
 
 ## Testing

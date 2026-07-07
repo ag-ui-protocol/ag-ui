@@ -82,10 +82,10 @@ class SDKToAGUITranslator:
     the first signal for a window arrives (output_item.added or,
     defensively, a bare delta), and *_END fires on the first close
     signal — output_item.done, the run-item commit, or finalize(),
-    whichever comes first. Run items double as the full emission path
-    for non-streaming runs: when no window was ever opened for an item,
-    its run-item translator emits the complete triplet from the
-    finished item.
+    whichever comes first. Run items double as a full emission path:
+    when no window was ever opened for an item (some backends never
+    stream raw deltas for it), its run-item translator emits the
+    complete triplet from the finished item.
     """
 
     def __init__(self) -> None:
@@ -97,7 +97,7 @@ class SDKToAGUITranslator:
         self._open_reasonings: dict[str, str] = {}     # key -> phase message_id
         self._open_reasoning_parts: dict[str, str] = {}  # key -> part message_id
         # When a run item shows up, we need to know if we already streamed and
-        # closed it (nothing to do) or if this is a non-streaming run and we
+        # closed it (nothing to do) or if no deltas ever arrived for it and we
         # have to emit it whole. These track what's been closed so we can tell.
         self._closed_text_ids: list[str] = []
         self._closed_reasoning_ids: list[str] = []
@@ -165,24 +165,6 @@ class SDKToAGUITranslator:
     # ─────────────────────────────────────────────────────────────────────
     # TIER 2 — Bulk collection + per event family
     # ─────────────────────────────────────────────────────────────────────
-
-    def translate_items(self, items: list[RunItem]) -> list[BaseEvent]:
-        """Translate a finished run's items (non-streaming mode).
-
-        Feed result.new_items from Runner.run / Runner.run_sync. Each
-        item emits its complete AG-UI sequence (full triplets — no
-        windows stay open), so no finalize() call is needed after.
-
-        Args:
-            items: The run's finished RunItem list.
-
-        Returns:
-            The complete list of AG-UI events for the run.
-        """
-        events: list[BaseEvent] = []
-        for item in items:
-            events.extend(self.translate_item(item))
-        return events
 
     def translate_raw_response_event(self, event: Any) -> list[BaseEvent]:
         """Handle a RawResponsesStreamEvent (token-level Responses deltas).
@@ -452,9 +434,9 @@ class SDKToAGUITranslator:
     def translate_item(self, item: RunItem) -> list[BaseEvent]:
         """Dispatch one SDK RunItem to the right per-type translator.
 
-        During streaming these act as safety-net closers (raw events
-        already streamed the content); for non-streaming runs they emit
-        the item's full AG-UI sequence.
+        Usually these act as safety-net closers (raw events already
+        streamed the content); when no deltas were ever streamed for the
+        item, they emit its full AG-UI sequence instead.
 
         Args:
             item: A finished SDK RunItem.
@@ -487,7 +469,7 @@ class SDKToAGUITranslator:
         """Handle an assistant message commit by closing its window or emitting the full triplet.
 
         Streamed: the raw deltas already carried the text — just close.
-        Non-streamed: emit TEXT_MESSAGE_START/CONTENT/END from the
+        No deltas seen: emit TEXT_MESSAGE_START/CONTENT/END from the
         finished item, using the SDK's own ItemHelpers extractors (text
         first, refusal as fallback — both are user-visible).
 
@@ -793,8 +775,8 @@ class SDKToAGUITranslator:
         Returns:
             ("close", key) when a streamed window is still open,
             ("skip", None) when the item was already fully streamed and
-            closed, or ("new", None) when nothing was streamed
-            (non-streaming run) and the item must be emitted whole.
+            closed, or ("new", None) when nothing was streamed for the
+            item and it must be emitted whole.
         """
         if self._is_real_id(raw_id):
             if raw_id in open_windows:
