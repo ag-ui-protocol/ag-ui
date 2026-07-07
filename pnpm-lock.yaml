@@ -5,6 +5,10 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
+  '@ag-ui/client': workspace:*
+  '@ag-ui/core': workspace:*
+  '@ag-ui/encoder': workspace:*
+  '@ag-ui/proto': workspace:*
   langium: 3.2.0
   '@copilotkit/runtime>@ag-ui/a2ui-middleware': 0.0.8
   '@copilotkit/runtime>@langchain/core': 0.3.80
@@ -1663,7 +1667,7 @@ packages:
   '@ag-ui/a2ui-middleware@0.0.8':
     resolution: {integrity: sha512-YXabOMyNekshHWLc63fD166ndy/zOXp+UWbx1alYoGRhO2y2uZJzOlPLvBAkFY4PF3Lng78ByG4mNpxJlSLDvw==}
     peerDependencies:
-      '@ag-ui/client': '>=0.0.40'
+      '@ag-ui/client': workspace:*
       rxjs: 7.8.1
 
   '@ag-ui/a2ui-toolkit@0.0.2':
@@ -1696,19 +1700,19 @@ packages:
   '@ag-ui/langgraph@0.0.41':
     resolution: {integrity: sha512-xo7ja/kuctmdPiH83QOUIpDs/AY3GzxW1fM37x9otK9fqwnKgi2JIcjfcdvAdGYdsCkXBn2WWQ2PVH+rdsLOzg==}
     peerDependencies:
-      '@ag-ui/client': '>=0.0.42'
-      '@ag-ui/core': '>=0.0.42'
+      '@ag-ui/client': workspace:*
+      '@ag-ui/core': workspace:*
 
   '@ag-ui/langgraph@0.0.42':
     resolution: {integrity: sha512-dXasEbGQFJcasdoy5khYyDHZHYoD1/i7hioaP8cejfw+Dss4tLvN8ndzD6c5j0hmANaKscekl+zkF7UQq3sI9w==}
     peerDependencies:
-      '@ag-ui/client': '>=0.0.42'
-      '@ag-ui/core': '>=0.0.42'
+      '@ag-ui/client': workspace:*
+      '@ag-ui/core': workspace:*
 
   '@ag-ui/mcp-apps-middleware@0.0.3':
     resolution: {integrity: sha512-Z+NZQXj4J+Y/2PLNsiyhNzRWFtTT2sAoC5dztoAlIsdfzvLvYEa52YGdHesNTN85JJqaIrYxQ8e31IBpKjrnoA==}
     peerDependencies:
-      '@ag-ui/client': '>=0.0.40'
+      '@ag-ui/client': workspace:*
 
   '@ag-ui/mcp-middleware@0.0.1':
     resolution: {integrity: sha512-TayUu7kB+jXUTPRUJesNvJYrP+0weTL9F2VJJ8QQ4sWxY/Ihjo+GgFYgJZYNcLwbo1DKgmVJtdm2XUouPCbxeg==}
@@ -3171,12 +3175,12 @@ packages:
   '@copilotkit/shared@1.60.1':
     resolution: {integrity: sha512-8KTxK6xnuxmFjGy9pHkHOMDElQl5Smisx0q8hx8je1NEkwrxFKrCK653APqn83QyQLifdPBqExXEUpGkqhoGcw==}
     peerDependencies:
-      '@ag-ui/core': '>=0.0.48'
+      '@ag-ui/core': workspace:*
 
   '@copilotkit/shared@1.61.2':
     resolution: {integrity: sha512-ZSfXZz3/9tPMj1erphVk+hUXcEsXm+ZutCfI8wgCE7VZ+08kkFW6uJSnvFueksPjHHPtrUplMTOnyxekQyfg3g==}
     peerDependencies:
-      '@ag-ui/core': '>=0.0.48'
+      '@ag-ui/core': workspace:*
 
   '@copilotkit/web-inspector@1.61.2':
     resolution: {integrity: sha512-IRQ0UENwYL5Kt5IpDwX5EGvCqcyLUDXqkrwyJLWeirxqtwsrb4o5xhaLSh2xWPhWurOoegeXgaAl2/Ssjym2pA==}
