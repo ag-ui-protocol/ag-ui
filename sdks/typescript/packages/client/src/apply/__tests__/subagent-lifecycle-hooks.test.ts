@@ -71,5 +71,32 @@ describe("defaultApplyEvents with subagent lifecycle events", () => {
     expect(onSubagentStartedEvent).toHaveBeenCalledTimes(1);
     expect(onSubagentErrorEvent).toHaveBeenCalledTimes(1);
     expect(onSubagentFinishedEvent).toHaveBeenCalledTimes(1);
+
+    expect(onSubagentStartedEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: expect.objectContaining({
+          type: EventType.SUBAGENT_STARTED,
+          subagentId: "s1",
+          name: "R",
+        }),
+      }),
+    );
+    expect(onSubagentErrorEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: expect.objectContaining({
+          type: EventType.SUBAGENT_ERROR,
+          subagentId: "s1",
+          message: "x",
+        }),
+      }),
+    );
+    expect(onSubagentFinishedEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: expect.objectContaining({
+          type: EventType.SUBAGENT_FINISHED,
+          subagentId: "s1",
+        }),
+      }),
+    );
   });
 });

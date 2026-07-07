@@ -161,4 +161,59 @@ describe("defaultApplyEvents with subagentId attribution", () => {
     expect(message).toBeDefined();
     expect((message as any).subagentId).toBe("owner");
   });
+
+  it("should set subagentId on TOOL_CALL_START creation and not overwrite it on a later resolve to the same message", async () => {
+    const events$ = new Subject<BaseEvent>();
+    const initialState: RunAgentInput = {
+      messages: [],
+      state: {},
+      threadId: "test-thread",
+      runId: "test-run",
+      tools: [],
+      context: [],
+    };
+
+    const agent = createAgent(initialState.messages);
+    const result$ = defaultApplyEvents(initialState, events$, agent, []);
+    const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
+
+    events$.next({ type: EventType.RUN_STARTED } as RunStartedEvent);
+    // No parentMessageId -> resolveOrCreateAssistantMessage creates a brand new
+    // assistant message keyed by toolCallId ("call_1"), so wasCreated is true
+    // and the positive `wasCreated && subagentId !== undefined` branch fires.
+    events$.next({
+      type: EventType.TOOL_CALL_START,
+      toolCallId: "call_1",
+      toolCallName: "f",
+      subagentId: "first",
+    } as ToolCallStartEvent);
+    events$.next({
+      type: EventType.TOOL_CALL_END,
+      toolCallId: "call_1",
+    } as ToolCallEndEvent);
+    // parentMessageId now points at the message created above, so this
+    // resolves to the EXISTING message (wasCreated=false) — the guard must
+    // block the overwrite regardless of the `=== undefined` sub-check.
+    events$.next({
+      type: EventType.TOOL_CALL_START,
+      toolCallId: "call_2",
+      toolCallName: "g",
+      parentMessageId: "call_1",
+      subagentId: "second",
+    } as ToolCallStartEvent);
+    events$.next({
+      type: EventType.TOOL_CALL_END,
+      toolCallId: "call_2",
+    } as ToolCallEndEvent);
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    events$.complete();
+
+    const stateUpdates = await stateUpdatesPromise;
+    const finalUpdate = stateUpdates[stateUpdates.length - 1];
+    const message = finalUpdate?.messages?.find((m) => m.id === "call_1");
+
+    expect(message).toBeDefined();
+    expect((message as any).subagentId).toBe("first");
+  });
 });

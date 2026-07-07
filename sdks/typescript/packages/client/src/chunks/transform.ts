@@ -32,7 +32,6 @@ interface ToolCallFields {
 
 interface ReasoningMessageFields {
   messageId: string;
-  subagentId?: string;
 }
 
 export const transformChunks =
