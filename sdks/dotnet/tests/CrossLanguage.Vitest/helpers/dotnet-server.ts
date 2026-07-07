@@ -40,7 +40,8 @@ export async function startDotnetServer(opts: {
   // Pre-build so the spawned process is just the server, not the dotnet
   // build pipeline. -p:NuGetAudit=false avoids the OpenTelemetry NU1902
   // advisory blocking restore (a known shared-workspace blocker, see
-  // sdks/dotnet/docs/cross-language-testing.md for context).
+  // sdks/dotnet/docs/cross-language-testing.md for context). SignAssembly=false
+  // keeps AGUI.Protobuf's test-only InternalsVisibleTo access enabled.
   const build = spawnSync(
     "dotnet",
     [
@@ -51,6 +52,7 @@ export async function startDotnetServer(opts: {
       "-nologo",
       "-clp:NoSummary",
       "-p:NuGetAudit=false",
+      "-p:SignAssembly=false",
     ],
     { stdio: "inherit" },
   );

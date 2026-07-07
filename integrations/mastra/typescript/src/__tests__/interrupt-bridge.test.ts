@@ -879,29 +879,42 @@ describe("interrupt bridge: tool-call buffering", () => {
     expect(JSON.parse((customEvents[1] as any).value).toolCallId).toBe("tc-y");
   });
 
-  it("errors with descriptive message when chunk has no payload", async () => {
+  it("skips (does not abort on) a chunk with no payload (#1635)", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const agent = makeLocalMastraAgent({
       streamChunks: [
         { type: "text-delta" }, // missing payload
+        { type: "finish", payload: { finishReason: "stop" } },
       ],
     });
 
-    const { error, events } = await collectError(agent, makeInput());
+    const events = await collectEvents(agent, makeInput());
 
-    expect(error.message).toContain("Malformed stream chunk");
-    expect(error.message).toContain("text-delta");
     expect(events[0]?.type).toBe(EventType.RUN_STARTED);
+    expect(events.some((e) => e.type === EventType.RUN_FINISHED)).toBe(true);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Skipping stream chunk without payload"),
+    );
+    warnSpy.mockRestore();
   });
 
-  it("errors with descriptive message when chunk is null", async () => {
+  it("skips (does not abort on) a null chunk (#1635)", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const agent = makeLocalMastraAgent({
-      streamChunks: [null],
+      streamChunks: [
+        null,
+        { type: "finish", payload: { finishReason: "stop" } },
+      ],
     });
 
-    const { error, events } = await collectError(agent, makeInput());
+    const events = await collectEvents(agent, makeInput());
 
-    expect(error.message).toContain("Malformed stream chunk");
     expect(events[0]?.type).toBe(EventType.RUN_STARTED);
+    expect(events.some((e) => e.type === EventType.RUN_FINISHED)).toBe(true);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Skipping stream chunk without payload"),
+    );
+    warnSpy.mockRestore();
   });
 
   it("errors when tool-call-suspended payload is missing toolCallId", async () => {
