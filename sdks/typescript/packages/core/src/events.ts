@@ -73,6 +73,7 @@ export const TextMessageStartEventSchema = BaseEventSchema.extend({
   messageId: z.string(),
   role: TextMessageRoleSchema.default("assistant"),
   name: z.string().optional(),
+  subagentId: z.string().optional(),
 });
 
 export const TextMessageContentEventSchema = BaseEventSchema.extend({
@@ -92,6 +93,7 @@ export const TextMessageChunkEventSchema = BaseEventSchema.extend({
   role: TextMessageRoleSchema.optional(),
   delta: z.string().optional(),
   name: z.string().optional(),
+  subagentId: z.string().optional(),
 });
 
 /**
@@ -123,6 +125,7 @@ export const ToolCallStartEventSchema = BaseEventSchema.extend({
   toolCallId: z.string(),
   toolCallName: z.string(),
   parentMessageId: z.string().optional(),
+  subagentId: z.string().optional(),
 });
 
 export const ToolCallArgsEventSchema = BaseEventSchema.extend({
@@ -142,6 +145,7 @@ export const ToolCallResultEventSchema = BaseEventSchema.extend({
   toolCallId: z.string(),
   content: z.string(),
   role: z.literal("tool").optional(),
+  subagentId: z.string().optional(),
 });
 
 export const ToolCallChunkEventSchema = BaseEventSchema.extend({
@@ -150,6 +154,7 @@ export const ToolCallChunkEventSchema = BaseEventSchema.extend({
   toolCallName: z.string().optional(),
   parentMessageId: z.string().optional(),
   delta: z.string().optional(),
+  subagentId: z.string().optional(),
 });
 
 /**
@@ -170,11 +175,13 @@ export const ThinkingEndEventSchema = BaseEventSchema.extend({
 export const StateSnapshotEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.STATE_SNAPSHOT),
   snapshot: StateSchema,
+  subagentId: z.string().optional(),
 });
 
 export const StateDeltaEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.STATE_DELTA),
   delta: z.array(z.any()), // JSON Patch (RFC 6902)
+  subagentId: z.string().optional(),
 });
 
 export const MessagesSnapshotEventSchema = BaseEventSchema.extend({
@@ -188,6 +195,7 @@ export const ActivitySnapshotEventSchema = BaseEventSchema.extend({
   activityType: z.string(),
   content: z.record(z.any()),
   replace: z.boolean().optional().default(true),
+  subagentId: z.string().optional(),
 });
 
 export const ActivityDeltaEventSchema = BaseEventSchema.extend({
@@ -201,12 +209,14 @@ export const RawEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.RAW),
   event: z.any(),
   source: z.string().optional(),
+  subagentId: z.string().optional(),
 });
 
 export const CustomEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.CUSTOM),
   name: z.string(),
   value: z.any(),
+  subagentId: z.string().optional(),
 });
 
 export const RunStartedEventSchema = BaseEventSchema.extend({
@@ -255,11 +265,13 @@ export const RunErrorEventSchema = BaseEventSchema.extend({
 export const StepStartedEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.STEP_STARTED),
   stepName: z.string(),
+  subagentId: z.string().optional(),
 });
 
 export const StepFinishedEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.STEP_FINISHED),
   stepName: z.string(),
+  subagentId: z.string().optional(),
 });
 
 // Schema for the encrypted signature subtype
@@ -271,12 +283,14 @@ export const ReasoningEncryptedValueSubtypeSchema = z.union([
 export const ReasoningStartEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.REASONING_START),
   messageId: z.string(),
+  subagentId: z.string().optional(),
 });
 
 export const ReasoningMessageStartEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.REASONING_MESSAGE_START),
   messageId: z.string(),
   role: z.literal("reasoning"),
+  subagentId: z.string().optional(),
 });
 
 export const ReasoningMessageContentEventSchema = BaseEventSchema.extend({
