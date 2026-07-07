@@ -381,6 +381,7 @@ class ReasoningMessageChunkEvent(BaseEvent):
     type: Literal[EventType.REASONING_MESSAGE_CHUNK] = EventType.REASONING_MESSAGE_CHUNK  # pyright: ignore[reportIncompatibleVariableOverride]
     message_id: Optional[str] = None
     delta: Optional[str] = None
+    subagent_id: Optional[str] = None
 
 
 class ReasoningEndEvent(BaseEvent):

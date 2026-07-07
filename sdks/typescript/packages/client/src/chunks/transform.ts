@@ -32,6 +32,7 @@ interface ToolCallFields {
 
 interface ReasoningMessageFields {
   messageId: string;
+  subagentId?: string;
 }
 
 export const transformChunks =
@@ -291,12 +292,17 @@ export const transformChunks =
 
               reasoningMessageFields = {
                 messageId: reasoningChunkEvent.messageId,
+                subagentId: reasoningChunkEvent.subagentId,
               };
               mode = "reasoning";
 
               const reasoningMessageStartEvent = {
                 type: EventType.REASONING_MESSAGE_START,
                 messageId: reasoningChunkEvent.messageId,
+                role: "reasoning",
+                ...(reasoningChunkEvent.subagentId !== undefined && {
+                  subagentId: reasoningChunkEvent.subagentId,
+                }),
               } as ReasoningMessageStartEvent;
               reasoningMessageResult.push(reasoningMessageStartEvent);
 

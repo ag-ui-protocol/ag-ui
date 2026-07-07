@@ -313,6 +313,7 @@ export const ReasoningMessageChunkEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.REASONING_MESSAGE_CHUNK),
   messageId: z.string().optional(),
   delta: z.string().optional(),
+  subagentId: z.string().optional(),
 });
 
 export const ReasoningEndEventSchema = BaseEventSchema.extend({

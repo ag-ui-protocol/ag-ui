@@ -5,8 +5,10 @@ import {
   EventType,
   TextMessageChunkEvent,
   ToolCallChunkEvent,
+  ReasoningMessageChunkEvent,
   TextMessageStartEvent,
   ToolCallStartEvent,
+  ReasoningMessageStartEvent,
   RunFinishedEvent,
   SubagentStartedEvent,
 } from "@ag-ui/core";
@@ -61,6 +63,31 @@ describe("transformChunks subagentId propagation", () => {
     const startEvent = events[0] as ToolCallStartEvent;
     expect(startEvent.type).toBe(EventType.TOOL_CALL_START);
     expect(startEvent.subagentId).toBe("sub-2");
+  });
+
+  it("should propagate subagentId from REASONING_MESSAGE_CHUNK to synthesized REASONING_MESSAGE_START", async () => {
+    const chunk: ReasoningMessageChunkEvent = {
+      type: EventType.REASONING_MESSAGE_CHUNK,
+      messageId: "r1",
+      delta: "thinking",
+      subagentId: "sub-3",
+    };
+
+    const closeEvent: RunFinishedEvent = {
+      type: EventType.RUN_FINISHED,
+      threadId: "thread-123",
+      runId: "run-123",
+    };
+
+    const events$ = concat(of(chunk), of(closeEvent));
+    const transformed$ = transformChunks(false)(events$);
+
+    const events = await firstValueFrom(transformed$.pipe(toArray()));
+
+    const startEvent = events[0] as ReasoningMessageStartEvent;
+    expect(startEvent.type).toBe(EventType.REASONING_MESSAGE_START);
+    expect(startEvent.role).toBe("reasoning");
+    expect(startEvent.subagentId).toBe("sub-3");
   });
 
   it("should pass through SUBAGENT_STARTED events unchanged", async () => {

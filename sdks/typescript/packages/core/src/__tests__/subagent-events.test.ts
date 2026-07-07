@@ -1,8 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
   TextMessageStartEventSchema,
+  TextMessageChunkEventSchema,
   ToolCallStartEventSchema,
+  ToolCallChunkEventSchema,
   ToolCallResultEventSchema,
+  ReasoningMessageChunkEventSchema,
   StateDeltaEventSchema,
   StepStartedEventSchema,
   CustomEventSchema,
@@ -35,6 +38,31 @@ describe("event subagentId attribution", () => {
         subagentId: "sub-3",
       }).subagentId,
     ).toBe("sub-3");
+  });
+
+  it("accepts subagentId on all chunk events", () => {
+    expect(
+      TextMessageChunkEventSchema.parse({
+        type: EventType.TEXT_MESSAGE_CHUNK,
+        messageId: "m1",
+        subagentId: "sub-7",
+      }).subagentId,
+    ).toBe("sub-7");
+    expect(
+      ToolCallChunkEventSchema.parse({
+        type: EventType.TOOL_CALL_CHUNK,
+        toolCallId: "tc1",
+        subagentId: "sub-8",
+      }).subagentId,
+    ).toBe("sub-8");
+    expect(
+      ReasoningMessageChunkEventSchema.parse({
+        type: EventType.REASONING_MESSAGE_CHUNK,
+        messageId: "r1",
+        delta: "thinking",
+        subagentId: "sub-9",
+      }).subagentId,
+    ).toBe("sub-9");
   });
 
   it("accepts subagentId on standalone events", () => {
