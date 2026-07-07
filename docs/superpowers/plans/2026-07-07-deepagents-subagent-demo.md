@@ -16,8 +16,26 @@ Design spec: `docs/superpowers/specs/2026-07-07-deepagents-subagent-demo-design.
 - **Backwards-compat is non-negotiable:** a normal (no-subagent) run has no nested namespace, so no `subagentId`/`SUBAGENT_*` may be emitted and behavior must be byte-identical to today. Every existing `ag_ui_langgraph` test must stay green.
 - The existing `subgraphs` demo is untouched.
 - `subagentId` is opaque and unique per subagent invocation; the same nested namespace maps to the same id for that invocation's lifetime.
-- **This plan is spike-gated.** Task 1 confirms how deepagents events actually surface. Tasks 2–4 are written against the documented `checkpoint_ns` model (`node:uuid|inner:uuid`) the integration already uses; if Task 1's findings differ, revise Tasks 2–4 before implementing them (this is an explicit review checkpoint, not a placeholder).
 - Python tests: `cd integrations/langgraph/python && python -m unittest <module>`.
+
+## Spike Outcome (Task 1 — CONFIRMED, drives Tasks 1.5–4)
+
+deepagents **0.6.12** (pulls langchain 1.3.x / langgraph 1.2.8). Assumption **holds**: subagents surface as nested `langgraph_checkpoint_ns`. Concrete signals to build against:
+- **Subagent present ⟺** the event's `ns` has a nested (`|`-separated) segment **AND** `metadata["lc_agent_name"]` is set. Root/supervisor events are single-segment with no `lc_agent_name`.
+- **`subagentId`** = the leading ns segment `ns.split("|")[0]` (e.g. `tools:<uuid>`) — stable across the invocation's events. (`run_id` is per-emitter; do not use it.)
+- **name/`subagent_type`** = `metadata["lc_agent_name"]` (e.g. `"researcher"`).
+- **Boundaries:** entry `on_tool_start name="task"`→`on_chain_start name="<subagent>"`; exit symmetric, ns returns to single-segment.
+- **Backwards-compat caveat:** the existing `subgraphs` demo also uses `|` nesting via *declared* subgraphs (`ns_root in self.subgraphs`). Subagent detection MUST exclude those — key off `lc_agent_name` (which declared subgraphs don't set), so the subgraphs demo emits no `SUBAGENT_*`.
+- **Dependency caveat:** deepagents 0.6.12 fails to import against the project's currently-installed langchain (`ImportError: InputAgentState`); its required versions satisfy the integration's declared ranges but the installed/locked versions must be bumped — see Task 1.5.
+
+## Task 1.5: Bump langchain/langgraph for deepagents + re-verify integration (GATE)
+
+**Files:** `integrations/langgraph/python/pyproject.toml` (+ lockfile)
+
+- [ ] **Step 1:** Bump the installed langchain / langchain-core / langgraph to the deepagents-0.6.12-compatible versions (langchain 1.3.x, langgraph 1.2.8) within the existing declared ranges; update the lockfile.
+- [ ] **Step 2:** Confirm deepagents imports cleanly in the project env: `cd integrations/langgraph/python && python -c "import deepagents; print(deepagents.__version__)"`.
+- [ ] **Step 3 (GATE):** Run the FULL existing integration suite: `python -m unittest discover tests`. It must stay green under the bumped versions. If it breaks, STOP and reassess (the bump changed an API the integration relies on) — do not proceed to emission work.
+- [ ] **Step 4:** Commit (`chore(langgraph): bump langchain/langgraph to deepagents-compatible versions`; Co-Authored-By line).
 
 ## File Structure
 
@@ -124,7 +142,13 @@ In `types.py`, add to the `RunMetadata` TypedDict: `active_subagents: Dict[str, 
 
 - [ ] **Step 4: Implement `derive_subagent_context`**
 
-Add a module-level dataclass `SubagentContext(subagent_id: str, name: str, parent_subagent_id: Optional[str])` and function. Using the `ns` model (`root:uuid|seg:uuid|...`): the subagent is the deepest non-root segment; `name` is that segment's node-name portion; `subagent_id` is a deterministic function of the full nested `ns` (e.g. the nested segment's uuid, or a hash of the `ns` — stable per invocation); `parent_subagent_id` is the next-shallower nested segment's id if one exists, else `None`. Return `None` when `ns` has no nested segment beyond the root/declared-subgraph.
+Signature (per spike findings): `derive_subagent_context(ns: str, lc_agent_name: Optional[str], subgraphs: set) -> Optional[SubagentContext]`, with `SubagentContext(subagent_id: str, name: str, parent_subagent_id: Optional[str])`.
+- Return `None` unless the event is inside a deepagents subagent: require `lc_agent_name` is set AND `ns` contains a nested (`|`) segment. Return `None` when `ns.split("|")[0].split(":")[0] in subgraphs` (a *declared* subgraph, handled by the existing subgraph logic — keeps the `subgraphs` demo unaffected).
+- `subagent_id` = the leading ns segment `ns.split("|")[0]` (stable per invocation, e.g. `tools:<uuid>`).
+- `name` = `lc_agent_name`.
+- `parent_subagent_id`: `None` for step 1 (single-level delegation; deepagents' nesting puts the subagent one level under the supervisor). If the ns shows a deeper nested subagent chain, set it to the next-shallower nested segment's id; otherwise `None`.
+
+Update the Step-1 test to pass `lc_agent_name` (e.g. `derive_subagent_context("tools:uuid|model:uuid", "researcher", set())` → ctx with `name=="researcher"`; `derive_subagent_context("model:uuid", None, set())` → `None`; a declared-subgraph ns with its root in `subgraphs` → `None`).
 
 - [ ] **Step 5: Run it — verify it passes**
 
