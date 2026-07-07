@@ -9,9 +9,8 @@ For live output use the main AGUITranslator.
 
 from __future__ import annotations
 
-from typing import Any
-
 from agents.items import RunItem
+from agents.result import RunResult
 from ag_ui.core import BaseEvent, RunAgentInput
 
 from .engine.agui_to_sdk import AGUIToSDKTranslator
@@ -58,7 +57,7 @@ class AGUINonStreamingTranslator:
             )
         return bundle
 
-    def to_agui(self, result: Any) -> list[BaseEvent]:
+    def to_agui(self, result: RunResult | list[RunItem]) -> list[BaseEvent]:
         """Translate a finished SDK run into a complete AG-UI event sequence.
 
         Accepts a RunResult (its new_items are read) or a plain

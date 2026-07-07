@@ -14,9 +14,11 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 from ag_ui.core import CustomEvent, EventType, RunAgentInput, Tool, UserMessage
 from agents import FunctionTool
+from agents.result import RunResultStreaming
 
 from ag_ui_openai_agents import AGUINonStreamingTranslator, AGUITranslator
 
@@ -99,7 +101,7 @@ def test_streaming_to_agui_streams_then_finalizes():
     assert [e.name for e in events] == ["translated:a", "translated:b", "finalized"]
 
 
-def test_streaming_facade_is_reusable_fresh_engine_per_run():
+def test_streaming_translator_is_reusable_fresh_engine_per_run():
     translator = AGUITranslator(outbound_cls=_StubOutbound)
     before = _StubOutbound.instances
 
@@ -109,6 +111,21 @@ def test_streaming_facade_is_reusable_fresh_engine_per_run():
     asyncio.run(one_run())
     asyncio.run(one_run())
     assert _StubOutbound.instances == before + 2
+
+
+def test_streaming_to_agui_accepts_run_streaming_result():
+    translator = AGUITranslator(outbound_cls=_StubOutbound)
+
+    # spec= makes isinstance(result, RunResultStreaming) True, matching what
+    # to_agui actually checks — a bare duck-typed stand-in would not.
+    result = MagicMock(spec=RunResultStreaming)
+    result.stream_events.return_value = _fake_stream("sdk")
+
+    async def collect():
+        return [e async for e in translator.to_agui(result)]
+
+    events = asyncio.run(collect())
+    assert [e.name for e in events] == ["translated:sdk", "finalized"]
 
 
 # ── AGUINonStreamingTranslator.to_agui ───────────────────────────────────

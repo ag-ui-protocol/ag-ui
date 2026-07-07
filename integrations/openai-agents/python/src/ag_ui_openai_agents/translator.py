@@ -1,7 +1,7 @@
 """Streaming translator — the package's main API.
 
-AGUITranslator pairs with Runner.run_streamed, exposing only
-to_sdk(run_input) and to_agui(stream_events). Stateless and reusable —
+AGUITranslator pairs with Runner.run_streamed, exposing
+to_sdk(run_input) and to_agui(events). Stateless and reusable —
 each to_agui call creates the fresh stateful engine that run needs.
 Lifecycle events (RUN_STARTED / RUN_FINISHED / RUN_ERROR) and session
 persistence are the caller's job, not the translator's.
@@ -11,8 +11,10 @@ Non-streaming runs (Runner.run / run_sync): use AGUINonStreamingTranslator.
 
 from __future__ import annotations
 
-from typing import Any, AsyncIterable, AsyncIterator
+from typing import AsyncIterator
 
+from agents.result import RunResultStreaming
+from agents.stream_events import StreamEvent
 from ag_ui.core import BaseEvent, RunAgentInput
 
 from .engine.agui_to_sdk import AGUIToSDKTranslator
@@ -27,7 +29,7 @@ class AGUITranslator:
         translator = AGUITranslator()
         bundle = translator.to_sdk(run_input)
         result = Runner.run_streamed(agent, input=bundle.messages, ...)
-        async for event in translator.to_agui(result.stream_events()):
+        async for event in translator.to_agui(result):
             ...  # AG-UI BaseEvent, ready to encode
     """
 
@@ -60,20 +62,28 @@ class AGUITranslator:
             )
         return bundle
 
-    async def to_agui(self, stream_events: AsyncIterable[Any]) -> AsyncIterator[BaseEvent]:
+    async def to_agui(
+        self, events: RunResultStreaming | AsyncIterator[StreamEvent]
+    ) -> AsyncIterator[BaseEvent]:
         """Translate an SDK event stream into a live AG-UI event stream.
 
-        Feed result.stream_events() from Runner.run_streamed. A fresh
-        stateful engine handles this run's windows; when the stream ends
-        the engine flush runs automatically — any still-open text /
+        Feed the result from Runner.run_streamed, or result.stream_events().
+        A fresh stateful engine handles this run's windows; when the stream
+        ends the engine flush runs automatically — any still-open text /
         tool-call / reasoning window is closed before the iterator finishes.
 
         Args:
-            stream_events: The SDK's async stream_events() iterator.
+            events: The SDK RunResultStreaming object, or the async
+                iterator returned by its stream_events() method.
 
         Yields:
             AG-UI BaseEvent instances, ready to encode.
         """
+        stream_events = (
+            events.stream_events()
+            if isinstance(events, RunResultStreaming)
+            else events
+        )
         outbound = self._outbound_cls()
         async for sdk_event in stream_events:
             for event in outbound.translate(sdk_event):
