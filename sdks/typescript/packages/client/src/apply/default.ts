@@ -31,6 +31,9 @@ import {
   type StateSnapshotEvent,
   type StepFinishedEvent,
   type StepStartedEvent,
+  type SubagentErrorEvent,
+  type SubagentFinishedEvent,
+  type SubagentStartedEvent,
   SystemMessage,
   type TextMessageContentEvent,
   type TextMessageEndEvent,
@@ -1174,6 +1177,60 @@ export const defaultApplyEvents = (
               currentMutation.messages = messages;
             }
           }
+          return emitUpdates();
+        }
+
+        case EventType.SUBAGENT_STARTED: {
+          const mutation = await runSubscribersWithMutation(
+            subscribers,
+            messages,
+            state,
+            (subscriber, messages, state) =>
+              subscriber.onSubagentStartedEvent?.({
+                event: event as SubagentStartedEvent,
+                messages,
+                state,
+                agent,
+                input,
+              }),
+          );
+          applyMutation(mutation);
+          return emitUpdates();
+        }
+
+        case EventType.SUBAGENT_FINISHED: {
+          const mutation = await runSubscribersWithMutation(
+            subscribers,
+            messages,
+            state,
+            (subscriber, messages, state) =>
+              subscriber.onSubagentFinishedEvent?.({
+                event: event as SubagentFinishedEvent,
+                messages,
+                state,
+                agent,
+                input,
+              }),
+          );
+          applyMutation(mutation);
+          return emitUpdates();
+        }
+
+        case EventType.SUBAGENT_ERROR: {
+          const mutation = await runSubscribersWithMutation(
+            subscribers,
+            messages,
+            state,
+            (subscriber, messages, state) =>
+              subscriber.onSubagentErrorEvent?.({
+                event: event as SubagentErrorEvent,
+                messages,
+                state,
+                agent,
+                input,
+              }),
+          );
+          applyMutation(mutation);
           return emitUpdates();
         }
       }
