@@ -1,7 +1,13 @@
 import unittest
+from unittest.mock import AsyncMock, MagicMock
 
-from ag_ui.core import EventType
-from ag_ui_langgraph.agent import derive_subagent_context, reconcile_subagents
+from ag_ui.core import (
+    EventType,
+    TextMessageStartEvent,
+    TextMessageContentEvent,
+    SubagentStartedEvent,
+)
+from ag_ui_langgraph.agent import LangGraphAgent, derive_subagent_context, reconcile_subagents
 
 
 class TestDeriveSubagentContext(unittest.TestCase):
@@ -70,3 +76,62 @@ class TestReconcileSubagents(unittest.TestCase):
     def test_root_only_emits_nothing(self):
         ar = _run()
         self.assertEqual(reconcile_subagents(ar, "model:root", None, set()), [])
+
+
+def _make_agent():
+    from langgraph.graph.state import CompiledStateGraph
+    graph = MagicMock(spec=CompiledStateGraph)
+    graph.config_specs = []
+    graph.nodes = {}
+    initial_state = MagicMock()
+    initial_state.values = {"messages": [], "copilotkit": {}}
+    initial_state.tasks = []
+    initial_state.next = []
+    initial_state.metadata = {"writes": {}}
+    graph.aget_state = AsyncMock(return_value=initial_state)
+    return LangGraphAgent(name="test", graph=graph)
+
+
+class TestDispatchStamping(unittest.TestCase):
+    def _agent(self, current_subagent_id):
+        agent = _make_agent()
+        agent.active_run = {"current_subagent_id": current_subagent_id, "active_subagents": {}}
+        return agent
+
+    def test_stamps_creation_event_when_in_subagent(self):
+        agent = self._agent("tools:s1")
+        ev = agent._dispatch_event(
+            TextMessageStartEvent(type=EventType.TEXT_MESSAGE_START, message_id="m1")
+        )
+        self.assertEqual(ev.subagent_id, "tools:s1")
+
+    def test_does_not_stamp_when_not_in_subagent(self):
+        agent = self._agent(None)
+        ev = agent._dispatch_event(
+            TextMessageStartEvent(type=EventType.TEXT_MESSAGE_START, message_id="m1")
+        )
+        self.assertIsNone(ev.subagent_id)
+
+    def test_does_not_overwrite_existing_subagent_id(self):
+        agent = self._agent("tools:s1")
+        ev = agent._dispatch_event(
+            TextMessageStartEvent(
+                type=EventType.TEXT_MESSAGE_START, message_id="m1", subagent_id="orig"
+            )
+        )
+        self.assertEqual(ev.subagent_id, "orig")
+
+    def test_does_not_stamp_continuation_event(self):
+        agent = self._agent("tools:s1")
+        ev = agent._dispatch_event(
+            TextMessageContentEvent(type=EventType.TEXT_MESSAGE_CONTENT, message_id="m1", delta="x")
+        )
+        # continuation events have no subagent_id field / must not be stamped
+        self.assertIsNone(getattr(ev, "subagent_id", None))
+
+    def test_does_not_stamp_subagent_lifecycle_event(self):
+        agent = self._agent("tools:s1")
+        ev = agent._dispatch_event(
+            SubagentStartedEvent(type=EventType.SUBAGENT_STARTED, subagent_id="tools:s1", name="r")
+        )
+        self.assertEqual(ev.subagent_id, "tools:s1")  # its own id, unchanged (not re-stamped by chokepoint logic)

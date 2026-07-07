@@ -137,6 +137,21 @@ def derive_subagent_context(ns: str, lc_agent_name: Optional[str], subgraphs) ->
     return SubagentContext(subagent_id=leading, name=lc_agent_name, parent_subagent_id=None)
 
 
+# Creation/standalone event types that carry a `subagent_id` field and should
+# be stamped with the currently active subagent id at the _dispatch_event
+# chokepoint. Deliberately excludes continuation events (e.g.
+# TEXT_MESSAGE_CONTENT, TOOL_CALL_ARGS), run-lifecycle events, MESSAGES_SNAPSHOT,
+# and the SUBAGENT_* lifecycle events themselves (which already carry their own
+# subagent_id explicitly).
+_SUBAGENT_ATTRIBUTABLE_EVENT_TYPES = frozenset({
+    EventType.TEXT_MESSAGE_START, EventType.TEXT_MESSAGE_CHUNK,
+    EventType.TOOL_CALL_START, EventType.TOOL_CALL_CHUNK, EventType.TOOL_CALL_RESULT,
+    EventType.REASONING_START, EventType.REASONING_MESSAGE_START,
+    EventType.ACTIVITY_SNAPSHOT, EventType.STATE_SNAPSHOT, EventType.STATE_DELTA,
+    EventType.STEP_STARTED, EventType.STEP_FINISHED, EventType.CUSTOM, EventType.RAW,
+})
+
+
 def reconcile_subagents(active_run, ns, lc_agent_name, subgraphs) -> list:
     """Return SUBAGENT_STARTED/FINISHED events to emit for this event, updating
     active_run["active_subagents"] (id->name) and ["current_subagent_id"].
@@ -240,6 +255,15 @@ class LangGraphAgent:
             event.event = make_json_safe(event.event)
         elif event.raw_event:
             event.raw_event = make_json_safe(event.raw_event)
+
+        active_run = getattr(self, "active_run", None)
+        current_subagent_id = active_run.get("current_subagent_id") if active_run else None
+        if (
+            current_subagent_id
+            and event.type in _SUBAGENT_ATTRIBUTABLE_EVENT_TYPES
+            and getattr(event, "subagent_id", None) is None
+        ):
+            event.subagent_id = current_subagent_id
 
         return event
 
