@@ -93,6 +93,12 @@ RunMetadata = TypedDict("RunMetadata", {
     # The subagent id (see above) whose events are currently being processed,
     # or None when the current event originates at the root/supervisor level.
     "current_subagent_id": NotRequired[Optional[str]],
+    # Subagent-attributed assistant messages streamed during this run, keyed by
+    # message id: {id, role, content, subagent_id}. These live only in the
+    # subagent (subgraph) checkpoint, not main-graph state, so they are merged
+    # into MESSAGES_SNAPSHOT (which is built from main-graph state) to keep the
+    # streamed subagent messages from being wiped when the client applies it.
+    "subagent_messages": NotRequired[Dict[str, Any]],
 })
 
 MessagesInProgressRecord = Dict[str, Optional[MessageInProgress]]

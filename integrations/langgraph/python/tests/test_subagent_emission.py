@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 from unittest.mock import AsyncMock, MagicMock
 
@@ -172,3 +173,82 @@ class TestDispatchStamping(unittest.TestCase):
             SubagentStartedEvent(type=EventType.SUBAGENT_STARTED, subagent_id="tools:s1", name="r")
         )
         self.assertEqual(ev.subagent_id, "tools:s1")  # its own id, unchanged (not re-stamped by chokepoint logic)
+
+
+async def _collect(agen):
+    return [ev async for ev in agen]
+
+
+class TestSnapshotIncludesSubagentMessages(unittest.TestCase):
+    """The MESSAGES_SNAPSHOT is built from MAIN-graph state, which does not
+    contain subagent-internal messages. These tests pin the fix that merges the
+    streamed subagent messages (with their subagent_id) into the snapshot so the
+    client does not wipe them when it applies the snapshot."""
+
+    def _agent_with_active_run(self, current_subagent_id=None):
+        agent = _make_agent()
+        agent.active_run = {
+            "id": "run-1",
+            "current_subagent_id": current_subagent_id,
+            "active_subagents": {},
+            "subagent_messages": {},
+        }
+        return agent
+
+    def _snapshot(self, agent):
+        events = asyncio.run(_collect(agent.get_state_and_messages_snapshots({})))
+        return next(e for e in events if e.type == EventType.MESSAGES_SNAPSHOT)
+
+    def test_subagent_message_merged_into_snapshot_with_id(self):
+        agent = self._agent_with_active_run(current_subagent_id="tools:s1")
+        # A subagent assistant message streams (START gets stamped with the
+        # active subagent id, CONTENT accumulates the text).
+        agent._dispatch_event(
+            TextMessageStartEvent(
+                type=EventType.TEXT_MESSAGE_START, message_id="sub-msg-1", role="assistant"
+            )
+        )
+        agent._dispatch_event(
+            TextMessageContentEvent(
+                type=EventType.TEXT_MESSAGE_CONTENT, message_id="sub-msg-1", delta="Hello "
+            )
+        )
+        agent._dispatch_event(
+            TextMessageContentEvent(
+                type=EventType.TEXT_MESSAGE_CONTENT, message_id="sub-msg-1", delta="world"
+            )
+        )
+
+        snap = self._snapshot(agent)
+        subagent_msgs = [
+            m for m in snap.messages if getattr(m, "subagent_id", None) == "tools:s1"
+        ]
+        self.assertEqual(len(subagent_msgs), 1)
+        self.assertEqual(subagent_msgs[0].id, "sub-msg-1")
+        self.assertEqual(subagent_msgs[0].role, "assistant")
+        self.assertEqual(subagent_msgs[0].content, "Hello world")
+
+    def test_no_subagent_messages_leaves_snapshot_unchanged(self):
+        # Backwards-compat: a run with no subagent messages (normal run or the
+        # declared-subgraphs demo) yields the main-graph snapshot untouched.
+        agent = self._agent_with_active_run(current_subagent_id=None)
+        agent._dispatch_event(
+            TextMessageStartEvent(
+                type=EventType.TEXT_MESSAGE_START, message_id="main-msg-1", role="assistant"
+            )
+        )
+        self.assertEqual(agent.active_run["subagent_messages"], {})
+        snap = self._snapshot(agent)
+        # main-graph state is empty in the mock -> snapshot stays empty
+        self.assertEqual(snap.messages, [])
+
+    def test_empty_subagent_message_not_appended(self):
+        # A subagent turn that streamed no text should not add an empty bubble.
+        agent = self._agent_with_active_run(current_subagent_id="tools:s1")
+        agent._dispatch_event(
+            TextMessageStartEvent(
+                type=EventType.TEXT_MESSAGE_START, message_id="sub-empty", role="assistant"
+            )
+        )
+        snap = self._snapshot(agent)
+        self.assertEqual(snap.messages, [])

@@ -48,6 +48,7 @@ from .utils import (
 
 from ag_ui.core import (
     EventType,
+    AssistantMessage,
     CustomEvent,
     Interrupt as AGUIInterrupt,
     MessagesSnapshotEvent,
@@ -260,7 +261,39 @@ class LangGraphAgent:
         ):
             event.subagent_id = current_subagent_id
 
+        self._accumulate_subagent_message(event)
+
         return event
+
+    def _accumulate_subagent_message(self, event: ProcessedEvents) -> None:
+        """Accumulate the text of subagent-attributed assistant messages as
+        they stream, keyed by message id, on ``active_run["subagent_messages"]``.
+
+        These messages live only in the subagent's (subgraph) checkpoint, not
+        in the main/supervisor graph state, so the MESSAGES_SNAPSHOT built from
+        main-graph state omits them — and applying that snapshot client-side
+        wipes the streamed subagent messages. Capturing them here lets
+        ``get_state_and_messages_snapshots`` merge them back in with their
+        ``subagent_id`` preserved. This is a no-op for runs without subagents
+        (the tracking dict stays empty), so normal runs and declared-subgraph
+        runs keep an identical snapshot.
+        """
+        active_run = getattr(self, "active_run", None)
+        if active_run is None:
+            return
+        sub_msgs = active_run.get("subagent_messages")
+        if sub_msgs is None:
+            return
+        etype = event.type
+        if etype == EventType.TEXT_MESSAGE_START and getattr(event, "subagent_id", None):
+            sub_msgs[event.message_id] = {
+                "id": event.message_id,
+                "role": getattr(event, "role", "assistant") or "assistant",
+                "content": "",
+                "subagent_id": event.subagent_id,
+            }
+        elif etype == EventType.TEXT_MESSAGE_CONTENT and event.message_id in sub_msgs:
+            sub_msgs[event.message_id]["content"] += event.delta or ""
 
     async def run(self, input: RunAgentInput) -> AsyncGenerator[ProcessedEvents, None]:
         # Normalize camelCase keys from the frontend to snake_case before forwarding.
@@ -289,6 +322,7 @@ class LangGraphAgent:
             "state_reliable": True,
             "active_subagents": {},
             "current_subagent_id": None,
+            "subagent_messages": {},
         }
         self.active_run = INITIAL_ACTIVE_RUN
         try:
@@ -2123,12 +2157,46 @@ class LangGraphAgent:
         )
 
         snapshot_messages = self._filter_orphan_tool_messages(state_values.get("messages", []))
+        agui_messages = self._merge_subagent_messages(
+            langchain_messages_to_agui(snapshot_messages)
+        )
         yield self._dispatch_event(
             MessagesSnapshotEvent(
                 type=EventType.MESSAGES_SNAPSHOT,
-                messages=langchain_messages_to_agui(snapshot_messages),
+                messages=agui_messages,
             )
         )
+
+    def _merge_subagent_messages(self, agui_messages: list) -> list:
+        """Append subagent-attributed assistant messages (streamed during the
+        run but absent from main-graph state) to a snapshot's message list,
+        preserving each message's ``subagent_id`` so the client can keep the
+        subagent attribution the frontend renders.
+
+        No-op when no subagent messages were captured, so runs without
+        subagents (and the declared-``subgraphs`` demo, which never sets a
+        ``subagent_id``) produce an identical snapshot. Messages already
+        present in the snapshot (matched by id) are not duplicated, and empty
+        assistant turns (e.g. a subagent turn with no streamed text) are
+        skipped so the snapshot gains no empty bubbles.
+        """
+        active_run = getattr(self, "active_run", None)
+        sub_msgs = active_run.get("subagent_messages") if active_run else None
+        if not sub_msgs:
+            return agui_messages
+        existing_ids = {getattr(m, "id", None) for m in agui_messages}
+        for entry in sub_msgs.values():
+            if entry["id"] in existing_ids or not entry["content"]:
+                continue
+            agui_messages.append(
+                AssistantMessage(
+                    id=entry["id"],
+                    role="assistant",
+                    content=entry["content"],
+                    subagent_id=entry["subagent_id"],
+                )
+            )
+        return agui_messages
 
 
 def dump_json_safe(value):
