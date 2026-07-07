@@ -44,12 +44,15 @@ class TestSubagentEventAttribution(unittest.TestCase):
         self.assertEqual(e.model_dump(by_alias=True)["subagentId"], "sub-1")
         d = StateDeltaEvent(type=EventType.STATE_DELTA, delta=[], subagent_id="sub-2")
         self.assertEqual(d.subagent_id, "sub-2")
+        self.assertEqual(d.model_dump(by_alias=True)["subagentId"], "sub-2")
 
     def test_all_chunk_events_accept_subagent_id(self):
         text = TextMessageChunkEvent(type=EventType.TEXT_MESSAGE_CHUNK, message_id="m1", subagent_id="sub-7")
         self.assertEqual(text.subagent_id, "sub-7")
+        self.assertEqual(text.model_dump(by_alias=True)["subagentId"], "sub-7")
         tool = ToolCallChunkEvent(type=EventType.TOOL_CALL_CHUNK, tool_call_id="tc1", subagent_id="sub-8")
         self.assertEqual(tool.subagent_id, "sub-8")
+        self.assertEqual(tool.model_dump(by_alias=True)["subagentId"], "sub-8")
         reasoning = ReasoningMessageChunkEvent(
             type=EventType.REASONING_MESSAGE_CHUNK, message_id="r1", delta="thinking", subagent_id="sub-9"
         )
