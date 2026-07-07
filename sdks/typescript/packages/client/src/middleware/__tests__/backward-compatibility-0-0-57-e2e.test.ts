@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { AbstractAgent } from "@/agent";
 import { BaseEvent, EventType, RunAgentInput } from "@ag-ui/core";
 import { Observable } from "rxjs";
@@ -8,7 +8,10 @@ vi.mock("uuid", () => ({
   v4: vi.fn().mockReturnValue("mock-uuid"),
 }));
 
-// structuredClone_ shim used by the apply/agent layer in the test environment.
+// Replace structuredClone_ with a JSON round-trip, matching the convention in
+// middleware-chained-integration.test.ts. The scripted messages here are plain
+// JSON objects, so JSON and native structured-clone semantics are equivalent for
+// this test; this only keeps the harness consistent with the sibling integration test.
 vi.mock("@/utils", async () => {
   const actual = await vi.importActual<typeof import("@/utils")>("@/utils");
   return {
@@ -27,7 +30,12 @@ function subagentStream(input: RunAgentInput): BaseEvent[] {
   return [
     { type: EventType.RUN_STARTED, threadId: input.threadId, runId: input.runId } as any,
     { type: EventType.SUBAGENT_STARTED, subagentId: "s1", name: "Researcher" } as any,
-    { type: EventType.TEXT_MESSAGE_START, messageId: "m1", role: "assistant", subagentId: "s1" } as any,
+    {
+      type: EventType.TEXT_MESSAGE_START,
+      messageId: "m1",
+      role: "assistant",
+      subagentId: "s1",
+    } as any,
     { type: EventType.TEXT_MESSAGE_CONTENT, messageId: "m1", delta: "hi" } as any,
     { type: EventType.TEXT_MESSAGE_END, messageId: "m1" } as any,
     { type: EventType.SUBAGENT_FINISHED, subagentId: "s1" } as any,
@@ -59,6 +67,15 @@ class NewSubagentAgent extends BaseSubagentAgent {
 }
 
 describe("BackwardCompatibility_0_0_57 end-to-end (via runAgent)", () => {
+  // Silence the shim's drop-warning during the downgrade path.
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    warnSpy.mockRestore();
+  });
+
   it("strips subagents through the full pipeline when the agent is <= 0.0.57", async () => {
     const agent = new OldSubagentAgent({ threadId: "t1" });
     const startedHook = vi.fn();
@@ -74,10 +91,14 @@ describe("BackwardCompatibility_0_0_57 end-to-end (via runAgent)", () => {
 
     const { newMessages } = await agent.runAgent();
 
-    // The lifecycle events were dropped before apply/subscribers.
+    // The lifecycle events were dropped before apply/subscribers...
     expect(startedHook).not.toHaveBeenCalled();
     expect(seenTypes).not.toContain(EventType.SUBAGENT_STARTED);
     expect(seenTypes).not.toContain(EventType.SUBAGENT_FINISHED);
+    // ...but the rest of the stream still flowed (guards against a vacuous pass
+    // where onEvent simply never fired).
+    expect(seenTypes).toContain(EventType.RUN_STARTED);
+    expect(seenTypes).toContain(EventType.TEXT_MESSAGE_START);
 
     // The materialized message carries no attribution.
     const m1 = newMessages.find((m) => m.id === "m1");
