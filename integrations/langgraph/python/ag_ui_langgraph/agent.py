@@ -75,6 +75,9 @@ from ag_ui.core import (
     ReasoningMessageEndEvent,
     ReasoningEndEvent,
     ReasoningEncryptedValueEvent,
+    SubagentStartedEvent,
+    SubagentFinishedEvent,
+    SubagentErrorEvent,
 )
 from .interrupts import lg_interrupts_to_agui, DEFAULT_RESUME_SENTINEL_CANCELLED, DEFAULT_RESUME_SENTINEL_MAP
 from ag_ui.encoder import EventEncoder
@@ -132,6 +135,42 @@ def derive_subagent_context(ns: str, lc_agent_name: Optional[str], subgraphs) ->
     if root_name in subgraphs:
         return None  # declared subgraph, handled elsewhere
     return SubagentContext(subagent_id=leading, name=lc_agent_name, parent_subagent_id=None)
+
+
+def reconcile_subagents(active_run, ns, lc_agent_name, subgraphs) -> list:
+    """Return SUBAGENT_STARTED/FINISHED events to emit for this event, updating
+    active_run["active_subagents"] (id->name) and ["current_subagent_id"].
+    Single-level model: deepagents runs each subagent's events contiguously."""
+    ctx = derive_subagent_context(ns, lc_agent_name, subgraphs)
+    new_id = ctx.subagent_id if ctx else None
+    current = active_run.get("current_subagent_id")
+    events = []
+    if new_id == current:
+        return events
+    # leaving the current subagent
+    if current is not None:
+        events.append(SubagentFinishedEvent(type=EventType.SUBAGENT_FINISHED, subagent_id=current))
+        active_run["active_subagents"].pop(current, None)
+    # entering a new subagent
+    if new_id is not None:
+        active_run["active_subagents"][new_id] = ctx.name
+        events.append(SubagentStartedEvent(
+            type=EventType.SUBAGENT_STARTED,
+            subagent_id=new_id,
+            name=ctx.name,
+            parent_subagent_id=ctx.parent_subagent_id,
+        ))
+    active_run["current_subagent_id"] = new_id
+    return events
+
+
+def drain_subagents(active_run) -> list:
+    """Emit SUBAGENT_FINISHED for any still-open subagents (before RUN_FINISHED)."""
+    events = [SubagentFinishedEvent(type=EventType.SUBAGENT_FINISHED, subagent_id=sid)
+              for sid in list(active_run.get("active_subagents", {}).keys())]
+    active_run["active_subagents"].clear()
+    active_run["current_subagent_id"] = None
+    return events
 
 
 class PreparedStream(TypedDict):
@@ -343,6 +382,10 @@ class LangGraphAgent:
                     async for ev in self.get_state_and_messages_snapshots(config):
                         yield ev
 
+                lc_agent_name = (event.get("metadata") or {}).get("lc_agent_name")
+                for sub_ev in reconcile_subagents(self.active_run, ns, lc_agent_name, self.subgraphs):
+                    yield self._dispatch_event(sub_ev)
+
                 if event["event"] == "error":
                     # Upstream "error" events do not always carry a
                     # data.message field; a hard subscript here crashed
@@ -356,6 +399,14 @@ class LangGraphAgent:
                             "Upstream error event missing data.message: %r", event
                         )
                         error_message = "Unknown error"
+                    if self.active_run.get("current_subagent_id"):
+                        yield self._dispatch_event(
+                            SubagentErrorEvent(
+                                type=EventType.SUBAGENT_ERROR,
+                                subagent_id=self.active_run["current_subagent_id"],
+                                message=error_message,
+                            )
+                        )
                     yield self._dispatch_event(
                         RunErrorEvent(type=EventType.RUN_ERROR, message=error_message, raw_event=event)
                     )
@@ -503,6 +554,9 @@ class LangGraphAgent:
 
             for ev in self.handle_node_change(None):
                 yield ev
+
+            for sub_ev in drain_subagents(self.active_run):
+                yield self._dispatch_event(sub_ev)
 
             if interrupts:
                 for ev in self._emit_interrupt_finish(
