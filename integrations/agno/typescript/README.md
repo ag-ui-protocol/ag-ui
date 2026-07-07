@@ -31,7 +31,7 @@ const result = await agent.runAgent({
 
 ## Dojo
 
-To run the [dojo](https://github.com/ag-ui-protocol/ag-ui/tree/main/apps/dojo) against a secured AgentOS (e.g. `OS_SECURITY_KEY`, JWT middleware, or platform access tokens), set `AGNO_AUTH_TOKEN` — every agno request will then carry an `Authorization: Bearer` header:
+To run the [dojo](https://github.com/ag-ui-protocol/ag-ui/tree/main/apps/dojo) against a secured AgentOS (e.g. `OS_SECURITY_KEY`, JWT middleware, or platform access tokens), set `AGNO_AUTH_TOKEN` — every agno request will then carry an `Authorization: Bearer <token>` header:
 
 ```bash
 AGNO_URL=http://localhost:9001 AGNO_AUTH_TOKEN=<your-key-or-token> pnpm dev
