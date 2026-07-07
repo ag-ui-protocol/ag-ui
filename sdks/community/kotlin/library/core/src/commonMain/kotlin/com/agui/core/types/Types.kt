@@ -351,6 +351,95 @@ data class BinaryInputContent(
     }
 }
 
+// ============== Spec-Compliant Media Content Types ==============
+
+/**
+ * Base class for the source of spec-compliant media content (image/audio/video/document).
+ * Discriminated by the "type" field: "data" or "url".
+ */
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
+@JsonClassDiscriminator("type")
+sealed class InputContentSource
+
+/**
+ * Inline base64-encoded data source.
+ *
+ * @param value Base64-encoded content
+ * @param mimeType MIME type of the content (e.g., "image/png")
+ */
+@Serializable
+@SerialName("data")
+data class InputContentDataSource(
+    val value: String,
+    val mimeType: String
+) : InputContentSource()
+
+/**
+ * URL reference source.
+ *
+ * @param value URL pointing to the content
+ * @param mimeType Optional MIME type hint
+ */
+@Serializable
+@SerialName("url")
+data class InputContentUrlSource(
+    val value: String,
+    val mimeType: String? = null
+) : InputContentSource()
+
+/**
+ * An image in a multimodal user message.
+ *
+ * @param source The data or URL source for the image
+ * @param metadata Optional opaque metadata
+ */
+@Serializable
+@SerialName("image")
+data class ImageInputContent(
+    val source: InputContentSource,
+    val metadata: JsonElement? = null
+) : InputContent()
+
+/**
+ * Audio content in a multimodal user message.
+ *
+ * @param source The data or URL source for the audio
+ * @param metadata Optional opaque metadata
+ */
+@Serializable
+@SerialName("audio")
+data class AudioInputContent(
+    val source: InputContentSource,
+    val metadata: JsonElement? = null
+) : InputContent()
+
+/**
+ * Video content in a multimodal user message.
+ *
+ * @param source The data or URL source for the video
+ * @param metadata Optional opaque metadata
+ */
+@Serializable
+@SerialName("video")
+data class VideoInputContent(
+    val source: InputContentSource,
+    val metadata: JsonElement? = null
+) : InputContent()
+
+/**
+ * A document in a multimodal user message.
+ *
+ * @param source The data or URL source for the document
+ * @param metadata Optional opaque metadata
+ */
+@Serializable
+@SerialName("document")
+data class DocumentInputContent(
+    val source: InputContentSource,
+    val metadata: JsonElement? = null
+) : InputContent()
+
 
 /**
  * Represents a State - just a simple type alias at least for now
