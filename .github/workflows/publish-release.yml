@@ -1246,7 +1246,6 @@ jobs:
           dotnet build src/AGUI.Protobuf/AGUI.Protobuf.csproj -c Release --no-incremental
           dotnet build src/AGUI.Client/AGUI.Client.csproj -c Release --no-incremental
           dotnet build src/AGUI.Server/AGUI.Server.csproj -c Release --no-incremental
-          dotnet build src/AGUI/AGUI.csproj -c Release --no-incremental
 
       - name: Pack NuGet packages
         shell: bash
@@ -1306,34 +1305,48 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          VERIFY_FAILED=""
-          while read -r pkg; do
-            NAME=$(echo "$pkg" | jq -r '.name')
-            VERSION=$(echo "$pkg" | jq -r '.version')
-            LOWER_NAME=$(printf '%s' "$NAME" | tr '[:upper:]' '[:lower:]')
-            LOWER_VERSION=$(printf '%s' "$VERSION" | tr '[:upper:]' '[:lower:]')
-            URL="https://api.nuget.org/v3-flatcontainer/${LOWER_NAME}/${LOWER_VERSION}/${LOWER_NAME}.${LOWER_VERSION}.nupkg"
-            OK=0
-            for ATTEMPT in 1 2 3 4 5 6; do
-              if curl -fsSL -o /dev/null "$URL"; then
-                OK=1
-                break
+
+          MAX_WAIT_SECONDS=900
+          SLEEP_SECONDS=15
+          START_SECONDS=$(date +%s)
+          MISSING_PACKAGES=$(mktemp)
+          jq -c '.[]' dotnet-packages.json > "$MISSING_PACKAGES"
+
+          while true; do
+            NEXT_MISSING=$(mktemp)
+
+            while read -r pkg; do
+              NAME=$(echo "$pkg" | jq -r '.name')
+              VERSION=$(echo "$pkg" | jq -r '.version')
+              LOWER_NAME=$(printf '%s' "$NAME" | tr '[:upper:]' '[:lower:]')
+              LOWER_VERSION=$(printf '%s' "$VERSION" | tr '[:upper:]' '[:lower:]')
+              URL="https://api.nuget.org/v3-flatcontainer/${LOWER_NAME}/${LOWER_VERSION}/${LOWER_NAME}.${LOWER_VERSION}.nupkg"
+
+              if curl -fsSL -o /dev/null "$URL" 2>/dev/null; then
+                echo "::notice::PUBLISHED: ${NAME}@${VERSION}"
+              else
+                echo "$pkg" >> "$NEXT_MISSING"
               fi
-              if [ "$ATTEMPT" -lt 6 ]; then
-                sleep 10
-              fi
-            done
-            if [ "$OK" -eq 1 ]; then
-              echo "::notice::PUBLISHED: ${NAME}@${VERSION}"
-            else
-              echo "::error::${NAME}@${VERSION} not visible on NuGet after 6 attempts"
-              VERIFY_FAILED="${VERIFY_FAILED} ${NAME}"
+            done < "$MISSING_PACKAGES"
+
+            if [ ! -s "$NEXT_MISSING" ]; then
+              rm -f "$MISSING_PACKAGES" "$NEXT_MISSING"
+              break
             fi
-          done < <(jq -c '.[]' dotnet-packages.json)
-          if [ -n "$VERIFY_FAILED" ]; then
-            echo "::error::NuGet verification failed for:${VERIFY_FAILED}"
-            exit 1
-          fi
+
+            NOW_SECONDS=$(date +%s)
+            ELAPSED_SECONDS=$((NOW_SECONDS - START_SECONDS))
+            if [ "$ELAPSED_SECONDS" -ge "$MAX_WAIT_SECONDS" ]; then
+              echo "::error::NuGet verification timed out after ${ELAPSED_SECONDS}s waiting for:"
+              jq -r '. | "- \(.name)@\(.version)"' "$NEXT_MISSING"
+              exit 1
+            fi
+
+            REMAINING_COUNT=$(wc -l < "$NEXT_MISSING" | tr -d ' ')
+            echo "::notice::Waiting for ${REMAINING_COUNT} NuGet package(s) to become visible after ${ELAPSED_SECONDS}s"
+            mv "$NEXT_MISSING" "$MISSING_PACKAGES"
+            sleep "$SLEEP_SECONDS"
+          done
 
       - name: Configure git
         if: needs.build.outputs.mode != 'prerelease'

@@ -21,8 +21,7 @@
         { "name": "AGUI.Formatting", "path": "sdks/dotnet/src/AGUI.Formatting", "ecosystem": "dotnet" },
         { "name": "AGUI.Protobuf", "path": "sdks/dotnet/src/AGUI.Protobuf", "ecosystem": "dotnet" },
         { "name": "AGUI.Client", "path": "sdks/dotnet/src/AGUI.Client", "ecosystem": "dotnet" },
-        { "name": "AGUI.Server", "path": "sdks/dotnet/src/AGUI.Server", "ecosystem": "dotnet" },
-        { "name": "AGUI", "path": "sdks/dotnet/src/AGUI", "ecosystem": "dotnet" }
+        { "name": "AGUI.Server", "path": "sdks/dotnet/src/AGUI.Server", "ecosystem": "dotnet" }
       ]
     },
     "create-ag-ui-app": {

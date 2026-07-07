@@ -651,24 +651,24 @@ test("build-python failure WITHOUT intent → NO post (routine PR flake)", () =>
 });
 
 // ---- NuGet lane: stable success/failure -------------------------------------
-test("NuGet success → count + names + link to umbrella package", () => {
+test("NuGet success → count + names + link to first package", () => {
   const r = buildReleaseNotification(
     base({
       mode: "stable",
       nugetResult: "success",
       nugetBuildResult: "success",
-      nugetPackages: nuget("AGUI.Client", "AGUI"),
+      nugetPackages: nuget("AGUI.Client", "AGUI.Server"),
     }),
   );
   assert.equal(r.shouldPost, true);
   assert.equal(
     r.message,
-    "📦 *ag-ui release* · 2 NuGet packages published (AGUI.Client, AGUI) · " +
-      `<${NUGET_BASE_URL}/AGUI/|NuGet>`,
+    "📦 *ag-ui release* · 2 NuGet packages published (AGUI.Client, AGUI.Server) · " +
+      `<${NUGET_BASE_URL}/AGUI.Client/|NuGet>`,
   );
 });
 
-test("NuGet success falls back to first package when umbrella package absent", () => {
+test("NuGet success links to first package for a single-package publish", () => {
   const r = buildReleaseNotification(
     base({
       mode: "stable",
