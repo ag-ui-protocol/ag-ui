@@ -57,3 +57,12 @@
 .subagent-tag-name { font-weight: 700; }
 .subagent-tag-id { opacity: 0.7; }
 .subagent-tag-name + .subagent-tag-id { padding-left: 0.375rem; margin-left: 0.375rem; border-left: 1px solid currentColor; }
+
+/* Collapsible per-subagent group (option b), reasoning-style */
+.subagent-group { border: 1px solid #dbeafe; border-radius: 0.625rem; margin: 0.5rem 0; overflow: hidden; background: #f8fafc; }
+.subagent-group-header { display: flex; align-items: center; gap: 0.5rem; width: 100%; padding: 0.5rem 0.75rem; background: #eff6ff; border: none; cursor: pointer; text-align: left; font: inherit; }
+.subagent-group-chevron { color: #1d4ed8; display: inline-block; transition: transform 0.15s ease; }
+.subagent-group-chevron.open { transform: rotate(90deg); }
+.subagent-group-meta { margin-left: auto; font-size: 0.6875rem; color: #64748b; white-space: nowrap; }
+.subagent-group-body { padding: 0.5rem 0.75rem; display: flex; flex-direction: column; gap: 0.5rem; }
+@media (prefers-color-scheme: dark) { .subagent-group { border-color: #1e3a8a; background: #0f172a; } .subagent-group-header { background: #1e293b; } .subagent-group-meta { color: #94a3b8; } }

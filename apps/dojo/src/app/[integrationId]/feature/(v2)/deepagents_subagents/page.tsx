@@ -3,11 +3,14 @@ import React from "react";
 import "@copilotkit/react-core/v2/styles.css";
 import "./style.css";
 import {
+  useAgent,
+  UseAgentUpdate,
   useConfigureSuggestions,
   useSubagent,
   CopilotChat,
   CopilotChatConfigurationProvider,
   CopilotChatAssistantMessage,
+  CopilotChatReasoningMessage,
   CopilotKitProvider,
 } from "@copilotkit/react-core/v2";
 
@@ -26,50 +29,107 @@ function getSubagentId(message: unknown): string | undefined {
   return (message as { subagentId?: string } | null | undefined)?.subagentId;
 }
 
-// Small inline pill identifying the subagent that produced a message. The tag
-// sits at the top of the assistant bubble, so it labels both the message's text
-// content and any tool-call cards rendered inside it.
-//
-// The declared subagent name (and description) come from the SUBAGENT_STARTED
-// lifecycle event, tracked in CopilotKit core's subagent registry and read here
-// via the `useSubagent` hook — resolved by the opaque subagentId, which stays
-// the stable key. Falls back to just the id until the registry has the name.
-function SubagentTag({ subagentId }: { subagentId: string }) {
-  const subagent = useSubagent({ subagentId });
-  return (
-    <span
-      className="subagent-tag"
-      data-testid="subagent-tag"
-      title={subagent?.description ?? `Produced by subagent ${subagentId}`}
-    >
-      <span className="subagent-tag-glyph">⟐</span>
-      {subagent?.name && (
-        <span className="subagent-tag-name">{subagent.name}</span>
-      )}
-      <span className="subagent-tag-id">{subagentId}</span>
-    </span>
-  );
-}
-
-// Assistant-message slot override. When the integration attributed this message
-// to a subagent, prepend the subagent tag; otherwise render the default message
-// untouched. Delegates all rendering (text, tool calls, toolbar) to the built-in
-// component so behavior is identical apart from the tag.
 type AssistantMessageProps = React.ComponentProps<
   typeof CopilotChatAssistantMessage
 >;
+type ChatMessage = NonNullable<AssistantMessageProps["messages"]>[number];
 
-function AssistantMessageWithSubagentTag(props: AssistantMessageProps) {
+// Collapsible group for ONE subagent (option b): every message across the
+// conversation that shares this subagentId renders inside a single expandable
+// block, mirroring the reasoning UI — open while the subagent is running,
+// auto-collapsing when it finishes (a manual toggle sticks). Name/description/
+// status all come from `useSubagent`; the members render via the built-in
+// assistant-message component so their text + tool-call cards appear inside.
+function SubagentGroup({
+  subagentId,
+  baseProps,
+}: {
+  subagentId: string;
+  baseProps: AssistantMessageProps;
+}) {
+  const subagent = useSubagent({ subagentId });
+  // Subscribe to the LIVE message list. The slot is rendered inside CopilotKit's
+  // MemoizedAssistantMessage, whose comparator only re-renders when the *anchor*
+  // message's own content/toolCalls change — NOT when later subagent messages
+  // are appended. Deriving members from the frozen `baseProps.messages` would
+  // strand the group at its first-render state (one tool call). This useAgent
+  // subscription re-renders the group on every message change (bypassing the
+  // parent memo, since a component's own store subscription always re-renders
+  // it), so all of the subagent's tool calls appear as they stream in.
+  const { agent } = useAgent({
+    agentId: AGENT_ID,
+    updates: [UseAgentUpdate.OnMessagesChanged],
+  });
+  const members = React.useMemo(
+    () =>
+      (agent.messages as ChatMessage[]).filter(
+        (m) => m.role === "assistant" && getSubagentId(m) === subagentId,
+      ),
+    [agent.messages, subagentId],
+  );
+  const running = !subagent || subagent.status === "running";
+  const [manualOpen, setManualOpen] = React.useState<boolean | null>(null);
+  const isOpen = manualOpen ?? running; // open while running, collapse when done
+  const toolCount = members.reduce(
+    (n, m) => n + ((m as { toolCalls?: unknown[] }).toolCalls?.length ?? 0),
+    0,
+  );
+  const name = subagent?.name ?? subagentId;
+  const label = running ? `Delegating to ${name}…` : `${name}`;
+
+  // Rendered with the exact reasoning chrome: CopilotChatReasoningMessage.Header
+  // (button, muted text, ChevronRight, streaming pulse) + .Toggle (grid-rows
+  // collapse animation). Only the content inside differs (subagent messages).
+  return (
+    <div className="cpk:my-1" data-testid="subagent-group">
+      <CopilotChatReasoningMessage.Header
+        isOpen={isOpen}
+        label={label}
+        hasContent
+        isStreaming={running}
+        onClick={() => setManualOpen(!isOpen)}
+        title={subagent?.description ?? `Subagent ${subagentId}`}
+      >
+        <span className="subagent-group-meta" data-testid="subagent-tag">
+          ⟐ {subagentId}
+          {toolCount ? ` · ${toolCount} tool calls` : ""}
+        </span>
+      </CopilotChatReasoningMessage.Header>
+      <CopilotChatReasoningMessage.Toggle isOpen={isOpen}>
+        <div className="subagent-group-body">
+          {members.map((m) => (
+            <CopilotChatAssistantMessage
+              key={m.id}
+              {...baseProps}
+              messages={agent.messages as AssistantMessageProps["messages"]}
+              message={m as AssistantMessageProps["message"]}
+            />
+          ))}
+        </div>
+      </CopilotChatReasoningMessage.Toggle>
+    </div>
+  );
+}
+
+// Grouping assistant-message slot (option b). Non-subagent messages render
+// normally. For a subagent message, collect every assistant message sharing its
+// subagentId and render the whole set inside ONE SubagentGroup, anchored at the
+// subagent's first message; later members return null (absorbed into the group).
+function AssistantMessageGrouped(props: AssistantMessageProps) {
   const subagentId = getSubagentId(props.message);
   if (!subagentId) {
     return <CopilotChatAssistantMessage {...props} />;
   }
-  return (
-    <div className="subagent-message" data-testid="subagent-message">
-      <SubagentTag subagentId={subagentId} />
-      <CopilotChatAssistantMessage {...props} />
-    </div>
+  // Anchor the group at the subagent's FIRST message so it renders exactly once;
+  // later members return null (absorbed into the group, which derives its full
+  // member list from the live agent state — see SubagentGroup).
+  const firstOfSubagent = (props.messages ?? []).find(
+    (m) => m.role === "assistant" && getSubagentId(m) === subagentId,
   );
+  if (props.message.id !== firstOfSubagent?.id) {
+    return null;
+  }
+  return <SubagentGroup subagentId={subagentId} baseProps={props} />;
 }
 
 // Wildcard tool-call renderer. CopilotKit v2 renders NOTHING for a tool call
@@ -84,6 +144,11 @@ function ToolCallCard({ name, args, status, result }: {
   status: string;
   result?: string;
 }) {
+  // `task` is the supervisor's delegation tool — the subagent group itself
+  // represents that delegation, so don't render a redundant task card.
+  if (name === "task") {
+    return null;
+  }
   const argsStr =
     args && Object.keys(args as object).length > 0
       ? JSON.stringify(args, null, 2)
@@ -114,7 +179,7 @@ const TOOL_CALL_RENDERERS = [
 // members the slot renderer never uses — our wrapper is a valid replacement.
 const MESSAGE_VIEW_SLOTS = {
   assistantMessage:
-    AssistantMessageWithSubagentTag as unknown as typeof CopilotChatAssistantMessage,
+    AssistantMessageGrouped as unknown as typeof CopilotChatAssistantMessage,
 };
 
 export default function DeepagentsSubagents({
