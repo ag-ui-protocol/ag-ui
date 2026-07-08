@@ -1,97 +1,45 @@
 /* Deepagents Subagents Demo Styles */
-/* Minimal layout: chat on the left, attribution list on the right */
+/* Centered chat (layout via Tailwind on the page); subagent attribution shown */
+/* as an inline tag on each message. */
 
-.deepagents-subagents-container {
-  display: flex;
-  height: 100%;
-  min-height: 100vh;
-  gap: 1rem;
-  padding: 1rem;
-}
-
-.deepagents-chat-panel {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.subagent-attribution-panel {
-  flex: 0 0 280px;
+/* Wrapper the assistant-message slot uses when a message is subagent-attributed. */
+.subagent-message {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  padding: 1rem;
-  border: 1px solid #e5e7eb;
-  border-radius: 0.5rem;
-  background: #f9fafb;
-  overflow-y: auto;
+  gap: 0.25rem;
 }
 
-.subagent-attribution-header {
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: #1f2937;
-}
-
-.subagent-attribution-hint {
-  font-size: 0.75rem;
-  color: #6b7280;
-  margin: 0;
-}
-
-.subagent-attribution-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.375rem;
-}
-
-.subagent-attribution-item {
-  display: flex;
+/* Inline pill identifying the producing subagent. */
+.subagent-tag {
+  align-self: flex-start;
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  padding: 0.375rem 0.5rem;
-  background: white;
-  border: 1px solid #e5e7eb;
-  border-radius: 0.375rem;
-  font-size: 0.75rem;
-}
-
-.subagent-role {
-  font-weight: 600;
-  color: #374151;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
-}
-
-.subagent-marker {
+  gap: 0.375rem;
   padding: 0.125rem 0.5rem;
   border-radius: 0.75rem;
   background: #dbeafe;
   color: #1d4ed8;
-  font-weight: 500;
+  border: 1px solid #bfdbfe;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, "Cascadia Code", monospace;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.subagent-marker--none {
-  background: transparent;
-  color: #9ca3af;
-}
-
-.subagent-attribution-empty {
+.subagent-tag-glyph {
   font-size: 0.75rem;
-  color: #9ca3af;
-  font-style: italic;
+  line-height: 1;
 }
 
-@media (max-width: 768px) {
-  .deepagents-subagents-container {
-    flex-direction: column;
-  }
-
-  .subagent-attribution-panel {
-    flex: 0 0 auto;
-    max-height: 240px;
+@media (prefers-color-scheme: dark) {
+  .subagent-tag {
+    background: #1e3a8a;
+    color: #bfdbfe;
+    border-color: #1d4ed8;
   }
 }

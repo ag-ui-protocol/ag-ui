@@ -93,12 +93,26 @@ RunMetadata = TypedDict("RunMetadata", {
     # The subagent id (see above) whose events are currently being processed,
     # or None when the current event originates at the root/supervisor level.
     "current_subagent_id": NotRequired[Optional[str]],
-    # Subagent-attributed assistant messages streamed during this run, keyed by
-    # message id: {id, role, content, subagent_id}. These live only in the
-    # subagent (subgraph) checkpoint, not main-graph state, so they are merged
-    # into MESSAGES_SNAPSHOT (which is built from main-graph state) to keep the
-    # streamed subagent messages from being wiped when the client applies it.
+    # Declared metadata for each subagent invocation, captured from the
+    # deepagents `task` delegation tool's on_tool_start input (which runs in the
+    # subagent's own checkpoint namespace, i.e. its subagent id). Maps subagent
+    # id -> {"name": subagent_type, "description": task description}, so
+    # SUBAGENT_STARTED can carry the declared subagent type and the
+    # per-invocation description rather than only the runtime lc_agent_name.
+    "subagent_task_meta": NotRequired[Dict[str, Dict[str, Optional[str]]]],
+    # Subagent-attributed messages streamed during this run, keyed by message
+    # id. Assistant entries hold {kind:"assistant", id, role, content,
+    # subagent_id, tool_calls}; tool-result entries hold {kind:"tool", id,
+    # content, tool_call_id, subagent_id}. These live only in the subagent
+    # (subgraph) checkpoint, not main-graph state, so they are merged into
+    # MESSAGES_SNAPSHOT (which is built from main-graph state) to keep the
+    # streamed subagent text AND tool calls from being wiped when the client
+    # applies it.
     "subagent_messages": NotRequired[Dict[str, Any]],
+    # Routes a subagent tool call's streamed TOOL_CALL_ARGS deltas (which carry
+    # only tool_call_id, no parent_message_id/subagent_id) back to the owning
+    # assistant entry in subagent_messages. Maps tool_call_id -> message id.
+    "subagent_tool_call_owner": NotRequired[Dict[str, str]],
 })
 
 MessagesInProgressRecord = Dict[str, Optional[MessageInProgress]]
