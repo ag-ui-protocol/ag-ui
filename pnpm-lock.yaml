@@ -5,10 +5,10 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  '@ag-ui/client': link:sdks/typescript/packages/client
-  '@ag-ui/core': link:sdks/typescript/packages/core
-  '@ag-ui/encoder': link:sdks/typescript/packages/encoder
-  '@ag-ui/proto': link:sdks/typescript/packages/proto
+  '@ag-ui/client': workspace:*
+  '@ag-ui/core': workspace:*
+  '@ag-ui/encoder': workspace:*
+  '@ag-ui/proto': workspace:*
   langium: 3.2.0
   '@copilotkit/runtime>@ag-ui/a2ui-middleware': 0.0.8
   '@copilotkit/runtime>@langchain/core': 0.3.80
@@ -47,10 +47,10 @@ importers:
   apps/client-cli-example:
     dependencies:
       '@ag-ui/client':
-        specifier: link:../../sdks/typescript/packages/client
+        specifier: workspace:*
         version: link:../../sdks/typescript/packages/client
       '@ag-ui/core':
-        specifier: link:../../sdks/typescript/packages/core
+        specifier: workspace:*
         version: link:../../sdks/typescript/packages/core
       '@ag-ui/mastra':
         specifier: workspace:*
@@ -120,16 +120,16 @@ importers:
         specifier: workspace:*
         version: link:../../integrations/claude-agent-sdk/typescript
       '@ag-ui/client':
-        specifier: link:../../sdks/typescript/packages/client
+        specifier: workspace:*
         version: link:../../sdks/typescript/packages/client
       '@ag-ui/core':
-        specifier: link:../../sdks/typescript/packages/core
+        specifier: workspace:*
         version: link:../../sdks/typescript/packages/core
       '@ag-ui/crewai':
         specifier: workspace:*
         version: link:../../integrations/crew-ai/typescript
       '@ag-ui/encoder':
-        specifier: link:../../sdks/typescript/packages/encoder
+        specifier: workspace:*
         version: link:../../sdks/typescript/packages/encoder
       '@ag-ui/langchain':
         specifier: workspace:*
@@ -150,7 +150,7 @@ importers:
         specifier: workspace:*
         version: link:../../middlewares/middleware-starter
       '@ag-ui/proto':
-        specifier: link:../../sdks/typescript/packages/proto
+        specifier: workspace:*
         version: link:../../sdks/typescript/packages/proto
       '@ag-ui/pydantic-ai':
         specifier: workspace:*
@@ -390,16 +390,16 @@ importers:
       '@a2a-js/sdk':
         specifier: ^0.2.2
         version: 0.2.5
-      '@ag-ui/client':
-        specifier: link:../../../sdks/typescript/packages/client
-        version: link:../../../sdks/typescript/packages/client
-      '@ag-ui/core':
-        specifier: link:../../../sdks/typescript/packages/core
-        version: link:../../../sdks/typescript/packages/core
       rxjs:
         specifier: 7.8.1
         version: 7.8.1
     devDependencies:
+      '@ag-ui/client':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/client
+      '@ag-ui/core':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/core
       '@arethetypeswrong/cli':
         specifier: ^0.17.4
         version: 0.17.4
@@ -424,16 +424,16 @@ importers:
 
   integrations/adk-middleware/typescript:
     dependencies:
-      '@ag-ui/client':
-        specifier: link:../../../sdks/typescript/packages/client
-        version: link:../../../sdks/typescript/packages/client
-      '@ag-ui/core':
-        specifier: link:../../../sdks/typescript/packages/core
-        version: link:../../../sdks/typescript/packages/core
       rxjs:
         specifier: 7.8.1
         version: 7.8.1
     devDependencies:
+      '@ag-ui/client':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/client
+      '@ag-ui/core':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/core
       '@arethetypeswrong/cli':
         specifier: ^0.17.4
         version: 0.17.4
@@ -455,16 +455,16 @@ importers:
 
   integrations/ag2/typescript:
     dependencies:
-      '@ag-ui/client':
-        specifier: link:../../../sdks/typescript/packages/client
-        version: link:../../../sdks/typescript/packages/client
-      '@ag-ui/core':
-        specifier: link:../../../sdks/typescript/packages/core
-        version: link:../../../sdks/typescript/packages/core
       rxjs:
         specifier: 7.8.1
         version: 7.8.1
     devDependencies:
+      '@ag-ui/client':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/client
+      '@ag-ui/core':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/core
       '@arethetypeswrong/cli':
         specifier: ^0.17.4
         version: 0.17.4
@@ -486,16 +486,16 @@ importers:
 
   integrations/agno/typescript:
     dependencies:
-      '@ag-ui/client':
-        specifier: link:../../../sdks/typescript/packages/client
-        version: link:../../../sdks/typescript/packages/client
-      '@ag-ui/core':
-        specifier: link:../../../sdks/typescript/packages/core
-        version: link:../../../sdks/typescript/packages/core
       rxjs:
         specifier: 7.8.1
         version: 7.8.1
     devDependencies:
+      '@ag-ui/client':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/client
+      '@ag-ui/core':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/core
       '@arethetypeswrong/cli':
         specifier: ^0.17.4
         version: 0.17.4
@@ -519,20 +519,19 @@ importers:
         version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@20.19.21)(jiti@2.6.1)(lightningcss@1.30.1)(tsx@4.20.6)(yaml@2.8.4)
 
   integrations/aws-strands/typescript:
-    dependencies:
-      '@ag-ui/client':
-        specifier: link:../../../sdks/typescript/packages/client
-        version: link:../../../sdks/typescript/packages/client
-      '@ag-ui/core':
-        specifier: link:../../../sdks/typescript/packages/core
-        version: link:../../../sdks/typescript/packages/core
-      '@ag-ui/encoder':
-        specifier: link:../../../sdks/typescript/packages/encoder
-        version: link:../../../sdks/typescript/packages/encoder
     devDependencies:
       '@ag-ui/a2ui-toolkit':
         specifier: workspace:*
         version: link:../../../sdks/typescript/packages/a2ui-toolkit
+      '@ag-ui/client':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/client
+      '@ag-ui/core':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/core
+      '@ag-ui/encoder':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/encoder
       '@arethetypeswrong/cli':
         specifier: ^0.17.4
         version: 0.17.4
@@ -588,10 +587,10 @@ importers:
         specifier: workspace:*
         version: link:..
       '@ag-ui/core':
-        specifier: link:../../../../sdks/typescript/packages/core
+        specifier: workspace:*
         version: link:../../../../sdks/typescript/packages/core
       '@ag-ui/encoder':
-        specifier: link:../../../../sdks/typescript/packages/encoder
+        specifier: workspace:*
         version: link:../../../../sdks/typescript/packages/encoder
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
@@ -630,12 +629,6 @@ importers:
 
   integrations/claude-agent-sdk/typescript:
     dependencies:
-      '@ag-ui/client':
-        specifier: link:../../../sdks/typescript/packages/client
-        version: link:../../../sdks/typescript/packages/client
-      '@ag-ui/core':
-        specifier: link:../../../sdks/typescript/packages/core
-        version: link:../../../sdks/typescript/packages/core
       '@anthropic-ai/sdk':
         specifier: '>=0.50.0'
         version: 0.57.0
@@ -646,6 +639,12 @@ importers:
         specifier: 3.25.76
         version: 3.25.76
     devDependencies:
+      '@ag-ui/client':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/client
+      '@ag-ui/core':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/core
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.2.58
         version: 0.2.74(zod@3.25.76)
@@ -666,14 +665,13 @@ importers:
         version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@20.19.21)(jiti@2.6.1)(lightningcss@1.30.1)(tsx@4.20.6)(yaml@2.8.4)
 
   integrations/community/cloudflare-agents/typescript:
-    dependencies:
+    devDependencies:
       '@ag-ui/client':
-        specifier: link:../../../../sdks/typescript/packages/client
+        specifier: workspace:*
         version: link:../../../../sdks/typescript/packages/client
       '@ag-ui/core':
-        specifier: link:../../../../sdks/typescript/packages/core
+        specifier: workspace:*
         version: link:../../../../sdks/typescript/packages/core
-    devDependencies:
       '@arethetypeswrong/cli':
         specifier: ^0.17.4
         version: 0.17.4
@@ -707,16 +705,16 @@ importers:
 
   integrations/community/spring-ai/typescript:
     dependencies:
-      '@ag-ui/client':
-        specifier: link:../../../../sdks/typescript/packages/client
-        version: link:../../../../sdks/typescript/packages/client
-      '@ag-ui/core':
-        specifier: link:../../../../sdks/typescript/packages/core
-        version: link:../../../../sdks/typescript/packages/core
       rxjs:
         specifier: 7.8.1
         version: 7.8.1
     devDependencies:
+      '@ag-ui/client':
+        specifier: workspace:*
+        version: link:../../../../sdks/typescript/packages/client
+      '@ag-ui/core':
+        specifier: workspace:*
+        version: link:../../../../sdks/typescript/packages/core
       '@arethetypeswrong/cli':
         specifier: ^0.17.4
         version: 0.17.4
@@ -741,16 +739,16 @@ importers:
 
   integrations/crew-ai/typescript:
     dependencies:
-      '@ag-ui/client':
-        specifier: link:../../../sdks/typescript/packages/client
-        version: link:../../../sdks/typescript/packages/client
-      '@ag-ui/core':
-        specifier: link:../../../sdks/typescript/packages/core
-        version: link:../../../sdks/typescript/packages/core
       rxjs:
         specifier: 7.8.1
         version: 7.8.1
     devDependencies:
+      '@ag-ui/client':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/client
+      '@ag-ui/core':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/core
       '@arethetypeswrong/cli':
         specifier: ^0.17.4
         version: 0.17.4
@@ -775,12 +773,6 @@ importers:
 
   integrations/langchain/typescript:
     dependencies:
-      '@ag-ui/client':
-        specifier: link:../../../sdks/typescript/packages/client
-        version: link:../../../sdks/typescript/packages/client
-      '@ag-ui/core':
-        specifier: link:../../../sdks/typescript/packages/core
-        version: link:../../../sdks/typescript/packages/core
       rxjs:
         specifier: 7.8.1
         version: 7.8.1
@@ -788,6 +780,12 @@ importers:
         specifier: 3.25.76
         version: 3.25.76
     devDependencies:
+      '@ag-ui/client':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/client
+      '@ag-ui/core':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/core
       '@arethetypeswrong/cli':
         specifier: ^0.17.4
         version: 0.17.4
@@ -818,12 +816,6 @@ importers:
       '@ag-ui/a2ui-toolkit':
         specifier: workspace:*
         version: link:../../../sdks/typescript/packages/a2ui-toolkit
-      '@ag-ui/client':
-        specifier: link:../../../sdks/typescript/packages/client
-        version: link:../../../sdks/typescript/packages/client
-      '@ag-ui/core':
-        specifier: link:../../../sdks/typescript/packages/core
-        version: link:../../../sdks/typescript/packages/core
       '@langchain/core':
         specifier: ^1.1.40
         version: 1.1.40(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.203.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.2.0(@opentelemetry/api@1.9.0))(openai@6.10.0(ws@8.21.0)(zod@3.25.76))(ws@8.21.0)
@@ -840,6 +832,12 @@ importers:
         specifier: 7.8.1
         version: 7.8.1
     devDependencies:
+      '@ag-ui/client':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/client
+      '@ag-ui/core':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/core
       '@arethetypeswrong/cli':
         specifier: ^0.17.4
         version: 0.17.4
@@ -864,16 +862,16 @@ importers:
 
   integrations/langroid/typescript:
     dependencies:
-      '@ag-ui/client':
-        specifier: link:../../../sdks/typescript/packages/client
-        version: link:../../../sdks/typescript/packages/client
-      '@ag-ui/core':
-        specifier: link:../../../sdks/typescript/packages/core
-        version: link:../../../sdks/typescript/packages/core
       rxjs:
         specifier: 7.8.1
         version: 7.8.1
     devDependencies:
+      '@ag-ui/client':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/client
+      '@ag-ui/core':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/core
       '@types/jest':
         specifier: ^29.5.14
         version: 29.5.14
@@ -895,16 +893,16 @@ importers:
 
   integrations/llama-index/typescript:
     dependencies:
-      '@ag-ui/client':
-        specifier: link:../../../sdks/typescript/packages/client
-        version: link:../../../sdks/typescript/packages/client
-      '@ag-ui/core':
-        specifier: link:../../../sdks/typescript/packages/core
-        version: link:../../../sdks/typescript/packages/core
       rxjs:
         specifier: 7.8.1
         version: 7.8.1
     devDependencies:
+      '@ag-ui/client':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/client
+      '@ag-ui/core':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/core
       '@arethetypeswrong/cli':
         specifier: ^0.17.4
         version: 0.17.4
@@ -932,12 +930,6 @@ importers:
       '@ag-ui/a2ui-toolkit':
         specifier: workspace:*
         version: link:../../../sdks/typescript/packages/a2ui-toolkit
-      '@ag-ui/client':
-        specifier: link:../../../sdks/typescript/packages/client
-        version: link:../../../sdks/typescript/packages/client
-      '@ag-ui/core':
-        specifier: link:../../../sdks/typescript/packages/core
-        version: link:../../../sdks/typescript/packages/core
       '@ai-sdk/ui-utils':
         specifier: ^1.1.19
         version: 1.2.11(zod@3.25.76)
@@ -951,6 +943,12 @@ importers:
         specifier: 3.25.76
         version: 3.25.76
     devDependencies:
+      '@ag-ui/client':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/client
+      '@ag-ui/core':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/core
       '@arethetypeswrong/cli':
         specifier: ^0.17.4
         version: 0.17.4
@@ -1021,16 +1019,16 @@ importers:
 
   integrations/pydantic-ai/typescript:
     dependencies:
-      '@ag-ui/client':
-        specifier: link:../../../sdks/typescript/packages/client
-        version: link:../../../sdks/typescript/packages/client
-      '@ag-ui/core':
-        specifier: link:../../../sdks/typescript/packages/core
-        version: link:../../../sdks/typescript/packages/core
       rxjs:
         specifier: 7.8.1
         version: 7.8.1
     devDependencies:
+      '@ag-ui/client':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/client
+      '@ag-ui/core':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/core
       '@arethetypeswrong/cli':
         specifier: ^0.17.4
         version: 0.17.4
@@ -1056,7 +1054,7 @@ importers:
   integrations/server-starter-all-features/typescript:
     dependencies:
       '@ag-ui/client':
-        specifier: link:../../../sdks/typescript/packages/client
+        specifier: workspace:*
         version: link:../../../sdks/typescript/packages/client
       rxjs:
         specifier: 7.8.1
@@ -1087,7 +1085,7 @@ importers:
   integrations/server-starter/typescript:
     dependencies:
       '@ag-ui/client':
-        specifier: link:../../../sdks/typescript/packages/client
+        specifier: workspace:*
         version: link:../../../sdks/typescript/packages/client
       rxjs:
         specifier: 7.8.1
@@ -1117,12 +1115,6 @@ importers:
 
   integrations/vercel-ai-sdk/typescript:
     dependencies:
-      '@ag-ui/client':
-        specifier: link:../../../sdks/typescript/packages/client
-        version: link:../../../sdks/typescript/packages/client
-      '@ag-ui/core':
-        specifier: link:../../../sdks/typescript/packages/core
-        version: link:../../../sdks/typescript/packages/core
       ai:
         specifier: ^4.3.16
         version: 4.3.19(react@19.2.3)(zod@3.25.76)
@@ -1133,6 +1125,12 @@ importers:
         specifier: 3.25.76
         version: 3.25.76
     devDependencies:
+      '@ag-ui/client':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/client
+      '@ag-ui/core':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/core
       '@arethetypeswrong/cli':
         specifier: ^0.17.4
         version: 0.17.4
@@ -1156,14 +1154,13 @@ importers:
         version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@20.19.21)(jiti@2.6.1)(lightningcss@1.30.1)(tsx@4.20.6)(yaml@2.8.4)
 
   integrations/watsonx/typescript:
-    dependencies:
+    devDependencies:
       '@ag-ui/client':
-        specifier: link:../../../sdks/typescript/packages/client
+        specifier: workspace:*
         version: link:../../../sdks/typescript/packages/client
       '@ag-ui/core':
-        specifier: link:../../../sdks/typescript/packages/core
+        specifier: workspace:*
         version: link:../../../sdks/typescript/packages/core
-    devDependencies:
       '@arethetypeswrong/cli':
         specifier: ^0.17.4
         version: 0.17.4
@@ -1194,9 +1191,6 @@ importers:
       '@a2a-js/sdk':
         specifier: ^0.2.2
         version: 0.2.5
-      '@ag-ui/client':
-        specifier: link:../../sdks/typescript/packages/client
-        version: link:../../sdks/typescript/packages/client
       ai:
         specifier: ^4.3.16
         version: 4.3.19(react@19.2.3)(zod@3.25.76)
@@ -1207,6 +1201,9 @@ importers:
         specifier: 3.25.76
         version: 3.25.76
     devDependencies:
+      '@ag-ui/client':
+        specifier: workspace:*
+        version: link:../../sdks/typescript/packages/client
       '@arethetypeswrong/cli':
         specifier: ^0.17.4
         version: 0.17.4
@@ -1234,13 +1231,13 @@ importers:
       '@ag-ui/a2ui-toolkit':
         specifier: workspace:*
         version: link:../../sdks/typescript/packages/a2ui-toolkit
-      '@ag-ui/client':
-        specifier: link:../../sdks/typescript/packages/client
-        version: link:../../sdks/typescript/packages/client
       clarinet:
         specifier: ^0.12.6
         version: 0.12.6
     devDependencies:
+      '@ag-ui/client':
+        specifier: workspace:*
+        version: link:../../sdks/typescript/packages/client
       '@types/clarinet':
         specifier: ^0.12.3
         version: 0.12.3
@@ -1261,11 +1258,10 @@ importers:
         version: 2.1.9(@types/node@20.19.21)(lightningcss@1.30.1)
 
   middlewares/event-throttle-middleware:
-    dependencies:
-      '@ag-ui/client':
-        specifier: link:../../sdks/typescript/packages/client
-        version: link:../../sdks/typescript/packages/client
     devDependencies:
+      '@ag-ui/client':
+        specifier: workspace:*
+        version: link:../../sdks/typescript/packages/client
       '@arethetypeswrong/cli':
         specifier: ^0.17.4
         version: 0.17.4
@@ -1293,13 +1289,13 @@ importers:
 
   middlewares/mcp-apps-middleware:
     dependencies:
-      '@ag-ui/client':
-        specifier: link:../../sdks/typescript/packages/client
-        version: link:../../sdks/typescript/packages/client
       '@modelcontextprotocol/sdk':
         specifier: ^1.0.0
         version: 1.20.0
     devDependencies:
+      '@ag-ui/client':
+        specifier: workspace:*
+        version: link:../../sdks/typescript/packages/client
       '@arethetypeswrong/cli':
         specifier: ^0.17.4
         version: 0.17.4
@@ -1328,7 +1324,7 @@ importers:
   middlewares/mcp-middleware:
     dependencies:
       '@ag-ui/client':
-        specifier: link:../../sdks/typescript/packages/client
+        specifier: workspace:*
         version: link:../../sdks/typescript/packages/client
       '@modelcontextprotocol/sdk':
         specifier: ^1.0.0
@@ -1362,7 +1358,7 @@ importers:
   middlewares/middleware-starter:
     dependencies:
       '@ag-ui/client':
-        specifier: link:../../sdks/typescript/packages/client
+        specifier: workspace:*
         version: link:../../sdks/typescript/packages/client
       rxjs:
         specifier: 7.8.1
@@ -1393,16 +1389,16 @@ importers:
   sdks/dotnet/tests/CrossLanguage.Vitest:
     dependencies:
       '@ag-ui/client':
-        specifier: link:../../../typescript/packages/client
+        specifier: workspace:*
         version: link:../../../typescript/packages/client
       '@ag-ui/core':
-        specifier: link:../../../typescript/packages/core
+        specifier: workspace:*
         version: link:../../../typescript/packages/core
       '@ag-ui/encoder':
-        specifier: link:../../../typescript/packages/encoder
+        specifier: workspace:*
         version: link:../../../typescript/packages/encoder
       '@ag-ui/proto':
-        specifier: link:../../../typescript/packages/proto
+        specifier: workspace:*
         version: link:../../../typescript/packages/proto
       '@copilotkit/aimock':
         specifier: ^1.9.0
@@ -1494,13 +1490,13 @@ importers:
   sdks/typescript/packages/client:
     dependencies:
       '@ag-ui/core':
-        specifier: link:../core
+        specifier: workspace:*
         version: link:../core
       '@ag-ui/encoder':
-        specifier: link:../encoder
+        specifier: workspace:*
         version: link:../encoder
       '@ag-ui/proto':
-        specifier: link:../proto
+        specifier: workspace:*
         version: link:../proto
       '@types/uuid':
         specifier: ^10.0.0
@@ -1574,10 +1570,10 @@ importers:
   sdks/typescript/packages/encoder:
     dependencies:
       '@ag-ui/core':
-        specifier: link:../core
+        specifier: workspace:*
         version: link:../core
       '@ag-ui/proto':
-        specifier: link:../proto
+        specifier: workspace:*
         version: link:../proto
     devDependencies:
       '@arethetypeswrong/cli':
@@ -1602,7 +1598,7 @@ importers:
   sdks/typescript/packages/proto:
     dependencies:
       '@ag-ui/core':
-        specifier: link:../core
+        specifier: workspace:*
         version: link:../core
       '@bufbuild/protobuf':
         specifier: ^2.2.5
@@ -1671,7 +1667,7 @@ packages:
   '@ag-ui/a2ui-middleware@0.0.8':
     resolution: {integrity: sha512-YXabOMyNekshHWLc63fD166ndy/zOXp+UWbx1alYoGRhO2y2uZJzOlPLvBAkFY4PF3Lng78ByG4mNpxJlSLDvw==}
     peerDependencies:
-      '@ag-ui/client': '>=0.0.40'
+      '@ag-ui/client': workspace:*
       rxjs: 7.8.1
 
   '@ag-ui/a2ui-toolkit@0.0.2':
@@ -1686,19 +1682,19 @@ packages:
   '@ag-ui/langgraph@0.0.41':
     resolution: {integrity: sha512-xo7ja/kuctmdPiH83QOUIpDs/AY3GzxW1fM37x9otK9fqwnKgi2JIcjfcdvAdGYdsCkXBn2WWQ2PVH+rdsLOzg==}
     peerDependencies:
-      '@ag-ui/client': '>=0.0.42'
-      '@ag-ui/core': '>=0.0.42'
+      '@ag-ui/client': workspace:*
+      '@ag-ui/core': workspace:*
 
   '@ag-ui/langgraph@0.0.42':
     resolution: {integrity: sha512-dXasEbGQFJcasdoy5khYyDHZHYoD1/i7hioaP8cejfw+Dss4tLvN8ndzD6c5j0hmANaKscekl+zkF7UQq3sI9w==}
     peerDependencies:
-      '@ag-ui/client': '>=0.0.42'
-      '@ag-ui/core': '>=0.0.42'
+      '@ag-ui/client': workspace:*
+      '@ag-ui/core': workspace:*
 
   '@ag-ui/mcp-apps-middleware@0.0.3':
     resolution: {integrity: sha512-Z+NZQXj4J+Y/2PLNsiyhNzRWFtTT2sAoC5dztoAlIsdfzvLvYEa52YGdHesNTN85JJqaIrYxQ8e31IBpKjrnoA==}
     peerDependencies:
-      '@ag-ui/client': '>=0.0.40'
+      '@ag-ui/client': workspace:*
 
   '@ag-ui/mcp-middleware@0.0.1':
     resolution: {integrity: sha512-TayUu7kB+jXUTPRUJesNvJYrP+0weTL9F2VJJ8QQ4sWxY/Ihjo+GgFYgJZYNcLwbo1DKgmVJtdm2XUouPCbxeg==}
@@ -3155,12 +3151,12 @@ packages:
   '@copilotkit/shared@1.60.1':
     resolution: {integrity: sha512-8KTxK6xnuxmFjGy9pHkHOMDElQl5Smisx0q8hx8je1NEkwrxFKrCK653APqn83QyQLifdPBqExXEUpGkqhoGcw==}
     peerDependencies:
-      '@ag-ui/core': '>=0.0.48'
+      '@ag-ui/core': workspace:*
 
   '@copilotkit/shared@1.61.2':
     resolution: {integrity: sha512-ZSfXZz3/9tPMj1erphVk+hUXcEsXm+ZutCfI8wgCE7VZ+08kkFW6uJSnvFueksPjHHPtrUplMTOnyxekQyfg3g==}
     peerDependencies:
-      '@ag-ui/core': '>=0.0.48'
+      '@ag-ui/core': workspace:*
 
   '@copilotkit/web-inspector@1.61.2':
     resolution: {integrity: sha512-IRQ0UENwYL5Kt5IpDwX5EGvCqcyLUDXqkrwyJLWeirxqtwsrb4o5xhaLSh2xWPhWurOoegeXgaAl2/Ssjym2pA==}

@@ -41,10 +41,10 @@
   "version": "0.0.1",
   "pnpm": {
     "overrides": {
-      "@ag-ui/client": "link:sdks/typescript/packages/client",
-      "@ag-ui/core": "link:sdks/typescript/packages/core",
-      "@ag-ui/encoder": "link:sdks/typescript/packages/encoder",
-      "@ag-ui/proto": "link:sdks/typescript/packages/proto",
+      "@ag-ui/client": "workspace:*",
+      "@ag-ui/core": "workspace:*",
+      "@ag-ui/encoder": "workspace:*",
+      "@ag-ui/proto": "workspace:*",
       "langium": "3.2.0",
       "@copilotkit/runtime>@ag-ui/a2ui-middleware": "0.0.8",
       "@copilotkit/runtime>@langchain/core": "0.3.80",
