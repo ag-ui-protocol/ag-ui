@@ -32,8 +32,8 @@
     "unlink:global": "pnpm unlink --global"
   },
   "peerDependencies": {
-    "@ag-ui/core": ">=0.0.37",
-    "@ag-ui/client": ">=0.0.40",
+    "@ag-ui/core": "workspace:*",
+    "@ag-ui/client": "workspace:*",
     "ai": "^5.0.0",
     "rxjs": "^7.0.0",
     "@cloudflare/workers-types": ">=4.0.0"
