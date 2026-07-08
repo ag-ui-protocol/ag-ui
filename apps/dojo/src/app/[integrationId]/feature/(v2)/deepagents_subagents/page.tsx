@@ -67,33 +67,40 @@ function SubagentGroup({
       ),
     [agent.messages, subagentId],
   );
+  // `running` reflects the SUBAGENT's own lifecycle: the registry flips it to
+  // "finished" when SUBAGENT_FINISHED arrives, which the integration now emits
+  // when the subagent's `task` delegation returns — not when the parent run
+  // ends. So the activity indicator stops with the subagent, not the supervisor.
   const running = !subagent || subagent.status === "running";
+  // Collapsed by default (like reasoning once it's done); a manual toggle wins.
   const [manualOpen, setManualOpen] = React.useState<boolean | null>(null);
-  const isOpen = manualOpen ?? running; // open while running, collapse when done
-  const toolCount = members.reduce(
-    (n, m) => n + ((m as { toolCalls?: unknown[] }).toolCalls?.length ?? 0),
-    0,
-  );
-  const name = subagent?.name ?? subagentId;
-  const label = running ? `Delegating to ${name}…` : `${name}`;
+  const isOpen = manualOpen ?? false;
+  // Just the declared subagent name, falling back to the opaque id.
+  const label = subagent?.name ?? subagentId;
 
   // Rendered with the exact reasoning chrome: CopilotChatReasoningMessage.Header
-  // (button, muted text, ChevronRight, streaming pulse) + .Toggle (grid-rows
-  // collapse animation). Only the content inside differs (subagent messages).
+  // (button, muted text, ChevronRight) + .Toggle (grid-rows collapse animation).
+  // A subtle pulsing dot (the same one the reasoning header uses) shows while
+  // the subagent is running; it's supplied as header children because the
+  // built-in pulse only renders when there's no content.
   return (
     <div className="cpk:my-1" data-testid="subagent-group">
       <CopilotChatReasoningMessage.Header
         isOpen={isOpen}
         label={label}
         hasContent
-        isStreaming={running}
         onClick={() => setManualOpen(!isOpen)}
         title={subagent?.description ?? `Subagent ${subagentId}`}
+        data-testid="subagent-tag"
       >
-        <span className="subagent-group-meta" data-testid="subagent-tag">
-          ⟐ {subagentId}
-          {toolCount ? ` · ${toolCount} tool calls` : ""}
-        </span>
+        {running && (
+          <span
+            className="cpk:inline-flex cpk:items-center cpk:ml-1"
+            data-testid="subagent-activity"
+          >
+            <span className="cpk:w-1.5 cpk:h-1.5 cpk:rounded-full cpk:bg-muted-foreground cpk:animate-pulse" />
+          </span>
+        )}
       </CopilotChatReasoningMessage.Header>
       <CopilotChatReasoningMessage.Toggle isOpen={isOpen}>
         <div className="subagent-group-body">

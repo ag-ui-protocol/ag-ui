@@ -1,47 +1,14 @@
 /* Deepagents Subagents Demo Styles */
-/* Centered chat (layout via Tailwind on the page); subagent attribution shown */
-/* as an inline tag on each message. */
+/* Subagent messages are grouped into one collapsible per subagentId, rendered */
+/* with CopilotKit's reasoning chrome (see page.tsx). Only the group body and */
+/* the wildcard tool-call cards need custom styling here. */
 
-/* Wrapper the assistant-message slot uses when a message is subagent-attributed. */
-.subagent-message {
+/* Body of the collapsible group — stacks the subagent's messages/tool cards. */
+.subagent-group-body {
+  padding: 0.5rem 0.75rem;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
-}
-
-/* Inline pill identifying the producing subagent. */
-.subagent-tag {
-  align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-  padding: 0.125rem 0.5rem;
-  border-radius: 0.75rem;
-  background: #dbeafe;
-  color: #1d4ed8;
-  border: 1px solid #bfdbfe;
-  font-size: 0.6875rem;
-  font-weight: 600;
-  font-family:
-    ui-monospace, SFMono-Regular, Menlo, Monaco, "Cascadia Code", monospace;
-  letter-spacing: 0.01em;
-  white-space: nowrap;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.subagent-tag-glyph {
-  font-size: 0.75rem;
-  line-height: 1;
-}
-
-@media (prefers-color-scheme: dark) {
-  .subagent-tag {
-    background: #1e3a8a;
-    color: #bfdbfe;
-    border-color: #1d4ed8;
-  }
+  gap: 0.5rem;
 }
 
 /* Wildcard tool-call card (subagent tool calls: write_todos, grep, glob, …) */
@@ -52,17 +19,3 @@
 .subagent-toolcall-body { margin: 0; padding: 0.5rem 0.625rem; white-space: pre-wrap; word-break: break-word; color: #334155; font-family: ui-monospace, Menlo, monospace; font-size: 0.6875rem; max-height: 180px; overflow: auto; }
 .subagent-toolcall-result { border-top: 1px dashed #e5e7eb; color: #475569; }
 @media (prefers-color-scheme: dark) { .subagent-toolcall { border-color: #334155; background: #0f172a; } .subagent-toolcall-head { background: #1e293b; } .subagent-toolcall-name { color: #e2e8f0; } .subagent-toolcall-body { color: #cbd5e1; } }
-
-/* subagent name (from useSubagent) shown before the opaque id */
-.subagent-tag-name { font-weight: 700; }
-.subagent-tag-id { opacity: 0.7; }
-.subagent-tag-name + .subagent-tag-id { padding-left: 0.375rem; margin-left: 0.375rem; border-left: 1px solid currentColor; }
-
-/* Collapsible per-subagent group (option b), reasoning-style */
-.subagent-group { border: 1px solid #dbeafe; border-radius: 0.625rem; margin: 0.5rem 0; overflow: hidden; background: #f8fafc; }
-.subagent-group-header { display: flex; align-items: center; gap: 0.5rem; width: 100%; padding: 0.5rem 0.75rem; background: #eff6ff; border: none; cursor: pointer; text-align: left; font: inherit; }
-.subagent-group-chevron { color: #1d4ed8; display: inline-block; transition: transform 0.15s ease; }
-.subagent-group-chevron.open { transform: rotate(90deg); }
-.subagent-group-meta { margin-left: auto; font-size: 0.6875rem; color: #64748b; white-space: nowrap; }
-.subagent-group-body { padding: 0.5rem 0.75rem; display: flex; flex-direction: column; gap: 0.5rem; }
-@media (prefers-color-scheme: dark) { .subagent-group { border-color: #1e3a8a; background: #0f172a; } .subagent-group-header { background: #1e293b; } .subagent-group-meta { color: #94a3b8; } }

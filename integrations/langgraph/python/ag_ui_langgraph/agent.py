@@ -303,6 +303,44 @@ class LangGraphAgent:
             "name": tool_input.get("subagent_type"),
             "description": tool_input.get("description"),
         }
+        # Map this `task` invocation's run_id to its subagent_id so the matching
+        # OnToolEnd can finish exactly this subagent (see
+        # _finish_subagent_on_task_end). The subagent's own inner tools (grep,
+        # write_file, …) share its checkpoint namespace, so ns matching alone
+        # would finish it prematurely; the run_id is unique to the task call.
+        run_id = event.get("run_id")
+        if run_id:
+            active_run.setdefault("subagent_task_runs", {})[run_id] = subagent_id
+
+    def _finish_subagent_on_task_end(self, event: dict) -> list:
+        """Emit SUBAGENT_FINISHED when a deepagents ``task`` delegation returns.
+
+        The subagent's lifecycle is exactly the lifespan of the ``task`` tool
+        that spawned it: its OnToolEnd fires once the subagent has produced all
+        of its output and control returns to the supervisor. Finishing here —
+        rather than in ``drain_subagents`` at RUN_FINISHED — makes the reported
+        subagent status track the subagent itself, not the parent run. Matched
+        by the run_id recorded in _capture_subagent_task_meta so only the task
+        call (not the subagent's inner tool calls, which share its namespace)
+        triggers the finish. No-op for non-task tool ends.
+        """
+        if event.get("event") != LangGraphEventTypes.OnToolEnd.value:
+            return []
+        active_run = getattr(self, "active_run", None)
+        if active_run is None:
+            return []
+        run_id = event.get("run_id")
+        subagent_id = (active_run.get("subagent_task_runs") or {}).pop(run_id, None)
+        if not subagent_id:
+            return []
+        if subagent_id not in active_run.get("active_subagents", {}):
+            return []
+        del active_run["active_subagents"][subagent_id]
+        if active_run.get("current_subagent_id") == subagent_id:
+            active_run["current_subagent_id"] = None
+        return [SubagentFinishedEvent(
+            type=EventType.SUBAGENT_FINISHED, subagent_id=subagent_id,
+        )]
 
     def _accumulate_subagent_message(self, event: ProcessedEvents) -> None:
         """Accumulate subagent-attributed messages — text, tool calls, and tool
@@ -408,6 +446,7 @@ class LangGraphAgent:
             "active_subagents": {},
             "current_subagent_id": None,
             "subagent_task_meta": {},
+            "subagent_task_runs": {},
             "subagent_messages": {},
             "subagent_tool_call_owner": {},
         }
@@ -530,6 +569,12 @@ class LangGraphAgent:
 
                 lc_agent_name = (event.get("metadata") or {}).get("lc_agent_name")
                 for sub_ev in reconcile_subagents(self.active_run, ns, lc_agent_name, self.subgraphs):
+                    yield self._dispatch_event(sub_ev)
+
+                # Finish a subagent as soon as its `task` delegation returns, so
+                # its reported status tracks the subagent's own lifecycle rather
+                # than waiting for drain_subagents at RUN_FINISHED.
+                for sub_ev in self._finish_subagent_on_task_end(event):
                     yield self._dispatch_event(sub_ev)
 
                 if event["event"] == "error":
