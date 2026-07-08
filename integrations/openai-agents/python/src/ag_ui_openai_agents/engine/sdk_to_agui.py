@@ -13,27 +13,34 @@ STATE_SNAPSHOT / STATE_DELTA, MESSAGES_SNAPSHOT) are the run loop's job
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Sequence
 
 from ag_ui.core import (
+    AssistantMessage,
     BaseEvent,
     CustomEvent,
     EventType,
+    FunctionCall,
+    Message,
+    MessagesSnapshotEvent,
     ReasoningEncryptedValueEvent,
     ReasoningEndEvent,
     ReasoningMessageContentEvent,
     ReasoningMessageEndEvent,
     ReasoningMessageStartEvent,
     ReasoningStartEvent,
+    RunAgentInput,
     StepFinishedEvent,
     StepStartedEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
+    ToolCall,
     ToolCallArgsEvent,
     ToolCallEndEvent,
     ToolCallResultEvent,
     ToolCallStartEvent,
+    ToolMessage,
 )
 from agents import (
     HandoffCallItem,
@@ -108,6 +115,12 @@ class SDKToAGUITranslator:
         # the reasoning phase, and we still need the original id to attach it to.
         self._reasoning_phase_ids: dict[str, str] = {}
         self._current_step: str | None = None
+        # AG-UI Messages for the end-of-run MESSAGES_SNAPSHOT, built inline as
+        # each item resolves its id here — never a second pass over new_items,
+        # so a snapshot message's id can never diverge from its streamed one.
+        # Reasoning items are intentionally never appended (see
+        # translate_reasoning_item).
+        self._snapshot_messages: list[Message] = []
 
     # ─────────────────────────────────────────────────────────────────────
     # TIER 1 — One-shot entry points
@@ -161,6 +174,47 @@ class SDKToAGUITranslator:
             )
             self._current_step = None
         return events
+
+    def build_messages_snapshot(
+        self,
+        run_input: RunAgentInput | Sequence[Message] | None = None,
+    ) -> MessagesSnapshotEvent:
+        """Build the end-of-run MESSAGES_SNAPSHOT event.
+
+        The snapshot is the full conversation as the client should know
+        it: the run's prior messages passed through untouched (they keep
+        the ids the client already renders, so its id-keyed merge updates
+        in place instead of duplicating), followed by this run's messages
+        — collected here as the stream ran (see _record_* below), each
+        under the exact id its streamed event used. Same id, one
+        resolution: a snapshot message can never disagree with its
+        streamed counterpart, even on backends that stamp placeholder ids
+        (Chat Completions, LiteLLM) instead of real ones.
+
+        Prior history comes from run_input.messages, not
+        result.to_input_list(): Responses-API input items carry no id slot
+        for user/system messages, so round-tripping prior turns through
+        them would mint fresh ids and duplicate every bubble on the
+        client. Filter run_input first if it carries anything the client
+        should not see echoed back (e.g. a system prompt sent as history).
+
+        Args:
+            run_input: The run's RunAgentInput, a plain message list, or
+                None when there is no prior history to prepend.
+
+        Returns:
+            A MESSAGES_SNAPSHOT event ready to encode.
+        """
+        if run_input is None:
+            prior: list[Message] = []
+        elif isinstance(run_input, RunAgentInput):
+            prior = list(run_input.messages or [])
+        else:
+            prior = list(run_input)
+        return MessagesSnapshotEvent(
+            type=EventType.MESSAGES_SNAPSHOT,
+            messages=[*prior, *self._snapshot_messages],
+        )
 
     # ─────────────────────────────────────────────────────────────────────
     # TIER 2 — Bulk collection + per event family
@@ -481,12 +535,20 @@ class SDKToAGUITranslator:
         """
         raw = item.raw_item
         raw_id = read_attr(raw, "id")
+        text = ItemHelpers.extract_text(raw) or ItemHelpers.extract_refusal(raw) or ""
         action, key = self._reconcile(raw_id, self._open_texts, self._closed_text_ids)
         if action == "close":
-            return self._close_text(key)
+            # key is still open at this point — read its id before _close_text pops it.
+            message_id = self._open_texts[key]
+            events = self._close_text(key)
+            self._record_text(message_id, text)
+            return events
         if action == "skip":
+            # Already closed via a raw event before this commit arrived —
+            # no BaseEvents to emit, but the snapshot still needs this
+            # message, under the exact id that earlier close already used.
+            self._record_text(key, text)
             return []
-        text = ItemHelpers.extract_text(raw) or ItemHelpers.extract_refusal(raw) or ""
         message_id = self._resolve_id(raw_id, new_message_id)
         events = self._open_text(message_id, message_id)
         if text:
@@ -498,7 +560,9 @@ class SDKToAGUITranslator:
                 )
             )
         events.extend(self._close_text(message_id))
+        self._record_text(message_id, text)
         return events
+
     def translate_tool_call_item(self, item: ToolCallItem) -> list[BaseEvent]:
         """Handle a tool call commit by closing its window or emitting START/[ARGS]/END.
 
@@ -519,11 +583,6 @@ class SDKToAGUITranslator:
             or read_attr(raw, "call_id")
             or self._resolve_id(read_attr(raw, "id"), new_tool_call_id)
         )
-        for key, open_call_id in self._open_tool_calls.items():
-            if open_call_id == call_id:
-                return self._close_tool_call(key)
-        if call_id in self._seen_call_ids:
-            return []
         name = (
             getattr(item, "tool_name", None)
             or read_attr(raw, "name")
@@ -531,6 +590,16 @@ class SDKToAGUITranslator:
             or ""
         )
         arguments = read_attr(raw, "arguments") or ""
+        for key, open_call_id in self._open_tool_calls.items():
+            if open_call_id == call_id:
+                events = self._close_tool_call(key)
+                self._record_tool_call(call_id, name, arguments)
+                return events
+        if call_id in self._seen_call_ids:
+            # Already closed via a raw event before this commit arrived —
+            # no BaseEvents to emit, but the snapshot still needs this call.
+            self._record_tool_call(call_id, name, arguments)
+            return []
         events = self._open_tool_call(call_id, call_id, name)
         if arguments:
             events.append(
@@ -541,6 +610,7 @@ class SDKToAGUITranslator:
                 )
             )
         events.extend(self._close_tool_call(call_id))
+        self._record_tool_call(call_id, name, arguments)
         return events
 
     def translate_tool_call_output_item(self, item: ToolCallOutputItem) -> list[BaseEvent]:
@@ -556,12 +626,14 @@ class SDKToAGUITranslator:
         if not call_id:
             logger.debug("Tool output without call_id; skipping TOOL_CALL_RESULT")
             return []
+        content = coerce_to_str(item.output)
+        result_id = self._record_result(call_id, content)
         return [
             ToolCallResultEvent(
                 type=EventType.TOOL_CALL_RESULT,
-                message_id=new_tool_result_id(call_id),
+                message_id=result_id,
                 tool_call_id=call_id,
-                content=coerce_to_str(item.output),
+                content=content,
             )
         ]
 
@@ -638,12 +710,14 @@ class SDKToAGUITranslator:
             return []
         target = read_attr(item.target_agent, "name") or ""
         output = read_attr(raw, "output") or f"Handed off to {target}"
+        content = coerce_to_str(output)
+        result_id = self._record_result(call_id, content)
         return [
             ToolCallResultEvent(
                 type=EventType.TOOL_CALL_RESULT,
-                message_id=new_tool_result_id(call_id),
+                message_id=result_id,
                 tool_call_id=call_id,
-                content=coerce_to_str(output),
+                content=content,
             )
         ]
 
@@ -774,21 +848,25 @@ class SDKToAGUITranslator:
 
         Returns:
             ("close", key) when a streamed window is still open,
-            ("skip", None) when the item was already fully streamed and
-            closed, or ("new", None) when nothing was streamed for the
-            item and it must be emitted whole.
+            ("skip", resolved_id) when the item was already fully
+            streamed and closed — resolved_id is the id that streamed
+            close already used, so the caller can still record a
+            snapshot message under it (real id: raw_id itself, since
+            it's known directly; placeholder id: the queued closed id),
+            or ("new", None) when nothing was streamed for the item and
+            it must be emitted whole.
         """
         if self._is_real_id(raw_id):
             if raw_id in open_windows:
                 return ("close", raw_id)
             if raw_id in closed_ids:
-                return ("skip", None)
+                return ("skip", raw_id)
             return ("new", None)
         if open_windows:
             return ("close", next(iter(open_windows)))
         if closed_ids:
-            closed_ids.pop(0)
-            return ("skip", None)
+            resolved_id = closed_ids.pop(0)
+            return ("skip", resolved_id)
         return ("new", None)
 
     # ─────────────────────────────────────────────────────────────────────
@@ -951,6 +1029,49 @@ class SDKToAGUITranslator:
                 encrypted_value=encrypted,
             )
         ]
+
+    # ─────────────────────────────────────────────────────────────────────
+    # TIER 4 — Internal helpers: snapshot message builders
+    # ─────────────────────────────────────────────────────────────────────
+    #
+    # One per streamed item, appended as the item commits — always with the
+    # id its streamed event already used, so build_messages_snapshot's output
+    # lines up with the stream. Reasoning is deliberately not recorded: the
+    # streamed reasoning bubbles survive the client merge on their own, and
+    # plaintext reasoning cannot be round-tripped back into an OpenAI run.
+
+    def _record_text(self, message_id: str, text: str) -> None:
+        self._snapshot_messages.append(
+            AssistantMessage(id=message_id, role="assistant", content=text)
+        )
+
+    def _record_tool_call(self, call_id: str, name: str, arguments: str) -> None:
+        # The streamed TOOL_CALL_START carried no parent message id, so the
+        # client keyed the bubble by the tool call id — mirror that here.
+        self._snapshot_messages.append(
+            AssistantMessage(
+                id=call_id,
+                role="assistant",
+                tool_calls=[
+                    ToolCall(
+                        id=call_id,
+                        type="function",
+                        function=FunctionCall(name=name, arguments=arguments),
+                    )
+                ],
+            )
+        )
+
+    def _record_result(self, call_id: str, content: str) -> str:
+        # Returns the derived result id so the caller reuses the same value
+        # for its TOOL_CALL_RESULT event — snapshot and stream stay in sync.
+        result_id = new_tool_result_id(call_id)
+        self._snapshot_messages.append(
+            ToolMessage(
+                id=result_id, role="tool", tool_call_id=call_id, content=content
+            )
+        )
+        return result_id
 
 
 __all__ = ["SDKToAGUITranslator"]

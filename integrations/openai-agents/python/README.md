@@ -21,12 +21,13 @@ translator = AGUITranslator()
 bundle = translator.to_sdk(run_input)
 result = Runner.run_streamed(agent, input=bundle.messages)
 
-async for event in translator.to_agui(result):
+async for event in translator.to_agui(result, run_input=run_input):
     ...
 ```
 
 `to_agui(result)` also accepts `result.stream_events()` if your code already
-has the SDK event iterator.
+has the SDK event iterator. The last event of the stream is a
+`MESSAGES_SNAPSHOT` by default — see [Messages Snapshot](#messages-snapshot).
 
 ## Install
 
@@ -85,8 +86,9 @@ async def _stream(body: RunAgentInput):
 
     try:
         # 4. Run the SDK agent normally, then translate the streamed result.
+        #    to_agui appends a MESSAGES_SNAPSHOT by default (last event).
         result = Runner.run_streamed(run_agent, input=bundle.messages)
-        async for event in translator.to_agui(result):
+        async for event in translator.to_agui(result, run_input=body):
             yield encoder.encode(event)
     except Exception:
         yield encoder.encode(
@@ -201,6 +203,48 @@ if bundle.tools:
     run_agent = agent.clone(tools=[*agent.tools, *bundle.tools])
 ```
 
+### Messages Snapshot
+
+`MESSAGES_SNAPSHOT` lets the client resync its whole message list in one
+event — it reconciles by message id, fixing anything the granular stream
+couldn't express (a reload mid-conversation, history rewritten by a handoff
+input filter, a dropped connection). `to_agui` appends one by default, as
+its last event, right after the stream's own flush — pass `run_input` so it
+has the prior turns; no `run_input`, no snapshot:
+
+```python
+async for event in translator.to_agui(result, run_input=run_input):
+    yield encoder.encode(event)
+
+yield encoder.encode(RunFinishedEvent(...))
+```
+
+The snapshot is `run_input.messages` (untouched, keeping the ids the client
+already renders) plus this run's messages, built inline as the engine
+streams — each message's id is resolved once and handed to both the
+streamed event and the snapshot entry, so they can never disagree, even on
+backends that don't stamp real ids (LiteLLM and similar). Reasoning items
+are not included; the client keeps its streamed reasoning bubbles through
+the merge on its own. If the run raises, the exception propagates out of
+the `async for` before the snapshot line runs — nothing is emitted on the
+error path.
+
+> `run_input.messages` passes through untouched — filter it first if it
+> holds anything the client shouldn't see echoed back, e.g. a system
+> prompt sent as history instead of via `agent.instructions`:
+> ```python
+> filtered = [m for m in run_input.messages if m.role != "system"]
+> async for event in translator.to_agui(result, run_input=filtered):
+>     ...
+> ```
+
+Pass `emit_messages_snapshot=False` to opt out (e.g. you assemble your own).
+Auto-emission works the same whether `to_agui` is given the
+`RunResultStreaming` object or a bare `result.stream_events()` iterator —
+the snapshot is built from the engine's own state (collected as it
+streamed), not `result.new_items`, so there's nothing the bare-iterator
+form is missing.
+
 ### What Your Code Still Owns
 
 The translator translates. Your run loop still owns orchestration:
@@ -208,7 +252,8 @@ The translator translates. Your run loop still owns orchestration:
 | Concern | Owned by |
 |---|---|
 | `RUN_STARTED`, `RUN_FINISHED`, `RUN_ERROR` | Your server |
-| `STATE_SNAPSHOT`, `MESSAGES_SNAPSHOT` | Your server, if your app needs them |
+| `STATE_SNAPSHOT` | Your server, if your app needs it |
+| `MESSAGES_SNAPSHOT` | `to_agui` (on by default given `run_input`; pass `emit_messages_snapshot=False` to own it yourself) |
 | Session storage and thread history | Your server |
 | SSE, WebSocket, HTTP response shape | Your server/framework |
 | OpenAI agent choice, model settings, handoffs, guardrails | Your OpenAI Agents SDK code |
