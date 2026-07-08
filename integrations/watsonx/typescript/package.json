@@ -36,8 +36,8 @@
     "node": ">=20.3.0"
   },
   "peerDependencies": {
-    "@ag-ui/core": "workspace:*",
-    "@ag-ui/client": "workspace:*",
+    "@ag-ui/core": ">=0.0.42",
+    "@ag-ui/client": ">=0.0.42",
     "rxjs": ">=7.8.0"
   },
   "devDependencies": {

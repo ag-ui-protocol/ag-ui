@@ -32,7 +32,7 @@
     "zod": "^3.22.4"
   },
   "peerDependencies": {
-    "@ag-ui/client": "workspace:*",
+    "@ag-ui/client": ">=0.0.40",
     "rxjs": "7.8.1"
   },
   "devDependencies": {
