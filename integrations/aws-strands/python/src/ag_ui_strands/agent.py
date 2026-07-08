@@ -22,6 +22,10 @@ from strands.session import SessionManager
 # "session_manager" is excluded: it is supplied per-thread via
 # StrandsAgentConfig.session_manager_provider (see run()). Forwarding a
 # template-level session_manager would make every thread share one session_id.
+# "plugins" is excluded: Strands consumes the plugin list during init and
+# retains only a _plugin_registry — the original objects are not stored as
+# self.plugins/self._plugins, so they cannot be auto-extracted. They are
+# supplied per-thread via the explicit StrandsAgent(plugins=...) kwarg.
 _AGUI_EXPLICIT_PARAMS = {
     "self",
     "model",
@@ -30,6 +34,7 @@ _AGUI_EXPLICIT_PARAMS = {
     "messages",
     "hooks",
     "session_manager",
+    "plugins",
 }
 
 
@@ -280,6 +285,7 @@ class StrandsAgent:
         description: str = "",
         config: "StrandsAgentConfig | None" = None,
         hooks: "list | None" = None,
+        plugins: "list | None" = None,
     ):
         # Store template agent configuration for creating fresh instances
         self._model = agent.model
@@ -303,6 +309,26 @@ class StrandsAgent:
         # the caller and forward them to every per-thread instance so any
         # observability / loop-cap / policy-enforcement hook actually fires.
         self._hooks = list(hooks) if hooks else []
+
+        # Strands plugins forwarded to each per-thread StrandsAgentCore.
+        #
+        # Same rationale as ``hooks`` above: ``plugins`` is a valid
+        # ``Agent.__init__`` parameter, but Strands consumes the list during
+        # init — registering each plugin's tools and hooks into the agent's
+        # registries — and stores only a ``_plugin_registry``. The original
+        # list of plugin objects is not retained as ``self.plugins`` /
+        # ``self._plugins``, so ``_extract_agent_kwargs`` cannot recover it
+        # from the template. The template Agent never serves a request, so a
+        # plugin registered there never runs its ``init_agent`` /
+        # before-invocation hooks on the per-thread agents that do. This
+        # silently breaks plugins whose behavior depends on those hooks — e.g.
+        # ``AgentSkills``, whose skill metadata is injected and whose
+        # filesystem skills are loaded in ``init_agent``; without forwarding,
+        # its activation tool leaks through (tools ARE copied) but reports
+        # "skill not found" because no skills were ever loaded. We therefore
+        # take plugins directly from the caller and forward them to every
+        # per-thread instance.
+        self._plugins = list(plugins) if plugins else []
 
         self.name = name
         self.description = description
@@ -421,6 +447,12 @@ class StrandsAgent:
                     core_kwargs = dict(self._agent_kwargs)
                     if self._hooks:
                         core_kwargs["hooks"] = list(self._hooks)
+                    # Same falsy-omission rule as ``hooks``: only forward
+                    # ``plugins`` when the caller supplied some, so we never
+                    # pass ``plugins=None`` / ``plugins=[]`` (which a future
+                    # StrandsAgentCore could interpret as "disable defaults").
+                    if self._plugins:
+                        core_kwargs["plugins"] = list(self._plugins)
                     self._agents_by_thread[thread_id] = StrandsAgentCore(
                         model=self._model,
                         system_prompt=self._system_prompt,
