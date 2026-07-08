@@ -4,6 +4,7 @@ import "@copilotkit/react-core/v2/styles.css";
 import "./style.css";
 import {
   useConfigureSuggestions,
+  useSubagent,
   CopilotChat,
   CopilotChatConfigurationProvider,
   CopilotChatAssistantMessage,
@@ -28,15 +29,24 @@ function getSubagentId(message: unknown): string | undefined {
 // Small inline pill identifying the subagent that produced a message. The tag
 // sits at the top of the assistant bubble, so it labels both the message's text
 // content and any tool-call cards rendered inside it.
+//
+// The declared subagent name (and description) come from the SUBAGENT_STARTED
+// lifecycle event, tracked in CopilotKit core's subagent registry and read here
+// via the `useSubagent` hook — resolved by the opaque subagentId, which stays
+// the stable key. Falls back to just the id until the registry has the name.
 function SubagentTag({ subagentId }: { subagentId: string }) {
+  const subagent = useSubagent({ subagentId });
   return (
     <span
       className="subagent-tag"
       data-testid="subagent-tag"
-      title={`Produced by subagent ${subagentId}`}
+      title={subagent?.description ?? `Produced by subagent ${subagentId}`}
     >
       <span className="subagent-tag-glyph">⟐</span>
-      {subagentId}
+      {subagent?.name && (
+        <span className="subagent-tag-name">{subagent.name}</span>
+      )}
+      <span className="subagent-tag-id">{subagentId}</span>
     </span>
   );
 }
@@ -62,6 +72,42 @@ function AssistantMessageWithSubagentTag(props: AssistantMessageProps) {
   );
 }
 
+// Wildcard tool-call renderer. CopilotKit v2 renders NOTHING for a tool call
+// unless a per-tool or wildcard ("*") renderer is registered (unhandled tool
+// calls are opt-in). The deepagents subagent calls generic tools (write_todos,
+// grep, glob, write_file, task) with no bespoke UI, so register a catch-all that
+// shows the tool name, its arguments, and result — this is what makes the
+// subagent's tool-call *messages* visible under their subagent tag.
+function ToolCallCard({ name, args, status, result }: {
+  name: string;
+  args: unknown;
+  status: string;
+  result?: string;
+}) {
+  const argsStr =
+    args && Object.keys(args as object).length > 0
+      ? JSON.stringify(args, null, 2)
+      : "";
+  return (
+    <div className="subagent-toolcall" data-testid="subagent-toolcall">
+      <div className="subagent-toolcall-head">
+        <span className="subagent-toolcall-name">🛠 {name}</span>
+        <span className="subagent-toolcall-status">{String(status)}</span>
+      </div>
+      {argsStr && <pre className="subagent-toolcall-body">{argsStr}</pre>}
+      {result ? (
+        <pre className="subagent-toolcall-body subagent-toolcall-result">
+          {result.length > 600 ? result.slice(0, 600) + "…" : result}
+        </pre>
+      ) : null}
+    </div>
+  );
+}
+
+const TOOL_CALL_RENDERERS = [
+  { name: "*", render: ToolCallCard },
+] as React.ComponentProps<typeof CopilotKitProvider>["renderToolCalls"];
+
 // Stable slot object (module-level) so CopilotChat's slot memoization isn't
 // defeated by a fresh reference on every render. The cast satisfies the slot's
 // `typeof CopilotChatAssistantMessage` type, which carries static namespace
@@ -80,6 +126,7 @@ export default function DeepagentsSubagents({
     <CopilotKitProvider
       runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
+      renderToolCalls={TOOL_CALL_RENDERERS}
     >
       <CopilotChatConfigurationProvider agentId={AGENT_ID}>
         <SubagentAttributionDemo />
