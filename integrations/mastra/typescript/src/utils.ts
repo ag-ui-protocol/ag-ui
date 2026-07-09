@@ -1,11 +1,16 @@
-import type { InputContent, InputContentDataSource, InputContentUrlSource, Message } from "@ag-ui/client";
-import { AbstractAgent, randomUUID } from "@ag-ui/client";
+import type {
+  InputContent,
+  InputContentDataSource,
+  InputContentUrlSource,
+  Message,
+} from "@ag-ui/client";
+import { AbstractAgent } from "@ag-ui/client";
 import { MastraClient } from "@mastra/client-js";
 import type { Mastra } from "@mastra/core";
 import type { CoreMessage } from "@mastra/core/llm";
 import { Agent as LocalMastraAgent } from "@mastra/core/agent";
 import { RequestContext } from "@mastra/core/request-context";
-import { MastraAgent } from "./mastra";
+import { MastraAgent, MastraTracingOptions } from "./mastra";
 
 /**
  * CoreMessage extended with an optional `id` field.
@@ -16,7 +21,9 @@ import { MastraAgent } from "./mastra";
  */
 type CoreMessageWithId = CoreMessage & { id?: string };
 
-function mediaSourceToUrl(source: InputContentDataSource | InputContentUrlSource): string {
+function mediaSourceToUrl(
+  source: InputContentDataSource | InputContentUrlSource,
+): string {
   if (source.type === "data") {
     return `data:${source.mimeType};base64,${source.value}`;
   }
@@ -89,19 +96,31 @@ const toMastraContent = (content: Message["content"]): string | any[] => {
             image: `data:${binaryPart.mimeType};base64,${binaryPart.data}`,
           });
         } else {
-          console.warn("[toMastraContent] Dropping BinaryInputContent: no url or data provided");
+          console.warn(
+            "[toMastraContent] Dropping BinaryInputContent: no url or data provided",
+          );
         }
         break;
       }
       default:
-        console.warn(`[toMastraContent] Unknown content type "${part.type}"; skipping`);
+        console.warn(
+          `[toMastraContent] Unknown content type "${part.type}"; skipping`,
+        );
         break;
     }
   }
   return parts;
 };
 
-export function convertAGUIMessagesToMastra(messages: Message[]): CoreMessageWithId[] {
+export function convertAGUIMessagesToMastra(
+  messages: Message[],
+  // Messages to resolve a tool message's toolName against. Defaults to
+  // `messages`, but callers that send only a diff (the new turn) must pass the
+  // full incoming history here: a tool-result's matching assistant tool-call
+  // may have been filtered out of `messages`, and resolving toolName to
+  // "unknown" makes Mastra store a broken tool result (the model then re-calls).
+  lookupMessages: Message[] = messages,
+): CoreMessageWithId[] {
   // Preserve AG-UI message IDs on the CoreMessage objects (see CoreMessageWithId).
   // Mastra's AIV4Adapter.fromCoreMessage reads `id` when present, which enables
   // Mastra's MessageHistory processor to deduplicate re-sent history:
@@ -140,7 +159,7 @@ export function convertAGUIMessagesToMastra(messages: Message[]): CoreMessageWit
       } as CoreMessage);
     } else if (message.role === "tool") {
       let toolName = "unknown";
-      for (const msg of messages) {
+      for (const msg of lookupMessages) {
         if (msg.role === "assistant") {
           for (const toolCall of msg.toolCalls ?? []) {
             if (toolCall.id === message.toolCallId) {
@@ -168,207 +187,34 @@ export function convertAGUIMessagesToMastra(messages: Message[]): CoreMessageWit
   return result;
 }
 
-/**
- * Converts Mastra MastraDBMessage[] (V2 format) to AG-UI Message[] format.
- * Used to emit MESSAGES_SNAPSHOT events so frontends (e.g. CopilotKit) can
- * synchronize thread history without re-sending all messages.
- *
- * MastraDBMessage uses a V2 parts-based format:
- *   { id, role, content: { format: 2, parts: [...] } }
- *
- * Each part has a `type` (e.g. "text", "tool-invocation") with type-specific fields.
- */
-/**
- * Parse a string payload that may be either a `data:<mime>;base64,<raw>` URL
- * or a plain URL into an AG-UI content source. The forward converter
- * (`toMastraContent` / `mediaSourceToUrl`) always produces a data URL for
- * `type: "data"` sources and a plain URL for `type: "url"` sources, so we
- * reverse that here to recover the original shape. `mimeTypeHint` is used
- * when the payload is a plain URL (no mime embedded).
- */
-function parseMediaSource(
-  value: string,
-  mimeTypeHint?: string,
-): InputContentDataSource | InputContentUrlSource {
-  const dataUrlMatch = /^data:([^;,]+)(?:;([^,]+))?,(.*)$/.exec(value);
-  if (dataUrlMatch) {
-    const [, mime, encoding, payload] = dataUrlMatch;
-    // Only base64 data URLs round-trip cleanly to AG-UI's { type: "data" }
-    // shape (which expects raw base64). Anything else, hand back as a url.
-    if (encoding === "base64") {
-      return { type: "data", value: payload, mimeType: mime };
-    }
-    return { type: "url", value, mimeType: mime };
-  }
-  return {
-    type: "url",
-    value,
-    mimeType: mimeTypeHint ?? "application/octet-stream",
-  };
-}
-
-/**
- * Map a Mastra V2 media part back to an AG-UI InputContent entry.
- *
- * Handles both shapes emitted by the forward converter (`toMastraContent`):
- *   - `{ type: "image", image: <data-url | url> }`
- *   - `{ type: "file", mimeType, data: <data-url | url> | url: <url> }`
- *
- * Returns null when the part can't be represented.
- */
-function mediaPartToAGUIInputContent(part: {
-  type?: string;
-  mimeType?: string;
-  data?: string;
-  url?: string;
-  image?: string;
-}): InputContent | null {
-  if (part.type === "image") {
-    // Forward converter emits `{ type: "image", image: <url-or-data-url> }`.
-    // The mime type for plain URLs isn't recoverable, so default to image/*.
-    const raw = part.image;
-    if (!raw) return null;
-    const source = parseMediaSource(raw, "image/*");
-    return { type: "image", source };
-  }
-
-  if (part.type === "file") {
-    const hintedMime = part.mimeType ?? "application/octet-stream";
-    let source: InputContentDataSource | InputContentUrlSource | null = null;
-    if (part.data) {
-      source = parseMediaSource(part.data, hintedMime);
-      // If the hinted mime conflicts with a decoded data-URL mime, trust the
-      // hint from the part (it's authoritative in storage).
-      if (source.type === "data" && part.mimeType) {
-        source = { ...source, mimeType: part.mimeType };
-      }
-    } else if (part.url) {
-      source = { type: "url", value: part.url, mimeType: hintedMime };
-    }
-    if (!source) return null;
-
-    const mime = source.mimeType ?? hintedMime;
-    if (mime.startsWith("image/")) return { type: "image", source };
-    if (mime.startsWith("audio/")) return { type: "audio", source };
-    if (mime.startsWith("video/")) return { type: "video", source };
-    return { type: "document", source };
-  }
-
-  return null;
-}
-
-export function convertMastraMessagesToAGUI(messages: { id: string; role: string; content: { parts?: any[] } }[]): Message[] {
-  const result: Message[] = [];
-
-  for (const message of messages) {
-    const parts = message.content?.parts ?? [];
-
-    if (message.role === "user") {
-      // Preserve multimodal content. Use a string when the message is text-only
-      // (backwards-compat with AG-UI clients that expect string content), and
-      // an InputContent[] when any non-text part is present.
-      const inputContent: InputContent[] = [];
-      for (const part of parts) {
-        if (part.type === "text") {
-          if (part.text) inputContent.push({ type: "text", text: part.text });
-        } else if (part.type === "file" || part.type === "image") {
-          const mapped = mediaPartToAGUIInputContent(part);
-          if (mapped) inputContent.push(mapped);
-        }
-      }
-
-      const hasNonText = inputContent.some((c) => c.type !== "text");
-      if (hasNonText) {
-        result.push({
-          id: message.id,
-          role: "user",
-          content: inputContent,
-        } as Message);
-      } else {
-        const text = inputContent
-          .filter((c): c is Extract<InputContent, { type: "text" }> => c.type === "text")
-          .map((c) => c.text)
-          .join("\n");
-        result.push({
-          id: message.id,
-          role: "user",
-          content: text,
-        } as Message);
-      }
-    } else if (message.role === "assistant") {
-      // AG-UI AssistantMessage.content is `string | undefined`, so non-text
-      // assistant parts (file/reasoning/etc.) cannot be faithfully represented
-      // and are intentionally skipped. Text parts are concatenated in order.
-      const textSegments: string[] = [];
-      const toolCalls: Array<{
-        id: string;
-        type: "function";
-        function: { name: string; arguments: string };
-      }> = [];
-      const toolResults: Array<{ toolCallId: string; result: any }> = [];
-
-      for (const part of parts) {
-        if (part.type === "text") {
-          if (part.text) textSegments.push(part.text);
-        } else if (part.type === "tool-invocation" || part.type === "tool-call") {
-          const toolCallId = part.toolCallId ?? part.id ?? randomUUID();
-          const toolName = part.toolName ?? part.name ?? "unknown";
-          const args = part.args ?? {};
-          toolCalls.push({
-            id: toolCallId,
-            type: "function",
-            function: {
-              name: toolName,
-              arguments: typeof args === "string" ? args : JSON.stringify(args),
-            },
-          });
-          if (part.type === "tool-invocation" && part.state === "result" && part.result !== undefined) {
-            toolResults.push({
-              toolCallId,
-              result: part.result,
-            });
-          }
-        }
-      }
-
-      const textContent = textSegments.join("");
-      if (textContent || toolCalls.length > 0) {
-        result.push({
-          id: message.id,
-          role: "assistant",
-          content: textContent || undefined,
-          toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-        } as Message);
-      }
-
-      // Push tool result messages after the assistant message with stable IDs
-      // derived from the parent message + tool call, so repeated snapshots
-      // don't produce new IDs for the same logical tool result.
-      for (const tr of toolResults) {
-        result.push({
-          id: `${message.id}:${tr.toolCallId}:result`,
-          role: "tool",
-          content: typeof tr.result === "string" ? tr.result : JSON.stringify(tr.result),
-          toolCallId: tr.toolCallId,
-        } as Message);
-      }
-    }
-    // System messages are skipped — AG-UI MESSAGES_SNAPSHOT only needs user/assistant/tool
-  }
-
-  return result;
-}
-
 export interface GetRemoteAgentsOptions {
   mastraClient: MastraClient;
   resourceId: string;
+  /**
+   * Surface Mastra Observational Memory (OM) background work as AG-UI activity
+   * events (activityType `mastra-observational-memory`). `true` enables it for
+   * every agent; pass an array of agent ids to enable it only for those.
+   * Default OFF. The remote agent must have OM enabled on its Memory server-side
+   * — this only controls whether the bridge surfaces the `data-om-*` chunks it
+   * streams. See `MastraAgentConfig.observationalMemory`.
+   */
+  observationalMemory?: boolean | string[];
+  /** Mastra tracing options forwarded to each run. See MastraAgentConfig.tracingOptions. */
+  tracingOptions?: MastraTracingOptions;
 }
 
 export async function getRemoteAgents({
   mastraClient,
   resourceId,
+  observationalMemory,
+  tracingOptions,
 }: GetRemoteAgentsOptions): Promise<Record<string, AbstractAgent>> {
   const agents = await mastraClient.listAgents();
+
+  const wantsObservationalMemory = (agentId: string): boolean =>
+    observationalMemory === true ||
+    (Array.isArray(observationalMemory) &&
+      observationalMemory.includes(agentId));
 
   return Object.entries(agents).reduce(
     (acc, [agentId]) => {
@@ -378,6 +224,13 @@ export async function getRemoteAgents({
         agentId,
         agent,
         resourceId,
+        // Enables syncing input.state into the remote server's working memory
+        // (client -> agent shared state), mirroring the local path.
+        remoteClient: mastraClient,
+        observationalMemory: wantsObservationalMemory(agentId)
+          ? true
+          : undefined,
+        tracingOptions,
       });
 
       return acc;
@@ -390,14 +243,41 @@ export interface GetLocalAgentsOptions {
   mastra: Mastra;
   resourceId: string;
   requestContext?: RequestContext;
+  /**
+   * Enable Mastra's `untilIdle` run mode (background-task lifecycle piped into
+   * the run's fullStream). `true` enables it for every agent; pass an array of
+   * agent ids to enable it only for those. See `MastraAgentConfig.untilIdle`.
+   */
+  untilIdle?: boolean | string[];
+  /**
+   * Surface Mastra Observational Memory (OM) background work as AG-UI activity
+   * events (activityType `mastra-observational-memory`). `true` enables it for
+   * every agent; pass an array of agent ids to enable it only for those.
+   * Default OFF. See `MastraAgentConfig.observationalMemory`.
+   */
+  observationalMemory?: boolean | string[];
+  /** Mastra tracing options forwarded to each run. See MastraAgentConfig.tracingOptions. */
+  tracingOptions?: MastraTracingOptions;
 }
 
 export function getLocalAgents({
   mastra,
   resourceId,
   requestContext,
+  untilIdle,
+  observationalMemory,
+  tracingOptions,
 }: GetLocalAgentsOptions): Record<string, AbstractAgent> {
   const agents = mastra.listAgents() || {};
+
+  const wantsUntilIdle = (agentId: string): boolean =>
+    untilIdle === true ||
+    (Array.isArray(untilIdle) && untilIdle.includes(agentId));
+
+  const wantsObservationalMemory = (agentId: string): boolean =>
+    observationalMemory === true ||
+    (Array.isArray(observationalMemory) &&
+      observationalMemory.includes(agentId));
 
   const agentAGUI = Object.entries(agents).reduce(
     (acc, [agentId, agent]) => {
@@ -406,6 +286,11 @@ export function getLocalAgents({
         agent,
         resourceId,
         requestContext,
+        untilIdle: wantsUntilIdle(agentId) ? true : undefined,
+        observationalMemory: wantsObservationalMemory(agentId)
+          ? true
+          : undefined,
+        tracingOptions,
       });
       return acc;
     },
@@ -420,6 +305,8 @@ export interface GetLocalAgentOptions {
   agentId: string;
   resourceId: string;
   requestContext?: RequestContext;
+  /** Mastra tracing options forwarded to the run. See MastraAgentConfig.tracingOptions. */
+  tracingOptions?: MastraTracingOptions;
 }
 
 export function getLocalAgent({
@@ -427,6 +314,7 @@ export function getLocalAgent({
   agentId,
   resourceId,
   requestContext,
+  tracingOptions,
 }: GetLocalAgentOptions) {
   const agent = mastra.getAgent(agentId);
   if (!agent) {
@@ -437,6 +325,7 @@ export function getLocalAgent({
     agent,
     resourceId,
     requestContext,
+    tracingOptions,
   }) as AbstractAgent;
 }
 
@@ -445,9 +334,17 @@ export interface GetNetworkOptions {
   networkId: string;
   resourceId: string;
   requestContext?: RequestContext;
+  /** Mastra tracing options forwarded to the run. See MastraAgentConfig.tracingOptions. */
+  tracingOptions?: MastraTracingOptions;
 }
 
-export function getNetwork({ mastra, networkId, resourceId, requestContext }: GetNetworkOptions) {
+export function getNetwork({
+  mastra,
+  networkId,
+  resourceId,
+  requestContext,
+  tracingOptions,
+}: GetNetworkOptions) {
   const network = mastra.getAgent(networkId);
   if (!network) {
     throw new Error(`Network ${networkId} not found`);
@@ -457,5 +354,6 @@ export function getNetwork({ mastra, networkId, resourceId, requestContext }: Ge
     agent: network as unknown as LocalMastraAgent,
     resourceId,
     requestContext,
+    tracingOptions,
   }) as AbstractAgent;
 }

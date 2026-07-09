@@ -4,7 +4,8 @@
 # Verifies that the `name` declared for each package in
 # scripts/release/release.config.json matches the actual package name in that
 # package's on-disk manifest (package.json for TypeScript, pyproject.toml for
-# Python — either PEP 621 `[project]` or poetry `[tool.poetry]`).
+# Python — either PEP 621 `[project]` or poetry `[tool.poetry]`, or .csproj
+# PackageId for .NET).
 #
 # Why this matters: release.config.json is the single source of truth that the
 # version-bumper (prepare-release.ts), the dropdown guard, the nx allowlist
@@ -51,7 +52,7 @@ while IFS=$'\t' read -r scope name path ecosystem build_system; do
       continue
     fi
     actual=$(jq -r '.name // empty' "$manifest")
-  else
+  elif [ "$ecosystem" = "python" ]; then
     manifest="$REPO_ROOT/$path/pyproject.toml"
     if [ ! -f "$manifest" ]; then
       echo "ERROR: [$scope] $name: pyproject.toml not found at $path" >&2
@@ -78,7 +79,31 @@ try:
 except KeyError as e:
     print(f'ERROR: missing key {e} in {os.environ[\"MANIFEST\"]}', file=sys.stderr)
     sys.exit(1)
-") || { echo "ERROR: [$scope] $name: could not read name from $path/pyproject.toml" >&2; rc=1; continue; }
+	") || { echo "ERROR: [$scope] $name: could not read name from $path/pyproject.toml" >&2; rc=1; continue; }
+  elif [ "$ecosystem" = "dotnet" ]; then
+    manifest=$(find "$REPO_ROOT/$path" -maxdepth 1 -name '*.csproj' -print -quit)
+    if [ -z "$manifest" ] || [ ! -f "$manifest" ]; then
+      echo "ERROR: [$scope] $name: .csproj not found at $path" >&2
+      rc=1
+      continue
+    fi
+    actual=$(MANIFEST="$manifest" python3 -c "
+import os, sys
+import xml.etree.ElementTree as ET
+try:
+    root = ET.parse(os.environ['MANIFEST']).getroot()
+    value = root.findtext('.//PackageId')
+    if not value:
+        raise KeyError('PackageId')
+    print(value)
+except Exception as e:
+    print(f'ERROR: could not read PackageId from {os.environ[\"MANIFEST\"]}: {e}', file=sys.stderr)
+    sys.exit(1)
+") || { echo "ERROR: [$scope] $name: could not read PackageId from $path/*.csproj" >&2; rc=1; continue; }
+  else
+    echo "ERROR: [$scope] $name: unknown ecosystem '$ecosystem'" >&2
+    rc=1
+    continue
   fi
 
   if [ -z "$actual" ]; then
@@ -96,7 +121,7 @@ done <<< "$PACKAGES"
 if [ "$rc" -ne 0 ]; then
   echo "" >&2
   echo "Fix: make each release.config.json package 'name' exactly match the name in" >&2
-  echo "its manifest (package.json '.name', or pyproject.toml [project]/[tool.poetry] name)." >&2
+  echo "its manifest (package.json '.name', pyproject.toml [project]/[tool.poetry] name, or .csproj PackageId)." >&2
   exit 1
 fi
 

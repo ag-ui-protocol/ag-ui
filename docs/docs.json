@@ -141,7 +141,7 @@
                 ]
               },
               {
-                "group": "AGUI.Hosting.AspNetCore",
+                "group": "AGUI.Server",
                 "pages": [
                   "sdk/dotnet/hosting/overview",
                   "sdk/dotnet/hosting/endpoints",

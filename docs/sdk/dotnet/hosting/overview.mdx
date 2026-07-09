@@ -1,16 +1,17 @@
 ---
 title: "Overview"
-description: "ASP.NET Core hosting package overview"
+description: "Server adapter package overview"
 ---
 
-# AGUI.Hosting.AspNetCore
+# AGUI.Server
 
-`AGUI.Hosting.AspNetCore` is the .NET server-side hosting layer for AG-UI. It
-turns any `Microsoft.Extensions.AI.IChatClient` into an AG-UI endpoint that
-accepts `RunAgentInput` and streams AG-UI events to a frontend UI.
+`AGUI.Server` is the .NET server-side adapter for AG-UI. It converts a
+`Microsoft.Extensions.AI.IChatClient` stream into AG-UI protocol events, so you
+can expose any chat client as an AG-UI endpoint that accepts `RunAgentInput` and
+streams AG-UI events to a frontend UI.
 
 ```bash
-dotnet add package AGUI.Hosting.AspNetCore
+dotnet add package AGUI.Server
 ```
 
 ## The core idea
@@ -23,18 +24,20 @@ messages and options, calls your chat client, then converts the streamed
 
 ## What it depends on
 
-`AGUI.Hosting.AspNetCore` is intentionally small:
+`AGUI.Server` is intentionally small:
 
 - [AG-UI protocol types](/sdk/dotnet/abstractions/events) from
   `AGUI.Abstractions`
 - `Microsoft.Extensions.AI.Abstractions`
-- ASP.NET Core, through `Microsoft.AspNetCore.App`
 
-It does not depend on the .NET AG-UI client package. The server and client
-packages share protocol types, but remain independent.
+It is framework-agnostic: it does not depend on ASP.NET Core or any web
+framework. You host the adapter inside the web framework of your choice (the
+samples and docs use ASP.NET Core). It also does not depend on the .NET AG-UI
+client package. The server and client packages share protocol types, but remain
+independent.
 
 <Note>
-  The hosting package targets `net10.0`, `net9.0`, and `net8.0`.
+  The server package targets `net10.0`, `net9.0`, and `net8.0`.
 </Note>
 
 ## What the hosting layer handles
@@ -52,7 +55,7 @@ The hosting layer handles the protocol details for you:
 
 ## Server and client together
 
-Use `AGUI.Hosting.AspNetCore` when you are building an AG-UI server. Use
+Use `AGUI.Server` when you are building an AG-UI server. Use
 [AGUI.Client](/sdk/dotnet/client/overview) when .NET code needs to consume an
 AG-UI endpoint as an `IChatClient`.
 

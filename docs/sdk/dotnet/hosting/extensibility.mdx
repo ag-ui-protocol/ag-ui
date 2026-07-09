@@ -48,7 +48,7 @@ to let the next mapper try the content.
 
 ```csharp
 using AGUI.Abstractions;
-using AGUI.Hosting.AspNetCore;
+using AGUI.Server;
 using Microsoft.Extensions.AI;
 
 public sealed class WorkflowStepContent : AIContent
@@ -82,7 +82,7 @@ outcome and stops the run. Return `null` to continue to the next mapper or to
 
 ```csharp
 using AGUI.Abstractions;
-using AGUI.Hosting.AspNetCore;
+using AGUI.Server;
 using Microsoft.Extensions.AI;
 
 public sealed class ConfirmationRequiredContent : AIContent
@@ -116,7 +116,7 @@ the normal tool call start, args, and end events.
 ```csharp
 using System.Text.Json;
 using AGUI.Abstractions;
-using AGUI.Hosting.AspNetCore;
+using AGUI.Server;
 
 string? lastDocument = null;
 
@@ -156,7 +156,7 @@ extra events after the normal `ToolCallResultEvent`.
 ```csharp
 using System.Text.Json;
 using AGUI.Abstractions;
-using AGUI.Hosting.AspNetCore;
+using AGUI.Server;
 
 var streamOptions = new AGUIStreamOptions()
     .MapResult("save_recipe", result =>
