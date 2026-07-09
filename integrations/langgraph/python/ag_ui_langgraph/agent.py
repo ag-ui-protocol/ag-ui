@@ -428,7 +428,23 @@ class LangGraphAgent:
             forwarded_props = {
                 camel_to_snake(k): v for k, v in input.forwarded_props.items()
             }
-        async for event_str in self._handle_stream_events(input.model_copy(update={"forwarded_props": forwarded_props})):
+
+        # Drop subagent-attributed messages from the input. They are streamed for
+        # display only — each subagent's internal text and tool calls — and live
+        # in the subagent's own subgraph checkpoint, never the main graph's. The
+        # client echoes the full history back on every turn, so without this the
+        # main-graph merge would treat them as new messages (their ids are never
+        # in the main checkpoint) and append them to the supervisor's state,
+        # polluting it with orphan subagent tool calls that grow each turn. The
+        # supervisor's own messages carry no subagent_id, so they are kept; the
+        # subagent messages are re-streamed and re-attributed on each run.
+        update: dict = {"forwarded_props": forwarded_props}
+        if input.messages:
+            update["messages"] = [
+                m for m in input.messages if not getattr(m, "subagent_id", None)
+            ]
+
+        async for event_str in self._handle_stream_events(input.model_copy(update=update)):
             yield event_str
 
     async def _handle_stream_events(self, input: RunAgentInput) -> AsyncGenerator[ProcessedEvents, None]:
