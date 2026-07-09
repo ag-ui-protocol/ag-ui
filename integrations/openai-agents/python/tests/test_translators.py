@@ -6,11 +6,13 @@ Covers the public translator contract only — engine mappings have their own co
 - ``to_sdk`` delegates to the inbound engine and populates ``tools``.
 - ``AGUITranslator.to_agui`` streams engine output live and appends the
   engine flush, with a fresh engine per call (reusable translator).
-- ``to_agui`` appends a MESSAGES_SNAPSHOT by default; snapshot content
-  itself is covered in ``test_snapshot.py``, this file only checks the
-  wiring (default on given a ``run_input``, ``emit_messages_snapshot=False``
-  opts out, no ``run_input`` means no snapshot — same for bare iterators,
-  since the snapshot no longer depends on ``result.new_items``).
+- ``to_agui`` always wraps the stream with RUN_STARTED / RUN_FINISHED /
+  RUN_ERROR — not optional, thread_id/run_id come straight off run_input.
+- ``to_agui`` appends a MESSAGES_SNAPSHOT by default just before
+  RUN_FINISHED; snapshot content itself is covered in ``test_snapshot.py``,
+  this file only checks the wiring (default on, ``emit_messages_snapshot=False``
+  opts out — same for bare iterators, since the snapshot no longer depends
+  on ``result.new_items``).
 """
 
 from __future__ import annotations
@@ -18,11 +20,15 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import MagicMock
 
+import pytest
 from ag_ui.core import (
     CustomEvent,
     EventType,
     MessagesSnapshotEvent,
     RunAgentInput,
+    RunErrorEvent,
+    RunFinishedEvent,
+    RunStartedEvent,
     Tool,
     UserMessage,
 )
@@ -109,10 +115,21 @@ def test_streaming_to_agui_streams_then_finalizes():
     translator = AGUITranslator(outbound_cls=_StubOutbound)
 
     async def collect():
-        return [e async for e in translator.to_agui(_fake_stream("a", "b"))]
+        return [
+            e
+            async for e in translator.to_agui(
+                _fake_stream("a", "b"), _run_input(), emit_messages_snapshot=False
+            )
+        ]
 
     events = asyncio.run(collect())
-    assert [e.name for e in events] == ["translated:a", "translated:b", "finalized"]
+    assert isinstance(events[0], RunStartedEvent)
+    assert isinstance(events[-1], RunFinishedEvent)
+    assert [e.name for e in events[1:-1]] == [
+        "translated:a",
+        "translated:b",
+        "finalized",
+    ]
 
 
 def test_streaming_translator_is_reusable_fresh_engine_per_run():
@@ -120,7 +137,7 @@ def test_streaming_translator_is_reusable_fresh_engine_per_run():
     before = _StubOutbound.instances
 
     async def one_run():
-        return [e async for e in translator.to_agui(_fake_stream("x"))]
+        return [e async for e in translator.to_agui(_fake_stream("x"), _run_input())]
 
     asyncio.run(one_run())
     asyncio.run(one_run())
@@ -137,11 +154,13 @@ def test_streaming_to_agui_accepts_run_streaming_result():
     result.new_items = []
 
     async def collect():
-        return [e async for e in translator.to_agui(result, run_input=_run_input())]
+        return [e async for e in translator.to_agui(result, _run_input())]
 
     events = asyncio.run(collect())
-    assert [e.name for e in events[:2]] == ["translated:sdk", "finalized"]
-    assert isinstance(events[2], MessagesSnapshotEvent)
+    assert isinstance(events[0], RunStartedEvent)
+    assert [e.name for e in events[1:3]] == ["translated:sdk", "finalized"]
+    assert isinstance(events[3], MessagesSnapshotEvent)
+    assert isinstance(events[4], RunFinishedEvent)
 
 
 # ── AGUITranslator.to_agui (MESSAGES_SNAPSHOT) ───────────────────────────
@@ -155,10 +174,11 @@ def test_to_agui_emits_snapshot_by_default():
     run_input = _run_input()
 
     async def collect():
-        return [e async for e in translator.to_agui(result, run_input=run_input)]
+        return [e async for e in translator.to_agui(result, run_input)]
 
     events = asyncio.run(collect())
-    snapshot = events[-1]
+    assert isinstance(events[-1], RunFinishedEvent)
+    snapshot = events[-2]
     assert isinstance(snapshot, MessagesSnapshotEvent)
     assert [m.id for m in snapshot.messages] == ["m1"]
 
@@ -173,22 +193,9 @@ def test_to_agui_emit_messages_snapshot_false_opts_out():
         return [
             e
             async for e in translator.to_agui(
-                result, run_input=_run_input(), emit_messages_snapshot=False
+                result, _run_input(), emit_messages_snapshot=False
             )
         ]
-
-    events = asyncio.run(collect())
-    assert not any(isinstance(e, MessagesSnapshotEvent) for e in events)
-
-
-def test_to_agui_skips_snapshot_without_run_input():
-    translator = AGUITranslator(outbound_cls=_StubOutbound)
-    result = MagicMock(spec=RunResultStreaming)
-    result.stream_events.return_value = _fake_stream()
-    result.new_items = []
-
-    async def collect():
-        return [e async for e in translator.to_agui(result)]
 
     events = asyncio.run(collect())
     assert not any(isinstance(e, MessagesSnapshotEvent) for e in events)
@@ -201,10 +208,69 @@ def test_to_agui_emits_snapshot_for_bare_iterator_too():
     translator = AGUITranslator(outbound_cls=_StubOutbound)
 
     async def collect():
-        return [
-            e
-            async for e in translator.to_agui(_fake_stream("a"), run_input=_run_input())
-        ]
+        return [e async for e in translator.to_agui(_fake_stream("a"), _run_input())]
 
     events = asyncio.run(collect())
-    assert isinstance(events[-1], MessagesSnapshotEvent)
+    assert isinstance(events[-1], RunFinishedEvent)
+    assert isinstance(events[-2], MessagesSnapshotEvent)
+
+
+# ── AGUITranslator.to_agui (lifecycle events) ────────────────────────────
+
+
+def test_to_agui_wraps_stream_with_lifecycle_events():
+    translator = AGUITranslator(outbound_cls=_StubOutbound)
+
+    async def collect():
+        return [e async for e in translator.to_agui(_fake_stream("a"), _run_input())]
+
+    events = asyncio.run(collect())
+    started, finished = events[0], events[-1]
+    assert isinstance(started, RunStartedEvent)
+    assert started.thread_id == "t1"
+    assert started.run_id == "r1"
+    assert isinstance(finished, RunFinishedEvent)
+    assert finished.thread_id == "t1"
+    assert finished.run_id == "r1"
+
+
+def test_to_agui_emits_run_error_and_reraises_on_exception():
+    class _ExplodingOutbound(_StubOutbound):
+        def translate(self, sdk_event):
+            raise RuntimeError("boom")
+
+    translator = AGUITranslator(outbound_cls=_ExplodingOutbound)
+    collected: list = []
+
+    async def collect():
+        async for e in translator.to_agui(_fake_stream("a"), _run_input()):
+            collected.append(e)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        asyncio.run(collect())
+
+    assert isinstance(collected[0], RunStartedEvent)
+    assert isinstance(collected[-1], RunErrorEvent)
+    assert collected[-1].message == "boom"
+
+
+def test_to_agui_emits_run_error_on_cancelled_error():
+    # asyncio.CancelledError is BaseException, not Exception (3.8+) — a
+    # mid-stream timeout/dropped-connection must still surface RUN_ERROR
+    # instead of silently ending the stream after whatever was last yielded.
+    class _CancelledOutbound(_StubOutbound):
+        def translate(self, sdk_event):
+            raise asyncio.CancelledError()
+
+    translator = AGUITranslator(outbound_cls=_CancelledOutbound)
+    collected: list = []
+
+    async def collect():
+        async for e in translator.to_agui(_fake_stream("a"), _run_input()):
+            collected.append(e)
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(collect())
+
+    assert isinstance(collected[0], RunStartedEvent)
+    assert isinstance(collected[-1], RunErrorEvent)

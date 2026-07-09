@@ -21,13 +21,16 @@ translator = AGUITranslator()
 bundle = translator.to_sdk(run_input)
 result = Runner.run_streamed(agent, input=bundle.messages)
 
-async for event in translator.to_agui(result, run_input=run_input):
+async for event in translator.to_agui(result, run_input):
     ...
 ```
 
 `to_agui(result)` also accepts `result.stream_events()` if your code already
-has the SDK event iterator. The last event of the stream is a
-`MESSAGES_SNAPSHOT` by default — see [Messages Snapshot](#messages-snapshot).
+has the SDK event iterator. The stream is always wrapped with `RUN_STARTED`
+(first) and `RUN_FINISHED`/`RUN_ERROR` (last) — thread_id/run_id come from
+`run_input`, or pass them explicitly. The event just before `RUN_FINISHED`
+is a `MESSAGES_SNAPSHOT` by default — see
+[Messages Snapshot](#messages-snapshot).
 
 ## Install
 
@@ -49,10 +52,7 @@ SSE.
 
 ```python
 from agents import Agent, Runner
-from ag_ui.core import (
-    EventType, RunAgentInput,
-    RunErrorEvent, RunFinishedEvent, RunStartedEvent,
-)
+from ag_ui.core import RunAgentInput
 from ag_ui.encoder import EventEncoder
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
@@ -79,26 +79,12 @@ async def _stream(body: RunAgentInput):
     if bundle.tools:
         run_agent = agent.clone(tools=[*agent.tools, *bundle.tools])
 
-    # 3. Lifecycle events are emitted by your run loop.
-    yield encoder.encode(RunStartedEvent(
-        type=EventType.RUN_STARTED, thread_id=body.thread_id, run_id=body.run_id,
-    ))
-
-    try:
-        # 4. Run the SDK agent normally, then translate the streamed result.
-        #    to_agui appends a MESSAGES_SNAPSHOT by default (last event).
-        result = Runner.run_streamed(run_agent, input=bundle.messages)
-        async for event in translator.to_agui(result, run_input=body):
-            yield encoder.encode(event)
-    except Exception:
-        yield encoder.encode(
-            RunErrorEvent(type=EventType.RUN_ERROR, message="Agent run failed.")
-        )
-        return
-
-    yield encoder.encode(RunFinishedEvent(
-        type=EventType.RUN_FINISHED, thread_id=body.thread_id, run_id=body.run_id,
-    ))
+    # 3. Run the SDK agent normally, then translate the streamed result.
+    #    to_agui wraps it with RUN_STARTED/RUN_FINISHED/RUN_ERROR and
+    #    appends a MESSAGES_SNAPSHOT by default (just before RUN_FINISHED).
+    result = Runner.run_streamed(run_agent, input=bundle.messages)
+    async for event in translator.to_agui(result, body):
+        yield encoder.encode(event)
 ```
 
 Test it:
@@ -136,7 +122,7 @@ fresh per-run engine it needs. Create one instance and share it.
 |---|---|
 | Live chat, tool-call progress, reasoning progress | `AGUITranslator` with `Runner.run_streamed` |
 | FastAPI SSE | Return `StreamingResponse(_stream(...), media_type="text/event-stream")` |
-| WebSocket or another async transport | Iterate `translator.to_agui(result)` and send each event JSON |
+| WebSocket or another async transport | Iterate `translator.to_agui(result, run_input)` and send each event JSON |
 | Custom model settings, tracing, guardrails, handoffs | Pass normal OpenAI Agents SDK args to `Runner.run_streamed` |
 | Custom AG-UI mapping behavior | Subclass an engine translator and inject it into the public translator |
 
@@ -150,20 +136,22 @@ translator = AGUITranslator()
 bundle = translator.to_sdk(run_input)
 result = Runner.run_streamed(agent, input=bundle.messages)
 
-async for event in translator.to_agui(result):
+async for event in translator.to_agui(result, run_input):
     ...  # AG-UI BaseEvent, ready to encode
 ```
 
 You may also pass the SDK event iterator directly:
 
 ```python
-async for event in translator.to_agui(result.stream_events()):
+async for event in translator.to_agui(result.stream_events(), run_input):
     ...
 ```
 
 `to_agui` handles the streaming bookkeeping for the run. If the SDK stream ends
 while text, tool-call arguments, or reasoning output is still open, the
-translator emits the matching close event before the iterator finishes.
+translator emits the matching close event before the iterator finishes. It
+always wraps the whole stream with `RUN_STARTED` (first) and
+`RUN_FINISHED`/`RUN_ERROR` (last) — see [Lifecycle Events](#lifecycle-events).
 
 All normal OpenAI Agents SDK run options stay on the SDK call:
 
@@ -176,7 +164,7 @@ result = Runner.run_streamed(
     run_config=run_config,
 )
 
-async for event in translator.to_agui(result):
+async for event in translator.to_agui(result, run_input):
     ...
 ```
 
@@ -203,20 +191,39 @@ if bundle.tools:
     run_agent = agent.clone(tools=[*agent.tools, *bundle.tools])
 ```
 
+### Lifecycle Events
+
+`to_agui` always wraps the stream: `RUN_STARTED` is the first event
+yielded, and `RUN_FINISHED` is the last — or `RUN_ERROR` if the stream
+raises, in which case the exception is re-raised after that event so your
+own logging/observability still sees it. This covers `asyncio.CancelledError`
+too (a mid-stream timeout or dropped connection), not just ordinary
+exceptions — it's `BaseException`, not `Exception`, so a plain
+`except Exception` would miss it and the client would just see the
+stream stop with no `RUN_ERROR` and no `RUN_FINISHED`. Not optional —
+every caller needs these three events, so there's no flag to turn them off:
+
+```python
+async for event in translator.to_agui(result, run_input):
+    yield encoder.encode(event)
+```
+
+`thread_id`/`run_id` come straight off `run_input` — no separate params to
+pass, since `run_input` is already required for the lifecycle events (and,
+by default, the snapshot).
+
 ### Messages Snapshot
 
 `MESSAGES_SNAPSHOT` lets the client resync its whole message list in one
 event — it reconciles by message id, fixing anything the granular stream
 couldn't express (a reload mid-conversation, history rewritten by a handoff
-input filter, a dropped connection). `to_agui` appends one by default, as
-its last event, right after the stream's own flush — pass `run_input` so it
-has the prior turns; no `run_input`, no snapshot:
+input filter, a dropped connection). `to_agui` appends one by default,
+right after the stream's own flush and just before `RUN_FINISHED`, using
+`run_input.messages` for the prior turns:
 
 ```python
-async for event in translator.to_agui(result, run_input=run_input):
+async for event in translator.to_agui(result, run_input):
     yield encoder.encode(event)
-
-yield encoder.encode(RunFinishedEvent(...))
 ```
 
 The snapshot is `run_input.messages` (untouched, keeping the ids the client
@@ -225,16 +232,18 @@ streams — each message's id is resolved once and handed to both the
 streamed event and the snapshot entry, so they can never disagree, even on
 backends that don't stamp real ids (LiteLLM and similar). Reasoning items
 are not included; the client keeps its streamed reasoning bubbles through
-the merge on its own. If the run raises, the exception propagates out of
-the `async for` before the snapshot line runs — nothing is emitted on the
-error path.
+the merge on its own. If the run raises, `to_agui` yields `RUN_ERROR` and
+re-raises before the snapshot line runs — nothing is emitted on the error
+path.
 
 > `run_input.messages` passes through untouched — filter it first if it
 > holds anything the client shouldn't see echoed back, e.g. a system
 > prompt sent as history instead of via `agent.instructions`:
 > ```python
-> filtered = [m for m in run_input.messages if m.role != "system"]
-> async for event in translator.to_agui(result, run_input=filtered):
+> filtered = run_input.model_copy(
+>     update={"messages": [m for m in run_input.messages if m.role != "system"]}
+> )
+> async for event in translator.to_agui(result, filtered):
 >     ...
 > ```
 
@@ -251,9 +260,9 @@ The translator translates. Your run loop still owns orchestration:
 
 | Concern | Owned by |
 |---|---|
-| `RUN_STARTED`, `RUN_FINISHED`, `RUN_ERROR` | Your server |
+| `RUN_STARTED`, `RUN_FINISHED`, `RUN_ERROR` | `to_agui` (always) |
 | `STATE_SNAPSHOT` | Your server, if your app needs it |
-| `MESSAGES_SNAPSHOT` | `to_agui` (on by default given `run_input`; pass `emit_messages_snapshot=False` to own it yourself) |
+| `MESSAGES_SNAPSHOT` | `to_agui` (on by default; pass `emit_messages_snapshot=False` to own it yourself) |
 | Session storage and thread history | Your server |
 | SSE, WebSocket, HTTP response shape | Your server/framework |
 | OpenAI agent choice, model settings, handoffs, guardrails | Your OpenAI Agents SDK code |
@@ -272,7 +281,7 @@ from ag_ui.encoder import EventEncoder
 
 encoder = EventEncoder()
 
-async for event in translator.to_agui(result):
+async for event in translator.to_agui(result, run_input):
     yield encoder.encode(event)
 ```
 
@@ -286,14 +295,14 @@ def encode_sse(event) -> bytes:
 For WebSockets, send the same JSON payload:
 
 ```python
-async for event in translator.to_agui(result):
+async for event in translator.to_agui(result, run_input):
     await websocket.send_text(event.model_dump_json(by_alias=True, exclude_none=True))
 ```
 
 For tests or in-process consumers, collect events directly:
 
 ```python
-events = [event async for event in translator.to_agui(result)]
+events = [event async for event in translator.to_agui(result, run_input)]
 ```
 
 ### State, Context, and Forwarded Props
