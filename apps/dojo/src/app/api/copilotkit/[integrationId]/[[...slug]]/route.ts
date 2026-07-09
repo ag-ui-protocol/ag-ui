@@ -44,7 +44,13 @@ async function getHandler(integrationId: string) {
   // injectA2UITool) in agents.ts via STRANDS_A2UI_INJECT_AGENTS, while
   // `a2ui_fixed_schema` wires its OWN backend tools and must NOT get
   // `generate_a2ui` injected alongside them.
-  const injectsA2UITool = integrationId.includes("langgraph");
+  // LangGraph + Mastra rely on the runtime forwarding `injectA2UITool`: their
+  // demos wire NO A2UI tool and the adapter/bridge auto-injects `generate_a2ui`
+  // when it sees the flag (Mastra via @ag-ui/mastra planA2UIInjection in the
+  // bridge). Strands/ADK apply their OWN per-agent middleware instead.
+  const injectsA2UITool =
+    integrationId.includes("langgraph") ||
+    integrationId === "mastra-agent-local";
 
   // Agents whose A2UI rendering the runtime auto-applies A2UIMiddleware for.
   // Inject-whitelisted agents (ADK_A2UI_INJECT_AGENTS / STRANDS_A2UI_INJECT_AGENTS)
