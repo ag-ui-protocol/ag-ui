@@ -429,20 +429,29 @@ class LangGraphAgent:
                 camel_to_snake(k): v for k, v in input.forwarded_props.items()
             }
 
-        # Drop subagent-attributed messages from the input. They are streamed for
-        # display only — each subagent's internal text and tool calls — and live
+        # Split subagent-attributed messages out of the graph input. They are
+        # display-only — each subagent's internal text and tool calls — and live
         # in the subagent's own subgraph checkpoint, never the main graph's. The
-        # client echoes the full history back on every turn, so without this the
-        # main-graph merge would treat them as new messages (their ids are never
-        # in the main checkpoint) and append them to the supervisor's state,
-        # polluting it with orphan subagent tool calls that grow each turn. The
-        # supervisor's own messages carry no subagent_id, so they are kept; the
-        # subagent messages are re-streamed and re-attributed on each run.
+        # client echoes the full history back on every turn, so leaving them in
+        # would make the main-graph merge treat them as new messages (their ids
+        # are never in the main checkpoint) and append them to the supervisor's
+        # state, polluting it with orphan subagent tool calls that grow each
+        # turn. The supervisor's own messages carry no subagent_id, so they stay
+        # in the graph input. The subagent messages are stashed and re-emitted in
+        # the MESSAGES_SNAPSHOT (see _merge_subagent_messages) so they persist in
+        # the client's display across turns without ever entering graph state.
+        graph_messages = []
+        inbound_subagent_messages = []
+        for m in input.messages or []:
+            if getattr(m, "subagent_id", None):
+                inbound_subagent_messages.append(m)
+            else:
+                graph_messages.append(m)
+        self._inbound_subagent_messages = inbound_subagent_messages
+
         update: dict = {"forwarded_props": forwarded_props}
         if input.messages:
-            update["messages"] = [
-                m for m in input.messages if not getattr(m, "subagent_id", None)
-            ]
+            update["messages"] = graph_messages
 
         async for event_str in self._handle_stream_events(input.model_copy(update=update)):
             yield event_str
@@ -465,6 +474,10 @@ class LangGraphAgent:
             "subagent_task_runs": {},
             "subagent_messages": {},
             "subagent_tool_call_owner": {},
+            # Subagent messages the client echoed back from prior turns, split
+            # out of the graph input in run(). Re-emitted in the snapshot so
+            # they persist in the display without entering graph state.
+            "inbound_subagent_messages": getattr(self, "_inbound_subagent_messages", []) or [],
         }
         self.active_run = INITIAL_ACTIVE_RUN
         try:
@@ -2322,24 +2335,35 @@ class LangGraphAgent:
         )
 
     def _merge_subagent_messages(self, agui_messages: list) -> list:
-        """Append subagent-attributed messages (streamed during the run but
-        absent from main-graph state) to a snapshot's message list, preserving
-        each message's ``subagent_id`` so the client keeps the subagent
-        attribution the frontend renders — for both text and tool calls.
+        """Append subagent-attributed messages to a snapshot's message list,
+        preserving each message's ``subagent_id`` so the client keeps the
+        subagent attribution the frontend renders — for both text and tool calls.
 
-        No-op when no subagent messages were captured, so runs without
-        subagents (and the declared-``subgraphs`` demo, which never sets a
-        ``subagent_id``) produce an identical snapshot. Messages already
-        present in the snapshot (matched by id) are not duplicated. An
-        assistant turn with neither text nor tool calls is skipped so the
-        snapshot gains no empty bubbles; tool calls are preserved even when the
-        turn has no text (a tool-call-only subagent message).
+        Two sources are merged, both absent from main-graph state:
+
+        1. This run's freshly-streamed subagent messages (``subagent_messages``),
+           built from the accumulator.
+        2. Prior turns' subagent messages the client echoed back, split out of
+           the graph input in ``run`` (``inbound_subagent_messages``). Re-emitting
+           them keeps them in the client's display across turns — the client's
+           MESSAGES_SNAPSHOT apply is an edit-merge that keeps a message it
+           already has in its existing position, so including them here (by id)
+           preserves their place without our needing to reconstruct ordering.
+
+        No-op when neither source has anything, so runs without subagents (and
+        the declared-``subgraphs`` demo, which never sets a ``subagent_id``)
+        produce an identical snapshot. Messages already present (matched by id)
+        are not duplicated. An assistant turn with neither text nor tool calls is
+        skipped so the snapshot gains no empty bubbles; tool calls are preserved
+        even when the turn has no text (a tool-call-only subagent message).
         """
         active_run = getattr(self, "active_run", None)
-        sub_msgs = active_run.get("subagent_messages") if active_run else None
-        if not sub_msgs:
+        sub_msgs = (active_run.get("subagent_messages") if active_run else None) or {}
+        inbound = (active_run.get("inbound_subagent_messages") if active_run else None) or []
+        if not sub_msgs and not inbound:
             return agui_messages
         existing_ids = {getattr(m, "id", None) for m in agui_messages}
+        # 1. This run's freshly-streamed subagent messages.
         for entry in sub_msgs.values():
             if entry["id"] in existing_ids:
                 continue
@@ -2353,6 +2377,7 @@ class LangGraphAgent:
                         subagent_id=entry["subagent_id"],
                     )
                 )
+                existing_ids.add(entry["id"])
                 continue
             tool_calls = [
                 AGUIToolCall(
@@ -2373,6 +2398,16 @@ class LangGraphAgent:
                     subagent_id=entry["subagent_id"],
                 )
             )
+            existing_ids.add(entry["id"])
+        # 2. Prior turns' subagent messages echoed back by the client. Re-emit
+        #    verbatim (they are already well-formed AG-UI messages carrying
+        #    subagent_id) so the client retains them in place across turns.
+        for m in inbound:
+            mid = getattr(m, "id", None)
+            if mid in existing_ids:
+                continue
+            agui_messages.append(m)
+            existing_ids.add(mid)
         return agui_messages
 
 
