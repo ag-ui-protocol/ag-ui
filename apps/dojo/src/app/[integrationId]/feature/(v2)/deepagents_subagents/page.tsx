@@ -80,12 +80,34 @@ function SubagentGroup({
         title={subagent?.description ?? `Subagent ${subagentId}`}
         data-testid="subagent-tag"
       >
-        {running && (
+        {running ? (
           <span
             className="cpk:inline-flex cpk:items-center cpk:ml-1"
             data-testid="subagent-activity"
           >
             <span className="cpk:w-1.5 cpk:h-1.5 cpk:rounded-full cpk:bg-muted-foreground cpk:animate-pulse" />
+          </span>
+        ) : (
+          // Subtle checkmark once this subagent has finished (matches the muted
+          // reasoning styling; inline SVG so no icon dependency is pulled in).
+          <span
+            className="cpk:inline-flex cpk:items-center cpk:ml-1 cpk:text-muted-foreground"
+            data-testid="subagent-done"
+            aria-label="finished"
+          >
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2.5}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M20 6 9 17l-5-5" />
+            </svg>
           </span>
         )}
       </CopilotChatReasoningMessage.Header>
