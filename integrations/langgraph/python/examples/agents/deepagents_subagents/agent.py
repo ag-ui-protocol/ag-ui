@@ -1,15 +1,11 @@
-"""A deepagents supervisor that delegates to a specialized research
-subagent via the `task` tool.
+"""A deepagents supervisor that delegates to several specialized research
+subagents via the `task` tool.
 
-This demo exists to exercise the AG-UI SUBAGENT_STARTED / SUBAGENT_FINISHED
-event attribution for deepagents subagents: a single user question should
-reliably fan out into a `task` delegation (market research), surfaced as its
-own subagent run with a distinct `subagent_id`.
-
-NOTE: This demo is temporarily reduced to a SINGLE subagent to isolate and
-iterate on the MESSAGES_SNAPSHOT subagent-attribution fix. The full
-three-subagent version (market, technical, and risk research) will be
-restored once the fix is validated.
+This demo exercises AG-UI SUBAGENT_STARTED / SUBAGENT_FINISHED attribution: a
+single research question fans out into multiple `task` delegations, each surfaced
+as its own subagent run with a distinct `subagent_id`. The dojo groups every
+subagent's messages under its own collapsible header, so a run with three
+specialists shows three independent groups.
 """
 
 import os
@@ -21,35 +17,74 @@ from deepagents.middleware.subagents import SubAgent
 
 model = ChatOpenAI(model="gpt-4o-mini")
 
-market_researcher: SubAgent = {
-    "name": "market_researcher",
+cognition_researcher: SubAgent = {
+    "name": "cognition_researcher",
     "description": (
-        "Researches market size, target customers, competitors, and demand "
-        "for a product or business idea. Delegate to this subagent for any "
-        "market-related sub-question."
+        "Researches cognitive abilities: problem-solving, learning, memory, "
+        "tool use, and reasoning. Delegate to this subagent for any question "
+        "about how a subject thinks or learns."
     ),
     "system_prompt": (
-        "You are a market research analyst. Given a product or business "
-        "idea, give a concise (3-5 sentence) assessment of the target "
-        "market, likely customers, and competitive landscape. Be specific "
+        "You are a cognition research specialist. Given a topic, give a "
+        "concise (3-5 sentence) assessment of the cognitive abilities "
+        "involved — problem-solving, learning, memory, reasoning. Be specific "
         "and avoid hedging."
     ),
     "tools": [],
 }
 
-SUPERVISOR_PROMPT = """You are a research supervisor. For EVERY user question \
-about a product, business, or idea, you MUST gather input from your market \
-research specialist subagent before answering - no exceptions, even if the \
-question seems simple.
+behavior_researcher: SubAgent = {
+    "name": "behavior_researcher",
+    "description": (
+        "Researches behavior: social interaction, communication, and "
+        "personality. Delegate to this subagent for any question about how a "
+        "subject acts or interacts."
+    ),
+    "system_prompt": (
+        "You are a behavioral research specialist. Given a topic, give a "
+        "concise (3-5 sentence) assessment of the observable behavior — "
+        "social interaction, communication, and notable personality traits. "
+        "Be specific and avoid hedging."
+    ),
+    "tools": [],
+}
+
+neuroscience_researcher: SubAgent = {
+    "name": "neuroscience_researcher",
+    "description": (
+        "Researches the biological substrate: nervous system, brain or neural "
+        "structure, and the mechanisms behind behavior. Delegate to this "
+        "subagent for any question about the underlying biology."
+    ),
+    "system_prompt": (
+        "You are a neuroscience research specialist. Given a topic, give a "
+        "concise (3-5 sentence) assessment of the biological substrate — "
+        "nervous system organization, neural mechanisms, and how they support "
+        "the observed abilities. Be specific and avoid hedging."
+    ),
+    "tools": [],
+}
+
+SUBAGENTS = [cognition_researcher, behavior_researcher, neuroscience_researcher]
+
+SUPERVISOR_PROMPT = """You are a research supervisor with three specialist \
+subagents: `cognition_researcher`, `behavior_researcher`, and \
+`neuroscience_researcher`.
+
+For EVERY user question, you MUST gather input from ALL THREE specialists before \
+answering — no exceptions, even if the question seems simple.
 
 Always do the following, in order:
-1. Call the `task` tool with `subagent_type="market_researcher"`, asking it \
-to research the market angle of the user's question.
-2. Once it has responded, synthesize its findings into a single, concise \
-final answer for the user.
+1. Call the `task` tool once with `subagent_type="cognition_researcher"`.
+2. Call the `task` tool once with `subagent_type="behavior_researcher"`.
+3. Call the `task` tool once with `subagent_type="neuroscience_researcher"`.
+   Each call should ask that specialist to research its angle of the user's \
+question.
+4. Once all three have responded, synthesize their findings into a single, \
+concise final answer for the user.
 
-Delegate the task - do not skip it, and do not answer from your own knowledge \
-instead of delegating."""
+Delegate every angle - do not skip any specialist, and do not answer from your \
+own knowledge instead of delegating."""
 
 # Conditionally use a checkpointer based on the environment (matches the
 # pattern used by the sibling example agents).
@@ -63,7 +98,7 @@ if is_fast_api:
         model=model,
         tools=[],
         system_prompt=SUPERVISOR_PROMPT,
-        subagents=[market_researcher],
+        subagents=SUBAGENTS,
         checkpointer=MemorySaver(),
     )
 else:
@@ -72,5 +107,5 @@ else:
         model=model,
         tools=[],
         system_prompt=SUPERVISOR_PROMPT,
-        subagents=[market_researcher],
+        subagents=SUBAGENTS,
     )
