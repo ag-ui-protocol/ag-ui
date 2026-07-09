@@ -76,6 +76,8 @@ class AGUITranslator:
         run_input: RunAgentInput,
         *,
         emit_messages_snapshot: bool = True,
+        emit_run_error: bool = True,
+        run_error_message: str | None = None,
     ) -> AsyncIterator[BaseEvent]:
         """Translate an SDK event stream into a live AG-UI event stream.
 
@@ -88,8 +90,18 @@ class AGUITranslator:
         always RUN_FINISHED (or RUN_ERROR, if the stream raises — the
         error event is yielded and then the exception re-raised; this
         includes asyncio.CancelledError from a mid-stream timeout or
-        dropped connection, not just ordinary exceptions). Not optional.
-        thread_id/run_id come straight off run_input.
+        dropped connection, not just ordinary exceptions). RUN_STARTED /
+        RUN_FINISHED are not optional; thread_id/run_id come straight off
+        run_input.
+
+        On error, the RUN_ERROR event carries str(exc) by default — pass
+        run_error_message to send a fixed string instead (e.g. a generic
+        "Agent run failed" so raw exception text never reaches the client).
+        The exception is re-raised regardless, so the caller's own logging
+        still sees the real one. Pass emit_run_error=False only if you
+        signal the terminal error yourself in an outer handler — otherwise
+        a raise with no RUN_ERROR leaves the client watching the stream
+        just stop.
 
         Just before RUN_FINISHED, a MESSAGES_SNAPSHOT is appended by
         default: run_input.messages, untouched, plus this run's messages —
@@ -123,6 +135,12 @@ class AGUITranslator:
                 half.
             emit_messages_snapshot: Whether to append a MESSAGES_SNAPSHOT
                 just before RUN_FINISHED. Defaults to True.
+            emit_run_error: Whether to yield a RUN_ERROR event when the
+                stream raises, before re-raising. Defaults to True; set
+                False only if you emit your own terminal error event.
+            run_error_message: The RUN_ERROR message. Defaults to None, which
+                sends str(exc); set a fixed string to keep raw exception
+                text off the wire.
 
         Yields:
             AG-UI BaseEvent instances, ready to encode.
@@ -152,7 +170,11 @@ class AGUITranslator:
             # a mid-stream cancellation (timeout, dropped connection) would
             # otherwise skip this handler entirely and the client would see
             # the stream just stop, with no RUN_ERROR and no RUN_FINISHED.
-            yield RunErrorEvent(type=EventType.RUN_ERROR, message=str(exc))
+            if emit_run_error:
+                yield RunErrorEvent(
+                    type=EventType.RUN_ERROR,
+                    message=run_error_message or str(exc),
+                )
             raise
 
         yield RunFinishedEvent(

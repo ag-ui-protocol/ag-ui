@@ -254,6 +254,49 @@ def test_to_agui_emits_run_error_and_reraises_on_exception():
     assert collected[-1].message == "boom"
 
 
+def test_to_agui_emit_run_error_false_suppresses_event_but_still_raises():
+    class _ExplodingOutbound(_StubOutbound):
+        def translate(self, sdk_event):
+            raise RuntimeError("boom")
+
+    translator = AGUITranslator(outbound_cls=_ExplodingOutbound)
+    collected: list = []
+
+    async def collect():
+        async for e in translator.to_agui(
+            _fake_stream("a"), _run_input(), emit_run_error=False
+        ):
+            collected.append(e)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        asyncio.run(collect())
+
+    assert isinstance(collected[0], RunStartedEvent)
+    assert not any(isinstance(e, RunErrorEvent) for e in collected)
+
+
+def test_to_agui_run_error_message_overrides_exception_text():
+    class _ExplodingOutbound(_StubOutbound):
+        def translate(self, sdk_event):
+            raise RuntimeError("raw internal detail")
+
+    translator = AGUITranslator(outbound_cls=_ExplodingOutbound)
+    collected: list = []
+
+    async def collect():
+        async for e in translator.to_agui(
+            _fake_stream("a"), _run_input(), run_error_message="Agent run failed"
+        ):
+            collected.append(e)
+
+    with pytest.raises(RuntimeError, match="raw internal detail"):
+        asyncio.run(collect())
+
+    error = collected[-1]
+    assert isinstance(error, RunErrorEvent)
+    assert error.message == "Agent run failed"
+
+
 def test_to_agui_emits_run_error_on_cancelled_error():
     # asyncio.CancelledError is BaseException, not Exception (3.8+) — a
     # mid-stream timeout/dropped-connection must still surface RUN_ERROR
