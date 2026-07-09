@@ -111,18 +111,34 @@ function SubagentGroup({
           </span>
         )}
       </CopilotChatReasoningMessage.Header>
-      <CopilotChatReasoningMessage.Toggle isOpen={isOpen}>
-        <div className="subagent-group-body">
-          {members.map((m) => (
-            <CopilotChatAssistantMessage
-              key={m.id}
-              message={m as AssistantMessageProps["message"]}
-              messages={agent.messages as AssistantMessageProps["messages"]}
-              isRunning={running}
-            />
-          ))}
+      {/*
+        Same grid-rows collapse as CopilotChatReasoningMessage.Toggle, but the
+        transition duration is 0 while closing so collapsing is immediate — the
+        built-in Toggle animates both directions at 200ms, which makes closing
+        feel laggy ("plays the animation, then closes"). Opening still animates.
+      */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateRows: isOpen ? "1fr" : "0fr",
+          transitionProperty: "grid-template-rows",
+          transitionTimingFunction: "ease-in-out",
+          transitionDuration: isOpen ? "200ms" : "0ms",
+        }}
+      >
+        <div style={{ overflow: "hidden" }}>
+          <div className="subagent-group-body">
+            {members.map((m) => (
+              <CopilotChatAssistantMessage
+                key={m.id}
+                message={m as AssistantMessageProps["message"]}
+                messages={agent.messages as AssistantMessageProps["messages"]}
+                isRunning={running}
+              />
+            ))}
+          </div>
         </div>
-      </CopilotChatReasoningMessage.Toggle>
+      </div>
     </div>
   );
 }
