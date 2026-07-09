@@ -10,7 +10,6 @@ import {
   CopilotChat,
   CopilotChatConfigurationProvider,
   CopilotChatAssistantMessage,
-  CopilotChatReasoningMessage,
   CopilotKitProvider,
 } from "@copilotkit/react-core/v2";
 
@@ -34,8 +33,71 @@ type AssistantMessageProps = React.ComponentProps<
 >;
 type ChatMessage = NonNullable<AssistantMessageProps["messages"]>[number];
 
-// One collapsible group for a SINGLE subagent, rendered in the exact reasoning
-// style (CopilotChatReasoningMessage.Header + .Toggle). Collapsed by default; a
+// Join truthy class-name parts (tiny local stand-in for clsx/twMerge; we own
+// all the classes here so there are no conflicts to dedupe).
+function cx(...parts: Array<string | false | null | undefined>): string {
+  return parts.filter(Boolean).join(" ");
+}
+
+// Standalone collapsible header for a subagent group. This reproduces the look
+// of CopilotKit's reasoning-message header — muted text, hover affordance, and
+// a chevron that rotates when open — but is owned by this demo rather than
+// reusing CopilotChatReasoningMessage.Header. Styling uses the cpk: utility
+// classes from the already-imported CopilotKit stylesheet so it matches the
+// surrounding chat; the chevron is an inline SVG (no lucide dependency).
+function SubagentGroupHeader({
+  isOpen,
+  label,
+  onClick,
+  title,
+  children,
+}: {
+  isOpen: boolean;
+  label: string;
+  onClick: () => void;
+  title?: string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      aria-expanded={isOpen}
+      data-testid="subagent-tag"
+      className={cx(
+        "cpk:inline-flex cpk:items-center cpk:gap-1 cpk:py-1 cpk:text-sm",
+        "cpk:text-muted-foreground cpk:transition-colors cpk:select-none",
+        "cpk:hover:text-foreground cpk:cursor-pointer",
+      )}
+    >
+      <span className="cpk:font-medium">{label}</span>
+      {children}
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+        style={{
+          flexShrink: 0,
+          transform: isOpen ? "rotate(90deg)" : "rotate(0deg)",
+          transition: "transform 200ms",
+        }}
+      >
+        <path d="m9 18 6-6-6-6" />
+      </svg>
+    </button>
+  );
+}
+
+// One collapsible group for a SINGLE subagent, rendered in the reasoning style
+// via the standalone SubagentGroupHeader (above) plus a custom collapse
+// container (below). Collapsed by default; a
 // subtle activity dot shows while THIS subagent is running — its own lifecycle,
 // read from `useSubagent`, which the registry flips to "finished" on the
 // SUBAGENT_FINISHED the integration emits when the subagent's `task` delegation
@@ -72,13 +134,11 @@ function SubagentGroup({
 
   return (
     <div className="cpk:my-1" data-testid="subagent-group">
-      <CopilotChatReasoningMessage.Header
+      <SubagentGroupHeader
         isOpen={isOpen}
         label={label}
-        hasContent
         onClick={() => setManualOpen(!isOpen)}
         title={subagent?.description ?? `Subagent ${subagentId}`}
-        data-testid="subagent-tag"
       >
         {running ? (
           <span
@@ -110,7 +170,7 @@ function SubagentGroup({
             </svg>
           </span>
         )}
-      </CopilotChatReasoningMessage.Header>
+      </SubagentGroupHeader>
       {/*
         Same grid-rows collapse as CopilotChatReasoningMessage.Toggle, but the
         transition duration is 0 while closing so collapsing is immediate — the
