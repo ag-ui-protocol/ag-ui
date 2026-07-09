@@ -31,6 +31,9 @@ import {
   type StateSnapshotEvent,
   type StepFinishedEvent,
   type StepStartedEvent,
+  type SubagentErrorEvent,
+  type SubagentFinishedEvent,
+  type SubagentStartedEvent,
   SystemMessage,
   type TextMessageContentEvent,
   type TextMessageEndEvent,
@@ -168,7 +171,12 @@ export const defaultApplyEvents = (
           applyMutation(mutation);
 
           if (mutation.stopPropagation !== true) {
-            const { messageId, role = "assistant", name } = event as TextMessageStartEvent;
+            const {
+              messageId,
+              role = "assistant",
+              name,
+              subagentId,
+            } = event as TextMessageStartEvent;
 
             // Check if a message with this ID already exists (e.g., created by TOOL_CALL_START
             // with the same parentMessageId)
@@ -182,6 +190,7 @@ export const defaultApplyEvents = (
                 role: role,
                 content: "",
                 ...(name !== undefined && { name }),
+                ...(subagentId !== undefined && { subagentId }),
               };
 
               // Add the new message to the messages array
@@ -291,13 +300,19 @@ export const defaultApplyEvents = (
           applyMutation(mutation);
 
           if (mutation.stopPropagation !== true) {
-            const { toolCallId, toolCallName, parentMessageId } = event as ToolCallStartEvent;
+            const { toolCallId, toolCallName, parentMessageId, subagentId } =
+              event as ToolCallStartEvent;
 
+            const preexistingIds = new Set(messages.map((m) => m.id));
             const targetMessage = resolveOrCreateAssistantMessage(
               messages,
               parentMessageId,
               toolCallId,
             );
+            const wasCreated = !preexistingIds.has(targetMessage.id);
+            if (wasCreated && subagentId !== undefined && targetMessage.subagentId === undefined) {
+              targetMessage.subagentId = subagentId;
+            }
 
             targetMessage.toolCalls ??= [];
 
@@ -454,13 +469,15 @@ export const defaultApplyEvents = (
           applyMutation(mutation);
 
           if (mutation.stopPropagation !== true) {
-            const { messageId, toolCallId, content, role } = event as ToolCallResultEvent;
+            const { messageId, toolCallId, content, role, subagentId } =
+              event as ToolCallResultEvent;
 
             const toolMessage: ToolMessage = {
               id: messageId,
               toolCallId,
               role: role || "tool",
               content: content,
+              ...(subagentId !== undefined && { subagentId }),
             };
 
             // Place the tool result immediately after the assistant message that
@@ -665,6 +682,9 @@ export const defaultApplyEvents = (
               role: "activity",
               activityType: activityEvent.activityType,
               content: structuredClone_(activityEvent.content),
+              ...(activityEvent.subagentId !== undefined && {
+                subagentId: activityEvent.subagentId,
+              }),
             };
 
             let createdMessage: ActivityMessage | undefined;
@@ -1002,7 +1022,7 @@ export const defaultApplyEvents = (
           applyMutation(mutation);
 
           if (mutation.stopPropagation !== true) {
-            const { messageId } = event as ReasoningMessageStartEvent;
+            const { messageId, subagentId } = event as ReasoningMessageStartEvent;
             const existingMessage = messages.find((m) => m.id === messageId);
 
             if (!existingMessage) {
@@ -1010,6 +1030,7 @@ export const defaultApplyEvents = (
                 id: messageId,
                 role: "reasoning",
                 content: "",
+                ...(subagentId !== undefined && { subagentId }),
               };
               messages.push(newMessage);
               applyMutation({ messages });
@@ -1160,6 +1181,60 @@ export const defaultApplyEvents = (
               currentMutation.messages = messages;
             }
           }
+          return emitUpdates();
+        }
+
+        case EventType.SUBAGENT_STARTED: {
+          const mutation = await runSubscribersWithMutation(
+            subscribers,
+            messages,
+            state,
+            (subscriber, messages, state) =>
+              subscriber.onSubagentStartedEvent?.({
+                event: event as SubagentStartedEvent,
+                messages,
+                state,
+                agent,
+                input,
+              }),
+          );
+          applyMutation(mutation);
+          return emitUpdates();
+        }
+
+        case EventType.SUBAGENT_FINISHED: {
+          const mutation = await runSubscribersWithMutation(
+            subscribers,
+            messages,
+            state,
+            (subscriber, messages, state) =>
+              subscriber.onSubagentFinishedEvent?.({
+                event: event as SubagentFinishedEvent,
+                messages,
+                state,
+                agent,
+                input,
+              }),
+          );
+          applyMutation(mutation);
+          return emitUpdates();
+        }
+
+        case EventType.SUBAGENT_ERROR: {
+          const mutation = await runSubscribersWithMutation(
+            subscribers,
+            messages,
+            state,
+            (subscriber, messages, state) =>
+              subscriber.onSubagentErrorEvent?.({
+                event: event as SubagentErrorEvent,
+                messages,
+                state,
+                agent,
+                input,
+              }),
+          );
+          applyMutation(mutation);
           return emitUpdates();
         }
       }

@@ -241,6 +241,7 @@ export const agentsIntegrations = {
         shared_state: "shared_state",
         tool_based_generative_ui: "tool_based_generative_ui",
         subgraphs: "subgraphs",
+        deepagents_subagents: "deepagents_subagents",
       },
     ),
     // A2UI Chat with middleware
@@ -284,6 +285,7 @@ export const agentsIntegrations = {
         shared_state: "shared_state",
         tool_based_generative_ui: "tool_based_generative_ui",
         subgraphs: "subgraphs",
+        deepagents_subagents: "deepagents_subagents",
       },
     ),
     a2ui_fixed_schema: new LangGraphHttpAgent({

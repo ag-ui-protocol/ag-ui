@@ -16,6 +16,7 @@ export const verifyEvents =
     let firstEventReceived = false;
     // Track active steps
     let activeSteps = new Map<string, boolean>(); // Map of step name -> active status
+    let activeSubagents = new Map<string, boolean>(); // Map of subagent ID -> active status
     let activeThinkingStep = false;
     let activeThinkingStepMessage = false;
     let runStarted = false; // Track if a run has started
@@ -25,6 +26,7 @@ export const verifyEvents =
       activeMessages.clear();
       activeToolCalls.clear();
       activeSteps.clear();
+      activeSubagents.clear();
       activeThinkingStep = false;
       activeThinkingStepMessage = false;
       runFinished = false;
@@ -218,6 +220,45 @@ export const verifyEvents =
             return of(event);
           }
 
+          // Subagent flow
+          case EventType.SUBAGENT_STARTED: {
+            const subagentId = (event as any).subagentId;
+            const parentSubagentId = (event as any).parentSubagentId;
+            if (activeSubagents.has(subagentId)) {
+              return throwError(
+                () =>
+                  new AGUIError(
+                    `Cannot send 'SUBAGENT_STARTED': subagent '${subagentId}' is already active. Finish it with 'SUBAGENT_FINISHED' first.`,
+                  ),
+              );
+            }
+            if (parentSubagentId !== undefined && !activeSubagents.has(parentSubagentId)) {
+              return throwError(
+                () =>
+                  new AGUIError(
+                    `Cannot send 'SUBAGENT_STARTED': parentSubagentId '${parentSubagentId}' has not been started.`,
+                  ),
+              );
+            }
+            activeSubagents.set(subagentId, true);
+            return of(event);
+          }
+
+          case EventType.SUBAGENT_FINISHED:
+          case EventType.SUBAGENT_ERROR: {
+            const subagentId = (event as any).subagentId;
+            if (!activeSubagents.has(subagentId)) {
+              return throwError(
+                () =>
+                  new AGUIError(
+                    `Cannot send '${eventType}': no active subagent found with ID '${subagentId}'. A 'SUBAGENT_STARTED' event must be sent first.`,
+                  ),
+              );
+            }
+            activeSubagents.delete(subagentId);
+            return of(event);
+          }
+
           // Run flow
           case EventType.RUN_STARTED: {
             // We've already validated this above
@@ -258,6 +299,17 @@ export const verifyEvents =
                 () =>
                   new AGUIError(
                     `Cannot send 'RUN_FINISHED' while tool calls are still active: ${unfinishedToolCalls}`,
+                  ),
+              );
+            }
+
+            // Check that all subagents are finished before run ends
+            if (activeSubagents.size > 0) {
+              const unfinishedSubagents = Array.from(activeSubagents.keys()).join(", ");
+              return throwError(
+                () =>
+                  new AGUIError(
+                    `Cannot send 'RUN_FINISHED' while subagents are still active: ${unfinishedSubagents}`,
                   ),
               );
             }

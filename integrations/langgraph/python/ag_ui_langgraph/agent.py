@@ -3,6 +3,7 @@ import re
 import uuid
 import json
 from copy import deepcopy
+from dataclasses import dataclass
 from typing import Optional, List, Any, Union, AsyncGenerator, Generator, Literal, Dict, TypedDict
 from typing_extensions import NotRequired, Self
 import inspect
@@ -47,6 +48,10 @@ from .utils import (
 
 from ag_ui.core import (
     EventType,
+    AssistantMessage,
+    FunctionCall,
+    ToolCall as AGUIToolCall,
+    ToolMessage as AGUIToolMessage,
     CustomEvent,
     Interrupt as AGUIInterrupt,
     MessagesSnapshotEvent,
@@ -74,6 +79,9 @@ from ag_ui.core import (
     ReasoningMessageEndEvent,
     ReasoningEndEvent,
     ReasoningEncryptedValueEvent,
+    SubagentStartedEvent,
+    SubagentFinishedEvent,
+    SubagentErrorEvent,
 )
 from .interrupts import lg_interrupts_to_agui, DEFAULT_RESUME_SENTINEL_CANCELLED, DEFAULT_RESUME_SENTINEL_MAP
 from ag_ui.encoder import EventEncoder
@@ -107,6 +115,83 @@ ProcessedEvents = Union[
 logger = logging.getLogger(__name__)
 
 ROOT_SUBGRAPH_NAME = "root"
+
+
+@dataclass
+class SubagentContext:
+    subagent_id: str
+    name: str
+    parent_subagent_id: Optional[str] = None
+
+
+def derive_subagent_context(ns: str, lc_agent_name: Optional[str], subgraphs) -> Optional[SubagentContext]:
+    """Return a SubagentContext when an event originates inside a deepagents
+    subagent, else None.
+
+    Signals (confirmed via spike): a subagent event has a nested ('|') checkpoint
+    namespace AND metadata lc_agent_name set. Declared subgraphs also nest but do
+    not set lc_agent_name, so they are excluded (their root segment is in `subgraphs`).
+    """
+    if not lc_agent_name or not ns or "|" not in ns:
+        return None
+    leading = ns.split("|")[0]
+    root_name = leading.split(":")[0]
+    if root_name in subgraphs:
+        return None  # declared subgraph, handled elsewhere
+    return SubagentContext(subagent_id=leading, name=lc_agent_name, parent_subagent_id=None)
+
+
+# Creation/standalone event types that carry a `subagent_id` field and should
+# be stamped with the currently active subagent id at the _dispatch_event
+# chokepoint. Deliberately excludes continuation events (e.g.
+# TEXT_MESSAGE_CONTENT, TOOL_CALL_ARGS), run-lifecycle events, MESSAGES_SNAPSHOT,
+# and the SUBAGENT_* lifecycle events themselves (which already carry their own
+# subagent_id explicitly).
+_SUBAGENT_ATTRIBUTABLE_EVENT_TYPES = frozenset({
+    EventType.TEXT_MESSAGE_START, EventType.TEXT_MESSAGE_CHUNK,
+    EventType.TOOL_CALL_START, EventType.TOOL_CALL_CHUNK, EventType.TOOL_CALL_RESULT,
+    EventType.REASONING_START, EventType.REASONING_MESSAGE_START,
+    EventType.ACTIVITY_SNAPSHOT, EventType.STATE_SNAPSHOT, EventType.STATE_DELTA,
+    EventType.STEP_STARTED, EventType.STEP_FINISHED, EventType.CUSTOM, EventType.RAW,
+})
+
+
+def reconcile_subagents(active_run, ns, lc_agent_name, subgraphs) -> list:
+    """Emit SUBAGENT_STARTED once per distinct subagent (deepagents runs task
+    subagents concurrently, so their events interleave -- a toggle is NOT a finish).
+    current_subagent_id tracks the CURRENT event's subagent for _dispatch_event
+    stamping. SUBAGENT_FINISHED is emitted by drain_subagents before RUN_FINISHED
+    (unique-started + all-closed-before-run-end is protocol-valid; precise per-subagent
+    finish timing is deferred for this step)."""
+    ctx = derive_subagent_context(ns, lc_agent_name, subgraphs)
+    new_id = ctx.subagent_id if ctx else None
+    active_run["current_subagent_id"] = new_id
+    events = []
+    if new_id is not None and new_id not in active_run["active_subagents"]:
+        # Prefer the declared subagent_type + description captured from the
+        # `task` delegation tool (see _capture_subagent_task_meta); fall back to
+        # the runtime lc_agent_name when no task metadata was captured.
+        task_meta = (active_run.get("subagent_task_meta") or {}).get(new_id) or {}
+        name = task_meta.get("name") or ctx.name
+        description = task_meta.get("description")
+        active_run["active_subagents"][new_id] = name
+        events.append(SubagentStartedEvent(
+            type=EventType.SUBAGENT_STARTED,
+            subagent_id=new_id,
+            name=name,
+            description=description,
+            parent_subagent_id=ctx.parent_subagent_id,
+        ))
+    return events
+
+
+def drain_subagents(active_run) -> list:
+    """Emit SUBAGENT_FINISHED for any still-open subagents (before RUN_FINISHED)."""
+    events = [SubagentFinishedEvent(type=EventType.SUBAGENT_FINISHED, subagent_id=sid)
+              for sid in list(active_run.get("active_subagents", {}).keys())]
+    active_run["active_subagents"].clear()
+    active_run["current_subagent_id"] = None
+    return events
 
 
 class PreparedStream(TypedDict):
@@ -177,7 +262,123 @@ class LangGraphAgent:
         elif event.raw_event:
             event.raw_event = make_json_safe(event.raw_event)
 
+        active_run = getattr(self, "active_run", None)
+        current_subagent_id = active_run.get("current_subagent_id") if active_run else None
+        if (
+            current_subagent_id
+            and event.type in _SUBAGENT_ATTRIBUTABLE_EVENT_TYPES
+            and getattr(event, "subagent_id", None) is None
+        ):
+            event.subagent_id = current_subagent_id
+
+        self._accumulate_subagent_message(event)
+
         return event
+
+    def _capture_subagent_task_meta(self, event: dict) -> None:
+        """Record a subagent invocation's declared name + description from the
+        deepagents ``task`` delegation tool's ``on_tool_start``.
+
+        The ``task`` tool executes in the subagent's own checkpoint namespace
+        (e.g. ``tools:<uuid>``) — the same value ``derive_subagent_context``
+        derives as the subagent id — and its input carries ``subagent_type`` and
+        ``description``. Capturing it here (which runs before the subagent's own
+        events trigger SUBAGENT_STARTED) lets that event report the declared
+        subagent type and the per-invocation description. No-op for non-task
+        tools and non-deepagents runs (input without ``subagent_type``).
+        """
+        if event.get("event") != LangGraphEventTypes.OnToolStart.value:
+            return
+        tool_input = (event.get("data") or {}).get("input")
+        if not isinstance(tool_input, dict) or "subagent_type" not in tool_input:
+            return
+        ns = (event.get("metadata") or {}).get("langgraph_checkpoint_ns", "")
+        subagent_id = ns.split("|")[0] if ns else ""
+        if not subagent_id:
+            return
+        active_run = getattr(self, "active_run", None)
+        if active_run is None:
+            return
+        active_run.setdefault("subagent_task_meta", {})[subagent_id] = {
+            "name": tool_input.get("subagent_type"),
+            "description": tool_input.get("description"),
+        }
+
+    def _accumulate_subagent_message(self, event: ProcessedEvents) -> None:
+        """Accumulate subagent-attributed messages — text, tool calls, and tool
+        results — as they stream, keyed by message id, on
+        ``active_run["subagent_messages"]``.
+
+        These messages live only in the subagent's (subgraph) checkpoint, not
+        in the main/supervisor graph state, so the MESSAGES_SNAPSHOT built from
+        main-graph state omits them — and applying that snapshot client-side
+        wipes the streamed subagent messages. Capturing them here lets
+        ``get_state_and_messages_snapshots`` merge them back in with their
+        ``subagent_id`` preserved, so both subagent text and tool-call
+        attribution survive a snapshot apply. This is a no-op for runs without
+        subagents (the tracking dicts stay empty), so normal runs and
+        declared-subgraph runs keep an identical snapshot.
+
+        TOOL_CALL_START / TOOL_CALL_RESULT are stamped with the active
+        subagent_id upstream (see _dispatch_event); TOOL_CALL_ARGS is a
+        continuation event carrying only tool_call_id, so it is routed back to
+        its owning assistant entry via ``subagent_tool_call_owner``.
+        """
+        active_run = getattr(self, "active_run", None)
+        if active_run is None:
+            return
+        sub_msgs = active_run.get("subagent_messages")
+        if sub_msgs is None:
+            return
+        tc_owner = active_run.get("subagent_tool_call_owner")
+        if tc_owner is None:
+            return
+        etype = event.type
+
+        def ensure_assistant_entry(message_id: str, subagent_id: str) -> dict:
+            entry = sub_msgs.get(message_id)
+            if entry is None:
+                entry = sub_msgs[message_id] = {
+                    "kind": "assistant",
+                    "id": message_id,
+                    "role": "assistant",
+                    "content": "",
+                    "subagent_id": subagent_id,
+                    "tool_calls": {},
+                }
+            return entry
+
+        if etype == EventType.TEXT_MESSAGE_START and getattr(event, "subagent_id", None):
+            entry = ensure_assistant_entry(event.message_id, event.subagent_id)
+            entry["role"] = getattr(event, "role", "assistant") or "assistant"
+        elif etype == EventType.TEXT_MESSAGE_CONTENT:
+            entry = sub_msgs.get(event.message_id)
+            if entry is not None and entry.get("kind") == "assistant":
+                entry["content"] += event.delta or ""
+        elif etype == EventType.TOOL_CALL_START and getattr(event, "subagent_id", None):
+            message_id = event.parent_message_id or event.tool_call_id
+            entry = ensure_assistant_entry(message_id, event.subagent_id)
+            entry["tool_calls"][event.tool_call_id] = {
+                "id": event.tool_call_id,
+                "name": event.tool_call_name,
+                "arguments": "",
+            }
+            tc_owner[event.tool_call_id] = message_id
+        elif etype == EventType.TOOL_CALL_ARGS:
+            message_id = tc_owner.get(event.tool_call_id)
+            entry = sub_msgs.get(message_id) if message_id is not None else None
+            if entry is not None and entry.get("kind") == "assistant":
+                tool_call = entry["tool_calls"].get(event.tool_call_id)
+                if tool_call is not None:
+                    tool_call["arguments"] += event.delta or ""
+        elif etype == EventType.TOOL_CALL_RESULT and getattr(event, "subagent_id", None):
+            sub_msgs[event.message_id] = {
+                "kind": "tool",
+                "id": event.message_id,
+                "content": event.content or "",
+                "tool_call_id": event.tool_call_id,
+                "subagent_id": event.subagent_id,
+            }
 
     async def run(self, input: RunAgentInput) -> AsyncGenerator[ProcessedEvents, None]:
         # Normalize camelCase keys from the frontend to snake_case before forwarding.
@@ -204,6 +405,11 @@ class LangGraphAgent:
             "streamed_tool_call_ids": set(),
             "model_made_tool_call": False,
             "state_reliable": True,
+            "active_subagents": {},
+            "current_subagent_id": None,
+            "subagent_task_meta": {},
+            "subagent_messages": {},
+            "subagent_tool_call_owner": {},
         }
         self.active_run = INITIAL_ACTIVE_RUN
         try:
@@ -316,6 +522,16 @@ class LangGraphAgent:
                     async for ev in self.get_state_and_messages_snapshots(config):
                         yield ev
 
+                # Capture declared subagent name/description from the `task`
+                # tool BEFORE reconcile_subagents fires SUBAGENT_STARTED for the
+                # subagent it spawns (task on_tool_start precedes the subagent's
+                # own events in the stream).
+                self._capture_subagent_task_meta(event)
+
+                lc_agent_name = (event.get("metadata") or {}).get("lc_agent_name")
+                for sub_ev in reconcile_subagents(self.active_run, ns, lc_agent_name, self.subgraphs):
+                    yield self._dispatch_event(sub_ev)
+
                 if event["event"] == "error":
                     # Upstream "error" events do not always carry a
                     # data.message field; a hard subscript here crashed
@@ -329,6 +545,14 @@ class LangGraphAgent:
                             "Upstream error event missing data.message: %r", event
                         )
                         error_message = "Unknown error"
+                    if self.active_run.get("current_subagent_id"):
+                        yield self._dispatch_event(
+                            SubagentErrorEvent(
+                                type=EventType.SUBAGENT_ERROR,
+                                subagent_id=self.active_run["current_subagent_id"],
+                                message=error_message,
+                            )
+                        )
                     yield self._dispatch_event(
                         RunErrorEvent(type=EventType.RUN_ERROR, message=error_message, raw_event=event)
                     )
@@ -476,6 +700,9 @@ class LangGraphAgent:
 
             for ev in self.handle_node_change(None):
                 yield ev
+
+            for sub_ev in drain_subagents(self.active_run):
+                yield self._dispatch_event(sub_ev)
 
             if interrupts:
                 for ev in self._emit_interrupt_finish(
@@ -2023,12 +2250,69 @@ class LangGraphAgent:
         )
 
         snapshot_messages = self._filter_orphan_tool_messages(state_values.get("messages", []))
+        agui_messages = self._merge_subagent_messages(
+            langchain_messages_to_agui(snapshot_messages)
+        )
         yield self._dispatch_event(
             MessagesSnapshotEvent(
                 type=EventType.MESSAGES_SNAPSHOT,
-                messages=langchain_messages_to_agui(snapshot_messages),
+                messages=agui_messages,
             )
         )
+
+    def _merge_subagent_messages(self, agui_messages: list) -> list:
+        """Append subagent-attributed messages (streamed during the run but
+        absent from main-graph state) to a snapshot's message list, preserving
+        each message's ``subagent_id`` so the client keeps the subagent
+        attribution the frontend renders — for both text and tool calls.
+
+        No-op when no subagent messages were captured, so runs without
+        subagents (and the declared-``subgraphs`` demo, which never sets a
+        ``subagent_id``) produce an identical snapshot. Messages already
+        present in the snapshot (matched by id) are not duplicated. An
+        assistant turn with neither text nor tool calls is skipped so the
+        snapshot gains no empty bubbles; tool calls are preserved even when the
+        turn has no text (a tool-call-only subagent message).
+        """
+        active_run = getattr(self, "active_run", None)
+        sub_msgs = active_run.get("subagent_messages") if active_run else None
+        if not sub_msgs:
+            return agui_messages
+        existing_ids = {getattr(m, "id", None) for m in agui_messages}
+        for entry in sub_msgs.values():
+            if entry["id"] in existing_ids:
+                continue
+            if entry["kind"] == "tool":
+                agui_messages.append(
+                    AGUIToolMessage(
+                        id=entry["id"],
+                        role="tool",
+                        content=entry["content"],
+                        tool_call_id=entry["tool_call_id"],
+                        subagent_id=entry["subagent_id"],
+                    )
+                )
+                continue
+            tool_calls = [
+                AGUIToolCall(
+                    id=tc["id"],
+                    type="function",
+                    function=FunctionCall(name=tc["name"], arguments=tc["arguments"]),
+                )
+                for tc in entry["tool_calls"].values()
+            ]
+            if not entry["content"] and not tool_calls:
+                continue
+            agui_messages.append(
+                AssistantMessage(
+                    id=entry["id"],
+                    role="assistant",
+                    content=entry["content"] or None,
+                    tool_calls=tool_calls or None,
+                    subagent_id=entry["subagent_id"],
+                )
+            )
+        return agui_messages
 
 
 def dump_json_safe(value):
