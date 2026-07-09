@@ -200,8 +200,9 @@ own logging/observability still sees it. This covers `asyncio.CancelledError`
 too (a mid-stream timeout or dropped connection), not just ordinary
 exceptions — it's `BaseException`, not `Exception`, so a plain
 `except Exception` would miss it and the client would just see the
-stream stop with no `RUN_ERROR` and no `RUN_FINISHED`. Not optional —
-every caller needs these three events, so there's no flag to turn them off:
+stream stop with no `RUN_ERROR` and no `RUN_FINISHED`. `RUN_STARTED` and
+`RUN_FINISHED` are not optional — every caller needs them, so there's no
+flag to turn them off:
 
 ```python
 async for event in translator.to_agui(result, run_input):
@@ -211,6 +212,22 @@ async for event in translator.to_agui(result, run_input):
 `thread_id`/`run_id` come straight off `run_input` — no separate params to
 pass, since `run_input` is already required for the lifecycle events (and,
 by default, the snapshot).
+
+The `RUN_ERROR` on the error path is tunable. By default it carries
+`str(exc)`; pass `run_error_message` to send a fixed string instead, so raw
+exception text never reaches the client — the real exception is still
+re-raised, so your own logging keeps it:
+
+```python
+async for event in translator.to_agui(
+    result, run_input, run_error_message="Agent run failed"
+):
+    yield encoder.encode(event)
+```
+
+Pass `emit_run_error=False` only if you emit your own terminal error event
+in an outer handler — otherwise the exception re-raises with no `RUN_ERROR`
+and the client just watches the stream stop.
 
 ### Messages Snapshot
 
@@ -270,6 +287,26 @@ The translator translates. Your run loop still owns orchestration:
 
 This keeps the integration framework-neutral. FastAPI, Starlette, Django,
 aiohttp, raw ASGI, WebSockets, or tests can all use the same translator calls.
+
+### Guardrails
+
+The AG-UI protocol has no guardrail event type, so guardrails surface as
+run errors. When an input or output guardrail trips, the OpenAI Agents SDK
+raises `InputGuardrailTripwireTriggered` / `OutputGuardrailTripwireTriggered`
+mid-run; that exception flows through the stream, `to_agui` yields
+`RUN_ERROR`, and re-raises. No special handling needed — a tripwire aborts
+the run like any other error.
+
+Guardrail messages can be noisy or leak your policy internals, so this is a
+natural place for `run_error_message` — send a clean, client-safe string
+while your logs keep the real exception:
+
+```python
+async for event in translator.to_agui(
+    result, run_input, run_error_message="Request blocked by content policy"
+):
+    yield encoder.encode(event)
+```
 
 ### Transport Options
 
