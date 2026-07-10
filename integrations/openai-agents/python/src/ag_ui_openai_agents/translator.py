@@ -23,6 +23,7 @@ from ag_ui.core import (
     RunErrorEvent,
     RunFinishedEvent,
     RunStartedEvent,
+    StateSnapshotEvent,
 )
 
 from .engine.agui_to_sdk import AGUIToSDKTranslator
@@ -78,6 +79,7 @@ class AGUITranslator:
         emit_messages_snapshot: bool = True,
         emit_run_error: bool = True,
         run_error_message: str | None = None,
+        emit_state_snapshot: bool = True,
     ) -> AsyncIterator[BaseEvent]:
         """Translate an SDK event stream into a live AG-UI event stream.
 
@@ -113,6 +115,13 @@ class AGUITranslator:
         object or a bare stream_events() iterator — the snapshot is built
         from engine state, not result.new_items.
 
+        Right after RUN_STARTED, a STATE_SNAPSHOT echoes run_input.state
+        back whenever it isn't None — the same thing the other AG-UI
+        integrations that have no native SDK state do (the OpenAI Agents
+        SDK has no shared-state channel of its own; state lives at the
+        AG-UI/frontend layer). Pass emit_state_snapshot=False to suppress
+        it. Nothing state-related is emitted on the error path.
+
         Note:
             run_input.messages passes through to the snapshot as-is. If it
             carries messages your client should not see echoed back — a
@@ -141,6 +150,9 @@ class AGUITranslator:
             run_error_message: The RUN_ERROR message. Defaults to None, which
                 sends str(exc); set a fixed string to keep raw exception
                 text off the wire.
+            emit_state_snapshot: Whether to echo run_input.state as a
+                STATE_SNAPSHOT after RUN_STARTED when it isn't None.
+                Defaults to True.
 
         Yields:
             AG-UI BaseEvent instances, ready to encode.
@@ -150,6 +162,12 @@ class AGUITranslator:
             thread_id=run_input.thread_id,
             run_id=run_input.run_id,
         )
+
+        if emit_state_snapshot and run_input.state is not None:
+            yield StateSnapshotEvent(
+                type=EventType.STATE_SNAPSHOT,
+                snapshot=run_input.state,
+            )
 
         stream_events = (
             events.stream_events()

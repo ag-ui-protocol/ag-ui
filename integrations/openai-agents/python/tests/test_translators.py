@@ -29,6 +29,7 @@ from ag_ui.core import (
     RunErrorEvent,
     RunFinishedEvent,
     RunStartedEvent,
+    StateSnapshotEvent,
     Tool,
     UserMessage,
 )
@@ -118,7 +119,10 @@ def test_streaming_to_agui_streams_then_finalizes():
         return [
             e
             async for e in translator.to_agui(
-                _fake_stream("a", "b"), _run_input(), emit_messages_snapshot=False
+                _fake_stream("a", "b"),
+                _run_input(),
+                emit_messages_snapshot=False,
+                emit_state_snapshot=False,
             )
         ]
 
@@ -154,7 +158,12 @@ def test_streaming_to_agui_accepts_run_streaming_result():
     result.new_items = []
 
     async def collect():
-        return [e async for e in translator.to_agui(result, _run_input())]
+        return [
+            e
+            async for e in translator.to_agui(
+                result, _run_input(), emit_state_snapshot=False
+            )
+        ]
 
     events = asyncio.run(collect())
     assert isinstance(events[0], RunStartedEvent)
@@ -317,3 +326,67 @@ def test_to_agui_emits_run_error_on_cancelled_error():
 
     assert isinstance(collected[0], RunStartedEvent)
     assert isinstance(collected[-1], RunErrorEvent)
+
+
+# ── AGUITranslator.to_agui (state snapshot) ──────────────────────────────
+
+
+def test_to_agui_echoes_run_input_state_as_snapshot():
+    # Non-empty run_input.state is echoed back as a STATE_SNAPSHOT right
+    # after RUN_STARTED — matching the other integrations with no native SDK
+    # state.
+    translator = AGUITranslator(outbound_cls=_StubOutbound)
+    run_input = _run_input().model_copy(update={"state": {"theme": "dark"}})
+
+    async def collect():
+        return [
+            e
+            async for e in translator.to_agui(
+                _fake_stream("a"), run_input, emit_messages_snapshot=False
+            )
+        ]
+
+    events = asyncio.run(collect())
+    assert isinstance(events[0], RunStartedEvent)
+    assert isinstance(events[1], StateSnapshotEvent)
+    assert events[1].snapshot == {"theme": "dark"}
+    # Just the one snapshot — no mid-run state tracking.
+    assert sum(isinstance(e, StateSnapshotEvent) for e in events) == 1
+
+
+def test_to_agui_empty_run_input_state_still_emits_snapshot():
+    # Gated on `is not None`, so an empty {} still echoes as STATE_SNAPSHOT({})
+    # — matching aws-strands / claude-agent-sdk.
+    translator = AGUITranslator(outbound_cls=_StubOutbound)
+
+    async def collect():
+        return [
+            e
+            async for e in translator.to_agui(
+                _fake_stream("a"), _run_input(), emit_messages_snapshot=False
+            )
+        ]
+
+    events = asyncio.run(collect())
+    snapshots = [e for e in events if isinstance(e, StateSnapshotEvent)]
+    assert len(snapshots) == 1
+    assert snapshots[0].snapshot == {}
+
+
+def test_to_agui_emit_state_snapshot_false_suppresses_it():
+    translator = AGUITranslator(outbound_cls=_StubOutbound)
+    run_input = _run_input().model_copy(update={"state": {"x": 1}})
+
+    async def collect():
+        return [
+            e
+            async for e in translator.to_agui(
+                _fake_stream("a"),
+                run_input,
+                emit_messages_snapshot=False,
+                emit_state_snapshot=False,
+            )
+        ]
+
+    events = asyncio.run(collect())
+    assert not any(isinstance(e, StateSnapshotEvent) for e in events)
