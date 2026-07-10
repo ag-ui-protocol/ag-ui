@@ -254,6 +254,11 @@ export const menuIntegrations = [
       "predictive_state_updates",
       "shared_state",
       "tool_based_generative_ui",
+      "tool_confirmation",
+      "user_input",
+      "backend_feedback",
+      "team_human_in_the_loop",
+      "nested_team_chat",
     ],
   },
   {

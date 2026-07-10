@@ -1,0 +1,25 @@
+# Multiple Choice Feedback
+
+## What This Demo Shows
+
+This demo showcases the **multiple choice feedback** HITL pattern:
+
+1. **Option Selection**: Agent presents choices for user to select from
+2. **Radio Buttons**: User picks one option from a list
+3. **Frontend-Defined Tools**: Tools are registered via `useHumanInTheLoop` hook
+
+## How to Interact
+
+1. Ask your Copilot for a recommendation:
+   - "Help me pick a cuisine for dinner"
+   - "Help me plan my weekend activities"
+
+2. A card with multiple options will appear
+
+3. Select an option and click **Confirm Selection**
+
+## Technical Details
+
+- Backend: Minimal agent with no tools (tools come from frontend)
+- Frontend: Uses `useHumanInTheLoop` hook with `MultipleChoiceCard`
+- The agent receives the selected choice and responds accordingly

@@ -1,0 +1,25 @@
+# User Input Required
+
+## What This Demo Shows
+
+This demo showcases the **user input** HITL pattern:
+
+1. **Text Input**: Tools that need user-provided text data
+2. **Secret Input**: Secure password/API key entry
+3. **Frontend-Defined Tools**: Tools are registered via `useHumanInTheLoop` hook
+
+## How to Interact
+
+1. Ask your Copilot to configure something:
+   - "Search the database for customer records"
+   - "Configure my OpenAI API key"
+
+2. A text input or password field will appear
+
+3. Enter your response and click **Submit** or **Configure**
+
+## Technical Details
+
+- Backend: Minimal agent with no tools (tools come from frontend)
+- Frontend: Uses `useHumanInTheLoop` hook with `TextInputCard` and `SecretInputCard`
+- Secret input uses `type="password"` and masks the value in the response

@@ -1,0 +1,27 @@
+# Team Human-in-the-Loop
+
+## What This Demo Shows
+
+This demo showcases **HITL with teams**:
+
+1. **Team Routing**: Leader routes to appropriate member agents
+2. **Member Pause**: Member's tool with `requires_confirmation=True` pauses the team
+3. **Confirmation Surfaces**: Team member pauses are surfaced to the UI for user action
+
+## How to Interact
+
+1. Ask the team to send an email:
+   - "Email alice@example.com to say the quarterly report is ready"
+
+2. The team routes to the Emailer member
+
+3. A confirmation card appears for the email
+
+4. Click **Send Email** to approve or **Cancel** to reject
+
+## Technical Details
+
+- Backend: Team with Researcher and Emailer members
+- Emailer has `send_email` tool with `requires_confirmation=True`
+- Team pauses are emitted from `TeamRunPausedEvent.active_requirements`
+- Frontend receives the same confirmation UI as single-agent HITL
