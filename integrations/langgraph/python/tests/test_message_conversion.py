@@ -1,4 +1,5 @@
 """Tests for AG-UI <-> LangChain message conversion functions."""
+import unittest
 import json
 import pytest
 
@@ -23,7 +24,7 @@ from ag_ui_langgraph.utils import (
 )
 
 
-class TestAguiMessagesToLangchain:
+class TestAguiMessagesToLangchain(unittest.TestCase):
     """Tests for agui_messages_to_langchain()."""
 
     def test_human_message(self):
@@ -168,7 +169,7 @@ class TestAguiMessagesToLangchain:
         assert isinstance(result[0], HumanMessage)
 
 
-class TestLangchainMessagesToAgui:
+class TestLangchainMessagesToAgui(unittest.TestCase):
     """Tests for langchain_messages_to_agui()."""
 
     def test_human_message(self):
@@ -248,7 +249,7 @@ class TestLangchainMessagesToAgui:
         assert content[0].source.value == "abc123"
 
 
-class TestRoundTrip:
+class TestRoundTrip(unittest.TestCase):
     """Tests that messages survive conversion in both directions."""
 
     def test_human_round_trip(self):
@@ -288,7 +289,7 @@ class TestRoundTrip:
         assert back[0].tool_call_id == "tc1"
 
 
-class TestNormalizeToolContent:
+class TestNormalizeToolContent(unittest.TestCase):
     """Tests for normalize_tool_content()."""
 
     def test_string_passthrough(self):
@@ -319,7 +320,7 @@ class TestNormalizeToolContent:
         assert result == "null"
 
 
-class TestEdgeCases:
+class TestEdgeCases(unittest.TestCase):
     """Edge cases for conversion functions."""
 
     def test_empty_message_list(self):
@@ -359,7 +360,7 @@ class TestEdgeCases:
         assert result[0].tool_calls == []
 
 
-class TestReasoningRoundTrip:
+class TestReasoningRoundTrip(unittest.TestCase):
     """Reasoning must survive AG-UI <-> LangChain conversion losslessly.
 
     An OpenAI reasoning model (Responses API) emits reasoning as a

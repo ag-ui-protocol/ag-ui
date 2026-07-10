@@ -71,6 +71,7 @@ _INTERNAL_STATE_KEYS = frozenset({
 })
 from .execution_state import ExecutionState
 from .client_proxy_toolset import ClientProxyToolset
+from .a2ui_tool import A2UISubAgentTool, plan_a2ui_injection
 from .config import PredictStateMapping
 from .request_state_service import RequestStateSessionService
 from .utils.converters import convert_message_content_to_parts
@@ -211,6 +212,9 @@ class ADKAgent:
         use_thread_id_as_session_id: bool = False,
 
         capabilities: Optional[Dict[str, Any]] = None,
+
+        # A2UI auto-injection
+        a2ui: Optional[Dict[str, Any]] = None,
     ):
         """Initialize the ADKAgent.
 
@@ -272,6 +276,26 @@ class ADKAgent:
                 clients to discover agent features before initiating a run. Use the
                 "custom" key for application-specific feature flags (e.g.,
                 {"custom": {"predictiveChips": True, "suggestedQuestions": True}}).
+            a2ui: A2UI auto-injection config — everything A2UI-related in one place
+                (mirrors ``StrandsAgentConfig.a2ui``). When the CopilotKit runtime
+                forwards ``injectA2UITool`` (or ``a2ui["inject_a2ui_tool"]`` opts in
+                on a host that doesn't), the adapter injects a ``generate_a2ui``
+                recovery tool onto the root ``LlmAgent`` and infers the sub-agent
+                model from that agent's ``canonical_model`` — no manual
+                ``get_a2ui_tool()`` wiring needed. Keys:
+
+                - ``inject_a2ui_tool`` — opt in without the runtime flag; a string
+                  also names the injected render tool to drop from the frontend
+                  tools.
+                - ``default_catalog_id`` — catalog id stamped into auto-injected
+                  surfaces (must match the host renderer's catalog).
+                - ``guidelines`` — ``{"composition_guide": ...}`` teaches the
+                  sub-agent the catalog's components; required for a real model to
+                  compose them.
+                - ``catalog`` — inline catalog override for catalog-aware recovery
+                  (otherwise resolved from the run's schema context / session state).
+                - ``recovery`` — recovery loop config (camelCase keys per the shared
+                  toolkit contract, e.g. ``{"maxAttempts": 5}``).
 
             Note:
             If delete_session_on_cleanup=False but save_session_to_memory_on_cleanup=True, sessions will accumulate in SessionService but still be saved to memory on cleanup.
@@ -388,6 +412,9 @@ class ADKAgent:
         # Message snapshot configuration
         self._emit_messages_snapshot = emit_messages_snapshot
         self._capabilities = capabilities
+        # A2UI auto-injection config (mirrors StrandsAgentConfig.a2ui). None
+        # disables auto-injection unless the runtime forwards injectA2UITool.
+        self._a2ui_config = a2ui
 
         # Streaming function call arguments (Gemini 3+ via Vertex AI)
         if streaming_function_call_arguments and not self._adk_supports_streaming_fc_args():
@@ -2396,8 +2423,76 @@ class ADKAgent:
 
                 adk_agent.instruction = new_instruction
 
+        # A2UI auto-injection (mirrors the Strands adapter). When the runtime
+        # forwards ``injectA2UITool`` (or the host opts in via the ``a2ui``
+        # config), inject a ``generate_a2ui`` recovery tool onto the root
+        # ``LlmAgent``, infer the sub-agent model from its ``canonical_model``,
+        # and drop the injected ``render_a2ui`` frontend proxy so the model calls
+        # generate_a2ui directly. Best-effort: a failure here logs and the run
+        # proceeds without A2UI rather than crashing the turn.
+        a2ui_plan: Optional[dict] = None
+        frontend_tools = input.tools
+        try:
+            forwarded = (
+                input.forwarded_props
+                if isinstance(input.forwarded_props, dict)
+                else {}
+            )
+            flag = forwarded.get("injectA2UITool")
+            if flag is None and self._a2ui_config:
+                flag = self._a2ui_config.get("inject_a2ui_tool")
+            if flag:
+                # Resolve the model + existing tool names from the per-run root
+                # only when injection is actually requested — avoids touching the
+                # LLM registry on every unrelated run. A non-LlmAgent root has no
+                # inferable model; pass None so the planner warns and skips.
+                root_model = None
+                existing_tool_names: list[str] = []
+                if isinstance(adk_agent, LlmAgent):
+                    try:
+                        root_model = adk_agent.canonical_model
+                    except Exception as e:  # noqa: BLE001 — degrade, don't crash
+                        logger.warning(
+                            "A2UI auto-inject: could not resolve the agent's "
+                            "model; skipping injection: %s",
+                            e,
+                        )
+                    existing_tool_names = [
+                        name
+                        for tool in (adk_agent.tools or [])
+                        if (name := getattr(tool, "name", None))
+                    ]
+                a2ui_plan = plan_a2ui_injection(
+                    model=root_model,
+                    input=input,
+                    existing_tool_names=existing_tool_names,
+                    config=self._a2ui_config,
+                    log=logger,
+                )
+                if a2ui_plan:
+                    drop = set(a2ui_plan["drop_tool_names"])
+                    frontend_tools = [
+                        t
+                        for t in (input.tools or [])
+                        if (
+                            t.get("name")
+                            if isinstance(t, dict)
+                            else getattr(t, "name", None)
+                        )
+                        not in drop
+                    ]
+        except Exception as e:  # noqa: BLE001 — never crash the turn here
+            logger.error(
+                "A2UI auto-injection planning failed; running without A2UI for "
+                "this turn: %s",
+                e,
+                exc_info=True,
+            )
+            a2ui_plan = None
+            frontend_tools = input.tools
+
         # Log tools available from frontend
-        tool_names = [t.name for t in input.tools] if input.tools else []
+        tool_names = [t.name for t in frontend_tools] if frontend_tools else []
         logger.info(f"Tools from frontend: {tool_names}")
 
         # Track all ClientProxyToolset instances for collecting accumulated predictive state
@@ -2437,7 +2532,7 @@ class ADKAgent:
                             f"filter={tool.tool_filter}; replacing with per-run ClientProxyToolset"
                         )
                         proxy_toolset = ClientProxyToolset(
-                            ag_ui_tools=input.tools,
+                            ag_ui_tools=frontend_tools,
                             event_queue=event_queue,
                             tool_filter=tool.tool_filter,
                             tool_name_prefix=tool.tool_name_prefix,
@@ -2451,7 +2546,28 @@ class ADKAgent:
                         # its own input.tools + event_queue) and the
                         # construction-time AGUIToolset is never mutated.
                         tool = proxy_toolset
+                    elif isinstance(tool, A2UISubAgentTool):
+                        # Per-run swap: give this run's A2UI subagent tool its own
+                        # event_queue so it can emit the nested render_a2ui
+                        # tool-call stream onto THIS run's stream — without mutating
+                        # the shared construction-time instance (concurrency-safe,
+                        # mirrors the ClientProxyToolset replacement above).
+                        tool = tool.for_run(event_queue)
                     new_tools.append(tool)
+
+                # Auto-inject the A2UI ``generate_a2ui`` tool onto the ROOT
+                # LlmAgent only (the planning agent — mirrors the Strands
+                # adapter's single-agent injection). ``plan_a2ui_injection``
+                # already honored USER-PREVAILS (a dev-wired generate_a2ui makes
+                # the plan None), so this never double-adds. Bind this run's
+                # event_queue via ``for_run`` exactly like the dev-wired branch.
+                if a2ui_plan is not None and agent is adk_agent:
+                    new_tools.append(a2ui_plan["tool"].for_run(event_queue))
+                    logger.info(
+                        f"[TOOL_SETUP] Agent {agent.name}: auto-injected "
+                        f"'{a2ui_plan['tool_name']}' (dropped frontend "
+                        f"{a2ui_plan['drop_tool_names']})"
+                    )
 
                 agent.tools = new_tools
                 logger.info(f"[TOOL_SETUP] Agent {agent.name} now has {len(new_tools)} tools after replacement")

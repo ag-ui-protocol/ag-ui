@@ -7,6 +7,18 @@ each new framework adapter (ADK, Mastra, Strands, …) only owns the
 framework-specific glue: tool decorator, runtime state access, model
 binding + invoke.
 
+Streaming: the subagent's ``render_a2ui`` call must STREAM to the AG-UI wire so
+the a2ui middleware paints the surface progressively (the "building" skeleton
+keys off the inner tool-call's arg deltas, not the final result). On LangGraph
+this is FREE: the subagent runs ``model.astream`` inside the graph, so its
+nested ``render_a2ui`` tool-call arg deltas surface natively as
+``OnChatModelStream`` events, which the generic ``agent.py`` / ``agent.ts``
+translator already turns into inner TOOL_CALL_START/ARGS/END. So this adapter
+does NOT emit any A2UI-specific custom events — it just streams the subagent and
+hands the accumulated args to the recovery loop. (Frameworks whose SDK does NOT
+surface a nested model stream as wire events — e.g. Strands — own that explicit
+push in their own adapter; LangGraph never needs it.)
+
 Example usage in a chat node::
 
     from ag_ui_langgraph import get_a2ui_tools
@@ -21,6 +33,8 @@ Example usage in a chat node::
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from typing import Any, Optional
 
 from langchain.tools import tool, ToolRuntime
@@ -39,6 +53,11 @@ from ag_ui_a2ui_toolkit import (
     run_a2ui_generation_with_recovery,
 )
 
+logger = logging.getLogger("ag_ui_langgraph")
+
+#: Name of the render tool the A2UI middleware injects (and the subagent binds).
+RENDER_A2UI_TOOL_NAME: str = RENDER_A2UI_TOOL_DEF["function"]["name"]
+
 
 # Re-export the toolkit constants/types for callers that previously imported
 # them from this package — keeps the public surface stable and lets consumers
@@ -51,6 +70,42 @@ __all__ = [
     "A2UIGuidelines",
     "BASIC_CATALOG_ID",
 ]
+
+
+async def _stream_render_subagent(
+    model_with_tool: Any,
+    prompt: str,
+    messages: list,
+) -> Optional[dict]:
+    """Run the structured-output subagent once and return the captured
+    ``render_a2ui`` args — or ``None`` if the model produced no call.
+
+    Uses ``astream`` (not ``invoke``) so the nested ``render_a2ui`` tool-call
+    arg deltas surface natively as the graph's ``OnChatModelStream`` events —
+    which the generic ``agent.py`` / ``agent.ts`` translator already turns into
+    inner TOOL_CALL_START/ARGS/END, painting the surface progressively. This
+    adapter emits NO A2UI-specific events: it merely consumes the stream to
+    accumulate the final structured args for the recovery loop.
+    """
+    accumulated = None
+    async for chunk in model_with_tool.astream(
+        [SystemMessage(content=prompt), *messages]
+    ):
+        # Accumulate the streamed AIMessageChunks so the final parsed tool_calls
+        # reconstruct even when each frame carries only an incremental arg
+        # fragment. (Surfacing the deltas on the wire is langgraph's job, via
+        # the OnChatModelStream events this astream emits.)
+        accumulated = chunk if accumulated is None else accumulated + chunk
+
+    if accumulated is None:
+        return None
+    tool_calls = getattr(accumulated, "tool_calls", None) or []
+    for call in tool_calls:
+        call_name = call.get("name") if isinstance(call, dict) else None
+        if call_name in (None, RENDER_A2UI_TOOL_NAME):
+            raw_args = call.get("args") if isinstance(call, dict) else None
+            return raw_args if isinstance(raw_args, dict) else {}
+    return None
 
 
 def get_a2ui_tools(params: A2UIToolParams):
@@ -83,7 +138,7 @@ def get_a2ui_tools(params: A2UIToolParams):
     on_a2ui_attempt = cfg["on_a2ui_attempt"]
 
     @tool(cfg["tool_name"], description=cfg["tool_description"])
-    def generate_a2ui(
+    async def generate_a2ui(
         runtime: ToolRuntime[Any],
         intent: str = "create",
         target_surface_id: Optional[str] = None,
@@ -121,13 +176,8 @@ def get_a2ui_tools(params: A2UIToolParams):
             [RENDER_A2UI_TOOL_DEF], tool_choice="render_a2ui"
         )
 
-        def _invoke_subagent(prompt, _attempt):
-            response = model_with_tool.invoke(
-                [SystemMessage(content=prompt), *messages]
-            )
-            if not response.tool_calls:
-                return None
-            return response.tool_calls[0]["args"]
+        async def _invoke_subagent(prompt, _attempt):
+            return await _stream_render_subagent(model_with_tool, prompt, messages)
 
         def _build_envelope(args):
             return build_a2ui_envelope(
@@ -144,11 +194,20 @@ def get_a2ui_tools(params: A2UIToolParams):
         # validated surface is committed (the middleware gate suppresses any
         # unvalidated attempt, so a rejected one never paints). Returns a structured
         # hard-failure envelope once the attempt cap is hit.
-        result = run_a2ui_generation_with_recovery(
+        #
+        # The recovery loop is synchronous and calls ``invoke_subagent`` (here the
+        # async streaming subagent) per attempt. Run it in a worker thread so its
+        # blocking ``asyncio.run`` doesn't collide with THIS running event loop.
+        # The subagent's astream still emits OnChatModelStream on the run, so the
+        # surface paints progressively without this adapter emitting anything.
+        result = await asyncio.to_thread(
+            run_a2ui_generation_with_recovery,
             base_prompt=prep["prompt"],
             catalog=catalog,
             config=recovery,
-            invoke_subagent=_invoke_subagent,
+            invoke_subagent=lambda prompt, attempt: asyncio.run(
+                _invoke_subagent(prompt, attempt)
+            ),
             build_envelope=_build_envelope,
             on_attempt=on_a2ui_attempt,
         )

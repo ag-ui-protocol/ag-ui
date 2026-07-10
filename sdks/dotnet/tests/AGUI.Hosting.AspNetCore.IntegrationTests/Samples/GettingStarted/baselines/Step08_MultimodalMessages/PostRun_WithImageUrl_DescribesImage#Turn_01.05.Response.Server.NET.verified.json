@@ -1,0 +1,604 @@
+﻿[
+  {
+    "contents": [],
+    "responseId": "",
+    "messageId": "",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": ""
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": "The"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " image"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " shows"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " a"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " black"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": ","
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " minimalist"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": ","
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " geometric"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " design"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " resembling"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " a"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " diamond"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " or"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " gemstone"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " shape"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": "."
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " It"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " consists"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " of"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " triangular"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " sections"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": ","
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " outlined"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " to"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " give"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " it"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " a"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " fac"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": "eted"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " appearance"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": ","
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " like"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " a"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " cut"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " gem"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": "."
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " The"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " overall"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " design"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " is"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " simplistic"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " and"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": " styl"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": "ized"
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "text",
+        "text": "."
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "finishReason": "stop",
+    "modelId": ""
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "usage",
+        "details": {
+          "inputTokenCount": 220,
+          "outputTokenCount": 47,
+          "cachedInputTokenCount": 0,
+          "reasoningTokenCount": 0,
+          "additionalCounts": {
+            "InputTokenDetails.AudioTokenCount": 0,
+            "OutputTokenDetails.AudioTokenCount": 0,
+            "OutputTokenDetails.AcceptedPredictionTokenCount": 0,
+            "OutputTokenDetails.RejectedPredictionTokenCount": 0
+          }
+        }
+      }
+    ],
+    "responseId": "chatcmpl-Id_1",
+    "messageId": "chatcmpl-Id_1",
+    "finishReason": "stop",
+    "modelId": ""
+  }
+]

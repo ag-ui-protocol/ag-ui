@@ -170,12 +170,19 @@ function _coerceText(content: unknown): string {
  * JSON object/array, emit it as `{ json: parsed }` so the LLM sees a real
  * structured result. Fall back to `{ text: ... }` for everything else.
  */
-function _buildToolResultContent(
+export function _buildToolResultContent(
   content: unknown,
 ): { text: string } | { json: unknown } {
   const text = _coerceText(content);
   const trimmed = text.trim();
-  if (trimmed.length === 0) return { text };
+  // Render-only frontend tools (e.g. CopilotKit `useComponent`) legitimately
+  // produce an empty client tool result. Forwarding an empty `text` block to
+  // the Strands model reaches OpenAI, which rejects tool messages with empty
+  // content (HTTP 400). Synthesize a non-empty acknowledgement instead — this
+  // matches the Python adapter's behavior. The UI-bound TOOL_CALL_RESULT event
+  // is emitted on a separate path and stays faithfully empty.
+  if (trimmed.length === 0)
+    return { text: "Tool executed successfully with no return value." };
   const first = trimmed[0];
   if (first !== "{" && first !== "[") return { text };
   try {
@@ -217,6 +224,30 @@ function _resolveToolUseId(
   }
   if (isFrontendTool) return uuid();
   return strandsToolId || uuid();
+}
+
+/**
+ * Emit a TOOL_CALL_END for every tracked tool call that started but never
+ * ended, so the stream is left with no active tool calls.
+ *
+ * Parallel tool fan-out (e.g. gpt-4o chaining weather + flights + dice in one
+ * turn) can leave sibling calls mid-flight: when a `stopStreamingAfterResult`
+ * tool returns first it halts the stream before the other calls reach their
+ * `contentBlockStop`/TOOL_CALL_END. Without draining them, the terminal
+ * RUN_FINISHED trips the AG-UI client verifier's "tool calls still active"
+ * guard (runtimeErrorCode INCOMPLETE_STREAM). Idempotent: flips `endEmitted`
+ * so a second drain (or a normal-path call after the events already went out)
+ * is a no-op.
+ */
+function* _drainPendingToolCalls(
+  seen: Map<string, SeenToolCall>,
+): Generator<BaseEvent> {
+  for (const [toolCallId, entry] of seen) {
+    if (entry.startEmitted && !entry.endEmitted) {
+      entry.endEmitted = true;
+      yield { type: EventType.TOOL_CALL_END, toolCallId } as BaseEvent;
+    }
+  }
 }
 
 /**
@@ -1886,6 +1917,13 @@ export class StrandsAgent {
           };
         }
       }
+
+      // Close out any tool calls still in flight before RUN_FINISHED. On the
+      // halt path (stopStreamingAfterResult) the break above exits the loop
+      // with sibling parallel calls that emitted TOOL_CALL_START but never
+      // reached their TOOL_CALL_END; the normal path drains nothing (all ends
+      // already emitted). Either way the verifier must see zero active calls.
+      yield* _drainPendingToolCalls(toolCallsSeen);
 
       // Final state snapshot with `currentState` verbatim. Unlike the initial
       // snapshot this is not filtered — the initial filter exists only to

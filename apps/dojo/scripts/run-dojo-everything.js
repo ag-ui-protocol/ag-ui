@@ -274,6 +274,15 @@ const ALL_SERVICES = {
       env: { PORT: 8016 },
     },
   ],
+  "ag-ui-dotnet": [
+    {
+      command:
+        'dotnet run --project AGUIDojoServer/AGUIDojoServer.csproj --urls "http://localhost:8023" --no-build',
+      name: "AG-UI .NET SDK",
+      cwd: path.join(gitRoot, "sdks/dotnet/samples/AGUIClientServer"),
+      env: { PORT: 8023 },
+    },
+  ],
   dojo: [
     {
       command: "pnpm run start",
@@ -299,6 +308,7 @@ const ALL_SERVICES = {
         A2A_MIDDLEWARE_ORCHESTRATOR_URL: "http://localhost:8014",
         AGENT_FRAMEWORK_PYTHON_URL: "http://localhost:8015",
         AGENT_FRAMEWORK_DOTNET_URL: "http://localhost:8016",
+        AGUI_DOTNET_URL: "http://localhost:8023",
         AWS_STRANDS_URL: "http://localhost:8017",
         AWS_STRANDS_TYPESCRIPT_URL: "http://localhost:8022",
         CLAUDE_AGENT_SDK_PYTHON_URL: "http://localhost:8019",
@@ -334,6 +344,7 @@ const ALL_SERVICES = {
         A2A_MIDDLEWARE_ORCHESTRATOR_URL: "http://localhost:8014",
         AGENT_FRAMEWORK_PYTHON_URL: "http://localhost:8015",
         AGENT_FRAMEWORK_DOTNET_URL: "http://localhost:8016",
+        AGUI_DOTNET_URL: "http://localhost:8023",
         AWS_STRANDS_URL: "http://localhost:8017",
         AWS_STRANDS_TYPESCRIPT_URL: "http://localhost:8022",
         CLAUDE_AGENT_SDK_PYTHON_URL: "http://localhost:8019",
