@@ -15,6 +15,16 @@ is required.
 current AG-UI protocol (streaming text, reasoning, tool calls), so no protocol
 version capping is applied.
 
+## Features
+
+- **Operator-token auth built in** — pass the gateway token as `gatewayToken` and
+  it is attached as `Authorization: Bearer <token>` on every request; no manual
+  header assembly.
+- **Standard AG-UI transport** — a thin `HttpAgent` subclass, so it works with any
+  AG-UI / CopilotKit frontend over HTTP/SSE with no framework-specific glue.
+- **No protocol capping** — OpenClaw emits the current AG-UI protocol (streaming
+  text, reasoning, tool calls), so no version ceiling is applied.
+
 ## Installation
 
 ```shell
@@ -35,11 +45,8 @@ import { OpenClawAgent } from "@ag-ui/openclaw";
 const agent = new OpenClawAgent({
   // The clawg-ui operator route exposed by the OpenClaw gateway.
   url: "http://localhost:8000/v1/clawg-ui/operator",
-  // Gateway token — clawg-ui's operator route authenticates with the gateway
-  // token, so no interactive device pairing is needed.
-  headers: {
-    Authorization: `Bearer ${process.env.OPENCLAW_GATEWAY_TOKEN}`,
-  },
+  // The gateway operator token — sent as `Authorization: Bearer <token>`.
+  gatewayToken: process.env.OPENCLAW_GATEWAY_TOKEN,
 });
 
 const result = await agent.runAgent({
@@ -47,9 +54,10 @@ const result = await agent.runAgent({
 });
 ```
 
-`OpenClawAgent` accepts the same configuration as `HttpAgent` (`url`,
-`headers`, `fetch`, `agentId`, `threadId`, `initialMessages`, `initialState`,
-`debug`).
+`OpenClawAgent` accepts the same configuration as `HttpAgent` (`url`, `headers`,
+`fetch`, `agentId`, `threadId`, `initialMessages`, `initialState`, `debug`), plus
+`gatewayToken` — a convenience that becomes the `Authorization: Bearer` header
+(authoritative over any `Authorization` passed in `headers`).
 
 ## Prerequisites
 
