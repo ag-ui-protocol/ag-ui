@@ -47,11 +47,11 @@ const agent = new OpenClawAgent({
   url: "http://localhost:8000/v1/clawg-ui/operator",
   // The gateway operator token — sent as `Authorization: Bearer <token>`.
   gatewayToken: process.env.OPENCLAW_GATEWAY_TOKEN,
+  // Seed the conversation; the agent replies to these on the first run.
+  initialMessages: [{ id: "1", role: "user", content: "Hello from AG-UI!" }],
 });
 
-const result = await agent.runAgent({
-  messages: [{ id: "1", role: "user", content: "Hello from AG-UI!" }],
-});
+const result = await agent.runAgent();
 ```
 
 `OpenClawAgent` accepts the same configuration as `HttpAgent` (`url`, `headers`,
