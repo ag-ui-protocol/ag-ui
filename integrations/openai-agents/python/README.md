@@ -415,25 +415,49 @@ class MyOutbound(SDKToAGUITranslator):
 translator = AGUITranslator(outbound_cls=MyOutbound)
 ```
 
-## Frontend (client-owned) tools
+## Frontend (client-owned) tools & Human-in-the-Loop
 
-Tools declared in `RunAgentInput.tools` belong to the frontend. `to_sdk`
-turns them into SDK `FunctionTool` proxies so the model can call them; for
-human-in-the-loop flows, end the run the moment such a tool is called by
-using the SDK's native mechanism:
+Tools declared in `RunAgentInput.tools` belong to the **frontend** — the
+browser owns their execution (rendering UI, waiting on the user), not your
+server. This is the human-in-the-loop mechanism: the same one most AG-UI
+integrations use, paired with CopilotKit's `useHumanInTheLoop` on the client.
+
+**1. Merge the client tools onto your agent per request.** `to_sdk` turns
+each into an SDK `FunctionTool` proxy:
+
+```python
+translated = translator.to_sdk(run_input)
+agent = base_agent.clone(tools=[*base_agent.tools, *translated.tools])
+```
+
+**2. Stop the run when the model calls one.** Use the SDK-native
+`StopAtTools` so the run ends the instant the model emits the call — before
+the (never-used) proxy body would run:
 
 ```python
 from agents import Agent, StopAtTools
 
-agent = Agent(
+base_agent = Agent(
     ...,
-    tool_use_behavior=StopAtTools(stop_at_tool_names=["confirm_changes"]),
+    tool_use_behavior=StopAtTools(stop_at_tool_names=["generate_task_steps"]),
 )
 ```
 
-The run stops before the proxy body executes; the frontend answers the tool
-call and sends the result back as a `tool` message in the next run's
-`messages`. See `examples/agents_examples/human_in_the_loop.py`.
+**3. The frontend answers; the agent resumes next request.** The tool call
+streams to the browser, the user acts, and the result comes back as a
+`ToolMessage` in the next run's `messages` — ordinary multi-turn history.
+`to_sdk` translates that `ToolMessage` into a `function_call_output`, so the
+agent picks up where it left off. No custom event, no `RunState`, no
+persistence to wire.
+
+```
+Request 1:  user asks  →  agent calls generate_task_steps  →  RUN_FINISHED (paused)
+Frontend:   renders the call, user approves/edits
+Request 2:  messages include the ToolMessage result  →  agent continues
+```
+
+See `examples/agents_examples/human_in_the_loop.py` for the agent and
+`examples/server.py` for the run loop that merges the client tools.
 
 ## Gotchas
 
