@@ -545,6 +545,21 @@ const agentFilesMapper: Record<
       {},
     );
   },
+  "openai-agents-python": (agentKeys: string[]) => {
+    return agentKeys.reduce(
+      (acc, agentId) => ({
+        ...acc,
+        [agentId]: [
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/openai-agents/python/examples/agents_examples/${agentId}.py`,
+          ),
+        ],
+      }),
+      {},
+    );
+  },
   // watsonx uses a single TS agent for all features — no per-feature server files
   watsonx: () => ({
     agentic_chat: [

@@ -378,6 +378,16 @@ export const menuIntegrations = [
     ],
   },
   {
+    id: "openai-agents-python",
+    name: "OpenAI Agents SDK (Python)",
+    features: [
+      "agentic_chat",
+      "backend_tool_rendering",
+      "human_in_the_loop",
+      "tool_based_generative_ui",
+    ],
+  },
+  {
     id: "langroid",
     name: "Langroid",
     features: [
