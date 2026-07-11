@@ -506,8 +506,9 @@ interface MastraAgentStreamOptions {
    * (Mastra observability v-next) when the consumed stream exposed one, so the
    * bridge can surface it on `RUN_FINISHED.result` (see makeRunFinishedEvent).
    * traceId is undefined on cores/streams that don't expose one.
+   * usage carries per-run token counts when the underlying model reported them.
    */
-  onRunFinished?: (traceId?: string) => Promise<void>;
+  onRunFinished?: (traceId?: string, usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number }) => Promise<void>;
   onToolSuspended: (payload: {
     toolCallId: string;
     toolName: string;
@@ -926,7 +927,7 @@ export class MastraAgent extends AbstractAgent {
             onError: (error) => {
               subscriber.error(error);
             },
-            onRunFinished: async (traceId) => {
+            onRunFinished: async (traceId, usage) => {
               await this.emitWorkingMemorySnapshot(subscriber, input.threadId);
               subscriber.next(
                 this.makeRunFinishedEvent(
@@ -934,6 +935,7 @@ export class MastraAgent extends AbstractAgent {
                   input.runId,
                   pendingInterrupts,
                   traceId,
+                  usage,
                 ),
               );
               subscriber.complete();
@@ -1044,6 +1046,7 @@ export class MastraAgent extends AbstractAgent {
     runId: string,
     interrupts: Interrupt[],
     traceId?: string,
+    usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number },
   ): RunFinishedEvent {
     const includeOutcome = this.emitInterruptOutcome && interrupts.length > 0;
     return {
@@ -1051,6 +1054,7 @@ export class MastraAgent extends AbstractAgent {
       threadId,
       runId,
       ...(traceId ? { result: { traceId } } : {}),
+      ...(usage ? { usage } : {}),
       ...(includeOutcome
         ? {
             outcome: {
@@ -2761,7 +2765,8 @@ export class MastraAgent extends AbstractAgent {
 
           if (!hadError) {
             const traceId = await this.resolveTraceId(response);
-            await onRunFinished?.(traceId);
+            const usage = await (response as any).usage?.catch?.(() => undefined);
+            await onRunFinished?.(traceId, usage);
           }
         } else {
           throw new Error("Invalid response from local agent");
