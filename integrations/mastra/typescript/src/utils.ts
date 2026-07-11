@@ -1,11 +1,16 @@
-import type { InputContent, InputContentDataSource, InputContentUrlSource, Message } from "@ag-ui/client";
+import type {
+  InputContent,
+  InputContentDataSource,
+  InputContentUrlSource,
+  Message,
+} from "@ag-ui/client";
 import { AbstractAgent } from "@ag-ui/client";
 import { MastraClient } from "@mastra/client-js";
 import type { Mastra } from "@mastra/core";
 import type { CoreMessage } from "@mastra/core/llm";
 import { Agent as LocalMastraAgent } from "@mastra/core/agent";
 import { RequestContext } from "@mastra/core/request-context";
-import { MastraAgent } from "./mastra";
+import { MastraAgent, MastraTracingOptions } from "./mastra";
 
 /**
  * CoreMessage extended with an optional `id` field.
@@ -16,7 +21,9 @@ import { MastraAgent } from "./mastra";
  */
 type CoreMessageWithId = CoreMessage & { id?: string };
 
-function mediaSourceToUrl(source: InputContentDataSource | InputContentUrlSource): string {
+function mediaSourceToUrl(
+  source: InputContentDataSource | InputContentUrlSource,
+): string {
   if (source.type === "data") {
     return `data:${source.mimeType};base64,${source.value}`;
   }
@@ -89,12 +96,16 @@ const toMastraContent = (content: Message["content"]): string | any[] => {
             image: `data:${binaryPart.mimeType};base64,${binaryPart.data}`,
           });
         } else {
-          console.warn("[toMastraContent] Dropping BinaryInputContent: no url or data provided");
+          console.warn(
+            "[toMastraContent] Dropping BinaryInputContent: no url or data provided",
+          );
         }
         break;
       }
       default:
-        console.warn(`[toMastraContent] Unknown content type "${part.type}"; skipping`);
+        console.warn(
+          `[toMastraContent] Unknown content type "${part.type}"; skipping`,
+        );
         break;
     }
   }
@@ -179,13 +190,31 @@ export function convertAGUIMessagesToMastra(
 export interface GetRemoteAgentsOptions {
   mastraClient: MastraClient;
   resourceId: string;
+  /**
+   * Surface Mastra Observational Memory (OM) background work as AG-UI activity
+   * events (activityType `mastra-observational-memory`). `true` enables it for
+   * every agent; pass an array of agent ids to enable it only for those.
+   * Default OFF. The remote agent must have OM enabled on its Memory server-side
+   * — this only controls whether the bridge surfaces the `data-om-*` chunks it
+   * streams. See `MastraAgentConfig.observationalMemory`.
+   */
+  observationalMemory?: boolean | string[];
+  /** Mastra tracing options forwarded to each run. See MastraAgentConfig.tracingOptions. */
+  tracingOptions?: MastraTracingOptions;
 }
 
 export async function getRemoteAgents({
   mastraClient,
   resourceId,
+  observationalMemory,
+  tracingOptions,
 }: GetRemoteAgentsOptions): Promise<Record<string, AbstractAgent>> {
   const agents = await mastraClient.listAgents();
+
+  const wantsObservationalMemory = (agentId: string): boolean =>
+    observationalMemory === true ||
+    (Array.isArray(observationalMemory) &&
+      observationalMemory.includes(agentId));
 
   return Object.entries(agents).reduce(
     (acc, [agentId]) => {
@@ -195,6 +224,13 @@ export async function getRemoteAgents({
         agentId,
         agent,
         resourceId,
+        // Enables syncing input.state into the remote server's working memory
+        // (client -> agent shared state), mirroring the local path.
+        remoteClient: mastraClient,
+        observationalMemory: wantsObservationalMemory(agentId)
+          ? true
+          : undefined,
+        tracingOptions,
       });
 
       return acc;
@@ -213,6 +249,15 @@ export interface GetLocalAgentsOptions {
    * agent ids to enable it only for those. See `MastraAgentConfig.untilIdle`.
    */
   untilIdle?: boolean | string[];
+  /**
+   * Surface Mastra Observational Memory (OM) background work as AG-UI activity
+   * events (activityType `mastra-observational-memory`). `true` enables it for
+   * every agent; pass an array of agent ids to enable it only for those.
+   * Default OFF. See `MastraAgentConfig.observationalMemory`.
+   */
+  observationalMemory?: boolean | string[];
+  /** Mastra tracing options forwarded to each run. See MastraAgentConfig.tracingOptions. */
+  tracingOptions?: MastraTracingOptions;
 }
 
 export function getLocalAgents({
@@ -220,12 +265,19 @@ export function getLocalAgents({
   resourceId,
   requestContext,
   untilIdle,
+  observationalMemory,
+  tracingOptions,
 }: GetLocalAgentsOptions): Record<string, AbstractAgent> {
   const agents = mastra.listAgents() || {};
 
   const wantsUntilIdle = (agentId: string): boolean =>
     untilIdle === true ||
     (Array.isArray(untilIdle) && untilIdle.includes(agentId));
+
+  const wantsObservationalMemory = (agentId: string): boolean =>
+    observationalMemory === true ||
+    (Array.isArray(observationalMemory) &&
+      observationalMemory.includes(agentId));
 
   const agentAGUI = Object.entries(agents).reduce(
     (acc, [agentId, agent]) => {
@@ -235,6 +287,10 @@ export function getLocalAgents({
         resourceId,
         requestContext,
         untilIdle: wantsUntilIdle(agentId) ? true : undefined,
+        observationalMemory: wantsObservationalMemory(agentId)
+          ? true
+          : undefined,
+        tracingOptions,
       });
       return acc;
     },
@@ -249,6 +305,8 @@ export interface GetLocalAgentOptions {
   agentId: string;
   resourceId: string;
   requestContext?: RequestContext;
+  /** Mastra tracing options forwarded to the run. See MastraAgentConfig.tracingOptions. */
+  tracingOptions?: MastraTracingOptions;
 }
 
 export function getLocalAgent({
@@ -256,6 +314,7 @@ export function getLocalAgent({
   agentId,
   resourceId,
   requestContext,
+  tracingOptions,
 }: GetLocalAgentOptions) {
   const agent = mastra.getAgent(agentId);
   if (!agent) {
@@ -266,6 +325,7 @@ export function getLocalAgent({
     agent,
     resourceId,
     requestContext,
+    tracingOptions,
   }) as AbstractAgent;
 }
 
@@ -274,9 +334,17 @@ export interface GetNetworkOptions {
   networkId: string;
   resourceId: string;
   requestContext?: RequestContext;
+  /** Mastra tracing options forwarded to the run. See MastraAgentConfig.tracingOptions. */
+  tracingOptions?: MastraTracingOptions;
 }
 
-export function getNetwork({ mastra, networkId, resourceId, requestContext }: GetNetworkOptions) {
+export function getNetwork({
+  mastra,
+  networkId,
+  resourceId,
+  requestContext,
+  tracingOptions,
+}: GetNetworkOptions) {
   const network = mastra.getAgent(networkId);
   if (!network) {
     throw new Error(`Network ${networkId} not found`);
@@ -286,5 +354,6 @@ export function getNetwork({ mastra, networkId, resourceId, requestContext }: Ge
     agent: network as unknown as LocalMastraAgent,
     resourceId,
     requestContext,
+    tracingOptions,
   }) as AbstractAgent;
 }

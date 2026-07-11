@@ -129,6 +129,13 @@ export const featureConfig: FeatureConfig[] = [
     tags: ["Background Tasks", "Activity", "Long running task"],
   }),
   createFeatureConfig({
+    id: "observational_memory",
+    name: "Observational Memory",
+    description:
+      "Watch Mastra Observational Memory observe and compress the conversation in the background, surfaced as a distinct activity.",
+    tags: ["Observational Memory", "Activity", "Memory"],
+  }),
+  createFeatureConfig({
     id: "a2ui_recovery",
     name: "A2UI Error Recovery",
     description:

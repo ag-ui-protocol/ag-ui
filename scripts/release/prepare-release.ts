@@ -11,9 +11,10 @@
  * For TypeScript packages, edits package.json.
  * For Python packages, edits pyproject.toml using regex (handles both
  * [project].version and [tool.poetry].version).
+ * For .NET packages, edits sdks/dotnet/Directory.Build.props VersionPrefix.
  *
  * Outputs JSON to stdout:
- *   { "scope": "...", "packages": [{ "name", "oldVersion", "newVersion", "file" }] }
+ *   { "scope": "...", "packages": [{ "name", "oldVersion", "newVersion", "file", "path" }] }
  */
 
 import * as fs from "fs";
@@ -241,7 +242,7 @@ function bumpPythonVersion(
 interface PackageConfig {
   name: string;
   path: string;
-  ecosystem: "typescript" | "python";
+  ecosystem: "typescript" | "python" | "dotnet";
   buildSystem?: "uv" | "poetry";
 }
 
@@ -326,37 +327,78 @@ function writePyVersion(pyprojectPath: string, newVersion: string): void {
   fs.writeFileSync(pyprojectPath, lines.join('\n'), "utf-8");
 }
 
+function readDotnetVersion(propsPath: string): string {
+  const content = fs.readFileSync(propsPath, "utf-8");
+  const match = content.match(/<VersionPrefix(?:\s+[^>]*)?>([^<]+)<\/VersionPrefix>/);
+  if (!match) {
+    throw new Error(`Cannot read <VersionPrefix> from ${propsPath}`);
+  }
+  return match[1];
+}
+
+function writeDotnetVersion(propsPath: string, newVersion: string): void {
+  const content = fs.readFileSync(propsPath, "utf-8");
+  const next = content.replace(
+    /(<VersionPrefix(?:\s+[^>]*)?>)([^<]+)(<\/VersionPrefix>)/,
+    `$1${newVersion}$3`,
+  );
+  if (next === content) {
+    throw new Error(`Cannot find <VersionPrefix> in ${propsPath}`);
+  }
+  fs.writeFileSync(propsPath, next, "utf-8");
+}
+
 function getVersionFilePath(repoRoot: string, pkg: PackageConfig): string {
   if (pkg.ecosystem === "typescript") {
     return path.join(repoRoot, pkg.path, "package.json");
   }
+  if (pkg.ecosystem === "dotnet") {
+    return path.join(repoRoot, "sdks/dotnet/Directory.Build.props");
+  }
   return path.join(repoRoot, pkg.path, "pyproject.toml");
+}
+
+function readVersionFile(filePath: string, ecosystem: PackageConfig["ecosystem"]): string {
+  if (ecosystem === "typescript") {
+    return readTsVersion(filePath);
+  }
+  if (ecosystem === "dotnet") {
+    return readDotnetVersion(filePath);
+  }
+  return readPyVersion(filePath);
 }
 
 function readVersion(repoRoot: string, pkg: PackageConfig): string {
   const filePath = getVersionFilePath(repoRoot, pkg);
-  return pkg.ecosystem === "typescript"
-    ? readTsVersion(filePath)
-    : readPyVersion(filePath);
+  return readVersionFile(filePath, pkg.ecosystem);
+}
+
+function writeVersionFile(filePath: string, ecosystem: PackageConfig["ecosystem"], newVersion: string): void {
+  if (ecosystem === "typescript") {
+    writeTsVersion(filePath, newVersion);
+  } else if (ecosystem === "dotnet") {
+    writeDotnetVersion(filePath, newVersion);
+  } else {
+    writePyVersion(filePath, newVersion);
+  }
 }
 
 function writeVersion(repoRoot: string, pkg: PackageConfig, newVersion: string): void {
   const filePath = getVersionFilePath(repoRoot, pkg);
-  if (pkg.ecosystem === "typescript") {
-    writeTsVersion(filePath, newVersion);
-  } else {
-    writePyVersion(filePath, newVersion);
-  }
+  writeVersionFile(filePath, pkg.ecosystem, newVersion);
 }
 
 function computeNewVersion(
   current: string,
   bump: CliArgs["bump"],
   preid: string,
-  ecosystem: "typescript" | "python"
+  ecosystem: PackageConfig["ecosystem"]
 ): string {
   if (ecosystem === "python") {
     return bumpPythonVersion(current, bump, preid);
+  }
+  if (ecosystem === "dotnet" && bump === "prerelease") {
+    return `${current}-${preid}`;
   }
   return bumpVersion(current, bump, preid);
 }
@@ -384,6 +426,7 @@ function main(): void {
     oldVersion: string;
     newVersion: string;
     file: string;
+    path: string;
     ecosystem: string;
     buildSystem?: string;
   }> = [];
@@ -391,18 +434,33 @@ function main(): void {
   if (scopeConfig.sharedVersion && scopeConfig.versionSource) {
     // All packages share one version — read from versionSource
     const versionSourcePath = path.join(repoRoot, scopeConfig.versionSource);
-    const currentVersion = readTsVersion(versionSourcePath); // versionSource is always a package.json for shared TS
-    const newVersion = bumpVersion(currentVersion, args.bump, args.preid);
+    const versionSourceEcosystem = scopeConfig.packages[0]?.ecosystem;
+    if (!versionSourceEcosystem) {
+      throw new Error(`Scope ${args.scope} has no packages`);
+    }
+    const currentVersion = readVersionFile(versionSourcePath, versionSourceEcosystem);
+    const newVersion = computeNewVersion(currentVersion, args.bump, args.preid, versionSourceEcosystem);
 
     console.error(`[${args.scope}] Shared version: ${currentVersion} -> ${newVersion}`);
 
+    if (versionSourceEcosystem === "dotnet" && args.bump !== "prerelease" && !args.dryRun) {
+      writeVersionFile(versionSourcePath, versionSourceEcosystem, newVersion);
+      const written = readVersionFile(versionSourcePath, versionSourceEcosystem);
+      if (written !== newVersion) {
+        console.error(`ERROR: Verification failed for ${scopeConfig.versionSource}: expected ${newVersion}, got ${written}`);
+        process.exit(1);
+      }
+    }
+
     for (const pkg of scopeConfig.packages) {
-      const filePath = getVersionFilePath(repoRoot, pkg);
+      const filePath = versionSourceEcosystem === "dotnet"
+        ? versionSourcePath
+        : getVersionFilePath(repoRoot, pkg);
       const relPath = path.relative(repoRoot, filePath);
 
       const versionToWrite = pkg.ecosystem === 'python' ? toPep440(newVersion) : newVersion;
 
-      if (!args.dryRun) {
+      if (versionSourceEcosystem !== "dotnet" && !args.dryRun) {
         writeVersion(repoRoot, pkg, versionToWrite);
         // Verify
         const written = readVersion(repoRoot, pkg);
@@ -417,6 +475,7 @@ function main(): void {
         oldVersion: currentVersion,
         newVersion: versionToWrite,
         file: relPath,
+        path: pkg.path,
         ecosystem: pkg.ecosystem,
         ...(pkg.buildSystem && { buildSystem: pkg.buildSystem }),
       });
@@ -446,6 +505,7 @@ function main(): void {
         oldVersion: currentVersion,
         newVersion,
         file: relPath,
+        path: pkg.path,
         ecosystem: pkg.ecosystem,
         ...(pkg.buildSystem && { buildSystem: pkg.buildSystem }),
       });
