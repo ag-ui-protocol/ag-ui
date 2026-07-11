@@ -100,6 +100,12 @@ class SDKToAGUITranslator:
         # otherwise __idx_<output_index>. Value is the id we already sent in
         # the matching *_START event, so we can pair the END to it.
         self._open_texts: dict[str, str] = {}          # key -> message_id
+        # A message item that was announced (output_item.added) but whose
+        # TEXT_MESSAGE_START we're holding back until a real delta arrives.
+        # Value is the id the START will carry once (if) it opens. Lets a
+        # text-less item — a pure tool-call turn on some providers — pass
+        # through without an empty text window bracketing the tool call.
+        self._pending_text_ids: dict[str, str] = {}    # key -> deferred message_id
         self._open_tool_calls: dict[str, str] = {}     # key -> tool_call_id
         self._open_reasonings: dict[str, str] = {}     # key -> phase message_id
         self._open_reasoning_parts: dict[str, str] = {}  # key -> part message_id
@@ -326,7 +332,17 @@ class SDKToAGUITranslator:
         key = self._window_key(item_id, read_attr(data, "output_index"))
 
         if item_type == SDKItemType.MESSAGE:
-            return self._open_text(key, self._resolve_id(item_id, new_message_id))
+            # Defer TEXT_MESSAGE_START until a real delta actually arrives.
+            # Some providers (LiteLLM's chat-completions adapter, for one)
+            # emit a message item even on a turn that ends up being a pure
+            # tool call with no spoken text — opening the window here would
+            # leave an empty TEXT_MESSAGE_START/END pair wrapping the tool
+            # call on the wire. Remember the real id so the lazy open still
+            # uses it. Output has begun, though, so close any open reasoning
+            # now (some backends send reasoning-done late) — that must not
+            # wait for the deferred text.
+            self._pending_text_ids[key] = self._resolve_id(item_id, new_message_id)
+            return self._close_all_reasonings()
         if item_type == SDKItemType.FUNCTION_CALL:
             call_id = read_attr(item, "call_id") or self._resolve_id(item_id, new_tool_call_id)
             name = read_attr(item, "name") or ""
@@ -356,6 +372,11 @@ class SDKToAGUITranslator:
         key = self._window_key(read_attr(item, "id"), read_attr(data, "output_index"))
 
         if item_type == SDKItemType.MESSAGE:
+            # Drop a deferred-but-never-opened window: no delta ever arrived,
+            # so there's nothing on the wire to close and no empty window to
+            # emit. If a delta did arrive the pending entry is already gone
+            # and this pop is a no-op; _close_text then closes the real one.
+            self._pending_text_ids.pop(key, None)
             return self._close_text(key)
         if item_type == SDKItemType.FUNCTION_CALL or item_type in HOSTED_TOOL_CALL_TYPES:
             return self._close_tool_call(key)
@@ -391,6 +412,9 @@ class SDKToAGUITranslator:
             The closing event, or [] if already closed.
         """
         key = self._window_key(read_attr(data, "item_id"), read_attr(data, "output_index"))
+        # A text-level done with no delta ever seen: drop the deferred window
+        # the same way output_item.done does, so it never opens empty.
+        self._pending_text_ids.pop(key, None)
         return self._close_text(key)
 
     def translate_refusal_delta(self, data: Any) -> list[BaseEvent]:
@@ -549,16 +573,23 @@ class SDKToAGUITranslator:
             # message, under the exact id that earlier close already used.
             self._record_text(key, text)
             return []
+        # "new": nothing was ever streamed for this item. A real id also
+        # supersedes any deferred window we were holding for it.
+        self._pending_text_ids.pop(raw_id, None)
+        if not text:
+            # An empty assistant commit — emit no window (START+END with no
+            # content is exactly the empty-bubble artifact) and keep it out of
+            # the snapshot.
+            return []
         message_id = self._resolve_id(raw_id, new_message_id)
         events = self._open_text(message_id, message_id)
-        if text:
-            events.append(
-                TextMessageContentEvent(
-                    type=EventType.TEXT_MESSAGE_CONTENT,
-                    message_id=message_id,
-                    delta=text,
-                )
+        events.append(
+            TextMessageContentEvent(
+                type=EventType.TEXT_MESSAGE_CONTENT,
+                message_id=message_id,
+                delta=text,
             )
+        )
         events.extend(self._close_text(message_id))
         self._record_text(message_id, text)
         return events
@@ -895,7 +926,12 @@ class SDKToAGUITranslator:
             return []
         events: list[BaseEvent] = []
         if key not in self._open_texts:
-            events.extend(self._open_text(key, new_message_id()))
+            # First real delta for a deferred item opens the window now, under
+            # the id output_item.added reserved (falling back to a fresh id if
+            # the deltas arrived with no added first).
+            events.extend(
+                self._open_text(key, self._pending_text_ids.pop(key, None) or new_message_id())
+            )
         events.append(
             TextMessageContentEvent(
                 type=EventType.TEXT_MESSAGE_CONTENT,

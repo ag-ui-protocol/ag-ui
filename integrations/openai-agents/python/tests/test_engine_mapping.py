@@ -147,6 +147,48 @@ def test_refusal_delta_streams_into_the_text_window():
     assert events[1].delta == "no"
 
 
+def test_text_less_message_item_wrapping_a_tool_call_emits_no_window():
+    # A provider (e.g. LiteLLM's chat-completions adapter) can announce a
+    # message item even on a pure tool-call turn that never carries text: an
+    # output_item.added(message), the whole tool call, then
+    # output_item.done(message) — with no text delta in between. The message
+    # window must never open, so the tool call stays a clean sibling and no
+    # empty TEXT_MESSAGE_START/END brackets it on the wire.
+    engine = SDKToAGUITranslator()
+    events = _drive(
+        engine,
+        _added(SDKItemType.MESSAGE, output_index=0, id="msg_1"),
+        _added(
+            SDKItemType.FUNCTION_CALL,
+            output_index=1,
+            id="fc_1",
+            call_id="call_1",
+            name="change_background",
+        ),
+        _raw(
+            RawResponseEventType.FUNCTION_CALL_ARGUMENTS_DELTA,
+            item_id="fc_1",
+            output_index=1,
+            delta='{"background":"red"}',
+        ),
+        _done(
+            SDKItemType.FUNCTION_CALL,
+            output_index=1,
+            id="fc_1",
+            call_id="call_1",
+            name="change_background",
+        ),
+        _done(SDKItemType.MESSAGE, output_index=0, id="msg_1"),
+    )
+    assert _types(events) == [
+        EventType.TOOL_CALL_START,
+        EventType.TOOL_CALL_ARGS,
+        EventType.TOOL_CALL_END,
+    ]
+    assert EventType.TEXT_MESSAGE_START not in _types(events)
+    assert EventType.TEXT_MESSAGE_END not in _types(events)
+
+
 # ── tool-call streaming ──────────────────────────────────────────────────
 
 
@@ -248,12 +290,20 @@ def test_reasoning_auto_closes_when_text_output_starts():
             delta="hmm",
         ),
     )
+    # output_item.added closes reasoning right away (output has begun), but
+    # holds back TEXT_MESSAGE_START — that waits for a real delta so a
+    # text-less item can't emit an empty window.
     events = _drive(engine, _added(SDKItemType.MESSAGE, id="msg_1"))
     assert _types(events) == [
         EventType.REASONING_MESSAGE_END,
         EventType.REASONING_END,
-        EventType.TEXT_MESSAGE_START,
     ]
+    events = _drive(
+        engine,
+        _raw(RawResponseEventType.TEXT_DELTA, item_id="msg_1", output_index=0, delta="ok"),
+    )
+    assert _types(events) == [EventType.TEXT_MESSAGE_START, EventType.TEXT_MESSAGE_CONTENT]
+    assert events[0].message_id == "msg_1", "deferred START must carry the reserved id"
 
 
 # ── multi-agent steps ────────────────────────────────────────────────────

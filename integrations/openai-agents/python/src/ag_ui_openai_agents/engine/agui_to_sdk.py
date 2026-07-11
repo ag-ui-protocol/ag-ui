@@ -31,6 +31,7 @@ from ag_ui.core import (
     VideoInputContent,
 )
 from agents import FunctionTool, RunContextWrapper, TResponseInputItem
+from agents.exceptions import AgentsException
 
 from .helpers import coerce_to_str, read_attr
 from .types import TranslatedInput
@@ -42,13 +43,21 @@ logger = logging.getLogger(__name__)
 # Sentinel exception used by client-tool proxies
 # ---------------------------------------------------------------------------
 
-class ClientToolPending(Exception):
+class ClientToolPending(AgentsException):
     """Raised by a client-tool proxy to signal "stop, the UI owns this call".
 
     The outer run loop catches it, cancels the SDK run after the current
     turn, and persists the resulting RunState keyed by thread_id so the
     next AG-UI request (which carries an AG-UI ToolMessage with the
     client's result) can resume from the same point.
+
+    Subclasses AgentsException deliberately: the SDK's own tool executor
+    (agents.run_internal.tool_execution._run_single_tool) special-cases
+    `isinstance(e, AgentsException)` to re-raise it as-is — anything else
+    gets wrapped in a generic UserError first, which would hide this from
+    the outer run loop's `except ClientToolPending` and turn every
+    client-owned tool call into a hard run failure instead of a clean
+    hand-off.
 
     Args:
         tool_name: Name of the client-owned tool that was called.
@@ -312,9 +321,20 @@ class AGUIToSDKTranslator:
         if text:
             items.append(
                 {
-                    "type": "message",
                     "role": "assistant",
-                    "content": [{"type": "output_text", "text": text}],
+                    "content": text,
+                    # Deliberately no "type" key: the SDK's own item
+                    # classifiers (agents.models.chatcmpl_converter,
+                    # Converter.maybe_easy_input_message) match
+                    # EasyInputMessageParam on the exact key set
+                    # {"content", "role"} — adding "type": "message" here
+                    # makes it match maybe_response_output_message instead
+                    # (any dict with type="message"/role="assistant"), whose
+                    # branch assumes content is a list of output_text/refusal
+                    # parts and blows up on a plain string. This is a prior
+                    # assistant turn being replayed as *input*, so the plain
+                    # EasyInputMessageParam shape is exactly right — no id,
+                    # no status, no content-part wrapping needed.
                 }
             )
         for tool_call in message.tool_calls or []:

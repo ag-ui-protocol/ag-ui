@@ -26,7 +26,7 @@ from ag_ui.core import (
     StateSnapshotEvent,
 )
 
-from .engine.agui_to_sdk import AGUIToSDKTranslator
+from .engine.agui_to_sdk import AGUIToSDKTranslator, ClientToolPending
 from .engine.sdk_to_agui import SDKToAGUITranslator
 from .engine.types import TranslatedInput
 
@@ -179,6 +179,18 @@ class AGUITranslator:
             async for sdk_event in stream_events:
                 for event in outbound.translate(sdk_event):
                     yield event
+            for event in outbound.finalize():
+                yield event
+            if emit_messages_snapshot:
+                yield outbound.build_messages_snapshot(run_input)
+        except ClientToolPending:
+            # Not a failure — a client-declared tool's proxy raises this the
+            # instant the model calls it, specifically so the SDK stops here
+            # and hands the call back to the client. The TOOL_CALL_START/
+            # ARGS/END trio for it was already yielded by the normal
+            # translate() dispatch above (the run-item event that names the
+            # call arrives before the SDK ever invokes it), so this is a
+            # clean end of turn: finalize any open windows, snapshot, finish.
             for event in outbound.finalize():
                 yield event
             if emit_messages_snapshot:
