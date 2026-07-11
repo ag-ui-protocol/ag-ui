@@ -43,6 +43,7 @@ on:
           - middleware-mcp-apps
           - sdk-py
           - sdk-py-a2ui-toolkit
+          - sdk-dotnet
           - sdk-ts
           - sdk-ts-a2ui-toolkit
           - create-ag-ui-app
@@ -252,11 +253,11 @@ jobs:
           {
             echo "## Accumulated Release"
             echo ""
-            echo "Merging this PR publishes the following to npm and PyPI:"
+            echo "Merging this PR publishes the following to npm, PyPI, and NuGet:"
             echo ""
             echo "| Package | Old | New | Registry |"
             echo "|---------|-----|-----|----------|"
-            jq -r '.[] | "| \(.name) | \(.oldVersion) | \(.newVersion) | \(if .ecosystem == "typescript" then "npm" else "PyPI" end) |"' /tmp/accumulated.json
+            jq -r '.[] | "| \(.name) | \(.oldVersion) | \(.newVersion) | \(if .ecosystem == "typescript" then "npm" elif .ecosystem == "dotnet" then "NuGet" else "PyPI" end) |"' /tmp/accumulated.json
             echo ""
             echo "---"
             echo ""
@@ -276,7 +277,7 @@ jobs:
             echo "2. **CI runs on this PR** — tests, lint, type checks, build must pass before merge."
             echo "3. **When merged**, the \`release / publish\` workflow detects the version bumps and:"
             echo "   - Builds and tests all packages"
-            echo "   - Publishes to npm and PyPI"
+            echo "   - Publishes to npm, PyPI, and NuGet"
             echo "   - Creates per-package git tags"
             echo "   - Creates a GitHub Release"
             echo ""

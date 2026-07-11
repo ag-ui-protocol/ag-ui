@@ -486,3 +486,4 @@ $RECYCLE.BIN/
 
 # Repo-local .NET SDK provisioned by build.cmd/build.sh/eng/install-dotnet.*
 .dotnet/
+.dotnet_home/
