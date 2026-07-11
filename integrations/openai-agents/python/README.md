@@ -44,55 +44,16 @@ For local development this package uses [uv](https://docs.astral.sh/uv/):
 uv sync
 ```
 
-## Quick Start: Serve an Agent
+## Quick Start: Compose It Yourself (recommended)
 
-The fastest path. Wrap a plain SDK `Agent` with `OpenAIAgentsAgent`, then hand
-it to `add_openai_agents_fastapi_endpoint` — SSE, content negotiation, a
-`/health` check, lifecycle events, and the state/messages snapshots are all
-wired for you.
-
-```python
-from agents import Agent
-from fastapi import FastAPI
-
-from ag_ui_openai_agents import (
-    OpenAIAgentsAgent,
-    add_openai_agents_fastapi_endpoint,
-)
-
-agent = OpenAIAgentsAgent(Agent(name="assistant", instructions="Be concise."))
-
-app = FastAPI()
-add_openai_agents_fastapi_endpoint(app, agent, "/")
-```
-
-That's the whole integration. `OpenAIAgentsAgent`:
-
-- holds no per-request state — one instance serves every request; the SDK
-  `Agent` is a config template, and client-declared tools are merged onto a
-  per-request `clone()`, so concurrent requests never see each other's tools;
-- takes `run_config=...` to route runs through a non-OpenAI provider (e.g.
-  LiteLLM) or set run-wide model settings;
-- exposes `run(RunAgentInput) -> AsyncIterator[BaseEvent]` if you want to serve
-  it on a transport other than FastAPI.
-
-```python
-from agents import RunConfig
-from agents.extensions.models.litellm_provider import LitellmProvider
-
-agent = OpenAIAgentsAgent(
-    Agent(name="assistant", instructions="Be concise.", model="gemini/gemini-2.5-flash"),
-    run_config=RunConfig(model_provider=LitellmProvider()),
-)
-```
-
-Need finer control (a custom transport, your own SSE framing, per-run branching)?
-Drop to the translator — see the next section.
-
-## Quick Start: Compose It Yourself
-
-The lower-level path the wrapper is built on: accept `RunAgentInput`, run your
-OpenAI agent with `Runner.run_streamed`, and stream AG-UI events back over SSE.
+**This is the recommended way to use this integration.** `AGUITranslator` is
+just an events translator — it converts at the AG-UI boundary and nothing
+else. You keep full control of the agent (any `Agent` config, model,
+handoffs, guardrails) and full control of the backend server (FastAPI or
+anything else, your own routes, your own SSE/WebSocket framing, your own
+session/auth logic). Nothing about your `Runner.run_streamed` call or your
+server is owned by this package — accept `RunAgentInput`, run your OpenAI
+agent normally, stream AG-UI events back:
 
 ```python
 from agents import Agent, Runner
@@ -149,18 +110,66 @@ TEXT_MESSAGE_END -> RUN_FINISHED`.
 A full multi-demo server (chat, backend tools, human-in-the-loop, handoffs,
 orchestrator) lives in [`examples/`](examples/).
 
+## Quick Start: Serve an Agent (opinionated shortcut)
+
+Want the boilerplate above wired up for you instead? Wrap a plain SDK `Agent`
+with `OpenAIAgentsAgent`, then hand it to `add_openai_agents_fastapi_endpoint`
+— SSE, content negotiation, a `/health` check, lifecycle events, and the
+state/messages snapshots are all wired for you. Trades away the control the
+translator gives you (agent config is fixed at construction, server is
+FastAPI) for less code.
+
+```python
+from agents import Agent
+from fastapi import FastAPI
+
+from ag_ui_openai_agents import (
+    OpenAIAgentsAgent,
+    add_openai_agents_fastapi_endpoint,
+)
+
+agent = OpenAIAgentsAgent(Agent(name="assistant", instructions="Be concise."))
+
+app = FastAPI()
+add_openai_agents_fastapi_endpoint(app, agent, "/")
+```
+
+`OpenAIAgentsAgent`:
+
+- holds no per-request state — one instance serves every request; the SDK
+  `Agent` is a config template, and client-declared tools are merged onto a
+  per-request `clone()`, so concurrent requests never see each other's tools;
+- takes `run_config=...` to route runs through a non-OpenAI provider (e.g.
+  LiteLLM) or set run-wide model settings;
+- exposes `run(RunAgentInput) -> AsyncIterator[BaseEvent]` if you want to serve
+  it on a transport other than FastAPI.
+
+```python
+from agents import RunConfig
+from agents.extensions.models.litellm_provider import LitellmProvider
+
+agent = OpenAIAgentsAgent(
+    Agent(name="assistant", instructions="Be concise.", model="gemini/gemini-2.5-flash"),
+    run_config=RunConfig(model_provider=LitellmProvider()),
+)
+```
+
+Need finer control (a custom transport, your own SSE framing, per-run
+branching)? Use the translator directly — see the section above.
+
 ## Public API
 
 Two layers, pick by how much control you want:
 
 | Name | Kind | Use it for |
 |---|---|---|
+| `AGUITranslator` | translator (recommended) | compose it yourself — `to_sdk` + `to_agui`; full control of the agent and server |
 | `OpenAIAgentsAgent` | wrapper class | serve an agent: `run(RunAgentInput) -> AsyncIterator[BaseEvent]` |
 | `add_openai_agents_fastapi_endpoint(app, agent, path)` | helper | wire a wrapped agent to FastAPI (SSE + `/health`) |
-| `AGUITranslator` | translator | compose it yourself — `to_sdk` + `to_agui` |
 
-The wrapper is built on the translator; use the translator directly for custom
-transports or per-run branching.
+The wrapper is built on the translator; it trades control for less code. The
+translator is just an events translator — it does not own your agent or your
+server, so start there unless the wrapper's shortcut fits as-is.
 
 `AGUITranslator` pairs with the SDK's streaming run mode:
 
@@ -175,7 +184,8 @@ fresh per-run engine it needs. Create one instance and share it.
 
 | Need | Use |
 |---|---|
-| Just serve an agent over FastAPI | `OpenAIAgentsAgent` + `add_openai_agents_fastapi_endpoint` |
+| Full control of the agent config and the server (recommended default) | `AGUITranslator` — compose it yourself |
+| Just serve a fixed agent over FastAPI, no custom server logic | `OpenAIAgentsAgent` + `add_openai_agents_fastapi_endpoint` |
 | Live chat, tool-call progress, reasoning progress | `AGUITranslator` with `Runner.run_streamed` |
 | FastAPI SSE | Return `StreamingResponse(_stream(...), media_type="text/event-stream")` |
 | WebSocket or another async transport | Iterate `translator.to_agui(result, run_input)` and send each event JSON |
@@ -343,6 +353,54 @@ The translator translates. Your run loop still owns orchestration:
 
 This keeps the integration framework-neutral. FastAPI, Starlette, Django,
 aiohttp, raw ASGI, WebSockets, or tests can all use the same translator calls.
+
+### Event Mapping
+
+Both directions, source of truth is `engine/agui_to_sdk.py` and
+`engine/sdk_to_agui.py`.
+
+**Inbound** — AG-UI `Message` → Responses-API input item (`AGUIToSDKTranslator`):
+
+| AG-UI type | SDK / Responses-API shape |
+|---|---|
+| `UserMessage` | `{"type": "message", "role": "user", "content": [...]}` (multimodal-aware) |
+| `SystemMessage` | `{"type": "message", "role": "system", ...}` |
+| `DeveloperMessage` | `{"type": "message", "role": "developer", ...}` |
+| `AssistantMessage` | optional text `message` item + one `function_call` item per `tool_calls` entry |
+| `ToolMessage` | `{"type": "function_call_output", "call_id": ..., "output": ...}` |
+| `ReasoningMessage` | `{"type": "reasoning", ...}` if `encrypted_value` is set, else dropped (plaintext reasoning isn't replayable) |
+| `ActivityMessage` | dropped (no Responses-API equivalent; override to fold into the prompt) |
+| `Tool` (client-declared) | SDK `FunctionTool` proxy that raises `ClientToolPending` when invoked |
+| Content parts: `TextInputContent`, `ImageInputContent`, `AudioInputContent`, `DocumentInputContent`, `BinaryInputContent` | `input_text` / `input_image` / `input_audio` / `input_file` parts |
+| `VideoInputContent` | dropped (Responses API has no video input) |
+
+**Outbound** — SDK stream event → AG-UI `BaseEvent` (`SDKToAGUITranslator`):
+
+| SDK event / item | AG-UI event(s) |
+|---|---|
+| `response.output_item.added` (message) | `TEXT_MESSAGE_START` |
+| `response.output_text.delta` / `response.refusal.delta` | `TEXT_MESSAGE_CONTENT` (lazy-opens the window if needed) |
+| `response.output_item.done` (message) / `response.output_text.done` | `TEXT_MESSAGE_END` |
+| `response.output_item.added` (function_call / hosted tool call) | `TOOL_CALL_START` |
+| `response.function_call_arguments.delta` | `TOOL_CALL_ARGS` |
+| `response.output_item.done` (function_call / hosted tool call) | `TOOL_CALL_END` |
+| `ToolCallOutputItem` | `TOOL_CALL_RESULT` |
+| `HandoffCallItem` | `TOOL_CALL_START` / `TOOL_CALL_ARGS` / `TOOL_CALL_END` (a handoff is a function call) |
+| `HandoffOutputItem` | `TOOL_CALL_RESULT` |
+| `response.reasoning_summary_text.delta` / `response.reasoning_text.delta` | `REASONING_START` (once) + `REASONING_MESSAGE_START` + `REASONING_MESSAGE_CONTENT` |
+| `response.reasoning_summary_part.done` / `response.reasoning_text.done` | `REASONING_MESSAGE_END` |
+| `ReasoningItem` (finished, with `encrypted_content`) | `REASONING_ENCRYPTED_VALUE` |
+| stream end / any open reasoning when text or a tool call opens | `REASONING_END` |
+| `AgentUpdatedStreamEvent` | `STEP_FINISHED` (previous agent, if any) + `STEP_STARTED` (new agent) |
+| `MCPApprovalRequestItem` | `CUSTOM` (name=`"mcp_approval_request"`) |
+| `MCPListToolsItem`, `MCPApprovalResponseItem` | dropped (server-side bookkeeping / echo) |
+| stream start / end (always, via `to_agui`) | `RUN_STARTED` / `RUN_FINISHED` (or `RUN_ERROR`) |
+| end of stream, `run_input` given (default) | `MESSAGES_SNAPSHOT` |
+| `run_input.state`, if set | `STATE_SNAPSHOT` (echoed once by `to_agui`) |
+
+Unknown SDK event or item types translate to `[]` with a debug log —
+graceful degradation, never a raise. See `tests/test_engine_mapping.py` for
+the streaming behavior pinned event-by-event.
 
 ### Guardrails
 
