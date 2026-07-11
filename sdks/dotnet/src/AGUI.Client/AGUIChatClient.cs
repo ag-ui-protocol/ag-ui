@@ -340,6 +340,16 @@ public sealed class AGUIChatClient : DelegatingChatClient
                 {
                     input.ParentRunId = providedInput.ParentRunId;
                 }
+
+                if (providedInput.Context is { Count: > 0 })
+                {
+                    input.Context = providedInput.Context;
+                }
+
+                if (providedInput.ForwardedProperties.ValueKind is not JsonValueKind.Undefined)
+                {
+                    input.ForwardedProperties = providedInput.ForwardedProperties;
+                }
             }
 
             // Convert M.E.AI tools to AG-UI format

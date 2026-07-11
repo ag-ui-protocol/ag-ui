@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using AGUI.Abstractions;
@@ -141,6 +142,43 @@ public sealed class AGUIChatClientTest
         await DrainAsync(client.GetStreamingResponseAsync(history, options));
 
         Assert.Equal(3, transport.LastInput!.Messages.Count);
+    }
+
+    // https://github.com/ag-ui-protocol/ag-ui/issues/2151
+    // A caller-supplied RunAgentInput (via RawRepresentationFactory) must have its
+    // Context and ForwardedProperties carried through onto the request that is sent,
+    // just like Messages/Tools/State/ParentRunId already are.
+    [Fact]
+    public async Task GetStreamingResponse_WithRawRepresentationFactory_PreservesContextAndForwardedProperties()
+    {
+        var transport = new CapturingTransport();
+        using var client = new AGUIChatClient(new() { Transport = transport });
+
+        var forwarded = JsonDocument.Parse("{\"tenant\":\"acme\"}").RootElement.Clone();
+        var options = new ChatOptions
+        {
+            RawRepresentationFactory = _ => new RunAgentInput
+            {
+                Context = new List<AGUIContext>
+                {
+                    new() { Description = "userId", Value = "u-123" }
+                },
+                ForwardedProperties = forwarded,
+            }
+        };
+
+        await DrainAsync(client.GetStreamingResponseAsync(
+            [new ChatMessage(ChatRole.User, "Hello")], options));
+
+        var sent = transport.LastInput!;
+
+        Assert.NotNull(sent.Context);
+        Assert.Single(sent.Context!);
+        Assert.Equal("userId", sent.Context![0].Description);
+        Assert.Equal("u-123", sent.Context[0].Value);
+
+        Assert.Equal(JsonValueKind.Object, sent.ForwardedProperties.ValueKind);
+        Assert.Equal("acme", sent.ForwardedProperties.GetProperty("tenant").GetString());
     }
 
     // https://github.com/microsoft/agent-framework/issues/5587
