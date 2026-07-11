@@ -7,7 +7,7 @@
     <PackageTags>$(PackageTags);formatting;sse;server-sent-events;streaming;transport</PackageTags>
   </PropertyGroup>
 
-  <ItemGroup>
+  <ItemGroup Condition="'$(SignAssembly)' != 'true'">
     <InternalsVisibleTo Include="AGUI.Formatting.UnitTests" />
   </ItemGroup>
 

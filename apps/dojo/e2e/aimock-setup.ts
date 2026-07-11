@@ -3,7 +3,8 @@ import * as path from "node:path";
 import { registerA2UIRecoveryFixtures } from "./a2ui-recovery-fixtures";
 import { registerA2UIADKFixtures } from "./a2ui-adk-fixtures";
 
-const MOCK_PORT = 5555;
+// Configurable so parallel worktrees / runs don't collide on one aimock port.
+const MOCK_PORT = Number(process.env.AIMOCK_PORT) || 5555;
 const FIXTURES_DIR = path.join(import.meta.dirname, "fixtures", "openai");
 
 let mockServer: LLMock | null = null;

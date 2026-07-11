@@ -14,7 +14,7 @@ import {
   RequestContext,
 } from "@mastra/core/request-context";
 import { ContextWithMastra, registerApiRoute } from "@mastra/core/server";
-import { MastraAgent } from "./mastra";
+import { MastraAgent, MastraTracingOptions } from "./mastra";
 
 /**
  * `Omit` that distributes over each member of a union, so a discriminated union
@@ -44,10 +44,17 @@ export function registerCopilotKit({
   setContext,
   agents,
   cors,
+  tracingOptions,
   ...runtimeOptions
 }: {
   path: string;
   resourceId: string;
+  /**
+   * Mastra tracing options forwarded to each agent run (default-agent path
+   * only; ignored when `agents` is supplied since those are pre-constructed).
+   * See MastraAgentConfig.tracingOptions.
+   */
+  tracingOptions?: MastraTracingOptions;
   /**
    * @deprecated The v2 CopilotKit runtime handler used internally has no
    * service-adapter slot (AG-UI agents don't use one), so this option is
@@ -88,11 +95,13 @@ export function registerCopilotKit({
         agents ||
         MastraAgent.getLocalAgents({
           resourceId:
-            requestContext.get<typeof MASTRA_RESOURCE_ID_KEY, string | undefined>(
-              MASTRA_RESOURCE_ID_KEY,
-            ) ?? resourceId,
+            requestContext.get<
+              typeof MASTRA_RESOURCE_ID_KEY,
+              string | undefined
+            >(MASTRA_RESOURCE_ID_KEY) ?? resourceId,
           mastra,
           requestContext,
+          tracingOptions,
         });
 
       const runtime = new CopilotRuntime({
