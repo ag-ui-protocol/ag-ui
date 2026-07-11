@@ -115,7 +115,12 @@ export const menuIntegrations = [
       "backend_tool_rendering",
       "human_in_the_loop",
       "interrupt",
+      "shared_state",
       "tool_based_generative_ui",
+      "a2ui_dynamic_schema",
+      "a2ui_recovery",
+      "a2ui_fixed_schema",
+      "observational_memory",
     ],
   },
   {
@@ -130,6 +135,10 @@ export const menuIntegrations = [
       "shared_state",
       "tool_based_generative_ui",
       "background_agents",
+      "a2ui_dynamic_schema",
+      "a2ui_recovery",
+      "a2ui_fixed_schema",
+      "observational_memory",
     ],
   },
   {

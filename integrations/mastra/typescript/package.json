@@ -1,6 +1,6 @@
 {
   "name": "@ag-ui/mastra",
-  "version": "1.0.3",
+  "version": "1.1.1",
   "repository": {
     "type": "git",
     "url": "https://github.com/ag-ui-protocol/ag-ui.git"
@@ -22,6 +22,10 @@
     ".": {
       "require": "./dist/index.js",
       "import": "./dist/index.mjs"
+    },
+    "./a2ui": {
+      "require": "./dist/a2ui.js",
+      "import": "./dist/a2ui.mjs"
     },
     "./copilotkit": {
       "require": "./dist/copilotkit.js",
@@ -49,8 +53,11 @@
     "unlink:global": "pnpm unlink --global"
   },
   "dependencies": {
+    "@ag-ui/a2ui-toolkit": "workspace:*",
     "@ai-sdk/ui-utils": "^1.1.19",
-    "rxjs": "7.8.1"
+    "fast-json-patch": "^3.1.1",
+    "rxjs": "7.8.1",
+    "zod": "^3.25.76"
   },
   "peerDependencies": {
     "@ag-ui/core": ">=0.0.44",
