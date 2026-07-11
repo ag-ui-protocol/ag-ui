@@ -46,7 +46,7 @@
  *   detected packages or was intended. Same safe over-report direction; true
  *   per-lane attribution needs the build job to emit per-lane results.
  *
- * Failure model — TWO INDEPENDENT LANES (npm + PyPI):
+ * Failure model — THREE INDEPENDENT LANES (npm + PyPI + NuGet):
  *
  *   - dry-run → no post (entirely suppressed).
  *
@@ -172,6 +172,17 @@ export interface BuildReleaseNotificationInput {
   pyBuildResult: JobResult;
   /** needs.build.outputs.py_packages — the published PyPI package set. */
   pyPackages: PublishedPackage[];
+  /**
+   * NUGET_INTENDED — "true" when the notify job determined a NuGet release was
+   * intended. Same role as npmIntended/pyIntended: build-failure fallback only.
+   */
+  nugetIntended: string;
+  /** needs.publish-dotnet.result mapped to the NuGet lane. */
+  nugetResult: JobResult;
+  /** needs.build.result mapped to the NuGet lane. */
+  nugetBuildResult: JobResult;
+  /** needs.build.outputs.dotnet_packages — the published NuGet package set. */
+  nugetPackages: PublishedPackage[];
   /** needs.build.outputs.scope. Reserved for future use; not rendered today. */
   scope: string;
   /** inputs.dry_run — true on a dry-run dispatch. */
@@ -182,6 +193,8 @@ export interface BuildReleaseNotificationInput {
   npmOrgUrl: string;
   /** Base URL for PyPI project pages (https://pypi.org/project). */
   pyBaseUrl: string;
+  /** Base URL for NuGet package pages (https://www.nuget.org/packages). */
+  nugetBaseUrl: string;
 }
 
 export interface BuildReleaseNotificationResult {
@@ -259,6 +272,7 @@ export function buildReleaseNotification(
   // gate is the detected package set (tsPackages / pyPackages).
   const npmIntended = input.npmIntended === "true";
   const pyIntended = input.pyIntended === "true";
+  const nugetIntended = input.nugetIntended === "true";
 
   const lines: string[] = [];
 
@@ -396,6 +410,28 @@ export function buildReleaseNotification(
     // the npm lane (and vice-versa) when the other lane also detected packages
     // or was intended.
     lines.push(`🔴 *ag-ui PyPI release failed* · <${input.runUrl}|View run>`);
+  }
+
+  // --- NuGet lane (stable only — canary already short-circuited above) ---
+  if (
+    input.mode === "stable" &&
+    input.nugetResult === "success" &&
+    input.nugetPackages.length > 0
+  ) {
+    const count = input.nugetPackages.length;
+    const names = renderNameList(input.nugetPackages.map((p) => p.name));
+    const flagship = input.nugetPackages[0].name;
+    lines.push(
+      `📦 *ag-ui release* · ${pluralize(count, "NuGet package")} published ` +
+        `(${names}) · ` +
+        `<${input.nugetBaseUrl}/${flagship}/|NuGet>`,
+    );
+  } else if (
+    (input.nugetResult === "failure" || input.nugetBuildResult === "failure") &&
+    (input.nugetPackages.length > 0 ||
+      (input.nugetBuildResult === "failure" && nugetIntended))
+  ) {
+    lines.push(`🔴 *ag-ui NuGet release failed* · <${input.runUrl}|View run>`);
   }
 
   if (lines.length === 0) {

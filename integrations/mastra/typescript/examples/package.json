@@ -20,7 +20,8 @@
     "@mastra/libsql": "^1.14.2",
     "@mastra/loggers": "^1.2.0",
     "@mastra/memory": "^1.21.2",
-    "zod": "^4.3.6"
+    "zod": "^4.3.6",
+    "@ag-ui/mastra": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^20",

@@ -12,6 +12,18 @@
         { "name": "@ag-ui/proto", "path": "sdks/typescript/packages/proto", "ecosystem": "typescript" }
       ]
     },
+    "sdk-dotnet": {
+      "description": ".NET SDK packages",
+      "sharedVersion": true,
+      "versionSource": "sdks/dotnet/Directory.Build.props",
+      "packages": [
+        { "name": "AGUI.Abstractions", "path": "sdks/dotnet/src/AGUI.Abstractions", "ecosystem": "dotnet" },
+        { "name": "AGUI.Formatting", "path": "sdks/dotnet/src/AGUI.Formatting", "ecosystem": "dotnet" },
+        { "name": "AGUI.Protobuf", "path": "sdks/dotnet/src/AGUI.Protobuf", "ecosystem": "dotnet" },
+        { "name": "AGUI.Client", "path": "sdks/dotnet/src/AGUI.Client", "ecosystem": "dotnet" },
+        { "name": "AGUI.Server", "path": "sdks/dotnet/src/AGUI.Server", "ecosystem": "dotnet" }
+      ]
+    },
     "create-ag-ui-app": {
       "description": "create-ag-ui-app CLI (independently versioned)",
       "sharedVersion": false,
