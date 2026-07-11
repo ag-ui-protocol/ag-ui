@@ -10,7 +10,9 @@ the tool result as a JSON object — temperature/conditions/humidity/
 wind_speed/feels_like — and the argument as `location`, matching every other
 integration's version of this demo. A plain sentence string or a `city`
 param renders as a blank/all-zero card, since the frontend has nothing to
-parse.
+parse. The fixed return value (same for every location) matches how most
+other integrations' versions of this demo work too — the point of the demo
+is the tool-call plumbing, not real weather data.
 """
 
 from __future__ import annotations
@@ -19,22 +21,13 @@ from agents import Agent, function_tool
 
 from .constants import DEFAULT_MODEL
 
-_WEATHER = {
-    "berlin": {"temperature": 24, "conditions": "sunny", "humidity": 40, "wind_speed": 12, "feels_like": 25},
-    "munich": {"temperature": 22, "conditions": "cloudy", "humidity": 55, "wind_speed": 8, "feels_like": 21},
-    "london": {"temperature": 17, "conditions": "rainy", "humidity": 75, "wind_speed": 18, "feels_like": 16},
-    "paris": {"temperature": 26, "conditions": "sunny", "humidity": 35, "wind_speed": 10, "feels_like": 27},
-    "new york": {"temperature": 19, "conditions": "clear", "humidity": 45, "wind_speed": 14, "feels_like": 18},
-    "san francisco": {"temperature": 16, "conditions": "cloudy", "humidity": 68, "wind_speed": 20, "feels_like": 15},
-    "tokyo": {"temperature": 23, "conditions": "clear", "humidity": 60, "wind_speed": 9, "feels_like": 24},
-}
-_DEFAULT_WEATHER = {"temperature": 20, "conditions": "clear", "humidity": 50, "wind_speed": 10, "feels_like": 20}
+_WEATHER = {"temperature": 20, "conditions": "sunny", "humidity": 50, "wind_speed": 10, "feels_like": 20}
 
 
 @function_tool
 def get_weather(location: str) -> dict:
     """Get the current weather for a location."""
-    return _WEATHER.get(location.lower(), _DEFAULT_WEATHER)
+    return _WEATHER
 
 
 def create_backend_tool_agent() -> Agent:
