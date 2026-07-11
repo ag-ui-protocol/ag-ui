@@ -1196,6 +1196,26 @@ export class LangGraphAgent extends AbstractAgent {
     });
   }
 
+  /**
+   * True when a tool call's originating assistant message is already present in
+   * the durable thread history (`this.messages`). On a HITL resume the client
+   * replays the full conversation, so the TOOL_CALL_START/ARGS/END triple for
+   * this tool call was already delivered in the prior run and must not be
+   * re-emitted by `OnToolEnd` (whose per-run `emittedToolCallStartIds` Set is
+   * reset on every run). `TOOL_CALL_RESULT` still fires normally. See #2014.
+   */
+  private toolCallAnnouncedInPriorRun(toolCallId: string | undefined): boolean {
+    if (!toolCallId) {
+      return false;
+    }
+    return (this.messages ?? []).some(
+      (message: any) =>
+        message?.role === "assistant" &&
+        Array.isArray(message.toolCalls) &&
+        message.toolCalls.some((toolCall: any) => toolCall?.id === toolCallId),
+    );
+  }
+
   handleSingleEvent(event: any): void {
     // messages-tuple data arrives as [AIMessageChunk, metadata] arrays,
     // not objects with an .event property like events-mode data.
@@ -1489,7 +1509,12 @@ export class LangGraphAgent extends AbstractAgent {
           toolCallOutput.update?.messages
             .filter((message: MessageFields) => message.type === "tool")
             .forEach((message: MessageFields) => {
-              if (!this.activeRun!.hasFunctionStreaming) {
+              // Skip the synthetic START/ARGS on a HITL resume where the tool
+              // call was already announced in a prior run (#2014).
+              if (
+                !this.activeRun!.hasFunctionStreaming &&
+                !this.toolCallAnnouncedInPriorRun(message.tool_call_id)
+              ) {
                 this.dispatchEvent({
                   type: EventType.TOOL_CALL_START,
                   toolCallId: message.tool_call_id,
@@ -1526,8 +1551,12 @@ export class LangGraphAgent extends AbstractAgent {
 
         // Emit TOOL_CALL_START + ARGS + END for tool calls that were not
         // already handled by the streaming path. Uses emittedToolCallStartIds
-        // to avoid duplicates from parallel tool calls.
-        if (!this.emittedToolCallStartIds.has(toolCallOutput.tool_call_id)) {
+        // to avoid duplicates from parallel tool calls, and the durable
+        // thread history to avoid re-announcing on a HITL resume (#2014).
+        if (
+          !this.emittedToolCallStartIds.has(toolCallOutput.tool_call_id) &&
+          !this.toolCallAnnouncedInPriorRun(toolCallOutput.tool_call_id)
+        ) {
           this.emittedToolCallStartIds.add(toolCallOutput.tool_call_id);
           this.dispatchEvent({
             type: EventType.TOOL_CALL_START,
