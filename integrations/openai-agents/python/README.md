@@ -44,11 +44,55 @@ For local development this package uses [uv](https://docs.astral.sh/uv/):
 uv sync
 ```
 
-## Quick Start: Streaming Endpoint
+## Quick Start: Serve an Agent
 
-This is the common server shape for AG-UI clients: accept `RunAgentInput`, run
-your OpenAI agent with `Runner.run_streamed`, and stream AG-UI events back over
-SSE.
+The fastest path. Wrap a plain SDK `Agent` with `OpenAIAgentsAgent`, then hand
+it to `add_openai_agents_fastapi_endpoint` — SSE, content negotiation, a
+`/health` check, lifecycle events, and the state/messages snapshots are all
+wired for you.
+
+```python
+from agents import Agent
+from fastapi import FastAPI
+
+from ag_ui_openai_agents import (
+    OpenAIAgentsAgent,
+    add_openai_agents_fastapi_endpoint,
+)
+
+agent = OpenAIAgentsAgent(Agent(name="assistant", instructions="Be concise."))
+
+app = FastAPI()
+add_openai_agents_fastapi_endpoint(app, agent, "/")
+```
+
+That's the whole integration. `OpenAIAgentsAgent`:
+
+- holds no per-request state — one instance serves every request; the SDK
+  `Agent` is a config template, and client-declared tools are merged onto a
+  per-request `clone()`, so concurrent requests never see each other's tools;
+- takes `run_config=...` to route runs through a non-OpenAI provider (e.g.
+  LiteLLM) or set run-wide model settings;
+- exposes `run(RunAgentInput) -> AsyncIterator[BaseEvent]` if you want to serve
+  it on a transport other than FastAPI.
+
+```python
+from agents import RunConfig
+from agents.extensions.models.litellm_provider import LitellmProvider
+
+agent = OpenAIAgentsAgent(
+    Agent(name="assistant", instructions="Be concise.", model="gemini/gemini-2.5-flash"),
+    run_config=RunConfig(model_provider=LitellmProvider()),
+)
+```
+
+Need finer control (a custom transport, your own SSE framing, per-run branching)?
+Drop to the translator — see the next section.
+
+## Quick Start: Compose It Yourself
+
+The lower-level path the wrapper is built on: accept `RunAgentInput`, run your
+OpenAI agent with `Runner.run_streamed`, and stream AG-UI events back over SSE.
 
 ```python
 from agents import Agent, Runner
@@ -107,7 +151,18 @@ orchestrator) lives in [`examples/`](examples/).
 
 ## Public API
 
-There is one public translator; it pairs with the SDK's streaming run mode:
+Two layers, pick by how much control you want:
+
+| Name | Kind | Use it for |
+|---|---|---|
+| `OpenAIAgentsAgent` | wrapper class | serve an agent: `run(RunAgentInput) -> AsyncIterator[BaseEvent]` |
+| `add_openai_agents_fastapi_endpoint(app, agent, path)` | helper | wire a wrapped agent to FastAPI (SSE + `/health`) |
+| `AGUITranslator` | translator | compose it yourself — `to_sdk` + `to_agui` |
+
+The wrapper is built on the translator; use the translator directly for custom
+transports or per-run branching.
+
+`AGUITranslator` pairs with the SDK's streaming run mode:
 
 | Class | Pairs with | `to_agui(...)` returns |
 |---|---|---|
@@ -120,6 +175,7 @@ fresh per-run engine it needs. Create one instance and share it.
 
 | Need | Use |
 |---|---|
+| Just serve an agent over FastAPI | `OpenAIAgentsAgent` + `add_openai_agents_fastapi_endpoint` |
 | Live chat, tool-call progress, reasoning progress | `AGUITranslator` with `Runner.run_streamed` |
 | FastAPI SSE | Return `StreamingResponse(_stream(...), media_type="text/event-stream")` |
 | WebSocket or another async transport | Iterate `translator.to_agui(result, run_input)` and send each event JSON |

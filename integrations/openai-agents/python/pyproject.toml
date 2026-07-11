@@ -11,6 +11,7 @@ dependencies = [
     "ag-ui-protocol>=0.1.18",
     "openai-agents>=0.8.4",
     "pydantic>=2.13.4",
+    "fastapi>=0.115.12",
 ]
 
 [dependency-groups]
