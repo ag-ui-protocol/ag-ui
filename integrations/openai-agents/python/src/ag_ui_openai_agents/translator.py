@@ -12,10 +12,12 @@ Session persistence is still the caller's job.
 from __future__ import annotations
 
 import asyncio
-from typing import AsyncIterator
+import inspect
+from typing import Any, AsyncIterator
 
 from agents.result import RunResultStreaming
 from agents.stream_events import StreamEvent
+
 from ag_ui.core import (
     BaseEvent,
     CustomEvent,
@@ -26,7 +28,6 @@ from ag_ui.core import (
     RunStartedEvent,
     StateSnapshotEvent,
 )
-
 from .engine.agui_to_sdk import AGUIToSDKTranslator, ClientToolPending
 from .engine.sdk_to_agui import SDKToAGUITranslator
 from .engine.types import TranslatedInput
@@ -78,8 +79,8 @@ class AGUITranslator:
         run_input: RunAgentInput,
         *,
         start_custom_event: CustomEvent | None = None,
-        emit_initial_state: bool = True,
-        emit_final_state: bool = True,
+        initial_state: Any = None,
+        final_state: Any = None,
         emit_messages_snapshot: bool = True,
         end_custom_event: CustomEvent | None = None,
         emit_run_error: bool = True,
@@ -93,10 +94,10 @@ class AGUITranslator:
 
             1. RUN_STARTED               — always first
             2. start_custom_event        — optional, if provided
-            3. STATE_SNAPSHOT (initial)  — echo run_input.state; emit_initial_state
+            3. STATE_SNAPSHOT (initial)  — resolve initial_state
                … streamed STEP/TEXT/TOOL/REASONING events …
             4. STEP_FINISHED             — final window close (outbound.finalize)
-            5. STATE_SNAPSHOT (final)    — run_input.state again; emit_final_state
+            5. STATE_SNAPSHOT (final)    — resolve final_state
             6. MESSAGES_SNAPSHOT         — emit_messages_snapshot
             7. end_custom_event          — optional, if provided
             8. RUN_FINISHED              — always last (or RUN_ERROR on raise)
@@ -133,17 +134,14 @@ class AGUITranslator:
         object or a bare stream_events() iterator — the snapshot is built
         from engine state, not result.new_items.
 
-        State is echoed as a STATE_SNAPSHOT twice, both gated on
-        run_input.state is not None (so an empty {} still emits — matching
-        aws-strands / claude-agent-sdk, and matching the frontend, whose
-        own `if (event.state)` guard treats {} as truthy but null as
-        skip). Once right after RUN_STARTED (emit_initial_state) and once
-        near the end, just before MESSAGES_SNAPSHOT (emit_final_state).
-        The OpenAI Agents SDK has no shared-state channel of its own, so
-        nothing mutates state mid-run; the final echo is the settled-state
-        slot the frontend can rely on ending with (and the hook where
-        future run-end state, e.g. handoff continuity, would land).
-        Nothing state-related is emitted on the error path.
+        State sources may be static values, zero-argument functions, or
+        zero-argument async functions. initial_state is resolved right after
+        RUN_STARTED; final_state is resolved near the end, after the SDK
+        stream and engine flush. Omit either argument to use run_input.state,
+        or pass None to suppress that snapshot. Empty {} still emits. This
+        lets application hooks and tools mutate state during a run while the
+        translator remains unaware of the state shape. Nothing state-related
+        is emitted on the error path.
 
         Note:
             run_input.messages passes through to the snapshot as-is. If it
@@ -171,12 +169,14 @@ class AGUITranslator:
                 content starts flowing. Must be a CustomEvent instance —
                 anything else raises TypeError. None (the default) emits
                 nothing.
-            emit_initial_state: Whether to echo run_input.state as a
-                STATE_SNAPSHOT right after RUN_STARTED when it isn't None.
-                Empty {} still emits; only None is skipped. Defaults to True.
-            emit_final_state: Whether to echo run_input.state as a
-                STATE_SNAPSHOT near the end, just before MESSAGES_SNAPSHOT,
-                when it isn't None. Same None-only gate. Defaults to True.
+            initial_state: State source resolved right after RUN_STARTED.
+                Accepts a static value, a zero-argument function, or a
+                zero-argument async function. Omitted uses run_input.state;
+                None suppresses the initial snapshot.
+            final_state: State source resolved after successful streaming and
+                finalization, just before MESSAGES_SNAPSHOT. Accepts the same
+                forms as initial_state. Omitted uses run_input.state; None
+                suppresses the final snapshot.
             emit_messages_snapshot: Whether to append a MESSAGES_SNAPSHOT
                 just before RUN_FINISHED. Defaults to True.
             end_custom_event: An optional CustomEvent yielded right before
@@ -216,12 +216,14 @@ class AGUITranslator:
         if start_custom_event:
             yield start_custom_event
 
-        # 3. STATE_SNAPSHOT (initial) — echo run_input.state ({} emits, None skips)
-        if emit_initial_state and run_input.state is not None:
-            yield StateSnapshotEvent(
-                type=EventType.STATE_SNAPSHOT,
-                snapshot=run_input.state,
-            )
+        # 3. STATE_SNAPSHOT (initial) — resolve now ({} emits, None skips)
+        if initial_state is not None:
+            snapshot = await self._resolve_state_snapshot(initial_state)
+            if snapshot is not None:
+                yield StateSnapshotEvent(
+                    type=EventType.STATE_SNAPSHOT,
+                    snapshot=snapshot,
+                )
 
         stream_events = (
             events.stream_events()
@@ -237,12 +239,14 @@ class AGUITranslator:
             # 4. STEP_FINISHED — final window close
             for event in outbound.finalize():
                 yield event
-            # 5. STATE_SNAPSHOT (final) — settled state ({} emits, None skips)
-            if emit_final_state and run_input.state is not None:
-                yield StateSnapshotEvent(
-                    type=EventType.STATE_SNAPSHOT,
-                    snapshot=run_input.state,
-                )
+            # 5. STATE_SNAPSHOT (final) — resolve now ({} emits, None skips)
+            if final_state is not None:
+                snapshot = await self._resolve_state_snapshot(final_state)
+                if snapshot is not None:
+                    yield StateSnapshotEvent(
+                        type=EventType.STATE_SNAPSHOT,
+                        snapshot=snapshot,
+                    )
             # 6. MESSAGES_SNAPSHOT
             if emit_messages_snapshot:
                 yield outbound.build_messages_snapshot(run_input)
@@ -257,12 +261,14 @@ class AGUITranslator:
             # 4. STEP_FINISHED — final window close
             for event in outbound.finalize():
                 yield event
-            # 5. STATE_SNAPSHOT (final) — settled state ({} emits, None skips)
-            if emit_final_state and run_input.state is not None:
-                yield StateSnapshotEvent(
-                    type=EventType.STATE_SNAPSHOT,
-                    snapshot=run_input.state,
-                )
+            # 5. STATE_SNAPSHOT (final) — resolve now ({} emits, None skips)
+            if final_state is not None:
+                snapshot = await self._resolve_state_snapshot(final_state)
+                if snapshot is not None:
+                    yield StateSnapshotEvent(
+                        type=EventType.STATE_SNAPSHOT,
+                        snapshot=snapshot,
+                    )
             # 6. MESSAGES_SNAPSHOT
             if emit_messages_snapshot:
                 yield outbound.build_messages_snapshot(run_input)
@@ -288,3 +294,10 @@ class AGUITranslator:
             thread_id=run_input.thread_id,
             run_id=run_input.run_id,
         )
+
+    async def _resolve_state_snapshot(self, state: Any) -> Any:
+        """Resolve a static, synchronous, or asynchronous state source."""
+        value = state() if callable(state) else state
+        if inspect.isawaitable(value):
+            value = await value
+        return value
