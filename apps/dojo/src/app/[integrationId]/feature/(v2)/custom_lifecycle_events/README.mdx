@@ -15,10 +15,11 @@ at the end — plain conversation otherwise, same agent as `agentic_chat`.
 ## How to Interact
 
 - "Say hi in one sentence."
-- "Tell me one interesting fact about space."
+- "Tell me one interesting fact about AI."
 
-Watch the usage card above the chat: the input slot fills in immediately,
-the output slot fills in once the run finishes, then a total appears.
+Each assistant reply has a compact usage label immediately above it. The label
+shows the input usage reported at the beginning of the run and the output usage
+reported at the end.
 
 ## Technical Details
 
@@ -28,11 +29,9 @@ the output slot fills in once the run finishes, then a total appears.
   `to_agui(start_custom_event=..., end_custom_event=...)`
 - Both events are opaque to the translator — it only checks `isinstance(...,
   CustomEvent)`, the `name`/`value` shape is entirely up to the caller
-- Frontend reads them via the raw AG-UI client, not a CopilotKit renderer:
-  `useAgent({ agentId }).agent.subscribe({ onCustomEvent })` — `CUSTOM`
-  events with an arbitrary `name` aren't covered by `renderActivityMessages`
-  (that's for `ACTIVITY_SNAPSHOT`/`ACTIVITY_DELTA`) or
-  `renderCustomMessages` (that decorates existing chat messages), so this
-  goes straight to the subscriber API
+- The page captures the current `runId` from `RUN_STARTED`, associates the
+  custom usage events with that run in a small external store, then uses
+  `CopilotKitProvider`'s stable `renderCustomMessages` configuration to render
+  the matching label above the assistant message
 - The token/cost numbers are fake — the point is the event bracketing, not
   real usage accounting
