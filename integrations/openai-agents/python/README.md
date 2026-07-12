@@ -394,7 +394,7 @@ Both directions, source of truth is `engine/agui_to_sdk.py` and
 | `ActivityMessage` | dropped (no Responses-API equivalent; override to fold into the prompt) |
 | `Tool` (client-declared) | SDK `FunctionTool` proxy that raises `ClientToolPending` when invoked |
 | Content parts: `TextInputContent`, `ImageInputContent`, `AudioInputContent`, `DocumentInputContent`, `BinaryInputContent` | `input_text` / `input_image` / `input_audio` / `input_file` parts |
-| `VideoInputContent` | dropped (Responses API has no video input) |
+| `VideoInputContent` | dropped (no OpenAI API accepts video input yet) |
 
 **Outbound** — SDK stream event → AG-UI `BaseEvent` (`SDKToAGUITranslator`):
 
@@ -443,6 +443,37 @@ async for event in translator.to_agui(
 ):
     yield encoder.encode(event)
 ```
+
+### Multi-modality
+
+**Input (what the user sends the agent):** an AG-UI `UserMessage` can carry
+more than text — images, audio clips, documents, etc. Each one is a typed
+content part (`ag_ui.core.InputContent`). The translator converts each part
+into the block shape the OpenAI Agents SDK expects for that message:
+
+| User sends this... | ...becomes this for the SDK | How |
+|---|---|---|
+| Plain text | `input_text` | as-is |
+| An image | `input_image` | a URL is passed through; raw bytes become a base64 `data:` URL |
+| An audio clip | `input_audio` | must be raw bytes (base64) — audio can't be sent as a URL; the audio format (`wav`, `mp3`, ...) is read from the clip's mime type |
+| A document (PDF, etc.) | `input_file` | URL stays a URL; raw bytes become base64 |
+| A video | *(dropped, see below)* | not supported — see below |
+| `BinaryInputContent` (deprecated, legacy catch-all) | whichever of the above matches its mime type | e.g. `image/*` → `input_image` |
+
+**Video input isn't supported, and it's not our limitation to fix.** Right
+now, no OpenAI API (Responses or Chat Completions) accepts video as input at
+all — there's no video content type to translate into. If OpenAI adds one,
+we'll wire it up. Until then, video parts are silently dropped (logged, not
+an error). If you want to work around it today, override
+`translate_video_content` in a subclass — e.g. extract a few frames and send
+them as images instead.
+
+**Output (what the agent sends back):** text only. If the agent generates an
+image, audio, or speaks out loud (TTS), none of that reaches the AG-UI
+client — the AG-UI protocol itself has no event type for "here's an image/audio
+clip the model produced," so there's nothing to translate it into. This is a
+protocol-level gap, not something specific to this integration — every
+AG-UI SDK has the same hole.
 
 ### Transport Options
 
