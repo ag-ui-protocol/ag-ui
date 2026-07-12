@@ -20,7 +20,6 @@ export type Feature =
   | "a2ui_advanced"
   | "a2ui_recovery"
   | "crew_chat"
-  | "handoff"
   | "subagents"
   | "custom_lifecycle_events"
   | "error_flow"

@@ -1,12 +1,12 @@
 """Subagents — multi-agent via the SDK's agents-as-tools pattern.
 
-Complements :mod:`handoff`: there, control *transfers* to the specialist
-(triage agent exits the conversation). Here the supervisor stays in charge
-and *calls* specialists as tools (``Agent.as_tool()``), possibly several in
-one turn, then synthesizes their outputs itself — a call-and-return
-delegation, not a handoff. Same shape as the LangGraph "subagents" showcase
-demo (a supervisor calling child agents as tools and getting results back),
-just built with the SDK's own ``as_tool()`` instead of a routing graph.
+Unlike a handoff (control *transfers* to the specialist, triage agent exits
+the conversation), the supervisor here stays in charge and *calls*
+specialists as tools (``Agent.as_tool()``), possibly several in one turn,
+then synthesizes their outputs itself — a call-and-return delegation, not a
+handoff. Same shape as the LangGraph "subagents" showcase demo (a supervisor
+calling child agents as tools and getting results back), just built with the
+SDK's own ``as_tool()`` instead of a routing graph.
 
 On the AG-UI side each specialist invocation is an ordinary
 ``TOOL_CALL_START/ARGS/END`` + ``TOOL_CALL_RESULT`` sequence — the nested

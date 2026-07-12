@@ -14,7 +14,6 @@ One FastAPI route per demo, all sharing the same run loop:
     POST /backend_tool_rendering    ← server-executed @function_tool
     POST /human_in_the_loop         ← frontend-owned tool, StopAtTools
     POST /tool_based_generative_ui  ← frontend tool renders the content
-    POST /handoff                   ← multi-agent triage via handoffs=
     POST /orchestrator              ← multi-agent via agents-as-tools
     POST /custom_lifecycle_events   ← manual CUSTOM event right after RUN_STARTED
                                        and right before RUN_FINISHED, via

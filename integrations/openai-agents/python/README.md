@@ -108,14 +108,26 @@ Expected: `RUN_STARTED -> STATE_SNAPSHOT -> TEXT_MESSAGE_START ->
 TEXT_MESSAGE_CONTENT (xN) -> TEXT_MESSAGE_END -> STATE_SNAPSHOT ->
 MESSAGES_SNAPSHOT -> RUN_FINISHED`.
 
-`run_input.state` is echoed as a `STATE_SNAPSHOT` twice — once right after
-`RUN_STARTED` (`emit_initial_state`) and once just before `MESSAGES_SNAPSHOT`
-(`emit_final_state`) — both defaulting on, both gated only on
-`state is not None` (an empty `{}` still emits; only `null` is skipped). The
-OpenAI Agents SDK has no shared-state channel, so nothing mutates state
-mid-run; the final echo is the settled-state slot the frontend can rely on
-ending with. Pass `emit_initial_state=False` / `emit_final_state=False` to
-`to_agui` to suppress either.
+`initial_state` and `final_state` control the two `STATE_SNAPSHOT` slots.
+Omit them to echo `run_input.state` as before, pass `None` to suppress a slot,
+or pass a static value, zero-argument function, or zero-argument async
+function. The initial source is resolved right after `RUN_STARTED`; the final
+source is resolved after successful streaming, just before
+`MESSAGES_SNAPSHOT`. This lets hooks and tools update application-owned state:
+
+```python
+state = dict(run_input.state or {})
+initial_snapshot = dict(state)
+
+result = Runner.run_streamed(agent, input=bundle.messages, context=state)
+async for event in translator.to_agui(
+    result,
+    run_input,
+    initial_state=initial_snapshot,
+    final_state=lambda: dict(state),
+):
+    ...
+```
 
 A full multi-demo server (chat, backend tools, human-in-the-loop, handoffs,
 orchestrator) lives in [`examples/`](examples/).

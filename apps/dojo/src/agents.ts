@@ -641,7 +641,6 @@ export const agentsIntegrations = {
         backend_tool_rendering: "backend_tool_rendering",
         human_in_the_loop: "human_in_the_loop",
         tool_based_generative_ui: "tool_based_generative_ui",
-        handoff: "handoff",
         subagents: "subagents",
         custom_lifecycle_events: "custom_lifecycle_events",
       },

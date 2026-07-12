@@ -48,8 +48,8 @@ curl -N -X POST http://localhost:8022/agentic_chat \
 ```
 
 Swap the path to hit a different demo — `GET /health` lists every registered
-agent. Demos map 1:1 onto the AG-UI Dojo feature pages, plus two multi-agent
-patterns (`handoff`, `orchestrator`).
+agent. Demos map 1:1 onto the AG-UI Dojo feature pages, plus a multi-agent
+pattern (`orchestrator`).
 
 > The stateful demos (`shared_state`, `agentic_generative_ui`,
 > `predictive_state_updates`) are shelved together with the `AGUIContext`
@@ -90,24 +90,12 @@ mechanics as `human_in_the_loop`.
 **Try:** `"Write me a haiku about the ocean."` — needs a client that sends a
 `generate_haiku` tool definition (Dojo's tool-based generative UI page).
 
-### `handoff`
-Multi-agent triage using the SDK's native `handoffs=`. A `triage_agent`
-hands off to `billing_agent` or `refund_agent` depending on the request.
-Exercises handoff call/result translation (`translate_handoff_call_item` /
-`translate_handoff_output_item`) and per-agent `STEP_STARTED`/`STEP_FINISHED`
-pairs (`translate_agent_updated_event`) so the client can attribute each
-message to the agent that produced it.
-
-**Try:** `"I was charged twice for my last invoice."` (routes to
-`billing_agent`) or `"I want a refund for order #1234."` (routes to
-`refund_agent`).
-
 ### `orchestrator`
 Multi-agent via the SDK's **agents-as-tools** pattern (`Agent.as_tool()`) —
-the complement to `handoff`: control never transfers, the orchestrator calls
-`research_agent`, `writer_agent`, and `critic_agent` as tools and
-synthesizes the final answer itself. Each specialist invocation appears to
-the client as a normal `TOOL_CALL_*` + `TOOL_CALL_RESULT` sequence; the
-nested agents' inner turns stay internal to the SDK.
+control never transfers, the orchestrator calls `research_agent`,
+`writer_agent`, and `critic_agent` as tools and synthesizes the final answer
+itself. Each specialist invocation appears to the client as a normal
+`TOOL_CALL_*` + `TOOL_CALL_RESULT` sequence; the nested agents' inner turns
+stay internal to the SDK.
 
 **Try:** `"Write a short piece about the history of coffee."`

@@ -89,13 +89,6 @@ export const featureConfig: FeatureConfig[] = [
     tags: ["Chat", "Multi-agent architecture", "Streaming", "Subgraphs"],
   }),
   createFeatureConfig({
-    id: "handoff",
-    name: "Handoff",
-    description:
-      "Triage agent hands the conversation off to a specialist agent",
-    tags: ["Multi-agent architecture", "Agentic architecture", "Handoff", "Delegation"],
-  }),
-  createFeatureConfig({
     id: "subagents",
     name: "Sub-agents",
     description:

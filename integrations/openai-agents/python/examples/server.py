@@ -15,7 +15,6 @@ translator_server.py shows every step and lets you branch mid-run.
     POST /backend_tool_rendering    ← server-executed @function_tool
     POST /human_in_the_loop         ← frontend-owned tool, StopAtTools
     POST /tool_based_generative_ui  ← frontend tool renders the content
-    POST /handoff                   ← multi-agent triage via handoffs=
     POST /orchestrator              ← multi-agent via agents-as-tools
 
     GET  /health                    ← liveness check (lists all demos)

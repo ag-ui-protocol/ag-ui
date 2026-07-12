@@ -1,7 +1,7 @@
 """Agentic chat — plain conversation, no tools.
 
 The baseline demo: exercises ``TEXT_MESSAGE_START/CONTENT/END`` only. Good
-first smoke test before trying the tool / handoff examples.
+first smoke test before trying the tool / multi-agent examples.
 """
 
 from __future__ import annotations
