@@ -626,6 +626,79 @@ Request 2:  messages include the ToolMessage result  →  agent continues
 See `examples/agents_examples/human_in_the_loop.py` for the agent and
 `examples/server.py` for the run loop that merges the client tools.
 
+## Backend tool approval (`needs_approval`)
+
+Different from the frontend-tools pattern above: here the tool is real
+server-side code (`@function_tool`, `Agent.tools=[...]`), and the SDK itself
+gates it with `needs_approval=True` — no AG-UI concept involved. This is for
+"the backend can do this, but a human should sign off first" (e.g. issuing a
+refund), as opposed to "only the browser can do this at all".
+
+|  | Frontend tools (above) | Backend approval (here) |
+|---|---|---|
+| Tool implementation | None — frontend-only | Real, server-side |
+| Pause mechanism | `StopAtTools`, mid-stream | `needs_approval`, only known post-stream via `result.interruptions` |
+| Decision carried back as | An ordinary `ToolMessage` next turn | `forwarded_props["approval"]` + a stored `RunState` |
+| Dojo demo | `human_in_the_loop` | `human_in_the_loop_approval` |
+
+**1. Mark the tool.** The SDK stops the run before the body executes and
+reports the pending call on `result.interruptions`:
+
+```python
+from agents import function_tool
+
+@function_tool(needs_approval=True)
+def issue_refund(order_id: str) -> str:
+    ...  # real logic — only runs after approval
+```
+
+**2. `result.interruptions` is only known post-hoc — and the client drops
+anything sent after `RUN_FINISHED`.** So the approval event can't be a
+plain event yielded after the `to_agui()` loop; it has to be
+`end_custom_event` (fires right before `RUN_FINISHED`), which means
+draining the raw SDK stream yourself first instead of handing `result`
+straight to `to_agui`:
+
+```python
+raw_events = [event async for event in result.stream_events()]
+
+end_custom_event = None
+if result.interruptions:
+    state = result.to_state()          # serialize the paused run
+    store[run_input.thread_id] = state  # keep it somewhere until the decision arrives
+    end_custom_event = CustomEvent(
+        name="approval_request",
+        value=[
+            {"call_id": item.raw_item.call_id, "tool_name": item.tool_name}
+            for item in result.interruptions
+        ],
+    )
+
+async def _replay():
+    for event in raw_events:
+        yield event
+
+async for ag_event in translator.to_agui(_replay(), run_input, end_custom_event=end_custom_event):
+    yield encoder.encode(ag_event)
+```
+
+**3. Resume from the stored state on the next request**, once the client
+sends the decision back (however you choose to carry it — e.g.
+`forwarded_props`):
+
+```python
+state = store.pop(run_input.thread_id)
+item = next(i for i in state.get_interruptions() if i.raw_item.call_id == call_id)
+state.approve(item) if approve else state.reject(item)
+result = Runner.run_streamed(agent, state)   # resumes, not a fresh run
+```
+
+There's no AG-UI-native event for the approval request — `CustomEvent` is
+the same escape hatch used for MCP approval requests elsewhere in this
+package. See `examples/agents_examples/human_in_the_loop_approval.py` for
+the agent and `examples/server.py` (`/human_in_the_loop_approval`) for the
+full hand-routed loop, including the in-memory pending-state store.
+
 ## Gotchas
 
 - **Reasoning replay** (sending reasoning back to OpenAI) only works via

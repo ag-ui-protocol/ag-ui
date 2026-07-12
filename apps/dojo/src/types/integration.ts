@@ -4,6 +4,7 @@ export type Feature =
   | "agentic_chat"
   | "agentic_generative_ui"
   | "human_in_the_loop"
+  | "human_in_the_loop_approval"
   | "interrupt"
   | "predictive_state_updates"
   | "shared_state"

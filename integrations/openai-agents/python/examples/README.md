@@ -81,6 +81,13 @@ the steps, gets user approval, and sends the result back as an ordinary
 a `generate_task_steps` tool definition in `RunAgentInput.tools` (e.g. the
 AG-UI Dojo's human-in-the-loop page, which uses the same tool name).
 
+> **vs. `human_in_the_loop_approval` (below):** here the tool has *no server
+> implementation* — only the browser can run it, so there's nothing to gate.
+> `human_in_the_loop_approval` is the opposite case: a real backend tool,
+> paused by the SDK's own approval API before *its* body runs. Different
+> problem, different mechanism — see the comparison table under
+> `human_in_the_loop_approval`.
+
 ### `tool_based_generative_ui`
 Another frontend-owned tool (`generate_haiku`), but here the tool call *is*
 the deliverable: the frontend renders the haiku card straight from the
@@ -89,6 +96,43 @@ mechanics as `human_in_the_loop`.
 
 **Try:** `"Write me a haiku about the ocean."` — needs a client that sends a
 `generate_haiku` tool definition (Dojo's tool-based generative UI page).
+
+### `human_in_the_loop_approval`
+A *backend*-owned tool (`issue_refund`) that requires approval before it
+runs — the SDK's `needs_approval=True` (`agents.tool.function_tool`), not an
+AG-UI concept. Unlike `human_in_the_loop`, the tool has a real server-side
+implementation; the SDK itself pauses the run and reports a
+`ToolApprovalItem` on `result.interruptions` before the body ever executes.
+That's only known once the stream is fully drained, so this demo is
+hand-routed (see `server.py` / `translator_server.py`) instead of running
+through the shared loop:
+
+1. First request runs normally; if `result.interruptions` is non-empty after
+   the stream ends, the server serializes the paused run
+   (`result.to_state()`), keeps it in memory keyed by `thread_id`, and sends
+   a `CustomEvent(name="approval_request")` as `to_agui()`'s
+   `end_custom_event` — right before `RUN_FINISHED`, not after (the client
+   drops anything that arrives once a run is marked finished).
+2. The client's decision comes back on the *next* request as
+   `RunAgentInput.forwarded_props["approval"]` (`{"call_id", "approve"}`).
+   The server looks up the stored state, calls `state.approve()` /
+   `state.reject()`, and resumes with `Runner.run_streamed(agent, state)`
+   instead of starting over from `translated.messages`.
+
+**Try:** `"I'd like a refund for ORD-1001."` — requires a client that renders
+`approval_request` custom events and sends the decision back via
+`forwarded_props` (the AG-UI Dojo's Human in the Loop (Backend Approval)
+page does this).
+
+**`human_in_the_loop_approval` vs. `human_in_the_loop` — same goal, different mechanism:**
+
+| | `human_in_the_loop` | `human_in_the_loop_approval` |
+|---|---|---|
+| Who owns the tool | Frontend — no server implementation exists | Backend — real `@function_tool` code |
+| What pauses the run | `StopAtTools`, the instant the model calls it | The SDK's own `needs_approval` gate, before the body runs |
+| How the pause surfaces | Normal `TOOL_CALL_*` events, mid-stream | `result.interruptions`, only known after the stream ends |
+| How the decision comes back | An ordinary `ToolMessage` in the next request's `messages` | `RunAgentInput.forwarded_props["approval"]`, resumed via a stored `RunState` |
+| Why | The action can *only* happen client-side (render UI, wait on a click) | The backend *can* do it, but shouldn't without sign-off first |
 
 ### `orchestrator`
 Multi-agent via the SDK's **agents-as-tools** pattern (`Agent.as_tool()`) —

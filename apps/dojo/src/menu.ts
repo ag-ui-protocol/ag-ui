@@ -384,6 +384,7 @@ export const menuIntegrations = [
       "agentic_chat",
       "backend_tool_rendering",
       "human_in_the_loop",
+      "human_in_the_loop_approval",
       "tool_based_generative_ui",
       "subagents",
       "custom_lifecycle_events",

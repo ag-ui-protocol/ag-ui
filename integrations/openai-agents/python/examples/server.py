@@ -20,6 +20,9 @@ translator_server.py shows every step and lets you branch mid-run.
                                        (routed by hand — see below)
     POST /dynamic_system_prompt     ← system prompt built from RunAgentInput.context
                                        (routed by hand — see below)
+    POST /human_in_the_loop_approval ← backend tool gated by needs_approval,
+                                       resumed from result.interruptions
+                                       (routed by hand — see below)
 
     GET  /health                    ← liveness check (lists all demos)
     GET  /<demo>/health             ← per-demo check
@@ -58,7 +61,7 @@ from pathlib import Path
 
 import uvicorn
 from agents import Runner
-from ag_ui.core import RunAgentInput
+from ag_ui.core import CustomEvent, EventType, RunAgentInput
 from ag_ui.encoder import EventEncoder
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
@@ -79,7 +82,7 @@ DEMOS: dict[str, DemoConfig] = build_registry()
 
 app = FastAPI(title="AG-UI × OpenAI Agents SDK examples (wrapper)")
 
-# The whole run loop: one wrapped agent + one endpoint per demo. Two demos
+# The whole run loop: one wrapped agent + one endpoint per demo. Three demos
 # need more than the wrapper can give them, so they're routed by hand below
 # instead of through this loop:
 #   - custom_lifecycle_events: OpenAIAgentsAgent.run() calls
@@ -89,7 +92,10 @@ app = FastAPI(title="AG-UI × OpenAI Agents SDK examples (wrapper)")
 #   - dynamic_system_prompt: OpenAIAgentsAgent.run() never passes context=
 #     to Runner.run_streamed, so the demo's whole point (reading
 #     RunAgentInput.context) would silently do nothing.
-_HAND_ROUTED = {"custom_lifecycle_events", "dynamic_system_prompt"}
+#   - human_in_the_loop_approval: needs to inspect result.interruptions after the stream
+#     and, on the next request, resume from a stored RunState instead of
+#     translated.messages — the wrapper always starts fresh from the input.
+_HAND_ROUTED = {"custom_lifecycle_events", "dynamic_system_prompt", "human_in_the_loop_approval"}
 
 for demo_name, demo in DEMOS.items():
     if demo_name in _HAND_ROUTED:
@@ -134,6 +140,86 @@ async def _run_dynamic_system_prompt(body: RunAgentInput) -> StreamingResponse:
             yield _dsp_encoder.encode(ag_event)
 
     return StreamingResponse(_stream(), media_type=_dsp_encoder.get_content_type())
+
+
+_approval_translator = AGUITranslator()
+_approval_encoder = EventEncoder()
+_approval_demo = DEMOS["human_in_the_loop_approval"]
+
+# thread_id -> paused RunState, waiting for an approve/reject decision on the
+# next request. In-memory only — fine for a demo process, not a restart or a
+# second server instance; a real app would use a session store instead.
+_PENDING_APPROVALS: dict[str, object] = {}
+
+
+@app.post("/human_in_the_loop_approval")
+async def _run_approval(body: RunAgentInput) -> StreamingResponse:
+    async def _stream():
+        agent = _approval_demo.agent
+        decision = None
+        forwarded = body.forwarded_props
+        if isinstance(forwarded, dict):
+            decision = forwarded.get("approval")
+
+        pending_state = _PENDING_APPROVALS.pop(body.thread_id, None)
+        if decision and pending_state is not None:
+            item = next(
+                (
+                    i
+                    for i in pending_state.get_interruptions()
+                    if getattr(i.raw_item, "call_id", None) == decision.get("call_id")
+                ),
+                None,
+            )
+            if item is not None:
+                if decision.get("approve"):
+                    pending_state.approve(item)
+                else:
+                    pending_state.reject(item)
+            result = Runner.run_streamed(agent, pending_state)
+        else:
+            translated = _approval_translator.to_sdk(body)
+            if translated.tools:
+                agent = agent.clone(tools=[*agent.tools, *translated.tools])
+            result = Runner.run_streamed(agent, input=translated.messages)
+
+        # result.interruptions is only known once the SDK's own stream is
+        # fully drained — there's no mid-stream event for it. to_agui()
+        # always puts RUN_FINISHED last, and the client drops anything that
+        # arrives after RUN_FINISHED (a finished run is done, full stop) —
+        # so the approval CustomEvent has to go out as end_custom_event
+        # (right before RUN_FINISHED), which means draining the raw SDK
+        # stream ourselves first instead of handing `result` straight to
+        # to_agui: end_custom_event has to already exist by the time we
+        # call it, and interruptions aren't known until the drain finishes.
+        raw_events = [event async for event in result.stream_events()]
+
+        end_custom_event = None
+        if result.interruptions:
+            _PENDING_APPROVALS[body.thread_id] = result.to_state()
+            end_custom_event = CustomEvent(
+                type=EventType.CUSTOM,
+                name="approval_request",
+                value=[
+                    {
+                        "call_id": getattr(item.raw_item, "call_id", None),
+                        "tool_name": item.tool_name,
+                        "arguments": getattr(item.raw_item, "arguments", None),
+                    }
+                    for item in result.interruptions
+                ],
+            )
+
+        async def _replay():
+            for event in raw_events:
+                yield event
+
+        async for ag_event in _approval_translator.to_agui(
+            _replay(), body, end_custom_event=end_custom_event
+        ):
+            yield _approval_encoder.encode(ag_event)
+
+    return StreamingResponse(_stream(), media_type=_approval_encoder.get_content_type())
 
 
 @app.get("/health")

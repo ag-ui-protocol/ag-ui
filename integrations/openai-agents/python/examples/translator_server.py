@@ -19,6 +19,9 @@ One FastAPI route per demo, all sharing the same run loop:
                                        and right before RUN_FINISHED, via
                                        DemoConfig.build_start_custom_event /
                                        build_end_custom_event
+    POST /human_in_the_loop_approval ← backend tool gated by needs_approval,
+                                       resumed from result.interruptions
+                                       (routed by hand — see below)
 
     GET  /health                    ← liveness check
 
@@ -60,7 +63,7 @@ from pathlib import Path
 
 import uvicorn
 from agents import Runner
-from ag_ui.core import RunAgentInput
+from ag_ui.core import CustomEvent, EventType, RunAgentInput
 from ag_ui.encoder import EventEncoder
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
@@ -97,13 +100,103 @@ async def health() -> dict:
     return {"status": "ok", "agents": list(DEMOS)}
 
 
+# thread_id -> paused RunState, waiting for an approve/reject decision on the
+# next request. In-memory only — fine for a demo process, not a restart or a
+# second server instance; a real app would use a session store instead.
+_PENDING_APPROVALS: dict[str, object] = {}
+
+
 @app.post("/{agent_name}")
 async def run(agent_name: str, body: RunAgentInput) -> StreamingResponse:
     """Accept a RunAgentInput, run the named demo agent, stream AG-UI events back via SSE."""
     demo = DEMOS.get(agent_name)
     if demo is None:
         raise HTTPException(status_code=404, detail=f"Unknown agent: {agent_name!r}")
+    if agent_name == "human_in_the_loop_approval":
+        return StreamingResponse(
+            _stream_approval(demo, body), media_type=encoder.get_content_type()
+        )
     return StreamingResponse(_stream(demo, body), media_type=encoder.get_content_type())
+
+
+async def _stream_approval(demo: DemoConfig, body: RunAgentInput):
+    """Same shape as _stream, plus resuming from result.interruptions.
+
+    Kept separate from _stream rather than adding an if-branch there: this is
+    the only demo that needs to inspect result.interruptions after the
+    stream and possibly resume from a stored RunState instead of
+    translated.messages, and that logic doesn't apply to any other demo.
+    """
+    agent = demo.agent
+    decision = None
+    forwarded = body.forwarded_props
+    if isinstance(forwarded, dict):
+        decision = forwarded.get("approval")
+
+    pending_state = _PENDING_APPROVALS.pop(body.thread_id, None)
+    if decision and pending_state is not None:
+        item = next(
+            (
+                i
+                for i in pending_state.get_interruptions()
+                if getattr(i.raw_item, "call_id", None) == decision.get("call_id")
+            ),
+            None,
+        )
+        if item is not None:
+            if decision.get("approve"):
+                pending_state.approve(item)
+            else:
+                pending_state.reject(item)
+        result = Runner.run_streamed(agent, pending_state)
+    else:
+        translated = translator.to_sdk(body)
+        if translated.tools:
+            agent = agent.clone(tools=[*agent.tools, *translated.tools])
+        result = Runner.run_streamed(agent, input=translated.messages)
+
+    # result.interruptions is only known once the SDK's own stream is fully
+    # drained — there's no mid-stream event for it. to_agui() always puts
+    # RUN_FINISHED last, and the client drops anything that arrives after
+    # RUN_FINISHED, so the approval CustomEvent has to go out as
+    # end_custom_event (right before RUN_FINISHED) — which means draining
+    # the raw SDK stream ourselves first instead of handing `result`
+    # straight to to_agui: end_custom_event has to already exist by the
+    # time we call it, and interruptions aren't known until the drain
+    # finishes.
+    try:
+        raw_events = [event async for event in result.stream_events()]
+    except Exception:
+        logger.exception("Agent run failed")
+        return
+
+    end_custom_event = None
+    if result.interruptions:
+        _PENDING_APPROVALS[body.thread_id] = result.to_state()
+        end_custom_event = CustomEvent(
+            type=EventType.CUSTOM,
+            name="approval_request",
+            value=[
+                {
+                    "call_id": getattr(item.raw_item, "call_id", None),
+                    "tool_name": item.tool_name,
+                    "arguments": getattr(item.raw_item, "arguments", None),
+                }
+                for item in result.interruptions
+            ],
+        )
+
+    async def _replay():
+        for event in raw_events:
+            yield event
+
+    try:
+        async for ag_event in translator.to_agui(
+            _replay(), body, end_custom_event=end_custom_event
+        ):
+            yield encoder.encode(ag_event)
+    except Exception:
+        logger.exception("Agent run failed")
 
 
 # ---------------------------------------------------------------------------

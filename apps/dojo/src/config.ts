@@ -37,6 +37,13 @@ export const featureConfig: FeatureConfig[] = [
     tags: ["HITL", "Interactivity"],
   }),
   createFeatureConfig({
+    id: "human_in_the_loop_approval",
+    name: "Human in the Loop (Backend Approval)",
+    description:
+      "A real backend tool (issue a refund) pauses for human approval before it runs, then resumes",
+    tags: ["HITL", "Interactivity", "Approval"],
+  }),
+  createFeatureConfig({
     id: "interrupt",
     name: "Interrupt (Suspend/Resume)",
     description:

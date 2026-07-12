@@ -42,6 +42,7 @@ from .custom_lifecycle_events import (
 )
 from .dynamic_system_prompt import agent as dynamic_system_prompt_agent
 from .human_in_the_loop import create_human_in_the_loop_agent
+from .human_in_the_loop_approval import create_human_in_the_loop_approval_agent
 from .subagents import create_subagents_agent
 from .tool_based_generative_ui import create_tool_based_generative_ui_agent
 
@@ -61,6 +62,12 @@ def build_registry() -> dict[str, DemoConfig]:
         "agentic_chat": DemoConfig(agent=create_agentic_chat_agent()),
         "backend_tool_rendering": DemoConfig(agent=create_backend_tool_agent()),
         "human_in_the_loop": DemoConfig(agent=create_human_in_the_loop_agent()),
+        # Same idea as human_in_the_loop (pause for a person before an action
+        # happens) but a different mechanism — see
+        # human_in_the_loop_approval.py's docstring for the frontend-tool vs
+        # SDK-native-approval distinction. Hand-routed, same reason as
+        # dynamic_system_prompt below.
+        "human_in_the_loop_approval": DemoConfig(agent=create_human_in_the_loop_approval_agent()),
         "tool_based_generative_ui": DemoConfig(agent=create_tool_based_generative_ui_agent()),
         "subagents": DemoConfig(agent=create_subagents_agent()),
         "custom_lifecycle_events": DemoConfig(
@@ -83,6 +90,7 @@ __all__ = [
     "create_backend_tool_agent",
     "create_custom_lifecycle_events_agent",
     "create_human_in_the_loop_agent",
+    "create_human_in_the_loop_approval_agent",
     "create_subagents_agent",
     "create_tool_based_generative_ui_agent",
 ]
