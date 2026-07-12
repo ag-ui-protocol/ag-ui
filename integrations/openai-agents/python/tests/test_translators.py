@@ -122,7 +122,8 @@ def test_streaming_to_agui_streams_then_finalizes():
                 _fake_stream("a", "b"),
                 _run_input(),
                 emit_messages_snapshot=False,
-                emit_state_snapshot=False,
+                emit_initial_state=False,
+                emit_final_state=False,
             )
         ]
 
@@ -161,7 +162,7 @@ def test_streaming_to_agui_accepts_run_streaming_result():
         return [
             e
             async for e in translator.to_agui(
-                result, _run_input(), emit_state_snapshot=False
+                result, _run_input(), emit_initial_state=False, emit_final_state=False
             )
         ]
 
@@ -342,7 +343,10 @@ def test_to_agui_echoes_run_input_state_as_snapshot():
         return [
             e
             async for e in translator.to_agui(
-                _fake_stream("a"), run_input, emit_messages_snapshot=False
+                _fake_stream("a"),
+                run_input,
+                emit_messages_snapshot=False,
+                emit_final_state=False,
             )
         ]
 
@@ -350,7 +354,7 @@ def test_to_agui_echoes_run_input_state_as_snapshot():
     assert isinstance(events[0], RunStartedEvent)
     assert isinstance(events[1], StateSnapshotEvent)
     assert events[1].snapshot == {"theme": "dark"}
-    # Just the one snapshot — no mid-run state tracking.
+    # emit_final_state=False here isolates the initial echo — just the one.
     assert sum(isinstance(e, StateSnapshotEvent) for e in events) == 1
 
 
@@ -363,7 +367,10 @@ def test_to_agui_empty_run_input_state_still_emits_snapshot():
         return [
             e
             async for e in translator.to_agui(
-                _fake_stream("a"), _run_input(), emit_messages_snapshot=False
+                _fake_stream("a"),
+                _run_input(),
+                emit_messages_snapshot=False,
+                emit_final_state=False,
             )
         ]
 
@@ -373,7 +380,7 @@ def test_to_agui_empty_run_input_state_still_emits_snapshot():
     assert snapshots[0].snapshot == {}
 
 
-def test_to_agui_emit_state_snapshot_false_suppresses_it():
+def test_to_agui_state_flags_false_suppress_both_snapshots():
     translator = AGUITranslator(outbound_cls=_StubOutbound)
     run_input = _run_input().model_copy(update={"state": {"x": 1}})
 
@@ -384,9 +391,52 @@ def test_to_agui_emit_state_snapshot_false_suppresses_it():
                 _fake_stream("a"),
                 run_input,
                 emit_messages_snapshot=False,
-                emit_state_snapshot=False,
+                emit_initial_state=False,
+                emit_final_state=False,
             )
         ]
 
     events = asyncio.run(collect())
     assert not any(isinstance(e, StateSnapshotEvent) for e in events)
+
+
+def test_to_agui_emits_final_state_before_messages_snapshot():
+    # Default flags: state echoes twice — initial right after RUN_STARTED and
+    # final in the settled-state slot (#5), just before MESSAGES_SNAPSHOT.
+    translator = AGUITranslator(outbound_cls=_StubOutbound)
+    run_input = _run_input().model_copy(update={"state": {"theme": "dark"}})
+
+    async def collect():
+        return [e async for e in translator.to_agui(_fake_stream("a"), run_input)]
+
+    events = asyncio.run(collect())
+    snapshots = [e for e in events if isinstance(e, StateSnapshotEvent)]
+    # Two snapshots: initial echo + final settled state, both == run_input.state.
+    assert len(snapshots) == 2
+    assert all(s.snapshot == {"theme": "dark"} for s in snapshots)
+    # Canonical order #5 → #6 → #8: final STATE, then MESSAGES, then RUN_FINISHED.
+    assert isinstance(events[-1], RunFinishedEvent)
+    assert isinstance(events[-2], MessagesSnapshotEvent)
+    assert events[-3] is snapshots[-1]
+
+
+def test_to_agui_emit_final_state_false_keeps_only_initial():
+    translator = AGUITranslator(outbound_cls=_StubOutbound)
+    run_input = _run_input().model_copy(update={"state": {"x": 1}})
+
+    async def collect():
+        return [
+            e
+            async for e in translator.to_agui(
+                _fake_stream("a"),
+                run_input,
+                emit_messages_snapshot=False,
+                emit_final_state=False,
+            )
+        ]
+
+    events = asyncio.run(collect())
+    snapshots = [e for e in events if isinstance(e, StateSnapshotEvent)]
+    assert len(snapshots) == 1
+    # The lone snapshot is the initial echo (right after RUN_STARTED), not a final.
+    assert isinstance(events[1], StateSnapshotEvent)

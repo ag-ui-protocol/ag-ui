@@ -77,14 +77,29 @@ class AGUITranslator:
         events: RunResultStreaming | AsyncIterator[StreamEvent],
         run_input: RunAgentInput,
         *,
+        start_custom_event: CustomEvent | None = None,
+        emit_initial_state: bool = True,
+        emit_final_state: bool = True,
         emit_messages_snapshot: bool = True,
+        end_custom_event: CustomEvent | None = None,
         emit_run_error: bool = True,
         run_error_message: str | None = None,
-        emit_state_snapshot: bool = True,
-        start_custom_event: CustomEvent | None = None,
-        end_custom_event: CustomEvent | None = None,
     ) -> AsyncIterator[BaseEvent]:
         """Translate an SDK event stream into a live AG-UI event stream.
+
+        Canonical event order (the lifecycle events this method controls
+        directly; streamed message/tool/reasoning/step events flow through
+        outbound.translate between #3 and #4):
+
+            1. RUN_STARTED               — always first
+            2. start_custom_event        — optional, if provided
+            3. STATE_SNAPSHOT (initial)  — echo run_input.state; emit_initial_state
+               … streamed STEP/TEXT/TOOL/REASONING events …
+            4. STEP_FINISHED             — final window close (outbound.finalize)
+            5. STATE_SNAPSHOT (final)    — run_input.state again; emit_final_state
+            6. MESSAGES_SNAPSHOT         — emit_messages_snapshot
+            7. end_custom_event          — optional, if provided
+            8. RUN_FINISHED              — always last (or RUN_ERROR on raise)
 
         Feed the result from Runner.run_streamed, or result.stream_events().
         A fresh stateful engine handles this run's windows; when the stream
@@ -118,12 +133,17 @@ class AGUITranslator:
         object or a bare stream_events() iterator — the snapshot is built
         from engine state, not result.new_items.
 
-        Right after RUN_STARTED, a STATE_SNAPSHOT echoes run_input.state
-        back whenever it isn't None — the same thing the other AG-UI
-        integrations that have no native SDK state do (the OpenAI Agents
-        SDK has no shared-state channel of its own; state lives at the
-        AG-UI/frontend layer). Pass emit_state_snapshot=False to suppress
-        it. Nothing state-related is emitted on the error path.
+        State is echoed as a STATE_SNAPSHOT twice, both gated on
+        run_input.state is not None (so an empty {} still emits — matching
+        aws-strands / claude-agent-sdk, and matching the frontend, whose
+        own `if (event.state)` guard treats {} as truthy but null as
+        skip). Once right after RUN_STARTED (emit_initial_state) and once
+        near the end, just before MESSAGES_SNAPSHOT (emit_final_state).
+        The OpenAI Agents SDK has no shared-state channel of its own, so
+        nothing mutates state mid-run; the final echo is the settled-state
+        slot the frontend can rely on ending with (and the hook where
+        future run-end state, e.g. handoff continuity, would land).
+        Nothing state-related is emitted on the error path.
 
         Note:
             run_input.messages passes through to the snapshot as-is. If it
@@ -145,26 +165,29 @@ class AGUITranslator:
                 thread_id/run_id for the lifecycle events and, unless
                 emit_messages_snapshot=False, the snapshot's prior-history
                 half.
-            emit_messages_snapshot: Whether to append a MESSAGES_SNAPSHOT
-                just before RUN_FINISHED. Defaults to True.
-            emit_run_error: Whether to yield a RUN_ERROR event when the
-                stream raises, before re-raising. Defaults to True; set
-                False only if you emit your own terminal error event.
-            run_error_message: The RUN_ERROR message. Defaults to None, which
-                sends str(exc); set a fixed string to keep raw exception
-                text off the wire.
-            emit_state_snapshot: Whether to echo run_input.state as a
-                STATE_SNAPSHOT after RUN_STARTED when it isn't None.
-                Defaults to True.
             start_custom_event: An optional CustomEvent yielded right after
                 RUN_STARTED (before the STATE_SNAPSHOT), for callers who
                 need to signal something to the client before any run
                 content starts flowing. Must be a CustomEvent instance —
                 anything else raises TypeError. None (the default) emits
                 nothing.
+            emit_initial_state: Whether to echo run_input.state as a
+                STATE_SNAPSHOT right after RUN_STARTED when it isn't None.
+                Empty {} still emits; only None is skipped. Defaults to True.
+            emit_final_state: Whether to echo run_input.state as a
+                STATE_SNAPSHOT near the end, just before MESSAGES_SNAPSHOT,
+                when it isn't None. Same None-only gate. Defaults to True.
+            emit_messages_snapshot: Whether to append a MESSAGES_SNAPSHOT
+                just before RUN_FINISHED. Defaults to True.
             end_custom_event: An optional CustomEvent yielded right before
                 RUN_FINISHED, after the MESSAGES_SNAPSHOT. Same type
                 restriction and default as start_custom_event.
+            emit_run_error: Whether to yield a RUN_ERROR event when the
+                stream raises, before re-raising. Defaults to True; set
+                False only if you emit your own terminal error event.
+            run_error_message: The RUN_ERROR message. Defaults to None, which
+                sends str(exc); set a fixed string to keep raw exception
+                text off the wire.
 
         Yields:
             AG-UI BaseEvent instances, ready to encode.
@@ -182,16 +205,19 @@ class AGUITranslator:
                 f"end_custom_event must be a CustomEvent, got {type(end_custom_event).__name__}"
             )
 
+        # 1. RUN_STARTED — always first
         yield RunStartedEvent(
             type=EventType.RUN_STARTED,
             thread_id=run_input.thread_id,
             run_id=run_input.run_id,
         )
 
+        # 2. start_custom_event — optional
         if start_custom_event:
             yield start_custom_event
 
-        if emit_state_snapshot and run_input.state is not None:
+        # 3. STATE_SNAPSHOT (initial) — echo run_input.state ({} emits, None skips)
+        if emit_initial_state and run_input.state is not None:
             yield StateSnapshotEvent(
                 type=EventType.STATE_SNAPSHOT,
                 snapshot=run_input.state,
@@ -204,11 +230,20 @@ class AGUITranslator:
         )
         outbound = self._outbound_cls()
         try:
+            # … streamed STEP / TEXT / TOOL / REASONING events …
             async for sdk_event in stream_events:
                 for event in outbound.translate(sdk_event):
                     yield event
+            # 4. STEP_FINISHED — final window close
             for event in outbound.finalize():
                 yield event
+            # 5. STATE_SNAPSHOT (final) — settled state ({} emits, None skips)
+            if emit_final_state and run_input.state is not None:
+                yield StateSnapshotEvent(
+                    type=EventType.STATE_SNAPSHOT,
+                    snapshot=run_input.state,
+                )
+            # 6. MESSAGES_SNAPSHOT
             if emit_messages_snapshot:
                 yield outbound.build_messages_snapshot(run_input)
         except ClientToolPending:
@@ -219,8 +254,16 @@ class AGUITranslator:
             # translate() dispatch above (the run-item event that names the
             # call arrives before the SDK ever invokes it), so this is a
             # clean end of turn: finalize any open windows, snapshot, finish.
+            # 4. STEP_FINISHED — final window close
             for event in outbound.finalize():
                 yield event
+            # 5. STATE_SNAPSHOT (final) — settled state ({} emits, None skips)
+            if emit_final_state and run_input.state is not None:
+                yield StateSnapshotEvent(
+                    type=EventType.STATE_SNAPSHOT,
+                    snapshot=run_input.state,
+                )
+            # 6. MESSAGES_SNAPSHOT
             if emit_messages_snapshot:
                 yield outbound.build_messages_snapshot(run_input)
         except (Exception, asyncio.CancelledError) as exc:
@@ -235,9 +278,11 @@ class AGUITranslator:
                 )
             raise
 
+        # 7. end_custom_event — optional
         if end_custom_event:
             yield end_custom_event
 
+        # 8. RUN_FINISHED — always last
         yield RunFinishedEvent(
             type=EventType.RUN_FINISHED,
             thread_id=run_input.thread_id,

@@ -104,8 +104,18 @@ curl -N -X POST http://localhost:8000 \
   }'
 ```
 
-Expected: `RUN_STARTED -> TEXT_MESSAGE_START -> TEXT_MESSAGE_CONTENT (xN) ->
-TEXT_MESSAGE_END -> RUN_FINISHED`.
+Expected: `RUN_STARTED -> STATE_SNAPSHOT -> TEXT_MESSAGE_START ->
+TEXT_MESSAGE_CONTENT (xN) -> TEXT_MESSAGE_END -> STATE_SNAPSHOT ->
+MESSAGES_SNAPSHOT -> RUN_FINISHED`.
+
+`run_input.state` is echoed as a `STATE_SNAPSHOT` twice — once right after
+`RUN_STARTED` (`emit_initial_state`) and once just before `MESSAGES_SNAPSHOT`
+(`emit_final_state`) — both defaulting on, both gated only on
+`state is not None` (an empty `{}` still emits; only `null` is skipped). The
+OpenAI Agents SDK has no shared-state channel, so nothing mutates state
+mid-run; the final echo is the settled-state slot the frontend can rely on
+ending with. Pass `emit_initial_state=False` / `emit_final_state=False` to
+`to_agui` to suppress either.
 
 A full multi-demo server (chat, backend tools, human-in-the-loop, handoffs,
 orchestrator) lives in [`examples/`](examples/).
