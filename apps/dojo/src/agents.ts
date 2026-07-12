@@ -643,6 +643,7 @@ export const agentsIntegrations = {
         tool_based_generative_ui: "tool_based_generative_ui",
         subagents: "subagents",
         custom_lifecycle_events: "custom_lifecycle_events",
+        dynamic_system_prompt: "dynamic_system_prompt",
       },
     ),
 

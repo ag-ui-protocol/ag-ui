@@ -11,6 +11,15 @@ returning a ``CustomEvent``, which the shared loop forwards into
 No if-branch keyed by demo name, no separate router — one generic loop,
 one optional per-demo hook.
 
+dynamic_system_prompt is registered here too (so DEMOS/health lists it) but
+is never run through the generic loop or wrapper — it needs
+``context=run_input.context`` on ``Runner.run_streamed``, which neither the
+wrapper (``OpenAIAgentsAgent.run()``) nor the shared translator loops pass.
+Its own run loop lives next to the agent in
+``dynamic_system_prompt.py`` (``stream()``); ``server.py`` and
+``.dev/groq_server.py`` both call that function directly from a hand-written
+route instead.
+
 Stateful demos (shared_state, agentic_generative_ui,
 predictive_state_updates) are shelved together with ``AGUIContext`` —
 see ``.dev/shelved/``.
@@ -31,6 +40,7 @@ from .custom_lifecycle_events import (
     build_output_usage_event,
     create_custom_lifecycle_events_agent,
 )
+from .dynamic_system_prompt import agent as dynamic_system_prompt_agent
 from .human_in_the_loop import create_human_in_the_loop_agent
 from .subagents import create_subagents_agent
 from .tool_based_generative_ui import create_tool_based_generative_ui_agent
@@ -58,6 +68,11 @@ def build_registry() -> dict[str, DemoConfig]:
             build_start_custom_event=build_input_usage_event,
             build_end_custom_event=build_output_usage_event,
         ),
+        # Same agent singleton dynamic_system_prompt.stream() runs — only
+        # registered here so DEMOS/health lists it. Servers route this one by
+        # hand (dynamic_system_prompt.stream) instead of through this agent
+        # generically, since it needs context= the generic loop can't give it.
+        "dynamic_system_prompt": DemoConfig(agent=dynamic_system_prompt_agent),
     }
 
 

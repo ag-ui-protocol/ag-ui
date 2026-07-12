@@ -387,6 +387,7 @@ export const menuIntegrations = [
       "tool_based_generative_ui",
       "subagents",
       "custom_lifecycle_events",
+      "dynamic_system_prompt",
     ],
   },
   {

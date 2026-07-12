@@ -15,7 +15,11 @@ translator_server.py shows every step and lets you branch mid-run.
     POST /backend_tool_rendering    ← server-executed @function_tool
     POST /human_in_the_loop         ← frontend-owned tool, StopAtTools
     POST /tool_based_generative_ui  ← frontend tool renders the content
-    POST /orchestrator              ← multi-agent via agents-as-tools
+    POST /subagents                 ← multi-agent via agents-as-tools
+    POST /custom_lifecycle_events   ← manual CUSTOM event bracketing the run
+                                       (routed by hand — see below)
+    POST /dynamic_system_prompt     ← system prompt built from RunAgentInput.context
+                                       (routed by hand — see below)
 
     GET  /health                    ← liveness check (lists all demos)
     GET  /<demo>/health             ← per-demo check
@@ -53,11 +57,20 @@ import os
 from pathlib import Path
 
 import uvicorn
+from agents import Runner
+from ag_ui.core import RunAgentInput
+from ag_ui.encoder import EventEncoder
 from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
 
-from ag_ui_openai_agents import OpenAIAgentsAgent, add_openai_agents_fastapi_endpoint
+from ag_ui_openai_agents import (
+    AGUITranslator,
+    OpenAIAgentsAgent,
+    add_openai_agents_fastapi_endpoint,
+)
 
 from agents_examples import DemoConfig, build_registry
+from agents_examples.dynamic_system_prompt import stream as dsp_stream
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -66,13 +79,61 @@ DEMOS: dict[str, DemoConfig] = build_registry()
 
 app = FastAPI(title="AG-UI × OpenAI Agents SDK examples (wrapper)")
 
-# The whole run loop: one wrapped agent + one endpoint per demo.
+# The whole run loop: one wrapped agent + one endpoint per demo. Two demos
+# need more than the wrapper can give them, so they're routed by hand below
+# instead of through this loop:
+#   - custom_lifecycle_events: OpenAIAgentsAgent.run() calls
+#     to_agui(result, input) with no extra kwargs, so the wrapper can't
+#     forward DemoConfig.build_start_custom_event/build_end_custom_event —
+#     the CUSTOM events would silently never go out.
+#   - dynamic_system_prompt: OpenAIAgentsAgent.run() never passes context=
+#     to Runner.run_streamed, so the demo's whole point (reading
+#     RunAgentInput.context) would silently do nothing.
+_HAND_ROUTED = {"custom_lifecycle_events", "dynamic_system_prompt"}
+
 for demo_name, demo in DEMOS.items():
+    if demo_name in _HAND_ROUTED:
+        continue
     add_openai_agents_fastapi_endpoint(
         app,
         OpenAIAgentsAgent(demo.agent, name=demo_name),
         f"/{demo_name}",
     )
+
+_lifecycle_translator = AGUITranslator()
+_lifecycle_encoder = EventEncoder()
+_lifecycle_demo = DEMOS["custom_lifecycle_events"]
+
+
+@app.post("/custom_lifecycle_events")
+async def _run_custom_lifecycle_events(body: RunAgentInput) -> StreamingResponse:
+    async def _stream():
+        translated = _lifecycle_translator.to_sdk(body)
+        agent = _lifecycle_demo.agent
+        if translated.tools:
+            agent = agent.clone(tools=[*agent.tools, *translated.tools])
+        kwargs = {}
+        if _lifecycle_demo.build_start_custom_event is not None:
+            kwargs["start_custom_event"] = _lifecycle_demo.build_start_custom_event()
+        if _lifecycle_demo.build_end_custom_event is not None:
+            kwargs["end_custom_event"] = _lifecycle_demo.build_end_custom_event()
+        result = Runner.run_streamed(agent, input=translated.messages)
+        async for ag_event in _lifecycle_translator.to_agui(result, body, **kwargs):
+            yield _lifecycle_encoder.encode(ag_event)
+
+    return StreamingResponse(_stream(), media_type=_lifecycle_encoder.get_content_type())
+
+
+_dsp_encoder = EventEncoder()
+
+
+@app.post("/dynamic_system_prompt")
+async def _run_dynamic_system_prompt(body: RunAgentInput) -> StreamingResponse:
+    async def _stream():
+        async for ag_event in dsp_stream(body):
+            yield _dsp_encoder.encode(ag_event)
+
+    return StreamingResponse(_stream(), media_type=_dsp_encoder.get_content_type())
 
 
 @app.get("/health")

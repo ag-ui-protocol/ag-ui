@@ -103,6 +103,13 @@ export const featureConfig: FeatureConfig[] = [
     tags: ["Custom Events", "Lifecycle", "Translator"],
   }),
   createFeatureConfig({
+    id: "dynamic_system_prompt",
+    name: "Dynamic System Prompt",
+    description:
+      "Reply language picked from the AG-UI context channel, baked fresh into the system prompt every turn",
+    tags: ["Context", "Dynamic System Prompt"],
+  }),
+  createFeatureConfig({
     id: "a2a_chat",
     name: "A2A Chat",
     description: "Chat with your Copilot and call frontend tools",

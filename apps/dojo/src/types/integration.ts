@@ -22,6 +22,7 @@ export type Feature =
   | "crew_chat"
   | "subagents"
   | "custom_lifecycle_events"
+  | "dynamic_system_prompt"
   | "error_flow"
   | "background_agents"
   | "observational_memory";

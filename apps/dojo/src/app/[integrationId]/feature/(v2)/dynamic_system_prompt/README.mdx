@@ -1,0 +1,37 @@
+# 🌐 Dynamic System Prompt
+
+## What This Demo Shows
+
+The frontend sends a language choice over the AG-UI **context** channel — a
+plain `{description, value}` pair, no special class involved. The agent's
+`instructions` is a callable (`Agent.instructions`, the OpenAI Agents SDK's
+own dynamic-instructions feature) that reads the context list every turn and
+bakes "always reply in X" into the system prompt fresh, before each model
+call.
+
+Context needs no `AGUIContext`/state machinery — it's read-only and
+regenerated every run, so this demo drives the translator directly instead
+of the shared wrapper: `to_sdk()` / `Runner.run_streamed(..., context=...)`
+/ `to_agui()`, the same three calls as the other servers, plus the one line
+they skip — passing the AG-UI context straight through as the SDK's own
+`context=`.
+
+## How to Interact
+
+- Pick a language in the sidebar, then ask anything — the reply comes back
+  entirely in that language, regardless of what language you type in.
+- Switch languages mid-conversation and ask again — the next reply follows
+  the new choice immediately, no restart needed.
+
+## Technical Details
+
+- `useAgentContext({ description: "Reply language", value: language })` —
+  pushes the current pick onto `RunAgentInput.context` with every message
+- `dynamic_instructions(ctx, agent)` in
+  `examples/agents_examples/dynamic_system_prompt.py` reads
+  `ctx.context` (the raw `list[Context]` sent by the client) and returns a
+  fresh instructions string
+- Runs as its own standalone FastAPI app (own file, own port) rather than
+  through the shared demo registry — the shared servers don't forward
+  `RunAgentInput.context` into `Runner.run_streamed`, so a demo that needs
+  it runs independently instead of changing that shared loop
