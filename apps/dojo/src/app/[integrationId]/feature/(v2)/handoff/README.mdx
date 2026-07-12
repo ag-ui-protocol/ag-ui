@@ -1,0 +1,26 @@
+# 🤝 Handoff
+
+## What This Demo Shows
+
+Two handoff patterns from the SDK docs' `handoffs/` page, combined in one
+triage agent:
+
+- passing an `Agent` directly (`billing_agent`) — plain handoff, no
+  customization
+- wrapping with `handoff(agent=..., on_handoff=..., input_type=...)`
+  (`escalation_agent`) — the LLM fills in a structured `EscalationData`
+  reason, delivered to a callback before the specialist takes over
+
+## How to Interact
+
+- "I have a question about my invoice" (routes to billing_agent)
+- "This isn't working and I've tried everything, I need to talk to someone"
+  (routes to escalation_agent with a captured reason)
+
+## Technical Details
+
+- The handoff shows up as an AG-UI tool call + result, same as any other tool
+- `escalation_agent`'s structured input rides through as ordinary tool-call
+  JSON args — no special-casing in the translator
+- Each hop emits `STEP_FINISHED` for the outgoing agent and `STEP_STARTED`
+  for the incoming one

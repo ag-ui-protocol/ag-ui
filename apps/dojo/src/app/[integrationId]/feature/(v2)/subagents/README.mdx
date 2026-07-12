@@ -1,0 +1,30 @@
+# 🧭 Subagents
+
+## What This Demo Shows
+
+A supervisor agent stays in charge of the conversation and calls specialist
+agents as tools (`Agent.as_tool()`), possibly several in one turn, then
+synthesizes their outputs itself — a call-and-return delegation, not a
+handoff. Complements the `handoff` demo, where control transfers away from
+the triage agent instead. Same shape as CopilotKit's own LangGraph
+"subagents" showcase demo (a supervisor calling child agents as tools).
+
+A sidebar tracks the team live: role chips light up while a specialist is
+working, and a delegation log lists each call with its status and a
+preview of the input/output.
+
+## How to Interact
+
+- "Write a short piece about the history of coffee" (calls research,
+  writer, and critic specialists in sequence, then produces a final draft)
+- "What is 2 + 2?" (answered directly, no team involved)
+
+## Technical Details
+
+- Each specialist invocation is an ordinary `TOOL_CALL_START/ARGS/END` +
+  `TOOL_CALL_RESULT` sequence
+- The nested agents' own model turns stay internal to the SDK and are not
+  streamed as separate messages — the client sees one coherent transcript
+- The sidebar is built from three `useRenderTool` renderers (one per
+  specialist tool name), each reporting its status into shared page state
+  via a small tracker component

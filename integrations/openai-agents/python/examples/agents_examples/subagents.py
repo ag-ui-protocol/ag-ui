@@ -1,14 +1,17 @@
-"""Orchestrator — multi-agent via the SDK's agents-as-tools pattern.
+"""Subagents — multi-agent via the SDK's agents-as-tools pattern.
 
 Complements :mod:`handoff`: there, control *transfers* to the specialist
-(triage agent exits the conversation). Here the orchestrator stays in charge
+(triage agent exits the conversation). Here the supervisor stays in charge
 and *calls* specialists as tools (``Agent.as_tool()``), possibly several in
-one turn, then synthesizes their outputs itself.
+one turn, then synthesizes their outputs itself — a call-and-return
+delegation, not a handoff. Same shape as the LangGraph "subagents" showcase
+demo (a supervisor calling child agents as tools and getting results back),
+just built with the SDK's own ``as_tool()`` instead of a routing graph.
 
 On the AG-UI side each specialist invocation is an ordinary
 ``TOOL_CALL_START/ARGS/END`` + ``TOOL_CALL_RESULT`` sequence — the nested
 agent's own model turns stay internal to the SDK and are not streamed as
-separate messages, so the client sees one coherent orchestrator transcript.
+separate messages, so the client sees one coherent supervisor transcript.
 """
 
 from __future__ import annotations
@@ -45,7 +48,7 @@ critic_agent = Agent(
 )
 
 
-def create_orchestrator_agent() -> Agent:
+def create_subagents_agent() -> Agent:
     return Agent(
         name="orchestrator",
         model=DEFAULT_MODEL,

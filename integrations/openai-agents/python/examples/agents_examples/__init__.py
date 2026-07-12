@@ -18,7 +18,7 @@ from .agentic_chat import create_agentic_chat_agent
 from .backend_tool_rendering import create_backend_tool_agent
 from .handoff import create_handoff_agent
 from .human_in_the_loop import create_human_in_the_loop_agent
-from .orchestrator import create_orchestrator_agent
+from .subagents import create_subagents_agent
 from .tool_based_generative_ui import create_tool_based_generative_ui_agent
 
 
@@ -37,7 +37,7 @@ def build_registry() -> dict[str, DemoConfig]:
         "human_in_the_loop": DemoConfig(agent=create_human_in_the_loop_agent()),
         "tool_based_generative_ui": DemoConfig(agent=create_tool_based_generative_ui_agent()),
         "handoff": DemoConfig(agent=create_handoff_agent()),
-        "orchestrator": DemoConfig(agent=create_orchestrator_agent()),
+        "subagents": DemoConfig(agent=create_subagents_agent()),
     }
 
 
@@ -48,6 +48,6 @@ __all__ = [
     "create_backend_tool_agent",
     "create_handoff_agent",
     "create_human_in_the_loop_agent",
-    "create_orchestrator_agent",
+    "create_subagents_agent",
     "create_tool_based_generative_ui_agent",
 ]
