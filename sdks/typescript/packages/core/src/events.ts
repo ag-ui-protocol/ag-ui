@@ -259,6 +259,13 @@ export const RunFinishedEventSchema = BaseEventSchema.extend({
   outcome: RunFinishedOutcomeSchema.nullable()
     .optional()
     .transform((v) => v ?? undefined),
+  usage: z
+    .object({
+      inputTokens: z.number().optional(),
+      outputTokens: z.number().optional(),
+      totalTokens: z.number().optional(),
+    })
+    .optional(),
 });
 
 export const RunErrorEventSchema = BaseEventSchema.extend({
