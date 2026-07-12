@@ -103,6 +103,13 @@ export const featureConfig: FeatureConfig[] = [
     tags: ["Multi-agent architecture", "Sub-agents", "Orchestrator", "Agent as tool"],
   }),
   createFeatureConfig({
+    id: "custom_lifecycle_events",
+    name: "Custom Lifecycle Events",
+    description:
+      "Manual CUSTOM events bracket the run — a session marker right after start, a usage summary right before finish",
+    tags: ["Custom Events", "Lifecycle", "Translator"],
+  }),
+  createFeatureConfig({
     id: "a2a_chat",
     name: "A2A Chat",
     description: "Chat with your Copilot and call frontend tools",

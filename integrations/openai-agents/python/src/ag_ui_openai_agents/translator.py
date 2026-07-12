@@ -18,6 +18,7 @@ from agents.result import RunResultStreaming
 from agents.stream_events import StreamEvent
 from ag_ui.core import (
     BaseEvent,
+    CustomEvent,
     EventType,
     RunAgentInput,
     RunErrorEvent,
@@ -80,6 +81,8 @@ class AGUITranslator:
         emit_run_error: bool = True,
         run_error_message: str | None = None,
         emit_state_snapshot: bool = True,
+        start_custom_event: CustomEvent | None = None,
+        end_custom_event: CustomEvent | None = None,
     ) -> AsyncIterator[BaseEvent]:
         """Translate an SDK event stream into a live AG-UI event stream.
 
@@ -153,15 +156,40 @@ class AGUITranslator:
             emit_state_snapshot: Whether to echo run_input.state as a
                 STATE_SNAPSHOT after RUN_STARTED when it isn't None.
                 Defaults to True.
+            start_custom_event: An optional CustomEvent yielded right after
+                RUN_STARTED (before the STATE_SNAPSHOT), for callers who
+                need to signal something to the client before any run
+                content starts flowing. Must be a CustomEvent instance —
+                anything else raises TypeError. None (the default) emits
+                nothing.
+            end_custom_event: An optional CustomEvent yielded right before
+                RUN_FINISHED, after the MESSAGES_SNAPSHOT. Same type
+                restriction and default as start_custom_event.
 
         Yields:
             AG-UI BaseEvent instances, ready to encode.
+
+        Raises:
+            TypeError: start_custom_event or end_custom_event was given but
+                is not a CustomEvent instance.
         """
+        if start_custom_event and not isinstance(start_custom_event, CustomEvent):
+            raise TypeError(
+                f"start_custom_event must be a CustomEvent, got {type(start_custom_event).__name__}"
+            )
+        if end_custom_event and not isinstance(end_custom_event, CustomEvent):
+            raise TypeError(
+                f"end_custom_event must be a CustomEvent, got {type(end_custom_event).__name__}"
+            )
+
         yield RunStartedEvent(
             type=EventType.RUN_STARTED,
             thread_id=run_input.thread_id,
             run_id=run_input.run_id,
         )
+
+        if start_custom_event:
+            yield start_custom_event
 
         if emit_state_snapshot and run_input.state is not None:
             yield StateSnapshotEvent(
@@ -206,6 +234,9 @@ class AGUITranslator:
                     message=run_error_message or str(exc),
                 )
             raise
+
+        if end_custom_event:
+            yield end_custom_event
 
         yield RunFinishedEvent(
             type=EventType.RUN_FINISHED,

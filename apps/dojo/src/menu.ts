@@ -387,6 +387,7 @@ export const menuIntegrations = [
       "tool_based_generative_ui",
       "handoff",
       "subagents",
+      "custom_lifecycle_events",
     ],
   },
   {

@@ -16,6 +16,10 @@ One FastAPI route per demo, all sharing the same run loop:
     POST /tool_based_generative_ui  ← frontend tool renders the content
     POST /handoff                   ← multi-agent triage via handoffs=
     POST /orchestrator              ← multi-agent via agents-as-tools
+    POST /custom_lifecycle_events   ← manual CUSTOM event right after RUN_STARTED
+                                       and right before RUN_FINISHED, via
+                                       DemoConfig.build_start_custom_event /
+                                       build_end_custom_event
 
     GET  /health                    ← liveness check
 
@@ -124,13 +128,24 @@ async def _stream(demo: DemoConfig, body: RunAgentInput):
     if translated.tools:
         agent = agent.clone(tools=[*agent.tools, *translated.tools])
 
+    # Demo-specific lifecycle hooks (only custom_lifecycle_events sets these) —
+    # start_custom_event/end_custom_event only accept CustomEvent instances
+    # (anything else raises TypeError), so building them here, not inline,
+    # keeps this loop demo-agnostic: it just forwards whatever the registry
+    # gave it.
+    to_agui_kwargs = {}
+    if demo.build_start_custom_event:
+        to_agui_kwargs["start_custom_event"] = demo.build_start_custom_event()
+    if demo.build_end_custom_event:
+        to_agui_kwargs["end_custom_event"] = demo.build_end_custom_event()
+
     # 2 — Run the agent; to_agui() wraps the stream with the lifecycle events
     #     (RUN_STARTED first, RUN_FINISHED / RUN_ERROR last), echoes the state
     #     snapshot, handles window bookkeeping + the final flush, and appends a
     #     trailing MESSAGES_SNAPSHOT. Nothing to hand-emit here.
     try:
         result = Runner.run_streamed(agent, input=translated.messages)
-        async for ag_event in translator.to_agui(result, body):
+        async for ag_event in translator.to_agui(result, body, **to_agui_kwargs):
             yield encoder.encode(ag_event)
     except Exception:
         # to_agui already emitted RUN_ERROR before re-raising; just log here so
