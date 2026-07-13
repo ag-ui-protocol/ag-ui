@@ -18,8 +18,8 @@ The flow is:
 ```python
 translator = AGUITranslator()
 
-bundle = translator.to_sdk(run_input)
-result = Runner.run_streamed(agent, input=bundle.messages)
+translated_input = translator.to_sdk(run_input)
+result = Runner.run_streamed(agent, input=translated_input.messages)
 
 async for event in translator.to_agui(result, run_input):
     ...
@@ -72,24 +72,25 @@ app = FastAPI()
 
 @app.post("/")
 async def run(body: RunAgentInput) -> StreamingResponse:
-    return StreamingResponse(_stream(body), media_type=encoder.get_content_type())
+    """Translate one AG-UI request into an SDK run and stream it back."""
 
+    async def stream():
+        # AGUI input -> OpenAI SDK
+        translated_input = translator.to_sdk(body)
 
-async def _stream(body: RunAgentInput):
-    # 1. AG-UI input -> SDK-ready bundle.
-    bundle = translator.to_sdk(body)
+        # merge client-declared tools onto this request's agent
+        run_agent = agent
+        if translated_input.tools:
+            run_agent = agent.clone(tools=[*agent.tools, *translated_input.tools])
 
-    # 2. Merge client-declared tools per request.
-    run_agent = agent
-    if bundle.tools:
-        run_agent = agent.clone(tools=[*agent.tools, *bundle.tools])
+        # normal OpenAI SDK streaming run
+        result = Runner.run_streamed(run_agent, input=translated_input.messages)
 
-    # 3. Run the SDK agent normally, then translate the streamed result.
-    #    to_agui wraps it with RUN_STARTED/RUN_FINISHED/RUN_ERROR and
-    #    appends a MESSAGES_SNAPSHOT by default (just before RUN_FINISHED).
-    result = Runner.run_streamed(run_agent, input=bundle.messages)
-    async for event in translator.to_agui(result, body):
-        yield encoder.encode(event)
+        # OpenAI SDK -> AGUI events
+        async for event in translator.to_agui(result, body):
+            yield encoder.encode(event)
+
+    return StreamingResponse(stream(), media_type=encoder.get_content_type())
 ```
 
 Test it:
