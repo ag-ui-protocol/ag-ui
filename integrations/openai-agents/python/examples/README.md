@@ -13,12 +13,9 @@ The aggregate server shows both integration styles:
 - **`translator_server.py`** remains a compact, centralized direct-translator
   reference for the original focused demos.
 
-Model provider is **native OpenAI**
-(`OPENAI_API_KEY`) — the translators are provider-agnostic, but these
-examples exercise the plain-OpenAI path deliberately, since that's what most
-integrators will run in production. (LiteLLM/Gemini and the
-`FAKE_RESPONSES_ID` handling are covered by the drift-guard/unit tests, not
-these examples.)
+Model provider is **native OpenAI** (`OPENAI_API_KEY`). These examples exercise
+the direct OpenAI path deliberately, since that is the reference setup for the
+library.
 
 ## Running the server
 

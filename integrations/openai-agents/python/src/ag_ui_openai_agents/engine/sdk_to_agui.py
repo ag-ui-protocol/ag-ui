@@ -194,8 +194,8 @@ class SDKToAGUITranslator:
         — collected here as the stream ran (see _record_* below), each
         under the exact id its streamed event used. Same id, one
         resolution: a snapshot message can never disagree with its
-        streamed counterpart, even on backends that stamp placeholder ids
-        (Chat Completions, LiteLLM) instead of real ones.
+        streamed counterpart, even when a backend emits placeholder ids
+        instead of real ones.
 
         Prior history comes from run_input.messages, not
         result.to_input_list(): Responses-API input items carry no id slot
@@ -333,11 +333,10 @@ class SDKToAGUITranslator:
 
         if item_type == SDKItemType.MESSAGE:
             # Defer TEXT_MESSAGE_START until a real delta actually arrives.
-            # Some providers (LiteLLM's chat-completions adapter, for one)
-            # emit a message item even on a turn that ends up being a pure
-            # tool call with no spoken text — opening the window here would
-            # leave an empty TEXT_MESSAGE_START/END pair wrapping the tool
-            # call on the wire. Remember the real id so the lazy open still
+            # Some backends emit a message item even on a turn that ends up
+            # being a pure tool call with no spoken text — opening the window
+            # here would leave an empty TEXT_MESSAGE_START/END pair wrapping
+            # the tool call on the wire. Remember the real id so the lazy open still
             # uses it. Output has begun, though, so close any open reasoning
             # now (some backends send reasoning-done late) — that must not
             # wait for the deferred text.
@@ -813,12 +812,11 @@ class SDKToAGUITranslator:
     def _is_real_id(item_id: Any) -> bool:
         """Check whether an id is usable on the wire (not empty, not a placeholder).
 
-        Some model backends stamp every item with the SDK's
-        FAKE_RESPONSES_ID sentinel — sharing it across AG-UI events
-        would collide every message of the run. Checked against the
-        SDK's own constant, so it's a no-op (always real) on native
-        OpenAI and correct for any other backend without a
-        provider-specific branch.
+        Some backends stamp every item with the SDK's FAKE_RESPONSES_ID
+        sentinel — sharing it across AG-UI events would collide every
+        message of the run. Checked against the SDK's own constant, so
+        it is a no-op on native OpenAI and correct for any backend that
+        does not use placeholder ids.
 
         Args:
             item_id: The item's wire id, or None.

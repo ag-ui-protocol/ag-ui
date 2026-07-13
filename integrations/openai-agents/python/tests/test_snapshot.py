@@ -213,7 +213,7 @@ def test_unknown_item_types_are_skipped_not_raised():
 # arrives. translate_message_output_item/translate_tool_call_item then hit
 # their "skip" branch (nothing left to close) — that branch used to return
 # [] without ever recording a snapshot message, so the item streamed fully
-# but never made it into MESSAGES_SNAPSHOT. Observed on a real LiteLLM run.
+# but never made it into MESSAGES_SNAPSHOT. Observed on a real run.
 
 
 def test_text_message_closed_by_raw_event_before_commit_still_snapshots():

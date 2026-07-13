@@ -148,8 +148,8 @@ def test_refusal_delta_streams_into_the_text_window():
 
 
 def test_text_less_message_item_wrapping_a_tool_call_emits_no_window():
-    # A provider (e.g. LiteLLM's chat-completions adapter) can announce a
-    # message item even on a pure tool-call turn that never carries text: an
+    # Some backends can announce a message item even on a pure tool-call turn
+    # that never carries text: an
     # output_item.added(message), the whole tool call, then
     # output_item.done(message) — with no text delta in between. The message
     # window must never open, so the tool call stays a clean sibling and no

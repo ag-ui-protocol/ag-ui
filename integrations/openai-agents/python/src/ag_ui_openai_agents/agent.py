@@ -60,8 +60,8 @@ class OpenAIAgentsAgent:
             translator: An AGUITranslator to reuse. Defaults to a fresh one;
                 pass your own to inject engine subclasses (per-mapping overrides).
             run_config: Passed straight to Runner.run_streamed on every run —
-                the place to set a non-OpenAI model provider (e.g. LiteLLM) or
-                run-wide model settings. None uses the SDK defaults (native OpenAI).
+                the place to set run-wide model settings. None uses the SDK
+                defaults (native OpenAI).
             start_custom_event: A CustomEvent, or a zero-argument factory that
                 builds one per run, emitted after RUN_STARTED.
             initial_state: Passed to AGUITranslator.to_agui. Accepts the same

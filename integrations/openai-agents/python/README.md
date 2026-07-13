@@ -163,18 +163,13 @@ add_openai_agents_fastapi_endpoint(app, agent, "/")
 - holds no per-request state — one instance serves every request; the SDK
   `Agent` is a config template, and client-declared tools are merged onto a
   per-request `clone()`, so concurrent requests never see each other's tools;
-- takes `run_config=...` to route runs through a non-OpenAI provider (e.g.
-  LiteLLM) or set run-wide model settings;
+- takes `run_config=...` to set run-wide model settings;
 - exposes `run(RunAgentInput) -> AsyncIterator[BaseEvent]` if you want to serve
   it on a transport other than FastAPI.
 
 ```python
-from agents import RunConfig
-from agents.extensions.models.litellm_provider import LitellmProvider
-
 agent = OpenAIAgentsAgent(
     Agent(name="assistant", instructions="Be concise.", model="gpt-5.4-mini"),
-    run_config=RunConfig(model_provider=LitellmProvider()),
 )
 ```
 
@@ -497,7 +492,7 @@ The snapshot is `run_input.messages` (untouched, keeping the ids the client
 already renders) plus this run's messages, built inline as the engine
 streams — each message's id is resolved once and handed to both the
 streamed event and the snapshot entry, so they can never disagree, even on
-backends that don't stamp real ids (LiteLLM and similar). Reasoning items
+backends that don't stamp real ids. Reasoning items
 are not included; the client keeps its streamed reasoning bubbles through
 the merge on its own. If the run raises, `to_agui` yields `RUN_ERROR` and
 re-raises before the snapshot line runs — nothing is emitted on the error
