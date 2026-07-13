@@ -1,6 +1,6 @@
 """Outbound translator: OpenAI Agents SDK events → AG-UI BaseEvent.
 
-Same layered shape as AGUIToSDKTranslator, just the other direction.
+Same layered shape as AGUIToOpenAITranslator, just the other direction.
 Stateful per run — it tracks open text / tool-call / reasoning windows so
 AG-UI always sees strict START → CONTENT → END triplets. Make a fresh one
 per run; don't share across runs.
@@ -68,14 +68,14 @@ from .helpers import (
 from .stream_types import (
     HOSTED_TOOL_CALL_TYPES,
     RawResponseEventType,
-    SDKItemType,
-    SDKStreamEventType,
+    OpenAIItemType,
+    OpenAIStreamEventType,
 )
 
 logger = logging.getLogger(__name__)
 
 
-class SDKToAGUITranslator:
+class OpenAIToAGUITranslator:
     """Translate OpenAI Agents SDK outputs into AG-UI BaseEvent objects.
 
     Wire ids are reused, never invented — with one caveat: some model
@@ -146,11 +146,11 @@ class SDKToAGUITranslator:
             Zero or more translated AG-UI events.
         """
         event_type = read_attr(sdk_event, "type")
-        if event_type == SDKStreamEventType.RAW_RESPONSE:
+        if event_type == OpenAIStreamEventType.RAW_RESPONSE:
             return self.translate_raw_response_event(sdk_event)
-        if event_type == SDKStreamEventType.RUN_ITEM:
+        if event_type == OpenAIStreamEventType.RUN_ITEM:
             return self.translate_run_item_event(sdk_event)
-        if event_type == SDKStreamEventType.AGENT_UPDATED:
+        if event_type == OpenAIStreamEventType.AGENT_UPDATED:
             return self.translate_agent_updated_event(sdk_event)
         logger.debug("Unknown SDK stream event type: %s", event_type)
         return []
@@ -331,7 +331,7 @@ class SDKToAGUITranslator:
         item_id = read_attr(item, "id")
         key = self._window_key(item_id, read_attr(data, "output_index"))
 
-        if item_type == SDKItemType.MESSAGE:
+        if item_type == OpenAIItemType.MESSAGE:
             # Defer TEXT_MESSAGE_START until a real delta actually arrives.
             # Some backends emit a message item even on a turn that ends up
             # being a pure tool call with no spoken text — opening the window
@@ -342,11 +342,11 @@ class SDKToAGUITranslator:
             # wait for the deferred text.
             self._pending_text_ids[key] = self._resolve_id(item_id, new_message_id)
             return self._close_all_reasonings()
-        if item_type == SDKItemType.FUNCTION_CALL:
+        if item_type == OpenAIItemType.FUNCTION_CALL:
             call_id = read_attr(item, "call_id") or self._resolve_id(item_id, new_tool_call_id)
             name = read_attr(item, "name") or ""
             return self._open_tool_call(key, call_id, name)
-        if item_type == SDKItemType.REASONING:
+        if item_type == OpenAIItemType.REASONING:
             return self._open_reasoning(key, self._resolve_id(item_id, new_reasoning_id))
         if item_type in HOSTED_TOOL_CALL_TYPES:
             call_id = self._resolve_id(item_id, new_tool_call_id)
@@ -370,16 +370,16 @@ class SDKToAGUITranslator:
         item_type = read_attr(item, "type")
         key = self._window_key(read_attr(item, "id"), read_attr(data, "output_index"))
 
-        if item_type == SDKItemType.MESSAGE:
+        if item_type == OpenAIItemType.MESSAGE:
             # Drop a deferred-but-never-opened window: no delta ever arrived,
             # so there's nothing on the wire to close and no empty window to
             # emit. If a delta did arrive the pending entry is already gone
             # and this pop is a no-op; _close_text then closes the real one.
             self._pending_text_ids.pop(key, None)
             return self._close_text(key)
-        if item_type == SDKItemType.FUNCTION_CALL or item_type in HOSTED_TOOL_CALL_TYPES:
+        if item_type == OpenAIItemType.FUNCTION_CALL or item_type in HOSTED_TOOL_CALL_TYPES:
             return self._close_tool_call(key)
-        if item_type == SDKItemType.REASONING:
+        if item_type == OpenAIItemType.REASONING:
             events = self._emit_encrypted_value(key, item)
             events.extend(self._close_reasoning(key))
             return events
@@ -1108,4 +1108,4 @@ class SDKToAGUITranslator:
         return result_id
 
 
-__all__ = ["SDKToAGUITranslator"]
+__all__ = ["OpenAIToAGUITranslator"]

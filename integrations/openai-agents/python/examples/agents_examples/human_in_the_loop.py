@@ -3,7 +3,7 @@
 Unlike :mod:`backend_tool_rendering`, ``generate_task_steps`` has no server
 implementation — it arrives per-request as an AG-UI client tool
 (``RunAgentInput.tools``), gets wrapped into an SDK ``FunctionTool`` proxy by
-``AGUIToSDKTranslator.translate_tools()``, and is merged onto this agent by
+``AGUIToOpenAITranslator.translate_tools()``, and is merged onto this agent by
 the run loop (see ``server.py``).
 
 ``tool_use_behavior=StopAtTools(...)`` is the SDK's built-in for "the model

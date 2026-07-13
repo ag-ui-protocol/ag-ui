@@ -1,7 +1,7 @@
 """Public data containers for the translator package.
 
 Holds typed result objects produced by the translators. Translator
-behavior lives in agui_to_sdk.py and sdk_to_agui.py; this module only
+behavior lives in agui_to_openai.py and openai_to_agui.py; this module only
 describes the shapes those translators hand back.
 """
 

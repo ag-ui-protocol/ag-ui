@@ -1,5 +1,5 @@
 """
-Tests for AGUIToSDKTranslator's multimodal content mapping.
+Tests for AGUIToOpenAITranslator's multimodal content mapping.
 
 Pins the wire shape each ``translate_*_content`` method produces (or the
 ``None``/drop behavior when unsupported), per the table in
@@ -21,9 +21,9 @@ from ag_ui.core import (
     TextInputContent,
     VideoInputContent,
 )
-from ag_ui_openai_agents.engine.agui_to_sdk import AGUIToSDKTranslator
+from ag_ui_openai_agents.engine.agui_to_openai import AGUIToOpenAITranslator
 
-_engine = AGUIToSDKTranslator()
+_engine = AGUIToOpenAITranslator()
 
 
 def _binary(**kwargs) -> BinaryInputContent:

@@ -78,13 +78,13 @@ class ClientToolPending(AgentsException):
 # The translator
 # ---------------------------------------------------------------------------
 
-class AGUIToSDKTranslator:
+class AGUIToOpenAITranslator:
     """Translate AG-UI inbound primitives into OpenAI Agents SDK shapes.
 
     Example:
         One-shot:
 
-            translated_input = AGUIToSDKTranslator().translate(run_input)
+            translated_input = AGUIToOpenAITranslator().translate(run_input)
             result = Runner.run_streamed(
                 agent.clone(tools=agent.tools + translated_input.tools),
                 input=translated_input.messages,
@@ -92,7 +92,7 @@ class AGUIToSDKTranslator:
 
         Per-item:
 
-            translator = AGUIToSDKTranslator()
+            translator = AGUIToOpenAITranslator()
             items = [translator.translate_user_message(msg) for msg in user_msgs]
             proxy = translator.translate_tool(my_tool)
             image_part = translator.translate_image_content(part)
@@ -788,6 +788,6 @@ class AGUIToSDKTranslator:
 
 
 __all__ = [
-    "AGUIToSDKTranslator",
+    "AGUIToOpenAITranslator",
     "ClientToolPending",
 ]

@@ -19,8 +19,8 @@ from ag_ui.core import (
     RunStartedEvent,
     StateSnapshotEvent,
 )
-from .engine.agui_to_sdk import AGUIToSDKTranslator, ClientToolPending
-from .engine.sdk_to_agui import SDKToAGUITranslator
+from .engine.agui_to_openai import AGUIToOpenAITranslator, ClientToolPending
+from .engine.openai_to_agui import OpenAIToAGUITranslator
 from .engine.types import TranslatedInput
 
 
@@ -41,8 +41,8 @@ class AGUITranslator:
     def __init__(
         self,
         *,
-        inbound_cls: type[AGUIToSDKTranslator] = AGUIToSDKTranslator,
-        outbound_cls: type[SDKToAGUITranslator] = SDKToAGUITranslator,
+        inbound_cls: type[AGUIToOpenAITranslator] = AGUIToOpenAITranslator,
+        outbound_cls: type[OpenAIToAGUITranslator] = OpenAIToAGUITranslator,
     ) -> None:
         """Create a translator; engine classes are advanced mapping override points.
 

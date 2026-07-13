@@ -232,7 +232,7 @@ async for event in translator.to_agui(result, run_input):
 #### Constructor
 
 ```python
-AGUITranslator(*, inbound_cls=AGUIToSDKTranslator, outbound_cls=SDKToAGUITranslator)
+AGUITranslator(*, inbound_cls=AGUIToOpenAITranslator, outbound_cls=OpenAIToAGUITranslator)
 ```
 
 These are advanced extension points for changing one mapping without forking
@@ -240,8 +240,8 @@ the public orchestration:
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `inbound_cls` | `AGUIToSDKTranslator` | Class used for AG-UI request → SDK input translation. One instance is reused because it is stateless. |
-| `outbound_cls` | `SDKToAGUITranslator` | Class used for SDK stream → AG-UI event translation. A fresh instance is created for every run because it tracks open stream windows. |
+| `inbound_cls` | `AGUIToOpenAITranslator` | Class used for AG-UI request → SDK input translation. One instance is reused because it is stateless. |
+| `outbound_cls` | `OpenAIToAGUITranslator` | Class used for SDK stream → AG-UI event translation. A fresh instance is created for every run because it tracks open stream windows. |
 
 For normal use, pass neither parameter. For a custom mapping, subclass the
 relevant engine class; see [Advanced: the engine layer](#advanced-the-engine-layer).
@@ -535,10 +535,10 @@ aiohttp, raw ASGI, WebSockets, or tests can all use the same translator calls.
 
 ### Event Mapping
 
-Both directions, source of truth is `engine/agui_to_sdk.py` and
-`engine/sdk_to_agui.py`.
+Both directions, source of truth is `engine/agui_to_openai.py` and
+`engine/openai_to_agui.py`.
 
-**Inbound** — AG-UI `Message` → Responses-API input item (`AGUIToSDKTranslator`):
+**Inbound** — AG-UI `Message` → Responses-API input item (`AGUIToOpenAITranslator`):
 
 | AG-UI type | SDK / Responses-API shape |
 |---|---|
@@ -553,7 +553,7 @@ Both directions, source of truth is `engine/agui_to_sdk.py` and
 | Content parts: `TextInputContent`, `ImageInputContent`, `AudioInputContent`, `DocumentInputContent`, `BinaryInputContent` | `input_text` / `input_image` / `input_audio` / `input_file` parts |
 | `VideoInputContent` | dropped (no OpenAI API accepts video input yet) |
 
-**Outbound** — SDK stream event → AG-UI `BaseEvent` (`SDKToAGUITranslator`):
+**Outbound** — SDK stream event → AG-UI `BaseEvent` (`OpenAIToAGUITranslator`):
 
 | SDK event / item | AG-UI event(s) |
 |---|---|
@@ -718,9 +718,9 @@ Unknown SDK event types are skipped with a debug log instead of crashing the run
 The public translator delegates to two independent, symmetric engine translators in
 `ag_ui_openai_agents.engine`:
 
-- `AGUIToSDKTranslator` — inbound; stateless, tiered per-type methods
+- `AGUIToOpenAITranslator` — inbound; stateless, tiered per-type methods
   (`translate_user_message`, `translate_tool_message`, ...)
-- `SDKToAGUITranslator` — outbound; stateful per run (open text/tool/reasoning
+- `OpenAIToAGUITranslator` — outbound; stateful per run (open text/tool/reasoning
   windows), per-type methods (`translate_text_delta`, `translate_item`, ...)
 
 Every per-type method is a public override point. To customize one mapping,
@@ -729,10 +729,10 @@ untouched:
 
 ```python
 from ag_ui_openai_agents import AGUITranslator
-from ag_ui_openai_agents.engine import SDKToAGUITranslator
+from ag_ui_openai_agents.engine import OpenAIToAGUITranslator
 
 
-class MyOutbound(SDKToAGUITranslator):
+class MyOutbound(OpenAIToAGUITranslator):
     def translate_text_delta(self, data):
         ...  # your variant of one mapping
 

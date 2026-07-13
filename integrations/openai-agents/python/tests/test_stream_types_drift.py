@@ -46,8 +46,8 @@ from openai.types.responses.response_reasoning_text_done_event import (
 from ag_ui_openai_agents.engine import (
     HOSTED_TOOL_CALL_TYPES,
     RawResponseEventType,
-    SDKItemType,
-    SDKStreamEventType,
+    OpenAIItemType,
+    OpenAIStreamEventType,
 )
 
 
@@ -74,12 +74,12 @@ def output_item_union_members() -> tuple[type, ...]:
 @pytest.mark.parametrize(
     ("ours", "sdk_cls"),
     [
-        (SDKStreamEventType.RAW_RESPONSE, RawResponsesStreamEvent),
-        (SDKStreamEventType.RUN_ITEM, RunItemStreamEvent),
-        (SDKStreamEventType.AGENT_UPDATED, AgentUpdatedStreamEvent),
+        (OpenAIStreamEventType.RAW_RESPONSE, RawResponsesStreamEvent),
+        (OpenAIStreamEventType.RUN_ITEM, RunItemStreamEvent),
+        (OpenAIStreamEventType.AGENT_UPDATED, AgentUpdatedStreamEvent),
     ],
 )
-def test_stream_event_types_match_sdk(ours: SDKStreamEventType, sdk_cls: type) -> None:
+def test_stream_event_types_match_sdk(ours: OpenAIStreamEventType, sdk_cls: type) -> None:
     assert ours == dataclass_wire_value(sdk_cls)
 
 
@@ -116,12 +116,12 @@ def test_raw_response_event_types_match_sdk(
 @pytest.mark.parametrize(
     ("ours", "sdk_cls"),
     [
-        (SDKItemType.MESSAGE, ResponseOutputMessage),
-        (SDKItemType.FUNCTION_CALL, ResponseFunctionToolCall),
-        (SDKItemType.REASONING, ResponseReasoningItem),
+        (OpenAIItemType.MESSAGE, ResponseOutputMessage),
+        (OpenAIItemType.FUNCTION_CALL, ResponseFunctionToolCall),
+        (OpenAIItemType.REASONING, ResponseReasoningItem),
     ],
 )
-def test_item_types_match_sdk(ours: SDKItemType, sdk_cls: type) -> None:
+def test_item_types_match_sdk(ours: OpenAIItemType, sdk_cls: type) -> None:
     assert ours == pydantic_wire_value(sdk_cls)
 
 
@@ -138,6 +138,6 @@ def test_every_sdk_tool_call_item_type_is_known() -> None:
         for member in output_item_union_members()
         if pydantic_wire_value(member).endswith("_call")
     }
-    known = HOSTED_TOOL_CALL_TYPES | {SDKItemType.FUNCTION_CALL.value}
+    known = HOSTED_TOOL_CALL_TYPES | {OpenAIItemType.FUNCTION_CALL.value}
     unknown = sdk_call_types - known
     assert not unknown, f"SDK added tool-call item types we don't map: {unknown}"

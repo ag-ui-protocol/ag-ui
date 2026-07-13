@@ -17,7 +17,7 @@ Compose it yourself (mid level — the streaming translator):
 
 Advanced (per-mapping overrides) — the engine layer:
 
-    from ag_ui_openai_agents.engine import AGUIToSDKTranslator, SDKToAGUITranslator
+    from ag_ui_openai_agents.engine import AGUIToOpenAITranslator, OpenAIToAGUITranslator
 """
 
 from __future__ import annotations
@@ -25,9 +25,9 @@ from __future__ import annotations
 from .agent import OpenAIAgentsAgent
 from .endpoint import add_openai_agents_fastapi_endpoint
 from .engine import (
-    AGUIToSDKTranslator,
+    AGUIToOpenAITranslator,
     ClientToolPending,
-    SDKToAGUITranslator,
+    OpenAIToAGUITranslator,
     TranslatedInput,
 )
 from .translator import AGUITranslator
@@ -41,8 +41,8 @@ __all__ = [
     # Public translator (primary API — 2 methods)
     "AGUITranslator",
     # Engine translators (advanced / per-mapping overrides)
-    "AGUIToSDKTranslator",
-    "SDKToAGUITranslator",
+    "AGUIToOpenAITranslator",
+    "OpenAIToAGUITranslator",
     # Types & helpers
     "TranslatedInput",
     "ClientToolPending",

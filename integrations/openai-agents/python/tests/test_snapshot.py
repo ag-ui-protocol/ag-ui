@@ -1,11 +1,11 @@
 """
-Tests for SDKToAGUITranslator.build_messages_snapshot.
+Tests for OpenAIToAGUITranslator.build_messages_snapshot.
 
 The invariant that matters: every id in the snapshot equals the id the
 streamed events already used — guaranteed by construction, since the
 engine resolves each item's id once and hands it to both the streamed
 event and the accumulated snapshot message. See the snapshot-message
-builders in engine/sdk_to_agui.py.
+builders in engine/openai_to_agui.py.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from ag_ui.core import (
     ToolMessage,
     UserMessage,
 )
-from ag_ui_openai_agents.engine import SDKToAGUITranslator
+from ag_ui_openai_agents.engine import OpenAIToAGUITranslator
 
 _AGENT = Agent(name="test-agent")
 
@@ -87,7 +87,7 @@ def _reasoning_item(item_id: str = "rs_1") -> ReasoningItem:
 
 
 def test_snapshot_ids_match_streamed_event_ids():
-    engine = SDKToAGUITranslator()
+    engine = OpenAIToAGUITranslator()
     items = [_text_item(), _tool_call_item(), _tool_output_item()]
     streamed = []
     for item in items:
@@ -126,7 +126,7 @@ def test_snapshot_ids_match_streamed_event_ids():
 
 
 def test_tool_call_and_result_round_trip():
-    engine = SDKToAGUITranslator()
+    engine = OpenAIToAGUITranslator()
     engine.translate_item(_tool_call_item())
     engine.translate_item(_tool_output_item())
 
@@ -159,7 +159,7 @@ def test_snapshot_prepends_input_history_with_original_ids():
         context=[],
         forwarded_props=None,
     )
-    engine = SDKToAGUITranslator()
+    engine = OpenAIToAGUITranslator()
     engine.translate_item(_text_item("msg_new", "hi again"))
 
     event = engine.build_messages_snapshot(run_input)
@@ -171,7 +171,7 @@ def test_snapshot_prepends_input_history_with_original_ids():
 
 
 def test_snapshot_accepts_message_list_and_none_history():
-    engine = SDKToAGUITranslator()
+    engine = OpenAIToAGUITranslator()
     engine.translate_item(_text_item())
 
     prior = [UserMessage(id="m1", role="user", content="hi")]
@@ -187,7 +187,7 @@ def test_snapshot_accepts_message_list_and_none_history():
 
 
 def test_reasoning_items_are_skipped_from_snapshot():
-    engine = SDKToAGUITranslator()
+    engine = OpenAIToAGUITranslator()
     engine.translate_item(_reasoning_item())
     engine.translate_item(_text_item())
 
@@ -197,7 +197,7 @@ def test_reasoning_items_are_skipped_from_snapshot():
 def test_unknown_item_types_are_skipped_not_raised():
     from types import SimpleNamespace
 
-    engine = SDKToAGUITranslator()
+    engine = OpenAIToAGUITranslator()
     unknown = SimpleNamespace(raw_item={"type": "something_else"})
 
     events = engine.translate_item(unknown)
@@ -219,7 +219,7 @@ def test_unknown_item_types_are_skipped_not_raised():
 def test_text_message_closed_by_raw_event_before_commit_still_snapshots():
     from types import SimpleNamespace
 
-    engine = SDKToAGUITranslator()
+    engine = OpenAIToAGUITranslator()
 
     # response.output_item.added then .done — closes the window via the
     # raw-event path, same as a real streaming run.
@@ -247,7 +247,7 @@ def test_text_message_closed_by_raw_event_before_commit_still_snapshots():
 def test_tool_call_closed_by_raw_event_before_commit_still_snapshots():
     from types import SimpleNamespace
 
-    engine = SDKToAGUITranslator()
+    engine = OpenAIToAGUITranslator()
 
     added = SimpleNamespace(
         item=SimpleNamespace(

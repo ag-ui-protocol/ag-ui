@@ -11,7 +11,7 @@ from __future__ import annotations
 from enum import Enum
 
 
-class SDKStreamEventType(str, Enum):
+class OpenAIStreamEventType(str, Enum):
     """Top-level StreamEvent.type values yielded by Runner.run_streamed."""
 
     RAW_RESPONSE = "raw_response_event"
@@ -39,7 +39,7 @@ class RawResponseEventType(str, Enum):
     REASONING_TEXT_DONE = "response.reasoning_text.done"
 
 
-class SDKItemType(str, Enum):
+class OpenAIItemType(str, Enum):
     """Output-item type values carried by output_item.added / .done."""
 
     MESSAGE = "message"

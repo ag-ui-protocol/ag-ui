@@ -1,5 +1,5 @@
 """
-Tests for SDKToAGUITranslator's streaming event mapping.
+Tests for OpenAIToAGUITranslator's streaming event mapping.
 
 The rest of the suite pins ids (test_snapshot) and the wire strings
 (test_stream_types_drift); this one pins the actual translation: feed the
@@ -29,11 +29,11 @@ from openai.types.responses import ResponseFunctionToolCall
 from openai.types.responses.response_output_item import McpApprovalRequest
 
 from ag_ui.core import EventType
-from ag_ui_openai_agents.engine import SDKToAGUITranslator
+from ag_ui_openai_agents.engine import OpenAIToAGUITranslator
 from ag_ui_openai_agents.engine.stream_types import (
     RawResponseEventType,
-    SDKItemType,
-    SDKStreamEventType,
+    OpenAIItemType,
+    OpenAIStreamEventType,
 )
 
 _AGENT = Agent(name="test-agent")
@@ -45,12 +45,12 @@ _AGENT = Agent(name="test-agent")
 def _raw(kind: RawResponseEventType, **data) -> SimpleNamespace:
     """A RawResponsesStreamEvent wrapping one Responses payload."""
     return SimpleNamespace(
-        type=SDKStreamEventType.RAW_RESPONSE,
+        type=OpenAIStreamEventType.RAW_RESPONSE,
         data=SimpleNamespace(type=kind, **data),
     )
 
 
-def _added(item_type: SDKItemType, output_index: int = 0, **item) -> SimpleNamespace:
+def _added(item_type: OpenAIItemType, output_index: int = 0, **item) -> SimpleNamespace:
     return _raw(
         RawResponseEventType.OUTPUT_ITEM_ADDED,
         item=SimpleNamespace(type=item_type, **item),
@@ -58,7 +58,7 @@ def _added(item_type: SDKItemType, output_index: int = 0, **item) -> SimpleNames
     )
 
 
-def _done(item_type: SDKItemType, output_index: int = 0, **item) -> SimpleNamespace:
+def _done(item_type: OpenAIItemType, output_index: int = 0, **item) -> SimpleNamespace:
     return _raw(
         RawResponseEventType.OUTPUT_ITEM_DONE,
         item=SimpleNamespace(type=item_type, **item),
@@ -67,17 +67,17 @@ def _done(item_type: SDKItemType, output_index: int = 0, **item) -> SimpleNamesp
 
 
 def _run_item(item) -> SimpleNamespace:
-    return SimpleNamespace(type=SDKStreamEventType.RUN_ITEM, name="x", item=item)
+    return SimpleNamespace(type=OpenAIStreamEventType.RUN_ITEM, name="x", item=item)
 
 
 def _agent_updated(name: str) -> SimpleNamespace:
     return SimpleNamespace(
-        type=SDKStreamEventType.AGENT_UPDATED,
+        type=OpenAIStreamEventType.AGENT_UPDATED,
         new_agent=SimpleNamespace(name=name),
     )
 
 
-def _drive(engine: SDKToAGUITranslator, *events) -> list:
+def _drive(engine: OpenAIToAGUITranslator, *events) -> list:
     out: list = []
     for event in events:
         out.extend(engine.translate(event))
@@ -92,13 +92,13 @@ def _types(events) -> list[EventType]:
 
 
 def test_text_streams_start_content_end_under_one_id():
-    engine = SDKToAGUITranslator()
+    engine = OpenAIToAGUITranslator()
     events = _drive(
         engine,
-        _added(SDKItemType.MESSAGE, id="msg_1"),
+        _added(OpenAIItemType.MESSAGE, id="msg_1"),
         _raw(RawResponseEventType.TEXT_DELTA, item_id="msg_1", output_index=0, delta="Hel"),
         _raw(RawResponseEventType.TEXT_DELTA, item_id="msg_1", output_index=0, delta="lo"),
-        _done(SDKItemType.MESSAGE, id="msg_1"),
+        _done(OpenAIItemType.MESSAGE, id="msg_1"),
     )
     assert _types(events) == [
         EventType.TEXT_MESSAGE_START,
@@ -117,7 +117,7 @@ def test_text_streams_start_content_end_under_one_id():
 
 def test_text_delta_lazily_opens_window_without_output_item_added():
     # Some backends jump straight to deltas with no output_item.added first.
-    engine = SDKToAGUITranslator()
+    engine = OpenAIToAGUITranslator()
     events = _drive(
         engine,
         _raw(RawResponseEventType.TEXT_DELTA, item_id="msg_1", output_index=0, delta="hi"),
@@ -126,10 +126,10 @@ def test_text_delta_lazily_opens_window_without_output_item_added():
 
 
 def test_text_done_closes_window_when_output_item_done_is_skipped():
-    engine = SDKToAGUITranslator()
+    engine = OpenAIToAGUITranslator()
     events = _drive(
         engine,
-        _added(SDKItemType.MESSAGE, id="msg_1"),
+        _added(OpenAIItemType.MESSAGE, id="msg_1"),
         _raw(RawResponseEventType.TEXT_DELTA, item_id="msg_1", output_index=0, delta="hi"),
         _raw(RawResponseEventType.TEXT_DONE, item_id="msg_1", output_index=0),
     )
@@ -137,10 +137,10 @@ def test_text_done_closes_window_when_output_item_done_is_skipped():
 
 
 def test_refusal_delta_streams_into_the_text_window():
-    engine = SDKToAGUITranslator()
+    engine = OpenAIToAGUITranslator()
     events = _drive(
         engine,
-        _added(SDKItemType.MESSAGE, id="msg_1"),
+        _added(OpenAIItemType.MESSAGE, id="msg_1"),
         _raw(RawResponseEventType.REFUSAL_DELTA, item_id="msg_1", output_index=0, delta="no"),
     )
     assert _types(events) == [EventType.TEXT_MESSAGE_START, EventType.TEXT_MESSAGE_CONTENT]
@@ -154,12 +154,12 @@ def test_text_less_message_item_wrapping_a_tool_call_emits_no_window():
     # output_item.done(message) — with no text delta in between. The message
     # window must never open, so the tool call stays a clean sibling and no
     # empty TEXT_MESSAGE_START/END brackets it on the wire.
-    engine = SDKToAGUITranslator()
+    engine = OpenAIToAGUITranslator()
     events = _drive(
         engine,
-        _added(SDKItemType.MESSAGE, output_index=0, id="msg_1"),
+        _added(OpenAIItemType.MESSAGE, output_index=0, id="msg_1"),
         _added(
-            SDKItemType.FUNCTION_CALL,
+            OpenAIItemType.FUNCTION_CALL,
             output_index=1,
             id="fc_1",
             call_id="call_1",
@@ -172,13 +172,13 @@ def test_text_less_message_item_wrapping_a_tool_call_emits_no_window():
             delta='{"background":"red"}',
         ),
         _done(
-            SDKItemType.FUNCTION_CALL,
+            OpenAIItemType.FUNCTION_CALL,
             output_index=1,
             id="fc_1",
             call_id="call_1",
             name="change_background",
         ),
-        _done(SDKItemType.MESSAGE, output_index=0, id="msg_1"),
+        _done(OpenAIItemType.MESSAGE, output_index=0, id="msg_1"),
     )
     assert _types(events) == [
         EventType.TOOL_CALL_START,
@@ -193,10 +193,10 @@ def test_text_less_message_item_wrapping_a_tool_call_emits_no_window():
 
 
 def test_function_call_streams_start_args_end_under_the_call_id():
-    engine = SDKToAGUITranslator()
+    engine = OpenAIToAGUITranslator()
     events = _drive(
         engine,
-        _added(SDKItemType.FUNCTION_CALL, id="fc_1", call_id="call_1", name="get_weather"),
+        _added(OpenAIItemType.FUNCTION_CALL, id="fc_1", call_id="call_1", name="get_weather"),
         _raw(
             RawResponseEventType.FUNCTION_CALL_ARGUMENTS_DELTA,
             item_id="fc_1",
@@ -209,7 +209,7 @@ def test_function_call_streams_start_args_end_under_the_call_id():
             output_index=0,
             delta='"Cairo"}',
         ),
-        _done(SDKItemType.FUNCTION_CALL, id="fc_1", call_id="call_1", name="get_weather"),
+        _done(OpenAIItemType.FUNCTION_CALL, id="fc_1", call_id="call_1", name="get_weather"),
     )
     assert _types(events) == [
         EventType.TOOL_CALL_START,
@@ -225,7 +225,7 @@ def test_function_call_streams_start_args_end_under_the_call_id():
 
 
 def test_function_call_args_delta_lazily_opens_the_call():
-    engine = SDKToAGUITranslator()
+    engine = OpenAIToAGUITranslator()
     events = _drive(
         engine,
         _raw(
@@ -239,7 +239,7 @@ def test_function_call_args_delta_lazily_opens_the_call():
 
 
 def test_tool_output_item_emits_tool_call_result():
-    engine = SDKToAGUITranslator()
+    engine = OpenAIToAGUITranslator()
     item = ToolCallOutputItem(
         agent=_AGENT,
         raw_item={"type": "function_call_output", "call_id": "call_1", "output": "sunny"},
@@ -255,7 +255,7 @@ def test_tool_output_item_emits_tool_call_result():
 
 
 def test_reasoning_summary_delta_opens_phase_and_part():
-    engine = SDKToAGUITranslator()
+    engine = OpenAIToAGUITranslator()
     events = _drive(
         engine,
         _raw(
@@ -280,7 +280,7 @@ def test_reasoning_summary_delta_opens_phase_and_part():
 def test_reasoning_auto_closes_when_text_output_starts():
     # Once real output begins, any open reasoning must be closed first —
     # reasoning must never bleed into the answer window.
-    engine = SDKToAGUITranslator()
+    engine = OpenAIToAGUITranslator()
     _drive(
         engine,
         _raw(
@@ -293,7 +293,7 @@ def test_reasoning_auto_closes_when_text_output_starts():
     # output_item.added closes reasoning right away (output has begun), but
     # holds back TEXT_MESSAGE_START — that waits for a real delta so a
     # text-less item can't emit an empty window.
-    events = _drive(engine, _added(SDKItemType.MESSAGE, id="msg_1"))
+    events = _drive(engine, _added(OpenAIItemType.MESSAGE, id="msg_1"))
     assert _types(events) == [
         EventType.REASONING_MESSAGE_END,
         EventType.REASONING_END,
@@ -310,7 +310,7 @@ def test_reasoning_auto_closes_when_text_output_starts():
 
 
 def test_agent_updated_opens_a_step_finalize_closes_it():
-    engine = SDKToAGUITranslator()
+    engine = OpenAIToAGUITranslator()
     events = _drive(engine, _agent_updated("triage_agent"))
     assert _types(events) == [EventType.STEP_STARTED]
     assert events[0].step_name == "triage_agent"
@@ -320,7 +320,7 @@ def test_agent_updated_opens_a_step_finalize_closes_it():
 
 
 def test_handoff_pairs_step_finished_with_the_next_step_started():
-    engine = SDKToAGUITranslator()
+    engine = OpenAIToAGUITranslator()
     _drive(engine, _agent_updated("triage_agent"))
     events = _drive(engine, _agent_updated("billing_agent"))
     assert _types(events) == [EventType.STEP_FINISHED, EventType.STEP_STARTED]
@@ -332,7 +332,7 @@ def test_handoff_pairs_step_finished_with_the_next_step_started():
 
 
 def test_handoff_call_and_output_items_map_to_tool_call_and_result():
-    engine = SDKToAGUITranslator()
+    engine = OpenAIToAGUITranslator()
     call = HandoffCallItem(
         agent=_AGENT,
         raw_item=ResponseFunctionToolCall(
@@ -368,7 +368,7 @@ def test_handoff_call_and_output_items_map_to_tool_call_and_result():
 
 
 def test_mcp_approval_request_maps_to_a_custom_event():
-    engine = SDKToAGUITranslator()
+    engine = OpenAIToAGUITranslator()
     item = MCPApprovalRequestItem(
         agent=_AGENT,
         raw_item=McpApprovalRequest(
@@ -389,5 +389,5 @@ def test_mcp_approval_request_maps_to_a_custom_event():
 
 
 def test_unknown_stream_event_type_translates_to_nothing():
-    engine = SDKToAGUITranslator()
+    engine = OpenAIToAGUITranslator()
     assert engine.translate(SimpleNamespace(type="something_new", data=None)) == []

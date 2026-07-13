@@ -7,7 +7,7 @@ everything else, import AGUITranslator from the package root instead.
 
 from __future__ import annotations
 
-from .agui_to_sdk import AGUIToSDKTranslator, ClientToolPending
+from .agui_to_openai import AGUIToOpenAITranslator, ClientToolPending
 from .helpers import (
     coerce_to_str,
     new_message_id,
@@ -15,25 +15,25 @@ from .helpers import (
     new_tool_result_id,
     read_attr,
 )
-from .sdk_to_agui import SDKToAGUITranslator
+from .openai_to_agui import OpenAIToAGUITranslator
 from .stream_types import (
     HOSTED_TOOL_CALL_TYPES,
     RawResponseEventType,
-    SDKItemType,
-    SDKStreamEventType,
+    OpenAIItemType,
+    OpenAIStreamEventType,
 )
 from .types import TranslatedInput
 
 __all__ = [
     # Engine translators
-    "AGUIToSDKTranslator",
-    "SDKToAGUITranslator",
+    "AGUIToOpenAITranslator",
+    "OpenAIToAGUITranslator",
     # Result types
     "TranslatedInput",
     # Wire discriminators
-    "SDKStreamEventType",
+    "OpenAIStreamEventType",
     "RawResponseEventType",
-    "SDKItemType",
+    "OpenAIItemType",
     "HOSTED_TOOL_CALL_TYPES",
     # Sentinels
     "ClientToolPending",
