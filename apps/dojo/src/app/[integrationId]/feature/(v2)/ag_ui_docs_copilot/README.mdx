@@ -5,13 +5,14 @@ the OpenAI Agents SDK.
 
 The main **Copilot** handles normal conversation without loading the
 documentation. For AG-UI documentation or code questions, it calls a second
-OpenAI Agents SDK agent, **AG-UI Documentation Specialist**, through
-`Agent.as_tool()`. Only the specialist receives the local `README.md`.
+OpenAI Agents SDK agents, **AG-UI OpenAI Agents Specialist** and **AG-UI
+Protocol Python Specialist**, through
+`Agent.as_tool()`. Each specialist receives only its relevant local README.
 
 ## What it demonstrates
 
 ```text
-Copilot → Documentation Specialist (local README)
+Copilot → OpenAI Agents / Protocol specialists (local READMEs)
                                       ↓
 RunAgentInput → to_sdk() → Runner.run_streamed() → to_agui() → SSE
 ```
@@ -32,6 +33,6 @@ documents should replace this with its own retrieval system.
 
 - Ask how `AGUITranslator.to_sdk()` and `to_agui()` connect the frontend and
   SDK.
-- Ask the Documentation Specialist to generate a minimal FastAPI streaming endpoint.
+- Ask the OpenAI Agents Specialist to generate a minimal FastAPI streaming endpoint.
 - Ask which translator options control lifecycle events, snapshots, state, and
   errors.

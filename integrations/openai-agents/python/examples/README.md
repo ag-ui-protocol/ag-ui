@@ -4,8 +4,9 @@ Runnable demos for `ag_ui_openai_agents`, one mounted FastAPI app per agent.
 The aggregate server shows both integration styles:
 
 - **`ag_ui_docs_copilot`** handles normal conversation with a small main
-  Copilot and delegates AG-UI documentation and code questions to an
-  `AG-UI Documentation Specialist` agent as a tool.
+  Copilot and delegates integration questions to an
+  `AG-UI OpenAI Agents Specialist` and core protocol questions to an
+  `AG-UI Protocol Python Specialist` as tools.
 - The remaining focused feature apps use **`OpenAIAgentsAgent`** and
   `add_openai_agents_fastapi_endpoint` where their run does not require custom
   control.
@@ -60,10 +61,11 @@ lists every registered agent. Demos map 1:1 onto the AG-UI Dojo feature pages.
 
 The main Copilot handles normal conversation without carrying the documentation
 in its instructions. Documentation and code questions are delegated to an
-`AG-UI Documentation Specialist`, which receives the integration's local
-`README.md` through the SDK's `Agent.as_tool()` API. Its endpoint keeps the
-direct `to_sdk` → `Runner.run_streamed` → `to_agui` flow visible and adds no
-retrieval framework, vector database, or network dependency.
+`AG-UI OpenAI Agents Specialist` and `AG-UI Protocol Python Specialist`, which
+receive the integration and core SDK README files through the SDK's
+`Agent.as_tool()` API. Its endpoint keeps the direct `to_sdk` →
+`Runner.run_streamed` → `to_agui` flow visible and adds no retrieval framework,
+vector database, or network dependency.
 
 **Try:** `"Explain how to connect my existing OpenAI Agents SDK agent to AG-UI,
 then ask the Documentation Specialist for the smallest FastAPI streaming

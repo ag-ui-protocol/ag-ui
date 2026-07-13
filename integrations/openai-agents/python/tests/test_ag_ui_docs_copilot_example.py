@@ -13,16 +13,26 @@ from agents_examples import ag_ui_docs_copilot  # noqa: E402
 
 
 def test_docs_copilot_loads_the_integration_readme() -> None:
-    assert "AG-UI × OpenAI Agents SDK" in ag_ui_docs_copilot.DOCS
-    assert "AGUITranslator" in ag_ui_docs_copilot.DOCS
+    assert "AG-UI × OpenAI Agents SDK" in ag_ui_docs_copilot.AG_UI_OPENAI_AGENTS_DOCS
+    assert "AGUITranslator" in ag_ui_docs_copilot.AG_UI_OPENAI_AGENTS_DOCS
+    assert "ag-ui-protocol" in ag_ui_docs_copilot.AG_UI_PROTOCOL_DOCS
+    assert "EventEncoder" in ag_ui_docs_copilot.AG_UI_PROTOCOL_DOCS
 
 
 def test_docs_copilot_has_a_documentation_specialist_tool() -> None:
     assert ag_ui_docs_copilot.copilot_agent.name == "AG-UI Docs Copilot"
     assert {tool.name for tool in ag_ui_docs_copilot.copilot_agent.tools} == {
-        "ask_ag_ui_docs"
+        "ask_ag_ui_openai_agents_docs",
+        "ask_ag_ui_protocol_docs",
     }
-    assert ag_ui_docs_copilot.docs_agent.name == "AG-UI Documentation Specialist"
+    assert (
+        ag_ui_docs_copilot.ag_ui_openai_agents_docs_agent.name
+        == "AG-UI OpenAI Agents Specialist"
+    )
+    assert (
+        ag_ui_docs_copilot.ag_ui_protocol_docs_agent.name
+        == "AG-UI Protocol Python Specialist"
+    )
 
 
 def test_docs_copilot_keeps_the_direct_translator_flow_visible() -> None:

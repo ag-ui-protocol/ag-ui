@@ -30,11 +30,29 @@ const AGUIDocsCopilot: React.FC<AGUIDocsCopilotProps> = ({ params }) => {
 
 const DocsChat = () => {
   useRenderTool({
-    name: "ask_ag_ui_docs",
+    name: "ask_ag_ui_openai_agents_docs",
     agentId: "ag_ui_docs_copilot",
     parameters: z.object({ input: z.string().optional() }),
     render: ({ status, args, result }: any) => (
-      <DocsLookupProgress status={status} query={args?.input} result={result} />
+      <DocsLookupProgress
+        source="AG-UI OpenAI Agents"
+        status={status}
+        query={args?.input}
+        result={result}
+      />
+    ),
+  });
+  useRenderTool({
+    name: "ask_ag_ui_protocol_docs",
+    agentId: "ag_ui_docs_copilot",
+    parameters: z.object({ input: z.string().optional() }),
+    render: ({ status, args, result }: any) => (
+      <DocsLookupProgress
+        source="AG-UI Protocol"
+        status={status}
+        query={args?.input}
+        result={result}
+      />
     ),
   });
 
@@ -72,10 +90,12 @@ const DocsChat = () => {
 };
 
 function DocsLookupProgress({
+  source,
   status,
   query,
   result,
 }: {
+  source: "AG-UI OpenAI Agents" | "AG-UI Protocol";
   status: "inProgress" | "executing" | "complete";
   query?: string;
   result?: string;
@@ -85,7 +105,7 @@ function DocsLookupProgress({
     ? "Answer ready"
     : status === "executing"
       ? "Finding the relevant section"
-      : "Opening the AG-UI guide";
+      : `Opening the ${source} guide`;
 
   return (
     <div className="my-2 max-w-md rounded-xl border border-blue-200/70 bg-blue-50/70 px-4 py-3 text-sm dark:border-blue-400/20 dark:bg-blue-950/30">
@@ -94,7 +114,7 @@ function DocsLookupProgress({
           {complete ? "✓" : "📚"}
         </span>
         <span>
-          {complete ? "AG-UI docs consulted" : "Consulting the AG-UI docs"}
+          {complete ? `${source} docs consulted` : `Consulting ${source} docs`}
         </span>
         {!complete && (
           <span
@@ -117,7 +137,7 @@ function DocsLookupProgress({
       )}
       {complete && result && (
         <div className="mt-1 line-clamp-2 text-xs text-blue-900/70 dark:text-blue-100/70">
-          Documentation specialist finished.
+          {source} specialist finished.
         </div>
       )}
     </div>
