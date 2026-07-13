@@ -540,7 +540,7 @@ class SDKToAGUITranslator:
             return self.translate_mcp_list_tools_item(item)
         if isinstance(item, MCPApprovalResponseItem):
             return self.translate_mcp_approval_response_item(item)
-        logger.debug("Unknown SDK run item type: %s", type(item).__name__)
+        logger.warning("Unknown SDK run item type: %s", type(item).__name__)
         return []
 
     def translate_message_output_item(self, item: MessageOutputItem) -> list[BaseEvent]:

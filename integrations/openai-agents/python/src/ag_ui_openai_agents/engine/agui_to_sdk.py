@@ -245,7 +245,7 @@ class AGUIToSDKTranslator:
         if isinstance(message, ActivityMessage):
             item = self.translate_activity_message(message)
             return [item] if item is not None else []
-        logger.debug("Unknown AG-UI message type: %s", type(message).__name__)
+        logger.warning("Unknown AG-UI message type: %s", type(message).__name__)
         return []
 
     def translate_user_message(self, message: UserMessage) -> dict[str, Any]:
@@ -740,6 +740,7 @@ class AGUIToSDKTranslator:
             url = self._data_source_to_url(read_attr(part, "source"))
             return {"type": "input_image", "image_url": url} if url else None
         # Don't recognize it — skip it rather than guess.
+        logger.warning("Ignoring unsupported input content type: %s", part_type)
         return None
 
     # -- Helpers for translate_binary_content, split out to keep it readable
