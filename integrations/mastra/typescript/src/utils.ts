@@ -8,7 +8,10 @@ import { AbstractAgent } from "@ag-ui/client";
 import { MastraClient } from "@mastra/client-js";
 import type { Mastra } from "@mastra/core";
 import type { CoreMessage } from "@mastra/core/llm";
-import { Agent as LocalMastraAgent } from "@mastra/core/agent";
+import {
+  Agent as LocalMastraAgent,
+  type AgentExecutionOptions,
+} from "@mastra/core/agent";
 import { RequestContext } from "@mastra/core/request-context";
 import { MastraAgent, MastraTracingOptions } from "./mastra";
 
@@ -258,6 +261,12 @@ export interface GetLocalAgentsOptions {
   observationalMemory?: boolean | string[];
   /** Mastra tracing options forwarded to each run. See MastraAgentConfig.tracingOptions. */
   tracingOptions?: MastraTracingOptions;
+  /** Local-only Mastra callback forwarded to every agent run. */
+  prepareStep?: AgentExecutionOptions["prepareStep"];
+  /** Local-only Mastra callback forwarded to every agent run. */
+  onFinish?: AgentExecutionOptions["onFinish"];
+  /** Local-only Mastra callback forwarded to every agent run. */
+  onStepFinish?: AgentExecutionOptions["onStepFinish"];
 }
 
 export function getLocalAgents({
@@ -267,6 +276,9 @@ export function getLocalAgents({
   untilIdle,
   observationalMemory,
   tracingOptions,
+  prepareStep,
+  onFinish,
+  onStepFinish,
 }: GetLocalAgentsOptions): Record<string, AbstractAgent> {
   const agents = mastra.listAgents() || {};
 
@@ -291,6 +303,9 @@ export function getLocalAgents({
           ? true
           : undefined,
         tracingOptions,
+        prepareStep,
+        onFinish,
+        onStepFinish,
       });
       return acc;
     },
@@ -307,6 +322,12 @@ export interface GetLocalAgentOptions {
   requestContext?: RequestContext;
   /** Mastra tracing options forwarded to the run. See MastraAgentConfig.tracingOptions. */
   tracingOptions?: MastraTracingOptions;
+  /** Local-only Mastra callback forwarded to the run. */
+  prepareStep?: AgentExecutionOptions["prepareStep"];
+  /** Local-only Mastra callback forwarded to the run. */
+  onFinish?: AgentExecutionOptions["onFinish"];
+  /** Local-only Mastra callback forwarded to the run. */
+  onStepFinish?: AgentExecutionOptions["onStepFinish"];
 }
 
 export function getLocalAgent({
@@ -315,6 +336,9 @@ export function getLocalAgent({
   resourceId,
   requestContext,
   tracingOptions,
+  prepareStep,
+  onFinish,
+  onStepFinish,
 }: GetLocalAgentOptions) {
   const agent = mastra.getAgent(agentId);
   if (!agent) {
@@ -326,6 +350,9 @@ export function getLocalAgent({
     resourceId,
     requestContext,
     tracingOptions,
+    prepareStep,
+    onFinish,
+    onStepFinish,
   }) as AbstractAgent;
 }
 

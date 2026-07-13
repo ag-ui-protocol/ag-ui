@@ -24,7 +24,10 @@ import type {
   ToolCallStartEvent,
 } from "@ag-ui/client";
 import { AbstractAgent, EventType } from "@ag-ui/client";
-import type { Agent as LocalMastraAgent } from "@mastra/core/agent";
+import type {
+  Agent as LocalMastraAgent,
+  AgentExecutionOptions,
+} from "@mastra/core/agent";
 import { RequestContext } from "@mastra/core/request-context";
 import { randomUUID } from "@ag-ui/client";
 import jsonpatch from "fast-json-patch";
@@ -339,6 +342,18 @@ export interface MastraAgentConfig extends AgentConfig {
   resourceId?: string;
   requestContext?: RequestContext;
   /**
+   * Local agents only. Runs before every Mastra agent step and may adjust that
+   * step's model, tool choice, active tools, messages, or workspace.
+   *
+   * This is an in-process callback and is intentionally not forwarded to
+   * RemoteMastraAgent, where functions cannot cross the HTTP boundary.
+   */
+  prepareStep?: AgentExecutionOptions["prepareStep"];
+  /** Local agents only. Called when the Mastra agent execution completes. */
+  onFinish?: AgentExecutionOptions["onFinish"];
+  /** Local agents only. Called after each Mastra agent execution step. */
+  onStepFinish?: AgentExecutionOptions["onStepFinish"];
+  /**
    * Forward Mastra tracing options into the run's `agent.stream(...)` (and the
    * resume path). Chiefly lets a caller inject a self-chosen `traceId` so the
    * Mastra execution trace is anchored to an id the client already knows,
@@ -565,6 +580,9 @@ export class MastraAgent extends AbstractAgent {
   untilIdle?: boolean | { maxIdleMs?: number };
   observationalMemory?: boolean;
   tracingOptions?: MastraTracingOptions;
+  prepareStep?: AgentExecutionOptions["prepareStep"];
+  onFinish?: AgentExecutionOptions["onFinish"];
+  onStepFinish?: AgentExecutionOptions["onStepFinish"];
   public headers?: Record<string, string>;
   /** See MastraAgentConfig.emitInterruptOutcome. Default true. */
   emitInterruptOutcome: boolean;
@@ -602,6 +620,9 @@ export class MastraAgent extends AbstractAgent {
       requestContext,
       untilIdle,
       tracingOptions,
+      prepareStep,
+      onFinish,
+      onStepFinish,
       emitInterruptOutcome,
       a2ui,
       remoteClient,
@@ -620,6 +641,9 @@ export class MastraAgent extends AbstractAgent {
     this.useProcessedFinalText = useProcessedFinalText ?? false;
     this.observationalMemory = observationalMemory;
     this.tracingOptions = tracingOptions;
+    this.prepareStep = prepareStep;
+    this.onFinish = onFinish;
+    this.onStepFinish = onStepFinish;
   }
 
   public clone() {
@@ -2761,6 +2785,15 @@ export class MastraAgent extends AbstractAgent {
         }
         if (this.tracingOptions) {
           streamOptions.tracingOptions = this.tracingOptions;
+        }
+        if (this.prepareStep) {
+          streamOptions.prepareStep = this.prepareStep;
+        }
+        if (this.onFinish) {
+          streamOptions.onFinish = this.onFinish;
+        }
+        if (this.onStepFinish) {
+          streamOptions.onStepFinish = this.onStepFinish;
         }
         if (this.headers && Object.keys(this.headers).length > 0) {
           streamOptions.modelSettings = {
