@@ -1,37 +1,16 @@
 """Dynamic system prompt — reply language driven by the AG-UI ``context`` channel.
 
-The point of this demo: **context needs no special AG-UI class.** The frontend
-sends a language choice (English / Arabic / German) over the AG-UI ``context``
-channel — a plain ``list[Context]`` of ``{description, value}`` items on
-``RunAgentInput.context``. This example folds it into the system prompt with the
-OpenAI Agents SDK's own native feature: ``Agent.instructions`` accepting a
-callable ``(RunContextWrapper, Agent) -> str``, re-run every turn.
-
-Not registered in ``build_registry()``: ``server.py``'s wrapper
-(``OpenAIAgentsAgent``) and ``translator_server.py``'s shared ``_stream()``
-both call ``Runner.run_streamed`` without ``context=``, so neither ever
-forwards ``RunAgentInput.context`` to the SDK — ``to_sdk()`` hands it back on
-``TranslatedInput.context``, but nothing in those two shared loops passes it
-on. Rather than change either shared loop for one demo, ``stream()`` below
-is this demo's own run loop — the same three calls those servers make
-(``to_sdk`` / ``Runner.run_streamed`` / ``to_agui``), translator-driven, no
-``OpenAIAgentsAgent`` wrapper and no FastAPI in this file, plus the one line
-those loops skip: ``context=translated.context``, passed straight through as
-the SDK's own ``context=`` and read back via ``RunContextWrapper.context`` in
-``dynamic_instructions``. ``.dev/groq_server.py`` (gitignored, local Groq
-dev) just calls ``stream()`` from its own route. No ``AGUIContext`` anywhere:
-this demo has no state, only context, and context is just a list to read.
+The frontend sends a language choice in ``RunAgentInput.context`` and the SDK
+rebuilds its instructions for that request.
 """
 
 from __future__ import annotations
 
-from typing import AsyncIterator
+from agents import Agent, RunContextWrapper
+from ag_ui.core import Context
+from fastapi import FastAPI
 
-from agents import Agent, Runner, RunContextWrapper
-from ag_ui.core import BaseEvent, Context, RunAgentInput
-
-from ag_ui_openai_agents import AGUITranslator
-
+from ag_ui_openai_agents import OpenAIAgentsAgent, add_openai_agents_fastapi_endpoint
 from .constants import DEFAULT_MODEL
 
 BASE_INSTRUCTIONS = (
@@ -75,30 +54,6 @@ def create_dynamic_system_prompt_agent() -> Agent:
     )
 
 
-agent = create_dynamic_system_prompt_agent()
-
-# Reusable — to_sdk is stateless, to_agui spins up a fresh engine per call.
-_translator = AGUITranslator()
-
-
-async def stream(body: RunAgentInput) -> AsyncIterator[BaseEvent]:
-    """Run this demo for one AG-UI request, translator by hand, and yield AG-UI events.
-
-    Any server can call this directly — it owns the HTTP/SSE plumbing, this
-    owns the run loop. The one line that makes the demo work:
-    ``context=translated.context``, forwarded to ``Runner.run_streamed`` so
-    ``dynamic_instructions`` can read it back.
-    """
-    translated = _translator.to_sdk(body)
-
-    run_agent = agent
-    if translated.tools:
-        run_agent = run_agent.clone(tools=[*agent.tools, *translated.tools])
-
-    result = Runner.run_streamed(
-        run_agent,
-        input=translated.messages,
-        context=translated.context,
-    )
-    async for event in _translator.to_agui(result, body):
-        yield event
+agent = OpenAIAgentsAgent(create_dynamic_system_prompt_agent(), name="dynamic_system_prompt")
+app = FastAPI(title="Dynamic system prompt AG-UI demo")
+add_openai_agents_fastapi_endpoint(app, agent, "/")

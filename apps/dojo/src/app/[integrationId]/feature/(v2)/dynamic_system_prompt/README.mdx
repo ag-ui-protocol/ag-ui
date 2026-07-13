@@ -10,11 +10,9 @@ bakes "always reply in X" into the system prompt fresh, before each model
 call.
 
 Context needs no `AGUIContext`/state machinery — it's read-only and
-regenerated every run, so this demo drives the translator directly instead
-of the shared wrapper: `to_sdk()` / `Runner.run_streamed(..., context=...)`
-/ `to_agui()`, the same three calls as the other servers, plus the one line
-they skip — passing the AG-UI context straight through as the SDK's own
-`context=`.
+regenerated every run. The shared `OpenAIAgentsAgent` wrapper passes the
+translated context into `Runner.run_streamed(..., context=...)`, so this demo
+uses the same mounted FastAPI-app pattern as the other examples.
 
 ## How to Interact
 
@@ -31,7 +29,6 @@ they skip — passing the AG-UI context straight through as the SDK's own
   `examples/agents_examples/dynamic_system_prompt.py` reads
   `ctx.context` (the raw `list[Context]` sent by the client) and returns a
   fresh instructions string
-- Runs as its own standalone FastAPI app (own file, own port) rather than
-  through the shared demo registry — the shared servers don't forward
-  `RunAgentInput.context` into `Runner.run_streamed`, so a demo that needs
-  it runs independently instead of changing that shared loop
+- The demo app is mounted by `examples/server.py` at
+  `/dynamic_system_prompt`; the aggregate OpenAI Agents server runs on port
+  8024

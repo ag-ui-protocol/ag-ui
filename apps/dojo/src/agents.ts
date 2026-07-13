@@ -635,7 +635,7 @@ export const agentsIntegrations = {
   "openai-agents-python": async () =>
     mapAgents(
       (path) =>
-        new HttpAgent({ url: `${envVars.openaiAgentsPythonUrl}/${path}` }),
+        new HttpAgent({ url: `${envVars.openaiAgentsPythonUrl}/${path}/` }),
       {
         agentic_chat: "agentic_chat",
         backend_tool_rendering: "backend_tool_rendering",

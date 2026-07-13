@@ -28,15 +28,20 @@ pending:
 
 The frontend renders Approve/Reject; either choice comes back as the next
 ``RunAgentInput.forwarded_props["approval"]`` (``{"call_id", "approve"}``).
-The run loop looks up the stored state, calls ``state.approve()`` /
+The aggregate server looks up the stored state, calls ``state.approve()`` /
 ``state.reject()``, and resumes with ``Runner.run_streamed(agent, state)``
 instead of starting fresh from ``translated.messages``.
 """
 
 from __future__ import annotations
 
-from agents import Agent, function_tool
+from agents import Agent, Runner, function_tool
+from ag_ui.core import CustomEvent, EventType, RunAgentInput
+from ag_ui.encoder import EventEncoder
+from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
 
+from ag_ui_openai_agents import AGUITranslator
 from .constants import DEFAULT_MODEL
 
 # Fake order book — good enough to make "approved" visibly do something.
@@ -69,3 +74,73 @@ def create_human_in_the_loop_approval_agent() -> Agent:
         ),
         tools=[issue_refund],
     )
+
+
+agent = create_human_in_the_loop_approval_agent()
+app = FastAPI(title="Human in the loop approval AG-UI demo")
+_translator = AGUITranslator()
+_encoder = EventEncoder()
+_pending_approvals: dict[str, object] = {}
+
+
+@app.post("/")
+async def run(body: RunAgentInput) -> StreamingResponse:
+    """Run or resume the approval-gated agent."""
+
+    async def stream():
+        decision = None
+        if isinstance(body.forwarded_props, dict):
+            decision = body.forwarded_props.get("approval")
+
+        pending_state = _pending_approvals.pop(body.thread_id, None)
+        if decision and pending_state is not None:
+            item = next(
+                (
+                    item
+                    for item in pending_state.get_interruptions()
+                    if getattr(item.raw_item, "call_id", None) == decision.get("call_id")
+                ),
+                None,
+            )
+            if item is not None:
+                if decision.get("approve"):
+                    pending_state.approve(item)
+                else:
+                    pending_state.reject(item)
+            result = Runner.run_streamed(agent, pending_state)
+        else:
+            translated = _translator.to_sdk(body)
+            run_agent = agent
+            if translated.tools:
+                run_agent = run_agent.clone(tools=[*agent.tools, *translated.tools])
+            result = Runner.run_streamed(
+                run_agent, input=translated.messages, context=translated.context
+            )
+
+        raw_events = [event async for event in result.stream_events()]
+        end_custom_event = None
+        if result.interruptions:
+            _pending_approvals[body.thread_id] = result.to_state()
+            end_custom_event = CustomEvent(
+                type=EventType.CUSTOM,
+                name="approval_request",
+                value=[
+                    {
+                        "call_id": getattr(item.raw_item, "call_id", None),
+                        "tool_name": item.tool_name,
+                        "arguments": getattr(item.raw_item, "arguments", None),
+                    }
+                    for item in result.interruptions
+                ],
+            )
+
+        async def replay():
+            for event in raw_events:
+                yield event
+
+        async for event in _translator.to_agui(
+            replay(), body, end_custom_event=end_custom_event
+        ):
+            yield _encoder.encode(event)
+
+    return StreamingResponse(stream(), media_type=_encoder.get_content_type())

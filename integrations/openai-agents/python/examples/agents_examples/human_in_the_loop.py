@@ -17,7 +17,9 @@ no custom pause/resume machinery needed.
 from __future__ import annotations
 
 from agents import Agent, StopAtTools
+from fastapi import FastAPI
 
+from ag_ui_openai_agents import OpenAIAgentsAgent, add_openai_agents_fastapi_endpoint
 from .constants import DEFAULT_MODEL
 
 # Must match the AG-UI client tool name the frontend declares in
@@ -42,3 +44,8 @@ def create_human_in_the_loop_agent() -> Agent:
         instructions=INSTRUCTIONS,
         tool_use_behavior=StopAtTools(stop_at_tool_names=[FRONTEND_TOOL_NAME]),
     )
+
+
+agent = OpenAIAgentsAgent(create_human_in_the_loop_agent(), name="human_in_the_loop")
+app = FastAPI(title="Human in the loop AG-UI demo")
+add_openai_agents_fastapi_endpoint(app, agent, "/")

@@ -8,7 +8,8 @@ and has its own coverage:
   RUN_FINISHED last) for one AG-UI request.
 - Client-declared tools are merged onto a per-request ``clone`` — the wrapped
   static agent is never mutated; without tools no clone happens.
-- ``run_config`` passes through to ``Runner.run_streamed``.
+- ``run_config`` and context pass through to ``Runner.run_streamed``.
+- Optional lifecycle-event builders are forwarded to ``to_agui`` per run.
 - ``name`` defaults to the SDK agent's name.
 """
 
@@ -19,6 +20,8 @@ from unittest.mock import MagicMock
 
 import pytest
 from ag_ui.core import (
+    CustomEvent,
+    Context,
     EventType,
     RunAgentInput,
     Tool,
@@ -62,7 +65,9 @@ def patched_runner(monkeypatch):
     calls: list[dict] = []
 
     def fake_run_streamed(agent, *, input, run_config=None, **kwargs):
-        calls.append({"agent": agent, "input": input, "run_config": run_config})
+        calls.append(
+            {"agent": agent, "input": input, "run_config": run_config, **kwargs}
+        )
         result = MagicMock(spec=RunResultStreaming)
         result.stream_events.return_value = _empty_stream()
         return result
@@ -111,6 +116,36 @@ def test_run_config_passes_through(patched_runner):
     )
     _collect(wrapper, _run_input())
     assert patched_runner[0]["run_config"] is run_config
+
+
+def test_context_passes_through(patched_runner):
+    run_input = _run_input()
+    run_input.context = [Context(description="Response language", value="German")]
+    wrapper = OpenAIAgentsAgent(Agent(name="assistant", instructions="hi"))
+    _collect(wrapper, run_input)
+    assert patched_runner[0]["context"] == run_input.context
+
+
+def test_lifecycle_event_builders_pass_through(patched_runner, monkeypatch):
+    start = CustomEvent(type=EventType.CUSTOM, name="start", value={})
+    end = CustomEvent(type=EventType.CUSTOM, name="end", value={})
+    translated_calls: list[dict] = []
+    wrapper = OpenAIAgentsAgent(
+        Agent(name="assistant", instructions="hi"),
+        build_start_custom_event=lambda: start,
+        build_end_custom_event=lambda: end,
+    )
+
+    original_to_agui = wrapper._translator.to_agui
+
+    async def spy_to_agui(result, run_input, **kwargs):
+        translated_calls.append(kwargs)
+        async for event in original_to_agui(result, run_input, **kwargs):
+            yield event
+
+    monkeypatch.setattr(wrapper._translator, "to_agui", spy_to_agui)
+    _collect(wrapper, _run_input())
+    assert translated_calls == [{"start_custom_event": start, "end_custom_event": end}]
 
 
 def test_name_defaults_to_agent_name():

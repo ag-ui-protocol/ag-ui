@@ -86,7 +86,7 @@ export default function getEnvVars(): envVars {
     claudeAgentSdkTypescriptUrl:
       process.env.CLAUDE_AGENT_SDK_TYPESCRIPT_URL || "http://localhost:8020",
     openaiAgentsPythonUrl:
-      process.env.OPENAI_AGENTS_PYTHON_URL || "http://localhost:8022",
+      process.env.OPENAI_AGENTS_PYTHON_URL || "http://localhost:8024",
     langroidUrl: process.env.LANGROID_URL || "http://localhost:8021",
     watsonxRegion: process.env.WATSONX_REGION || "",
     watsonxInstanceId: process.env.WATSONX_INSTANCE_ID || "",

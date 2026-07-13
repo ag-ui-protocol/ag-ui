@@ -6,7 +6,7 @@
 and `end_custom_event` — each accepting only an AG-UI `CustomEvent` instance
 (anything else raises `TypeError`), default `None` (off). When set, one
 `CUSTOM` event is emitted right after `RUN_STARTED`, another right before
-`RUN_FINISHED`. This demo's server (`translator_server.py`) uses them to
+`RUN_FINISHED`. This demo's `OpenAIAgentsAgent` wrapper forwards them to
 report fake usage split the way a real bill would be: `input_usage`
 (prompt tokens/cost — known before the model even runs) at the start,
 `output_usage` (completion tokens/cost — known only once the run is done)
@@ -24,9 +24,9 @@ reported at the end.
 ## Technical Details
 
 - `build_input_usage_event()`/`build_output_usage_event()`
-  (`agents_examples/custom_lifecycle_events.py`) build the two `CustomEvent`s;
-  `translator_server.py`'s route just calls them and passes the result to
-  `to_agui(start_custom_event=..., end_custom_event=...)`
+  (`agents_examples/custom_lifecycle_events.py`) build the two `CustomEvent`s
+  for each run; `OpenAIAgentsAgent` calls the builders and passes the results
+  to `to_agui(start_custom_event=..., end_custom_event=...)`
 - Both events are opaque to the translator — it only checks `isinstance(...,
   CustomEvent)`, the `name`/`value` shape is entirely up to the caller
 - The page captures the current `runId` from `RUN_STARTED`, associates the

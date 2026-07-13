@@ -6,10 +6,10 @@ ready for add_openai_agents_fastapi_endpoint.
 
 from __future__ import annotations
 
-from typing import AsyncIterator
+from typing import AsyncIterator, Callable
 
 from agents import Agent, RunConfig, Runner
-from ag_ui.core import BaseEvent, RunAgentInput
+from ag_ui.core import BaseEvent, CustomEvent, RunAgentInput
 
 from .translator import AGUITranslator
 
@@ -43,6 +43,8 @@ class OpenAIAgentsAgent:
         description: str = "",
         translator: AGUITranslator | None = None,
         run_config: RunConfig | None = None,
+        build_start_custom_event: Callable[[], CustomEvent] | None = None,
+        build_end_custom_event: Callable[[], CustomEvent] | None = None,
     ) -> None:
         """Wrap an SDK Agent.
 
@@ -55,12 +57,18 @@ class OpenAIAgentsAgent:
             run_config: Passed straight to Runner.run_streamed on every run —
                 the place to set a non-OpenAI model provider (e.g. LiteLLM) or
                 run-wide model settings. None uses the SDK defaults (native OpenAI).
+            build_start_custom_event: Lazily builds a CUSTOM event emitted after
+                RUN_STARTED for each run.
+            build_end_custom_event: Lazily builds a CUSTOM event emitted before
+                the terminal lifecycle event for each run.
         """
         self.agent = agent
         self.name = name or agent.name
         self.description = description
         self._translator = translator or AGUITranslator()
         self._run_config = run_config
+        self._build_start_custom_event = build_start_custom_event
+        self._build_end_custom_event = build_end_custom_event
 
     async def run(self, input: RunAgentInput) -> AsyncIterator[BaseEvent]:
         """Run the agent for one AG-UI request and yield AG-UI events.
@@ -88,7 +96,14 @@ class OpenAIAgentsAgent:
             agent,
             input=translated.messages,
             run_config=self._run_config,
+            context=translated.context,
         )
 
-        async for event in self._translator.to_agui(result, input):
+        to_agui_kwargs = {}
+        if self._build_start_custom_event is not None:
+            to_agui_kwargs["start_custom_event"] = self._build_start_custom_event()
+        if self._build_end_custom_event is not None:
+            to_agui_kwargs["end_custom_event"] = self._build_end_custom_event()
+
+        async for event in self._translator.to_agui(result, input, **to_agui_kwargs):
             yield event

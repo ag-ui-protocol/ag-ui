@@ -28,13 +28,13 @@ cp .env.example .env   # fill in OPENAI_API_KEY
 uv run python server.py
 ```
 
-Server runs on **http://localhost:8022** (the port the AG-UI Dojo expects;
+Server runs on **http://localhost:8024** (the port the AG-UI Dojo expects;
 override with `PORT`).
 
 ## Testing
 
 ```bash
-curl -N -X POST http://localhost:8022/agentic_chat \
+curl -N -X POST http://localhost:8024/agentic_chat \
   -H 'Content-Type: application/json' \
   -d '{
     "thread_id": "t1",

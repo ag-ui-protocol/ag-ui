@@ -1,0 +1,14 @@
+---
+title: Human in the Loop Approval
+description: Pause a backend tool call until a person approves or rejects it.
+---
+
+## Human in the Loop Approval
+
+This example uses a backend-owned `issue_refund` tool with the OpenAI Agents
+SDK's `needs_approval` option. When the agent asks to issue a refund, the run
+pauses and the page shows an approval card.
+
+Choose **Approve** to execute the refund or **Reject** to resume the agent
+without executing it. The server keeps the paused SDK state for the thread and
+uses the decision from the next request to continue that same run.

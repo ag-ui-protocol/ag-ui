@@ -18,7 +18,9 @@ is the tool-call plumbing, not real weather data.
 from __future__ import annotations
 
 from agents import Agent, function_tool
+from fastapi import FastAPI
 
+from ag_ui_openai_agents import OpenAIAgentsAgent, add_openai_agents_fastapi_endpoint
 from .constants import DEFAULT_MODEL
 
 _WEATHER = {"temperature": 20, "conditions": "sunny", "humidity": 50, "wind_speed": 10, "feels_like": 20}
@@ -40,3 +42,8 @@ def create_backend_tool_agent() -> Agent:
         ),
         tools=[get_weather],
     )
+
+
+agent = OpenAIAgentsAgent(create_backend_tool_agent(), name="backend_tool_rendering")
+app = FastAPI(title="Backend tool rendering AG-UI demo")
+add_openai_agents_fastapi_endpoint(app, agent, "/")

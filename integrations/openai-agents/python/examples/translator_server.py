@@ -38,7 +38,7 @@ Run:
     RELOAD=1 OPENAI_API_KEY=sk-... uv run python translator_server.py
 
 Test:
-    curl -N -X POST http://localhost:8022/agentic_chat \\
+    curl -N -X POST http://localhost:8024/agentic_chat \\
       -H 'Content-Type: application/json' \\
       -d '{
         "thread_id": "t1",
@@ -253,9 +253,9 @@ def main() -> int:
     if not os.getenv("OPENAI_API_KEY"):
         print("Error: OPENAI_API_KEY required")
         return 1
-    # 8022 is the port the AG-UI Dojo expects for this integration
+    # 8024 is the port the AG-UI Dojo expects for this integration
     # (apps/dojo/src/env.ts — OPENAI_AGENTS_PYTHON_URL).
-    port = int(os.getenv("PORT", "8022"))
+    port = int(os.getenv("PORT", "8024"))
     host = os.getenv("HOST", "0.0.0.0")
     print(f"Starting server on port {port} — agents: {list(DEMOS)}")
     if os.getenv("RELOAD"):

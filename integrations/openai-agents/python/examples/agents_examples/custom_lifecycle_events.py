@@ -1,11 +1,10 @@
-"""Custom lifecycle events — manual to_agui() with a CUSTOM event bracketing the run.
+"""Custom lifecycle events — CUSTOM events bracketing the run.
 
 Plain chat agent, same as agentic_chat — the point isn't the agent, it's
 the two builder functions below. This ``DemoConfig`` sets
-``build_start_custom_event``/``build_end_custom_event`` (see
-``agents_examples/__init__.py``); the shared run loop in
-translator_server.py calls them and forwards the result into
-``to_agui()``'s ``start_custom_event``/``end_custom_event`` params, so one
+``build_start_custom_event``/``build_end_custom_event``. The wrapper forwards
+their results to ``to_agui()``'s ``start_custom_event``/``end_custom_event``
+params, so one
 CUSTOM event goes out right after RUN_STARTED and another right before
 RUN_FINISHED. Only CustomEvent instances are accepted there; anything else
 raises TypeError.
@@ -22,7 +21,9 @@ import random
 
 from ag_ui.core import CustomEvent, EventType
 from agents import Agent
+from fastapi import FastAPI
 
+from ag_ui_openai_agents import OpenAIAgentsAgent, add_openai_agents_fastapi_endpoint
 from .constants import DEFAULT_MODEL
 
 
@@ -50,3 +51,13 @@ def build_output_usage_event() -> CustomEvent:
         name="output_usage",
         value={"tokens": tokens, "cost_usd": round(tokens * 0.0000006, 6)},
     )
+
+
+agent = OpenAIAgentsAgent(
+    create_custom_lifecycle_events_agent(),
+    name="custom_lifecycle_events",
+    build_start_custom_event=build_input_usage_event,
+    build_end_custom_event=build_output_usage_event,
+)
+app = FastAPI(title="Custom lifecycle events AG-UI demo")
+add_openai_agents_fastapi_endpoint(app, agent, "/")

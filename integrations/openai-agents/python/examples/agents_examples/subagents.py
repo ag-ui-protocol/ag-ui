@@ -17,7 +17,9 @@ separate messages, so the client sees one coherent supervisor transcript.
 from __future__ import annotations
 
 from agents import Agent
+from fastapi import FastAPI
 
+from ag_ui_openai_agents import OpenAIAgentsAgent, add_openai_agents_fastapi_endpoint
 from .constants import DEFAULT_MODEL
 
 research_agent = Agent(
@@ -74,3 +76,8 @@ def create_subagents_agent() -> Agent:
             ),
         ],
     )
+
+
+agent = OpenAIAgentsAgent(create_subagents_agent(), name="subagents")
+app = FastAPI(title="Subagents AG-UI demo")
+add_openai_agents_fastapi_endpoint(app, agent, "/")
