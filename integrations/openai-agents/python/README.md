@@ -35,7 +35,7 @@ is a `MESSAGES_SNAPSHOT` by default — see
 ## Install
 
 ```bash
-pip install ag-ui-openai-agent-sdk
+pip install ag-ui-openai-agents
 ```
 
 For local development this package uses [uv](https://docs.astral.sh/uv/):

@@ -1,17 +1,18 @@
 [project]
-name = "ag-ui-openai-agent-sdk"
+name = "ag-ui-openai-agents"
 version = "0.1.0"
 description = "AG-UI integration for OpenAI Agent SDK"
 readme = "README.md"
 authors = [
-    { name = "Abdelrahman Abozied" },
+    { name = "Abdelrahman Abozied", email = "me@abdelrahman.ai" },
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "ag-ui-protocol>=0.1.18",
     "openai-agents>=0.8.4",
     "pydantic>=2.13.4",
     "fastapi>=0.115.12",
+    "uvicorn>=0.51.0",
 ]
 
 [dependency-groups]
