@@ -18,6 +18,12 @@ function createFeatureConfig({
 
 export const featureConfig: FeatureConfig[] = [
   createFeatureConfig({
+    id: "ag_ui_docs_copilot",
+    name: "AG-UI Docs Copilot",
+    description: "Ask questions about the OpenAI Agents integration and delegate code snippets to a specialist agent",
+    tags: ["AG-UI", "OpenAI Agents", "Documentation", "Copilot"],
+  }),
+  createFeatureConfig({
     id: "agentic_chat",
     name: "Agentic Chat",
     description: "Chat with your Copilot and call frontend tools",

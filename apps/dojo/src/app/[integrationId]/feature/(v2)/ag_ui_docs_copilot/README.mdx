@@ -1,0 +1,37 @@
+# AG-UI Docs Copilot
+
+This example is a small documentation assistant for the AG-UI integration with
+the OpenAI Agents SDK.
+
+The main **Copilot** handles normal conversation without loading the
+documentation. For AG-UI documentation or code questions, it calls a second
+OpenAI Agents SDK agent, **AG-UI Documentation Specialist**, through
+`Agent.as_tool()`. Only the specialist receives the local `README.md`.
+
+## What it demonstrates
+
+```text
+Copilot → Documentation Specialist (local README)
+                                      ↓
+RunAgentInput → to_sdk() → Runner.run_streamed() → to_agui() → SSE
+```
+
+- Local documentation with no internet request or retrieval framework
+- An OpenAI Agents SDK documentation specialist used as a tool by Copilot
+- A direct, visible AG-UI translator endpoint
+- Streaming lifecycle, text, and tool-call events to CopilotKit
+
+## Why the documentation is loaded directly
+
+The integration README is small enough for this focused demo, so it is read
+once and included in the agents' instructions. This keeps the example
+deterministic and easy to copy. A production assistant with many or large
+documents should replace this with its own retrieval system.
+
+## Try it
+
+- Ask how `AGUITranslator.to_sdk()` and `to_agui()` connect the frontend and
+  SDK.
+- Ask the Documentation Specialist to generate a minimal FastAPI streaming endpoint.
+- Ask which translator options control lifecycle events, snapshots, state, and
+  errors.

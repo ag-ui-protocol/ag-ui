@@ -381,6 +381,7 @@ export const menuIntegrations = [
     id: "openai-agents-python",
     name: "OpenAI Agents SDK (Python)",
     features: [
+      "ag_ui_docs_copilot",
       "agentic_chat",
       "backend_tool_rendering",
       "human_in_the_loop",

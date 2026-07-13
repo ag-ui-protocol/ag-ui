@@ -1,6 +1,7 @@
 import type { menuIntegrations } from "../menu";
 
 export type Feature =
+  | "ag_ui_docs_copilot"
   | "agentic_chat"
   | "agentic_generative_ui"
   | "human_in_the_loop"

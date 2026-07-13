@@ -10,9 +10,11 @@ import os
 from pathlib import Path
 
 import uvicorn
+from agents import set_tracing_disabled
 from fastapi import FastAPI
 
 from agents_examples import (
+    ag_ui_docs_copilot,
     agentic_chat,
     backend_tool_rendering,
     custom_lifecycle_events,
@@ -23,7 +25,10 @@ from agents_examples import (
     tool_based_generative_ui,
 )
 
+set_tracing_disabled(True)
+
 DEMOS = {
+    "ag_ui_docs_copilot": ag_ui_docs_copilot.copilot_agent,
     "agentic_chat": agentic_chat.agent,
     "backend_tool_rendering": backend_tool_rendering.agent,
     "human_in_the_loop": human_in_the_loop.agent,
@@ -35,6 +40,7 @@ DEMOS = {
 }
 
 DEMO_APPS = {
+    "ag_ui_docs_copilot": ag_ui_docs_copilot.app,
     "agentic_chat": agentic_chat.app,
     "backend_tool_rendering": backend_tool_rendering.app,
     "human_in_the_loop": human_in_the_loop.app,

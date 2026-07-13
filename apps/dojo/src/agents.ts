@@ -637,6 +637,7 @@ export const agentsIntegrations = {
       (path) =>
         new HttpAgent({ url: `${envVars.openaiAgentsPythonUrl}/${path}/` }),
       {
+        ag_ui_docs_copilot: "ag_ui_docs_copilot",
         agentic_chat: "agentic_chat",
         backend_tool_rendering: "backend_tool_rendering",
         human_in_the_loop: "human_in_the_loop",
