@@ -6,6 +6,7 @@
     "dev": "npm run generate-content-json && next dev",
     "build": "next build",
     "start": "npm run generate-content-json && next start",
+    "e2e": "pnpm --dir e2e exec playwright test",
     "lint": "eslint .",
     "mastra:dev": "mastra dev",
     "generate-content-json": "npx tsx scripts/generate-content-json.ts",

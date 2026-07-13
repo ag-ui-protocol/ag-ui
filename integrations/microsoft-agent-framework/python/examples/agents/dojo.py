@@ -21,11 +21,8 @@ import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI
 
+from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
 from agent_framework.openai import OpenAIChatClient
-# TODO: Uncomment this when we have a way to authenticate with Azure
-# from azure.identity import DefaultAzureCredential
-# from agent_framework.azure import AzureOpenAIChatClient
-from agent_framework_ag_ui import add_agent_framework_fastapi_endpoint
 from agent_framework_ag_ui_examples.agents import (
     document_writer_agent,
     human_in_the_loop_agent,
@@ -67,25 +64,28 @@ api_key = os.getenv("OPENAI_API_KEY")
 # You can use different chat clients for different agents:
 
 # from agent_framework.openai import OpenAIChatClient
-# openai_client = OpenAIChatClient(model_id="gpt-4o")
-# azure_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+# openai_client = OpenAIChatClient(model="gpt-4o")
+# azure_client = OpenAIChatClient(
+#     model=deployment_name,
+#     azure_endpoint=endpoint,
+#     api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+# )
 
 # Then pass different clients to different agents:
 # add_agent_framework_fastapi_endpoint(app, simple_agent(azure_client), "/agentic_chat")
 # add_agent_framework_fastapi_endpoint(app, weather_agent(openai_client), "/backend_tool_rendering")
 
-# If using api_key authentication remove the credential parameter
-# Explicitly pass deployment_name to align with .NET behavior and support both env var names
-chat_client = OpenAIChatClient(
-    model_id=deployment_name or os.getenv("OPENAI_CHAT_MODEL_ID", "gpt-4o"),
-    api_key=api_key,
-)
-# TODO: Uncomment this to authenticate with Azure
-# chat_client = AzureOpenAIChatClient(
-#     credential=DefaultAzureCredential(),
-#     deployment_name=deployment_name,
-#     endpoint=endpoint,
-# )
+if endpoint:
+    chat_client = OpenAIChatClient(
+        model=deployment_name,
+        azure_endpoint=endpoint,
+        api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+    )
+else:
+    chat_client = OpenAIChatClient(
+        model=os.getenv("OPENAI_CHAT_MODEL_ID", "gpt-4o"),
+        api_key=api_key,
+    )
 
 # Agentic Chat - simple_agent
 add_agent_framework_fastapi_endpoint(app, simple_agent(chat_client), "/agentic_chat")
