@@ -5,8 +5,10 @@ import { CopilotKit } from "@copilotkit/react-core";
 import {
   CopilotChat,
   useConfigureSuggestions,
+  useRenderTool,
 } from "@copilotkit/react-core/v2";
 import "@copilotkit/react-core/v2/styles.css";
+import { z } from "zod";
 
 interface AGUIDocsCopilotProps {
   params: Promise<{ integrationId: string }>;
@@ -27,6 +29,15 @@ const AGUIDocsCopilot: React.FC<AGUIDocsCopilotProps> = ({ params }) => {
 };
 
 const DocsChat = () => {
+  useRenderTool({
+    name: "ask_ag_ui_docs",
+    agentId: "ag_ui_docs_copilot",
+    parameters: z.object({ input: z.string().optional() }),
+    render: ({ status, args, result }: any) => (
+      <DocsLookupProgress status={status} query={args?.input} result={result} />
+    ),
+  });
+
   useConfigureSuggestions({
     suggestions: [
       {
@@ -59,5 +70,58 @@ const DocsChat = () => {
     </div>
   );
 };
+
+function DocsLookupProgress({
+  status,
+  query,
+  result,
+}: {
+  status: "inProgress" | "executing" | "complete";
+  query?: string;
+  result?: string;
+}) {
+  const complete = status === "complete";
+  const step = complete
+    ? "Answer ready"
+    : status === "executing"
+      ? "Finding the relevant section"
+      : "Opening the AG-UI guide";
+
+  return (
+    <div className="my-2 max-w-md rounded-xl border border-blue-200/70 bg-blue-50/70 px-4 py-3 text-sm dark:border-blue-400/20 dark:bg-blue-950/30">
+      <div className="flex items-center gap-2 font-medium text-blue-900 dark:text-blue-100">
+        <span className={complete ? "" : "animate-pulse"}>
+          {complete ? "✓" : "📚"}
+        </span>
+        <span>
+          {complete ? "AG-UI docs consulted" : "Consulting the AG-UI docs"}
+        </span>
+        {!complete && (
+          <span
+            className="ml-auto flex gap-0.5"
+            aria-label="Docs search in progress"
+          >
+            <span className="animate-bounce">•</span>
+            <span className="animate-bounce [animation-delay:120ms]">•</span>
+            <span className="animate-bounce [animation-delay:240ms]">•</span>
+          </span>
+        )}
+      </div>
+      <div className="mt-1 text-xs text-blue-800/70 dark:text-blue-200/70">
+        {step}
+      </div>
+      {!complete && query && (
+        <div className="mt-2 line-clamp-2 text-xs text-blue-900/70 dark:text-blue-100/70">
+          {query}
+        </div>
+      )}
+      {complete && result && (
+        <div className="mt-1 line-clamp-2 text-xs text-blue-900/70 dark:text-blue-100/70">
+          Documentation specialist finished.
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default AGUIDocsCopilot;
