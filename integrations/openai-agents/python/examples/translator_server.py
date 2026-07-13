@@ -17,8 +17,8 @@ One FastAPI route per demo, all sharing the same run loop:
     POST /orchestrator              ← multi-agent via agents-as-tools
     POST /custom_lifecycle_events   ← manual CUSTOM event right after RUN_STARTED
                                        and right before RUN_FINISHED, via
-                                       DemoConfig.build_start_custom_event /
-                                       build_end_custom_event
+                                       DemoConfig.start_custom_event /
+                                       end_custom_event
     POST /human_in_the_loop_approval ← backend tool gated by needs_approval,
                                        resumed from result.interruptions
                                        (routed by hand — see below)
@@ -232,10 +232,18 @@ async def _stream(demo: DemoConfig, body: RunAgentInput):
     # keeps this loop demo-agnostic: it just forwards whatever the registry
     # gave it.
     to_agui_kwargs = {}
-    if demo.build_start_custom_event:
-        to_agui_kwargs["start_custom_event"] = demo.build_start_custom_event()
-    if demo.build_end_custom_event:
-        to_agui_kwargs["end_custom_event"] = demo.build_end_custom_event()
+    if demo.start_custom_event:
+        to_agui_kwargs["start_custom_event"] = (
+            demo.start_custom_event()
+            if callable(demo.start_custom_event)
+            else demo.start_custom_event
+        )
+    if demo.end_custom_event:
+        to_agui_kwargs["end_custom_event"] = (
+            demo.end_custom_event()
+            if callable(demo.end_custom_event)
+            else demo.end_custom_event
+        )
 
     # 2 — Run the agent; to_agui() wraps the stream with the lifecycle events
     #     (RUN_STARTED first, RUN_FINISHED / RUN_ERROR last), echoes the state

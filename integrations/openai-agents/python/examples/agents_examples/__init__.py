@@ -4,7 +4,7 @@ Each demo is a ``DemoConfig`` wrapping the SDK agent. ``build_registry()``
 assembles the full name → config map the aggregate servers serve, one route per key.
 
 Most demos only set ``agent``. custom_lifecycle_events also sets
-``build_start_custom_event``/``build_end_custom_event``: optional callables
+``start_custom_event``/``end_custom_event``: optional callables
 returning a ``CustomEvent``, which the shared loop forwards into
 ``to_agui(..., start_custom_event=..., end_custom_event=...)`` when present.
 No if-branch keyed by demo name, no separate router — one generic loop,
@@ -42,8 +42,8 @@ class DemoConfig:
     """One demo route: the agent to run for it, plus optional lifecycle hooks."""
 
     agent: Agent
-    build_start_custom_event: Callable[[], CustomEvent] | None = None
-    build_end_custom_event: Callable[[], CustomEvent] | None = None
+    start_custom_event: CustomEvent | Callable[[], CustomEvent] | None = None
+    end_custom_event: CustomEvent | Callable[[], CustomEvent] | None = None
 
 
 def build_registry() -> dict[str, DemoConfig]:
@@ -61,8 +61,8 @@ def build_registry() -> dict[str, DemoConfig]:
         "subagents": DemoConfig(agent=create_subagents_agent()),
         "custom_lifecycle_events": DemoConfig(
             agent=create_custom_lifecycle_events_agent(),
-            build_start_custom_event=build_input_usage_event,
-            build_end_custom_event=build_output_usage_event,
+            start_custom_event=build_input_usage_event,
+            end_custom_event=build_output_usage_event,
         ),
         "dynamic_system_prompt": DemoConfig(agent=create_dynamic_system_prompt_agent()),
     }

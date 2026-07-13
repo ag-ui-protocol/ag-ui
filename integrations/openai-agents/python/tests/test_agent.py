@@ -9,7 +9,7 @@ and has its own coverage:
 - Client-declared tools are merged onto a per-request ``clone`` — the wrapped
   static agent is never mutated; without tools no clone happens.
 - ``run_config`` and context pass through to ``Runner.run_streamed``.
-- Optional lifecycle-event builders are forwarded to ``to_agui`` per run.
+- Every ``to_agui`` option is forwarded with the same public name.
 - ``name`` defaults to the SDK agent's name.
 """
 
@@ -126,14 +126,21 @@ def test_context_passes_through(patched_runner):
     assert patched_runner[0]["context"] == run_input.context
 
 
-def test_lifecycle_event_builders_pass_through(patched_runner, monkeypatch):
+def test_to_agui_options_pass_through(patched_runner, monkeypatch):
     start = CustomEvent(type=EventType.CUSTOM, name="start", value={})
     end = CustomEvent(type=EventType.CUSTOM, name="end", value={})
+    initial_state = lambda: {"phase": "initial"}
+    final_state = lambda: {"phase": "final"}
     translated_calls: list[dict] = []
     wrapper = OpenAIAgentsAgent(
         Agent(name="assistant", instructions="hi"),
-        build_start_custom_event=lambda: start,
-        build_end_custom_event=lambda: end,
+        start_custom_event=lambda: start,
+        initial_state=initial_state,
+        final_state=final_state,
+        emit_messages_snapshot=False,
+        end_custom_event=lambda: end,
+        emit_run_error=False,
+        run_error_message="safe error",
     )
 
     original_to_agui = wrapper._translator.to_agui
@@ -145,7 +152,38 @@ def test_lifecycle_event_builders_pass_through(patched_runner, monkeypatch):
 
     monkeypatch.setattr(wrapper._translator, "to_agui", spy_to_agui)
     _collect(wrapper, _run_input())
-    assert translated_calls == [{"start_custom_event": start, "end_custom_event": end}]
+    assert translated_calls == [
+        {
+            "start_custom_event": start,
+            "initial_state": initial_state,
+            "final_state": final_state,
+            "emit_messages_snapshot": False,
+            "end_custom_event": end,
+            "emit_run_error": False,
+            "run_error_message": "safe error",
+        }
+    ]
+
+
+def test_custom_event_factories_run_once_per_request(patched_runner):
+    calls = {"start": 0, "end": 0}
+
+    def start_custom_event():
+        calls["start"] += 1
+        return CustomEvent(type=EventType.CUSTOM, name="start", value={})
+
+    def end_custom_event():
+        calls["end"] += 1
+        return CustomEvent(type=EventType.CUSTOM, name="end", value={})
+
+    wrapper = OpenAIAgentsAgent(
+        Agent(name="assistant", instructions="hi"),
+        start_custom_event=start_custom_event,
+        end_custom_event=end_custom_event,
+    )
+    _collect(wrapper, _run_input())
+    _collect(wrapper, _run_input())
+    assert calls == {"start": 2, "end": 2}
 
 
 def test_name_defaults_to_agent_name():

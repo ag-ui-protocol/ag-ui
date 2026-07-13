@@ -6,7 +6,7 @@ ready for add_openai_agents_fastapi_endpoint.
 
 from __future__ import annotations
 
-from typing import AsyncIterator, Callable
+from typing import Any, AsyncIterator, Callable
 
 from agents import Agent, RunConfig, Runner
 from ag_ui.core import BaseEvent, CustomEvent, RunAgentInput
@@ -43,8 +43,13 @@ class OpenAIAgentsAgent:
         description: str = "",
         translator: AGUITranslator | None = None,
         run_config: RunConfig | None = None,
-        build_start_custom_event: Callable[[], CustomEvent] | None = None,
-        build_end_custom_event: Callable[[], CustomEvent] | None = None,
+        start_custom_event: CustomEvent | Callable[[], CustomEvent] | None = None,
+        initial_state: Any = None,
+        final_state: Any = None,
+        emit_messages_snapshot: bool = True,
+        end_custom_event: CustomEvent | Callable[[], CustomEvent] | None = None,
+        emit_run_error: bool = True,
+        run_error_message: str | None = None,
     ) -> None:
         """Wrap an SDK Agent.
 
@@ -57,18 +62,32 @@ class OpenAIAgentsAgent:
             run_config: Passed straight to Runner.run_streamed on every run —
                 the place to set a non-OpenAI model provider (e.g. LiteLLM) or
                 run-wide model settings. None uses the SDK defaults (native OpenAI).
-            build_start_custom_event: Lazily builds a CUSTOM event emitted after
-                RUN_STARTED for each run.
-            build_end_custom_event: Lazily builds a CUSTOM event emitted before
-                the terminal lifecycle event for each run.
+            start_custom_event: A CustomEvent, or a zero-argument factory that
+                builds one per run, emitted after RUN_STARTED.
+            initial_state: Passed to AGUITranslator.to_agui. Accepts the same
+                static, synchronous, or asynchronous state sources.
+            final_state: Passed to AGUITranslator.to_agui. Accepts the same
+                static, synchronous, or asynchronous state sources.
+            emit_messages_snapshot: Whether to emit MESSAGES_SNAPSHOT before
+                RUN_FINISHED. Defaults to True.
+            end_custom_event: A CustomEvent, or a zero-argument factory that
+                builds one per run, emitted before the terminal lifecycle event.
+            emit_run_error: Whether to emit RUN_ERROR when streaming fails.
+                Defaults to True.
+            run_error_message: Fixed RUN_ERROR message. None sends str(exc).
         """
         self.agent = agent
         self.name = name or agent.name
         self.description = description
         self._translator = translator or AGUITranslator()
         self._run_config = run_config
-        self._build_start_custom_event = build_start_custom_event
-        self._build_end_custom_event = build_end_custom_event
+        self._start_custom_event = start_custom_event
+        self._initial_state = initial_state
+        self._final_state = final_state
+        self._emit_messages_snapshot = emit_messages_snapshot
+        self._end_custom_event = end_custom_event
+        self._emit_run_error = emit_run_error
+        self._run_error_message = run_error_message
 
     async def run(self, input: RunAgentInput) -> AsyncIterator[BaseEvent]:
         """Run the agent for one AG-UI request and yield AG-UI events.
@@ -99,11 +118,25 @@ class OpenAIAgentsAgent:
             context=translated.context,
         )
 
-        to_agui_kwargs = {}
-        if self._build_start_custom_event is not None:
-            to_agui_kwargs["start_custom_event"] = self._build_start_custom_event()
-        if self._build_end_custom_event is not None:
-            to_agui_kwargs["end_custom_event"] = self._build_end_custom_event()
+        start_custom_event = self._resolve_custom_event(self._start_custom_event)
+        end_custom_event = self._resolve_custom_event(self._end_custom_event)
 
-        async for event in self._translator.to_agui(result, input, **to_agui_kwargs):
+        async for event in self._translator.to_agui(
+            result,
+            input,
+            start_custom_event=start_custom_event,
+            initial_state=self._initial_state,
+            final_state=self._final_state,
+            emit_messages_snapshot=self._emit_messages_snapshot,
+            end_custom_event=end_custom_event,
+            emit_run_error=self._emit_run_error,
+            run_error_message=self._run_error_message,
+        ):
             yield event
+
+    @staticmethod
+    def _resolve_custom_event(
+        source: CustomEvent | Callable[[], CustomEvent] | None,
+    ) -> CustomEvent | None:
+        """Resolve a fixed custom event or a per-run event factory."""
+        return source() if callable(source) else source
