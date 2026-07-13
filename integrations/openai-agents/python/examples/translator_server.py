@@ -112,6 +112,12 @@ async def run(agent_name: str, body: RunAgentInput) -> StreamingResponse:
     demo = DEMOS.get(agent_name)
     if demo is None:
         raise HTTPException(status_code=404, detail=f"Unknown agent: {agent_name!r}")
+    logger.info(
+        "Starting agent run: agent=%s thread_id=%s run_id=%s",
+        agent_name,
+        body.thread_id,
+        body.run_id,
+    )
     if agent_name == "human_in_the_loop_approval":
         return StreamingResponse(
             _stream_approval(demo, body), media_type=encoder.get_content_type()

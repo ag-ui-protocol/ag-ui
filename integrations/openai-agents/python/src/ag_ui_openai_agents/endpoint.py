@@ -6,6 +6,8 @@ negotiation, health check.
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 
@@ -13,6 +15,8 @@ from ag_ui.core import RunAgentInput
 from ag_ui.encoder import EventEncoder
 
 from .agent import OpenAIAgentsAgent
+
+logger = logging.getLogger(__name__)
 
 
 def add_openai_agents_fastapi_endpoint(
@@ -32,6 +36,12 @@ def add_openai_agents_fastapi_endpoint(
     @app.post(path)
     async def openai_agents_endpoint(input_data: RunAgentInput, request: Request):
         """Run the agent and stream AG-UI events back to the client."""
+        logger.info(
+            "Starting agent run: agent=%s thread_id=%s run_id=%s",
+            agent.name,
+            input_data.thread_id,
+            input_data.run_id,
+        )
         accept_header = request.headers.get("accept")
         encoder = EventEncoder(accept=accept_header)
 
