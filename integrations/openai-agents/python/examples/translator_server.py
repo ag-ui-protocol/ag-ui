@@ -63,13 +63,12 @@ from pathlib import Path
 
 import uvicorn
 from agents import Runner
-from ag_ui.core import CustomEvent, EventType, RunAgentInput
-from ag_ui.encoder import EventEncoder
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 
+from ag_ui.core import CustomEvent, EventType, RunAgentInput
+from ag_ui.encoder import EventEncoder
 from ag_ui_openai_agents import AGUITranslator
-
 from agents_examples import DemoConfig, build_registry
 
 logging.basicConfig(level=logging.INFO)

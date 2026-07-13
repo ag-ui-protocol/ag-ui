@@ -25,10 +25,10 @@ from agents import (
     MCPApprovalRequestItem,
 )
 from agents.items import ToolCallOutputItem
-from ag_ui.core import EventType
 from openai.types.responses import ResponseFunctionToolCall
 from openai.types.responses.response_output_item import McpApprovalRequest
 
+from ag_ui.core import EventType
 from ag_ui_openai_agents.engine import SDKToAGUITranslator
 from ag_ui_openai_agents.engine.stream_types import (
     RawResponseEventType,

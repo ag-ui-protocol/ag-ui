@@ -18,8 +18,8 @@ from agents.result import RunResultStreaming
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from ag_ui_openai_agents import OpenAIAgentsAgent, add_openai_agents_fastapi_endpoint
 import ag_ui_openai_agents.agent as agent_module
+from ag_ui_openai_agents import OpenAIAgentsAgent, add_openai_agents_fastapi_endpoint
 
 RUN_INPUT_JSON = {
     "thread_id": "t1",

@@ -21,7 +21,6 @@ from ag_ui.core import (
     TextInputContent,
     VideoInputContent,
 )
-
 from ag_ui_openai_agents.engine.agui_to_sdk import AGUIToSDKTranslator
 
 _engine = AGUIToSDKTranslator()

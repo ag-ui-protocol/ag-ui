@@ -19,6 +19,10 @@ import asyncio
 from unittest.mock import MagicMock
 
 import pytest
+from agents import Agent, RunConfig
+from agents.result import RunResultStreaming
+
+import ag_ui_openai_agents.agent as agent_module
 from ag_ui.core import (
     CustomEvent,
     Context,
@@ -27,11 +31,7 @@ from ag_ui.core import (
     Tool,
     UserMessage,
 )
-from agents import Agent, RunConfig
-from agents.result import RunResultStreaming
-
 from ag_ui_openai_agents import OpenAIAgentsAgent
-import ag_ui_openai_agents.agent as agent_module
 
 
 def _run_input(with_tool: bool = False) -> RunAgentInput:

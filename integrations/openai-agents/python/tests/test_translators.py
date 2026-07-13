@@ -21,6 +21,9 @@ import asyncio
 from unittest.mock import MagicMock
 
 import pytest
+from agents import FunctionTool
+from agents.result import RunResultStreaming
+
 from ag_ui.core import (
     CustomEvent,
     EventType,
@@ -33,9 +36,6 @@ from ag_ui.core import (
     Tool,
     UserMessage,
 )
-from agents import FunctionTool
-from agents.result import RunResultStreaming
-
 from ag_ui_openai_agents import AGUITranslator
 
 

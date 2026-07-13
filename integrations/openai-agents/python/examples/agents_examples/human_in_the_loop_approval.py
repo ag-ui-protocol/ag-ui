@@ -36,11 +36,11 @@ instead of starting fresh from ``translated.messages``.
 from __future__ import annotations
 
 from agents import Agent, Runner, function_tool
-from ag_ui.core import CustomEvent, EventType, RunAgentInput
-from ag_ui.encoder import EventEncoder
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 
+from ag_ui.core import CustomEvent, EventType, RunAgentInput
+from ag_ui.encoder import EventEncoder
 from ag_ui_openai_agents import AGUITranslator
 from .constants import DEFAULT_MODEL
 

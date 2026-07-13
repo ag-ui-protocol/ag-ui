@@ -7,9 +7,9 @@ rebuilds its instructions for that request.
 from __future__ import annotations
 
 from agents import Agent, RunContextWrapper
-from ag_ui.core import Context
 from fastapi import FastAPI
 
+from ag_ui.core import Context
 from ag_ui_openai_agents import OpenAIAgentsAgent, add_openai_agents_fastapi_endpoint
 from .constants import DEFAULT_MODEL
 

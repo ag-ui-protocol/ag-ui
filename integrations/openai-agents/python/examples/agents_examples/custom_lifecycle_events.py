@@ -19,10 +19,10 @@ from __future__ import annotations
 
 import random
 
-from ag_ui.core import CustomEvent, EventType
 from agents import Agent
 from fastapi import FastAPI
 
+from ag_ui.core import CustomEvent, EventType
 from ag_ui_openai_agents import OpenAIAgentsAgent, add_openai_agents_fastapi_endpoint
 from .constants import DEFAULT_MODEL
 

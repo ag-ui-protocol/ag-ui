@@ -4,16 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ag_ui.core import RunAgentInput
-from ag_ui.encoder import EventEncoder
 from agents import Agent, Runner
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 
+from ag_ui.core import RunAgentInput
+from ag_ui.encoder import EventEncoder
 from ag_ui_openai_agents import AGUITranslator
-
 from .constants import DEFAULT_MODEL
-
 
 DOCS = Path(__file__).resolve().parents[2].joinpath("README.md").read_text(encoding="utf-8")
 

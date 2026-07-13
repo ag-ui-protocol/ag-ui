@@ -13,7 +13,6 @@ from fastapi.responses import StreamingResponse
 
 from ag_ui.core import RunAgentInput
 from ag_ui.encoder import EventEncoder
-
 from .agent import OpenAIAgentsAgent
 
 logger = logging.getLogger(__name__)

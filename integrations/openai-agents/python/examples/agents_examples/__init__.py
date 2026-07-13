@@ -21,8 +21,8 @@ from dataclasses import dataclass
 from typing import Callable
 
 from agents import Agent
-from ag_ui.core import CustomEvent
 
+from ag_ui.core import CustomEvent
 from .agentic_chat import create_agentic_chat_agent
 from .backend_tool_rendering import create_backend_tool_agent
 from .custom_lifecycle_events import (

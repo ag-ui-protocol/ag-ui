@@ -9,8 +9,8 @@ from __future__ import annotations
 from typing import Any, AsyncIterator, Callable
 
 from agents import Agent, RunConfig, Runner
-from ag_ui.core import BaseEvent, CustomEvent, RunAgentInput
 
+from ag_ui.core import BaseEvent, CustomEvent, RunAgentInput
 from .translator import AGUITranslator
 
 

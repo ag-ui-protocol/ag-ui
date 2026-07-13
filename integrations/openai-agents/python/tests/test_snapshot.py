@@ -17,13 +17,6 @@ from agents.items import (
     ToolCallItem,
     ToolCallOutputItem,
 )
-from ag_ui.core import (
-    AssistantMessage,
-    EventType,
-    RunAgentInput,
-    ToolMessage,
-    UserMessage,
-)
 from openai.types.responses import (
     ResponseFunctionToolCall,
     ResponseOutputMessage,
@@ -31,6 +24,13 @@ from openai.types.responses import (
     ResponseReasoningItem,
 )
 
+from ag_ui.core import (
+    AssistantMessage,
+    EventType,
+    RunAgentInput,
+    ToolMessage,
+    UserMessage,
+)
 from ag_ui_openai_agents.engine import SDKToAGUITranslator
 
 _AGENT = Agent(name="test-agent")

@@ -11,6 +11,9 @@ from __future__ import annotations
 import logging
 from typing import Any, Iterable
 
+from agents import FunctionTool, RunContextWrapper, TResponseInputItem
+from agents.exceptions import AgentsException
+
 from ag_ui.core import (
     ActivityMessage,
     AssistantMessage,
@@ -30,9 +33,6 @@ from ag_ui.core import (
     UserMessage,
     VideoInputContent,
 )
-from agents import FunctionTool, RunContextWrapper, TResponseInputItem
-from agents.exceptions import AgentsException
-
 from .helpers import coerce_to_str, read_attr
 from .types import TranslatedInput
 

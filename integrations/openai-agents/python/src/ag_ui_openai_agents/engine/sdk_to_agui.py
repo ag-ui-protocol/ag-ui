@@ -15,6 +15,21 @@ from __future__ import annotations
 import logging
 from typing import Any, Sequence
 
+from agents import (
+    HandoffCallItem,
+    HandoffOutputItem,
+    ItemHelpers,
+    MCPApprovalRequestItem,
+    MCPApprovalResponseItem,
+    MessageOutputItem,
+    ReasoningItem,
+    RunItem,
+    ToolCallItem,
+    ToolCallOutputItem,
+)
+from agents.items import MCPListToolsItem  # not re-exported at package top level
+from agents.models.fake_id import FAKE_RESPONSES_ID
+
 from ag_ui.core import (
     AssistantMessage,
     BaseEvent,
@@ -42,21 +57,6 @@ from ag_ui.core import (
     ToolCallStartEvent,
     ToolMessage,
 )
-from agents import (
-    HandoffCallItem,
-    HandoffOutputItem,
-    ItemHelpers,
-    MCPApprovalRequestItem,
-    MCPApprovalResponseItem,
-    MessageOutputItem,
-    ReasoningItem,
-    RunItem,
-    ToolCallItem,
-    ToolCallOutputItem,
-)
-from agents.items import MCPListToolsItem  # not re-exported at package top level
-from agents.models.fake_id import FAKE_RESPONSES_ID
-
 from .helpers import (
     coerce_to_str,
     new_message_id,
