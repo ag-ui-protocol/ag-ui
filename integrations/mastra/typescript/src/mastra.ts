@@ -574,6 +574,7 @@ export class MastraAgent extends AbstractAgent {
   remoteClient?: MastraClient;
   /** See MastraAgentConfig.useProcessedFinalText. Default false. */
   useProcessedFinalText: boolean;
+  private activeAbortController?: AbortController;
 
   /**
    * Suffix appended to a turn's base (Mastra-stored) messageId to key the
@@ -657,6 +658,14 @@ export class MastraAgent extends AbstractAgent {
     const pendingInterrupts: Interrupt[] = [];
 
     return new Observable<BaseEvent>((subscriber) => {
+      const abortController = new AbortController();
+      this.activeAbortController = abortController;
+      const clearActiveAbortController = () => {
+        if (this.activeAbortController === abortController) {
+          this.activeAbortController = undefined;
+        }
+      };
+
       const run = async () => {
         const runStartedEvent: RunStartedEvent = {
           type: EventType.RUN_STARTED,
@@ -763,6 +772,9 @@ export class MastraAgent extends AbstractAgent {
             },
             requestContext: resumeRequestContext,
           };
+          if (this.isLocalMastraAgent(this.agent)) {
+            resumeOptions.abortSignal = abortController.signal;
+          }
           if (this.tracingOptions) {
             resumeOptions.tracingOptions = this.tracingOptions;
           }
@@ -921,36 +933,54 @@ export class MastraAgent extends AbstractAgent {
             pendingInterrupts,
           );
 
-          await this.streamMastraAgent(input, {
-            ...streamCallbacks,
-            onError: (error) => {
-              subscriber.error(error);
-            },
-            onRunFinished: async (traceId) => {
-              await this.emitWorkingMemorySnapshot(subscriber, input.threadId);
-              subscriber.next(
-                this.makeRunFinishedEvent(
+          await this.streamMastraAgent(
+            input,
+            {
+              ...streamCallbacks,
+              onError: (error) => {
+                subscriber.error(error);
+              },
+              onRunFinished: async (traceId) => {
+                await this.emitWorkingMemorySnapshot(
+                  subscriber,
                   input.threadId,
-                  input.runId,
-                  pendingInterrupts,
-                  traceId,
-                ),
-              );
-              subscriber.complete();
+                );
+                subscriber.next(
+                  this.makeRunFinishedEvent(
+                    input.threadId,
+                    input.runId,
+                    pendingInterrupts,
+                    traceId,
+                  ),
+                );
+                subscriber.complete();
+              },
             },
-          });
+            abortController.signal,
+          );
         } catch (error) {
           subscriber.error(error);
         }
       };
 
-      run().catch((err) => {
-        if (subscriber.closed) return;
-        subscriber.error(err);
-      });
+      run()
+        .catch((err) => {
+          if (subscriber.closed) return;
+          subscriber.error(err);
+        })
+        .finally(clearActiveAbortController);
 
-      return () => {};
+      return () => {
+        abortController.abort();
+        clearActiveAbortController();
+      };
     });
+  }
+
+  override abortRun(): void {
+    this.activeAbortController?.abort();
+    this.activeAbortController = undefined;
+    super.abortRun();
   }
 
   isLocalMastraAgent(
@@ -1433,6 +1463,7 @@ export class MastraAgent extends AbstractAgent {
       toolName: string;
       args: any;
     } | null = null;
+    let streamAborted = false;
     // Tool calls for which we have emitted TOOL_CALL_START via the streaming
     // (delta) path, and (separately) for which we have emitted TOOL_CALL_END.
     const streamedStarted = new Set<string>();
@@ -1820,6 +1851,14 @@ export class MastraAgent extends AbstractAgent {
     };
 
     const handleChunk = (chunk: any): boolean => {
+      if (streamAborted) return false;
+
+      if (chunk?.type === "abort") {
+        streamAborted = true;
+        flush();
+        return false;
+      }
+
       // Observational Memory data parts arrive on fullStream as
       // `{ type: "data-om-*", data: {...} }` (no `payload`). Handle them before
       // the payload guard below so they map to activity when surfacing is on,
@@ -2612,6 +2651,7 @@ export class MastraAgent extends AbstractAgent {
       onError,
       onRunFinished,
     }: MastraAgentStreamOptions,
+    abortSignal?: AbortSignal,
   ): Promise<void> {
     const clientTools = tools.reduce(
       (acc, tool) => {
@@ -2710,6 +2750,7 @@ export class MastraAgent extends AbstractAgent {
           clientTools,
           requestContext,
           ...(a2uiToolsets ? { toolsets: a2uiToolsets } : {}),
+          ...(abortSignal ? { abortSignal } : {}),
         };
         // Pipe the background-task lifecycle into this run's fullStream (and
         // re-enter the loop on completion) when opted in. Only meaningful for

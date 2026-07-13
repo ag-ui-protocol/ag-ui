@@ -681,6 +681,43 @@ describe("event emission details (fake-only)", () => {
       warnSpy.mockRestore();
     });
 
+    it("treats abort chunks as a terminal stream boundary without warning", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      const agent = makeLocalMastraAgent({
+        streamChunks: [
+          { type: "text-delta", payload: { text: "before" } },
+          { type: "abort" },
+          { type: "text-delta", payload: { text: "after" } },
+          { type: "finish", payload: { finishReason: "stop" } },
+        ],
+      });
+
+      const events = await collectEvents(agent, makeInput());
+
+      expect(events.some((e) => e.type === EventType.RUN_FINISHED)).toBe(true);
+      const joinedText = events
+        .filter(
+          (e): e is TextMessageChunkEvent =>
+            e.type === EventType.TEXT_MESSAGE_CHUNK,
+        )
+        .map((e) => e.delta ?? "")
+        .join("");
+      expect(joinedText).toContain("before");
+      expect(joinedText).not.toContain("after");
+
+      const warnedTypes = warnSpy.mock.calls.map((c) => String(c[0]));
+      expect(
+        warnedTypes.some(
+          (m) =>
+            m.includes("Unrecognized stream chunk type") &&
+            m.includes("abort"),
+        ),
+      ).toBe(false);
+
+      warnSpy.mockRestore();
+    });
+
     it("warns at most once per payload-less chunk type (no log flood)", async () => {
       const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 

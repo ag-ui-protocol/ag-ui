@@ -79,6 +79,10 @@ export class FakeLocalAgent {
     return this.memory;
   }
 
+  async listTools(_opts?: any) {
+    return {};
+  }
+
   async stream(messages: any, opts?: any) {
     this.lastStreamMessages = messages;
     this.lastStreamOpts = opts;
