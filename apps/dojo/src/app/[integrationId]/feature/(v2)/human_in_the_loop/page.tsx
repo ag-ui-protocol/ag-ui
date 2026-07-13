@@ -476,6 +476,8 @@ const StepsFeedback = ({
   const { theme } = useTheme();
   const [localSteps, setLocalSteps] = useState<Step[]>([]);
   const [accepted, setAccepted] = useState<boolean | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [resumeError, setResumeError] = useState<string | null>(null);
 
   useEffect(() => {
     if (
@@ -513,21 +515,32 @@ const StepsFeedback = ({
     );
   };
 
-  const handleReject = () => {
-    if (respond) {
-      setAccepted(false);
-      respond({ accepted: false });
+  const submitResponse = async (
+    response: { accepted: false } | { accepted: true; steps: Step[] },
+  ) => {
+    if (!respond || isSubmitting) return;
+
+    setIsSubmitting(true);
+    setResumeError(null);
+    try {
+      await respond(response);
+      setAccepted(response.accepted);
+    } catch {
+      setResumeError("Could not resume the agent. Please try again.");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  const handleConfirm = () => {
-    if (respond) {
-      const confirmedSteps = localSteps.filter(
-        (step) => step.status === "enabled",
-      );
-      setAccepted(true);
-      respond({ accepted: true, steps: confirmedSteps });
-    }
+  const handleReject = async () => {
+    await submitResponse({ accepted: false });
+  };
+
+  const handleConfirm = async () => {
+    const confirmedSteps = localSteps.filter(
+      (step) => step.status === "enabled",
+    );
+    await submitResponse({ accepted: true, steps: confirmedSteps });
   };
 
   return (
@@ -548,7 +561,7 @@ const StepsFeedback = ({
             theme={theme}
             status={status}
             onToggle={() => handleStepToggle(index)}
-            disabled={status !== "executing"}
+            disabled={status !== "executing" || isSubmitting}
           />
         ))}
       </div>
@@ -559,7 +572,7 @@ const StepsFeedback = ({
           <ActionButton
             variant="secondary"
             theme={theme}
-            disabled={status !== "executing"}
+            disabled={status !== "executing" || isSubmitting}
             onClick={handleReject}
           >
             <span className="mr-2">✗</span>
@@ -568,7 +581,7 @@ const StepsFeedback = ({
           <ActionButton
             variant="success"
             theme={theme}
-            disabled={status !== "executing"}
+            disabled={status !== "executing" || isSubmitting}
             onClick={handleConfirm}
           >
             <span className="mr-2">✓</span>
@@ -582,6 +595,12 @@ const StepsFeedback = ({
             </span>
           </ActionButton>
         </div>
+      )}
+
+      {resumeError && (
+        <p role="alert" className="mt-4 text-center text-sm text-red-600">
+          {resumeError}
+        </p>
       )}
 
       {/* Result State - Unique to StepsFeedback */}

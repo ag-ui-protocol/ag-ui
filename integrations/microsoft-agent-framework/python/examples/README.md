@@ -32,8 +32,7 @@ OPENAI_CHAT_MODEL_ID=your_model_here
 
 # Or for Azure OpenAI
 AZURE_OPENAI_ENDPOINT=your_endpoint_here
-# If using token auth, this env var is not necessary
-# AZURE_OPENAI_API_KEY=your_api_key_here
+AZURE_OPENAI_API_KEY=your_api_key_here
 AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=your_deployment_here
 ```
 
@@ -87,14 +86,7 @@ The server exposes the following example agents demonstrating all 7 AG-UI featur
 ```
 examples/
 ├── agents/
-│   ├── agentic_chat/                  # Feature 1: Basic chat agent
-│   ├── backend_tool_rendering/        # Feature 2: Backend tool rendering
-│   ├── human_in_the_loop/             # Feature 3: Human-in-the-loop
-│   ├── agentic_generative_ui/         # Feature 4: Streaming state updates
-│   ├── tool_based_generative_ui/      # Feature 5: Custom UI components
-│   ├── shared_state/                  # Feature 6: Bidirectional state sync
-│   ├── predictive_state_updates/      # Feature 7: Predictive state updates
-│   └── dojo.py                        # FastAPI application setup
+│   └── dojo.py                        # Agents and FastAPI endpoint setup
 ├── pyproject.toml                     # Dependencies and scripts
 ├── .env.example                       # Environment variable template
 └── README.md                          # This file
@@ -153,15 +145,15 @@ See `agents/dojo.py` for a complete example.
 
 To add a new example agent:
 
-1. Create a new directory under `agents/`
-2. Add an `agent.py` file with your agent implementation
-3. Import and register it in `agents/dojo.py`
+1. Add the agent implementation to `agents/dojo.py`
+2. Register it with the FastAPI application in the same file
 
 ## Dependencies
 
 This integration uses:
 
 - `agent-framework-ag-ui` - Microsoft Agent Framework AG-UI adapter
+- `agent-framework-openai` - Microsoft Agent Framework OpenAI chat client
 - `fastapi` - Web framework for the server
 - `uvicorn` - ASGI server
 - `python-dotenv` - Environment variable management

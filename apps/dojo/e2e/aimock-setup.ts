@@ -1316,6 +1316,48 @@ export async function setupLLMock(): Promise<void> {
     },
   });
 
+  // Microsoft Agent Framework exposes `write_document`, while the shared
+  // predictive-state fixture targets integrations that expose
+  // `write_document_local`. Scope the MAF responses by advertised tool name so
+  // changing one integration cannot break the others.
+  const microsoftAgentFrameworkDocuments = [
+    {
+      prompt: "dragon called Atlantis",
+      document:
+        "Once upon a time, in a land far away, there lived a magnificent dragon named Atlantis. Atlantis was known throughout the realm for its shimmering scales that reflected the light of a thousand stars. The dragon Atlantis would soar above the mountains, breathing fire that lit up the night sky. Villagers would gather to watch Atlantis perform its aerial dances, marveling at the grace of this ancient creature.",
+    },
+    {
+      prompt: "Change dragon name to Lola",
+      document:
+        "Once upon a time, in a land far away, there lived a magnificent dragon named Lola. Lola was known throughout the realm for its shimmering scales that reflected the light of a thousand stars. The dragon Lola would soar above the mountains, breathing fire that lit up the night sky. Villagers would gather to watch Lola perform its aerial dances, marveling at the grace of this ancient creature.",
+    },
+  ];
+
+  for (const fixture of microsoftAgentFrameworkDocuments) {
+    mockServer.addFixture({
+      match: {
+        predicate: (req) => {
+          const lastUser = req.messages.filter((m) => m.role === "user").pop();
+          const hasMafDocumentTool = req.tools?.some(
+            (tool) => tool.function.name === "write_document",
+          );
+          return (
+            !!hasMafDocumentTool &&
+            textOf(lastUser?.content).includes(fixture.prompt)
+          );
+        },
+      },
+      response: {
+        toolCalls: [
+          {
+            name: "write_document",
+            arguments: JSON.stringify({ document: fixture.document }),
+          },
+        ],
+      },
+    });
+  }
+
   // Load all fixture JSON files from the fixtures directory.
   // HITL fixtures loaded above take priority (first-match-wins).
   mockServer.loadFixtureDir(FIXTURES_DIR);

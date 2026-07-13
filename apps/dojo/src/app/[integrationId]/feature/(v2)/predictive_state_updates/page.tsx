@@ -428,6 +428,29 @@ function ConfirmChanges({
   onConfirm,
 }: ConfirmChangesProps) {
   const [accepted, setAccepted] = useState<boolean | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [resumeError, setResumeError] = useState<string | null>(null);
+
+  const submitResponse = async (nextAccepted: boolean) => {
+    if (!respond || isSubmitting) return;
+
+    setIsSubmitting(true);
+    setResumeError(null);
+    try {
+      await respond({ accepted: nextAccepted });
+      if (nextAccepted) {
+        onConfirm();
+      } else {
+        onReject();
+      }
+      setAccepted(nextAccepted);
+    } catch {
+      setResumeError("Could not resume the agent. Please try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   return (
     <div
       data-testid="confirm-changes-modal"
@@ -442,14 +465,8 @@ function ConfirmChanges({
             className={`bg-gray-200 text-black py-2 px-4 rounded disabled:opacity-50 ${
               status === "executing" ? "cursor-pointer" : "cursor-default"
             }`}
-            disabled={status !== "executing"}
-            onClick={() => {
-              if (respond) {
-                setAccepted(false);
-                onReject();
-                respond({ accepted: false });
-              }
-            }}
+            disabled={status !== "executing" || isSubmitting}
+            onClick={() => void submitResponse(false)}
           >
             Reject
           </button>
@@ -458,18 +475,17 @@ function ConfirmChanges({
             className={`bg-black text-white py-2 px-4 rounded disabled:opacity-50 ${
               status === "executing" ? "cursor-pointer" : "cursor-default"
             }`}
-            disabled={status !== "executing"}
-            onClick={() => {
-              if (respond) {
-                setAccepted(true);
-                onConfirm();
-                respond({ accepted: true });
-              }
-            }}
+            disabled={status !== "executing" || isSubmitting}
+            onClick={() => void submitResponse(true)}
           >
             Confirm
           </button>
         </div>
+      )}
+      {resumeError && (
+        <p role="alert" className="mt-4 text-sm text-red-600">
+          {resumeError}
+        </p>
       )}
       {accepted !== null && (
         <div className="flex justify-end">

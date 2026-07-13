@@ -16,5 +16,8 @@ test("[MS Agent Framework Python] resumes an approved predictive-state interrupt
 
   await predictiveState.getPredictiveResponse();
   await predictiveState.getUserApproval();
+  await expect(
+    page.getByText("Done! I've completed that for you."),
+  ).toBeVisible();
   expect(await predictiveState.verifyAgentResponse("Atlantis")).not.toBeNull();
 });
