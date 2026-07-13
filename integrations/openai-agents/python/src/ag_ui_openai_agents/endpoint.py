@@ -45,7 +45,7 @@ def add_openai_agents_fastapi_endpoint(
         encoder = EventEncoder(accept=accept_header)
 
         async def event_generator():
-            async for event in agent.run(input_data):
+            async for event in agent.run_streamed(input_data):
                 yield encoder.encode(event)
 
         return StreamingResponse(

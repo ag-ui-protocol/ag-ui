@@ -1,6 +1,6 @@
 """Agent wrapper — an OpenAI Agents SDK Agent that speaks AG-UI.
 
-Wrap a plain SDK Agent, get one run(RunAgentInput) yielding AG-UI events,
+Wrap a plain SDK Agent, get one run_streamed(RunAgentInput) yielding AG-UI events,
 ready for add_openai_agents_fastapi_endpoint.
 """
 
@@ -31,7 +31,7 @@ class OpenAIAgentsAgent:
         sdk_agent = Agent(name="assistant", instructions="You are helpful.")
         agent = OpenAIAgentsAgent(sdk_agent)
 
-        async for event in agent.run(run_input):
+        async for event in agent.run_streamed(run_input):
             ...
     """
 
@@ -51,7 +51,7 @@ class OpenAIAgentsAgent:
         emit_run_error: bool = True,
         run_error_message: str | None = None,
     ) -> None:
-        """Wrap an SDK Agent.
+        """Wrap OpenAI Agents SDK Agent.
 
         Args:
             agent: The OpenAI Agents SDK Agent to serve.
@@ -89,7 +89,7 @@ class OpenAIAgentsAgent:
         self._emit_run_error = emit_run_error
         self._run_error_message = run_error_message
 
-    async def run(self, input: RunAgentInput) -> AsyncIterator[BaseEvent]:
+    async def run_streamed(self, input: RunAgentInput) -> AsyncIterator[BaseEvent]:
         """Run the agent for one AG-UI request and yield AG-UI events.
 
         Orchestration only — the translator does the mapping. to_sdk turns the

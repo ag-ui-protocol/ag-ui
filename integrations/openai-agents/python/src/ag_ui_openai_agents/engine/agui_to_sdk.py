@@ -84,10 +84,10 @@ class AGUIToSDKTranslator:
     Example:
         One-shot:
 
-            bundle = AGUIToSDKTranslator().translate(run_input)
+            translated_input = AGUIToSDKTranslator().translate(run_input)
             result = Runner.run_streamed(
-                agent.clone(tools=agent.tools + bundle.function_tools),
-                input=bundle.input_items,
+                agent.clone(tools=agent.tools + translated_input.tools),
+                input=translated_input.messages,
             )
 
         Per-item:
@@ -131,7 +131,7 @@ class AGUIToSDKTranslator:
             run_id=run_input.run_id,
             parent_run_id=getattr(run_input, "parent_run_id", None),
             messages=self.translate_messages(run_input.messages or []),
-            # tools=self.translate_tools(run_input.tools or []),
+            tools=self.translate_tools(run_input.tools or []),
             state=run_input.state,
             context=list(run_input.context or []),
             forwarded_props=run_input.forwarded_props,

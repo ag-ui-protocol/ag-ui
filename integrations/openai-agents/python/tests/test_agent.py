@@ -78,7 +78,7 @@ def patched_runner(monkeypatch):
 
 def _collect(wrapper: OpenAIAgentsAgent, run_input: RunAgentInput) -> list:
     async def go():
-        return [event async for event in wrapper.run(run_input)]
+        return [event async for event in wrapper.run_streamed(run_input)]
 
     return asyncio.run(go())
 
