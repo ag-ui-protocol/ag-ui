@@ -5,8 +5,8 @@ with the [AG-UI Protocol](https://github.com/ag-ui-protocol/ag-ui). Build your
 agent with the OpenAI SDK as usual, then translate its execution into AG-UI
 events any AG-UI client (e.g. CopilotKit) can render live.
 
-The integration is a **translator**. You keep using the OpenAI Agents
-SDK normally; the translator only maps data at the AG-UI boundary:
+The integration is a **translator**. You keep using the OpenAI Agents SDK
+normally; this package maps data only at the AG-UI boundary:
 
 ```
 AG-UI RunAgentInput    ──to_sdk()──▶  SDK input items + tools
@@ -25,10 +25,10 @@ async for event in translator.to_agui(result, run_input):
     ...
 ```
 
-`to_agui(result)` also accepts `result.stream_events()` if your code already
+`to_agui(result, run_input)` also accepts `result.stream_events()` if your code already
 has the SDK event iterator. The stream is always wrapped with `RUN_STARTED`
-(first) and `RUN_FINISHED`/`RUN_ERROR` (last) — thread_id/run_id come from
-`run_input`, or pass them explicitly. The event just before `RUN_FINISHED`
+(first) and `RUN_FINISHED`/`RUN_ERROR` (last); `thread_id` and `run_id` come
+from `run_input`. The event just before `RUN_FINISHED`
 is a `MESSAGES_SNAPSHOT` by default — see
 [Messages Snapshot](#messages-snapshot).
 
@@ -105,22 +105,23 @@ curl -N -X POST http://localhost:8000 \
   }'
 ```
 
-Expected: `RUN_STARTED -> STATE_SNAPSHOT -> TEXT_MESSAGE_START ->
-TEXT_MESSAGE_CONTENT (xN) -> TEXT_MESSAGE_END -> STATE_SNAPSHOT ->
-MESSAGES_SNAPSHOT -> RUN_FINISHED`.
+Expected: `RUN_STARTED -> TEXT_MESSAGE_START -> TEXT_MESSAGE_CONTENT (xN) ->
+TEXT_MESSAGE_END -> MESSAGES_SNAPSHOT -> RUN_FINISHED`. Add state sources to
+emit the optional `STATE_SNAPSHOT` events.
 
-`initial_state` and `final_state` control the two `STATE_SNAPSHOT` slots.
-Omit them to echo `run_input.state` as before, pass `None` to suppress a slot,
-or pass a static value, zero-argument function, or zero-argument async
-function. The initial source is resolved right after `RUN_STARTED`; the final
-source is resolved after successful streaming, just before
-`MESSAGES_SNAPSHOT`. This lets hooks and tools update application-owned state:
+`initial_state` and `final_state` opt into the two `STATE_SNAPSHOT` slots.
+Pass a static value, zero-argument function, or zero-argument async function;
+`None` (the default) skips that snapshot. The initial source is resolved right
+after `RUN_STARTED`; the final source is resolved after successful streaming,
+just before `MESSAGES_SNAPSHOT`. This lets hooks and tools update
+application-owned state:
 
 ```python
 state = dict(run_input.state or {})
 initial_snapshot = dict(state)
+translated_input = translator.to_sdk(run_input)
 
-result = Runner.run_streamed(agent, input=bundle.messages, context=state)
+result = Runner.run_streamed(agent, input=translated_input.messages, context=state)
 async for event in translator.to_agui(
     result,
     run_input,
@@ -180,7 +181,7 @@ agent = OpenAIAgentsAgent(
 Need finer control (a custom transport, your own SSE framing, per-run
 branching)? Use the translator directly — see the section above.
 
-## Public API
+## API overview
 
 Two layers, pick by how much control you want:
 
@@ -215,6 +216,166 @@ fresh per-run engine it needs. Create one instance and share it.
 | Custom model settings, tracing, guardrails, handoffs | Pass normal OpenAI Agents SDK args to `Runner.run_streamed` |
 | Custom AG-UI mapping behavior | Subclass an engine translator and inject it into the public translator |
 
+## Public API reference
+
+### `AGUITranslator`
+
+`AGUITranslator` is the primary API. It is stateless and reusable: create one
+instance for the application, translate each request with `to_sdk`, run the
+SDK normally, then translate the resulting stream with `to_agui`. It does not
+own your SDK agent, server routes, authentication, or session storage.
+
+```python
+translator = AGUITranslator()
+translated_input = translator.to_sdk(run_input)
+result = Runner.run_streamed(agent, input=translated_input.messages)
+
+async for event in translator.to_agui(result, run_input):
+    yield encoder.encode(event)
+```
+
+#### Constructor
+
+```python
+AGUITranslator(*, inbound_cls=AGUIToSDKTranslator, outbound_cls=SDKToAGUITranslator)
+```
+
+These are advanced extension points for changing one mapping without forking
+the public orchestration:
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `inbound_cls` | `AGUIToSDKTranslator` | Class used for AG-UI request → SDK input translation. One instance is reused because it is stateless. |
+| `outbound_cls` | `SDKToAGUITranslator` | Class used for SDK stream → AG-UI event translation. A fresh instance is created for every run because it tracks open stream windows. |
+
+For normal use, pass neither parameter. For a custom mapping, subclass the
+relevant engine class; see [Advanced: the engine layer](#advanced-the-engine-layer).
+
+#### `to_sdk(run_input)`
+
+```python
+translated_input = translator.to_sdk(run_input)
+```
+
+Accepts one `RunAgentInput` and returns `TranslatedInput`:
+
+| Field | Use |
+|---|---|
+| `messages` | Responses API items for `Runner.run_streamed(input=...)`. |
+| `tools` | Client-owned `FunctionTool` proxies. Clone the agent and merge these tools for this request. |
+| `state`, `context`, `forwarded_props`, `thread_id`, `run_id`, `parent_run_id`, `resume` | Original request data, preserved for your application. |
+
+`TranslatedInput` does not run an agent and does not put `state` or `context`
+into prompts automatically.
+
+#### `to_agui(events, run_input, ...)`
+
+```python
+async for event in translator.to_agui(result, run_input):
+    yield encoder.encode(event)
+```
+
+`events` accepts either the `RunResultStreaming` returned by
+`Runner.run_streamed` or its `stream_events()` iterator. `run_input` supplies
+the lifecycle IDs and message history for snapshots.
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `start_custom_event` | `None` | A `CustomEvent` sent after `RUN_STARTED`. |
+| `initial_state` | `None` | Static, sync, or async source for an initial `STATE_SNAPSHOT`. |
+| `final_state` | `None` | Static, sync, or async source for a final `STATE_SNAPSHOT`. |
+| `emit_messages_snapshot` | `True` | Add `MESSAGES_SNAPSHOT` before the terminal event. |
+| `end_custom_event` | `None` | A `CustomEvent` sent after the snapshots and before `RUN_FINISHED`. |
+| `emit_run_error` | `True` | Send `RUN_ERROR` if streaming raises, then re-raise the original exception. |
+| `run_error_message` | `None` | Client-safe error text; by default the event uses `str(exception)`. |
+
+`initial_state` and `final_state` can each be a value, a zero-argument
+function, or a zero-argument async function. A supplied `None` skips that
+snapshot; an empty `{}` is still a valid snapshot. Custom-event values must be
+`CustomEvent` objects. The wrapper supports factories for these events; the
+direct translator intentionally accepts the event object for this one run.
+
+Successful runs follow this order:
+
+```text
+RUN_STARTED
+start_custom_event                 (optional)
+STATE_SNAPSHOT                     (initial, optional)
+… streamed step, text, tool, and reasoning events …
+close any open stream windows
+STATE_SNAPSHOT                     (final, optional)
+MESSAGES_SNAPSHOT                  (optional, enabled by default)
+end_custom_event                   (optional)
+RUN_FINISHED
+```
+
+If the SDK stream raises, the translator emits `RUN_ERROR` when enabled and
+re-raises the original exception. It does not emit final state, a messages
+snapshot, `end_custom_event`, or `RUN_FINISHED` on that error path.
+
+### `OpenAIAgentsAgent`
+
+`OpenAIAgentsAgent` is the convenience wrapper for a fixed SDK `Agent`.
+Internally it performs the same `to_sdk` → `Runner.run_streamed` → `to_agui`
+flow shown above. Use it when that standard flow is enough; use
+`AGUITranslator` directly when your endpoint needs custom branching,
+orchestration, or transport behavior.
+
+```python
+wrapped_agent = OpenAIAgentsAgent(
+    Agent(name="assistant", instructions="Be concise."),
+)
+```
+
+| Constructor parameter | Default | Meaning |
+|---|---|---|
+| `agent` | required | SDK `Agent` to run. |
+| `name` | `agent.name` | Public name returned by the helper health route. |
+| `description` | `""` | Optional application metadata. |
+| `translator` | new `AGUITranslator` | Translator instance, including any custom engine classes. |
+| `run_config` | `None` | `RunConfig` passed to every `Runner.run_streamed` call. |
+| `start_custom_event` | `None` | A `CustomEvent` or zero-argument factory, emitted after `RUN_STARTED`. |
+| `initial_state` | `None` | Same state-source forms as `AGUITranslator.to_agui`. |
+| `final_state` | `None` | Same state-source forms as `AGUITranslator.to_agui`. |
+| `emit_messages_snapshot` | `True` | Forwarded to `to_agui`. |
+| `end_custom_event` | `None` | A `CustomEvent` or zero-argument factory, emitted before the terminal event. |
+| `emit_run_error` | `True` | Forwarded to `to_agui`. |
+| `run_error_message` | `None` | Forwarded to `to_agui`. |
+
+Call `await` through its async iterator with `run(run_input)`. It yields
+`BaseEvent` objects; you encode or transport them yourself unless you use the
+FastAPI helper. Client-owned tools are merged onto a clone for that run, so a
+tool declared by one request never changes the shared SDK agent or leaks into
+another request.
+
+### `add_openai_agents_fastapi_endpoint`
+
+`add_openai_agents_fastapi_endpoint` connects an `OpenAIAgentsAgent` to a
+FastAPI app. It is the highest-level option: it owns HTTP POST handling, AG-UI
+SSE encoding, and a small health endpoint, but not your agent's own behavior.
+
+```python
+app = FastAPI()
+add_openai_agents_fastapi_endpoint(app, wrapped_agent, "/assistant")
+```
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `app` | required | FastAPI application to register routes on. |
+| `agent` | required | `OpenAIAgentsAgent` to execute for incoming requests. |
+| `path` | `"/"` | POST route that accepts `RunAgentInput`. |
+
+For `path="/assistant"`, the helper registers:
+
+| Route | Behavior |
+|---|---|
+| `POST /assistant` | Runs the wrapper and returns encoded AG-UI SSE events. |
+| `GET /assistant/health` | Returns `{"status": "ok", "agent": {"name": ...}}`. |
+
+The helper uses the request `Accept` header when creating `EventEncoder`, so
+its response content type matches AG-UI content negotiation. It adds routes
+only; it does not start a server or manage sessions.
+
 ### Streaming: Live AG-UI Output
 
 AG-UI is an ordered event stream by design, so streaming is the primary mode:
@@ -222,8 +383,8 @@ AG-UI is an ordered event stream by design, so streaming is the primary mode:
 ```python
 translator = AGUITranslator()
 
-bundle = translator.to_sdk(run_input)
-result = Runner.run_streamed(agent, input=bundle.messages)
+translated_input = translator.to_sdk(run_input)
+result = Runner.run_streamed(agent, input=translated_input.messages)
 
 async for event in translator.to_agui(result, run_input):
     ...  # AG-UI BaseEvent, ready to encode
@@ -247,7 +408,7 @@ All normal OpenAI Agents SDK run options stay on the SDK call:
 ```python
 result = Runner.run_streamed(
     agent,
-    input=bundle.messages,
+    input=translated_input.messages,
     context=my_context,
     max_turns=8,
     run_config=run_config,
@@ -263,21 +424,21 @@ async for event in translator.to_agui(result, run_input):
 
 | AG-UI field | Lands in |
 |---|---|
-| `messages` | `bundle.messages` — Responses-API input items for `Runner.run_streamed` |
-| `tools` | `bundle.tools` — SDK `FunctionTool` proxies for client-declared tools; merge with `agent.clone(tools=[*agent.tools, *bundle.tools])` |
-| `state`, `context`, `forwarded_props` | passthrough — the library never injects them anywhere; render them into instructions/messages yourself if your app needs the model to see them |
+| `messages` | `translated_input.messages` — Responses-API input items for `Runner.run_streamed` |
+| `tools` | `translated_input.tools` — SDK `FunctionTool` proxies for client-declared tools; merge with `agent.clone(tools=[*agent.tools, *translated_input.tools])` |
+| `state`, `context`, `forwarded_props` | passthrough — the direct translator never injects them into model input; use them in your application as needed |
 | `thread_id`, `run_id`, `parent_run_id`, `resume` | passthrough |
 
-The most important field is `bundle.messages`; pass it as `input=` to
+The most important field is `translated_input.messages`; pass it as `input=` to
 `Runner.run_streamed`.
 
-If `bundle.tools` is non-empty, merge those tools into the agent for this
+If `translated_input.tools` is non-empty, merge those tools into the agent for this
 request:
 
 ```python
 run_agent = agent
-if bundle.tools:
-    run_agent = agent.clone(tools=[*agent.tools, *bundle.tools])
+if translated_input.tools:
+    run_agent = agent.clone(tools=[*agent.tools, *translated_input.tools])
 ```
 
 ### Lifecycle Events
@@ -367,7 +528,7 @@ The translator translates. Your run loop still owns orchestration:
 | Concern | Owned by |
 |---|---|
 | `RUN_STARTED`, `RUN_FINISHED`, `RUN_ERROR` | `to_agui` (always) |
-| `STATE_SNAPSHOT` | Your server, if your app needs it |
+| `STATE_SNAPSHOT` | `to_agui` when you provide `initial_state` and/or `final_state` |
 | `MESSAGES_SNAPSHOT` | `to_agui` (on by default; pass `emit_messages_snapshot=False` to own it yourself) |
 | Session storage and thread history | Your server |
 | SSE, WebSocket, HTTP response shape | Your server/framework |
@@ -419,7 +580,7 @@ Both directions, source of truth is `engine/agui_to_sdk.py` and
 | `MCPListToolsItem`, `MCPApprovalResponseItem` | dropped (server-side bookkeeping / echo) |
 | stream start / end (always, via `to_agui`) | `RUN_STARTED` / `RUN_FINISHED` (or `RUN_ERROR`) |
 | end of stream, `run_input` given (default) | `MESSAGES_SNAPSHOT` |
-| `run_input.state`, if set | `STATE_SNAPSHOT` (echoed once by `to_agui`) |
+| `initial_state` / `final_state`, if provided | `STATE_SNAPSHOT` |
 
 Unknown SDK event or item types translate to `[]` with a debug log —
 graceful degradation, never a raise. See `tests/test_engine_mapping.py` for
@@ -527,16 +688,16 @@ AG-UI's `context` field belongs in the prompt (example below); the SDK's
 `context=` slot stays yours for whatever your tools need.
 
 ```python
-bundle = translator.to_sdk(run_input)
+translated_input = translator.to_sdk(run_input)
 
 instructions = agent.instructions
-if bundle.context:
+if translated_input.context:
     instructions += "\n\nContext:\n" + "\n".join(
-        f"- {item.description}: {item.value}" for item in bundle.context
+        f"- {item.description}: {item.value}" for item in translated_input.context
     )
 
 run_agent = agent.clone(instructions=instructions)
-result = Runner.run_streamed(run_agent, input=bundle.messages)
+result = Runner.run_streamed(run_agent, input=translated_input.messages)
 ```
 
 ## Capabilities

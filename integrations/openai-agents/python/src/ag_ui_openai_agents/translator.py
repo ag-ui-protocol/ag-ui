@@ -1,13 +1,4 @@
-"""Streaming translator — the package's main API.
-
-AGUITranslator pairs with Runner.run_streamed, exposing
-to_sdk(run_input) and to_agui(events, run_input). Stateless and reusable —
-each to_agui call creates the fresh stateful engine that run needs.
-to_agui always wraps the run with RUN_STARTED / RUN_FINISHED / RUN_ERROR —
-not optional, every caller needs them, and thread_id/run_id come straight
-off run_input. MESSAGES_SNAPSHOT is appended too, by default (see to_agui).
-Session persistence is still the caller's job.
-"""
+"""Translate between AG-UI requests and OpenAI Agents SDK streams."""
 
 from __future__ import annotations
 
@@ -34,14 +25,17 @@ from .engine.types import TranslatedInput
 
 
 class AGUITranslator:
-    """Main translator — pairs with Runner.run_streamed.
+    """Connect an existing streamed OpenAI Agents SDK run to AG-UI.
 
     Example:
         translator = AGUITranslator()
-        bundle = translator.to_sdk(run_input)
-        result = Runner.run_streamed(agent, input=bundle.messages, ...)
+        translated_input = translator.to_sdk(run_input)
+        result = Runner.run_streamed(agent, input=translated_input.messages)
         async for event in translator.to_agui(result, run_input):
-            ...  # AG-UI BaseEvent, ready to encode
+            ...  # encode or send the AG-UI event
+
+    The translator does not own the SDK agent, server, or session storage.
+    See the README for the complete API reference and integration patterns.
     """
 
     def __init__(
@@ -50,28 +44,32 @@ class AGUITranslator:
         inbound_cls: type[AGUIToSDKTranslator] = AGUIToSDKTranslator,
         outbound_cls: type[SDKToAGUITranslator] = SDKToAGUITranslator,
     ) -> None:
+        """Create a translator; engine classes are advanced mapping override points.
+
+        The inbound translator is reused because request translation is stateless.
+        A new outbound translator is created per run because it tracks that
+        stream's open text, tool, reasoning, and step windows.
+
+        Args:
+            inbound_cls: Request-to-SDK translator class.
+            outbound_cls: SDK-stream-to-AG-UI translator class, created per run.
+        """
         self._inbound = inbound_cls()
         self._outbound_cls = outbound_cls
 
     def to_sdk(self, run_input: RunAgentInput) -> TranslatedInput:
-        """Translate an AG-UI RunAgentInput into an SDK-ready bundle.
+        """Translate an AG-UI request into SDK input and passthrough data.
 
-        The bundle's tools field holds agents.FunctionTool proxies for the
-        client-declared tools — merge them with the agent's static tools
-        (agent.clone(tools=[*agent.tools, *bundle.tools])).
+        The inbound translator performs the complete request conversion,
+        including client-owned tool proxies.
 
         Args:
             run_input: The incoming AG-UI RunAgentInput.
 
         Returns:
-            TranslatedInput with items, tools, and passthrough state.
+            SDK-ready messages, client-tool proxies, and request passthrough fields.
         """
-        bundle = self._inbound.translate(run_input)
-        if run_input.tools:
-            bundle = bundle.model_copy(
-                update={"tools": self._inbound.translate_tools(run_input.tools)}
-            )
-        return bundle
+        return self._inbound.translate(run_input)
 
     async def to_agui(
         self,
@@ -86,124 +84,47 @@ class AGUITranslator:
         emit_run_error: bool = True,
         run_error_message: str | None = None,
     ) -> AsyncIterator[BaseEvent]:
-        """Translate an SDK event stream into a live AG-UI event stream.
+        """Translate an SDK event stream into ordered AG-UI events.
 
-        Canonical event order (the lifecycle events this method controls
-        directly; streamed message/tool/reasoning/step events flow through
-        outbound.translate between #3 and #4):
+        The translator supplies the lifecycle and snapshot events; the outbound
+        engine translates streamed text, tool, reasoning, and step events.
 
-            1. RUN_STARTED               — always first
-            2. start_custom_event        — optional, if provided
-            3. STATE_SNAPSHOT (initial)  — resolve initial_state
+            1. RUN_STARTED                    — always first
+            2. start_custom_event (optional)  — if provided
+            3. STATE_SNAPSHOT (initial, optional)
                … streamed STEP/TEXT/TOOL/REASONING events …
-            4. STEP_FINISHED             — final window close (outbound.finalize)
-            5. STATE_SNAPSHOT (final)    — resolve final_state
-            6. MESSAGES_SNAPSHOT         — emit_messages_snapshot
-            7. end_custom_event          — optional, if provided
-            8. RUN_FINISHED              — always last (or RUN_ERROR on raise)
+            4. Finalize open stream windows
+            5. STATE_SNAPSHOT (final, optional)
+            6. MESSAGES_SNAPSHOT (optional)
+            7. end_custom_event (optional)
+            8. RUN_FINISHED                   — always last; RUN_ERROR on failure
 
-        Feed the result from Runner.run_streamed, or result.stream_events().
-        A fresh stateful engine handles this run's windows; when the stream
-        ends the engine flush runs automatically — any still-open text /
-        tool-call / reasoning window is closed before the iterator finishes.
-
-        The first event yielded is always RUN_STARTED and the last is
-        always RUN_FINISHED (or RUN_ERROR, if the stream raises — the
-        error event is yielded and then the exception re-raised; this
-        includes asyncio.CancelledError from a mid-stream timeout or
-        dropped connection, not just ordinary exceptions). RUN_STARTED /
-        RUN_FINISHED are not optional; thread_id/run_id come straight off
-        run_input.
-
-        On error, the RUN_ERROR event carries str(exc) by default — pass
-        run_error_message to send a fixed string instead (e.g. a generic
-        "Agent run failed" so raw exception text never reaches the client).
-        The exception is re-raised regardless, so the caller's own logging
-        still sees the real one. Pass emit_run_error=False only if you
-        signal the terminal error yourself in an outer handler — otherwise
-        a raise with no RUN_ERROR leaves the client watching the stream
-        just stop.
-
-        Just before RUN_FINISHED, a MESSAGES_SNAPSHOT is appended by
-        default: run_input.messages, untouched, plus this run's messages —
-        collected by the engine as it streamed (see
-        SDKToAGUITranslator.build_messages_snapshot), each under the same
-        id its streamed event used, so the two can never diverge. Pass
-        emit_messages_snapshot=False to opt out (e.g. you assemble your
-        own). Works the same whether events is the RunResultStreaming
-        object or a bare stream_events() iterator — the snapshot is built
-        from engine state, not result.new_items.
-
-        State sources may be static values, zero-argument functions, or
-        zero-argument async functions. initial_state is resolved right after
-        RUN_STARTED; final_state is resolved near the end, after the SDK
-        stream and engine flush. Omit either argument to use run_input.state,
-        or pass None to suppress that snapshot. Empty {} still emits. This
-        lets application hooks and tools mutate state during a run while the
-        translator remains unaware of the state shape. Nothing state-related
-        is emitted on the error path.
-
-        Note:
-            run_input.messages passes through to the snapshot as-is. If it
-            carries messages your client should not see echoed back — a
-            system prompt sent as history instead of via
-            agent.instructions, for example — filter them out before
-            calling to_agui:
-
-                filtered = run_input.model_copy(
-                    update={"messages": [m for m in run_input.messages if m.role != "system"]}
-                )
-                async for event in translator.to_agui(result, filtered):
-                    ...
+        Errors yield ``RUN_ERROR`` by default, then the original exception is
+        re-raised. See the README for state, snapshots, and error details.
 
         Args:
-            events: The SDK RunResultStreaming object, or the async
-                iterator returned by its stream_events() method.
-            run_input: The RunAgentInput this run started from — supplies
-                thread_id/run_id for the lifecycle events and, unless
-                emit_messages_snapshot=False, the snapshot's prior-history
-                half.
-            start_custom_event: An optional CustomEvent yielded right after
-                RUN_STARTED (before the STATE_SNAPSHOT), for callers who
-                need to signal something to the client before any run
-                content starts flowing. Must be a CustomEvent instance —
-                anything else raises TypeError. None (the default) emits
-                nothing.
-            initial_state: State source resolved right after RUN_STARTED.
-                Accepts a static value, a zero-argument function, or a
-                zero-argument async function. Omitted uses run_input.state;
-                None suppresses the initial snapshot.
-            final_state: State source resolved after successful streaming and
-                finalization, just before MESSAGES_SNAPSHOT. Accepts the same
-                forms as initial_state. Omitted uses run_input.state; None
-                suppresses the final snapshot.
-            emit_messages_snapshot: Whether to append a MESSAGES_SNAPSHOT
-                just before RUN_FINISHED. Defaults to True.
-            end_custom_event: An optional CustomEvent yielded right before
-                RUN_FINISHED, after the MESSAGES_SNAPSHOT. Same type
-                restriction and default as start_custom_event.
-            emit_run_error: Whether to yield a RUN_ERROR event when the
-                stream raises, before re-raising. Defaults to True; set
-                False only if you emit your own terminal error event.
-            run_error_message: The RUN_ERROR message. Defaults to None, which
-                sends str(exc); set a fixed string to keep raw exception
-                text off the wire.
+            events: A ``RunResultStreaming`` or its ``stream_events()`` iterator.
+            run_input: The request supplying lifecycle IDs and message history.
+            start_custom_event: ``CustomEvent`` emitted after ``RUN_STARTED``.
+            initial_state: Optional static, sync, or async source for the first snapshot.
+            final_state: Optional static, sync, or async source for the final snapshot.
+            emit_messages_snapshot: Append ``MESSAGES_SNAPSHOT`` before finishing.
+            end_custom_event: ``CustomEvent`` emitted before ``RUN_FINISHED``.
+            emit_run_error: Emit ``RUN_ERROR`` before re-raising a stream error.
+            run_error_message: Safe fixed ``RUN_ERROR`` message; defaults to ``str(exc)``.
 
         Yields:
-            AG-UI BaseEvent instances, ready to encode.
+            AG-UI events ready to encode or send.
 
         Raises:
             TypeError: start_custom_event or end_custom_event was given but
                 is not a CustomEvent instance.
         """
+        # validate custom events
         if start_custom_event and not isinstance(start_custom_event, CustomEvent):
-            raise TypeError(
-                f"start_custom_event must be a CustomEvent, got {type(start_custom_event).__name__}"
-            )
+            raise TypeError(f"start_custom_event must be a CustomEvent, got {type(start_custom_event).__name__}")
         if end_custom_event and not isinstance(end_custom_event, CustomEvent):
-            raise TypeError(
-                f"end_custom_event must be a CustomEvent, got {type(end_custom_event).__name__}"
-            )
+            raise TypeError(f"end_custom_event must be a CustomEvent, got {type(end_custom_event).__name__}")
 
         # 1. RUN_STARTED — always first
         yield RunStartedEvent(
@@ -212,7 +133,7 @@ class AGUITranslator:
             run_id=run_input.run_id,
         )
 
-        # 2. start_custom_event — optional
+        # 2. start_custom_event (optional)
         if start_custom_event:
             yield start_custom_event
 
@@ -225,6 +146,7 @@ class AGUITranslator:
                     snapshot=snapshot,
                 )
 
+        # Accept either the SDK result or an iterator already obtained from it.
         stream_events = (
             events.stream_events()
             if isinstance(events, RunResultStreaming)
@@ -232,14 +154,14 @@ class AGUITranslator:
         )
         outbound = self._outbound_cls()
         try:
-            # … streamed STEP / TEXT / TOOL / REASONING events …
+            # Streamed STEP / TEXT / TOOL / REASONING events.
             async for sdk_event in stream_events:
                 for event in outbound.translate(sdk_event):
                     yield event
-            # 4. STEP_FINISHED — final window close
+            # 4. Close any text, tool, reasoning, or step window still open.
             for event in outbound.finalize():
                 yield event
-            # 5. STATE_SNAPSHOT (final) — resolve now ({} emits, None skips)
+            # 5. STATE_SNAPSHOT (final, optional)
             if final_state is not None:
                 snapshot = await self._resolve_state_snapshot(final_state)
                 if snapshot is not None:
@@ -247,21 +169,16 @@ class AGUITranslator:
                         type=EventType.STATE_SNAPSHOT,
                         snapshot=snapshot,
                     )
-            # 6. MESSAGES_SNAPSHOT
+            # 6. MESSAGES_SNAPSHOT (optional)
             if emit_messages_snapshot:
                 yield outbound.build_messages_snapshot(run_input)
         except ClientToolPending:
-            # Not a failure — a client-declared tool's proxy raises this the
-            # instant the model calls it, specifically so the SDK stops here
-            # and hands the call back to the client. The TOOL_CALL_START/
-            # ARGS/END trio for it was already yielded by the normal
-            # translate() dispatch above (the run-item event that names the
-            # call arrives before the SDK ever invokes it), so this is a
-            # clean end of turn: finalize any open windows, snapshot, finish.
-            # 4. STEP_FINISHED — final window close
+            # A client-owned tool ends this server run cleanly; its call events
+            # have already streamed to the frontend. Finish with steps 4–6.
+            # 4. Close any text, tool, reasoning, or step window still open.
             for event in outbound.finalize():
                 yield event
-            # 5. STATE_SNAPSHOT (final) — resolve now ({} emits, None skips)
+            # 5. STATE_SNAPSHOT (final, optional)
             if final_state is not None:
                 snapshot = await self._resolve_state_snapshot(final_state)
                 if snapshot is not None:
@@ -269,7 +186,7 @@ class AGUITranslator:
                         type=EventType.STATE_SNAPSHOT,
                         snapshot=snapshot,
                     )
-            # 6. MESSAGES_SNAPSHOT
+            # 6. MESSAGES_SNAPSHOT (optional)
             if emit_messages_snapshot:
                 yield outbound.build_messages_snapshot(run_input)
         except (Exception, asyncio.CancelledError) as exc:
@@ -284,7 +201,7 @@ class AGUITranslator:
                 )
             raise
 
-        # 7. end_custom_event — optional
+        # 7. end_custom_event (optional)
         if end_custom_event:
             yield end_custom_event
 
