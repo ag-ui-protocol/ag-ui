@@ -242,10 +242,7 @@ const DocumentEditor = ({ integrationId }: { integrationId: string }) => {
   useEffect(() => {
     if (wasRunning.current && !isLoading) {
       // Run just finished - set the text one final time
-      if (
-        currentDocument.trim().length > 0 &&
-        currentDocument !== document
-      ) {
+      if (currentDocument.trim().length > 0 && currentDocument !== document) {
         const newDocument = document;
         const diff = diffPartialText(currentDocument, newDocument, true);
         const markdown = fromMarkdown(diff);
