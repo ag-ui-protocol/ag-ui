@@ -9,7 +9,7 @@ The integration is a **translator**. You keep using the OpenAI Agents SDK
 normally; this package maps data only at the AG-UI boundary:
 
 ```
-AG-UI RunAgentInput    ──to_sdk()──▶  SDK input items + tools
+AG-UI RunAgentInput    ──to_openai()──▶  SDK input items + tools
 SDK streamed result    ──to_agui()─▶  AG-UI BaseEvents
 ```
 
@@ -18,11 +18,11 @@ The flow is:
 ```python
 translator = AGUITranslator()
 
-translated_input = translator.to_sdk(run_input)
+translated_input = translator.to_openai(run_input)
 result = Runner.run_streamed(agent, input=translated_input.messages)
 
 async for event in translator.to_agui(result, run_input):
-    ...
+  ...
 ```
 
 `to_agui(result, run_input)` also accepts `result.stream_events()` if your code already
@@ -65,32 +65,32 @@ from fastapi.responses import StreamingResponse
 from ag_ui_openai_agents import AGUITranslator
 
 agent = Agent(name="assistant", instructions="Be concise.")
-translator = AGUITranslator()   # stateless — one instance serves every request
-encoder = EventEncoder()        # AG-UI's own SSE encoder
+translator = AGUITranslator()  # stateless — one instance serves every request
+encoder = EventEncoder()  # AG-UI's own SSE encoder
 app = FastAPI()
 
 
 @app.post("/")
 async def run(body: RunAgentInput) -> StreamingResponse:
-    """Translate one AG-UI request into an SDK run and stream it back."""
+  """Translate one AG-UI request into an SDK run and stream it back."""
 
-    async def stream():
-        # AGUI input -> OpenAI SDK
-        translated_input = translator.to_sdk(body)
+  async def stream():
+    # AGUI input -> OpenAI SDK
+    translated_input = translator.to_openai(body)
 
-        # merge client-declared tools onto this request's agent
-        run_agent = agent
-        if translated_input.tools:
-            run_agent = agent.clone(tools=[*agent.tools, *translated_input.tools])
+    # merge client-declared tools onto this request's agent
+    run_agent = agent
+    if translated_input.tools:
+      run_agent = agent.clone(tools=[*agent.tools, *translated_input.tools])
 
-        # normal OpenAI SDK streaming run
-        result = Runner.run_streamed(run_agent, input=translated_input.messages)
+    # normal OpenAI SDK streaming run
+    result = Runner.run_streamed(run_agent, input=translated_input.messages)
 
-        # OpenAI SDK -> AGUI events
-        async for event in translator.to_agui(result, body):
-            yield encoder.encode(event)
+    # OpenAI SDK -> AGUI events
+    async for event in translator.to_agui(result, body):
+      yield encoder.encode(event)
 
-    return StreamingResponse(stream(), media_type=encoder.get_content_type())
+  return StreamingResponse(stream(), media_type=encoder.get_content_type())
 ```
 
 Test it:
@@ -119,16 +119,16 @@ application-owned state:
 ```python
 state = dict(run_input.state or {})
 initial_snapshot = dict(state)
-translated_input = translator.to_sdk(run_input)
+translated_input = translator.to_openai(run_input)
 
 result = Runner.run_streamed(agent, input=translated_input.messages, context=state)
 async for event in translator.to_agui(
-    result,
-    run_input,
-    initial_state=initial_snapshot,
-    final_state=lambda: dict(state),
+        result,
+        run_input,
+        initial_state=initial_snapshot,
+        final_state=lambda: dict(state),
 ):
-    ...
+  ...
 ```
 
 A full multi-demo server (chat, backend tools, human-in-the-loop, handoffs,
@@ -173,7 +173,7 @@ from agents import RunConfig
 from agents.extensions.models.litellm_provider import LitellmProvider
 
 agent = OpenAIAgentsAgent(
-    Agent(name="assistant", instructions="Be concise.", model="gemini/gemini-2.5-flash"),
+    Agent(name="assistant", instructions="Be concise.", model="gpt-5.4-mini"),
     run_config=RunConfig(model_provider=LitellmProvider()),
 )
 ```
@@ -187,7 +187,7 @@ Two layers, pick by how much control you want:
 
 | Name | Kind | Use it for |
 |---|---|---|
-| `AGUITranslator` | translator (recommended) | compose it yourself — `to_sdk` + `to_agui`; full control of the agent and server |
+| `AGUITranslator` | translator (recommended) | compose it yourself — `to_openai` + `to_agui`; full control of the agent and server |
 | `OpenAIAgentsAgent` | wrapper class | serve an agent: `run(RunAgentInput) -> AsyncIterator[BaseEvent]` |
 | `add_openai_agents_fastapi_endpoint(app, agent, path)` | helper | wire a wrapped agent to FastAPI (SSE + `/health`) |
 
@@ -221,13 +221,13 @@ fresh per-run engine it needs. Create one instance and share it.
 ### `AGUITranslator`
 
 `AGUITranslator` is the primary API. It is stateless and reusable: create one
-instance for the application, translate each request with `to_sdk`, run the
+instance for the application, translate each request with `to_openai`, run the
 SDK normally, then translate the resulting stream with `to_agui`. It does not
 own your SDK agent, server routes, authentication, or session storage.
 
 ```python
 translator = AGUITranslator()
-translated_input = translator.to_sdk(run_input)
+translated_input = translator.to_openai(run_input)
 result = Runner.run_streamed(agent, input=translated_input.messages)
 
 async for event in translator.to_agui(result, run_input):
@@ -251,10 +251,10 @@ the public orchestration:
 For normal use, pass neither parameter. For a custom mapping, subclass the
 relevant engine class; see [Advanced: the engine layer](#advanced-the-engine-layer).
 
-#### `to_sdk(run_input)`
+#### `to_openai(run_input)`
 
 ```python
-translated_input = translator.to_sdk(run_input)
+translated_input = translator.to_openai(run_input)
 ```
 
 Accepts one `RunAgentInput` and returns `TranslatedInput`:
@@ -316,7 +316,7 @@ snapshot, `end_custom_event`, or `RUN_FINISHED` on that error path.
 ### `OpenAIAgentsAgent`
 
 `OpenAIAgentsAgent` is the convenience wrapper for a fixed SDK `Agent`.
-Internally it performs the same `to_sdk` → `Runner.run_streamed` → `to_agui`
+Internally it performs the same `to_openai` → `Runner.run_streamed` → `to_agui`
 flow shown above. Use it when that standard flow is enough; use
 `AGUITranslator` directly when your endpoint needs custom branching,
 orchestration, or transport behavior.
@@ -383,11 +383,11 @@ AG-UI is an ordered event stream by design, so streaming is the primary mode:
 ```python
 translator = AGUITranslator()
 
-translated_input = translator.to_sdk(run_input)
+translated_input = translator.to_openai(run_input)
 result = Runner.run_streamed(agent, input=translated_input.messages)
 
 async for event in translator.to_agui(result, run_input):
-    ...  # AG-UI BaseEvent, ready to encode
+  ...  # AG-UI BaseEvent, ready to encode
 ```
 
 You may also pass the SDK event iterator directly:
@@ -418,7 +418,7 @@ async for event in translator.to_agui(result, run_input):
     ...
 ```
 
-### What `to_sdk` gives you
+### What `to_openai` gives you
 
 `TranslatedInput` mirrors `RunAgentInput` field for field:
 
@@ -688,13 +688,13 @@ AG-UI's `context` field belongs in the prompt (example below); the SDK's
 `context=` slot stays yours for whatever your tools need.
 
 ```python
-translated_input = translator.to_sdk(run_input)
+translated_input = translator.to_openai(run_input)
 
 instructions = agent.instructions
 if translated_input.context:
-    instructions += "\n\nContext:\n" + "\n".join(
-        f"- {item.description}: {item.value}" for item in translated_input.context
-    )
+  instructions += "\n\nContext:\n" + "\n".join(
+    f"- {item.description}: {item.value}" for item in translated_input.context
+  )
 
 run_agent = agent.clone(instructions=instructions)
 result = Runner.run_streamed(run_agent, input=translated_input.messages)
@@ -751,11 +751,11 @@ browser owns their execution (rendering UI, waiting on the user), not your
 server. This is the human-in-the-loop mechanism: the same one most AG-UI
 integrations use, paired with CopilotKit's `useHumanInTheLoop` on the client.
 
-**1. Merge the client tools onto your agent per request.** `to_sdk` turns
+**1. Merge the client tools onto your agent per request.** `to_openai` turns
 each into an SDK `FunctionTool` proxy:
 
 ```python
-translated = translator.to_sdk(run_input)
+translated = translator.to_openai(run_input)
 agent = base_agent.clone(tools=[*base_agent.tools, *translated.tools])
 ```
 
@@ -775,7 +775,7 @@ base_agent = Agent(
 **3. The frontend answers; the agent resumes next request.** The tool call
 streams to the browser, the user acts, and the result comes back as a
 `ToolMessage` in the next run's `messages` — ordinary multi-turn history.
-`to_sdk` translates that `ToolMessage` into a `function_call_output`, so the
+`to_openai` translates that `ToolMessage` into a `function_call_output`, so the
 agent picks up where it left off. No custom event, no `RunState`, no
 persistence to wire.
 

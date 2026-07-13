@@ -92,7 +92,7 @@ class OpenAIAgentsAgent:
     async def run_streamed(self, input: RunAgentInput) -> AsyncIterator[BaseEvent]:
         """Run the agent for one AG-UI request and yield AG-UI events.
 
-        Orchestration only — the translator does the mapping. to_sdk turns the
+        Orchestration only — the translator does the mapping. to_openai turns the
         request into SDK input items plus FunctionTool proxies for any
         client-declared tools; those proxies are merged onto a per-request
         clone so the static agent stays untouched. to_agui wraps the SDK stream
@@ -105,7 +105,7 @@ class OpenAIAgentsAgent:
         Yields:
             AG-UI BaseEvent instances, ready to encode.
         """
-        translated = self._translator.to_sdk(input)
+        translated = self._translator.to_openai(input)
 
         agent = self.agent
         if translated.tools:

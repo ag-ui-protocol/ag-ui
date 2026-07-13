@@ -109,7 +109,7 @@ async def run(body: RunAgentInput) -> StreamingResponse:
                     pending_state.reject(item)
             result = Runner.run_streamed(agent, pending_state)
         else:
-            translated = _translator.to_sdk(body)
+            translated = _translator.to_openai(body)
             run_agent = agent
             if translated.tools:
                 run_agent = run_agent.clone(tools=[*agent.tools, *translated.tools])

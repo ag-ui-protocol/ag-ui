@@ -1,7 +1,7 @@
 """
 Multi-agent example server — the translator by hand. Recommended.
 
-Wires the translator directly — to_sdk, Runner.run_streamed, to_agui — so the
+Wires the translator directly — to_openai, Runner.run_streamed, to_agui — so the
 full run loop is visible in one place. AGUITranslator is just an events
 translator: this file keeps full control of the agent and the server. Same
 demos and output as server.py, which builds the same thing with the
@@ -155,7 +155,7 @@ async def _stream_approval(demo: DemoConfig, body: RunAgentInput):
                 pending_state.reject(item)
         result = Runner.run_streamed(agent, pending_state)
     else:
-        translated = translator.to_sdk(body)
+        translated = translator.to_openai(body)
         if translated.tools:
             agent = agent.clone(tools=[*agent.tools, *translated.tools])
         result = Runner.run_streamed(agent, input=translated.messages)
@@ -216,7 +216,7 @@ async def _stream(demo: DemoConfig, body: RunAgentInput):
     Each yielded chunk is one SSE line: ``data: <json>\\n\\n``
     """
     # 1 — Translate AG-UI input into SDK-ready shapes.
-    translated = translator.to_sdk(body)
+    translated = translator.to_openai(body)
 
     # Frontend (client-owned) tools declared on this request — e.g. the
     # human_in_the_loop demo's `generate_task_steps`. Merged per-request

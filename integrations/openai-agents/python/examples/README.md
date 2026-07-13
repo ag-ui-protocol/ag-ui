@@ -63,7 +63,7 @@ The main Copilot handles normal conversation without carrying the documentation
 in its instructions. Documentation and code questions are delegated to an
 `AG-UI OpenAI Agents Specialist` and `AG-UI Protocol Python Specialist`, which
 receive the integration and core SDK README files through the SDK's
-`Agent.as_tool()` API. Its endpoint keeps the direct `to_sdk` →
+`Agent.as_tool()` API. Its endpoint keeps the direct `to_openai` →
 `Runner.run_streamed` → `to_agui` flow visible and adds no retrieval framework,
 vector database, or network dependency.
 

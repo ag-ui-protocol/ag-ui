@@ -38,6 +38,6 @@ def test_docs_copilot_has_a_documentation_specialist_tool() -> None:
 def test_docs_copilot_keeps_the_direct_translator_flow_visible() -> None:
     assert "/" in {route.path for route in ag_ui_docs_copilot.app.routes}
     source = inspect.getsource(ag_ui_docs_copilot.run_ag_ui_docs_copilot)
-    assert "translator.to_sdk(body)" in source
+    assert "translator.to_openai(body)" in source
     assert "Runner.run_streamed(" in source
     assert "translator.to_agui(result, body)" in source

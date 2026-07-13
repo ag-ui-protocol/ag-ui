@@ -14,7 +14,7 @@ Protocol Python Specialist**, through
 ```text
 Copilot → OpenAI Agents / Protocol specialists (local READMEs)
                                       ↓
-RunAgentInput → to_sdk() → Runner.run_streamed() → to_agui() → SSE
+RunAgentInput → to_openai() → Runner.run_streamed() → to_agui() → SSE
 ```
 
 - Local documentation with no internet request or retrieval framework
@@ -31,7 +31,7 @@ documents should replace this with its own retrieval system.
 
 ## Try it
 
-- Ask how `AGUITranslator.to_sdk()` and `to_agui()` connect the frontend and
+- Ask how `AGUITranslator.to_openai()` and `to_agui()` connect the frontend and
   SDK.
 - Ask the OpenAI Agents Specialist to generate a minimal FastAPI streaming endpoint.
 - Ask which translator options control lifecycle events, snapshots, state, and

@@ -126,7 +126,7 @@ async def run_ag_ui_docs_copilot(
 
     async def stream():
         # AGUI input -> OpenAI SDK
-        translated_input = translator.to_sdk(body)
+        translated_input = translator.to_openai(body)
 
         # normal OpenAI SDK streaming run
         result = Runner.run_streamed(

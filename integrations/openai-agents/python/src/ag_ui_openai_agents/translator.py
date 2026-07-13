@@ -29,7 +29,7 @@ class AGUITranslator:
 
     Example:
         translator = AGUITranslator()
-        translated_input = translator.to_sdk(run_input)
+        translated_input = translator.to_openai(run_input)
         result = Runner.run_streamed(agent, input=translated_input.messages)
         async for event in translator.to_agui(result, run_input):
             ...  # encode or send the AG-UI event
@@ -57,8 +57,8 @@ class AGUITranslator:
         self._inbound = inbound_cls()
         self._outbound_cls = outbound_cls
 
-    def to_sdk(self, run_input: RunAgentInput) -> TranslatedInput:
-        """Translate an AG-UI request into SDK input and passthrough data.
+    def to_openai(self, run_input: RunAgentInput) -> TranslatedInput:
+        """Translate an AG-UI request into OpenAI Agents SDK input and passthrough data.
 
         The inbound translator performs the complete request conversion,
         including client-owned tool proxies.

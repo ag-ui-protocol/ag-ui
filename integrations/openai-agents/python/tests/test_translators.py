@@ -3,7 +3,7 @@ Tests for the two-method translator API.
 
 Covers the public translator contract only — engine mappings have their own coverage:
 
-- ``to_sdk`` delegates to the inbound engine and populates ``tools``.
+- ``to_openai`` delegates to the inbound engine and populates ``tools``.
 - ``AGUITranslator.to_agui`` streams engine output live and appends the
   engine flush, with a fresh engine per call (reusable translator).
 - ``to_agui`` always wraps the stream with RUN_STARTED / RUN_FINISHED /
@@ -91,12 +91,12 @@ async def _fake_stream(*names: str):
         yield name
 
 
-# ── to_sdk ───────────────────────────────────────────────────────────────
+# ── to_openai ────────────────────────────────────────────────────────────
 
 
-def test_to_sdk_translates_messages_and_tools():
+def test_to_openai_translates_messages_and_tools():
     translator = AGUITranslator()
-    bundle = translator.to_sdk(_run_input(with_tool=True))
+    bundle = translator.to_openai(_run_input(with_tool=True))
     assert bundle.thread_id == "t1"
     assert bundle.messages, "user message should be translated into input items"
     assert len(bundle.tools) == 1
@@ -104,8 +104,8 @@ def test_to_sdk_translates_messages_and_tools():
     assert bundle.tools[0].name == "confirm"
 
 
-def test_to_sdk_without_tools_leaves_bundle_empty():
-    bundle = AGUITranslator().to_sdk(_run_input())
+def test_to_openai_without_tools_leaves_bundle_empty():
+    bundle = AGUITranslator().to_openai(_run_input())
     assert bundle.tools == []
 
 

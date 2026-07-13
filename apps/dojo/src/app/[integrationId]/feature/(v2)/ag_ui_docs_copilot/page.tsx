@@ -61,7 +61,7 @@ const DocsChat = () => {
       {
         title: "Stream an existing agent",
         message:
-          "Show me how to transfer an existing OpenAI Agents SDK streaming run to AG-UI. Give the smallest FastAPI endpoint using AGUITranslator.to_sdk(), Runner.run_streamed(), AGUITranslator.to_agui(), EventEncoder, and StreamingResponse. Explain only the data flow at each boundary.",
+          "Show me how to transfer an existing OpenAI Agents SDK streaming run to AG-UI. Give the smallest FastAPI endpoint using AGUITranslator.to_openai(), Runner.run_streamed(), AGUITranslator.to_agui(), EventEncoder, and StreamingResponse. Explain only the data flow at each boundary.",
       },
       {
         title: "Map SDK events to AG-UI",
