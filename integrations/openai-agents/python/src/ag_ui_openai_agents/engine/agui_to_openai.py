@@ -31,7 +31,7 @@ from ag_ui.core import (
     UserMessage,
     VideoInputContent,
 )
-from .helpers import coerce_to_str, read_attr
+from .helpers import read_attr, to_string
 from .types import TranslatedInput
 
 logger = logging.getLogger(__name__)
@@ -480,7 +480,7 @@ class AGUIToOpenAITranslator:
                     parts.append(converted)
             if parts:
                 return parts
-        return [{"type": "input_text", "text": coerce_to_str(content)}]
+        return [{"type": "input_text", "text": to_string(content)}]
 
     def translate_content_part(self, part: Any) -> dict[str, Any] | None:
         """Dispatch one content part to its per-type translator.

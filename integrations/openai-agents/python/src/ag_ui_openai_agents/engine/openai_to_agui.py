@@ -56,12 +56,12 @@ from ag_ui.core import (
     ToolMessage,
 )
 from .helpers import (
-    coerce_to_str,
     new_message_id,
     new_reasoning_id,
     new_tool_call_id,
     new_tool_result_id,
     read_attr,
+    to_string,
 )
 from .types import (
     HOSTED_TOOL_CALL_TYPES,
@@ -654,7 +654,7 @@ class OpenAIToAGUITranslator:
         if not call_id:
             logger.debug("Tool output without call_id; skipping TOOL_CALL_RESULT")
             return []
-        content = coerce_to_str(item.output)
+        content = to_string(item.output)
         result_id = self._record_result(call_id, content)
         return [
             ToolCallResultEvent(
@@ -738,7 +738,7 @@ class OpenAIToAGUITranslator:
             return []
         target = read_attr(item.target_agent, "name") or ""
         output = read_attr(raw, "output") or f"Handed off to {target}"
-        content = coerce_to_str(output)
+        content = to_string(output)
         result_id = self._record_result(call_id, content)
         return [
             ToolCallResultEvent(

@@ -7,11 +7,11 @@ everything else, import AGUITranslator from the package root instead.
 
 from .agui_to_openai import AGUIToOpenAITranslator, ClientToolPending
 from .helpers import (
-    coerce_to_str,
     new_message_id,
     new_tool_call_id,
     new_tool_result_id,
     read_attr,
+    to_string,
 )
 from .openai_to_agui import OpenAIToAGUITranslator
 from .types import (
@@ -25,7 +25,6 @@ from .types import (
 __all__ = [
     "AGUIToOpenAITranslator",
     "ClientToolPending",
-    "coerce_to_str",
     "HOSTED_TOOL_CALL_TYPES",
     "new_message_id",
     "new_tool_call_id",
@@ -35,5 +34,6 @@ __all__ = [
     "OpenAIStreamEventType",
     "OpenAIToAGUITranslator",
     "read_attr",
+    "to_string",
     "TranslatedInput",
 ]

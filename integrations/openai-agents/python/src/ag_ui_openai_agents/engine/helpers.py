@@ -69,7 +69,7 @@ def read_attr(obj: Any, name: str) -> Any:
     return getattr(obj, name, None)
 
 
-def coerce_to_str(value: Any) -> str:
+def to_string(value: Any) -> str:
     """Best-effort stringification for tool outputs and content payloads.
 
     Args:
@@ -89,9 +89,9 @@ def coerce_to_str(value: Any) -> str:
 
 
 __all__ = [
-    "coerce_to_str",
     "new_message_id",
     "new_tool_call_id",
     "new_tool_result_id",
     "read_attr",
+    "to_string",
 ]
