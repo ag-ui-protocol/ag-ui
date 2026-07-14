@@ -147,6 +147,30 @@ function SubagentGroup({
           >
             <span className="cpk:w-1.5 cpk:h-1.5 cpk:rounded-full cpk:bg-muted-foreground cpk:animate-pulse" />
           </span>
+        ) : subagent?.status === "error" ? (
+          // A subtle error mark when the subagent failed — distinct from the
+          // finished checkmark so a failed subagent doesn't read as successful.
+          <span
+            className="cpk:inline-flex cpk:items-center cpk:ml-1"
+            data-testid="subagent-error"
+            aria-label="error"
+            title={subagent?.error ?? undefined}
+            style={{ color: "#dc2626" }}
+          >
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2.5}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </span>
         ) : (
           // Subtle checkmark once this subagent has finished (matches the muted
           // reasoning styling; inline SVG so no icon dependency is pulled in).

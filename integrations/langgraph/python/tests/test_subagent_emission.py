@@ -7,12 +7,14 @@ from ag_ui.core import (
     TextMessageStartEvent,
     TextMessageContentEvent,
     SubagentStartedEvent,
+    AssistantMessage,
 )
 from ag_ui_langgraph.agent import (
     LangGraphAgent,
     derive_subagent_context,
     reconcile_subagents,
     drain_subagents,
+    error_open_subagents,
 )
 
 
@@ -192,6 +194,9 @@ class TestSnapshotIncludesSubagentMessages(unittest.TestCase):
             "current_subagent_id": current_subagent_id,
             "active_subagents": {},
             "subagent_messages": {},
+            "subagent_tool_call_owner": {},
+            "subagent_task_runs": {},
+            "inbound_subagent_messages": [],
         }
         return agent
 
@@ -252,3 +257,120 @@ class TestSnapshotIncludesSubagentMessages(unittest.TestCase):
         )
         snap = self._snapshot(agent)
         self.assertEqual(snap.messages, [])
+
+
+class TestErrorOpenSubagents(unittest.TestCase):
+    def test_emits_error_for_all_open_and_clears(self):
+        active_run = {
+            "active_subagents": {"tools:a": "x", "tools:b": "y"},
+            "current_subagent_id": "tools:b",
+        }
+        events = error_open_subagents(active_run, "boom")
+        self.assertEqual({e.subagent_id for e in events}, {"tools:a", "tools:b"})
+        self.assertTrue(all(e.type == EventType.SUBAGENT_ERROR for e in events))
+        self.assertTrue(all(e.message == "boom" for e in events))
+        # Cleared so a subsequent drain_subagents can't also emit SUBAGENT_FINISHED
+        # for a subagent that already errored.
+        self.assertEqual(active_run["active_subagents"], {})
+        self.assertIsNone(active_run["current_subagent_id"])
+
+    def test_no_open_subagents_is_noop(self):
+        active_run = {"active_subagents": {}, "current_subagent_id": None}
+        self.assertEqual(error_open_subagents(active_run, "boom"), [])
+
+
+class TestFinishSubagentOnTaskEnd(unittest.TestCase):
+    def _agent(self):
+        agent = _make_agent()
+        agent.active_run = {
+            "active_subagents": {},
+            "current_subagent_id": None,
+            "subagent_task_meta": {},
+            "subagent_task_runs": {},
+        }
+        return agent
+
+    def test_capture_records_name_description_and_run_id(self):
+        agent = self._agent()
+        agent._capture_subagent_task_meta({
+            "event": "on_tool_start",
+            "run_id": "run-task-1",
+            "data": {"input": {"subagent_type": "researcher", "description": "dig"}},
+            "metadata": {"langgraph_checkpoint_ns": "tools:sub1|model:x"},
+        })
+        self.assertEqual(
+            agent.active_run["subagent_task_meta"]["tools:sub1"],
+            {"name": "researcher", "description": "dig"},
+        )
+        self.assertEqual(agent.active_run["subagent_task_runs"]["run-task-1"], "tools:sub1")
+
+    def test_task_end_finishes_exactly_the_subagent_it_started(self):
+        agent = self._agent()
+        agent.active_run["subagent_task_runs"]["run-task-1"] = "tools:sub1"
+        agent.active_run["active_subagents"]["tools:sub1"] = "researcher"
+        agent.active_run["current_subagent_id"] = "tools:sub1"
+        events = agent._finish_subagent_on_task_end(
+            {"event": "on_tool_end", "run_id": "run-task-1"}
+        )
+        self.assertEqual([e.type for e in events], [EventType.SUBAGENT_FINISHED])
+        self.assertEqual(events[0].subagent_id, "tools:sub1")
+        self.assertEqual(agent.active_run["active_subagents"], {})
+        self.assertIsNone(agent.active_run["current_subagent_id"])
+
+    def test_inner_tool_end_does_not_finish_subagent_early(self):
+        # A subagent's inner tool (grep/write_file) shares the subagent's
+        # checkpoint ns but has a DIFFERENT run_id, so its OnToolEnd must NOT
+        # finish the subagent — this is the exact hazard the run_id keying guards.
+        agent = self._agent()
+        agent.active_run["subagent_task_runs"]["run-task-1"] = "tools:sub1"
+        agent.active_run["active_subagents"]["tools:sub1"] = "researcher"
+        events = agent._finish_subagent_on_task_end(
+            {"event": "on_tool_end", "run_id": "inner-tool-99"}
+        )
+        self.assertEqual(events, [])
+        self.assertIn("tools:sub1", agent.active_run["active_subagents"])
+
+    def test_non_tool_end_event_is_noop(self):
+        agent = self._agent()
+        self.assertEqual(
+            agent._finish_subagent_on_task_end({"event": "on_chain_end"}), []
+        )
+
+
+class TestCrossTurnPersistence(unittest.TestCase):
+    def _agent(self, inbound):
+        agent = _make_agent()
+        agent.active_run = {
+            "id": "run-1",
+            "current_subagent_id": None,
+            "active_subagents": {},
+            "subagent_messages": {},
+            "subagent_tool_call_owner": {},
+            "subagent_task_runs": {},
+            "inbound_subagent_messages": inbound,
+        }
+        return agent
+
+    def _snapshot(self, agent):
+        events = asyncio.run(_collect(agent.get_state_and_messages_snapshots({})))
+        return next(e for e in events if e.type == EventType.MESSAGES_SNAPSHOT)
+
+    def test_prior_turn_subagent_messages_reemitted(self):
+        prior = AssistantMessage(
+            id="prev-sub-1", role="assistant", content="earlier finding",
+            subagent_id="tools:s1",
+        )
+        snap = self._snapshot(self._agent([prior]))
+        ids = [(m.id, getattr(m, "subagent_id", None)) for m in snap.messages]
+        self.assertIn(("prev-sub-1", "tools:s1"), ids)
+
+    def test_inbound_deduped_by_id(self):
+        prior = AssistantMessage(
+            id="dup", role="assistant", content="x", subagent_id="tools:s1",
+        )
+        snap = self._snapshot(self._agent([prior, prior]))
+        self.assertEqual(sum(1 for m in snap.messages if m.id == "dup"), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

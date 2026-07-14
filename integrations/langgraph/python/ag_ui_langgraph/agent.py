@@ -194,6 +194,24 @@ def drain_subagents(active_run) -> list:
     return events
 
 
+def error_open_subagents(active_run, message: str) -> list:
+    """Emit SUBAGENT_ERROR for every still-open subagent and clear them.
+
+    Used on both the in-band ``error`` event path and the hard-exception path so
+    a subagent that was mid-flight when the run failed gets a terminal event
+    (otherwise the client shows it running forever). Clearing ``active_subagents``
+    also ensures a subsequent ``drain_subagents`` does NOT additionally emit
+    SUBAGENT_FINISHED for the same subagent (contradictory error-then-finish).
+    """
+    if not active_run:
+        return []
+    events = [SubagentErrorEvent(type=EventType.SUBAGENT_ERROR, subagent_id=sid, message=message)
+              for sid in list(active_run.get("active_subagents", {}).keys())]
+    active_run.get("active_subagents", {}).clear()
+    active_run["current_subagent_id"] = None
+    return events
+
+
 class PreparedStream(TypedDict):
     """Payload returned by prepare_stream / prepare_regenerate_stream.
 
@@ -619,14 +637,12 @@ class LangGraphAgent:
                             "Upstream error event missing data.message: %r", event
                         )
                         error_message = "Unknown error"
-                    if self.active_run.get("current_subagent_id"):
-                        yield self._dispatch_event(
-                            SubagentErrorEvent(
-                                type=EventType.SUBAGENT_ERROR,
-                                subagent_id=self.active_run["current_subagent_id"],
-                                message=error_message,
-                            )
-                        )
+                    # Terminate every open subagent with SUBAGENT_ERROR (not just
+                    # the current one — deepagents runs them concurrently) and
+                    # clear them so the drain below can't also emit a
+                    # contradictory SUBAGENT_FINISHED for a subagent that errored.
+                    for sub_ev in error_open_subagents(self.active_run, error_message):
+                        yield self._dispatch_event(sub_ev)
                     yield self._dispatch_event(
                         RunErrorEvent(type=EventType.RUN_ERROR, message=error_message, raw_event=event)
                     )
@@ -765,6 +781,13 @@ class LangGraphAgent:
 
             node_name = "__end__" if is_end_node else node_name
 
+            # End-of-run events (node-change STEP_*, final root STATE_SNAPSHOT)
+            # are supervisor-level. If the stream ended while a subagent was
+            # still open (e.g. its task OnToolEnd never fired), current_subagent_id
+            # would linger and mis-stamp these as the subagent's. Clear it before
+            # emitting them; drain_subagents below still finishes open subagents.
+            self.active_run["current_subagent_id"] = None
+
             if self.active_run.get("node_name") != node_name:
                 for ev in self.handle_node_change(node_name):
                     yield ev
@@ -792,6 +815,17 @@ class LangGraphAgent:
                         run_id=self.active_run["id"],
                     )
                 )
+        except Exception as exc:
+            # A hard exception (not an in-band "error" event) would otherwise
+            # leave any open subagent with no terminal event — the client shows
+            # it running forever. Emit SUBAGENT_ERROR for each open subagent,
+            # then re-raise for the existing run-level error handling. `except
+            # Exception` deliberately excludes CancelledError/GeneratorExit, so
+            # this never yields into a cancelled generator.
+            if getattr(self, "active_run", None):
+                for sub_ev in error_open_subagents(self.active_run, str(exc)):
+                    yield self._dispatch_event(sub_ev)
+            raise
         finally:
             self.active_run = None
 
