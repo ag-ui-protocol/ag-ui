@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **CHORE**: Bump `a2ui-agent-sdk` from `>=0.2.4,<0.3.0` to `>=0.4.0,<0.5.0`.
+  Render/heal reuse is unchanged — `render_catalog_instructions` / `heal_json_arg`
+  output is byte-identical across 0.2.4 and 0.4.0, and all A2UI tests pass against
+  0.4.0. As of 0.4.0 Google splits the A2A-free runtime engine into a standalone
+  `a2ui-core` package (deps: `jsonschema` / `pydantic` / `referencing` only — no
+  `a2a-sdk`), which `a2ui-agent-sdk` now pulls transitively (pinned
+  `>=0.1.1,<0.2.0`); the middleware imports `a2ui.schema` / `a2ui.parser` (never
+  `a2ui.core` directly), so no explicit `a2ui-core` dependency is declared.
+  `a2a-sdk` resolves to `<0.4.0` under 0.4.0's cap (it previously floated to 1.1.0
+  under the uncapped `>=0.3.0` pin), which aligns with `google-adk`'s own
+  `a2a<0.4` cap; it remains unimported (enforced by `test_a2ui_import_hygiene.py`).
+
 ## [0.7.0] - 2026-06-22
 
 ### Added

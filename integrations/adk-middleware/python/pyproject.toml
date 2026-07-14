@@ -26,14 +26,27 @@ dependencies = [
     # We import ONLY the A2A-free subset (a2ui.schema / a2ui.parser / a2ui.basic_catalog);
     # a2ui's top-level __init__ imports only .version and those subpackages import no
     # `a2a` (enforced by tests/test_a2ui_import_hygiene.py), so we add NO a2a-sdk pin.
-    # a2ui-agent-sdk floors google-adk at >=1.28.1, so adding it raises our effective
-    # adk floor; we keep the full google-adk<3.0 range (do NOT cap at <2.0) so the
-    # package supports — and we test against — adk 2.x, which consumers use. adk 2.x
-    # pulls google-genai>=2.4 (2.8.x), whose async streaming calls aiohttp
+    # As of 0.4.0, Google split the A2A-free runtime engine into a standalone
+    # a2ui-core package (deps: jsonschema / pydantic / referencing only — no a2a-sdk),
+    # and a2ui.schema/a2ui.parser now import a2ui.core internally. So a2ui-core is
+    # pulled TRANSITIVELY (a2ui-agent-sdk 0.4.0 pins a2ui-core>=0.1.1,<0.2.0) and is
+    # loaded at import time — still A2A-free (the hygiene test confirms zero a2a). We
+    # do NOT re-declare a2ui-core: this package's own source imports a2ui.schema /
+    # a2ui.parser, never a2ui.core directly. (render/heal are agent-authoring concerns
+    # Google keeps in a2ui-agent-sdk BY DESIGN; none of those symbols exist in
+    # a2ui.core, so they cannot migrate to core — do not retry that.)
+    # a2ui-agent-sdk floors google-adk at >=1.28.1, so it raises our effective adk
+    # floor; we keep the full google-adk<3.0 range (do NOT cap at <2.0) so the package
+    # supports — and we test against — adk 2.x, which consumers use. adk 2.x pulls
+    # google-genai>=2.4 (2.8.x), whose async streaming calls aiohttp
     # StreamReader.readline(max_line_length=) — only present in aiohttp >= 3.14.0 — so
     # the aiohttp floor below is raised to keep live Gemini streaming working. (That's
     # the real requirement; capping adk would just hide it.)
-    "a2ui-agent-sdk>=0.2.4,<0.3.0",
+    # a2a-sdk: 0.4.0 caps a2a-sdk<0.4.0, which ALIGNS with google-adk's own a2a<0.4
+    # cap (google-adk[a2a]/[test]); a2a-sdk is never imported here (hygiene-enforced).
+    # Floor at the verified 0.4.0 with a next-minor cap — do NOT widen to admit the
+    # unverified 0.3.x (it carries a validator rewrite between 0.2.4 and 0.4.0).
+    "a2ui-agent-sdk>=0.4.0,<0.5.0",
     "aiohttp>=3.14.1",
     "asyncio>=3.4.3",
     "fastapi>=0.115.2",
