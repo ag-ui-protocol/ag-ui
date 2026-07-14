@@ -114,6 +114,11 @@ class ClaudeAgentAdapter:
         # caller-registered PreToolUse hook (via ``resume_verdict_for``) to
         # allow or deny the re-fired deferred call.
         self._resume_verdicts: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        # thread_id -> last known Claude SDK session_id, captured from the worker
+        # after each run. On an interrupt-resume run this is passed to
+        # build_options(resume_session_id=...) so a fresh worker resumes the
+        # persisted session and re-fires the frozen deferred call.
+        self._claude_session_ids: Dict[str, str] = {}
         # thread_id -> {"worker": SessionWorker, "last_used": datetime, "active": bool, "active_runs": int}
         self._workers: Dict[str, Dict] = {}
         self._state_locks: Dict[str, asyncio.Lock] = {}
@@ -319,6 +324,15 @@ class ClaudeAgentAdapter:
         # frozen DeferredToolUse.input, so resume cannot open an args-swap window.
         if self._emit_interrupt_outcome:
             self._ingest_resume(thread_id, input_data)
+        # A resume run must NOT reuse the live in-process worker: the SDK only
+        # re-fires a deferred tool via ``ClaudeAgentOptions.resume`` at connect
+        # time, so we force a fresh worker seeded with the persisted Claude
+        # session_id below.
+        is_resume_run = bool(
+            self._emit_interrupt_outcome
+            and getattr(input_data, "resume", None)
+            and self._claude_session_ids.get(thread_id)
+        )
 
         # ── Run-admission serialization (Fix 1) ──
         # Acquire the per-thread RUN lock at admission — BEFORE worker.query() /
@@ -367,6 +381,31 @@ class ClaudeAgentAdapter:
             # reusing it would hang forever on a queue nothing drains. Evict the
             # dead worker and fall through to creating a fresh one.
             entry = self._workers.get(thread_id)
+            # Interrupt-resume: never reuse the live worker. The SDK only
+            # re-fires a deferred tool via ClaudeAgentOptions.resume at connect
+            # time, so evict any live worker and fall through to creating a
+            # fresh one seeded with the persisted Claude session_id.
+            if is_resume_run and entry is not None:
+                if entry.get("active_runs", 0) > 0:
+                    logger.error(
+                        f"Cannot resume thread={thread_id}: a peer run is still active"
+                    )
+                    yield RunErrorEvent(
+                        type=EventType.RUN_ERROR,
+                        thread_id=thread_id,
+                        run_id=run_id,
+                        message=(
+                            f"cannot resume run on thread {thread_id}: its worker "
+                            f"has another run still active"
+                        ),
+                    )
+                    return
+                logger.debug(f"Evicting live worker for thread={thread_id} to resume persisted session")
+                stale = self._workers.pop(thread_id, None)
+                if stale is not None:
+                    await stale["worker"].stop()
+                self._state_locks.pop(thread_id, None)
+                entry = None
             if entry is not None and not entry["worker"].is_alive():
                 if entry.get("active_runs", 0) > 0:
                     # DEFENSE-IN-DEPTH / UNREACHABLE under run-admission
@@ -414,7 +453,8 @@ class ClaudeAgentAdapter:
                     entry = None
 
             if entry is None:
-                options = self.build_options(input_data, thread_id=thread_id)
+                resume_session_id = self._claude_session_ids.get(thread_id) if is_resume_run else None
+                options = self.build_options(input_data, thread_id=thread_id, resume_session_id=resume_session_id)
                 worker = SessionWorker(thread_id, options)
                 await worker.start()
                 # ``active_runs`` is a refcount of in-flight run() invocations
@@ -492,6 +532,12 @@ class ClaudeAgentAdapter:
             # serialized peer on the same thread cannot have clobbered it). (Fix 4)
             run_result = self._per_run_result.get(result_key, None)
             outcome = self._build_interrupt_outcome(run_result, input_data)
+            # Remember the Claude SDK session_id so a subsequent interrupt-resume
+            # run can seed build_options(resume_session_id=...) and re-fire the
+            # frozen deferred call. Only meaningful when the interrupt contract
+            # is enabled; harmless otherwise.
+            if self._emit_interrupt_outcome and getattr(worker, "session_id", None):
+                self._claude_session_ids[thread_id] = worker.session_id
             yield RunFinishedEvent(
                 type=EventType.RUN_FINISHED,
                 thread_id=thread_id,
@@ -568,8 +614,16 @@ class ClaudeAgentAdapter:
             # run can proceed. We acquired it unconditionally before this try.
             run_lock.release()
 
-    def build_options(self, input_data: Optional[RunAgentInput] = None, thread_id: Optional[str] = None) -> "ClaudeAgentOptions":
-        """Build ClaudeAgentOptions from base config + RunAgentInput."""
+    def build_options(self, input_data: Optional[RunAgentInput] = None, thread_id: Optional[str] = None, resume_session_id: Optional[str] = None) -> "ClaudeAgentOptions":
+        """Build ClaudeAgentOptions from base config + RunAgentInput.
+
+        When ``resume_session_id`` is set (a resuming run under the interrupt
+        contract), it is passed to the SDK as ``resume`` so ``connect()``
+        materializes the persisted Claude session and replays the transcript —
+        which re-fires the frozen deferred tool call through PreToolUse. This is
+        the ONLY way to re-drive a deferred call; a live client's ``query()``
+        continues the conversation but does not resume a deferred tool.
+        """
         from claude_agent_sdk import ClaudeAgentOptions, create_sdk_mcp_server
         
         # Start with sensible defaults
@@ -634,6 +688,12 @@ class ClaudeAgentAdapter:
         # Remove api_key from options kwargs (handled via environment variable)
         merged_kwargs.pop("api_key", None)
         logger.debug(f"Merged kwargs after pop: {merged_kwargs}")
+
+        # Resume the persisted Claude session for an interrupt-resume run so the
+        # frozen deferred tool call re-fires PreToolUse (see method docstring).
+        if resume_session_id:
+            merged_kwargs["resume"] = resume_session_id
+            logger.debug(f"Resuming Claude session {resume_session_id} for deferred-tool replay")
         
         # Apply forwarded_props as per-run overrides (before adding dynamic tools)
         if input_data and input_data.forwarded_props:
