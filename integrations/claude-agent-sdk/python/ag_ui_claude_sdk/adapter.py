@@ -33,6 +33,13 @@ from ag_ui.core import (
     ReasoningMessageEndEvent,
     ReasoningEndEvent,
     ReasoningEncryptedValueEvent,
+    RunFinishedInterruptOutcome,
+)
+
+from .interrupts import (
+    deferred_tool_use_to_interrupt,
+    tool_use_id_from_interrupt_id,
+    is_resume_resolved,
 )
 
 if TYPE_CHECKING:
@@ -87,6 +94,7 @@ class ClaudeAgentAdapter:
         max_workers: int = 1000,
         worker_ttl_seconds: float = 1800,   # 30 min
         query_timeout_seconds: Optional[float] = 300,   # 5 min; bounds a hung/slow worker
+        emit_interrupt_outcome: bool = False,
     ):
         self.name = name
         self.description = description
@@ -94,6 +102,18 @@ class ClaudeAgentAdapter:
         self._max_workers = max_workers
         self._worker_ttl_seconds = worker_ttl_seconds
         self._query_timeout_seconds = query_timeout_seconds
+        # When True, a tool deferred by a PreToolUse hook is surfaced as an
+        # AG-UI ``RunFinishedInterruptOutcome`` and the adapter honours
+        # ``RunAgentInput.resume[]``. Default-off for back-compat: a client that
+        # predates the interrupt contract must not be handed an ``outcome`` it
+        # cannot resume (it would strand the run). Mirrors LangGraph's
+        # ``emit_interrupt_outcome`` opt-in.
+        self._emit_interrupt_outcome = emit_interrupt_outcome
+        # thread_id -> {deferred_tool_use_id: verdict dict}. Populated from
+        # RunAgentInput.resume[] at the start of a resuming run; read by the
+        # caller-registered PreToolUse hook (via ``resume_verdict_for``) to
+        # allow or deny the re-fired deferred call.
+        self._resume_verdicts: Dict[str, Dict[str, Dict[str, Any]]] = {}
         # thread_id -> {"worker": SessionWorker, "last_used": datetime, "active": bool, "active_runs": int}
         self._workers: Dict[str, Dict] = {}
         self._state_locks: Dict[str, asyncio.Lock] = {}
@@ -221,6 +241,66 @@ class ClaudeAgentAdapter:
         self._per_thread_state.pop(thread_id, None)
         self._drop_thread_results(thread_id)
 
+    def _build_interrupt_outcome(
+        self,
+        run_result: Optional[Dict[str, Any]],
+        input_data: RunAgentInput,
+    ) -> Optional[RunFinishedInterruptOutcome]:
+        """Build the RUN_FINISHED interrupt outcome for a deferred tool call.
+
+        Returns ``None`` (so RUN_FINISHED stays a plain success) unless the
+        interrupt contract is opted in AND this run halted on a deferred tool.
+        The proposed tool call has already been streamed as
+        TOOL_CALL_START/ARGS/END, so the client sees the frozen args before
+        the interrupt arrives.
+        """
+        if not self._emit_interrupt_outcome:
+            return None
+        if not run_result:
+            return None
+        deferred = run_result.get("deferred_tool_use")
+        if deferred is None:
+            return None
+        interrupt = deferred_tool_use_to_interrupt(deferred, tools=input_data.tools)
+        return RunFinishedInterruptOutcome(type="interrupt", interrupts=[interrupt])
+
+    def _ingest_resume(self, thread_id: str, input_data: RunAgentInput) -> None:
+        """Record ``RunAgentInput.resume[]`` verdicts for this thread.
+
+        Each ``ResumeEntry`` is keyed by the deferred tool-use id recovered from
+        its ``interrupt_id`` so the re-fired PreToolUse hook can look it up.
+        A missing/empty resume array clears any stale verdicts for the thread.
+        """
+        resume = getattr(input_data, "resume", None)
+        if not resume:
+            self._resume_verdicts.pop(thread_id, None)
+            return
+        verdicts: Dict[str, Dict[str, Any]] = {}
+        for entry in resume:
+            interrupt_id = getattr(entry, "interrupt_id", None)
+            if not interrupt_id:
+                continue
+            tool_use_id = tool_use_id_from_interrupt_id(interrupt_id)
+            verdicts[tool_use_id] = {
+                "status": getattr(entry, "status", None),
+                "payload": getattr(entry, "payload", None),
+                "resolved": is_resume_resolved(getattr(entry, "status", "")),
+            }
+        self._resume_verdicts[thread_id] = verdicts
+
+    def resume_verdict_for(
+        self,
+        thread_id: str,
+        tool_use_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Return the resume verdict for a deferred tool-use, or ``None``.
+
+        A caller-registered PreToolUse hook calls this when a deferred tool
+        re-fires on resume: a ``resolved`` verdict means allow the frozen call,
+        anything else (``cancelled``) means deny it.
+        """
+        return self._resume_verdicts.get(thread_id, {}).get(tool_use_id)
+
     async def run(self, input_data: RunAgentInput) -> AsyncIterator[BaseEvent]:
         """Run the agent and yield AG-UI events."""
         from .utils import process_messages
@@ -228,6 +308,17 @@ class ClaudeAgentAdapter:
         thread_id = input_data.thread_id or str(uuid.uuid4())
         run_id = input_data.run_id or str(uuid.uuid4())
         result_key = (thread_id, run_id)
+
+        # ── Resume handling (AG-UI interrupt contract) ──
+        # A resume request continues the persisted Claude session (already keyed
+        # by thread_id) so the frozen deferred tool re-fires PreToolUse. The
+        # per-interrupt verdicts are published on a per-thread map keyed by the
+        # deferred tool-use id, which the caller-registered PreToolUse hook reads
+        # to allow (with the frozen args) or deny the re-fired call. Args are
+        # NEVER re-derived from the resumed model turn — they stay bound to the
+        # frozen DeferredToolUse.input, so resume cannot open an args-swap window.
+        if self._emit_interrupt_outcome:
+            self._ingest_resume(thread_id, input_data)
 
         # ── Run-admission serialization (Fix 1) ──
         # Acquire the per-thread RUN lock at admission — BEFORE worker.query() /
@@ -399,11 +490,14 @@ class ClaudeAgentAdapter:
             
             # Emit RUN_FINISHED — read THIS run's own result (keyed per-run, so a
             # serialized peer on the same thread cannot have clobbered it). (Fix 4)
+            run_result = self._per_run_result.get(result_key, None)
+            outcome = self._build_interrupt_outcome(run_result, input_data)
             yield RunFinishedEvent(
                 type=EventType.RUN_FINISHED,
                 thread_id=thread_id,
                 run_id=run_id,
-                result=self._per_run_result.get(result_key, None),
+                result=run_result,
+                outcome=outcome,
             )
             
         except asyncio.TimeoutError as e:
@@ -1051,6 +1145,10 @@ class ClaudeAgentAdapter:
                     "total_cost_usd": getattr(message, 'total_cost_usd', None),
                     "usage": getattr(message, 'usage', None),
                     "structured_output": getattr(message, 'structured_output', None),
+                    # DeferredToolUse | None. When present the run halted on a
+                    # PreToolUse ``defer``; run() turns this into an AG-UI
+                    # interrupt outcome (only if emit_interrupt_outcome is set).
+                    "deferred_tool_use": getattr(message, 'deferred_tool_use', None),
                 }
                 
                 if not has_streamed_text and result_text:

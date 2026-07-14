@@ -18,6 +18,12 @@ from importlib.metadata import version, PackageNotFoundError
 
 from .adapter import ClaudeAgentAdapter
 from .endpoint import add_claude_fastapi_endpoint
+from .interrupts import (
+    deferred_tool_use_to_interrupt,
+    interrupt_id_for_tool_use,
+    tool_use_id_from_interrupt_id,
+    INTERRUPT_REASON_TOOL_CALL,
+)
 from .config import (
     ALLOWED_FORWARDED_PROPS,
     STATE_MANAGEMENT_TOOL_NAME,
@@ -31,6 +37,11 @@ except PackageNotFoundError:
 __all__ = [
     "ClaudeAgentAdapter",
     "add_claude_fastapi_endpoint",
+    # Interrupt/resume bridge (AG-UI interrupt contract)
+    "deferred_tool_use_to_interrupt",
+    "interrupt_id_for_tool_use",
+    "tool_use_id_from_interrupt_id",
+    "INTERRUPT_REASON_TOOL_CALL",
     # Configuration constants
     "ALLOWED_FORWARDED_PROPS",
     "STATE_MANAGEMENT_TOOL_NAME",

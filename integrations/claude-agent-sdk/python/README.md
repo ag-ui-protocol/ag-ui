@@ -31,10 +31,11 @@ add_claude_fastapi_endpoint(app=app, adapter=adapter, path="/my_agent")
 - **Event cleanup** - Hanging events (tool calls, reasoning blocks) automatically closed on stream end
 - **Custom tools via MCP** - Define custom tools using Claude SDK's @tool decorator
 - **Forwarded props** - Per-run option overrides with security whitelist
+- **Interrupt/resume (AG-UI contract)** - Opt in with `emit_interrupt_outcome=True`. A tool deferred by a PreToolUse hook (`permissionDecision: "defer"`) is surfaced as a `RunFinishedInterruptOutcome`, and `RunAgentInput.resume[]` verdicts are honoured on the resuming run. Default-off for back-compat.
 
 ## Examples
 
-The integration includes 5 example agents:
+The integration includes 6 example agents:
 
 | Route | Description | Features |
 |-------|-------------|----------|
@@ -42,6 +43,7 @@ The integration includes 5 example agents:
 | `/backend_tool_rendering` | Weather tool (backend MCP) | Backend tool execution, tool rendering |
 | `/shared_state` | Recipe collaboration | Bidirectional state sync, ag_ui_update_state |
 | `/human_in_the_loop` | Task planning with approval | Frontend tools, step tracking, approval workflow |
+| `/interrupt` | Destructive tool behind approval | `defer` -> interrupt outcome, `resume[]` verdict, frozen args |
 | `/tool_based_generative_ui` | Frontend tool rendering | Dynamic frontend tools, generative UI |
 
 ## Running the Examples

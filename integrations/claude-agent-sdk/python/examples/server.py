@@ -16,6 +16,7 @@ from agents.agentic_chat import create_agentic_chat_adapter
 from agents.backend_tool_rendering import create_backend_tool_adapter
 from agents.shared_state import create_shared_state_adapter
 from agents.human_in_the_loop import create_human_in_the_loop_adapter
+from agents.interrupt import create_interrupt_adapter
 from agents.tool_based_generative_ui import create_tool_based_generative_ui_adapter
 
 app = FastAPI(title="Claude Agent SDK Server")
@@ -33,6 +34,7 @@ adapters = {
     "backend_tool_rendering": create_backend_tool_adapter(),
     "shared_state": create_shared_state_adapter(),
     "human_in_the_loop": create_human_in_the_loop_adapter(),
+    "interrupt": create_interrupt_adapter(),
     "tool_based_generative_ui": create_tool_based_generative_ui_adapter(),
 }
 
