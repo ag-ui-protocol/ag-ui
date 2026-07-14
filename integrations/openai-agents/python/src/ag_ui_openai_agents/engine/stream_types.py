@@ -1,7 +1,7 @@
 """Wire-level discriminator values for OpenAI Agents SDK streaming.
 
 Single home for every "type" string the translators dispatch on. Members
-are (str, Enum) (StrEnum needs Python 3.11; this package supports 3.9+),
+are (str, Enum) (StrEnum needs Python 3.11; this package supports 3.10+),
 so they compare equal to the raw wire strings. The SDK's own Literal[...]
 annotations are the source of truth — see tests/test_stream_types_drift.py.
 """
