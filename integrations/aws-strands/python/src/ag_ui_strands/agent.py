@@ -9,7 +9,7 @@ import inspect
 import json
 import logging
 import uuid
-from typing import Any, AsyncIterator, Dict, List
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 from strands import Agent as StrandsAgentCore
 from strands.session import SessionManager
@@ -90,6 +90,7 @@ from ag_ui.core import (
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
+    TokenUsage,
     ToolCall,
     ToolCallArgsEvent,
     ToolCallEndEvent,
@@ -107,6 +108,7 @@ from .a2ui_tool import (
     plan_a2ui_injection,
 )
 from .client_proxy_tool import sync_proxy_tools
+from .usage import token_usage_from_strands
 from .config import (
     StrandsAgentConfig,
     ToolCallContext,
@@ -129,6 +131,25 @@ def _coerce_text(content: Any) -> str:
 def _coerce_id(value: Any) -> str:
     """Return ``value`` if it is a non-empty string, else a fresh UUID."""
     return value if isinstance(value, str) and value else str(uuid.uuid4())
+
+
+def _strands_model_identity(strands_agent: Any) -> tuple[Optional[str], Optional[str]]:
+    """Best-effort ``(provider, model_id)`` for a Strands agent's model, used to
+    label token usage. Provider is derived from the model class name (e.g.
+    ``BedrockModel`` -> ``bedrock``); model id from the model config. Returns
+    ``(None, None)`` on anything unexpected so usage still flows unlabeled.
+    """
+    try:
+        model = getattr(strands_agent, "model", None)
+        if model is None:
+            return (None, None)
+        cls = type(model).__name__
+        provider = cls[:-5].lower() if cls.endswith("Model") and len(cls) > 5 else None
+        config = model.get_config() if hasattr(model, "get_config") else getattr(model, "config", None)
+        model_id = config.get("model_id") if isinstance(config, dict) else None
+        return (provider, model_id if isinstance(model_id, str) else None)
+    except Exception:
+        return (None, None)
 
 
 def _build_snapshot_messages(input_messages: List[Any]) -> List[Any]:
@@ -906,6 +927,12 @@ class StrandsAgent:
                 # Strands (via session_manager) to track history.
                 agent_stream = strands_agent.stream_async(user_message)
 
+            # Provider-reported token usage, accumulated across the run and
+            # attached to the terminal RUN_FINISHED. Populated from the Strands
+            # AgentResult's metrics.accumulated_usage on the final "result" event.
+            run_usage: List[TokenUsage] = []
+            usage_provider, usage_model = _strands_model_identity(strands_agent)
+
             try:
                 async for event in agent_stream:
                     # If we've halted, consume remaining events silently to allow proper cleanup
@@ -913,6 +940,24 @@ class StrandsAgent:
                         continue
 
                     logger.debug(f"Received event: {event}")
+
+                    # Capture token usage from the terminal AgentResult. Done
+                    # before the lifecycle skips below so it is never missed,
+                    # regardless of which other keys the event also carries.
+                    result_obj = event.get("result") if isinstance(event, dict) else None
+                    if result_obj is not None:
+                        try:
+                            metrics = getattr(result_obj, "metrics", None)
+                            accumulated = getattr(metrics, "accumulated_usage", None)
+                            entry = token_usage_from_strands(
+                                accumulated,
+                                provider=usage_provider,
+                                model=usage_model,
+                            )
+                            if entry is not None:
+                                run_usage.append(entry)
+                        except Exception:  # pragma: no cover - defensive
+                            logger.debug("token usage capture skipped", exc_info=True)
 
                     # Skip lifecycle events
                     if event.get("init_event_loop") or event.get("start_event_loop"):
@@ -1819,6 +1864,7 @@ class StrandsAgent:
                 type=EventType.RUN_FINISHED,
                 thread_id=input_data.thread_id,
                 run_id=input_data.run_id,
+                usage=run_usage or None,
             )
 
         except Exception as e:

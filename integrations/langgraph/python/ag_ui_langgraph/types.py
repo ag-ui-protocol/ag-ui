@@ -2,6 +2,8 @@ from typing import TypedDict, Optional, List, Any, Dict, Set, Union, Literal
 from typing_extensions import NotRequired
 from enum import Enum
 
+from ag_ui.core import TokenUsage
+
 class LangGraphEventTypes(str, Enum):
     OnChainStart = "on_chain_start"
     OnChainStream = "on_chain_stream"
@@ -70,6 +72,10 @@ RunMetadata = TypedDict("RunMetadata", {
     "streamed_tool_call_ids": NotRequired[Set[str]],
     "model_made_tool_call": NotRequired[bool],
     "state_reliable": NotRequired[bool],
+    # Per-LLM-call token usage accumulated across the run from provider-reported
+    # numeric metadata; aggregated per (provider, model) and attached to the
+    # terminal RUN_FINISHED event. Never holds prompt/completion content.
+    "usage": NotRequired[List[TokenUsage]],
     # Message / state data
     "manually_emitted_state": NotRequired[Optional[State]],
     # Reasoning / thinking
