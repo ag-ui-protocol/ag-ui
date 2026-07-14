@@ -35,15 +35,11 @@ from .translator import AGUITranslator
 __version__ = "0.1.0"
 
 __all__ = [
-    # Serve an agent (highest level)
-    "OpenAIAgentsAgent",
     "add_openai_agents_fastapi_endpoint",
-    # Public translator (primary API — 2 methods)
-    "AGUITranslator",
-    # Engine translators (advanced / per-mapping overrides)
     "AGUIToOpenAITranslator",
-    "OpenAIToAGUITranslator",
-    # Types & helpers
-    "TranslatedInput",
+    "AGUITranslator",
     "ClientToolPending",
+    "OpenAIAgentsAgent",
+    "OpenAIToAGUITranslator",
+    "TranslatedInput",
 ]

@@ -1,12 +1,19 @@
-"""Public data containers for the translator package.
+"""Type definitions for the OpenAI Agents integration.
 
-Holds typed result objects produced by the translators. Translator
-behavior lives in agui_to_openai.py and openai_to_agui.py; this module only
-describes the shapes those translators hand back.
+Result containers the translators hand back (``TranslatedInput``), plus the
+OpenAI wire-level discriminator values the outbound translator dispatches on
+(``OpenAIItemType``, ``OpenAIRawResponseEventType``, ``OpenAIStreamEventType``,
+``HOSTED_TOOL_CALL_TYPES``). Members of the ``(str, Enum)`` classes compare
+equal to the raw wire strings (``StrEnum`` needs Python 3.11; this package
+supports 3.10+). The SDK's own ``Literal[...]`` annotations are the source of
+truth for those — see ``tests/test_stream_types_drift.py``. Translator
+behavior lives in ``agui_to_openai.py`` and ``openai_to_agui.py``; this module
+only describes shapes and constants.
 """
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import Any
 
 from agents import FunctionTool, TResponseInputItem
@@ -15,14 +22,43 @@ from pydantic import BaseModel, ConfigDict, SkipValidation
 from ag_ui.core import Context
 
 
-class TranslatedInput(BaseModel):
-    """SDK-ready bundle produced by translating an AG-UI RunAgentInput.
+# ── ag_ui_openai_agents result types ────────────────────────────────────────
 
-    The fields line up one-for-one with ag_ui.core.RunAgentInput — same
-    names, same required/optional split — so if you know the wire format
-    you already know this. The only real work happens on `messages` and
-    `tools` (translated into SDK shapes); everything else is handed
-    straight through for you to use however your app needs.
+class TranslatedInput(BaseModel):
+    """OpenAI Agents SDK-ready bundle produced by translating an AG-UI RunAgentInput.
+
+    Returned by ``AGUITranslator.to_openai()`` (or
+    ``AGUIToOpenAITranslator.translate()`` directly, for advanced/per-mapping
+    use). Fields line up one-for-one with ``ag_ui.core.RunAgentInput`` — same
+    names, same required/optional split — so if you know the wire format you
+    already know this shape. Only ``messages`` and ``tools`` are actually
+    translated into OpenAI Agents SDK types; everything else passes through
+    unchanged for you to use however your app needs.
+
+    Example:
+        translated_input = translator.to_openai(run_input)
+        result = Runner.run_streamed(
+            agent,
+            input=translated_input.messages,
+            context=translated_input.context,
+        )
+
+    Attributes:
+        thread_id: Conversation key. Stays the same across turns of one thread.
+        run_id: Id for this single run. Goes on the RUN_STARTED / RUN_FINISHED events.
+        parent_run_id: Set when this run was kicked off by another run
+            (nested/branched); None for a top-level run.
+        messages: Responses-API input items, ready to pass to
+            ``Runner.run*(input=...)``.
+        tools: FunctionTool proxies for the client's tools. Merge these with
+            your agent's own tools before running.
+        state: Whatever the client sent as state. Any, since AG-UI doesn't
+            pin a shape.
+        context: Ambient ``{description, value}`` items from the frontend.
+            Nothing folds these into the prompt for you.
+        forwarded_props: Grab-bag of extra client props (model overrides,
+            temperature, flags, ...) that don't have a dedicated field.
+        resume: Resume entries when continuing from an interrupt, else None.
     """
 
     # ── Identity ─────────────────────────────────────────────────────────
@@ -76,4 +112,68 @@ from agents.agent import AgentBase  # noqa: E402,F401
 
 TranslatedInput.model_rebuild()
 
-__all__ = ["TranslatedInput"]
+
+# ── OpenAI wire discriminators (raw events openai-agents emits) ─────────────────
+
+class OpenAIStreamEventType(str, Enum):
+    """Top-level StreamEvent.type values yielded by Runner.run_streamed."""
+
+    RAW_RESPONSE = "raw_response_event"
+    RUN_ITEM = "run_item_stream_event"
+    AGENT_UPDATED = "agent_updated_stream_event"
+
+
+class OpenAIRawResponseEventType(str, Enum):
+    """Raw Responses-API delta type values the outbound translator consumes.
+
+    Non-semantic bookkeeping kinds (response.created / .completed,
+    content_part.*, audio) are deliberately absent — they translate to
+    nothing.
+    """
+
+    OUTPUT_ITEM_ADDED = "response.output_item.added"
+    OUTPUT_ITEM_DONE = "response.output_item.done"
+    TEXT_DELTA = "response.output_text.delta"
+    TEXT_DONE = "response.output_text.done"
+    REFUSAL_DELTA = "response.refusal.delta"
+    FUNCTION_CALL_ARGUMENTS_DELTA = "response.function_call_arguments.delta"
+    REASONING_SUMMARY_DELTA = "response.reasoning_summary_text.delta"
+    REASONING_SUMMARY_PART_DONE = "response.reasoning_summary_part.done"
+    REASONING_TEXT_DELTA = "response.reasoning_text.delta"
+    REASONING_TEXT_DONE = "response.reasoning_text.done"
+
+
+class OpenAIItemType(str, Enum):
+    """Output-item type values carried by output_item.added / .done."""
+
+    MESSAGE = "message"
+    FUNCTION_CALL = "function_call"
+    REASONING = "reasoning"
+
+
+# Tools that run on OpenAI's side. We still show them as AG-UI tool calls, but
+# the API doesn't stream their arguments, so at the raw level all we can emit is
+# START/END. The run-item layer fills in the rest when it has it.
+HOSTED_TOOL_CALL_TYPES: frozenset[str] = frozenset(
+    {
+        "web_search_call",
+        "file_search_call",
+        "code_interpreter_call",
+        "image_generation_call",
+        "computer_call",
+        "local_shell_call",
+        "shell_call",
+        "apply_patch_call",
+        "mcp_call",
+        "custom_tool_call",
+        "tool_search_call",
+    }
+)
+
+__all__ = [
+    "HOSTED_TOOL_CALL_TYPES",
+    "OpenAIItemType",
+    "OpenAIRawResponseEventType",
+    "OpenAIStreamEventType",
+    "TranslatedInput",
+]

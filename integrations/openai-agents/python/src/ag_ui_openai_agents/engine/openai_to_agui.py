@@ -65,10 +65,10 @@ from .helpers import (
     new_tool_result_id,
     read_attr,
 )
-from .stream_types import (
+from .types import (
     HOSTED_TOOL_CALL_TYPES,
-    RawResponseEventType,
     OpenAIItemType,
+    OpenAIRawResponseEventType,
     OpenAIStreamEventType,
 )
 
@@ -239,26 +239,26 @@ class OpenAIToAGUITranslator:
         if data is None:
             return []
         kind = read_attr(data, "type")
-        if kind == RawResponseEventType.OUTPUT_ITEM_ADDED:
+        if kind == OpenAIRawResponseEventType.OUTPUT_ITEM_ADDED:
             return self.translate_output_item_added(data)
-        if kind == RawResponseEventType.OUTPUT_ITEM_DONE:
+        if kind == OpenAIRawResponseEventType.OUTPUT_ITEM_DONE:
             return self.translate_output_item_done(data)
-        if kind == RawResponseEventType.TEXT_DELTA:
+        if kind == OpenAIRawResponseEventType.TEXT_DELTA:
             return self.translate_text_delta(data)
-        if kind == RawResponseEventType.TEXT_DONE:
+        if kind == OpenAIRawResponseEventType.TEXT_DONE:
             return self.translate_text_done(data)
-        if kind == RawResponseEventType.REFUSAL_DELTA:
+        if kind == OpenAIRawResponseEventType.REFUSAL_DELTA:
             return self.translate_refusal_delta(data)
-        if kind == RawResponseEventType.FUNCTION_CALL_ARGUMENTS_DELTA:
+        if kind == OpenAIRawResponseEventType.FUNCTION_CALL_ARGUMENTS_DELTA:
             return self.translate_function_call_arguments_delta(data)
         if kind in (
-            RawResponseEventType.REASONING_SUMMARY_DELTA,
-            RawResponseEventType.REASONING_TEXT_DELTA,
+            OpenAIRawResponseEventType.REASONING_SUMMARY_DELTA,
+            OpenAIRawResponseEventType.REASONING_TEXT_DELTA,
         ):
             return self.translate_reasoning_delta(data)
         if kind in (
-            RawResponseEventType.REASONING_SUMMARY_PART_DONE,
-            RawResponseEventType.REASONING_TEXT_DONE,
+            OpenAIRawResponseEventType.REASONING_SUMMARY_PART_DONE,
+            OpenAIRawResponseEventType.REASONING_TEXT_DONE,
         ):
             return self.translate_reasoning_part_done(data)
         # Everything else (response.created/.completed, content_part chatter,

@@ -1,7 +1,7 @@
 """
 Drift guard: our wire strings must match the installed SDK's own types.
 
-``stream_types.py`` hardcodes the discriminator strings the translators
+``types.py`` hardcodes the discriminator strings the translators
 dispatch on. The SDK declares the same strings as ``Literal[...]`` annotations
 on its event/item classes. Nothing compares the two at runtime — if the SDK
 renamed a wire value, dispatch would silently stop matching (graceful
@@ -45,8 +45,8 @@ from openai.types.responses.response_reasoning_text_done_event import (
 
 from ag_ui_openai_agents.engine import (
     HOSTED_TOOL_CALL_TYPES,
-    RawResponseEventType,
     OpenAIItemType,
+    OpenAIRawResponseEventType,
     OpenAIStreamEventType,
 )
 
@@ -86,29 +86,29 @@ def test_stream_event_types_match_sdk(ours: OpenAIStreamEventType, sdk_cls: type
 @pytest.mark.parametrize(
     ("ours", "sdk_cls"),
     [
-        (RawResponseEventType.OUTPUT_ITEM_ADDED, ResponseOutputItemAddedEvent),
-        (RawResponseEventType.OUTPUT_ITEM_DONE, ResponseOutputItemDoneEvent),
-        (RawResponseEventType.TEXT_DELTA, ResponseTextDeltaEvent),
-        (RawResponseEventType.TEXT_DONE, ResponseTextDoneEvent),
-        (RawResponseEventType.REFUSAL_DELTA, ResponseRefusalDeltaEvent),
+        (OpenAIRawResponseEventType.OUTPUT_ITEM_ADDED, ResponseOutputItemAddedEvent),
+        (OpenAIRawResponseEventType.OUTPUT_ITEM_DONE, ResponseOutputItemDoneEvent),
+        (OpenAIRawResponseEventType.TEXT_DELTA, ResponseTextDeltaEvent),
+        (OpenAIRawResponseEventType.TEXT_DONE, ResponseTextDoneEvent),
+        (OpenAIRawResponseEventType.REFUSAL_DELTA, ResponseRefusalDeltaEvent),
         (
-            RawResponseEventType.FUNCTION_CALL_ARGUMENTS_DELTA,
+            OpenAIRawResponseEventType.FUNCTION_CALL_ARGUMENTS_DELTA,
             ResponseFunctionCallArgumentsDeltaEvent,
         ),
         (
-            RawResponseEventType.REASONING_SUMMARY_DELTA,
+            OpenAIRawResponseEventType.REASONING_SUMMARY_DELTA,
             ResponseReasoningSummaryTextDeltaEvent,
         ),
         (
-            RawResponseEventType.REASONING_SUMMARY_PART_DONE,
+            OpenAIRawResponseEventType.REASONING_SUMMARY_PART_DONE,
             ResponseReasoningSummaryPartDoneEvent,
         ),
-        (RawResponseEventType.REASONING_TEXT_DELTA, ResponseReasoningTextDeltaEvent),
-        (RawResponseEventType.REASONING_TEXT_DONE, ResponseReasoningTextDoneEvent),
+        (OpenAIRawResponseEventType.REASONING_TEXT_DELTA, ResponseReasoningTextDeltaEvent),
+        (OpenAIRawResponseEventType.REASONING_TEXT_DONE, ResponseReasoningTextDoneEvent),
     ],
 )
 def test_raw_response_event_types_match_sdk(
-    ours: RawResponseEventType, sdk_cls: type
+    ours: OpenAIRawResponseEventType, sdk_cls: type
 ) -> None:
     assert ours == pydantic_wire_value(sdk_cls)
 

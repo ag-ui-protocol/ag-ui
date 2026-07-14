@@ -91,9 +91,9 @@ def coerce_to_str(value: Any) -> str:
 
 
 __all__ = [
+    "coerce_to_str",
     "new_message_id",
     "new_tool_call_id",
     "new_tool_result_id",
     "read_attr",
-    "coerce_to_str",
 ]

@@ -30,9 +30,9 @@ from openai.types.responses.response_output_item import McpApprovalRequest
 
 from ag_ui.core import EventType
 from ag_ui_openai_agents.engine import OpenAIToAGUITranslator
-from ag_ui_openai_agents.engine.stream_types import (
-    RawResponseEventType,
+from ag_ui_openai_agents.engine.types import (
     OpenAIItemType,
+    OpenAIRawResponseEventType,
     OpenAIStreamEventType,
 )
 
@@ -42,7 +42,7 @@ _AGENT = Agent(name="test-agent")
 # ── event builders — shaped like the SDK's real stream events ────────────
 
 
-def _raw(kind: RawResponseEventType, **data) -> SimpleNamespace:
+def _raw(kind: OpenAIRawResponseEventType, **data) -> SimpleNamespace:
     """A RawResponsesStreamEvent wrapping one Responses payload."""
     return SimpleNamespace(
         type=OpenAIStreamEventType.RAW_RESPONSE,
@@ -52,7 +52,7 @@ def _raw(kind: RawResponseEventType, **data) -> SimpleNamespace:
 
 def _added(item_type: OpenAIItemType, output_index: int = 0, **item) -> SimpleNamespace:
     return _raw(
-        RawResponseEventType.OUTPUT_ITEM_ADDED,
+        OpenAIRawResponseEventType.OUTPUT_ITEM_ADDED,
         item=SimpleNamespace(type=item_type, **item),
         output_index=output_index,
     )
@@ -60,7 +60,7 @@ def _added(item_type: OpenAIItemType, output_index: int = 0, **item) -> SimpleNa
 
 def _done(item_type: OpenAIItemType, output_index: int = 0, **item) -> SimpleNamespace:
     return _raw(
-        RawResponseEventType.OUTPUT_ITEM_DONE,
+        OpenAIRawResponseEventType.OUTPUT_ITEM_DONE,
         item=SimpleNamespace(type=item_type, **item),
         output_index=output_index,
     )
@@ -96,8 +96,8 @@ def test_text_streams_start_content_end_under_one_id():
     events = _drive(
         engine,
         _added(OpenAIItemType.MESSAGE, id="msg_1"),
-        _raw(RawResponseEventType.TEXT_DELTA, item_id="msg_1", output_index=0, delta="Hel"),
-        _raw(RawResponseEventType.TEXT_DELTA, item_id="msg_1", output_index=0, delta="lo"),
+        _raw(OpenAIRawResponseEventType.TEXT_DELTA, item_id="msg_1", output_index=0, delta="Hel"),
+        _raw(OpenAIRawResponseEventType.TEXT_DELTA, item_id="msg_1", output_index=0, delta="lo"),
         _done(OpenAIItemType.MESSAGE, id="msg_1"),
     )
     assert _types(events) == [
@@ -120,7 +120,7 @@ def test_text_delta_lazily_opens_window_without_output_item_added():
     engine = OpenAIToAGUITranslator()
     events = _drive(
         engine,
-        _raw(RawResponseEventType.TEXT_DELTA, item_id="msg_1", output_index=0, delta="hi"),
+        _raw(OpenAIRawResponseEventType.TEXT_DELTA, item_id="msg_1", output_index=0, delta="hi"),
     )
     assert _types(events) == [EventType.TEXT_MESSAGE_START, EventType.TEXT_MESSAGE_CONTENT]
 
@@ -130,8 +130,8 @@ def test_text_done_closes_window_when_output_item_done_is_skipped():
     events = _drive(
         engine,
         _added(OpenAIItemType.MESSAGE, id="msg_1"),
-        _raw(RawResponseEventType.TEXT_DELTA, item_id="msg_1", output_index=0, delta="hi"),
-        _raw(RawResponseEventType.TEXT_DONE, item_id="msg_1", output_index=0),
+        _raw(OpenAIRawResponseEventType.TEXT_DELTA, item_id="msg_1", output_index=0, delta="hi"),
+        _raw(OpenAIRawResponseEventType.TEXT_DONE, item_id="msg_1", output_index=0),
     )
     assert _types(events)[-1] == EventType.TEXT_MESSAGE_END
 
@@ -141,7 +141,7 @@ def test_refusal_delta_streams_into_the_text_window():
     events = _drive(
         engine,
         _added(OpenAIItemType.MESSAGE, id="msg_1"),
-        _raw(RawResponseEventType.REFUSAL_DELTA, item_id="msg_1", output_index=0, delta="no"),
+        _raw(OpenAIRawResponseEventType.REFUSAL_DELTA, item_id="msg_1", output_index=0, delta="no"),
     )
     assert _types(events) == [EventType.TEXT_MESSAGE_START, EventType.TEXT_MESSAGE_CONTENT]
     assert events[1].delta == "no"
@@ -166,7 +166,7 @@ def test_text_less_message_item_wrapping_a_tool_call_emits_no_window():
             name="change_background",
         ),
         _raw(
-            RawResponseEventType.FUNCTION_CALL_ARGUMENTS_DELTA,
+            OpenAIRawResponseEventType.FUNCTION_CALL_ARGUMENTS_DELTA,
             item_id="fc_1",
             output_index=1,
             delta='{"background":"red"}',
@@ -198,13 +198,13 @@ def test_function_call_streams_start_args_end_under_the_call_id():
         engine,
         _added(OpenAIItemType.FUNCTION_CALL, id="fc_1", call_id="call_1", name="get_weather"),
         _raw(
-            RawResponseEventType.FUNCTION_CALL_ARGUMENTS_DELTA,
+            OpenAIRawResponseEventType.FUNCTION_CALL_ARGUMENTS_DELTA,
             item_id="fc_1",
             output_index=0,
             delta='{"city":',
         ),
         _raw(
-            RawResponseEventType.FUNCTION_CALL_ARGUMENTS_DELTA,
+            OpenAIRawResponseEventType.FUNCTION_CALL_ARGUMENTS_DELTA,
             item_id="fc_1",
             output_index=0,
             delta='"Cairo"}',
@@ -229,7 +229,7 @@ def test_function_call_args_delta_lazily_opens_the_call():
     events = _drive(
         engine,
         _raw(
-            RawResponseEventType.FUNCTION_CALL_ARGUMENTS_DELTA,
+            OpenAIRawResponseEventType.FUNCTION_CALL_ARGUMENTS_DELTA,
             item_id="fc_1",
             output_index=0,
             delta="{}",
@@ -259,12 +259,12 @@ def test_reasoning_summary_delta_opens_phase_and_part():
     events = _drive(
         engine,
         _raw(
-            RawResponseEventType.REASONING_SUMMARY_DELTA,
+            OpenAIRawResponseEventType.REASONING_SUMMARY_DELTA,
             item_id="rs_1",
             output_index=0,
             delta="thinking",
         ),
-        _raw(RawResponseEventType.REASONING_SUMMARY_PART_DONE, item_id="rs_1", output_index=0),
+        _raw(OpenAIRawResponseEventType.REASONING_SUMMARY_PART_DONE, item_id="rs_1", output_index=0),
     )
     assert _types(events) == [
         EventType.REASONING_START,
@@ -284,7 +284,7 @@ def test_reasoning_auto_closes_when_text_output_starts():
     _drive(
         engine,
         _raw(
-            RawResponseEventType.REASONING_TEXT_DELTA,
+            OpenAIRawResponseEventType.REASONING_TEXT_DELTA,
             item_id="rs_1",
             output_index=0,
             delta="hmm",
@@ -300,7 +300,7 @@ def test_reasoning_auto_closes_when_text_output_starts():
     ]
     events = _drive(
         engine,
-        _raw(RawResponseEventType.TEXT_DELTA, item_id="msg_1", output_index=0, delta="ok"),
+        _raw(OpenAIRawResponseEventType.TEXT_DELTA, item_id="msg_1", output_index=0, delta="ok"),
     )
     assert _types(events) == [EventType.TEXT_MESSAGE_START, EventType.TEXT_MESSAGE_CONTENT]
     assert events[0].message_id == "msg_1", "deferred START must carry the reserved id"
