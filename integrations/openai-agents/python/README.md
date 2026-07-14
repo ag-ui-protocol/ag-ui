@@ -178,17 +178,32 @@ branching)? Use the translator directly — see the section above.
 
 ## API overview
 
-Two layers, pick by how much control you want:
+Everything you need is importable from the package root:
+
+```python
+from ag_ui_openai_agents import (
+    AGUITranslator,
+    OpenAIAgentsAgent,
+    add_openai_agents_fastapi_endpoint,
+    TranslatedInput,
+)
+```
 
 | Name | Kind | Use it for |
 |---|---|---|
 | `AGUITranslator` | translator (recommended) | compose it yourself — `to_openai` + `to_agui`; full control of the agent and server |
+| `TranslatedInput` | result type | what `translator.to_openai(...)` returns — `messages`/`tools` plus passthrough fields |
 | `OpenAIAgentsAgent` | wrapper class | serve an agent: `run(RunAgentInput) -> AsyncIterator[BaseEvent]` |
 | `add_openai_agents_fastapi_endpoint(app, agent, path)` | helper | wire a wrapped agent to FastAPI (SSE + `/health`) |
 
 The wrapper is built on the translator; it trades control for less code. The
 translator is just an events translator — it does not own your agent or your
 server, so start there unless the wrapper's shortcut fits as-is.
+
+Everything else (`AGUIToOpenAITranslator`, `OpenAIToAGUITranslator`,
+`ClientToolPending`, and the per-type `translate_*` override points) is the
+advanced engine layer — import it from `ag_ui_openai_agents.engine`, not the
+package root; see [Advanced: the engine layer](#advanced-the-engine-layer).
 
 `AGUITranslator` pairs with the SDK's streaming run mode:
 
@@ -236,7 +251,8 @@ AGUITranslator(*, inbound_cls=AGUIToOpenAITranslator, outbound_cls=OpenAIToAGUIT
 ```
 
 These are advanced extension points for changing one mapping without forking
-the public orchestration:
+the public orchestration. Both defaults live in `ag_ui_openai_agents.engine`,
+not the package root:
 
 | Parameter | Default | Meaning |
 |---|---|---|
@@ -244,7 +260,9 @@ the public orchestration:
 | `outbound_cls` | `OpenAIToAGUITranslator` | Class used for SDK stream → AG-UI event translation. A fresh instance is created for every run because it tracks open stream windows. |
 
 For normal use, pass neither parameter. For a custom mapping, subclass the
-relevant engine class; see [Advanced: the engine layer](#advanced-the-engine-layer).
+relevant engine class (`from ag_ui_openai_agents.engine import
+AGUIToOpenAITranslator, OpenAIToAGUITranslator`); see
+[Advanced: the engine layer](#advanced-the-engine-layer).
 
 #### `to_openai(run_input)`
 
