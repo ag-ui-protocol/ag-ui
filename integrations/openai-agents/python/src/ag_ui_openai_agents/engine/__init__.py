@@ -5,7 +5,7 @@ inject it into the public translator via inbound_cls / outbound_cls. For
 everything else, import AGUITranslator from the package root instead.
 """
 
-from .agui_to_openai import AGUIToOpenAITranslator, ClientToolPending
+from .agui_to_openai import AGUIToOpenAITranslator
 from .helpers import (
     new_message_id,
     new_tool_call_id,
@@ -15,6 +15,7 @@ from .helpers import (
 )
 from .openai_to_agui import OpenAIToAGUITranslator
 from .types import (
+    ClientToolPending,
     HOSTED_TOOL_CALL_TYPES,
     OpenAIItemType,
     OpenAIRawResponseEventType,

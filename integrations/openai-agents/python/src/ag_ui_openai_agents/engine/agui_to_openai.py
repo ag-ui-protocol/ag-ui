@@ -10,7 +10,6 @@ import logging
 from typing import Any, Iterable
 
 from agents import FunctionTool, RunContextWrapper, TResponseInputItem
-from agents.exceptions import AgentsException
 
 from ag_ui.core import (
     ActivityMessage,
@@ -32,44 +31,9 @@ from ag_ui.core import (
     VideoInputContent,
 )
 from .helpers import read_attr, to_string
-from .types import TranslatedInput
+from .types import ClientToolPending, TranslatedInput
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Sentinel exception used by client-tool proxies
-# ---------------------------------------------------------------------------
-
-class ClientToolPending(AgentsException):
-    """Raised by a client-tool proxy to signal "stop, the UI owns this call".
-
-    The outer run loop catches it, cancels the SDK run after the current
-    turn, and persists the resulting RunState keyed by thread_id so the
-    next AG-UI request (which carries an AG-UI ToolMessage with the
-    client's result) can resume from the same point.
-
-    Subclasses AgentsException deliberately: the SDK's own tool executor
-    (agents.run_internal.tool_execution._run_single_tool) special-cases
-    `isinstance(e, AgentsException)` to re-raise it as-is — anything else
-    gets wrapped in a generic UserError first, which would hide this from
-    the outer run loop's `except ClientToolPending` and turn every
-    client-owned tool call into a hard run failure instead of a clean
-    hand-off.
-
-    Args:
-        tool_name: Name of the client-owned tool that was called.
-        tool_call_id: The SDK's call_id for this invocation.
-        arguments: Raw JSON arguments string the model produced.
-    """
-
-    def __init__(self, tool_name: str, tool_call_id: str, arguments: str) -> None:
-        super().__init__(
-            f"Client tool '{tool_name}' (call_id={tool_call_id}) pending UI execution"
-        )
-        self.tool_name = tool_name
-        self.tool_call_id = tool_call_id
-        self.arguments = arguments
 
 
 # ---------------------------------------------------------------------------
@@ -787,5 +751,4 @@ class AGUIToOpenAITranslator:
 
 __all__ = [
     "AGUIToOpenAITranslator",
-    "ClientToolPending",
 ]
