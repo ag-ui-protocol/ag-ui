@@ -5,8 +5,6 @@ inject it into the public translator via inbound_cls / outbound_cls. For
 everything else, import AGUITranslator from the package root instead.
 """
 
-from __future__ import annotations
-
 from .agui_to_openai import AGUIToOpenAITranslator, ClientToolPending
 from .helpers import (
     coerce_to_str,

@@ -4,8 +4,6 @@ Wrap a plain SDK Agent, get one run_streamed(RunAgentInput) yielding AG-UI event
 ready for add_openai_agents_fastapi_endpoint.
 """
 
-from __future__ import annotations
-
 from typing import Any, AsyncIterator, Callable
 
 from agents import Agent, RunConfig, Runner

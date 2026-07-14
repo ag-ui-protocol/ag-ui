@@ -6,8 +6,6 @@ and translate_<type>() does a single item (override one to tweak just that
 mapping). Stateless — make one and reuse it, or make one per request.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any, Iterable
 

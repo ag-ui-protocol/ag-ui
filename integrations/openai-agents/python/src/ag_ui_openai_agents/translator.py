@@ -1,7 +1,5 @@
 """Translate between AG-UI requests and OpenAI Agents SDK streams."""
 
-from __future__ import annotations
-
 import asyncio
 import inspect
 from typing import Any, AsyncIterator

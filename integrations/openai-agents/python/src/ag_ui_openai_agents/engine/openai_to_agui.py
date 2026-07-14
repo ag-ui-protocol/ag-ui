@@ -10,8 +10,6 @@ STATE_SNAPSHOT / STATE_DELTA, MESSAGES_SNAPSHOT) are the run loop's job
 — the translator only translates.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any, Sequence
 

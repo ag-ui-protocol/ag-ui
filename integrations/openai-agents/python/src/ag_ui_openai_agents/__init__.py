@@ -20,8 +20,6 @@ Advanced (per-mapping overrides) — the engine layer:
     from ag_ui_openai_agents.engine import AGUIToOpenAITranslator, OpenAIToAGUITranslator
 """
 
-from __future__ import annotations
-
 from .agent import OpenAIAgentsAgent
 from .endpoint import add_openai_agents_fastapi_endpoint
 from .engine import (

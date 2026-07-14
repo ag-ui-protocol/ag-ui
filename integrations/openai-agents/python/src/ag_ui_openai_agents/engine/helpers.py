@@ -4,8 +4,6 @@ These are deliberately tiny, side-effect-free, and dependency-light so they
 can be reused by either translator without coupling them.
 """
 
-from __future__ import annotations
-
 import json
 import uuid
 from typing import Any

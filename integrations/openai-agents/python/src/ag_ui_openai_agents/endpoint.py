@@ -4,8 +4,6 @@ Glue an OpenAIAgentsAgent to a FastAPI app in one call: SSE stream, content
 negotiation, health check.
 """
 
-from __future__ import annotations
-
 import logging
 
 from fastapi import FastAPI, Request
