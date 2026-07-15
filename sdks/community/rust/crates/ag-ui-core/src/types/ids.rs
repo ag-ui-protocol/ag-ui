@@ -7,18 +7,27 @@ use uuid::Uuid;
 /// Using OID namespace as it's appropriate for identifiers.
 const ID_NAMESPACE: Uuid = Uuid::NAMESPACE_OID;
 
-/// Macro to define a newtype ID based on Uuid with round-trip preservation.
+/// Macro to define a newtype ID whose identity is a protocol string, with a
+/// derived UUID as a compatibility view.
 ///
-/// These ID types support the AG-UI protocol which uses string identifiers.
-/// While the official TypeScript SDK uses plain strings, this Rust SDK provides
-/// UUID-based types for type safety. When a non-UUID string is received (e.g.,
-/// LangGraph's `lc_run--...` format), we:
+/// These ID types support the AG-UI protocol, which identifies everything by
+/// plain strings (the official TypeScript SDK types IDs as `string`; docs use
+/// values like `msg_1`, `thread1`). This Rust SDK layers a UUID view on top
+/// for callers that want one, but **the canonical protocol string is the
+/// identity** — `PartialEq`, `Eq`, `Hash`, `Serialize`, and `Display` are all
+/// keyed on it. The UUID is derived and MUST NOT be used for equality: two
+/// different strings could (in principle) collide under UUID v5 hashing, and
+/// treating the hash as identity would silently merge distinct protocol IDs
+/// in a `HashMap`/`HashSet`.
 ///
-/// 1. Generate a deterministic UUID using UUID v5 (namespace + original string)
-/// 2. Preserve the original string for serialization (round-trip fidelity)
+/// The canonical string is:
+/// - the original string, when constructed from a string (valid UUID or not)
+/// - the UUID's canonical hyphenated form, when constructed from a `Uuid`
+///   directly (`random()`, `From<Uuid>`)
 ///
-/// This allows internal code to work with UUIDs while maintaining protocol
-/// compatibility with servers that use arbitrary string IDs.
+/// For a non-UUID string, a deterministic UUID v5 hash (namespace + string)
+/// is cached for `as_uuid()`. For a UUID (or valid-UUID string), `as_uuid()`
+/// returns that exact UUID.
 macro_rules! define_id_type {
     // This arm of the macro handles calls that don't specify extra derives.
     ($name:ident) => {
@@ -28,46 +37,63 @@ macro_rules! define_id_type {
     ($name:ident, $($extra_derive:ident),*) => {
         #[doc = concat!(stringify!($name), ": A newtype wrapper providing type-safe identifiers.")]
         ///
-        /// Supports both UUID strings and arbitrary string IDs (like LangGraph's
-        /// `lc_run--...` format). Non-UUID strings are hashed to UUIDs internally
-        /// but preserved for round-trip serialization.
+        /// Identity is the canonical protocol string (see module docs). A
+        /// derived UUID is always available via [`Self::as_uuid`] but is not
+        /// part of equality/hashing/serialization.
         #[derive(Debug, Clone, $($extra_derive),*)]
         pub struct $name {
-            /// Internal UUID representation (always available)
+            /// Canonical protocol string — the identity of this ID. Either
+            /// the original string as received, or (for UUID-constructed
+            /// ids) the UUID's canonical hyphenated form.
+            raw: String,
+            /// Derived UUID view: the exact UUID for UUID-constructed ids,
+            /// or a deterministic UUID v5 hash of `raw` for arbitrary
+            /// strings. Not part of identity — see module docs.
             uuid: Uuid,
-            /// Original string if it wasn't a valid UUID (for round-trip serialization)
-            raw: Option<String>,
+            /// `true` if this ID was constructed from a string that is not
+            /// itself a valid UUID.
+            coerced: bool,
         }
 
         impl $name {
             /// Creates a new random ID.
             pub fn random() -> Self {
+                let uuid = Uuid::new_v4();
                 Self {
-                    uuid: Uuid::new_v4(),
-                    raw: None,
+                    raw: uuid.to_string(),
+                    uuid,
+                    coerced: false,
                 }
             }
 
             /// Creates a new ID from a string.
             ///
-            /// If the string is a valid UUID, it's used directly.
-            /// Otherwise, a deterministic UUID is generated via UUID v5,
-            /// and the original string is preserved for serialization.
+            /// The string itself becomes the identity (used for equality,
+            /// hashing, and serialization). If it happens to be a valid
+            /// UUID, `as_uuid()` returns that UUID directly; otherwise a
+            /// deterministic UUID v5 hash is cached for `as_uuid()`.
             pub fn new(s: impl AsRef<str>) -> Self {
                 let s = s.as_ref();
                 match Uuid::parse_str(s) {
-                    Ok(uuid) => Self { uuid, raw: None },
+                    Ok(uuid) => Self {
+                        raw: s.to_owned(),
+                        uuid,
+                        coerced: false,
+                    },
                     Err(_) => Self {
+                        raw: s.to_owned(),
                         uuid: Uuid::new_v5(&ID_NAMESPACE, s.as_bytes()),
-                        raw: Some(s.to_owned()),
+                        coerced: true,
                     },
                 }
             }
 
-            /// Returns the internal UUID representation.
+            /// Returns the derived UUID view.
             ///
             /// This is always available, even for non-UUID string IDs
             /// (in which case it's a deterministic hash of the original).
+            /// This is a compatibility view, not the identity of the ID —
+            /// use `==`/`Hash` (keyed on the protocol string) for equality.
             pub fn as_uuid(&self) -> &Uuid {
                 &self.uuid
             }
@@ -77,13 +103,13 @@ macro_rules! define_id_type {
             /// Useful for logging/debugging to identify IDs that were coerced
             /// from arbitrary strings (e.g., LangGraph format).
             pub fn was_coerced(&self) -> bool {
-                self.raw.is_some()
+                self.coerced
             }
 
             /// Returns the original string if this ID was coerced, or `None` if
             /// it was created from a valid UUID.
             pub fn original_string(&self) -> Option<&str> {
-                self.raw.as_deref()
+                self.coerced.then_some(self.raw.as_str())
             }
         }
 
@@ -102,69 +128,66 @@ macro_rules! define_id_type {
             where
                 S: Serializer,
             {
-                // Round-trip preservation: serialize original string if we had one
-                match &self.raw {
-                    Some(original) => serializer.serialize_str(original),
-                    None => serializer.serialize_str(&self.uuid.to_string()),
-                }
+                serializer.serialize_str(&self.raw)
             }
         }
 
-        // Manual PartialEq: equality is based solely on the UUID
-        // Two IDs are equal if they resolve to the same internal UUID,
-        // regardless of whether they came from different original strings
-        // (though in practice, same original -> same UUID via deterministic hash)
+        // Manual PartialEq: identity is the canonical protocol string.
+        // Deriving equality from the UUID view would let two distinct
+        // strings that collide under UUID v5 compare equal.
         impl PartialEq for $name {
             fn eq(&self, other: &Self) -> bool {
-                self.uuid == other.uuid
+                self.raw == other.raw
             }
         }
 
         impl Eq for $name {}
 
-        // Manual Hash: hash only the UUID for consistency with PartialEq
+        // Manual Hash: hash the canonical string, consistent with PartialEq.
         impl Hash for $name {
             fn hash<H: Hasher>(&self, state: &mut H) {
-                self.uuid.hash(state);
+                self.raw.hash(state);
             }
         }
 
-        /// Allows creating an ID from a Uuid.
+        /// Allows creating an ID from a Uuid. The UUID's canonical string
+        /// form becomes the identity.
         impl From<Uuid> for $name {
             fn from(uuid: Uuid) -> Self {
-                Self { uuid, raw: None }
+                Self {
+                    raw: uuid.to_string(),
+                    uuid,
+                    coerced: false,
+                }
             }
         }
 
-        /// Allows converting an ID back into a Uuid.
+        /// Allows converting an ID back into a Uuid (the derived view).
         impl From<$name> for Uuid {
             fn from(id: $name) -> Self {
                 id.uuid
             }
         }
 
-        /// Allows getting a reference to the inner Uuid.
+        /// Allows getting a reference to the derived Uuid view.
         impl AsRef<Uuid> for $name {
             fn as_ref(&self) -> &Uuid {
                 &self.uuid
             }
         }
 
-        /// Allows printing the ID.
-        /// Returns the original string if coerced, otherwise the UUID string.
+        /// Allows printing the ID. Always shows the canonical protocol
+        /// string (the identity).
         impl std::fmt::Display for $name {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                match &self.raw {
-                    Some(original) => write!(f, "{}", original),
-                    None => write!(f, "{}", self.uuid),
-                }
+                write!(f, "{}", self.raw)
             }
         }
 
         /// Allows parsing an ID from a string slice.
         ///
-        /// Note: This now accepts any string (not just valid UUIDs),
-        /// matching the behavior of `new()` and `Deserialize`.
+        /// Note: This accepts any string (not just valid UUIDs), matching
+        /// the behavior of `new()` and `Deserialize`.
         impl std::str::FromStr for $name {
             type Err = std::convert::Infallible;
 
@@ -173,29 +196,17 @@ macro_rules! define_id_type {
             }
         }
 
-        /// Allows comparing the ID with a Uuid.
+        /// Allows comparing the ID with a Uuid (compares the derived view).
         impl PartialEq<Uuid> for $name {
             fn eq(&self, other: &Uuid) -> bool {
                 self.uuid == *other
             }
         }
 
-        /// Allows comparing the ID with a string slice.
+        /// Allows comparing the ID with a string slice (compares identity).
         impl PartialEq<str> for $name {
             fn eq(&self, other: &str) -> bool {
-                // First check if we have an original string that matches
-                if let Some(ref raw) = self.raw {
-                    if raw == other {
-                        return true;
-                    }
-                }
-                // Then try to parse as UUID and compare
-                if let Ok(uuid) = Uuid::parse_str(other) {
-                    self.uuid == uuid
-                } else {
-                    // Compare by computing what the UUID would be
-                    self.uuid == Uuid::new_v5(&ID_NAMESPACE, other.as_bytes())
-                }
+                self.raw == other
             }
         }
     };
@@ -294,8 +305,7 @@ mod tests {
         // The new() method and deserialize should produce the same UUID for the same input
         let langgraph_id = "lc_run--019bcffd-726e-7ca1-9708-98f26a168272";
         let from_new = MessageId::new(langgraph_id);
-        let from_deser: MessageId =
-            serde_json::from_str(&format!("\"{}\"", langgraph_id)).unwrap();
+        let from_deser: MessageId = serde_json::from_str(&format!("\"{}\"", langgraph_id)).unwrap();
         assert_eq!(from_new, from_deser);
     }
 
@@ -446,5 +456,161 @@ mod tests {
         // And that UUID should be deterministic
         let expected = Uuid::new_v5(&ID_NAMESPACE, input.as_bytes());
         assert_eq!(id1.as_uuid(), &expected);
+    }
+
+    // --- Identity is the protocol string, not the derived UUID ---
+
+    #[test]
+    fn test_same_string_is_equal_and_hash_equal() {
+        use std::collections::hash_map::DefaultHasher;
+
+        let a = ThreadId::new("thread-abc");
+        let b = ThreadId::new("thread-abc");
+        assert_eq!(a, b);
+
+        let mut hasher_a = DefaultHasher::new();
+        let mut hasher_b = DefaultHasher::new();
+        a.hash(&mut hasher_a);
+        b.hash(&mut hasher_b);
+        assert_eq!(hasher_a.finish(), hasher_b.finish());
+    }
+
+    #[test]
+    fn test_different_strings_are_not_equal() {
+        let a = ThreadId::new("thread-abc");
+        let b = ThreadId::new("thread-xyz");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn test_string_constructed_id_survives_serde_roundtrip_as_equal() {
+        let id = RunId::new("arbitrary-run-id");
+        let serialized = serde_json::to_string(&id).unwrap();
+        let roundtripped: RunId = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(
+            id, roundtripped,
+            "serialize -> deserialize must preserve identity"
+        );
+    }
+
+    #[test]
+    fn test_valid_uuid_string_roundtrips_to_canonical_uuid_string() {
+        let uuid = Uuid::new_v4();
+        let id = MessageId::new(uuid.to_string());
+
+        // Canonical string form is the UUID itself, and as_uuid() returns it.
+        assert_eq!(id.to_string(), uuid.to_string());
+        assert_eq!(id.as_uuid(), &uuid);
+        assert!(!id.was_coerced());
+
+        let serialized = serde_json::to_string(&id).unwrap();
+        assert_eq!(serialized, format!("\"{}\"", uuid));
+        let deserialized: MessageId = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(id, deserialized);
+        assert_eq!(deserialized.as_uuid(), &uuid);
+    }
+
+    #[test]
+    fn test_identity_is_independent_of_backing_uuid() {
+        // Directly construct two ids that share the same derived UUID (as if
+        // two different strings had collided under UUID v5) but have
+        // different canonical strings. Equality must be decided by the
+        // string, not the UUID -- this is the property that keeps
+        // HashMap/HashSet keys from silently merging distinct protocol IDs.
+        let shared_uuid = Uuid::new_v5(&ID_NAMESPACE, b"irrelevant-for-this-test");
+        let a = MessageId {
+            raw: "string-a".to_string(),
+            uuid: shared_uuid,
+            coerced: true,
+        };
+        let b = MessageId {
+            raw: "string-b".to_string(),
+            uuid: shared_uuid,
+            coerced: true,
+        };
+
+        assert_eq!(a.as_uuid(), b.as_uuid(), "precondition: same derived UUID");
+        assert_ne!(a, b, "different canonical strings must not compare equal");
+    }
+
+    #[test]
+    fn test_different_uuid_spellings_of_same_uuid_are_distinct_ids() {
+        use std::collections::hash_map::DefaultHasher;
+
+        // Simple (no hyphens) and hyphenated spellings of the SAME uuid.
+        let simple = "67e5504410b1426f9247bb680e5fe0c8";
+        let hyphenated = "67e55044-10b1-426f-9247-bb680e5fe0c8";
+
+        // Precondition: Uuid::parse_str treats both as the same uuid.
+        assert_eq!(
+            Uuid::parse_str(simple).unwrap(),
+            Uuid::parse_str(hyphenated).unwrap()
+        );
+
+        let a = MessageId::new(simple);
+        let b = MessageId::new(hyphenated);
+
+        // Both are valid-UUID-shaped strings, so neither is "coerced" ...
+        assert!(!a.was_coerced());
+        assert!(!b.was_coerced());
+        // ... but they are different protocol strings, so they must be
+        // distinct ids: not equal, and not hash-equal.
+        assert_ne!(
+            a, b,
+            "different spellings of the same uuid must not be equal"
+        );
+
+        let mut hasher_a = DefaultHasher::new();
+        let mut hasher_b = DefaultHasher::new();
+        a.hash(&mut hasher_a);
+        b.hash(&mut hasher_b);
+        assert_ne!(
+            hasher_a.finish(),
+            hasher_b.finish(),
+            "different spellings of the same uuid should not hash-collide \
+             (not guaranteed in general, but true for DefaultHasher over \
+             these two distinct strings, and required for HashSet distinctness)"
+        );
+
+        // Both still resolve to the same underlying uuid via the derived view.
+        assert_eq!(a.as_uuid(), b.as_uuid());
+    }
+
+    #[test]
+    fn test_hyphenated_uuid_input_serializes_and_displays_exactly() {
+        let hyphenated = "67e55044-10b1-426f-9247-bb680e5fe0c8";
+        let id = MessageId::new(hyphenated);
+
+        // Display must be byte-identical to the exact input string, not
+        // re-canonicalized (even though in this case the input already IS
+        // the canonical hyphenated form, `new()` must not reconstruct it
+        // via `Uuid::to_string()`).
+        assert_eq!(id.to_string(), hyphenated);
+        assert_eq!(id.to_string().as_bytes(), hyphenated.as_bytes());
+
+        let serialized = serde_json::to_string(&id).unwrap();
+        assert_eq!(serialized, format!("\"{}\"", hyphenated));
+
+        let deserialized: MessageId = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(id, deserialized);
+        assert_eq!(deserialized.to_string(), hyphenated);
+    }
+
+    #[test]
+    fn test_simple_uuid_input_preserves_exact_spelling() {
+        // A "simple" (no-hyphen) valid-UUID-shaped string must round-trip
+        // as itself, not get rewritten into the hyphenated canonical form.
+        let simple = "67e5504410b1426f9247bb680e5fe0c8";
+        let id = MessageId::new(simple);
+
+        assert!(!id.was_coerced());
+        assert_eq!(id.to_string(), simple);
+
+        let serialized = serde_json::to_string(&id).unwrap();
+        assert_eq!(serialized, format!("\"{}\"", simple));
+
+        let deserialized: MessageId = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(id, deserialized);
+        assert_eq!(deserialized.to_string(), simple);
     }
 }
