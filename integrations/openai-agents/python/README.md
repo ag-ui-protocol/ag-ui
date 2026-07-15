@@ -569,7 +569,7 @@ Both directions, source of truth is `engine/agui_to_openai.py` and
 | `ActivityMessage` | dropped (neither Responses nor Chat Completions has an equivalent model-input item; subclasses may override this mapping) |
 | `Tool` (client-declared) | SDK `FunctionTool` proxy that raises `ClientToolPending` when invoked |
 | Content parts: `TextInputContent`, `ImageInputContent`, `AudioInputContent`, `DocumentInputContent`, `BinaryInputContent` | `input_text` / `input_image` / `input_audio` / `input_file` parts |
-| `VideoInputContent` | dropped (no OpenAI API accepts video input yet) |
+| `VideoInputContent` | dropped (neither Responses nor Chat Completions accepts video input) |
 
 **Outbound** — SDK stream event → AG-UI `BaseEvent` (`OpenAIToAGUITranslator`):
 
@@ -626,20 +626,25 @@ more than text — images, audio clips, documents, etc. Each one is a typed
 content part (`ag_ui.core.InputContent`). The translator converts each part
 into the block shape the OpenAI Agents SDK expects for that message:
 
-| User sends this... | ...becomes this for the SDK | How |
+| User sends this... | SDK shape | Transport support |
 |---|---|---|
-| Plain text | `input_text` | as-is |
-| An image | `input_image` | a URL is passed through; raw bytes become a base64 `data:` URL |
-| An audio clip | `input_audio` | must be raw bytes (base64) — audio can't be sent as a URL; the audio format (`wav`, `mp3`, ...) is read from the clip's mime type |
-| A document (PDF, etc.) | `input_file` | URL stays a URL; raw bytes become base64 |
-| A video | *(dropped, see below)* | not supported — see below |
-| `BinaryInputContent` (deprecated, legacy catch-all) | whichever of the above matches its mime type | e.g. `image/*` → `input_image` |
+| Plain text | `input_text` | Responses and Chat Completions |
+| An image | `input_image`; URL passes through and inline data becomes a base64 `data:` URL | Responses and Chat Completions |
+| An audio clip | `input_audio` with base64 data and a format tag | Chat Completions with an audio-capable model; not Responses |
+| A document (PDF, etc.) | `input_file`; URL uses `file_url` and inline data uses base64 `file_data` | Inline data works with both; URL works with Responses only |
+| A video | *(dropped, see below)* | Neither Responses nor Chat Completions |
+| `BinaryInputContent` (deprecated, legacy catch-all) | selected from its mime type, e.g. `image/*` becomes `input_image` | Depends on the selected content type |
 
-**Video input isn't supported, and it's not our limitation to fix.** Right
-now, no OpenAI API (Responses or Chat Completions) accepts video as input at
-all — there's no video content type to translate into. If OpenAI adds one,
-we'll wire it up. Until then, video parts are silently dropped (logged, not
-an error). If you want to work around it today, override
+Base64 represents binary bytes as text that can be embedded safely in JSON. It
+is encoding, not encryption or compression, and adds roughly 33% size overhead.
+AG-UI data sources already contain base64: the translator wraps image and file
+data in `data:<mime>;base64,...` URLs, while audio uses the base64 value with a
+separate format tag.
+
+**Video isn't supported as an agent model input.** Neither Responses nor Chat
+Completions has a video content part to translate into. OpenAI's specialized
+Videos API is separate from these agent inputs. Until support is added, video
+parts are silently dropped (logged, not an error). To work around it, override
 `translate_video_content` in a subclass — e.g. extract a few frames and send
 them as images instead.
 

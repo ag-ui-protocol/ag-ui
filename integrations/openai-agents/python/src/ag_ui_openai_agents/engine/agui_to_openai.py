@@ -428,8 +428,7 @@ class AGUIToOpenAITranslator:
             return self.translate_document_content(part)
         if isinstance(part, BinaryInputContent):
             return self.translate_binary_content(part)
-        # Not a typed part — probably a raw dict from loosely-parsed JSON.
-        # Fall back to sniffing it by shape.
+        # Support dict-shaped parts passed directly to the mapping API.
         return self._dispatch_dict_content_part(part)
 
     def translate_text_content(self, part: TextInputContent) -> dict[str, Any]:
@@ -471,10 +470,9 @@ class AGUIToOpenAITranslator:
     ) -> dict[str, Any] | None:
         """Translate an AudioInputContent part.
 
-        The Responses API accepts base64 audio data with a short format
-        tag (wav, mp3). The format is extracted from the mime type. URL
-        sources are not supported by the API for audio — they get
-        dropped.
+        OpenAI accepts base64 audio through Chat Completions with an
+        audio-capable model; Responses does not accept audio input. URL audio
+        sources are unsupported and are dropped.
 
         Args:
             part: The AG-UI audio content part.
@@ -503,8 +501,8 @@ class AGUIToOpenAITranslator:
     ) -> dict[str, Any] | None:
         """Translate a VideoInputContent part — dropped by default.
 
-        The Responses API has no native video input. Override this in
-        a subclass to swap in a placeholder or extract frames.
+        Neither Responses nor Chat Completions has a native video input part.
+        Override this in a subclass to use a placeholder or extract frames.
 
         Args:
             part: The AG-UI video content part.
@@ -512,7 +510,7 @@ class AGUIToOpenAITranslator:
         Returns:
             Always None.
         """
-        logger.debug("Dropping video part: Responses API does not accept video input")
+        logger.debug("Dropping video part: OpenAI model inputs do not accept video")
         return None
 
     def translate_document_content(
@@ -547,12 +545,11 @@ class AGUIToOpenAITranslator:
         self,
         part: BinaryInputContent,
     ) -> dict[str, Any] | None:
-        """Translate a BinaryInputContent part, routed by mime type.
+        """Translate the deprecated BinaryInputContent catch-all by mime type.
 
-        Binary parts are a polymorphic catch-all: they may be images,
-        audio, documents, etc. The mime type is sniffed and routed to
-        the corresponding Responses-API input shape. Unknown types are
-        dropped.
+        This legacy AG-UI type predates dedicated image, audio, video, and
+        document parts. Image and audio mime types use their matching SDK
+        shapes; all remaining mime types are represented as files.
 
         Args:
             part: The AG-UI binary content part.
@@ -573,7 +570,8 @@ class AGUIToOpenAITranslator:
     # LEVEL 4 — Internal helpers
     # ─────────────────────────────────────────────────────────────────────
 
-    def _ensure_object_schema(self, parameters: Any) -> dict[str, Any]:
+    @staticmethod
+    def _ensure_object_schema(parameters: Any) -> dict[str, Any]:
         """Normalize a possibly-empty tool parameter spec into a JSON Schema object.
 
         The Responses API requires every function tool's schema to be a
@@ -593,10 +591,9 @@ class AGUIToOpenAITranslator:
 
     @staticmethod
     def _data_source_to_url(source: Any) -> str | None:
-        """Render a content source (data or url) as a single string for image_url.
+        """Render an image source as the URL string used by the Agents SDK.
 
-        URL sources pass through. Data sources become
-        data:<mime>;base64,<value>.
+        Both SDK transports accept URL sources and base64 data URLs.
 
         Args:
             source: The content part's source object.
@@ -619,7 +616,7 @@ class AGUIToOpenAITranslator:
 
     @staticmethod
     def _audio_format_from_mime(mime: str | None) -> str:
-        """Map a mime type to the short format string the Responses API wants.
+        """Map a mime type to the format expected for Chat Completions audio.
 
         Args:
             mime: The audio mime type, or None.
