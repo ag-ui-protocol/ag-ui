@@ -556,9 +556,9 @@ aiohttp, raw ASGI, WebSockets, or tests can all use the same translator calls.
 Both directions, source of truth is `engine/agui_to_openai.py` and
 `engine/openai_to_agui.py`.
 
-**Inbound** — AG-UI `Message` → Responses-API input item (`AGUIToOpenAITranslator`):
+**Inbound** — AG-UI `Message` → OpenAI Agents SDK input item (`AGUIToOpenAITranslator`):
 
-| AG-UI type | SDK / Responses-API shape |
+| AG-UI type | OpenAI Agents SDK input shape |
 |---|---|
 | `UserMessage` | `{"type": "message", "role": "user", "content": [...]}` (multimodal-aware) |
 | `SystemMessage` | `{"type": "message", "role": "system", ...}` |
@@ -566,7 +566,7 @@ Both directions, source of truth is `engine/agui_to_openai.py` and
 | `AssistantMessage` | optional text `message` item + one `function_call` item per `tool_calls` entry |
 | `ToolMessage` | `{"type": "function_call_output", "call_id": ..., "output": ...}` |
 | `ReasoningMessage` | `{"type": "reasoning", ...}` if `encrypted_value` is set, else dropped (plaintext reasoning isn't replayable) |
-| `ActivityMessage` | dropped (no Responses-API equivalent; override to fold into the prompt) |
+| `ActivityMessage` | dropped (neither Responses nor Chat Completions has an equivalent model-input item; subclasses may override this mapping) |
 | `Tool` (client-declared) | SDK `FunctionTool` proxy that raises `ClientToolPending` when invoked |
 | Content parts: `TextInputContent`, `ImageInputContent`, `AudioInputContent`, `DocumentInputContent`, `BinaryInputContent` | `input_text` / `input_image` / `input_audio` / `input_file` parts |
 | `VideoInputContent` | dropped (no OpenAI API accepts video input yet) |

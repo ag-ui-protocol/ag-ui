@@ -1,10 +1,4 @@
-"""Inbound translator: AG-UI request primitives → OpenAI Agents SDK formats.
-
-Layered so you can grab as much or as little as you need: translate() does
-the whole request in one call, translate_<family>() handles a collection,
-and translate_<type>() does a single item (override one to tweak just that
-mapping). Stateless — make one and reuse it, or make one per request.
-"""
+"""Translate AG-UI request data into OpenAI Agents SDK input types."""
 
 import logging
 from typing import Any, Iterable
@@ -36,58 +30,50 @@ from .types import ClientToolPending, TranslatedInput
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# The translator
-# ---------------------------------------------------------------------------
-
 class AGUIToOpenAITranslator:
-    """Translate AG-UI inbound primitives into OpenAI Agents SDK shapes.
+    """Map AG-UI request data to OpenAI Agents SDK input types.
+
+    This stateless inbound engine powers ``AGUITranslator.to_openai()``.
+    Its public ``translate_*`` methods are mapping-level override points for
+    applications that need to customize individual conversions.
 
     Example:
-        One-shot:
+        Public translator:
 
-            translated_input = AGUIToOpenAITranslator().translate(run_input)
+            translated_input = AGUITranslator().to_openai(run_input)
             result = Runner.run_streamed(
                 agent.clone(tools=agent.tools + translated_input.tools),
                 input=translated_input.messages,
             )
 
-        Per-item:
+        Advanced per-item mapping:
 
             translator = AGUIToOpenAITranslator()
-            items = [translator.translate_user_message(msg) for msg in user_msgs]
-            proxy = translator.translate_tool(my_tool)
-            image_part = translator.translate_image_content(part)
+            translated_message = translator.translate_user_message(message)
     """
 
     # ─────────────────────────────────────────────────────────────────────
-    # TIER 1 — One-shot entry point
+    # LEVEL 1 — Complete request translation
     # ─────────────────────────────────────────────────────────────────────
 
     def translate(self, run_input: RunAgentInput) -> TranslatedInput:
-        """Translate an entire RunAgentInput into an SDK-ready bundle.
+        """Translate a complete AG-UI request for the OpenAI Agents SDK.
 
-        This is the high-level entry point. It does everything: converts
-        messages, wraps tools, and forwards state / context /
-        forwarded_props / thread_id / run_id / parent_run_id / resume so
-        callers have one object that mirrors ag_ui.core.RunAgentInput
-        field-for-field.
+        Converts message history and client-declared tools while preserving
+        the request identifiers, state, context, forwarded props, and resume
+        entries in a ``TranslatedInput`` result.
 
-        context and resume both pass through unchanged. context items
-        (from useCopilotReadable etc.) are not auto-folded into the
-        system prompt — call translate_context to format them if your
-        agent needs the model to see them.
+        Context and resume entries pass through unchanged.Context is not
+        automatically added to model input; use ``translate_context()`` when
+        the model should receive it.
 
         Args:
             run_input: The incoming AG-UI RunAgentInput.
 
         Returns:
-            TranslatedInput with translated messages and passthrough
-            state/context/forwarded_props.
+            OpenAI Agents SDK inputs and preserved AG-UI request metadata.
         """
-        # Not every version of RunAgentInput has `resume`, so reach for it with
-        # getattr instead of assuming it's there.
-        resume = getattr(run_input, "resume", None)
+        resume = run_input.resume
         return TranslatedInput(
             thread_id=run_input.thread_id,
             run_id=run_input.run_id,
@@ -101,20 +87,20 @@ class AGUIToOpenAITranslator:
         )
 
     # ─────────────────────────────────────────────────────────────────────
-    # TIER 2 — Bulk collections
+    # LEVEL 2 — Collection translation
     # ─────────────────────────────────────────────────────────────────────
 
     def translate_messages(
         self,
         messages: Iterable[Message],
     ) -> list[TResponseInputItem]:
-        """Translate every message and flatten into one Responses-API input list.
+        """Translate message history into OpenAI Agents SDK input items.
 
         Args:
             messages: AG-UI messages to translate.
 
         Returns:
-            Flattened list of Responses-API input items.
+            Flattened SDK input-item list in the original history order.
         """
         items = []
         for message in messages:
@@ -125,13 +111,16 @@ class AGUIToOpenAITranslator:
         self,
         tools: Iterable[AGUITool],
     ) -> list[FunctionTool]:
-        """Wrap every AG-UI tool as a long-running SDK FunctionTool proxy.
+        """Translate tools declared in ``RunAgentInput.tools``.
+
+        Each client-declared definition becomes an OpenAI Agents SDK ``FunctionTool`` proxy.
+        These are request tools, not historical ``ToolMessage`` instances.
 
         Args:
-            tools: AG-UI client-declared tools.
+            tools: Client-declared tools from the AG-UI request.
 
         Returns:
-            SDK FunctionTool proxies, one per input tool.
+            One SDK ``FunctionTool`` proxy per request tool.
         """
         return [self.translate_tool(tool) for tool in tools]
 
@@ -139,21 +128,10 @@ class AGUIToOpenAITranslator:
         self,
         items: Iterable[Context],
     ) -> str:
-        """Render ambient context items as a plain-text block for the system prompt.
+        """Render AG-UI context as text that callers may add to model input.
 
-        AG-UI context carries {description, value} pairs that frontends
-        (CopilotKit's useCopilotReadable, etc.) send to give the model
-        ambient knowledge about the user's UI state — current page,
-        selected item, user identity, etc.
-
-        This does not auto-inject anywhere — callers decide whether to
-        prepend the rendered string to a system message, store it in
-        agent state, or ignore it.
-
-        The output format is one "Description: value" line per item:
-
-            Description A: value A
-            Description B: value B
+        This method does not inject context automatically. Each non-empty
+        item is rendered as one ``description: value`` line.
 
         Example:
             prompt = "You are helpful."
@@ -175,61 +153,42 @@ class AGUIToOpenAITranslator:
         return "\n".join(lines)
 
     # ─────────────────────────────────────────────────────────────────────
-    # TIER 3a — Single message (dispatcher + per-type)
+    # LEVEL 3a — Message translation
     # ─────────────────────────────────────────────────────────────────────
 
     def translate_message(self, message: Message) -> list[dict[str, Any]]:
-        """Dispatch one AG-UI message to the right per-type translator.
+        """Dispatch one AG-UI message to its type-specific translator.
 
-        Returns a list because one message can produce multiple
-        Responses-API items (an AssistantMessage with N tool_calls
-        splits into 1 message item + N function_call items).
+        One message may produce multiple SDK input items; for example, an
+        ``AssistantMessage`` may contain text and multiple tool calls.
 
         Args:
             message: An AG-UI message of any supported type.
 
         Returns:
-            Zero or more Responses-API input items.
+            Zero or more OpenAI Agents SDK input items.
         """
-        if isinstance(message, UserMessage):
-            return [self.translate_user_message(message)]
         if isinstance(message, SystemMessage):
             return [self.translate_system_message(message)]
         if isinstance(message, DeveloperMessage):
             return [self.translate_developer_message(message)]
+        if isinstance(message, UserMessage):
+            return [self.translate_user_message(message)]
+        if isinstance(message, ReasoningMessage):
+            item = self.translate_reasoning_message(message)
+            return [item] if item is not None else []
         if isinstance(message, AssistantMessage):
             return self.translate_assistant_message(message)
         if isinstance(message, ToolMessage):
             return [self.translate_tool_message(message)]
-        if isinstance(message, ReasoningMessage):
-            item = self.translate_reasoning_message(message)
-            return [item] if item is not None else []
         if isinstance(message, ActivityMessage):
             item = self.translate_activity_message(message)
             return [item] if item is not None else []
         logger.warning("Unknown AG-UI message type: %s", type(message).__name__)
         return []
 
-    def translate_user_message(self, message: UserMessage) -> dict[str, Any]:
-        """Translate a user turn into a Responses-API message item.
-
-        Supports multimodal: message.content may be a string or a list
-        of typed content parts (text / image / audio / ...).
-
-        Args:
-            message: The AG-UI user message.
-
-        Returns:
-            {"type": "message", "role": "user", "content": [...]}
-        """
-        return {
-            "type": "message",
-            "role": "user",
-            "content": self.translate_content(message.content),
-        }
-
     def translate_system_message(self, message: SystemMessage) -> dict[str, Any]:
-        """Translate a system prompt into a Responses-API message item.
+        """Translate an AG-UI system prompt into an SDK input item.
 
         Args:
             message: The AG-UI system message.
@@ -244,10 +203,7 @@ class AGUIToOpenAITranslator:
         }
 
     def translate_developer_message(self, message: DeveloperMessage) -> dict[str, Any]:
-        """Translate a developer prompt into a Responses-API message item.
-
-        OpenAI's newer model lineage (GPT-4o+, o1) accepts role:
-        developer as a higher-priority alternative to system.
+        """Translate an AG-UI developer prompt into an SDK input item.
 
         Args:
             message: The AG-UI developer message.
@@ -261,86 +217,38 @@ class AGUIToOpenAITranslator:
             "content": [{"type": "input_text", "text": message.content or ""}],
         }
 
-    def translate_assistant_message(
-        self,
-        message: AssistantMessage,
-    ) -> list[dict[str, Any]]:
-        """Translate an assistant turn into message + function_call items.
+    def translate_user_message(self, message: UserMessage) -> dict[str, Any]:
+        """Translate an AG-UI user turn into an SDK input item.
 
-        The Responses API splits assistant tool calls into separate
-        items (one message for any spoken text, plus one function_call
-        per invocation) — so one AG-UI message can produce N+1 items.
+        Content may be text or a list of typed multimodal parts.
 
         Args:
-            message: The AG-UI assistant message.
+            message: The AG-UI user message.
 
         Returns:
-            Optional text message item followed by one function_call
-            item per tool call.
-        """
-        items: list[dict[str, Any]] = []
-        text = message.content or ""
-        if text:
-            items.append(
-                {
-                    "role": "assistant",
-                    "content": text,
-                    # Deliberately no "type" key: the SDK's own item
-                    # classifiers (agents.models.chatcmpl_converter,
-                    # Converter.maybe_easy_input_message) match
-                    # EasyInputMessageParam on the exact key set
-                    # {"content", "role"} — adding "type": "message" here
-                    # makes it match maybe_response_output_message instead
-                    # (any dict with type="message"/role="assistant"), whose
-                    # branch assumes content is a list of output_text/refusal
-                    # parts and blows up on a plain string. This is a prior
-                    # assistant turn being replayed as *input*, so the plain
-                    # EasyInputMessageParam shape is exactly right — no id,
-                    # no status, no content-part wrapping needed.
-                }
-            )
-        for tool_call in message.tool_calls or []:
-            items.append(
-                {
-                    "type": "function_call",
-                    "call_id": tool_call.id,
-                    "name": tool_call.function.name,
-                    "arguments": tool_call.function.arguments or "",
-                }
-            )
-        return items
-
-    def translate_tool_message(self, message: ToolMessage) -> dict[str, Any]:
-        """Translate a tool result into a function_call_output item.
-
-        Args:
-            message: The AG-UI tool message.
-
-        Returns:
-            {"type": "function_call_output", ...}
+            {"type": "message", "role": "user", "content": [...]}
         """
         return {
-            "type": "function_call_output",
-            "call_id": message.tool_call_id,
-            "output": message.content or "",
+            "type": "message",
+            "role": "user",
+            "content": self.translate_content(message.content),
         }
 
     def translate_reasoning_message(
         self,
         message: ReasoningMessage,
     ) -> dict[str, Any] | None:
-        """Translate a reasoning trace into a reasoning item, if replayable.
+        """Translate replayable AG-UI reasoning into an SDK input item.
 
-        OpenAI o-series models can re-ingest encrypted reasoning blobs
-        (the encrypted_value field) but treat plaintext reasoning as
-        opaque. A reasoning item is only emitted when an encrypted value
-        is present; otherwise the message is dropped with a debug log.
+        Reasoning is replayed only when ``encrypted_value`` is available.
+        Plaintext-only reasoning is dropped because it cannot restore the
+        model's reasoning state.
 
         Args:
             message: The AG-UI reasoning message.
 
         Returns:
-            {"type": "reasoning", ...}, or None if not replayable.
+            A reasoning input item, or ``None`` when replay is unavailable.
         """
         if not message.encrypted_value:
             logger.debug(
@@ -355,22 +263,74 @@ class AGUIToOpenAITranslator:
             "summary": [{"type": "summary_text", "text": message.content or ""}],
         }
 
+    def translate_assistant_message(
+        self,
+        message: AssistantMessage,
+    ) -> list[dict[str, Any]]:
+        """Translate an assistant turn into SDK message and function-call items.
+
+        Assistant text becomes an input message, while each requested tool
+        invocation becomes a separate function-call item.
+
+        Args:
+            message: The AG-UI assistant message.
+
+        Returns:
+            Optional text message item followed by one function_call
+            item per tool call.
+        """
+        items: list[dict[str, Any]] = []
+        text = message.content or ""
+        if text:
+            # Keep prior assistant text as an EasyInputMessageParam.
+            # Adding type="message" routes it to the SDK output-message converter.
+            items.append(
+                {
+                    "role": "assistant",
+                    "content": text,
+                }
+            )
+        for tool_call in message.tool_calls or []:
+            items.append(
+                {
+                    "type": "function_call",
+                    "call_id": tool_call.id,
+                    "name": tool_call.function.name,
+                    "arguments": tool_call.function.arguments or "",
+                }
+            )
+        return items
+
+    def translate_tool_message(self, message: ToolMessage) -> dict[str, Any]:
+        """Translate an AG-UI tool result into an SDK function-call output.
+
+        Args:
+            message: The AG-UI tool message.
+
+        Returns:
+            {"type": "function_call_output", ...}
+        """
+        return {
+            "type": "function_call_output",
+            "call_id": message.tool_call_id,
+            "output": message.content or "",
+        }
+
     def translate_activity_message(
         self,
         message: ActivityMessage,
     ) -> dict[str, Any] | None:
-        """Translate an activity status message — dropped by default.
+        """Drop an AG-UI activity message by default.
 
-        Activity messages describe UI side-effects (e.g. "user
-        navigated") that the model doesn't need to ingest. Subclasses
-        can override to fold them into the system prompt if a
-        particular use case needs it.
+        Neither Responses nor Chat Completions has an equivalent model-input
+        item. Subclasses may override this mapping for application-specific
+        activity that should be included in model input.
 
         Args:
             message: The AG-UI activity message.
 
         Returns:
-            Always None; no Responses-API equivalent exists.
+            Always ``None`` in the default implementation.
         """
         logger.debug(
             "Dropping ActivityMessage id=%s activity_type=%s",
@@ -380,15 +340,16 @@ class AGUIToOpenAITranslator:
         return None
 
     # ─────────────────────────────────────────────────────────────────────
-    # TIER 3b — Single tool
+    # LEVEL 3b — Client tool translation
     # ─────────────────────────────────────────────────────────────────────
 
     def translate_tool(self, tool: AGUITool) -> FunctionTool:
-        """Wrap one AG-UI Tool as an SDK FunctionTool proxy.
+        """Wrap a client-declared AG-UI tool as an SDK ``FunctionTool``.
 
         The proxy's invocation handler raises ClientToolPending so the
         outer run loop can pause the SDK and hand control back to the
-        client.
+        client. Client schemas remain non-strict because they are supplied
+        externally and may not follow the OpenAI strict-schema subset.
 
         Args:
             tool: The AG-UI client-declared tool.
@@ -418,7 +379,7 @@ class AGUIToOpenAITranslator:
         )
 
     # ─────────────────────────────────────────────────────────────────────
-    # TIER 3c — Content parts (multimodal)
+    # LEVEL 3c — Content-part translation (multimodal)
     # ─────────────────────────────────────────────────────────────────────
 
     def translate_content(self, content: Any) -> list[dict[str, Any]]:
@@ -609,7 +570,7 @@ class AGUIToOpenAITranslator:
         return self._binary_as_file(part, mime)
 
     # ─────────────────────────────────────────────────────────────────────
-    # TIER 4 — Internal helpers
+    # LEVEL 4 — Internal helpers
     # ─────────────────────────────────────────────────────────────────────
 
     def _ensure_object_schema(self, parameters: Any) -> dict[str, Any]:

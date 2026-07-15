@@ -32,6 +32,7 @@ from ag_ui.core import (
     RunErrorEvent,
     RunFinishedEvent,
     RunStartedEvent,
+    ResumeEntry,
     StateSnapshotEvent,
     Tool,
     UserMessage,
@@ -39,7 +40,10 @@ from ag_ui.core import (
 from ag_ui_openai_agents import AGUITranslator
 
 
-def _run_input(with_tool: bool = False) -> RunAgentInput:
+def _run_input(
+    with_tool: bool = False,
+    resume: list[ResumeEntry] | None = None,
+) -> RunAgentInput:
     return RunAgentInput(
         thread_id="t1",
         run_id="r1",
@@ -56,6 +60,7 @@ def _run_input(with_tool: bool = False) -> RunAgentInput:
         state={},
         context=[],
         forwarded_props=None,
+        resume=resume,
     )
 
 
@@ -102,11 +107,19 @@ def test_to_openai_translates_messages_and_tools():
     assert len(bundle.tools) == 1
     assert isinstance(bundle.tools[0], FunctionTool)
     assert bundle.tools[0].name == "confirm"
+    assert bundle.tools[0].strict_json_schema is False
 
 
 def test_to_openai_without_tools_leaves_bundle_empty():
     bundle = AGUITranslator().to_openai(_run_input())
     assert bundle.tools == []
+
+
+def test_to_openai_preserves_resume_entries():
+    resume = ResumeEntry(interrupt_id="interrupt-1", status="resolved", payload=True)
+    translated = AGUITranslator().to_openai(_run_input(resume=[resume]))
+
+    assert translated.resume == [resume]
 
 
 # ── AGUITranslator.to_agui (streaming) ───────────────────────────────────

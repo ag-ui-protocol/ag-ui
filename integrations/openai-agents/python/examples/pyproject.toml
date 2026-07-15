@@ -7,7 +7,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "ag-ui-openai-agents",
-    "ag-ui-protocol>=0.1.18",
+    "ag-ui-protocol>=0.1.19",
     "fastapi>=0.115.2",
     "uvicorn[standard]>=0.35.0",
 ]
