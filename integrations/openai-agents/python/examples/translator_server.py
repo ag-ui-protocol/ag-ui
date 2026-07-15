@@ -60,6 +60,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+from typing import Any
 
 import uvicorn
 from agents import Runner
@@ -70,6 +71,7 @@ from ag_ui.core import CustomEvent, EventType, RunAgentInput
 from ag_ui.encoder import EventEncoder
 from ag_ui_openai_agents import AGUITranslator
 from agents_examples import DemoConfig, build_registry
+from agents_examples.human_in_the_loop_approval import _resolve_approval
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -118,13 +120,22 @@ async def run(agent_name: str, body: RunAgentInput) -> StreamingResponse:
         body.run_id,
     )
     if agent_name == "human_in_the_loop_approval":
+        pending_state = _PENDING_APPROVALS.get(body.thread_id)
+        item, approve = _resolve_approval(pending_state, body.forwarded_props)
         return StreamingResponse(
-            _stream_approval(demo, body), media_type=encoder.get_content_type()
+            _stream_approval(demo, body, pending_state, item, approve),
+            media_type=encoder.get_content_type(),
         )
     return StreamingResponse(_stream(demo, body), media_type=encoder.get_content_type())
 
 
-async def _stream_approval(demo: DemoConfig, body: RunAgentInput):
+async def _stream_approval(
+    demo: DemoConfig,
+    body: RunAgentInput,
+    pending_state: Any,
+    item: Any,
+    approve: bool | None,
+):
     """Same shape as _stream, plus resuming from result.interruptions.
 
     Kept separate from _stream rather than adding an if-branch there: this is
@@ -133,27 +144,8 @@ async def _stream_approval(demo: DemoConfig, body: RunAgentInput):
     translated.messages, and that logic doesn't apply to any other demo.
     """
     agent = demo.agent
-    decision = None
-    forwarded = body.forwarded_props
-    if isinstance(forwarded, dict):
-        decision = forwarded.get("approval")
-
-    # Read without deleting: a request with a missing or mismatched decision
-    # must not consume the paused run — a later correct approval still has to
-    # be able to resume it.
-    pending_state = _PENDING_APPROVALS.get(body.thread_id)
-    item = None
-    if decision and pending_state is not None:
-        item = next(
-            (
-                i
-                for i in pending_state.get_interruptions()
-                if getattr(i.raw_item, "call_id", None) == decision.get("call_id")
-            ),
-            None,
-        )
     if item is not None:
-        if decision.get("approve"):
+        if approve:
             pending_state.approve(item)
         else:
             pending_state.reject(item)

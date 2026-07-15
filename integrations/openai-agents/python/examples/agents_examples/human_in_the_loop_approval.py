@@ -35,8 +35,10 @@ instead of starting fresh from ``translated.messages``.
 
 from __future__ import annotations
 
+from typing import Any
+
 from agents import Agent, Runner, function_tool
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 
 from ag_ui.core import CustomEvent, EventType, RunAgentInput
@@ -83,31 +85,51 @@ _encoder = EventEncoder()
 _pending_approvals: dict[str, object] = {}
 
 
+def _resolve_approval(
+    pending_state: Any,
+    forwarded_props: Any,
+) -> tuple[Any, bool | None]:
+    """Validate a decision for the paused run before an SSE response starts."""
+    decision = None
+    if isinstance(forwarded_props, dict):
+        decision = forwarded_props.get("approval")
+
+    if pending_state is None:
+        if decision is not None:
+            raise HTTPException(status_code=409, detail="No approval is pending")
+        return None, None
+
+    if not isinstance(decision, dict):
+        raise HTTPException(status_code=409, detail="This thread is waiting for approval")
+
+    call_id = decision.get("call_id")
+    approve = decision.get("approve")
+    if not call_id or not isinstance(approve, bool):
+        raise HTTPException(status_code=409, detail="Invalid approval decision")
+
+    item = next(
+        (
+            item
+            for item in pending_state.get_interruptions()
+            if getattr(item.raw_item, "call_id", None) == call_id
+        ),
+        None,
+    )
+    if item is None:
+        raise HTTPException(status_code=409, detail="Approval call_id does not match")
+    return item, approve
+
+
 @app.post("/")
 async def run(body: RunAgentInput) -> StreamingResponse:
     """Run or resume the approval-gated agent."""
 
-    async def stream():
-        decision = None
-        if isinstance(body.forwarded_props, dict):
-            decision = body.forwarded_props.get("approval")
+    pending_state = _pending_approvals.get(body.thread_id)
+    item, approve = _resolve_approval(pending_state, body.forwarded_props)
 
-        # Read without deleting: a request with a missing or mismatched
-        # decision must not consume the paused run — a later correct
-        # approval still has to be able to resume it.
-        pending_state = _pending_approvals.get(body.thread_id)
-        item = None
-        if decision and pending_state is not None:
-            item = next(
-                (
-                    item
-                    for item in pending_state.get_interruptions()
-                    if getattr(item.raw_item, "call_id", None) == decision.get("call_id")
-                ),
-                None,
-            )
+    async def stream():
         if item is not None:
-            if decision.get("approve"):
+            if approve:
                 pending_state.approve(item)
             else:
                 pending_state.reject(item)
