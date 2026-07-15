@@ -596,7 +596,7 @@ Both directions, source of truth is `engine/agui_to_openai.py` and
 | `initial_state` / `final_state`, if provided | `STATE_SNAPSHOT` |
 
 Unknown SDK event or item types translate to `[]` with a debug log —
-graceful degradation, never a raise. See `tests/test_engine_mapping.py` for
+graceful degradation, never a raise. See `tests/engine/test_openai_to_agui.py` for
 the streaming behavior pinned event-by-event.
 
 ### Guardrails
@@ -932,7 +932,7 @@ uv sync            # installs dev group (pytest)
 uv run pytest      # run the full suite
 ```
 
-The suite includes a **drift guard** (`tests/test_stream_types_drift.py`):
+The suite includes a **drift guard** (`tests/engine/test_types_drift.py`):
 this package hardcodes the wire `type` strings it dispatches on (in
 `engine/types.py`), and the guard asserts each one against the
 `Literal[...]` annotations of the installed `openai-agents` / `openai`

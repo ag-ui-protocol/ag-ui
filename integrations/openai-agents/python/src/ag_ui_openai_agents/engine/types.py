@@ -6,7 +6,7 @@ OpenAI wire-level discriminator values the outbound translator dispatches on
 ``HOSTED_TOOL_CALL_TYPES``). Members of the ``(str, Enum)`` classes compare
 equal to the raw wire strings (``StrEnum`` needs Python 3.11; this package
 supports 3.10+). The SDK's own ``Literal[...]`` annotations are the source of
-truth for those — see ``tests/test_stream_types_drift.py``. Translator
+truth for those — see ``tests/engine/test_types_drift.py``. Translator
 behavior lives in ``agui_to_openai.py`` and ``openai_to_agui.py``; this module
 only describes shapes and constants.
 """

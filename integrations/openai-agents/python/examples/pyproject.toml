@@ -12,6 +12,14 @@ dependencies = [
     "uvicorn[standard]>=0.35.0",
 ]
 
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [tool.uv.sources]
 ag-ui-openai-agents = { path = "../", editable = true }
 

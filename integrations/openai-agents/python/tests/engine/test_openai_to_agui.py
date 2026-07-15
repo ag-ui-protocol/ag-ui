@@ -1,8 +1,8 @@
 """
 Tests for OpenAIToAGUITranslator's streaming event mapping.
 
-The rest of the suite pins ids (test_snapshot) and the wire strings
-(test_stream_types_drift); this one pins the actual translation: feed the
+The rest of the suite pins IDs (test_openai_to_agui_snapshot) and wire strings
+(test_types_drift); this one pins the actual translation: feed the
 engine the SDK stream events a real run emits — raw Responses deltas,
 run-item commits, agent-updated signals — and assert the exact AG-UI event
 sequence it yields. No network, no model; just the mapping.

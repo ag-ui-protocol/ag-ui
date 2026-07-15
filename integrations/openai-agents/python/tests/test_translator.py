@@ -9,7 +9,8 @@ Covers the public translator contract only — engine mappings have their own co
 - ``to_agui`` always wraps the stream with RUN_STARTED / RUN_FINISHED /
   RUN_ERROR — not optional, thread_id/run_id come straight off run_input.
 - ``to_agui`` appends a MESSAGES_SNAPSHOT by default just before
-  RUN_FINISHED; snapshot content itself is covered in ``test_snapshot.py``,
+  RUN_FINISHED; snapshot content itself is covered in
+  ``engine/test_openai_to_agui_snapshot.py``,
   this file only checks the wiring (default on, ``emit_messages_snapshot=False``
   opts out — same for bare iterators, since the snapshot no longer depends
   on ``result.new_items``).

@@ -21,15 +21,28 @@ library.
 
 ```bash
 cd examples
-uv sync
+uv sync --no-dev
 cp .env.example .env   # fill in OPENAI_API_KEY
-uv run python server.py
+uv run --no-dev python server.py
 ```
 
 Server runs on **http://localhost:8024** (the port the AG-UI Dojo expects;
 override with `PORT`).
 
-## Testing
+## Automated tests
+
+The examples have an independent test suite. From this directory, install the
+development dependencies and run it with:
+
+```bash
+uv sync
+uv run pytest
+```
+
+Running `uv run pytest` from the main SDK directory tests only the SDK suite;
+it does not collect these example tests.
+
+## Manual smoke test
 
 ```bash
 curl -N -X POST http://localhost:8024/agentic_chat/ \

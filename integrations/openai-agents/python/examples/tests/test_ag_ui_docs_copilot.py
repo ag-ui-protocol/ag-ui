@@ -6,7 +6,7 @@ import inspect
 import sys
 from pathlib import Path
 
-EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
+EXAMPLES = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(EXAMPLES))
 
 from agents_examples import ag_ui_docs_copilot  # noqa: E402
