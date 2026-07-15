@@ -107,7 +107,7 @@ class OpenAIToAGUITranslator:
         self._snapshot_messages: list[Message] = []  # completed AG-UI messages
 
     # ─────────────────────────────────────────────────────────────────────
-    # TIER 1 — One-shot entry points
+    # LEVEL 1 — Stream lifecycle
     # ─────────────────────────────────────────────────────────────────────
 
     def translate(self, openai_event: Any) -> list[BaseEvent]:
@@ -125,7 +125,7 @@ class OpenAIToAGUITranslator:
             openai_event: One event from ``result.stream_events()``.
 
         Returns:
-            Zero or more translated AG-UI events.
+            Ordered AG-UI events, or an empty list if nothing is translatable.
         """
         event_type = read_attr(openai_event, "type")
         if event_type == OpenAIStreamEventType.RAW_RESPONSE:
@@ -134,17 +134,17 @@ class OpenAIToAGUITranslator:
             return self.translate_run_item_event(openai_event)
         if event_type == OpenAIStreamEventType.AGENT_UPDATED:
             return self.translate_agent_updated_event(openai_event)
-        logger.debug("Unknown SDK stream event type: %s", event_type)
+        logger.debug("Unknown OpenAI Agents SDK stream event type: %s", event_type)
         return []
 
     def finalize(self) -> list[BaseEvent]:
-        """Emit pending *_END markers when the SDK stream terminates.
+        """Emit pending *_END markers when the OpenAI Agents SDK stream terminates.
 
         Always call this after the stream ends — even on error — so the
         AG-UI client never sees a window that opened but never closed.
 
         Returns:
-            Closing events for any windows still open.
+            Closing events, or an empty list if no windows or agent step remain open.
         """
         events: list[BaseEvent] = []
         for key in list(self._open_texts):
@@ -169,29 +169,26 @@ class OpenAIToAGUITranslator:
     ) -> MessagesSnapshotEvent:
         """Build the end-of-run MESSAGES_SNAPSHOT event.
 
-        The snapshot is the full conversation as the client should know
-        it: the run's prior messages passed through untouched (they keep
-        the ids the client already renders, so its id-keyed merge updates
-        in place instead of duplicating), followed by this run's messages
-        — collected here as the stream ran (see _record_* below), each
-        under the exact id its streamed event used. Same id, one
-        resolution: a snapshot message can never disagree with its
-        streamed counterpart, even when a backend emits placeholder ids
-        instead of real ones.
+        The snapshot contains the prior AG-UI message history followed by
+        messages completed during this run. Prior messages retain their AG-UI
+        IDs, and completed messages reuse the IDs emitted by their streaming
+        events, allowing clients to merge the snapshot without duplicates.
 
-        Prior history comes from run_input.messages, not
-        result.to_input_list(): Responses-API input items carry no id slot
-        for user/system messages, so round-tripping prior turns through
-        them would mint fresh ids and duplicate every bubble on the
-        client. Filter run_input first if it carries anything the client
-        should not see echoed back (e.g. a system prompt sent as history).
+        Prior history comes from ``run_input.messages``, not
+        ``result.to_input_list()``. The OpenAI Agents SDK represents model input
+        as Responses-shaped items even when the underlying model uses Chat
+        Completions. Round-tripping prior AG-UI messages through that format
+        does not preserve their AG-UI IDs.
+
+        Callers should remove messages that must not be echoed to the client,
+        such as server-only system instructions, before passing ``run_input``.
 
         Args:
-            run_input: The run's RunAgentInput, a plain message list, or
-                None when there is no prior history to prepend.
+            run_input: The original run input, a message sequence, or ``None``
+                when there is no prior history.
 
         Returns:
-            A MESSAGES_SNAPSHOT event ready to encode.
+            A ``MESSAGES_SNAPSHOT`` containing prior and completed messages.
         """
         if run_input is None:
             prior: list[Message] = []
@@ -205,17 +202,17 @@ class OpenAIToAGUITranslator:
         )
 
     # ─────────────────────────────────────────────────────────────────────
-    # TIER 2 — Bulk collection + per event family
+    # LEVEL 2 — Event-family translation
     # ─────────────────────────────────────────────────────────────────────
 
     def translate_raw_response_event(self, event: Any) -> list[BaseEvent]:
         """Handle a RawResponsesStreamEvent (token-level Responses deltas).
 
         Args:
-            event: The SDK's RawResponsesStreamEvent.
+            event: The OpenAI Agents SDK's RawResponsesStreamEvent.
 
         Returns:
-            Zero or more translated AG-UI events.
+            Translated AG-UI events, or an empty list if ignored or invalid.
         """
         data = read_attr(event, "data")
         if data is None:
@@ -251,10 +248,10 @@ class OpenAIToAGUITranslator:
         """Handle a RunItemStreamEvent (semantic commit signals).
 
         Args:
-            event: The SDK's RunItemStreamEvent.
+            event: The OpenAI Agents SDK's RunItemStreamEvent.
 
         Returns:
-            Zero or more translated AG-UI events.
+            Translated AG-UI events, or an empty list if the event has no output.
         """
         item = read_attr(event, "item")
         if item is None:
@@ -268,7 +265,7 @@ class OpenAIToAGUITranslator:
         surfaced as an AG-UI step named after the agent.
 
         Args:
-            event: The SDK's AgentUpdatedStreamEvent.
+            event: The OpenAI Agents SDK's AgentUpdatedStreamEvent.
 
         Returns:
             STEP_FINISHED for the previous step (if any) followed by
@@ -291,16 +288,14 @@ class OpenAIToAGUITranslator:
         return events
 
     # ─────────────────────────────────────────────────────────────────────
-    # TIER 3a — Raw Responses deltas (per raw type)
+    # LEVEL 3a — Raw Responses event translation
     # ─────────────────────────────────────────────────────────────────────
 
     def translate_output_item_added(self, data: Any) -> list[BaseEvent]:
-        """Translate response.output_item.added by opening the matching AG-UI window.
+        """Prepare the AG-UI sequence for a new Responses output item.
 
-        message opens TEXT_MESSAGE_START, function_call opens
-        TOOL_CALL_START, reasoning opens REASONING_START, and hosted
-        tool calls open TOOL_CALL_START with the tool name set to the
-        item type.
+        Messages defer their text sequence until content arrives. Function and
+        hosted tool calls open tool-call sequences; reasoning opens its sequence.
 
         Args:
             data: The raw output_item.added payload.
@@ -314,14 +309,8 @@ class OpenAIToAGUITranslator:
         key = self._window_key(item_id, read_attr(data, "output_index"))
 
         if item_type == OpenAIItemType.MESSAGE:
-            # Defer TEXT_MESSAGE_START until a real delta actually arrives.
-            # Some backends emit a message item even on a turn that ends up
-            # being a pure tool call with no spoken text — opening the window
-            # here would leave an empty TEXT_MESSAGE_START/END pair wrapping
-            # the tool call on the wire. Remember the real id so the lazy open still
-            # uses it. Output has begun, though, so close any open reasoning
-            # now (some backends send reasoning-done late) — that must not
-            # wait for the deferred text.
+            # Defer text until its first delta to avoid empty messages on tool-only
+            # turns. Close reasoning now because some providers send its done late.
             self._pending_text_ids[key] = self._resolve_id(item_id, new_message_id)
             return self._close_all_reasonings()
         if item_type == OpenAIItemType.FUNCTION_CALL:
@@ -353,10 +342,8 @@ class OpenAIToAGUITranslator:
         key = self._window_key(read_attr(item, "id"), read_attr(data, "output_index"))
 
         if item_type == OpenAIItemType.MESSAGE:
-            # Drop a deferred-but-never-opened window: no delta ever arrived,
-            # so there's nothing on the wire to close and no empty window to
-            # emit. If a delta did arrive the pending entry is already gone
-            # and this pop is a no-op; _close_text then closes the real one.
+            # Discard a pending message if no text delta opened it; otherwise
+            # _close_text closes the active sequence below.
             self._pending_text_ids.pop(key, None)
             return self._close_text(key)
         if item_type == OpenAIItemType.FUNCTION_CALL or item_type in HOSTED_TOOL_CALL_TYPES:
@@ -487,21 +474,21 @@ class OpenAIToAGUITranslator:
         return self._close_reasoning_part(key)
 
     # ─────────────────────────────────────────────────────────────────────
-    # TIER 3b — Single run item (dispatcher + per-type)
+    # LEVEL 3b — Run-item translation
     # ─────────────────────────────────────────────────────────────────────
 
     def translate_item(self, item: RunItem) -> list[BaseEvent]:
-        """Dispatch one SDK RunItem to the right per-type translator.
+        """Dispatch one OpenAI Agents SDK RunItem to its per-type translator.
 
         Usually these act as safety-net closers (raw events already
         streamed the content); when no deltas were ever streamed for the
         item, they emit its full AG-UI sequence instead.
 
         Args:
-            item: A finished SDK RunItem.
+            item: A finished OpenAI Agents SDK RunItem.
 
         Returns:
-            Zero or more translated AG-UI events.
+            Translated AG-UI events, or an empty list if the item has no output.
         """
         if isinstance(item, MessageOutputItem):
             return self.translate_message_output_item(item)
@@ -521,7 +508,7 @@ class OpenAIToAGUITranslator:
             return self.translate_mcp_list_tools_item(item)
         if isinstance(item, MCPApprovalResponseItem):
             return self.translate_mcp_approval_response_item(item)
-        logger.warning("Unknown SDK run item type: %s", type(item).__name__)
+        logger.warning("Unknown OpenAI Agents SDK run item type: %s", type(item).__name__)
         return []
 
     def translate_message_output_item(self, item: MessageOutputItem) -> list[BaseEvent]:
@@ -529,7 +516,7 @@ class OpenAIToAGUITranslator:
 
         Streamed: the raw deltas already carried the text — just close.
         No deltas seen: emit TEXT_MESSAGE_START/CONTENT/END from the
-        finished item, using the SDK's own ItemHelpers extractors (text
+        finished item, using the OpenAI Agents SDK's ItemHelpers extractors (text
         first, refusal as fallback — both are user-visible).
 
         Args:
@@ -579,7 +566,7 @@ class OpenAIToAGUITranslator:
         """Handle a tool call commit by closing its window or emitting START/[ARGS]/END.
 
         Reconciled by call_id (present and real regardless of backend),
-        using the SDK's built-in ToolCallItem.call_id / .tool_name
+        using the OpenAI Agents SDK's built-in ToolCallItem.call_id / .tool_name
         properties where available — getattr fallbacks because
         HandoffCallItem routes through here too and lacks them.
 
@@ -787,16 +774,17 @@ class OpenAIToAGUITranslator:
         return []
 
     # ─────────────────────────────────────────────────────────────────────
-    # TIER 4 — Internal helpers: id handling
+    # LEVEL 4 — Internal helpers: id handling
     # ─────────────────────────────────────────────────────────────────────
 
     @staticmethod
     def _is_real_id(item_id: Any) -> bool:
         """Check whether an id is usable on the wire (not empty, not a placeholder).
 
-        Some backends stamp every item with the SDK's FAKE_RESPONSES_ID
+        Some backends stamp every item with the OpenAI Agents SDK's
+        FAKE_RESPONSES_ID
         sentinel — sharing it across AG-UI events would collide every
-        message of the run. Checked against the SDK's own constant, so
+        message of the run. Checked against the OpenAI Agents SDK's constant, so
         it is a no-op on native OpenAI and correct for any backend that
         does not use placeholder ids.
 
@@ -823,18 +811,19 @@ class OpenAIToAGUITranslator:
 
     @classmethod
     def _window_key(cls, item_id: Any, output_index: Any) -> str:
-        """Compute a stable window key for correlating raw events of one output item.
+        """Return the internal key that correlates one output item's raw events.
 
-        Real item ids win; placeholder ids fall back to the stream
-        position (output_index), which the Responses API guarantees is
-        unique per item within a response.
+        This key indexes open text, tool-call, and reasoning sequences; it is
+        never emitted as an AG-UI ID. A real OpenAI item ID is used when
+        available. Missing or placeholder IDs fall back to ``output_index``,
+        which is unique per item within a response.
 
         Args:
             item_id: The item's wire id, or None.
             output_index: The item's position in the response.
 
         Returns:
-            A stable key for this item's window.
+            The OpenAI item ID, or ``__idx_<output_index>`` as a fallback.
         """
         if cls._is_real_id(item_id):
             return item_id
@@ -881,7 +870,7 @@ class OpenAIToAGUITranslator:
         return ("new", None)
 
     # ─────────────────────────────────────────────────────────────────────
-    # TIER 4 — Internal helpers: window management
+    # LEVEL 4 — Internal helpers: window management
     # ─────────────────────────────────────────────────────────────────────
 
     def _open_text(self, key: str, message_id: str) -> list[BaseEvent]:
@@ -1047,7 +1036,7 @@ class OpenAIToAGUITranslator:
         ]
 
     # ─────────────────────────────────────────────────────────────────────
-    # TIER 4 — Internal helpers: snapshot message builders
+    # LEVEL 4 — Internal helpers: snapshot message builders
     # ─────────────────────────────────────────────────────────────────────
     #
     # One per streamed item, appended as the item commits — always with the
