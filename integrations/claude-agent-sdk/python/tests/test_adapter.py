@@ -18,6 +18,8 @@ from ag_ui_claude_sdk.config import STATE_MANAGEMENT_TOOL_FULL_NAME, AG_UI_MCP_S
 
 from ag_ui_claude_sdk.utils import extract_tool_names
 
+from claude_agent_sdk import AssistantMessage, ToolUseBlock
+
 from .conftest import stream_event, aiter
 
 
@@ -108,6 +110,29 @@ class TestStreamToolCall:
         assert start.tool_call_name == "lookup"  # prefix stripped
         # exactly one END for the one tool call
         assert types.count(EventType.TOOL_CALL_END) == 1
+
+    @pytest.mark.asyncio
+    async def test_subagent_tool_call_gets_parent_message_id(self, make_input):
+        # A complete AssistantMessage, not a StreamEvent, is how a subagent's
+        # own turn arrives — this hits the fallback branch (#2118).
+        adapter = ClaudeAgentAdapter(name="t")
+        subagent_message = AssistantMessage(
+            content=[ToolUseBlock(id="tc-subagent-1", name="mcp__ui__render_ui", input={})],
+            model="claude-haiku-4-5",
+            parent_tool_use_id="tc-agent-call",
+        )
+        events = await _drive(adapter, [subagent_message], make_input)
+        types = _types(events)
+        assert EventType.TOOL_CALL_START in types
+        start = next(e for e in events if e.type == EventType.TOOL_CALL_START)
+        assert start.tool_call_name == "render_ui"  # prefix stripped
+        assert start.parent_message_id is not None
+        assert start.parent_message_id != "tc-agent-call"  # not the SDK's parent_tool_use_id
+
+        # The id must also be the one reported in the run's MESSAGES_SNAPSHOT,
+        # i.e. it's a real, stable message id, not an arbitrary placeholder.
+        snapshot = next(e for e in events if e.type == EventType.MESSAGES_SNAPSHOT)
+        assert any(getattr(m, "id", None) == start.parent_message_id for m in snapshot.messages)
 
     @pytest.mark.asyncio
     async def test_frontend_tool_halts_stream(self, make_input):

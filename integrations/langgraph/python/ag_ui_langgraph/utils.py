@@ -272,16 +272,6 @@ def _media_source_to_url(source: Union[InputContentDataSource, InputContentUrlSo
     return None
 
 
-def _attach_input_metadata(
-    content_block: Dict[str, Any],
-    item: AGUIContentItem,
-) -> Dict[str, Any]:
-    metadata = getattr(item, "metadata", None)
-    if metadata is not None:
-        content_block["metadata"] = metadata
-    return content_block
-
-
 def convert_agui_multimodal_to_langchain(content: List[AGUIContentItem]) -> List[Dict[str, Any]]:
     """Convert AG-UI multimodal content to LangChain's multimodal format.
 
@@ -289,21 +279,28 @@ def convert_agui_multimodal_to_langchain(content: List[AGUIContentItem]) -> List
     VideoInputContent, DocumentInputContent) as well as legacy BinaryInputContent
     for backwards compatibility. All media types are routed through LangChain's
     ``image_url`` format since that is the only media block type LangChain supports.
+
+    AG-UI ``InputContent.metadata`` is intentionally NOT copied onto the content
+    blocks: these blocks are passed straight to the model, and a non-standard
+    top-level ``metadata`` key makes strict OpenAI-compatible providers reject the
+    request with a 400 ("Unexpected keys in a message content image dict"). The
+    metadata is never read back on the LangChain->AG-UI return path, so nothing is
+    lost by keeping the model payload spec-compliant. See issue #2100.
     """
     langchain_content: List[Dict[str, Any]] = []
     for item in content:
         if isinstance(item, TextInputContent):
-            langchain_content.append(_attach_input_metadata({
+            langchain_content.append({
                 "type": "text",
                 "text": item.text
-            }, item))
+            })
         elif isinstance(item, _MEDIA_CONTENT_TYPES):
             url = _media_source_to_url(item.source)
             if url:
-                langchain_content.append(_attach_input_metadata({
+                langchain_content.append({
                     "type": "image_url",
                     "image_url": {"url": url}
-                }, item))
+                })
             else:
                 logger.warning("Dropping %s content: source could not be converted to URL", type(item).__name__)
         elif isinstance(item, BinaryInputContent):
@@ -325,7 +322,7 @@ def convert_agui_multimodal_to_langchain(content: List[AGUIContentItem]) -> List
                 )
                 continue
 
-            langchain_content.append(_attach_input_metadata(content_dict, item))
+            langchain_content.append(content_dict)
 
     return langchain_content
 

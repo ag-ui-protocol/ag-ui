@@ -38,7 +38,7 @@ from ag_ui.core import (
 )
 from strands.tools.registry import ToolRegistry
 
-from ag_ui_strands.agent import StrandsAgent
+from ag_ui_strands.agent import StrandsAgent, _build_strands_history
 from ag_ui_strands.config import StrandsAgentConfig, ToolBehavior
 
 
@@ -96,6 +96,124 @@ def _run_input(
 
 async def _collect(agent: StrandsAgent, inp: RunAgentInput) -> list:
     return [e async for e in agent.run(inp)]
+
+
+def test_strands_history_bundles_parallel_tool_results():
+    messages = [
+        UserMessage(id="u1", role="user", content="hi"),
+        AssistantMessage(
+            id="a1",
+            role="assistant",
+            content="",
+            tool_calls=[
+                ToolCall(
+                    id="tooluse_1",
+                    type="function",
+                    function=FunctionCall(name="my_tool", arguments="{}"),
+                ),
+                ToolCall(
+                    id="tooluse_2",
+                    type="function",
+                    function=FunctionCall(name="my_tool", arguments="{}"),
+                ),
+                ToolCall(
+                    id="tooluse_3",
+                    type="function",
+                    function=FunctionCall(name="my_tool", arguments="{}"),
+                ),
+            ],
+        ),
+        ToolMessage(id="t1", role="tool", tool_call_id="tooluse_1", content='{"ok":1}'),
+        ToolMessage(id="t2", role="tool", tool_call_id="tooluse_2", content='{"ok":2}'),
+        ToolMessage(id="t3", role="tool", tool_call_id="tooluse_3", content='{"ok":3}'),
+    ]
+
+    native = _build_strands_history(messages)
+
+    assert len(native) == 3
+    assert native[2]["role"] == "user"
+    tool_results = [
+        block["toolResult"] for block in native[2]["content"] if "toolResult" in block
+    ]
+    assert len(tool_results) == 3
+    assert {result["toolUseId"] for result in tool_results} == {
+        "tooluse_1",
+        "tooluse_2",
+        "tooluse_3",
+    }
+
+
+def test_strands_history_reorders_out_of_order_tool_results():
+    """Tool results that arrive in a different order than their toolUse blocks
+    must be re-ordered to match, so Bedrock's positional pairing holds."""
+    messages = [
+        UserMessage(id="u1", role="user", content="hi"),
+        AssistantMessage(
+            id="a1",
+            role="assistant",
+            content="",
+            tool_calls=[
+                ToolCall(id="tooluse_1", type="function",
+                         function=FunctionCall(name="my_tool", arguments="{}")),
+                ToolCall(id="tooluse_2", type="function",
+                         function=FunctionCall(name="my_tool", arguments="{}")),
+                ToolCall(id="tooluse_3", type="function",
+                         function=FunctionCall(name="my_tool", arguments="{}")),
+            ],
+        ),
+        # Results arrive out of order: 3, 1, 2
+        ToolMessage(id="t3", role="tool", tool_call_id="tooluse_3", content='{"ok":3}'),
+        ToolMessage(id="t1", role="tool", tool_call_id="tooluse_1", content='{"ok":1}'),
+        ToolMessage(id="t2", role="tool", tool_call_id="tooluse_2", content='{"ok":2}'),
+    ]
+
+    native = _build_strands_history(messages)
+
+    assert len(native) == 3
+    assert native[1]["role"] == "assistant"
+    assert native[2]["role"] == "user"
+    tool_use_ids = [b["toolUse"]["toolUseId"] for b in native[1]["content"]]
+    result_ids = [b["toolResult"]["toolUseId"] for b in native[2]["content"]]
+    # toolResult order must follow the toolUse order, not arrival order.
+    assert result_ids == tool_use_ids == ["tooluse_1", "tooluse_2", "tooluse_3"]
+
+
+def test_strands_history_keeps_tooluse_and_results_adjacent():
+    """A non-tool message wedged between a toolUse turn and its results must be
+    moved out so the assistant(toolUse) message is immediately followed by the
+    user(toolResult) message, as Bedrock requires."""
+    messages = [
+        UserMessage(id="u1", role="user", content="hi"),
+        AssistantMessage(
+            id="a1",
+            role="assistant",
+            content="",
+            tool_calls=[
+                ToolCall(id="tooluse_1", type="function",
+                         function=FunctionCall(name="my_tool", arguments="{}")),
+                ToolCall(id="tooluse_2", type="function",
+                         function=FunctionCall(name="my_tool", arguments="{}")),
+            ],
+        ),
+        # A stray user message wedged between the toolUse turn and its results.
+        UserMessage(id="uX", role="user", content="wait, interrupting"),
+        ToolMessage(id="t1", role="tool", tool_call_id="tooluse_1", content='{"ok":1}'),
+        ToolMessage(id="t2", role="tool", tool_call_id="tooluse_2", content='{"ok":2}'),
+    ]
+
+    native = _build_strands_history(messages)
+
+    # Find the assistant(toolUse) message; its immediate successor must be the
+    # user(toolResult) message, with the wedged text pushed afterwards.
+    tooluse_idx = next(
+        i for i, m in enumerate(native)
+        if m["role"] == "assistant" and all("toolUse" in b for b in m["content"])
+    )
+    following = native[tooluse_idx + 1]
+    assert following["role"] == "user"
+    assert all("toolResult" in b for b in following["content"])
+    result_ids = [b["toolResult"]["toolUseId"] for b in following["content"]]
+    assert result_ids == ["tooluse_1", "tooluse_2"]
 
 
 # ---------------------------------------------------------------------------
