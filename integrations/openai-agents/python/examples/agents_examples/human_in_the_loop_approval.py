@@ -92,7 +92,11 @@ async def run(body: RunAgentInput) -> StreamingResponse:
         if isinstance(body.forwarded_props, dict):
             decision = body.forwarded_props.get("approval")
 
-        pending_state = _pending_approvals.pop(body.thread_id, None)
+        # Read without deleting: a request with a missing or mismatched
+        # decision must not consume the paused run — a later correct
+        # approval still has to be able to resume it.
+        pending_state = _pending_approvals.get(body.thread_id)
+        item = None
         if decision and pending_state is not None:
             item = next(
                 (
@@ -102,11 +106,12 @@ async def run(body: RunAgentInput) -> StreamingResponse:
                 ),
                 None,
             )
-            if item is not None:
-                if decision.get("approve"):
-                    pending_state.approve(item)
-                else:
-                    pending_state.reject(item)
+        if item is not None:
+            if decision.get("approve"):
+                pending_state.approve(item)
+            else:
+                pending_state.reject(item)
+            del _pending_approvals[body.thread_id]
             result = Runner.run_streamed(agent, pending_state)
         else:
             translated = _translator.to_openai(body)

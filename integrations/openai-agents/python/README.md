@@ -164,8 +164,8 @@ add_openai_agents_fastapi_endpoint(app, agent, "/")
   `Agent` is a config template, and client-declared tools are merged onto a
   per-request `clone()`, so concurrent requests never see each other's tools;
 - takes `run_config=...` to set run-wide model settings;
-- exposes `run(RunAgentInput) -> AsyncIterator[BaseEvent]` if you want to serve
-  it on a transport other than FastAPI.
+- exposes `run_streamed(RunAgentInput) -> AsyncIterator[BaseEvent]` if you want
+  to serve it on a transport other than FastAPI.
 
 ```python
 agent = OpenAIAgentsAgent(
@@ -193,7 +193,7 @@ from ag_ui_openai_agents import (
 |---|---|---|
 | `AGUITranslator` | translator (recommended) | compose it yourself — `to_openai` + `to_agui`; full control of the agent and server |
 | `TranslatedInput` | result type | what `translator.to_openai(...)` returns — `messages`/`tools` plus passthrough fields |
-| `OpenAIAgentsAgent` | wrapper class | serve an agent: `run(RunAgentInput) -> AsyncIterator[BaseEvent]` |
+| `OpenAIAgentsAgent` | wrapper class | serve an agent: `run_streamed(RunAgentInput) -> AsyncIterator[BaseEvent]` |
 | `add_openai_agents_fastapi_endpoint(app, agent, path)` | helper | wire a wrapped agent to FastAPI (SSE + `/health`) |
 
 The wrapper is built on the translator; it trades control for less code. The
@@ -355,7 +355,7 @@ wrapped_agent = OpenAIAgentsAgent(
 | `emit_run_error` | `True` | Forwarded to `to_agui`. |
 | `run_error_message` | `None` | Forwarded to `to_agui`. |
 
-Call `await` through its async iterator with `run(run_input)`. It yields
+Call `await` through its async iterator with `run_streamed(run_input)`. It yields
 `BaseEvent` objects; you encode or transport them yourself unless you use the
 FastAPI helper. Client-owned tools are merged onto a clone for that run, so a
 tool declared by one request never changes the shared SDK agent or leaks into

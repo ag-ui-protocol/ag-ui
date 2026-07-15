@@ -129,6 +129,8 @@ class AGUITranslator:
             type=EventType.RUN_STARTED,
             thread_id=run_input.thread_id,
             run_id=run_input.run_id,
+            # Read defensively — older RunAgentInput versions lack the field.
+            parent_run_id=getattr(run_input, "parent_run_id", None),
         )
 
         # 2. start_custom_event (optional)

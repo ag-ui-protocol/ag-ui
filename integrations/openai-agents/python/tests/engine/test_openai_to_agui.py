@@ -24,7 +24,7 @@ from agents import (
     HandoffOutputItem,
     MCPApprovalRequestItem,
 )
-from agents.items import ToolCallOutputItem
+from agents.items import ToolCallItem, ToolCallOutputItem
 from openai.types.responses import ResponseFunctionToolCall
 from openai.types.responses.response_output_item import McpApprovalRequest
 
@@ -236,6 +236,33 @@ def test_function_call_args_delta_lazily_opens_the_call():
         ),
     )
     assert _types(events) == [EventType.TOOL_CALL_START, EventType.TOOL_CALL_ARGS]
+
+
+def test_hosted_tool_call_with_distinct_call_id_streams_once():
+    # Hosted calls like computer_call carry both an item id and a call_id.
+    # The raw window and the run-item commit must agree on the call_id —
+    # otherwise the same call streams two full lifecycles under two ids.
+    engine = OpenAIToAGUITranslator()
+    raw = SimpleNamespace(type="computer_call", id="comp_1", call_id="call_1")
+    events = _drive(
+        engine,
+        _added("computer_call", id="comp_1", call_id="call_1"),
+        _done("computer_call", id="comp_1", call_id="call_1"),
+        _run_item(ToolCallItem(agent=_AGENT, raw_item=raw)),
+    )
+    assert _types(events) == [EventType.TOOL_CALL_START, EventType.TOOL_CALL_END]
+    assert {e.tool_call_id for e in events} == {"call_1"}
+
+
+def test_hosted_tool_call_without_call_id_falls_back_to_item_id():
+    engine = OpenAIToAGUITranslator()
+    events = _drive(
+        engine,
+        _added("web_search_call", id="ws_1"),
+        _done("web_search_call", id="ws_1"),
+    )
+    assert _types(events) == [EventType.TOOL_CALL_START, EventType.TOOL_CALL_END]
+    assert {e.tool_call_id for e in events} == {"ws_1"}
 
 
 def test_tool_output_item_emits_tool_call_result():

@@ -173,7 +173,8 @@ class AGUIToOpenAITranslator:
         if isinstance(message, DeveloperMessage):
             return [self.translate_developer_message(message)]
         if isinstance(message, UserMessage):
-            return [self.translate_user_message(message)]
+            item = self.translate_user_message(message)
+            return [item] if item is not None else []
         if isinstance(message, ReasoningMessage):
             item = self.translate_reasoning_message(message)
             return [item] if item is not None else []
@@ -217,21 +218,31 @@ class AGUIToOpenAITranslator:
             "content": [{"type": "input_text", "text": message.content or ""}],
         }
 
-    def translate_user_message(self, message: UserMessage) -> dict[str, Any]:
+    def translate_user_message(self, message: UserMessage) -> dict[str, Any] | None:
         """Translate an AG-UI user turn into an SDK input item.
 
-        Content may be text or a list of typed multimodal parts.
+        Content may be text or a list of typed multimodal parts. A message
+        whose parts are all unsupported (e.g. video-only) is dropped whole —
+        sending a message with empty content would be rejected by the API.
 
         Args:
             message: The AG-UI user message.
 
         Returns:
-            {"type": "message", "role": "user", "content": [...]}
+            {"type": "message", "role": "user", "content": [...]}, or None
+            when nothing in the message could be translated.
         """
+        content = self.translate_content(message.content)
+        if not content:
+            logger.debug(
+                "Dropping UserMessage id=%s: no translatable content parts",
+                message.id,
+            )
+            return None
         return {
             "type": "message",
             "role": "user",
-            "content": self.translate_content(message.content),
+            "content": content,
         }
 
     def translate_reasoning_message(
@@ -385,15 +396,18 @@ class AGUIToOpenAITranslator:
     def translate_content(self, content: Any) -> list[dict[str, Any]]:
         """Translate a message content field (str or list of parts) to input parts.
 
-        A string is wrapped as a single input_text part. A list has
-        each part passed through translate_content_part. Anything else
-        is best-effort stringified.
+        A string is wrapped as a single input_text part. A list has each part
+        passed through translate_content_part; parts that translate to None
+        are dropped, so an all-unsupported list (e.g. video-only) comes back
+        empty rather than stringified. Anything else is best-effort
+        stringified.
 
         Args:
             content: The message's content field.
 
         Returns:
-            List of Responses-API input parts.
+            List of Responses-API input parts; empty when every part was
+            unsupported.
         """
         if isinstance(content, str):
             return [{"type": "input_text", "text": content}]
@@ -403,8 +417,7 @@ class AGUIToOpenAITranslator:
                 converted = self.translate_content_part(part)
                 if converted is not None:
                     parts.append(converted)
-            if parts:
-                return parts
+            return parts
         return [{"type": "input_text", "text": to_string(content)}]
 
     def translate_content_part(self, part: Any) -> dict[str, Any] | None:
@@ -487,11 +500,15 @@ class AGUIToOpenAITranslator:
         if not value or source_type != "data":
             logger.debug("Dropping audio part: only data sources are supported")
             return None
+        audio_format = self._audio_format_from_mime(mime)
+        if audio_format is None:
+            logger.debug("Dropping audio part: unsupported format %s", mime)
+            return None
         return {
             "type": "input_audio",
             "input_audio": {
                 "data": value,
-                "format": self._audio_format_from_mime(mime),
+                "format": audio_format,
             },
         }
 
@@ -615,14 +632,19 @@ class AGUIToOpenAITranslator:
         return None
 
     @staticmethod
-    def _audio_format_from_mime(mime: str | None) -> str:
+    def _audio_format_from_mime(mime: str | None) -> str | None:
         """Map a mime type to the format expected for Chat Completions audio.
+
+        Chat Completions only accepts "wav" and "mp3" for input audio, so
+        anything else maps to None and the caller drops the part — sending
+        e.g. "ogg" would get the whole request rejected.
 
         Args:
             mime: The audio mime type, or None.
 
         Returns:
-            A short format tag (e.g. "wav", "mp3").
+            "wav" or "mp3", or None for unsupported formats. A missing mime
+            defaults to "wav".
         """
         if not mime:
             return "wav"
@@ -632,7 +654,7 @@ class AGUIToOpenAITranslator:
             return "mp3"
         if subtype in ("x-wav", "wav", "wave"):
             return "wav"
-        return subtype
+        return None
 
     def _dispatch_dict_content_part(
         self,
@@ -681,11 +703,15 @@ class AGUIToOpenAITranslator:
         if not part.data:
             logger.debug("Dropping binary audio: URL-only audio not supported")
             return None
+        audio_format = self._audio_format_from_mime(mime)
+        if audio_format is None:
+            logger.debug("Dropping binary audio: unsupported format %s", mime)
+            return None
         return {
             "type": "input_audio",
             "input_audio": {
                 "data": part.data,
-                "format": self._audio_format_from_mime(mime),
+                "format": audio_format,
             },
         }
 

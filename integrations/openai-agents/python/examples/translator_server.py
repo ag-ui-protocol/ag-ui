@@ -138,7 +138,11 @@ async def _stream_approval(demo: DemoConfig, body: RunAgentInput):
     if isinstance(forwarded, dict):
         decision = forwarded.get("approval")
 
-    pending_state = _PENDING_APPROVALS.pop(body.thread_id, None)
+    # Read without deleting: a request with a missing or mismatched decision
+    # must not consume the paused run — a later correct approval still has to
+    # be able to resume it.
+    pending_state = _PENDING_APPROVALS.get(body.thread_id)
+    item = None
     if decision and pending_state is not None:
         item = next(
             (
@@ -148,17 +152,20 @@ async def _stream_approval(demo: DemoConfig, body: RunAgentInput):
             ),
             None,
         )
-        if item is not None:
-            if decision.get("approve"):
-                pending_state.approve(item)
-            else:
-                pending_state.reject(item)
+    if item is not None:
+        if decision.get("approve"):
+            pending_state.approve(item)
+        else:
+            pending_state.reject(item)
+        del _PENDING_APPROVALS[body.thread_id]
         result = Runner.run_streamed(agent, pending_state)
     else:
         translated = translator.to_openai(body)
         if translated.tools:
             agent = agent.clone(tools=[*agent.tools, *translated.tools])
-        result = Runner.run_streamed(agent, input=translated.messages)
+        result = Runner.run_streamed(
+            agent, input=translated.messages, context=translated.context
+        )
 
     # result.interruptions is only known once the SDK's own stream is fully
     # drained — there's no mid-stream event for it. to_agui() always puts
@@ -249,7 +256,11 @@ async def _stream(demo: DemoConfig, body: RunAgentInput):
     #     snapshot, handles window bookkeeping + the final flush, and appends a
     #     trailing MESSAGES_SNAPSHOT. Nothing to hand-emit here.
     try:
-        result = Runner.run_streamed(agent, input=translated.messages)
+        # context= carries the AG-UI context items through to run-context
+        # readers (dynamic_system_prompt resolves its language from them).
+        result = Runner.run_streamed(
+            agent, input=translated.messages, context=translated.context
+        )
         async for ag_event in translator.to_agui(result, body, **to_agui_kwargs):
             yield encoder.encode(ag_event)
     except Exception:

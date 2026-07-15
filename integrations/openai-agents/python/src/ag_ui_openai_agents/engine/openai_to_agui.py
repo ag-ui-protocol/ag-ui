@@ -320,7 +320,12 @@ class OpenAIToAGUITranslator:
         if item_type == OpenAIItemType.REASONING:
             return self._open_reasoning(key, self._resolve_id(item_id, new_reasoning_id))
         if item_type in HOSTED_TOOL_CALL_TYPES:
-            call_id = self._resolve_id(item_id, new_tool_call_id)
+            # Some hosted calls (computer, shell, custom tools) carry a call_id
+            # distinct from the item id. The run-item commit reconciles by
+            # call_id, so open the window under it too — otherwise the same
+            # call streams twice, once per id, and the tool result attaches to
+            # the second copy instead of the one the client watched stream.
+            call_id = read_attr(item, "call_id") or self._resolve_id(item_id, new_tool_call_id)
             return self._open_tool_call(key, call_id, item_type)
         return []
 

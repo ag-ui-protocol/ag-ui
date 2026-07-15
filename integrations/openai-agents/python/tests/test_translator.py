@@ -151,6 +151,19 @@ def test_streaming_to_agui_streams_then_finalizes():
     ]
 
 
+def test_streaming_to_agui_carries_parent_run_id_onto_run_started():
+    translator = AGUITranslator(outbound_cls=_StubOutbound)
+    run_input = _run_input()
+    nested_input = run_input.model_copy(update={"parent_run_id": "r0"})
+
+    async def collect():
+        return [e async for e in translator.to_agui(_fake_stream(), nested_input)]
+
+    events = asyncio.run(collect())
+    assert isinstance(events[0], RunStartedEvent)
+    assert events[0].parent_run_id == "r0"
+
+
 def test_streaming_translator_is_reusable_fresh_engine_per_run():
     translator = AGUITranslator(outbound_cls=_StubOutbound)
     before = _StubOutbound.instances

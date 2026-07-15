@@ -19,6 +19,7 @@ from ag_ui.core import (
     InputContentDataSource,
     InputContentUrlSource,
     TextInputContent,
+    UserMessage,
     VideoInputContent,
 )
 from ag_ui_openai_agents.engine.agui_to_openai import AGUIToOpenAITranslator
@@ -90,8 +91,18 @@ def test_audio_format_from_mime_variants():
     assert fmt("audio/x-wav") == "wav"
     assert fmt("audio/wav") == "wav"
     assert fmt("audio/wave") == "wav"
-    assert fmt("audio/ogg") == "ogg"
     assert fmt(None) == "wav"
+    # Chat Completions only takes wav/mp3 — anything else must map to None
+    # so the caller drops the part instead of sending a rejectable request.
+    assert fmt("audio/ogg") is None
+    assert fmt("audio/flac") is None
+
+
+def test_audio_unsupported_format_is_dropped():
+    part = AudioInputContent(
+        source=InputContentDataSource(value="Zm9v", mime_type="audio/ogg")
+    )
+    assert _engine.translate_audio_content(part) is None
 
 
 # ── document ───────────────────────────────────────────────────────────
@@ -180,6 +191,11 @@ def test_binary_as_audio_without_data_is_dropped():
     assert _engine._binary_as_audio(part, "audio/wav") is None
 
 
+def test_binary_as_audio_unsupported_format_is_dropped():
+    part = _binary(mime_type="audio/ogg", data="Zm9v")
+    assert _engine._binary_as_audio(part, "audio/ogg") is None
+
+
 def test_binary_as_file_url_source():
     part = _binary(mime_type="application/pdf", url="https://x/y.pdf")
     out = _engine._binary_as_file(part, "application/pdf")
@@ -236,6 +252,41 @@ def test_translate_content_part_dispatches_by_type():
         "type": "input_image",
         "image_url": "https://x/y.png",
     }
+
+
+# ── all-unsupported content: drop, never stringify ────────────────────────
+
+
+def test_content_list_of_only_unsupported_parts_translates_to_empty():
+    # A video-only message must come back empty — not fall through to the
+    # stringify path and send the parts' repr to the model as input_text.
+    parts = [VideoInputContent(source=InputContentUrlSource(value="https://x/y.mp4"))]
+    assert _engine.translate_content(parts) == []
+
+
+def test_user_message_with_only_unsupported_parts_is_dropped_whole():
+    message = UserMessage(
+        id="u1",
+        role="user",
+        content=[VideoInputContent(source=InputContentUrlSource(value="https://x/y.mp4"))],
+    )
+    assert _engine.translate_user_message(message) is None
+    assert _engine.translate_message(message) == []
+
+
+def test_user_message_with_invalid_image_and_text_keeps_only_text():
+    message = UserMessage(
+        id="u1",
+        role="user",
+        content=[
+            TextInputContent(text="look"),
+            ImageInputContent(
+                source=InputContentDataSource(value="", mime_type="image/png")
+            ),
+        ],
+    )
+    item = _engine.translate_user_message(message)
+    assert item["content"] == [{"type": "input_text", "text": "look"}]
 
 
 # ── end-to-end: mixed multimodal user message ─────────────────────────────
