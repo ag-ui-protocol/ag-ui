@@ -153,8 +153,8 @@ class AGUITranslator:
         outbound = self._outbound_cls()
         try:
             # Streamed STEP / TEXT / TOOL / REASONING events.
-            async for sdk_event in stream_events:
-                for event in outbound.translate(sdk_event):
+            async for openai_event in stream_events:
+                for event in outbound.translate(openai_event):
                     yield event
             # 4. Close any text, tool, reasoning, or step window still open.
             for event in outbound.finalize():

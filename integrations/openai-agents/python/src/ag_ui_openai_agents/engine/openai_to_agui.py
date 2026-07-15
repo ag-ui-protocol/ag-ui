@@ -110,7 +110,7 @@ class OpenAIToAGUITranslator:
     # TIER 1 — One-shot entry points
     # ─────────────────────────────────────────────────────────────────────
 
-    def translate(self, sdk_event: Any) -> list[BaseEvent]:
+    def translate(self, openai_event: Any) -> list[BaseEvent]:
         """Translate one OpenAI Agents SDK stream event into ordered AG-UI events.
 
         Raw response events stream START, content, and END sequences. Run-item
@@ -122,18 +122,18 @@ class OpenAIToAGUITranslator:
         optional snapshots, and RUN_FINISHED. It emits RUN_ERROR on failure.
 
         Args:
-            sdk_event: One event from ``result.stream_events()``.
+            openai_event: One event from ``result.stream_events()``.
 
         Returns:
             Zero or more translated AG-UI events.
         """
-        event_type = read_attr(sdk_event, "type")
+        event_type = read_attr(openai_event, "type")
         if event_type == OpenAIStreamEventType.RAW_RESPONSE:
-            return self.translate_raw_response_event(sdk_event)
+            return self.translate_raw_response_event(openai_event)
         if event_type == OpenAIStreamEventType.RUN_ITEM:
-            return self.translate_run_item_event(sdk_event)
+            return self.translate_run_item_event(openai_event)
         if event_type == OpenAIStreamEventType.AGENT_UPDATED:
-            return self.translate_agent_updated_event(sdk_event)
+            return self.translate_agent_updated_event(openai_event)
         logger.debug("Unknown SDK stream event type: %s", event_type)
         return []
 

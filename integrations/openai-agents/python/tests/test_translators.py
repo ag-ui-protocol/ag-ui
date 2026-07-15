@@ -77,8 +77,8 @@ class _StubOutbound:
         type(self).instances += 1
         self._snapshot_messages: list = []
 
-    def translate(self, sdk_event):
-        return [_event(f"translated:{sdk_event}")]
+    def translate(self, openai_event):
+        return [_event(f"translated:{openai_event}")]
 
     def finalize(self):
         return [_event("finalized")]
@@ -259,7 +259,7 @@ def test_to_agui_wraps_stream_with_lifecycle_events():
 
 def test_to_agui_emits_run_error_and_reraises_on_exception():
     class _ExplodingOutbound(_StubOutbound):
-        def translate(self, sdk_event):
+        def translate(self, openai_event):
             raise RuntimeError("boom")
 
     translator = AGUITranslator(outbound_cls=_ExplodingOutbound)
@@ -279,7 +279,7 @@ def test_to_agui_emits_run_error_and_reraises_on_exception():
 
 def test_to_agui_emit_run_error_false_suppresses_event_but_still_raises():
     class _ExplodingOutbound(_StubOutbound):
-        def translate(self, sdk_event):
+        def translate(self, openai_event):
             raise RuntimeError("boom")
 
     translator = AGUITranslator(outbound_cls=_ExplodingOutbound)
@@ -300,7 +300,7 @@ def test_to_agui_emit_run_error_false_suppresses_event_but_still_raises():
 
 def test_to_agui_run_error_message_overrides_exception_text():
     class _ExplodingOutbound(_StubOutbound):
-        def translate(self, sdk_event):
+        def translate(self, openai_event):
             raise RuntimeError("raw internal detail")
 
     translator = AGUITranslator(outbound_cls=_ExplodingOutbound)
@@ -325,7 +325,7 @@ def test_to_agui_emits_run_error_on_cancelled_error():
     # mid-stream timeout/dropped-connection must still surface RUN_ERROR
     # instead of silently ending the stream after whatever was last yielded.
     class _CancelledOutbound(_StubOutbound):
-        def translate(self, sdk_event):
+        def translate(self, openai_event):
             raise asyncio.CancelledError()
 
     translator = AGUITranslator(outbound_cls=_CancelledOutbound)
