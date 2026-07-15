@@ -741,10 +741,45 @@ Unknown SDK event types are skipped with a debug log instead of crashing the run
 The public translator delegates to two independent, symmetric engine translators in
 `ag_ui_openai_agents.engine`:
 
-- `AGUIToOpenAITranslator` — inbound; stateless, tiered per-type methods
-  (`translate_user_message`, `translate_tool_message`, ...)
-- `OpenAIToAGUITranslator` — outbound; stateful per run (open text/tool/reasoning
-  windows), per-type methods (`translate_text_delta`, `translate_item`, ...)
+- `AGUIToOpenAITranslator` — inbound and stateless. Each request is converted
+  independently, so one instance can be reused.
+- `OpenAIToAGUITranslator` — outbound and stateful per run. OpenAI Agents SDK
+  events arrive incrementally, so it remembers open text, tool-call, reasoning,
+  and agent-step sequences between events.
+
+`AGUITranslator` remains stateless and reusable. It reuses the inbound engine
+and creates a fresh outbound engine for every `to_agui()` call.
+
+The public translator emits events in this order:
+
+```text
+RUN_STARTED
+  → optional start event and initial state
+  → streamed STEP / REASONING / TEXT / TOOL sequences
+  → finalize open sequences
+  → optional final state and MESSAGES_SNAPSHOT
+  → optional end event
+  → RUN_FINISHED
+```
+
+Within the outbound engine, each content sequence is correlated across OpenAI
+Agents SDK events and emitted as `START → content/arguments → END`.
+
+### Outbound state model
+
+An internal correlation key joins events for the same OpenAI Agents SDK output
+item. It uses the real item ID when available and otherwise uses the item's
+output position. The value stored for an open sequence is the ID already sent
+to the AG-UI client, ensuring later content and closing events reuse it.
+
+| State group | Attributes | Why it is retained |
+|---|---|---|
+| Text | `_open_texts`, `_pending_text_ids`, `_closed_text_ids` | Reuse message IDs, avoid empty assistant messages on tool-only turns, and prevent completed run items from duplicating streamed text. |
+| Tool calls | `_open_tool_calls`, `_seen_call_ids` | Attach streamed arguments to the correct tool call and prevent raw events and completed tool items from emitting the same call twice. |
+| Reasoning | `_open_reasonings`, `_open_reasoning_parts`, `_closed_reasoning_ids` | Preserve phase and part ordering, then reconcile completed reasoning items without duplicate output. |
+| Reasoning metadata | `_reasoning_part_seq`, `_reasoning_phase_ids`, `_emitted_encrypted_keys` | Give multiple reasoning parts stable IDs and attach encrypted replay data once, even when it arrives after visible reasoning closes. |
+| Agent steps | `_current_step` | Finish the previous agent step before starting the next and close the final step when the stream ends. |
+| Message snapshot | `_snapshot_messages` | Build `MESSAGES_SNAPSHOT` with the same IDs used by streamed text, tool calls, and tool results. |
 
 Every per-type method is a public override point. To customize one mapping,
 subclass the engine and inject it — the public translator and every other mapping stay

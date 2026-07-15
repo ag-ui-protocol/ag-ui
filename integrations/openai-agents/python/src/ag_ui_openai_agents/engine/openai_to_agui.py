@@ -1,14 +1,4 @@
-"""Outbound translator: OpenAI Agents SDK events → AG-UI BaseEvent.
-
-Same layered shape as AGUIToOpenAITranslator, just the other direction.
-Stateful per run — it tracks open text / tool-call / reasoning windows so
-AG-UI always sees strict START → CONTENT → END triplets. Make a fresh one
-per run; don't share across runs.
-
-Run-envelope events (RUN_STARTED / RUN_FINISHED / RUN_ERROR,
-STATE_SNAPSHOT / STATE_DELTA, MESSAGES_SNAPSHOT) are the run loop's job
-— the translator only translates.
-"""
+"""Translate OpenAI Agents SDK stream events into AG-UI events."""
 
 import logging
 from typing import Any, Sequence
@@ -74,71 +64,65 @@ logger = logging.getLogger(__name__)
 
 
 class OpenAIToAGUITranslator:
-    """Translate OpenAI Agents SDK outputs into AG-UI BaseEvent objects.
+    """Translate one OpenAI Agents SDK run into AG-UI events.
 
-    Wire ids are reused, never invented — with one caveat: some model
-    backends stamp every item with the SDK's FAKE_RESPONSES_ID
-    placeholder instead of a real id. Windows are therefore keyed by
-    real item id when available and by the raw event's output_index
-    otherwise, and placeholder ids are replaced with generated ones so
-    AG-UI clients never see two different messages sharing an id.
+    This translator is stateful and must be created once per run. It tracks
+    open text, tool-call, reasoning, and agent-step sequences so each AG-UI
+    sequence follows START, content, and END ordering.
 
-    The pattern is "lazy open, eager close": a *_START is emitted when
-    the first signal for a window arrives (output_item.added or,
-    defensively, a bare delta), and *_END fires on the first close
-    signal — output_item.done, the run-item commit, or finalize(),
-    whichever comes first. Run items double as a full emission path:
-    when no window was ever opened for an item (some backends never
-    stream raw deltas for it), its run-item translator emits the
-    complete triplet from the finished item.
+    Raw response events provide incremental content. Completed run items close
+    streamed sequences or emit a complete sequence when no deltas arrived.
+    ``finalize()`` closes any sequence still open when the stream ends.
+
+    OpenAI Agents SDK item IDs are reused when available. Missing or placeholder
+    IDs are replaced with generated AG-UI IDs, while internal correlation keys
+    ensure later deltas and completion events update the same sequence.
+
+    ``AGUITranslator`` owns run-level lifecycle and snapshot events, including
+    ``RUN_STARTED``, ``RUN_FINISHED``, ``RUN_ERROR``, and message/state snapshots.
     """
 
     def __init__(self) -> None:
-        # What's currently open. Key is the real item id when we have one,
-        # otherwise __idx_<output_index>. Value is the id we already sent in
-        # the matching *_START event, so we can pair the END to it.
-        self._open_texts: dict[str, str] = {}          # key -> message_id
-        # A message item that was announced (output_item.added) but whose
-        # TEXT_MESSAGE_START we're holding back until a real delta arrives.
-        # Value is the id the START will carry once (if) it opens. Lets a
-        # text-less item — a pure tool-call turn on some providers — pass
-        # through without an empty text window bracketing the tool call.
-        self._pending_text_ids: dict[str, str] = {}    # key -> deferred message_id
-        self._open_tool_calls: dict[str, str] = {}     # key -> tool_call_id
-        self._open_reasonings: dict[str, str] = {}     # key -> phase message_id
+        # Text sequences: defer empty messages and reconcile streamed commits.
+        self._open_texts: dict[str, str] = {}  # key -> message_id
+        self._pending_text_ids: dict[str, str] = {}  # key -> deferred message_id
+        self._closed_text_ids: list[str] = []  # closed message_ids
+
+        # Tool-call sequences: keep streamed arguments and commits deduplicated.
+        self._open_tool_calls: dict[str, str] = {}  # key -> tool_call_id
+        self._seen_call_ids: set[str] = set()  # emitted tool_call_ids
+
+        # Reasoning sequences: track phases, parts, replay data, and reconciliation.
+        self._open_reasonings: dict[str, str] = {}  # key -> phase message_id
         self._open_reasoning_parts: dict[str, str] = {}  # key -> part message_id
-        # When a run item shows up, we need to know if we already streamed and
-        # closed it (nothing to do) or if no deltas ever arrived for it and we
-        # have to emit it whole. These track what's been closed so we can tell.
-        self._closed_text_ids: list[str] = []
-        self._closed_reasoning_ids: list[str] = []
-        self._seen_call_ids: set[str] = set()
-        self._emitted_encrypted_keys: set[str] = set()
-        self._reasoning_part_seq: dict[str, int] = {}
-        # Never cleared: an encrypted value can land after we've already closed
-        # the reasoning phase, and we still need the original id to attach it to.
-        self._reasoning_phase_ids: dict[str, str] = {}
-        self._current_step: str | None = None
-        # AG-UI Messages for the end-of-run MESSAGES_SNAPSHOT, built inline as
-        # each item resolves its id here — never a second pass over new_items,
-        # so a snapshot message's id can never diverge from its streamed one.
-        # Reasoning items are intentionally never appended (see
-        # translate_reasoning_item).
-        self._snapshot_messages: list[Message] = []
+        self._closed_reasoning_ids: list[str] = []  # closed phase message_ids
+        self._emitted_encrypted_keys: set[str] = set()  # emitted keys
+        self._reasoning_part_seq: dict[str, int] = {}  # key -> next part index
+        self._reasoning_phase_ids: dict[str, str] = {}  # key -> phase message_id
+
+        # Agent-step state for ordered STEP_FINISHED and STEP_STARTED events.
+        self._current_step: str | None = None  # active step name
+
+        # Completed messages using the same IDs as their streamed events.
+        self._snapshot_messages: list[Message] = []  # completed AG-UI messages
 
     # ─────────────────────────────────────────────────────────────────────
     # TIER 1 — One-shot entry points
     # ─────────────────────────────────────────────────────────────────────
 
     def translate(self, sdk_event: Any) -> list[BaseEvent]:
-        """Dispatch one SDK StreamEvent to the right family translator.
+        """Translate one OpenAI Agents SDK stream event into ordered AG-UI events.
 
-        Returns a list because one SDK event can produce several AG-UI
-        events (e.g. an output_item.added that force-opens a window).
-        Unknown event types translate to [] with a debug log.
+        Raw response events stream START, content, and END sequences. Run-item
+        events close those sequences or emit them whole when no deltas arrived.
+        Agent updates emit STEP_FINISHED before STEP_STARTED.
+
+        Across a run, ``AGUITranslator.to_agui()`` emits RUN_STARTED, optional
+        initial events, translated stream sequences, finalized closing events,
+        optional snapshots, and RUN_FINISHED. It emits RUN_ERROR on failure.
 
         Args:
-            sdk_event: One event from result.stream_events().
+            sdk_event: One event from ``result.stream_events()``.
 
         Returns:
             Zero or more translated AG-UI events.
