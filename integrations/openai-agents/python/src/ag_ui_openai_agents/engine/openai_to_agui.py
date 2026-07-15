@@ -774,7 +774,7 @@ class OpenAIToAGUITranslator:
         return []
 
     # ─────────────────────────────────────────────────────────────────────
-    # LEVEL 4 — Internal helpers: id handling
+    # LEVEL 4a — ID handling
     # ─────────────────────────────────────────────────────────────────────
 
     @staticmethod
@@ -847,14 +847,10 @@ class OpenAIToAGUITranslator:
             closed_ids: Ids already closed via streaming, oldest first.
 
         Returns:
-            ("close", key) when a streamed window is still open,
-            ("skip", resolved_id) when the item was already fully
-            streamed and closed — resolved_id is the id that streamed
-            close already used, so the caller can still record a
-            snapshot message under it (real id: raw_id itself, since
-            it's known directly; placeholder id: the queued closed id),
-            or ("new", None) when nothing was streamed for the item and
-            it must be emitted whole.
+            A tuple[str, str | None] containing one of:
+                - ("close", key): Close the matching open sequence.
+                - ("skip", resolved_id): Reuse an already closed sequence's ID.
+                - ("new", None): Emit the complete item; no sequence exists.
         """
         if self._is_real_id(raw_id):
             if raw_id in open_windows:
@@ -870,15 +866,14 @@ class OpenAIToAGUITranslator:
         return ("new", None)
 
     # ─────────────────────────────────────────────────────────────────────
-    # LEVEL 4 — Internal helpers: window management
+    # LEVEL 4b — Sequence management
     # ─────────────────────────────────────────────────────────────────────
 
     def _open_text(self, key: str, message_id: str) -> list[BaseEvent]:
+        """Open a text sequence, closing active reasoning first."""
         if key in self._open_texts:
             return []
-        # Once real output starts, the model is done thinking. Close any open
-        # reasoning now instead of waiting for the done-event — some backends
-        # send it late, and we don't want reasoning bleeding into the answer.
+        # Close reasoning before assistant text; its done event may arrive late.
         events = self._close_all_reasonings()
         self._open_texts[key] = message_id
         events.append(
@@ -891,13 +886,12 @@ class OpenAIToAGUITranslator:
         return events
 
     def _emit_text_content(self, key: str, delta: str) -> list[BaseEvent]:
+        """Emit text content, opening its sequence when needed."""
         if not delta:
             return []
         events: list[BaseEvent] = []
         if key not in self._open_texts:
-            # First real delta for a deferred item opens the window now, under
-            # the id output_item.added reserved (falling back to a fresh id if
-            # the deltas arrived with no added first).
+            # Open deferred text on its first delta; generate an ID if added is absent.
             events.extend(
                 self._open_text(key, self._pending_text_ids.pop(key, None) or new_message_id())
             )
@@ -911,6 +905,7 @@ class OpenAIToAGUITranslator:
         return events
 
     def _close_text(self, key: str) -> list[BaseEvent]:
+        """Close a text sequence and remember its message ID."""
         message_id = self._open_texts.pop(key, None)
         if message_id is None:
             return []
@@ -923,6 +918,7 @@ class OpenAIToAGUITranslator:
         ]
 
     def _open_tool_call(self, key: str, call_id: str, name: str) -> list[BaseEvent]:
+        """Open a tool-call sequence, closing active reasoning first."""
         if key in self._open_tool_calls:
             return []
         events = self._close_all_reasonings()  # see _open_text
@@ -938,6 +934,7 @@ class OpenAIToAGUITranslator:
         return events
 
     def _close_tool_call(self, key: str) -> list[BaseEvent]:
+        """Close an active tool-call sequence."""
         call_id = self._open_tool_calls.pop(key, None)
         if call_id is None:
             return []
@@ -949,6 +946,7 @@ class OpenAIToAGUITranslator:
         ]
 
     def _open_reasoning(self, key: str, phase_id: str) -> list[BaseEvent]:
+        """Open a reasoning sequence."""
         if key in self._open_reasonings:
             return []
         self._open_reasonings[key] = phase_id
@@ -961,6 +959,7 @@ class OpenAIToAGUITranslator:
         ]
 
     def _open_reasoning_part(self, key: str) -> list[BaseEvent]:
+        """Open the next part of a reasoning sequence."""
         if key in self._open_reasoning_parts:
             return []
         seq = self._reasoning_part_seq.get(key, 0)
@@ -980,6 +979,7 @@ class OpenAIToAGUITranslator:
         ]
 
     def _close_reasoning_part(self, key: str) -> list[BaseEvent]:
+        """Close an active reasoning part."""
         message_id = self._open_reasoning_parts.pop(key, None)
         if message_id is None:
             return []
@@ -991,6 +991,7 @@ class OpenAIToAGUITranslator:
         ]
 
     def _close_reasoning(self, key: str) -> list[BaseEvent]:
+        """Close a reasoning part and its parent sequence."""
         phase_id = self._open_reasonings.pop(key, None)
         if phase_id is None:
             return []
@@ -1005,6 +1006,7 @@ class OpenAIToAGUITranslator:
         return events
 
     def _close_all_reasonings(self) -> list[BaseEvent]:
+        """Close every active reasoning sequence."""
         events: list[BaseEvent] = []
         for key in list(self._open_reasonings):
             events.extend(self._close_reasoning(key))
@@ -1036,21 +1038,19 @@ class OpenAIToAGUITranslator:
         ]
 
     # ─────────────────────────────────────────────────────────────────────
-    # LEVEL 4 — Internal helpers: snapshot message builders
+    # LEVEL 4c — Snapshot message builders
     # ─────────────────────────────────────────────────────────────────────
-    #
-    # One per streamed item, appended as the item commits — always with the
-    # id its streamed event already used, so build_messages_snapshot's output
-    # lines up with the stream. Reasoning is deliberately not recorded: the
-    # streamed reasoning bubbles survive the client merge on their own, and
-    # plaintext reasoning cannot be round-tripped back into an OpenAI run.
+    # Snapshot messages reuse streamed IDs so clients can merge without duplicates.
+    # Reasoning is omitted because plaintext reasoning cannot be replayed.
 
     def _record_text(self, message_id: str, text: str) -> None:
+        """Add an assistant text message to the snapshot."""
         self._snapshot_messages.append(
             AssistantMessage(id=message_id, role="assistant", content=text)
         )
 
     def _record_tool_call(self, call_id: str, name: str, arguments: str) -> None:
+        """Add an assistant tool call to the snapshot."""
         # The streamed TOOL_CALL_START carried no parent message id, so the
         # client keyed the bubble by the tool call id — mirror that here.
         self._snapshot_messages.append(
@@ -1068,6 +1068,7 @@ class OpenAIToAGUITranslator:
         )
 
     def _record_result(self, call_id: str, content: str) -> str:
+        """Add a tool result and return its derived message ID."""
         # Returns the derived result id so the caller reuses the same value
         # for its TOOL_CALL_RESULT event — snapshot and stream stay in sync.
         result_id = new_tool_result_id(call_id)
