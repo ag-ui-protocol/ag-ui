@@ -4,10 +4,11 @@
 # Creates or updates a daily GitHub Release with published package info.
 #
 # Usage: ./create-or-update-release.sh <ecosystem> <packages-json>
-#   ecosystem: "typescript" or "python"
+#   ecosystem: "typescript", "python", or "dotnet"
 #   packages-json: JSON array string of published packages
 #     TS format:  [{"name":"@ag-ui/core","version":"0.0.49","path":"..."}]
 #     Py format:  [{"name":"ag-ui-protocol","version":"0.1.15","dir":"..."}]
+#     .NET format: [{"name":"AGUI.Client","version":"0.1.0","path":"..."}]
 #
 # Requires: gh CLI authenticated with contents:write permission
 # Environment: DRY_RUN=true to skip actual release creation
@@ -41,8 +42,17 @@ elif [ "$ECOSYSTEM" = "python" ]; then
     VERSION=$(echo "$pkg" | jq -r '.version')
     SECTION+="| ${NAME} | ${VERSION} | \`pip install ${NAME}==${VERSION}\` |${NL}"
   done < <(echo "$PACKAGES_JSON" | jq -c '.[]')
+elif [ "$ECOSYSTEM" = "dotnet" ]; then
+  SECTION="### .NET (NuGet) - published at ${TIMESTAMP} UTC${NL}"
+  SECTION+="| Package | Version | Install |${NL}"
+  SECTION+="|---------|---------|--------|${NL}"
+  while read -r pkg; do
+    NAME=$(echo "$pkg" | jq -r '.name')
+    VERSION=$(echo "$pkg" | jq -r '.version')
+    SECTION+="| ${NAME} | ${VERSION} | \`dotnet add package ${NAME} --version ${VERSION}\` |${NL}"
+  done < <(echo "$PACKAGES_JSON" | jq -c '.[]')
 else
-  echo "ERROR: Unknown ecosystem '$ECOSYSTEM'. Use 'typescript' or 'python'." >&2
+  echo "ERROR: Unknown ecosystem '$ECOSYSTEM'. Use 'typescript', 'python', or 'dotnet'." >&2
   exit 1
 fi
 
@@ -72,11 +82,11 @@ for i in $(seq 1 $MAX_RETRIES); do
       if grep -Fq "$ROW_KEY" <<<"$EXISTING_BODY"; then
         echo "Row for ${NAME}@${VERSION} already present in release body; skipping" >&2
       else
-        if [ "$ECOSYSTEM" = "typescript" ]; then
-          APPEND_SECTION+="| ${NAME} | ${VERSION} | \`npm install ${NAME}@${VERSION}\` |${NL}"
-        else
-          APPEND_SECTION+="| ${NAME} | ${VERSION} | \`pip install ${NAME}==${VERSION}\` |${NL}"
-        fi
+        case "$ECOSYSTEM" in
+          typescript) APPEND_SECTION+="| ${NAME} | ${VERSION} | \`npm install ${NAME}@${VERSION}\` |${NL}" ;;
+          python) APPEND_SECTION+="| ${NAME} | ${VERSION} | \`pip install ${NAME}==${VERSION}\` |${NL}" ;;
+          dotnet) APPEND_SECTION+="| ${NAME} | ${VERSION} | \`dotnet add package ${NAME} --version ${VERSION}\` |${NL}" ;;
+        esac
         APPEND_ROWS=$((APPEND_ROWS + 1))
       fi
     done < <(echo "$PACKAGES_JSON" | jq -c '.[]')
@@ -86,11 +96,11 @@ for i in $(seq 1 $MAX_RETRIES); do
       exit 0
     fi
 
-    if [ "$ECOSYSTEM" = "typescript" ]; then
-      HEADER="### TypeScript (npm) - published at ${TIMESTAMP} UTC${NL}| Package | Version | Install |${NL}|---------|---------|--------|${NL}"
-    else
-      HEADER="### Python (PyPI) - published at ${TIMESTAMP} UTC${NL}| Package | Version | Install |${NL}|---------|---------|--------|${NL}"
-    fi
+    case "$ECOSYSTEM" in
+      typescript) HEADER="### TypeScript (npm) - published at ${TIMESTAMP} UTC${NL}| Package | Version | Install |${NL}|---------|---------|--------|${NL}" ;;
+      python) HEADER="### Python (PyPI) - published at ${TIMESTAMP} UTC${NL}| Package | Version | Install |${NL}|---------|---------|--------|${NL}" ;;
+      dotnet) HEADER="### .NET (NuGet) - published at ${TIMESTAMP} UTC${NL}| Package | Version | Install |${NL}|---------|---------|--------|${NL}" ;;
+    esac
     UPDATED_BODY="${EXISTING_BODY}${NL}${HEADER}${APPEND_SECTION}"
     echo "$UPDATED_BODY" | gh release edit "$TAG" --notes-file -
     echo "Updated existing release $TAG with $APPEND_ROWS new $ECOSYSTEM row(s)" >&2

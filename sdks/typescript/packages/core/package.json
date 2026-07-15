@@ -52,12 +52,10 @@
   },
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
       "require": "./dist/index.js",
       "import": "./dist/index.mjs"
     },
     "./schemas": {
-      "types": "./dist/schemas.d.ts",
       "require": "./dist/schemas.js",
       "import": "./dist/schemas.mjs"
     },

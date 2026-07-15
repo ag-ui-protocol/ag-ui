@@ -347,7 +347,15 @@ export const ToolCallStartEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.TOOL_CALL_START),
   toolCallId: z.string(),
   toolCallName: z.string(),
-  parentMessageId: z.string().optional(),
+  // Accept `null` and treat it as omitted, so producers that serialize optional
+  // fields as JSON `null` (e.g. the .NET Microsoft Agent Framework adapter, whose
+  // System.Text.Json emits `"parentMessageId": null`) still validate instead of
+  // aborting the run on the first tool call.
+  parentMessageId: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((v) => v ?? undefined),
 });
 
 export const ToolCallArgsEventSchema = BaseEventSchema.extend({
@@ -373,7 +381,12 @@ export const ToolCallChunkEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.TOOL_CALL_CHUNK),
   toolCallId: z.string().optional(),
   toolCallName: z.string().optional(),
-  parentMessageId: z.string().optional(),
+  // Accept `null` as omitted — same cross-language quirk as TOOL_CALL_START.
+  parentMessageId: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((v) => v ?? undefined),
   delta: z.string().optional(),
 });
 
@@ -467,7 +480,9 @@ export const RunFinishedEventSchema = BaseEventSchema.extend({
   result: z.any().optional(),
   // Accept `null` and treat it as omitted, so producers that emit `"outcome": null`
   // for the legacy no-outcome case still validate.
-  outcome: RunFinishedOutcomeSchema.nullable().optional().transform((v) => v ?? undefined),
+  outcome: RunFinishedOutcomeSchema.nullable()
+    .optional()
+    .transform((v) => v ?? undefined),
 });
 
 export const RunErrorEventSchema = BaseEventSchema.extend({
@@ -721,4 +736,3 @@ export const AgentCapabilitiesSchema = z.object({
   humanInTheLoop: HumanInTheLoopCapabilitiesSchema.optional(),
   custom: z.record(z.string(), z.unknown()).optional(),
 });
-

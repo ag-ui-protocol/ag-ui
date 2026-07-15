@@ -8,19 +8,25 @@
 
    The <img> raster is replaced with an empty SVG (the image itself draws
    nothing); the glyph shape is supplied as a CSS mask, and background-color
-   provides the (theme-aware, hover-aware) color shown through the mask. */
-img[src="/logo/dotnet.svg"] {
+   provides the (theme-aware, hover-aware) color shown through the mask.
+
+   The selector uses a [src$=...] suffix match, NOT [src=...]. Mintlify serves
+   the local path verbatim in `mintlify dev` but rewrites it to an S3 CDN URL
+   (https://mintlify.s3.../logo/dotnet.svg) in the hosted build. An exact match
+   works locally but silently fails in production, leaving a flat black .NET box
+   that does not recolor on hover or in dark mode. The suffix match covers both. */
+img[src$="/logo/dotnet.svg"] {
   content: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'/%3E");
   -webkit-mask: url("/logo/dotnet.svg") no-repeat center / contain;
   mask: url("/logo/dotnet.svg") no-repeat center / contain;
   background-color: rgb(158, 158, 158) !important; /* resting (light) — matches FA icons */
 }
-.group:hover img[src="/logo/dotnet.svg"] {
+.group:hover img[src$="/logo/dotnet.svg"] {
   background-color: rgb(23, 23, 23) !important; /* hover (light) — matches the label */
 }
-.dark img[src="/logo/dotnet.svg"] {
+.dark img[src$="/logo/dotnet.svg"] {
   background-color: rgb(112, 112, 112) !important; /* resting (dark) — matches FA icons */
 }
-.dark .group:hover img[src="/logo/dotnet.svg"] {
+.dark .group:hover img[src$="/logo/dotnet.svg"] {
   background-color: rgb(206, 206, 206) !important; /* hover (dark) — matches the label */
 }

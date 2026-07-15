@@ -2,8 +2,8 @@
 """
 collect-accumulated-bumps.py
 
-Walks every package.json and pyproject.toml that changed between two git refs
-and reports which ones had their version field bumped. Used to build a
+Walks every package.json, pyproject.toml, and enrolled .NET Directory.Build.props
+that changed between two git refs and reports which ones had their version field bumped. Used to build a
 release PR's summary from the accumulated state of the release/next branch.
 
 Usage:
@@ -75,16 +75,25 @@ def parse_pyproject(content: str) -> tuple[str | None, str | None]:
     return name, version
 
 
-def load_scope_map() -> dict[str, tuple[str, str]]:
-    """Map package path -> (scope name, ecosystem)."""
+def parse_directory_build_props(content: str) -> str | None:
+    match = re.search(r"<VersionPrefix(?:\s+[^>]*)?>([^<]+)</VersionPrefix>", content)
+    return match.group(1) if match else None
+
+
+def load_scope_maps() -> tuple[dict[str, tuple[str, str]], dict[str, tuple[str, list[dict]]]]:
+    """Map package path -> (scope name, ecosystem), and versionSource -> (scope, packages)."""
     with CONFIG_PATH.open("rb") as f:
         config = json.load(f)
 
     scope_map: dict[str, tuple[str, str]] = {}
+    version_source_map: dict[str, tuple[str, list[dict]]] = {}
     for scope_name, scope_data in config["scopes"].items():
         for pkg in scope_data["packages"]:
             scope_map[pkg["path"]] = (scope_name, pkg["ecosystem"])
-    return scope_map
+        version_source = scope_data.get("versionSource")
+        if version_source:
+            version_source_map[version_source] = (scope_name, scope_data["packages"])
+    return scope_map, version_source_map
 
 
 def find_scope(file_path: str, scope_map: dict[str, tuple[str, str]]) -> tuple[str, str] | None:
@@ -101,7 +110,7 @@ def main() -> None:
         sys.exit(1)
 
     base, head = sys.argv[1], sys.argv[2]
-    scope_map = load_scope_map()
+    scope_map, version_source_map = load_scope_maps()
 
     results: list[dict] = []
 
@@ -127,6 +136,32 @@ def main() -> None:
             if old_content is not None:
                 _, version_old = parse_pyproject(old_content)
             ecosystem_default = "python"
+
+        elif path in version_source_map and path.endswith("Directory.Build.props"):
+            new_content = read_file_at_ref(head, path)
+            old_content = read_file_at_ref(base, path)
+            if new_content is None:
+                continue
+            version_new = parse_directory_build_props(new_content)
+            if old_content is not None:
+                version_old = parse_directory_build_props(old_content)
+            if not version_new or version_old == version_new:
+                continue
+
+            scope_name, packages = version_source_map[path]
+            for pkg in packages:
+                results.append(
+                    {
+                        "scope": scope_name,
+                        "name": pkg["name"],
+                        "path": pkg["path"],
+                        "file": path,
+                        "ecosystem": pkg["ecosystem"],
+                        "oldVersion": version_old or "(new)",
+                        "newVersion": version_new,
+                    }
+                )
+            continue
 
         else:
             continue
