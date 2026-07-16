@@ -566,8 +566,10 @@ export class StrandsAgent {
   /**
    * Ensure a Strands agent exists for the given thread. Creates one if needed
    * (including session manager initialization). Returns the agent or an error
-   * event to yield. Matches Python's ordering: agent creation happens before
-   * resume validation so SessionManager can restore _interruptState.
+   * event to yield. Called from `run()`'s resume-validation gate on a cold
+   * start with a session provider (so SessionManager can restore
+   * `_interruptState` before validation runs), and again from
+   * `_runSingleAgent` for the actual run — the second call is a cache hit.
    */
   private async _ensureAgent(
     inputData: RunAgentInput,
@@ -671,7 +673,7 @@ export class StrandsAgent {
     // interrupts. Gated above `_runRaw` so subclasses that override only
     // `_runRaw` still inherit the checks.
     if (hasResume) {
-      const pending = this._pendingInterruptsByThread.get(threadId);
+      let pending = this._pendingInterruptsByThread.get(threadId);
 
       // Rule 5: idempotency — detect replayed resumes
       fingerprint = createHash("md5")
@@ -685,13 +687,69 @@ export class StrandsAgent {
         return;
       }
 
-      if (!pending && !this.config.sessionManagerProvider) {
+      // Cold start with a session provider: the in-memory pending map is
+      // empty because the per-thread agent (and its SessionManager-restored
+      // native _interruptState) hasn't been constructed in this process
+      // yet. Restore it now — before deciding whether to skip validation —
+      // so an unknown/partial resume can't slip through solely because
+      // nothing has run on this process since the interrupt was raised.
+      let nativePendingIds: Set<string> | undefined;
+      if (!pending && this.config.sessionManagerProvider) {
+        const restored = await this._ensureAgent(inputData, threadId);
+        if ("error" in restored) {
+          yield _runStarted(inputData);
+          yield restored.error;
+          return;
+        }
+        const interruptState = (
+          restored.agent as { _interruptState?: { activated?: boolean; interrupts?: Map<string, unknown> } }
+        )._interruptState;
+        if (interruptState?.activated && interruptState.interrupts) {
+          nativePendingIds = new Set(interruptState.interrupts.keys());
+        }
+        // Re-check the AG-UI-side map too: _ensureAgent may have raced with
+        // another call that populated it while we awaited.
+        pending = this._pendingInterruptsByThread.get(threadId);
+      }
+
+      if (!pending && !nativePendingIds) {
         yield _runStarted(inputData);
         yield _runError(
           "No pending interrupts for this thread.",
           "UNKNOWN_INTERRUPT_ID",
         );
         return;
+      }
+
+      if (!pending && nativePendingIds) {
+        // Best-effort validation against the restored native interrupt
+        // IDs only (rules 2/3). The full AG-UI interrupt metadata needed
+        // for rules 6/7 — responseSchema, expiresAt — is adapter-memory
+        // only and was lost on restart; it cannot be recovered here.
+        const unknown = inputData
+          .resume!.map((entry) => entry.interruptId)
+          .filter((id) => !nativePendingIds!.has(id));
+        if (unknown.length > 0) {
+          yield _runStarted(inputData);
+          yield _runError(
+            `This agent did not issue any interrupts to resume: ${unknown
+              .slice(0, 4)
+              .join(", ")}. ` +
+              "Resume entries must reference an outstanding interruptId.",
+            "UNKNOWN_INTERRUPT_ID",
+          );
+          return;
+        }
+        const resumedIds = new Set(inputData.resume!.map((e) => e.interruptId));
+        const missing = [...nativePendingIds].filter((id) => !resumedIds.has(id));
+        if (missing.length > 0) {
+          yield _runStarted(inputData);
+          yield _runError(
+            `Partial resume: missing interrupt IDs: ${missing.join(", ")}. All open interrupts must be addressed.`,
+            "PARTIAL_RESUME",
+          );
+          return;
+        }
       }
 
       if (pending) {
@@ -1153,12 +1211,12 @@ export class StrandsAgent {
               }
             }
           }
-          // If ALL entries are cancelled, finish immediately
-          if (resumeEntries.every((e) => e.status === "cancelled")) {
-            this._pendingInterruptsByThread.delete(threadId);
-            yield { type: EventType.RUN_FINISHED, threadId: inputData.threadId, runId: inputData.runId, outcome: { type: "success" } };
-            return;
-          }
+          // Note: even when ALL entries are cancelled, we still forward the
+          // denial responses to Strands via stream() below rather than
+          // short-circuiting here. This ensures native interrupt-state
+          // cleanup, hooks, snapshots, and session persistence all run
+          // through Strands' normal completion path instead of being
+          // bypassed by a synthetic RUN_FINISHED.
         }
         invokeArgs = resumeEntries.map(
           (entry) =>

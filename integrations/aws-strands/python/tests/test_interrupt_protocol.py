@@ -15,7 +15,7 @@ Covers:
 - Normal runs (no frontend tool) emit RunFinishedSuccessOutcome
 - Resume: resolved+approved passes "y" to Strands and run continues
 - Resume: resolved+denied passes "n" to Strands and run continues
-- Resume: cancelled deactivates Strands interrupt state and ends cleanly
+- Resume: cancelled forwards a native denial through stream_async() and ends cleanly
 - Resume: unknown interrupt_id yields RunErrorEvent
 - Resume: no pending interrupt on thread yields RunErrorEvent
 """
@@ -39,7 +39,6 @@ from strands.tools.registry import ToolRegistry
 from ag_ui_strands.agent import StrandsAgent
 from ag_ui_strands.config import StrandsAgentConfig, ToolBehavior
 from ag_ui_strands import (
-    Interrupt,
     ResumeEntry,
     RunFinishedInterruptOutcome,
     RunFinishedSuccessOutcome,
@@ -447,7 +446,12 @@ class TestResumeCancelled:
         assert len(finished) == 1
         assert isinstance(finished[0].outcome, RunFinishedSuccessOutcome)
 
-    async def test_cancelled_calls_deactivate(self):
+    async def test_cancelled_forwards_denial_through_strands(self):
+        """All-cancelled resumes must flow through stream_async() — not a
+        synthetic short-circuit — so Strands' own interrupt-state cleanup,
+        hooks, and session persistence still run (see issue: all-cancel
+        previously bypassed Strands and the run lifecycle entirely).
+        """
         strands_interrupt = _make_strands_interrupt("my_tool", {}, "st-1")
         interrupt_state = _make_interrupt_state(
             activated=True,
@@ -455,6 +459,17 @@ class TestResumeCancelled:
         )
 
         agent = _build_agent(self.THREAD + "-deact", [], self._config(), interrupt_state)
+        mock_inner = agent._agents_by_thread[self.THREAD + "-deact"]
+
+        captured_prompts: list = []
+        original_stream_async = mock_inner.stream_async
+
+        async def _spy_stream(msg: Any):
+            captured_prompts.append(msg)
+            async for event in original_stream_async(msg):
+                yield event
+
+        mock_inner.stream_async = _spy_stream
 
         resume_input = _run_input(
             self.THREAD + "-deact",
@@ -462,7 +477,18 @@ class TestResumeCancelled:
         )
         await _collect(agent, resume_input)
 
-        interrupt_state.deactivate.assert_called_once()
+        # The cancellation must be forwarded to Strands as a native
+        # interruptResponse denial — not handled by a synthetic return that
+        # skips stream_async() entirely.
+        assert len(captured_prompts) == 1
+        assert captured_prompts[0] == [
+            {
+                "interruptResponse": {
+                    "interruptId": strands_interrupt.id,
+                    "response": {"approved": False},
+                }
+            }
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -546,6 +572,168 @@ class TestStrandsInterruptHookAutoRegistration:
         agent = StrandsAgent(_template_agent(), name="test", config=config, hooks=[caller_hook])
         assert isinstance(agent._hooks[0], StrandsInterruptHook)
         assert agent._hooks[1] is caller_hook
+
+
+# ---------------------------------------------------------------------------
+# StrandsInterruptHook — strict approval payload contract
+# ---------------------------------------------------------------------------
+
+
+def _hook_event(response: Any, tool_name: str = "my_tool") -> MagicMock:
+    """Build a mock BeforeToolCallEvent whose event.interrupt() returns the
+    given resume response, as Strands does on the resume call."""
+    event = MagicMock()
+    event.tool_use = {"name": tool_name, "input": {}, "toolUseId": "st-1"}
+    event.interrupt = MagicMock(return_value=response)
+    event.cancel_tool = False
+    return event
+
+
+class TestStrandsInterruptHookStrictApproval:
+    """The approval hook must only grant approval for a strict
+    {"approved": true} payload — any other shape (missing key, non-bool
+    value, non-dict response) is an explicit denial, not a truthy coercion.
+    """
+
+    def _hook(self):
+        from ag_ui_strands.agent import StrandsInterruptHook
+        return StrandsInterruptHook(
+            {"my_tool": ToolBehavior(interrupt_on_call=True)}
+        )
+
+    def test_approved_true_grants_approval(self):
+        event = _hook_event({"approved": True})
+        self._hook()._on_before_tool_call(event)
+        assert event.cancel_tool is False
+
+    def test_approved_false_denies(self):
+        event = _hook_event({"approved": False})
+        self._hook()._on_before_tool_call(event)
+        assert event.cancel_tool
+
+    def test_missing_approved_key_denies(self):
+        event = _hook_event({})
+        self._hook()._on_before_tool_call(event)
+        assert event.cancel_tool
+
+    def test_truthy_string_does_not_grant_approval(self):
+        """A stringified 'false' (or any non-empty string) must NOT be
+        treated as approval merely because it's truthy."""
+        event = _hook_event({"approved": "false"})
+        self._hook()._on_before_tool_call(event)
+        assert event.cancel_tool
+
+    def test_truthy_string_true_does_not_grant_approval(self):
+        event = _hook_event({"approved": "true"})
+        self._hook()._on_before_tool_call(event)
+        assert event.cancel_tool
+
+    def test_numeric_one_does_not_grant_approval(self):
+        event = _hook_event({"approved": 1})
+        self._hook()._on_before_tool_call(event)
+        assert event.cancel_tool
+
+    def test_extra_keys_with_valid_approval_still_grants(self):
+        """Extra keys beyond the declared schema aren't themselves
+        disqualifying — only the "approved" value's type/value matters."""
+        event = _hook_event({"approved": True, "note": "looks fine"})
+        self._hook()._on_before_tool_call(event)
+        assert event.cancel_tool is False
+
+    def test_non_dict_response_denies(self):
+        event = _hook_event("y")
+        self._hook()._on_before_tool_call(event)
+        assert event.cancel_tool
+
+    def test_none_response_denies(self):
+        event = _hook_event(None)
+        self._hook()._on_before_tool_call(event)
+        assert event.cancel_tool
+
+
+# ---------------------------------------------------------------------------
+# Generic (non-tool-approval) native interrupts must stay generic
+# ---------------------------------------------------------------------------
+
+
+class TestGenericNativeInterrupt:
+    """Interrupts NOT raised by StrandsInterruptHook's own
+    "ag_ui:tool_call:" naming convention — e.g. a user's own tool calling
+    event.interrupt() directly for a generic human-in-the-loop request —
+    must be preserved as generic interrupts, not misclassified as tool-call
+    approvals with fabricated schema/metadata.
+    """
+
+    THREAD = "generic-interrupt-thread"
+
+    async def test_generic_interrupt_reason_is_preserved(self):
+        generic = StrandsInterrupt(
+            id="v1:custom:abc",
+            name="need_clarification",
+            reason={"question": "Which environment?"},
+        )
+        stream = [
+            {"result": _FakeAgentResult(stop_reason="interrupt", interrupts=[generic])},
+        ]
+        agent = _build_agent(self.THREAD, stream, StrandsAgentConfig())
+        events = await _collect(agent, _run_input(self.THREAD))
+
+        finished = [e for e in events if e.type == EventType.RUN_FINISHED]
+        assert len(finished) == 1
+        interrupt = finished[0].outcome.interrupts[0]
+        assert interrupt.id == "v1:custom:abc"
+        assert interrupt.reason == "need_clarification"
+
+    async def test_generic_interrupt_has_no_fabricated_tool_schema(self):
+        generic = StrandsInterrupt(
+            id="v1:custom:abc",
+            name="need_clarification",
+            reason={"question": "Which environment?"},
+        )
+        stream = [
+            {"result": _FakeAgentResult(stop_reason="interrupt", interrupts=[generic])},
+        ]
+        agent = _build_agent(self.THREAD + "-schema", stream, StrandsAgentConfig())
+        events = await _collect(agent, _run_input(self.THREAD + "-schema"))
+
+        finished = [e for e in events if e.type == EventType.RUN_FINISHED]
+        interrupt = finished[0].outcome.interrupts[0]
+        assert interrupt.response_schema is None
+        assert interrupt.tool_call_id is None
+
+    async def test_generic_interrupt_preserves_native_reason_in_metadata(self):
+        generic = StrandsInterrupt(
+            id="v1:custom:abc",
+            name="need_clarification",
+            reason={"question": "Which environment?"},
+        )
+        stream = [
+            {"result": _FakeAgentResult(stop_reason="interrupt", interrupts=[generic])},
+        ]
+        agent = _build_agent(self.THREAD + "-meta", stream, StrandsAgentConfig())
+        events = await _collect(agent, _run_input(self.THREAD + "-meta"))
+
+        finished = [e for e in events if e.type == EventType.RUN_FINISHED]
+        interrupt = finished[0].outcome.interrupts[0]
+        assert interrupt.metadata == {"reason": {"question": "Which environment?"}}
+
+    async def test_tool_call_interrupt_still_classified_as_tool_call(self):
+        """Sanity check: the ag_ui:tool_call: naming convention still
+        produces the tool-approval shape, unaffected by the generic path."""
+        strands_interrupt = _make_strands_interrupt("my_tool", {"x": 1}, "st-1")
+        stream = [
+            {"result": _FakeAgentResult(stop_reason="interrupt", interrupts=[strands_interrupt])},
+        ]
+        config = StrandsAgentConfig(
+            tool_behaviors={"my_tool": ToolBehavior(interrupt_on_call=True)}
+        )
+        agent = _build_agent(self.THREAD + "-tool", stream, config)
+        events = await _collect(agent, _run_input(self.THREAD + "-tool", tools=[Tool(name="my_tool", description="d", parameters={})]))
+
+        finished = [e for e in events if e.type == EventType.RUN_FINISHED]
+        interrupt = finished[0].outcome.interrupts[0]
+        assert interrupt.reason == "tool_call"
+        assert interrupt.response_schema is not None
 
 
 

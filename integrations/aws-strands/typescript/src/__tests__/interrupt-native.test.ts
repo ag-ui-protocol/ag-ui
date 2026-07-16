@@ -173,7 +173,7 @@ describe("StrandsAgent native interrupt bridge (Strands SDK 1.1.0+)", () => {
     expect(err.message).toContain("unknown-id");
   });
 
-  it("forwards a cancelled resume as { status: 'cancelled' }", async () => {
+  it("forwards a cancelled resume as native InterruptResponseContent through Strands", async () => {
     let capturedArgs: unknown = null;
     const stubAgent = scriptedAgent([], {
       stream: ((args: unknown) => {
@@ -207,7 +207,14 @@ describe("StrandsAgent native interrupt bridge (Strands SDK 1.1.0+)", () => {
       }),
     );
 
-    // All cancelled → early return with RUN_FINISHED, Strands not invoked
-    expect(capturedArgs).toBeNull();
+    // All-cancelled resumes must still be forwarded to Strands as native
+    // InterruptResponseContent — not short-circuited with a synthetic
+    // RUN_FINISHED that bypasses stream()/native cleanup/hooks/session
+    // persistence.
+    expect(capturedArgs).not.toBeNull();
+    expect(Array.isArray(capturedArgs)).toBe(true);
+    const [first] = capturedArgs as InterruptResponseContent[];
+    expect(first.interruptResponse.interruptId).toBe("ic");
+    expect(first.interruptResponse.response).toEqual({ status: "cancelled" });
   });
 });

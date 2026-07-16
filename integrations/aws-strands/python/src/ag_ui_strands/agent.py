@@ -332,8 +332,18 @@ class StrandsInterruptHook:
             },
         )
         # If we reach here we are on the resume path.
-        # Deny the tool call unless the user explicitly approved.
-        if not (isinstance(response, dict) and response.get("approved", False)):
+        # Enforce a strict payload contract matching the advertised
+        # response_schema ({"approved": bool}, required): only a dict with
+        # "approved" set to an actual bool of True grants approval. Anything
+        # else — a missing key, a non-bool value (e.g. a truthy string like
+        # "false", a number, None), or a non-dict response — is treated as
+        # an explicit denial rather than being coerced by truthiness.
+        approved = (
+            isinstance(response, dict)
+            and isinstance(response.get("approved"), bool)
+            and response["approved"] is True
+        )
+        if not approved:
             event.cancel_tool = f"User denied approval for '{tool_name}'."
 
 
@@ -834,30 +844,12 @@ class StrandsAgent:
                             content="Tool call cancelled by user.",
                         )
 
-            # If ALL entries are cancelled, finish immediately without invoking Strands
-            if all(e.status == "cancelled" for e in resume_entries):
-                interrupt_state.deactivate()
-                yield RunStartedEvent(
-                    type=EventType.RUN_STARTED,
-                    thread_id=input_data.thread_id,
-                    run_id=input_data.run_id,
-                )
-                yield RunFinishedEvent(
-                    type=EventType.RUN_FINISHED,
-                    thread_id=input_data.thread_id,
-                    run_id=input_data.run_id,
-                    outcome=RunFinishedSuccessOutcome(type="success"),
-                )
-                fingerprint = hashlib.md5(  # noqa: S324
-                    json.dumps(
-                        [(e.interrupt_id, e.status, e.payload) for e in resume_entries],
-                        sort_keys=True, default=str,
-                    ).encode(),
-                    usedforsecurity=False,
-                ).hexdigest()
-                self._last_resume_fingerprint[thread_id] = fingerprint
-                self._pending_interrupts_by_thread.pop(thread_id, None)
-                return
+            # Note: even when ALL entries are cancelled, we still forward the
+            # denial responses to Strands via stream_async() below rather than
+            # short-circuiting here. This ensures native interrupt-state
+            # cleanup, hooks, snapshots, and session persistence all run
+            # through Strands' normal completion path instead of being
+            # bypassed by a synthetic RUN_FINISHED.
 
             # Pass interruptResponse dicts as the prompt — Strands resumes from
             # its checkpoint without replaying the full conversation.
@@ -1268,36 +1260,54 @@ class StrandsAgent:
                             strands_interrupts = getattr(result, "interrupts", None) or []
                             ag_ui_interrupts = []
                             for si in strands_interrupts:
-                                tool_name_meta = (
-                                    si.reason.get("tool_name", "unknown")
-                                    if isinstance(si.reason, dict)
-                                    else "unknown"
+                                # Only interrupts raised by our own
+                                # StrandsInterruptHook (identified by the
+                                # "ag_ui:tool_call:" name prefix it always
+                                # uses) are tool-call approvals with the
+                                # {tool_name, tool_input, tool_use_id} reason
+                                # shape. Any other interrupt — e.g. one a
+                                # user's own tool or hook raises directly via
+                                # event.interrupt(name, reason=...) for
+                                # generic human-in-the-loop purposes — must
+                                # stay generic: preserve its native name/
+                                # reason payload rather than guessing tool
+                                # metadata out of an unrelated object.
+                                is_tool_approval = (
+                                    isinstance(si.name, str)
+                                    and si.name.startswith("ag_ui:tool_call:")
+                                    and isinstance(si.reason, dict)
                                 )
-                                tool_input_meta = (
-                                    si.reason.get("tool_input", {})
-                                    if isinstance(si.reason, dict)
-                                    else {}
-                                )
-                                tool_use_id_meta = (
-                                    si.reason.get("tool_use_id")
-                                    if isinstance(si.reason, dict)
-                                    else None
-                                )
-                                ag_ui_interrupts.append(Interrupt(
-                                    id=si.id,
-                                    reason="tool_call",
-                                    message=f"Approve call to {tool_name_meta}?",
-                                    tool_call_id=tool_use_id_meta,
-                                    response_schema={
-                                        "type": "object",
-                                        "properties": {"approved": {"type": "boolean"}},
-                                        "required": ["approved"],
-                                    },
-                                    metadata={
-                                        "tool_name": tool_name_meta,
-                                        "tool_input": tool_input_meta,
-                                    },
-                                ))
+                                if is_tool_approval:
+                                    tool_name_meta = si.reason.get("tool_name", "unknown")
+                                    tool_input_meta = si.reason.get("tool_input", {})
+                                    tool_use_id_meta = si.reason.get("tool_use_id")
+                                    ag_ui_interrupts.append(Interrupt(
+                                        id=si.id,
+                                        reason="tool_call",
+                                        message=f"Approve call to {tool_name_meta}?",
+                                        tool_call_id=tool_use_id_meta,
+                                        response_schema={
+                                            "type": "object",
+                                            "properties": {"approved": {"type": "boolean"}},
+                                            "required": ["approved"],
+                                        },
+                                        metadata={
+                                            "tool_name": tool_name_meta,
+                                            "tool_input": tool_input_meta,
+                                        },
+                                    ))
+                                else:
+                                    # Generic native interrupt: preserve the
+                                    # native name/reason as-is instead of
+                                    # fabricating tool-approval semantics.
+                                    ag_ui_interrupts.append(Interrupt(
+                                        id=si.id,
+                                        reason=si.name,
+                                        message=None,
+                                        tool_call_id=None,
+                                        response_schema=None,
+                                        metadata={"reason": si.reason} if si.reason is not None else None,
+                                    ))
                             if ag_ui_interrupts:
                                 pending_interrupt_outcome = RunFinishedInterruptOutcome(
                                     type="interrupt",
