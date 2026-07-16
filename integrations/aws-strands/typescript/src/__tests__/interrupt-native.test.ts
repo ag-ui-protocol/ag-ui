@@ -28,13 +28,15 @@ function makeAgentResultStream(
   };
 }
 
-function strandsInterrupt(id: string, name: string): StrandsInterrupt {
+function strandsInterrupt(id: string, toolName: string): StrandsInterrupt {
+  // Mirrors the shape the adapter's own interruptOnCall hook produces:
+  // name prefixed with "ag_ui:tool_call:" and a structured reason object.
   // The concrete class is internal; the adapter only reads .id / .name /
   // .reason, so a plain object that matches the interface is sufficient.
   return {
     id,
-    name,
-    reason: `Approve ${name}?`,
+    name: `ag_ui:tool_call:${toolName}`,
+    reason: { tool_call: true, tool_name: toolName, tool_input: {}, tool_use_id: id },
   } as unknown as StrandsInterrupt;
 }
 
@@ -75,8 +77,9 @@ describe("StrandsAgent native interrupt bridge (Strands SDK 1.1.0+)", () => {
       metadata?: { strandsName?: string };
     };
     expect(first.id).toBe("int-1");
-    expect(first.reason).toBe("Approve confirm_delete?");
-    expect(first.metadata?.strandsName).toBe("confirm_delete");
+    expect(first.reason).toBe("tool_call");
+    expect(first.message).toBe("Approve call to confirm_delete?");
+    expect(first.metadata?.strandsName).toBe("ag_ui:tool_call:confirm_delete");
 
     // The interrupt is now pending on the thread.
     const pending = (

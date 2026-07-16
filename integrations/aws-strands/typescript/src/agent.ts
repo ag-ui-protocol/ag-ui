@@ -2696,24 +2696,32 @@ function toResumeResponse(entry: ResumeEntry): unknown {
 /** Strands `Interrupt` → AG-UI `Interrupt`. */
 function strandsInterruptToAgui(interrupt: StrandsInterrupt): AguiInterrupt {
   const reasonRaw = interrupt.reason;
-  // Derive the AG-UI reason string: use raw string directly, or check for
-  // structured reason objects produced by the interruptOnCall hook.
-  let reason: string;
-  if (typeof reasonRaw === "string" && reasonRaw.length > 0) {
-    reason = reasonRaw;
-  } else if (
-    typeof reasonRaw === "object" &&
-    reasonRaw != null &&
-    (reasonRaw as Record<string, unknown>).tool_call
-  ) {
-    reason = "tool_call";
-  } else {
-    reason = "confirmation";
+  // Only interrupts raised by our own interruptOnCall hook (identified by
+  // the "ag_ui:tool_call:" name prefix it always uses) are tool-call
+  // approvals with the {tool_call, tool_name, tool_input, tool_use_id}
+  // reason shape. Any other interrupt — e.g. one a user's own tool or hook
+  // raises directly via event.interrupt() for a generic human-in-the-loop
+  // purpose — must stay generic: preserve its native name/reason payload
+  // rather than guessing tool-approval semantics out of an unrelated
+  // object.
+  const isToolApproval =
+    typeof interrupt.name === "string" &&
+    interrupt.name.startsWith("ag_ui:tool_call:");
+
+  if (!isToolApproval) {
+    const out: AguiInterrupt = {
+      id: interrupt.id,
+      reason: interrupt.name ?? "interrupt",
+    };
+    if (reasonRaw !== undefined && reasonRaw !== null) {
+      out.metadata = { reason: reasonRaw };
+    }
+    return out;
   }
+
+  const reason = "tool_call";
   const out: AguiInterrupt = { id: interrupt.id, reason };
-  if (typeof reasonRaw === "string" && reasonRaw.length > 0) {
-    out.message = reasonRaw;
-  } else if (typeof reasonRaw === "object" && reasonRaw != null) {
+  if (typeof reasonRaw === "object" && reasonRaw != null) {
     const tn = (reasonRaw as Record<string, unknown>).tool_name;
     if (typeof tn === "string") {
       out.message = `Approve call to ${tn}?`;
@@ -2724,18 +2732,11 @@ function strandsInterruptToAgui(interrupt: StrandsInterrupt): AguiInterrupt {
     const toolUseId = (reasonRaw as Record<string, unknown>).tool_use_id;
     if (typeof toolUseId === "string") out.toolCallId = toolUseId;
   }
-  // Add responseSchema for tool-bound and confirmation interrupts
-  if (
-    reason === "tool_call" ||
-    reason === "confirmation" ||
-    interrupt.name?.startsWith("ag_ui:tool_call:")
-  ) {
-    out.responseSchema = {
-      type: "object",
-      properties: { approved: { type: "boolean" } },
-      required: ["approved"],
-    };
-  }
+  out.responseSchema = {
+    type: "object",
+    properties: { approved: { type: "boolean" } },
+    required: ["approved"],
+  };
   const meta: Record<string, unknown> = { strandsName: interrupt.name };
   if (typeof reasonRaw === "object" && reasonRaw != null) {
     const r = reasonRaw as Record<string, unknown>;
