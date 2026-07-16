@@ -59,24 +59,33 @@ channels exist:
   `toolCallId`, `toolName`, `suspendPayload`, `args`, `resumeSchema`, and the
   snapshot-keying `runId`.
 - **Standard** `RunFinishedEvent.outcome = { type: "interrupt", interrupts }` —
-  the canonical AG-UI signal. Each suspend maps to an `Interrupt` (`id`,
-  `reason`, `toolCallId`, `responseSchema` — parsed from `resumeSchema`); the
-  remaining round-trip data lives under `metadata.mastra`.
+  the canonical AG-UI signal. Each suspend maps to an `Interrupt` (`reason`,
+  `toolCallId`, `responseSchema` — parsed from `resumeSchema`); the remaining
+  round-trip data lives under `metadata.mastra`. Its `id` is
+  `` `${runId}::${toolCallId}` `` — the snapshot-keying `runId` is encoded into
+  the id because a standard-path client only round-trips `interruptId` (not
+  `metadata`) on resume; the bridge decodes it back out.
 
-> **Opt-in (`emitInterruptOutcome`, default `false`).** The structured outcome
-> is gated behind a flag, mirroring LangGraph's `emitInterruptOutcome`. Released
-> clients that resume through the legacy `forwardedProps.command.resume` channel
-> (e.g. CopilotKit's runtime as of v1.60.1) stop sending a resume directive once
-> they observe the structured outcome, which silently strands the run. Enable it
-> only with a client that understands the canonical interrupt-outcome path. When
-> on, BOTH channels are emitted; when off, only the legacy event plus a plain
-> `RUN_FINISHED`.
+Resume is consumed from **both** channels regardless of the flag: the legacy
+`forwardedProps.command.resume` and the standard `RunAgentInput.resume` array.
+
+> **Opt-out (`emitInterruptOutcome`, default `true`).** The structured outcome
+> is the canonical AG-UI interrupt path, emitted by default alongside the legacy
+> event. **It requires a CopilotKit client `>= 1.61.2`** — the release that
+> reads `outcome:"interrupt"` and resumes via `RunAgentInput.resume`. On older
+> clients (`<= 1.61.1`, incl. 1.60.1/1.61.0) the client records the structured
+> interrupt but never addresses it on resume, stranding the run with
+> `Thread has N pending interrupt(s) not addressed by resume`. **If you target a
+> client below 1.61.2, set `emitInterruptOutcome: false`** to fall back to the
+> legacy `on_interrupt`-only path. When on, BOTH channels are emitted; when off,
+> only the legacy event plus a plain `RUN_FINISHED`.
 
 ```ts
 const agent = new MastraAgent({
   agent: mastra.getAgent("interrupt-agent"),
   resourceId: "user-123",
-  emitInterruptOutcome: true, // opt in to RUN_FINISHED.outcome interrupts
+  // Default true. Set false if your CopilotKit client is < 1.61.2.
+  emitInterruptOutcome: false,
 });
 ```
 

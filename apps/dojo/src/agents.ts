@@ -16,6 +16,12 @@ import { LlamaIndexAgent } from "@ag-ui/llamaindex";
 import { CrewAIAgent } from "@ag-ui/crewai";
 import getEnvVars from "./env";
 import { mastra } from "./mastra";
+import {
+  a2uiDynamicSchemaAgent,
+  a2uiRecoveryAgent,
+  a2uiInjectConfig,
+} from "./mastra/agents/a2ui";
+import { a2uiFixedSchemaAgent } from "./mastra/agents/a2ui-fixed";
 import { PydanticAIAgent } from "@ag-ui/pydantic-ai";
 import { ADKAgent } from "@ag-ui/adk";
 import { SpringAiAgent } from "@ag-ui/spring-ai";
@@ -140,6 +146,9 @@ export const agentsIntegrations = {
       // for dojo vs @ag-ui/mastra, causing nominal type mismatch on private fields
       mastraClient: mastraClient as any,
       resourceId: "mastra-agent-remote",
+      // Surface Observational Memory background work as AG-UI activity events
+      // for the `observational_memory` demo only (default OFF for all others).
+      observationalMemory: ["observational_memory"],
     }) as Promise<
       Record<
         | "agentic_chat"
@@ -147,26 +156,63 @@ export const agentsIntegrations = {
         | "agentic_chat_multimodal"
         | "backend_tool_rendering"
         | "human_in_the_loop"
-        | "tool_based_generative_ui",
+        | "interrupt"
+        | "shared_state"
+        | "tool_based_generative_ui"
+        | "a2ui_dynamic_schema"
+        | "a2ui_recovery"
+        | "a2ui_fixed_schema"
+        | "observational_memory",
         AbstractAgent
       >
     >;
   },
 
   "mastra-agent-local": async () => {
-    return MastraAgent.getLocalAgents({
+    const base = MastraAgent.getLocalAgents({
       // Cast needed: pnpm may resolve separate @mastra/core installations
       // for dojo vs @ag-ui/mastra, causing nominal type mismatch on private fields
       mastra: mastra as any,
       resourceId: "mastra-agent-local",
-    }) as Record<
+      // Surface Observational Memory background work as AG-UI activity events
+      // for the `observational_memory` demo only (default OFF for all others).
+      observationalMemory: ["observational_memory"],
+    });
+    // Override the A2UI agents with wrappers carrying the a2ui auto-inject
+    // config. The underlying agents wire NO tool — the bridge auto-injects
+    // `generate_a2ui` per run (pillar 1). Config MUST go through the constructor
+    // so the runtime's per-request `clone()` preserves it.
+    const wrapA2UI = (agent: unknown): AbstractAgent =>
+      new MastraAgent({
+        agent: agent as any,
+        resourceId: "mastra-agent-local",
+        a2ui: a2uiInjectConfig,
+      }) as unknown as AbstractAgent;
+    // Fixed-schema owns its own direct tools — opt OUT of auto-injection so the
+    // bridge never adds generate_a2ui alongside search_flights/search_hotels.
+    const wrapA2UIFixed = (agent: unknown): AbstractAgent =>
+      new MastraAgent({
+        agent: agent as any,
+        resourceId: "mastra-agent-local",
+        a2ui: { injectA2UITool: false },
+      }) as unknown as AbstractAgent;
+    return {
+      ...base,
+      a2ui_dynamic_schema: wrapA2UI(a2uiDynamicSchemaAgent),
+      a2ui_recovery: wrapA2UI(a2uiRecoveryAgent),
+      a2ui_fixed_schema: wrapA2UIFixed(a2uiFixedSchemaAgent),
+    } as Record<
       | "agentic_chat"
       | "backend_tool_rendering"
       | "human_in_the_loop"
       | "interrupt"
       | "shared_state"
       | "tool_based_generative_ui"
-      | "background_agents",
+      | "background_agents"
+      | "a2ui_dynamic_schema"
+      | "a2ui_recovery"
+      | "a2ui_fixed_schema"
+      | "observational_memory",
       AbstractAgent
     >;
   },

@@ -6,8 +6,10 @@ import { getStorage } from "../storage";
 // Demonstrates Mastra's native suspend/resume HITL bridged onto AG-UI's
 // `on_interrupt` flow. The agent calls `schedule_meeting`, which suspends; the
 // @ag-ui/mastra adapter emits a CUSTOM `on_interrupt` event; CopilotKit's v2
-// `useInterrupt` hook renders a time picker and resumes the tool. Resume only
-// works for LOCAL Mastra agents, so this is wired for `mastra-agent-local`.
+// `useInterrupt` hook renders a time picker and resumes the tool. Resume works
+// for both LOCAL and REMOTE Mastra agents (the remote path round-trips the
+// resume over @mastra/client-js' resumeStream, OSS-380), so this is wired for
+// both `mastra-agent-local` and the remote `mastra` integration.
 export const interruptAgent = new Agent({
   id: "interrupt",
   name: "interrupt",

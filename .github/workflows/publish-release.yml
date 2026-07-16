@@ -17,10 +17,10 @@ name: release / publish
 #   "1.2.3-canary.<suffix>" → publishes to npm `canary` (prerelease mode)
 #   "1.2.3a0" / "1.2.3b0" / "1.2.3rc0" → same, with PEP 440 prerelease tags
 #
-# SECURITY: Build and publish are split into separate jobs. Publishing
-# secrets (PYPI_API_TOKEN) are only available in the publish job, never in
-# the same process tree as build-time code execution. npm publishing uses
-# OIDC trusted publishing (no token at all) — see below.
+# SECURITY: Build and publish are split into separate jobs. Publishing secrets
+# (PYPI_API_TOKEN) are only available in publish jobs, never in the same process
+# tree as build-time code execution. npm and NuGet publishing use OIDC trusted
+# publishing (no long-lived package token at all) — see below.
 #
 # OIDC ENTRY POINT: This workflow is the ONLY workflow that publishes to npm
 # under OIDC. The npm trusted publisher records for every @ag-ui/* package
@@ -48,8 +48,9 @@ name: release / publish
 #     -f mode=prerelease -f scope=integration-langgraph-py -f suffix=fix-user-issue
 
 on:
-  # Version bumps can only live in package.json or pyproject.toml, so we
-  # gate the trigger on those paths. Combined with the release.config.json
+  # Version bumps can only live in package.json, pyproject.toml, or the .NET
+  # SDK's Directory.Build.props, so we gate the trigger on those paths.
+  # Combined with the release.config.json
   # allowlist in detect-ts-version-changes.sh this gives defense in depth:
   # unrelated pushes don't even start the workflow, and any workflow run that
   # does fire still filters to enrolled packages before touching a registry.
@@ -64,6 +65,7 @@ on:
     paths:
       - "**/package.json"
       - "**/pyproject.toml"
+      - "sdks/dotnet/Directory.Build.props"
   workflow_dispatch:
     inputs:
       mode:
@@ -108,6 +110,7 @@ on:
           - middleware-mcp-apps
           - sdk-py
           - sdk-py-a2ui-toolkit
+          - sdk-dotnet
           - sdk-ts
           - sdk-ts-a2ui-toolkit
           - create-ag-ui-app
@@ -154,12 +157,16 @@ jobs:
       ts_count: ${{ steps.detect_ts.outputs.count }}
       py_packages: ${{ steps.detect_py.outputs.packages }}
       py_count: ${{ steps.detect_py.outputs.count }}
+      dotnet_packages: ${{ steps.detect_dotnet.outputs.packages }}
+      dotnet_count: ${{ steps.detect_dotnet.outputs.count }}
       ts_groups_json: ${{ steps.save_groups.outputs.groups }}
       # Prerelease-only outputs (populated when mode=prerelease).
       pre_ts_packages_json: ${{ steps.pre_ts.outputs.packages_json }}
       pre_ts_projects: ${{ steps.pre_ts.outputs.projects }}
       pre_ts_count: ${{ steps.pre_ts.outputs.count }}
       pre_has_py_packages: ${{ steps.pre_py.outputs.has_packages }}
+      pre_dotnet_packages_json: ${{ steps.pre_dotnet.outputs.packages_json }}
+      pre_dotnet_count: ${{ steps.pre_dotnet.outputs.count }}
     steps:
       - name: Determine mode and scope
         id: meta
@@ -175,24 +182,26 @@ jobs:
           # push run yields "" and silently misroutes the build.
           MODE="${INPUT_MODE:-stable}"
           SCOPE="${INPUT_SCOPE:-}"
-          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
-          echo "scope=$SCOPE" >> "$GITHUB_OUTPUT"
+          {
+            echo "mode=$MODE"
+            echo "scope=$SCOPE"
+          } >> "$GITHUB_OUTPUT"
           echo "Detected mode: $MODE, scope: $SCOPE"
 
       - name: Checkout release ref
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           fetch-depth: 0
           ref: ${{ steps.meta.outputs.mode == 'prerelease' && github.ref || 'main' }}
           persist-credentials: false
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1  # v4.3.0
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271  # v6.0.9
         with:
           version: "10.33.4"
 
       - name: Setup Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
         with:
           node-version: "22"
 
@@ -203,12 +212,12 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # v8.1.0
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
         with:
           version: ">=0.8.0"
 
       - name: Setup Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: "3.12"
 
@@ -308,11 +317,43 @@ jobs:
           COUNT=$(echo "$CHANGED" | jq 'length')
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
 
+      - name: Detect .NET version changes vs NuGet
+        id: detect_dotnet
+        if: steps.meta.outputs.mode == 'stable'
+        run: |
+          set -euo pipefail
+          set +e
+          CHANGED=$(bash scripts/release/detect-dotnet-version-changes.sh 2>detect-dotnet.log)
+          RC=$?
+          set -e
+          if [ "$RC" -ne 0 ]; then
+            echo "::error::detect-dotnet-version-changes.sh exited with status $RC"
+            echo "::group::detect-dotnet.log"
+            cat detect-dotnet.log || true
+            echo "::endgroup::"
+            exit 1
+          fi
+          cat detect-dotnet.log || true
+          [ -z "$CHANGED" ] && CHANGED="[]"
+          [ "$CHANGED" = "null" ] && CHANGED="[]"
+          if ! echo "$CHANGED" | jq -e . >/dev/null 2>&1; then
+            echo "::error::detect-dotnet-version-changes.sh produced non-JSON stdout"
+            echo "::group::stdout (first 200 chars)"
+            printf '%s\n' "$CHANGED" | head -c 200
+            echo
+            echo "::endgroup::"
+            exit 1
+          fi
+          echo "packages=$CHANGED" >> "$GITHUB_OUTPUT"
+          COUNT=$(echo "$CHANGED" | jq 'length')
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+
       - name: Nothing to publish (stable)
         if: >
           steps.meta.outputs.mode == 'stable' &&
           steps.detect_ts.outputs.count == '0' &&
-          steps.detect_py.outputs.count == '0'
+          steps.detect_py.outputs.count == '0' &&
+          steps.detect_dotnet.outputs.count == '0'
         run: |
           {
             echo "## release / publish"
@@ -488,6 +529,21 @@ jobs:
             echo "has_packages=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Extract .NET packages in scope (prerelease)
+        if: steps.meta.outputs.mode == 'prerelease'
+        id: pre_dotnet
+        run: |
+          set -euo pipefail
+          COUNT=$(jq '[.packages[] | select(.ecosystem == "dotnet")] | length' /tmp/bump-result.json)
+          PACKAGES_JSON=$(jq -c '[.packages[] | select(.ecosystem == "dotnet") | {name: .name, version: .newVersion, path: .path, file: .file}]' /tmp/bump-result.json)
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "packages_json=$PACKAGES_JSON" >> "$GITHUB_OUTPUT"
+          if [ "$COUNT" -gt 0 ]; then
+            echo "NuGet packages JSON: $PACKAGES_JSON"
+          else
+            echo "No .NET packages in scope — NuGet publish will be skipped"
+          fi
+
       - name: Build TypeScript packages in scope (prerelease)
         if: steps.meta.outputs.mode == 'prerelease' && steps.pre_ts.outputs.count != '0'
         run: npx nx run-many -t build --projects="${STEPS_PRE_TS_OUTPUTS_PROJECTS}"
@@ -594,7 +650,7 @@ jobs:
       id-token: write
     steps:
       - name: Checkout release ref
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           fetch-depth: 0
           ref: ${{ needs.build.outputs.mode == 'prerelease' && github.ref || 'main' }}
@@ -604,13 +660,13 @@ jobs:
       # --- TypeScript publish ---
       - name: Setup pnpm
         if: needs.build.outputs.ts_count != '0' || needs.build.outputs.pre_ts_count != '0'
-        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1  # v4.3.0
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271  # v6.0.9
         with:
           version: "10.33.4"
 
       - name: Setup Node
         if: needs.build.outputs.ts_count != '0' || needs.build.outputs.pre_ts_count != '0'
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
         with:
           node-version: "22"
           registry-url: https://registry.npmjs.org
@@ -901,7 +957,7 @@ jobs:
       # --- Python publish ---
       - name: Install uv
         if: needs.build.outputs.py_count != '0' || needs.build.outputs.pre_has_py_packages == 'true'
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # v8.1.0
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
         with:
           version: ">=0.8.0"
 
@@ -1058,7 +1114,7 @@ jobs:
       # gone). Skipped on prerelease (canary) runs, which never touch
       # release/next.
       - name: Delete release/next if present
-        if: needs.build.outputs.mode != 'prerelease'
+        if: needs.build.outputs.mode != 'prerelease' && needs.build.outputs.dotnet_count == '0'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -1113,22 +1169,381 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
+  publish-dotnet:
+    needs: [build, publish]
+    # The NuGet lane runs after npm/PyPI. That sequencing avoids racing over
+    # tags/GitHub Releases on mixed releases and prevents a NuGet publish after
+    # an earlier registry lane failed.
+    if: >
+      always() &&
+      needs.build.result == 'success' &&
+      (needs.publish.result == 'success' || needs.publish.result == 'skipped') &&
+      ((needs.build.outputs.mode == 'stable' && needs.build.outputs.dotnet_count != '0') ||
+       (needs.build.outputs.mode == 'prerelease' && needs.build.outputs.pre_dotnet_count != '0')) &&
+      (github.event_name != 'workflow_dispatch' || inputs.dry_run != true)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    environment: nuget
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Checkout release ref
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.build.outputs.mode == 'prerelease' && github.ref || 'main' }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          # Step08_Multimodal integration test reads ag-ui-logo.png, which is
+          # stored via Git LFS. Without the real bytes the snapshot diff fails.
+          lfs: true
+          persist-credentials: false
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68  # v6.0.0
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
+
+      - name: Prepare NuGet package set
+        shell: bash
+        env:
+          MODE: ${{ needs.build.outputs.mode }}
+          DOTNET_PACKAGES: ${{ needs.build.outputs.dotnet_packages }}
+          PRE_DOTNET_PACKAGES: ${{ needs.build.outputs.pre_dotnet_packages_json }}
+        run: |
+          set -euo pipefail
+          if [ "$MODE" = "prerelease" ]; then
+            printf '%s' "$PRE_DOTNET_PACKAGES" > dotnet-packages.json
+          else
+            printf '%s' "$DOTNET_PACKAGES" > dotnet-packages.json
+          fi
+          jq -e 'type == "array" and length > 0' dotnet-packages.json >/dev/null
+          echo "NuGet packages:"
+          jq -r '.[] | "- \(.name)@\(.version) from \(.path)"' dotnet-packages.json
+
+      - name: Run .NET tests
+        shell: bash
+        working-directory: sdks/dotnet
+        run: |
+          set -euo pipefail
+          dotnet test tests/AGUI.Abstractions.UnitTests -c Release -p:SignAssembly=false
+          dotnet test tests/AGUI.Client.UnitTests -c Release -p:SignAssembly=false
+          dotnet test tests/AGUI.Formatting.UnitTests -c Release -p:SignAssembly=false
+          dotnet test tests/AGUI.Protobuf.UnitTests -c Release -p:SignAssembly=false
+          dotnet test tests/AGUI.Server.UnitTests -c Release -p:SignAssembly=false
+          dotnet test tests/AGUI.Hosting.AspNetCore.IntegrationTests -c Release -p:SignAssembly=false
+
+      - name: Build .NET packages
+        shell: bash
+        working-directory: sdks/dotnet
+        run: |
+          set -euo pipefail
+          dotnet build src/AGUI.Abstractions/AGUI.Abstractions.csproj -c Release --no-incremental
+          dotnet build src/AGUI.Formatting/AGUI.Formatting.csproj -c Release --no-incremental
+          dotnet build src/AGUI.Protobuf/AGUI.Protobuf.csproj -c Release --no-incremental
+          dotnet build src/AGUI.Client/AGUI.Client.csproj -c Release --no-incremental
+          dotnet build src/AGUI.Server/AGUI.Server.csproj -c Release --no-incremental
+
+      - name: Pack NuGet packages
+        shell: bash
+        env:
+          MODE: ${{ needs.build.outputs.mode }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/nuget
+          BASE_VERSION=$(sed -nE 's/.*<VersionPrefix[^>]*>([^<]+)<\/VersionPrefix>.*/\1/p' sdks/dotnet/Directory.Build.props | head -n1)
+          while read -r pkg; do
+            NAME=$(echo "$pkg" | jq -r '.name')
+            VERSION=$(echo "$pkg" | jq -r '.version')
+            PKG_PATH=$(echo "$pkg" | jq -r '.path')
+            CSPROJ="${PKG_PATH}/${NAME}.csproj"
+            EXTRA_ARGS=()
+            if [ "$MODE" = "prerelease" ]; then
+              SUFFIX="${VERSION#"$BASE_VERSION"-}"
+              if [ "$SUFFIX" = "$VERSION" ] || [ -z "$SUFFIX" ]; then
+                echo "::error::Could not derive VersionSuffix for ${NAME}@${VERSION} from VersionPrefix ${BASE_VERSION}"
+                exit 1
+              fi
+              EXTRA_ARGS+=("-p:VersionSuffix=${SUFFIX}")
+            fi
+            echo "Packing ${NAME}@${VERSION} from ${CSPROJ}"
+            dotnet pack "$CSPROJ" -c Release --no-build -o artifacts/nuget "${EXTRA_ARGS[@]}"
+            if [ ! -f "artifacts/nuget/${NAME}.${VERSION}.nupkg" ]; then
+              echo "::error::Expected artifacts/nuget/${NAME}.${VERSION}.nupkg after pack"
+              exit 1
+            fi
+          done < <(jq -c '.[]' dotnet-packages.json)
+          ls -la artifacts/nuget
+
+      # ── Author signing (pack → SIGN → push) ────────────────────────────────
+      # Author-signs the packed *.nupkg in place with a DigiCert code-signing
+      # certificate stored (non-exportable, RSA-HSM) in Azure Key Vault, via
+      # NuGetKeyVaultSignTool + GitHub OIDC (no long-lived secret). This is the
+      # *author* signature that flips packages to "signed" on nuget.org;
+      # nuget.org's *repository* signature is applied automatically on push and
+      # is independent of this. Symbol packages (*.snupkg) are intentionally not
+      # author-signed, and assembly strong-naming (AGUI.snk) is a separate,
+      # untouched concern.
+      # Gated on the SIGNING_PROVIDER variable (set on the `nuget` environment):
+      #   unset / 'none'  → no signing (safe default; inert until provisioned)
+      #   'keyvault'      → sign via Azure Key Vault + NuGetKeyVaultSignTool
+      # Required config (see sdks/dotnet/docs/signing.md): the secrets
+      # AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID,
+      # AZURE_KEY_VAULT_URL, CODE_SIGNING_CERT_NAME on the `nuget` environment;
+      # plus the App Registration granted Key Vault "Crypto User" + "Certificate
+      # User" roles on the vault, and the cert registered on the nuget.org owner.
+      # NOTE: inert until SIGNING_PROVIDER=keyvault — safe to merge ahead of
+      # provisioning.
+
+      # Fail fast with an explicit list if signing is enabled but its
+      # configuration is incomplete — so a half-provisioned setup errors here
+      # with actionable output instead of deep inside the signing tool. Lists
+      # exactly which secrets the `nuget` environment still needs. See
+      # sdks/dotnet/docs/signing.md.
+      - name: Preflight — validate signing configuration
+        if: vars.SIGNING_PROVIDER != '' && vars.SIGNING_PROVIDER != 'none'
+        shell: bash
+        env:
+          PROVIDER: ${{ vars.SIGNING_PROVIDER }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_KEY_VAULT_URL: ${{ secrets.AZURE_KEY_VAULT_URL }}
+          CODE_SIGNING_CERT_NAME: ${{ secrets.CODE_SIGNING_CERT_NAME }}
+        run: |
+          set -euo pipefail
+          if [ "$PROVIDER" != "keyvault" ]; then
+            echo "::error::Unknown SIGNING_PROVIDER '${PROVIDER}' (expected 'none' or 'keyvault')"
+            exit 1
+          fi
+          missing=()
+          for name in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID AZURE_KEY_VAULT_URL CODE_SIGNING_CERT_NAME; do
+            if [ -z "${!name}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::SIGNING_PROVIDER='keyvault' but the 'nuget' environment is missing: ${missing[*]}"
+            echo "Provision these (see sdks/dotnet/docs/signing.md) before enabling signing."
+            exit 1
+          fi
+          echo "Signing configuration for 'keyvault' is complete."
+
+      # OIDC login for Key Vault access — reuses the job's id-token: write; no
+      # long-lived client secret is stored.
+      - name: Azure login (OIDC)
+        if: vars.SIGNING_PROVIDER == 'keyvault'
+        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43  # v3.0.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # Author-sign each *.nupkg with the Key Vault cert. NuGetKeyVaultSignTool
+      # signs one file per call, so we loop; *.snupkg are excluded. The private
+      # key never leaves the HSM — signing is a keys/sign op inside the vault.
+      - name: Author-sign packages (Azure Key Vault)
+        if: vars.SIGNING_PROVIDER == 'keyvault'
+        shell: pwsh
+        env:
+          AZURE_KEY_VAULT_URL: ${{ secrets.AZURE_KEY_VAULT_URL }}
+          CODE_SIGNING_CERT_NAME: ${{ secrets.CODE_SIGNING_CERT_NAME }}
+        run: |
+          dotnet tool install --global NuGetKeyVaultSignTool
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to install NuGetKeyVaultSignTool' }
+          $toolsDir = Join-Path $env:USERPROFILE '.dotnet\tools'
+          if ($env:PATH -notlike "*$toolsDir*") { $env:PATH = "$toolsDir;$env:PATH" }
+
+          # Short-lived Key Vault data-plane token from the OIDC login context.
+          $token = az account get-access-token --resource https://vault.azure.net --query accessToken -o tsv
+          if (-not $token) { throw 'Failed to obtain Key Vault access token' }
+          Write-Output "::add-mask::$token"
+
+          $pkgs = Get-ChildItem -Path artifacts/nuget -File | Where-Object { $_.Extension -eq '.nupkg' }
+          if ($pkgs.Count -eq 0) { throw 'No .nupkg found to sign' }
+          foreach ($pkg in $pkgs) {
+            Write-Host "Signing $($pkg.Name)"
+            NuGetKeyVaultSignTool sign $pkg.FullName `
+              --file-digest sha256 `
+              --timestamp-rfc3161 http://timestamp.digicert.com `
+              --timestamp-digest sha256 `
+              --azure-key-vault-url $env:AZURE_KEY_VAULT_URL `
+              --azure-key-vault-certificate $env:CODE_SIGNING_CERT_NAME `
+              --azure-key-vault-accesstoken $token
+            if ($LASTEXITCODE -ne 0) { throw "Signing failed for $($pkg.Name)" }
+          }
+
+      # Fail the release before publishing if signing was requested but didn't
+      # actually apply (verifies the author signature chains to a trusted root).
+      - name: Verify packages are signed
+        if: vars.SIGNING_PROVIDER == 'keyvault'
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          pkgs=(artifacts/nuget/*.nupkg)
+          if [ ${#pkgs[@]} -eq 0 ]; then
+            echo "::error::No .nupkg found to verify after signing"
+            exit 1
+          fi
+          for pkg in "${pkgs[@]}"; do
+            echo "Verifying signature: ${pkg}"
+            dotnet nuget verify "${pkg}" --all
+          done
+
+      - name: NuGet login
+        id: nuget-login
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841  # v1
+        with:
+          user: ${{ vars.NUGET_USER }}
+
+      - name: Push NuGet packages
+        shell: bash
+        env:
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+        run: |
+          set -euo pipefail
+          dotnet nuget push artifacts/nuget/*.nupkg \
+            --api-key "$NUGET_API_KEY" \
+            --source https://www.nuget.org/api/v2/package \
+            --skip-duplicate
+          if compgen -G "artifacts/nuget/*.snupkg" > /dev/null; then
+            dotnet nuget push artifacts/nuget/*.snupkg \
+              --api-key "$NUGET_API_KEY" \
+              --source https://api.nuget.org/v3/index.json \
+              --skip-duplicate
+          fi
+
+      - name: Verify NuGet packages are visible
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          MAX_WAIT_SECONDS=900
+          SLEEP_SECONDS=15
+          START_SECONDS=$(date +%s)
+          MISSING_PACKAGES=$(mktemp)
+          jq -c '.[]' dotnet-packages.json > "$MISSING_PACKAGES"
+
+          while true; do
+            NEXT_MISSING=$(mktemp)
+
+            while read -r pkg; do
+              NAME=$(echo "$pkg" | jq -r '.name')
+              VERSION=$(echo "$pkg" | jq -r '.version')
+              LOWER_NAME=$(printf '%s' "$NAME" | tr '[:upper:]' '[:lower:]')
+              LOWER_VERSION=$(printf '%s' "$VERSION" | tr '[:upper:]' '[:lower:]')
+              URL="https://api.nuget.org/v3-flatcontainer/${LOWER_NAME}/${LOWER_VERSION}/${LOWER_NAME}.${LOWER_VERSION}.nupkg"
+
+              if curl -fsSL -o /dev/null "$URL" 2>/dev/null; then
+                echo "::notice::PUBLISHED: ${NAME}@${VERSION}"
+              else
+                echo "$pkg" >> "$NEXT_MISSING"
+              fi
+            done < "$MISSING_PACKAGES"
+
+            if [ ! -s "$NEXT_MISSING" ]; then
+              rm -f "$MISSING_PACKAGES" "$NEXT_MISSING"
+              break
+            fi
+
+            NOW_SECONDS=$(date +%s)
+            ELAPSED_SECONDS=$((NOW_SECONDS - START_SECONDS))
+            if [ "$ELAPSED_SECONDS" -ge "$MAX_WAIT_SECONDS" ]; then
+              echo "::error::NuGet verification timed out after ${ELAPSED_SECONDS}s waiting for:"
+              jq -r '. | "- \(.name)@\(.version)"' "$NEXT_MISSING"
+              exit 1
+            fi
+
+            REMAINING_COUNT=$(wc -l < "$NEXT_MISSING" | tr -d ' ')
+            echo "::notice::Waiting for ${REMAINING_COUNT} NuGet package(s) to become visible after ${ELAPSED_SECONDS}s"
+            mv "$NEXT_MISSING" "$MISSING_PACKAGES"
+            sleep "$SLEEP_SECONDS"
+          done
+
+      - name: Configure git
+        if: needs.build.outputs.mode != 'prerelease'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+
+      - name: Configure git credentials for push
+        if: needs.build.outputs.mode != 'prerelease'
+        run: git config --local url."https://x-access-token:$env:GITHUB_TOKEN@github.com/".insteadOf "https://github.com/"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push per-package git tags (.NET)
+        if: needs.build.outputs.mode != 'prerelease'
+        shell: bash
+        env:
+          DOTNET_PACKAGES: ${{ needs.build.outputs.dotnet_packages }}
+        run: bash scripts/release/create-tags.sh "$DOTNET_PACKAGES"
+
+      - name: Create GitHub Release (.NET)
+        if: needs.build.outputs.mode != 'prerelease'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DOTNET_PACKAGES: ${{ needs.build.outputs.dotnet_packages }}
+        run: bash scripts/release/create-or-update-release.sh dotnet "$DOTNET_PACKAGES"
+
+      - name: Reconcile GitHub Release (.NET) — safety net for partial failures
+        if: needs.build.outputs.mode != 'prerelease'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DOTNET_PACKAGES: ${{ needs.build.outputs.dotnet_packages }}
+        run: bash scripts/release/reconcile-release.sh dotnet "$DOTNET_PACKAGES"
+
+      - name: Delete release/next if present
+        if: needs.build.outputs.mode != 'prerelease'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git push origin --delete release/next 2>/dev/null || echo "Branch already gone"
+
+      - name: Release summary (.NET stable)
+        if: needs.build.outputs.mode == 'stable'
+        shell: bash
+        env:
+          DOTNET_PACKAGES: ${{ needs.build.outputs.dotnet_packages }}
+        run: |
+          {
+            echo "## release / publish — NuGet"
+            echo ""
+            echo "$DOTNET_PACKAGES" | jq -r '.[] | "- `\(.name)@\(.version)`"'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Canary publish summary (.NET prerelease)
+        if: needs.build.outputs.mode == 'prerelease'
+        shell: bash
+        env:
+          DOTNET_PACKAGES: ${{ needs.build.outputs.pre_dotnet_packages_json }}
+        run: |
+          {
+            echo ""
+            echo "## Canary publish summary — NuGet"
+            echo ""
+            echo "$DOTNET_PACKAGES" | jq -r '.[] | "```\ndotnet add package \(.name) --version \(.version)\n```"'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # Post-release #engr Slack notification. Ported from CopilotKit's `notify`
-  # job. Runs after build AND publish via always() so it fires on success,
-  # failure, OR a skipped publish — the pure builder
+  # job. Runs after build, publish, and publish-dotnet via always() so it fires
+  # on success, failure, OR a skipped publish — the pure builder
   # (scripts/release/build-release-notification.ts) decides what (if anything)
   # to post from the job results + the event-derived release intent.
   #
-  # DIVERGENCE FROM CPK: ag-ui publishes BOTH npm and PyPI from the SINGLE
-  # `publish` job (CPK split them into `publish` + `publish-python`). So the
-  # npm-lane and PyPI-lane RESULT signals both read the shared
-  # needs.publish.result / needs.build.result; the two lanes are distinguished
-  # downstream by their published-package SETS (ts_packages vs py_packages),
-  # which the build job emits per-ecosystem. A publish-job failure pages
-  # whichever lane the event intended (npm and/or PyPI) — acceptable because
-  # both lanes share one publish process here.
+  # DIVERGENCE FROM CPK: ag-ui publishes npm and PyPI from the SINGLE `publish`
+  # job, while NuGet publishes from a separate Windows-only `publish-dotnet`
+  # job. Lane attribution comes from the published-package SETS plus the
+  # event-derived intent gates.
   notify:
-    needs: [build, publish]
+    needs: [build, publish, publish-dotnet]
     # Run on every real-release context: a push-to-main (merged release PR /
     # version-bump) or a non-dry-run workflow_dispatch. Skipped on dry-run
     # dispatches (the builder also suppresses dry-run, but gating the job off
@@ -1169,26 +1584,29 @@ jobs:
           set -uo pipefail
           NPM_INTENDED=false
           PY_INTENDED=false
+          NUGET_INTENDED=false
 
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             # A stable dispatch intends the scope's lane. With no scope (full
-            # stable run) intend BOTH lanes. A prerelease dispatch is canary —
+            # stable run) intend ALL lanes. A prerelease dispatch is canary —
             # canary (prerelease) is FULLY suppressed by the builder (mode ==
-            # "prerelease" → no post on EITHER lane). Intent is computed
+            # "prerelease" → no post on ANY lane). Intent is computed
             # uniformly here regardless of mode, but a prerelease produces no
-            # notification on either lane. (INPUT_MODE is not read here: the
+            # notification on any lane. (INPUT_MODE is not read here: the
             # builder applies the canary/stable suppression from MODE; this step
             # only computes per-lane FAILURE intent.)
             SCOPE="${INPUT_SCOPE:-}"
             if [ -z "$SCOPE" ]; then
               NPM_INTENDED=true
               PY_INTENDED=true
+              NUGET_INTENDED=true
             else
-              # Map the dispatch scope to its ecosystem. The *-py glob catches
-              # the sdk-py / integration-*-py PyPI scopes; the explicit names
-              # cover the PyPI scopes that do NOT end in -py. Everything else is
-              # npm. This only affects FAILURE paging — success arms use the
-              # real published-package sets, not this heuristic.
+              # Map the dispatch scope to its ecosystem. The explicit NuGet arm
+              # catches sdk-dotnet. The *-py glob catches the sdk-py /
+              # integration-*-py PyPI scopes; the explicit Python names cover
+              # PyPI scopes that do NOT end in -py. Everything else is npm. This
+              # only affects FAILURE paging — success arms use the real
+              # published-package sets, not this heuristic.
               #
               # This step runs BEFORE checkout (see the job comment above), so
               # release.config.json is NOT on disk here and cannot be consulted
@@ -1196,6 +1614,8 @@ jobs:
               # verify-release-scope-dropdowns.sh asserts this list maps every
               # config scope to the correct ecosystem, so it cannot drift.
               case "$SCOPE" in
+                sdk-dotnet)
+                  NUGET_INTENDED=true ;;
                 integration-agent-spec|integration-langroid|sdk-py-a2ui-toolkit)
                   PY_INTENDED=true ;;
                 *-py)
@@ -1211,15 +1631,17 @@ jobs:
             FILES=""
             if [ -n "$SHA_BEFORE" ] && [ -n "$SHA_AFTER" ]; then
               if ! FILES=$(gh api "repos/${REPO}/compare/${SHA_BEFORE}...${SHA_AFTER}" --jq '.files[].filename' 2>/dev/null); then
-                echo "::warning::Could not resolve changed files for ${SHA_BEFORE}...${SHA_AFTER} — failing toward paging (both lanes intended)."
+                echo "::warning::Could not resolve changed files for ${SHA_BEFORE}...${SHA_AFTER} — failing toward paging (all lanes intended)."
                 NPM_INTENDED=true
                 PY_INTENDED=true
+                NUGET_INTENDED=true
                 FILES=""
               fi
             else
-              echo "::warning::Missing before/after SHAs on push event — failing toward paging (both lanes intended)."
+              echo "::warning::Missing before/after SHAs on push event — failing toward paging (all lanes intended)."
               NPM_INTENDED=true
               PY_INTENDED=true
+              NUGET_INTENDED=true
             fi
             # Intent here means "the compare-range TOUCHED a package.json /
             # pyproject.toml", NOT "a version was actually bumped". This signal
@@ -1246,9 +1668,10 @@ jobs:
               # intend BOTH lanes and warn, rather than trust an incomplete list.
               FILE_COUNT=$(printf '%s\n' "$FILES" | grep -c .)
               if [ "$FILE_COUNT" -ge 300 ]; then
-                echo "::warning::Compare response for ${SHA_BEFORE}...${SHA_AFTER} returned ${FILE_COUNT} files (>= the 300-file compare-API cap, which does not paginate) — failing toward paging (both lanes intended) since a manifest bump may be truncated out of the list."
+                echo "::warning::Compare response for ${SHA_BEFORE}...${SHA_AFTER} returned ${FILE_COUNT} files (>= the 300-file compare-API cap, which does not paginate) — failing toward paging (all lanes intended) since a manifest bump may be truncated out of the list."
                 NPM_INTENDED=true
                 PY_INTENDED=true
+                NUGET_INTENDED=true
               else
                 if echo "$FILES" | grep -qE '(^|/)package\.json$'; then
                   NPM_INTENDED=true
@@ -1256,26 +1679,32 @@ jobs:
                 if echo "$FILES" | grep -qE '(^|/)pyproject\.toml$'; then
                   PY_INTENDED=true
                 fi
+                if echo "$FILES" | grep -qx 'sdks/dotnet/Directory.Build.props'; then
+                  NUGET_INTENDED=true
+                fi
               fi
             fi
           fi
 
-          echo "npm_intended=$NPM_INTENDED" >> "$GITHUB_OUTPUT"
-          echo "py_intended=$PY_INTENDED" >> "$GITHUB_OUTPUT"
-          echo "npm_intended=$NPM_INTENDED py_intended=$PY_INTENDED"
+          {
+            echo "npm_intended=$NPM_INTENDED"
+            echo "py_intended=$PY_INTENDED"
+            echo "nuget_intended=$NUGET_INTENDED"
+          } >> "$GITHUB_OUTPUT"
+          echo "npm_intended=$NPM_INTENDED py_intended=$PY_INTENDED nuget_intended=$NUGET_INTENDED"
 
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
         with:
           version: "10.33.4"
 
       - name: Setup Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
 
@@ -1295,11 +1724,16 @@ jobs:
           PY_RESULT: ${{ needs.publish.result }}
           PY_BUILD_RESULT: ${{ needs.build.result }}
           PY_PACKAGES: ${{ needs.build.outputs.py_packages }}
+          NUGET_INTENDED: ${{ steps.intent.outputs.nuget_intended }}
+          NUGET_RESULT: ${{ needs['publish-dotnet'].result }}
+          NUGET_BUILD_RESULT: ${{ needs.build.result }}
+          NUGET_PACKAGES: ${{ needs.build.outputs.dotnet_packages }}
           SCOPE: ${{ needs.build.outputs.scope }}
           DRY_RUN: ${{ inputs.dry_run }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           NPM_ORG_URL: https://www.npmjs.com/org/ag-ui
           PY_BASE_URL: https://pypi.org/project
+          NUGET_BASE_URL: https://www.nuget.org/packages
         run: pnpm tsx scripts/release/build-release-notification.ts
 
       - name: Post to #engr
@@ -1307,7 +1741,7 @@ jobs:
         # secret is unset until the #engr incoming webhook is provisioned, and a
         # release must not go red merely because alerting isn't wired yet.
         if: steps.build_message.outputs.should_post == 'true' && env.SLACK_WEBHOOK != ''
-        uses: slackapi/slack-github-action@b0fa283ad8fea605de13dc3f449259339835fc52 # v2.1.0
+        uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
         with:
           webhook: ${{ secrets.SLACK_WEBHOOK_ENGR }}
           webhook-type: incoming-webhook
@@ -1331,10 +1765,11 @@ jobs:
           inputs.dry_run != true &&
           needs.build.outputs.mode != 'prerelease' &&
           (steps.intent.outputs.npm_intended != 'false' ||
-           steps.intent.outputs.py_intended != 'false') &&
+           steps.intent.outputs.py_intended != 'false' ||
+           steps.intent.outputs.nuget_intended != 'false') &&
           env.SLACK_WEBHOOK != ''
         continue-on-error: true
-        uses: slackapi/slack-github-action@b0fa283ad8fea605de13dc3f449259339835fc52 # v2.1.0
+        uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
         with:
           webhook: ${{ secrets.SLACK_WEBHOOK_ENGR }}
           webhook-type: incoming-webhook
@@ -1357,8 +1792,20 @@ jobs:
       - name: Dry-run summary
         env:
           MODE: ${{ needs.build.outputs.mode }}
+          DOTNET_PACKAGES: ${{ needs.build.outputs.dotnet_packages }}
+          PRE_DOTNET_PACKAGES: ${{ needs.build.outputs.pre_dotnet_packages_json }}
         run: |
           {
             echo ""
             echo "**DRY RUN** (mode=${MODE}) — no packages were published"
+            if [ "$MODE" = "stable" ] && [ -n "$DOTNET_PACKAGES" ] && [ "$(echo "$DOTNET_PACKAGES" | jq 'length')" -gt 0 ]; then
+              echo ""
+              echo "### NuGet"
+              echo "$DOTNET_PACKAGES" | jq -r '.[] | "- `\(.name)@\(.version)`"'
+            fi
+            if [ "$MODE" = "prerelease" ] && [ -n "$PRE_DOTNET_PACKAGES" ] && [ "$(echo "$PRE_DOTNET_PACKAGES" | jq 'length')" -gt 0 ]; then
+              echo ""
+              echo "### NuGet canary"
+              echo "$PRE_DOTNET_PACKAGES" | jq -r '.[] | "- `\(.name)@\(.version)`"'
+            fi
           } >> "$GITHUB_STEP_SUMMARY"

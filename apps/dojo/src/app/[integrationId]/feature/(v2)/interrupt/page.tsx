@@ -133,21 +133,14 @@ const TimePickerCard: React.FC<{
 
   const dark = theme === "dark";
 
+  // Once the user picks/cancels, render nothing: `resolve()` resumes the run and
+  // this interrupt render unmounts moments later, with the agent's text taking
+  // over as the confirmation. Blanking on click (rather than leaving the slots
+  // up) gives an instant, clean handoff and prevents a double-pick. We don't
+  // show a "Booked" card here — it would only flash before unmounting; the
+  // agent's message is the record.
   if (done) {
-    return (
-      <div
-        data-testid="interrupt-result"
-        className={`rounded-xl w-[480px] p-6 shadow-lg ${
-          dark
-            ? "bg-slate-800 text-white border border-slate-700"
-            : "bg-white text-gray-800 border border-gray-200"
-        }`}
-      >
-        {done === "cancelled"
-          ? "Cancelled — no meeting scheduled."
-          : `Booked: ${done.label}`}
-      </div>
-    );
+    return null;
   }
 
   return (

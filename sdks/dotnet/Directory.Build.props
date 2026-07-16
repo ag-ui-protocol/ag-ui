@@ -21,9 +21,8 @@
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(IsPackable)' == 'true'">
-    <VersionPrefix Condition="'$(VersionPrefix)' == ''">0.1.0</VersionPrefix>
-    <VersionSuffix Condition="'$(VersionSuffix)' == ''">preview</VersionSuffix>
-    <Authors>Markus Ecker</Authors>
+    <VersionPrefix Condition="'$(VersionPrefix)' == ''">0.0.4</VersionPrefix>
+    <Authors>AG-UI Protocol</Authors>
     <Company>AG-UI Protocol</Company>
     <Product>AG-UI .NET SDK</Product>
     <Copyright>Copyright (c) AG-UI Protocol 2025</Copyright>
@@ -32,11 +31,14 @@
     <RepositoryType>git</RepositoryType>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageIcon>icon.png</PackageIcon>
     <PackageReleaseNotes>Initial preview release of the AG-UI .NET SDK.</PackageReleaseNotes>
     <PackageTags>ag-ui;agent;ai;llm;protocol</PackageTags>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     <Deterministic>true</Deterministic>
+    <SignAssembly>true</SignAssembly>
+    <AssemblyOriginatorKeyFile>$(MSBuildThisFileDirectory)AGUI.snk</AssemblyOriginatorKeyFile>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
     <EnablePackageValidation>true</EnablePackageValidation>
@@ -49,6 +51,7 @@
   <ItemGroup Condition="'$(IsPackable)' == 'true'">
     <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="All" />
     <None Include="$(MSBuildThisFileDirectory)PACKAGE.md" Pack="true" PackagePath="\README.md" />
+    <None Include="$(MSBuildThisFileDirectory)..\..\docs\logo\AG-UI logo_dark.png" Pack="true" PackagePath="\icon.png" />
   </ItemGroup>
 
   <PropertyGroup Condition=" '$(TargetFramework)' == 'netstandard2.0' OR '$(TargetFramework)' == 'net472' ">

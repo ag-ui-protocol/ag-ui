@@ -174,11 +174,44 @@ const agentFilesMapper: Record<
         `/mastra/typescript/examples/src/mastra/agents/human-in-the-loop.ts`,
       ),
     ],
+    interrupt: [
+      path.join(
+        __dirname,
+        integrationsFolderPath,
+        `/mastra/typescript/examples/src/mastra/agents/interrupt.ts`,
+      ),
+      path.join(
+        __dirname,
+        integrationsFolderPath,
+        `/mastra/typescript/examples/src/mastra/tools/schedule-meeting-tool.ts`,
+      ),
+    ],
     tool_based_generative_ui: [
       path.join(
         __dirname,
         integrationsFolderPath,
         `/mastra/typescript/examples/src/mastra/agents/tool-based-generative-ui.ts`,
+      ),
+    ],
+    a2ui_dynamic_schema: [
+      path.join(
+        __dirname,
+        integrationsFolderPath,
+        `/mastra/typescript/examples/src/mastra/agents/a2ui.ts`,
+      ),
+    ],
+    a2ui_recovery: [
+      path.join(
+        __dirname,
+        integrationsFolderPath,
+        `/mastra/typescript/examples/src/mastra/agents/a2ui.ts`,
+      ),
+    ],
+    a2ui_fixed_schema: [
+      path.join(
+        __dirname,
+        integrationsFolderPath,
+        `/mastra/typescript/examples/src/mastra/agents/a2ui-fixed.ts`,
       ),
     ],
   }),
@@ -202,6 +235,15 @@ const agentFilesMapper: Record<
     ],
     tool_based_generative_ui: [
       path.join(__dirname, "../src/mastra/agents/tool-based-generative-ui.ts"),
+    ],
+    a2ui_dynamic_schema: [
+      path.join(__dirname, "../src/mastra/agents/a2ui.ts"),
+    ],
+    a2ui_recovery: [
+      path.join(__dirname, "../src/mastra/agents/a2ui.ts"),
+    ],
+    a2ui_fixed_schema: [
+      path.join(__dirname, "../src/mastra/agents/a2ui-fixed.ts"),
     ],
   }),
 

@@ -24,11 +24,11 @@
 #
 # THIRD scope projection guarded here: publish-release.yml's `notify` job has a
 # `Compute release intent` step whose `case "$SCOPE"` maps a dispatch scope to
-# its ecosystem (PyPI vs npm) for FAILURE paging. That step runs before
+# its ecosystem (NuGet vs PyPI vs npm) for FAILURE paging. That step runs before
 # checkout, so it cannot read release.config.json at runtime and instead carries
-# a static list of the python scopes that do NOT end in `-py`. check_notify_case
-# below asserts that list (and the `*-py` glob) projects every config scope to
-# the correct ecosystem, so this hand-maintained list cannot drift.
+# static lists for the exceptional scopes. check_notify_case below asserts those
+# lists project every config scope to the correct ecosystem, so this
+# hand-maintained list cannot drift.
 
 set -euo pipefail
 
@@ -140,50 +140,72 @@ check_workflow() {
 
 # Verify the notify-job ecosystem projection in publish-release.yml's
 # `Compute release intent` step. That step's `case "$SCOPE"` maps a scope to its
-# ecosystem (PyPI vs npm) for FAILURE paging using a static list of python
-# scopes that do NOT end in `-py`, plus a `*-py` glob; everything else is npm.
+# ecosystem (NuGet vs PyPI vs npm) for FAILURE paging using static exceptional
+# lists plus a `*-py` glob; everything else is npm.
 # Because the step runs before checkout it cannot consult release.config.json at
 # runtime, so this guard asserts the static projection still matches config:
-#   (1) the explicit list extracted from the case == the config's set of python
-#       scopes that do not end in `-py`, AND
-#   (2) the full projection (explicit-list OR `*-py` glob → python; else npm)
-#       maps EVERY config scope to its real ecosystem (catches e.g. a typescript
-#       scope that happens to end in `-py`, or a python scope missing from both).
+#   (1) the explicit Python list extracted from the case == the config's set of
+#       Python scopes that do not end in `-py`, AND
+#   (2) the explicit NuGet list extracted from the case == the config's NuGet
+#       scopes, AND
+#   (3) the full projection maps EVERY config scope to its real ecosystem
+#       (catches e.g. a typescript scope that happens to end in `-py`, or a
+#       Python/NuGet scope missing from the static list).
 check_notify_case() {
   local file="$1"
   local ecosystem scope
 
   # ecosystem-per-scope from config: "<scope> <ecosystem>" lines. A scope is
-  # python iff ANY of its packages is python (matches the workflow's intent:
-  # any python package in the scope should page the PyPI lane on failure).
+  # dotnet/python iff ANY of its packages is dotnet/python (matches the
+  # workflow's intent: any package in the scope should page the matching lane on
+  # failure).
   local config_eco
   config_eco=$(jq -r '
     .scopes | to_entries[]
     | .key as $s
-    | (if any(.value.packages[]; .ecosystem == "python") then "python" else "typescript" end)
+    | (if any(.value.packages[]; .ecosystem == "dotnet") then "dotnet"
+       elif any(.value.packages[]; .ecosystem == "python") then "python"
+       else "typescript" end)
     | "\($s) \(.)"
   ' "$CONFIG" | sort)
 
-  # EXPECTED explicit list: python scopes whose name does NOT end in -py.
+  # EXPECTED explicit lists.
   local expected_explicit
   expected_explicit=$(printf '%s\n' "$config_eco" \
     | awk '$2 == "python" && $1 !~ /-py$/ { print $1 }' | sort -u)
+  local expected_dotnet
+  expected_dotnet=$(printf '%s\n' "$config_eco" \
+    | awk '$2 == "dotnet" { print $1 }' | sort -u)
 
-  # ACTUAL explicit list from the case: the alternation arm immediately
-  # preceding `PY_INTENDED=true` that is NOT the `*-py` glob arm. Pull the
-  # `a|b|c)` pattern line and split on `|`, stripping the trailing `)`.
-  local actual_explicit
-  actual_explicit=$(awk '
+  # ACTUAL static lists from the case. Capture the pattern arm immediately
+  # preceding the target assignment, split alternations, and remove glob arms
+  # where relevant.
+  extract_case_patterns_for_assignment() {
+    local assignment="$1"
+    awk -v assignment="$assignment" '
     /case[[:space:]]+"\$SCOPE"[[:space:]]+in/ { in_case = 1; next }
     in_case && /esac/ { in_case = 0 }
-    in_case && /\|.*\)[[:space:]]*$/ && !/\*-py/ {
+    in_case && /^[[:space:]]*[^#[:space:]].*\)[[:space:]]*$/ {
       line = $0
       sub(/[[:space:]]*\)[[:space:]]*$/, "", line)   # drop trailing ")"
       sub(/^[[:space:]]+/, "", line)                 # drop leading indent
-      n = split(line, arr, "|")
-      for (i = 1; i <= n; i++) print arr[i]
+      last_pattern = line
+      next
     }
-  ' "$file" | sort -u)
+    in_case && index($0, assignment) && last_pattern != "" {
+      n = split(last_pattern, arr, "|")
+      for (i = 1; i <= n; i++) print arr[i]
+      last_pattern = ""
+    }
+    ' "$file"
+  }
+
+  local actual_explicit
+  actual_explicit=$(extract_case_patterns_for_assignment "PY_INTENDED=true" \
+    | grep -vx '\*-py' | sort -u || true)
+  local actual_dotnet
+  actual_dotnet=$(extract_case_patterns_for_assignment "NUGET_INTENDED=true" \
+    | grep -vx '\*' | sort -u || true)
 
   local rc_local=0
 
@@ -198,6 +220,17 @@ check_notify_case() {
     rc_local=1
   fi
 
+  if [ "$actual_dotnet" != "$expected_dotnet" ]; then
+    echo "ERROR: publish-release.yml notify-job NuGet case is out of sync with release.config.json." >&2
+    echo "" >&2
+    echo "--- diff (expected NuGet scopes  vs  case explicit list) ---" >&2
+    diff <(printf '%s\n' "$expected_dotnet") <(printf '%s\n' "$actual_dotnet") >&2 || true
+    echo "" >&2
+    echo "Fix: update the explicit NuGet-scope alternation in the 'Compute release" >&2
+    echo "intent' step's case to exactly the config dotnet scopes." >&2
+    rc_local=1
+  fi
+
   # Independently validate the full projection against config, so a scope that
   # is mapped to the WRONG lane (e.g. a typescript scope ending in -py, or a
   # python scope absent from BOTH the list and the -py glob) is caught even if
@@ -206,14 +239,11 @@ check_notify_case() {
   while read -r scope ecosystem; do
     [ -z "$scope" ] && continue
     local projected="typescript"
-    case "$scope" in
-      *-py) projected="python" ;;
-      *)
-        if printf '%s\n' "$actual_explicit" | grep -qx "$scope"; then
-          projected="python"
-        fi
-        ;;
-    esac
+    if printf '%s\n' "$actual_dotnet" | grep -qx "$scope"; then
+      projected="dotnet"
+    elif [[ "$scope" == *-py ]] || printf '%s\n' "$actual_explicit" | grep -qx "$scope"; then
+      projected="python"
+    fi
     if [ "$projected" != "$ecosystem" ]; then
       projection_mismatch+="  $scope: case projects '$projected' but config says '$ecosystem'"$'\n'
     fi
@@ -222,7 +252,7 @@ check_notify_case() {
   if [ -n "$projection_mismatch" ]; then
     echo "ERROR: publish-release.yml notify-job ecosystem case mis-projects scope(s):" >&2
     printf '%s' "$projection_mismatch" >&2
-    echo "Fix: the case (explicit list + '*-py' glob) must map every release.config.json" >&2
+    echo "Fix: the case (explicit lists + '*-py' glob) must map every release.config.json" >&2
     echo "scope to its real ecosystem." >&2
     rc_local=1
   fi
