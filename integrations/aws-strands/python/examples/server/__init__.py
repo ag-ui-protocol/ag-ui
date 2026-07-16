@@ -25,6 +25,9 @@ load_dotenv(dotenv_path=env_path)
 
 # Import agent apps
 from .api import (
+    a2ui_dynamic_schema_app,
+    a2ui_fixed_schema_app,
+    a2ui_recovery_app,
     agentic_chat_app,
     agentic_chat_reasoning_app,
     agentic_chat_multimodal_app,
@@ -47,6 +50,9 @@ app.add_middleware(
 )
 
 # Mount agents
+app.mount('/a2ui-dynamic-schema', a2ui_dynamic_schema_app, 'A2UI Dynamic Schema')
+app.mount('/a2ui-fixed-schema', a2ui_fixed_schema_app, 'A2UI Fixed Schema')
+app.mount('/a2ui-recovery', a2ui_recovery_app, 'A2UI Recovery')
 app.mount('/agentic-chat', agentic_chat_app, 'Agentic Chat')
 app.mount('/agentic-chat-reasoning', agentic_chat_reasoning_app, 'Agentic Chat Reasoning')
 app.mount('/agentic-chat-multimodal', agentic_chat_multimodal_app, 'Agentic Chat Multimodal')
@@ -60,10 +66,16 @@ def root():
     return {
         "message": "AWS Strands Integration 2 - AG-UI Dojo",
         "endpoints": {
+            "a2ui_dynamic_schema": "/a2ui-dynamic-schema",
+            "a2ui_fixed_schema": "/a2ui-fixed-schema",
+            "a2ui_recovery": "/a2ui-recovery",
             "agentic_chat": "/agentic-chat",
+            "agentic_chat_reasoning": "/agentic-chat-reasoning",
+            "agentic_chat_multimodal": "/agentic-chat-multimodal",
             "backend_tool_rendering": "/backend-tool-rendering",
             "agentic_generative_ui": "/agentic-generative-ui",
-            "shared_state": "/shared-state"
+            "shared_state": "/shared-state",
+            "human_in_the_loop": "/human-in-the-loop"
         }
     }
 

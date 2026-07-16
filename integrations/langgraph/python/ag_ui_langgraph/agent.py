@@ -16,6 +16,7 @@ except ImportError:
     from langchain_core.messages import BaseMessage, SystemMessage, ToolMessage
     
 from langchain_core.runnables import RunnableConfig, ensure_config
+from langchain_core.runnables.config import merge_configs
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.types import Command
 
@@ -47,11 +48,14 @@ from .utils import (
 from ag_ui.core import (
     EventType,
     CustomEvent,
+    Interrupt as AGUIInterrupt,
     MessagesSnapshotEvent,
     RawEvent,
+    ResumeEntry,
     RunAgentInput,
     RunErrorEvent,
     RunFinishedEvent,
+    RunFinishedInterruptOutcome,
     RunStartedEvent,
     StateDeltaEvent,
     StateSnapshotEvent,
@@ -71,7 +75,9 @@ from ag_ui.core import (
     ReasoningEndEvent,
     ReasoningEncryptedValueEvent,
 )
+from .interrupts import lg_interrupts_to_agui, DEFAULT_RESUME_SENTINEL_CANCELLED, DEFAULT_RESUME_SENTINEL_MAP
 from ag_ui.encoder import EventEncoder
+from ag_ui_a2ui_toolkit import split_a2ui_schema_context
 
 ProcessedEvents = Union[
     TextMessageStartEvent,
@@ -118,11 +124,18 @@ class PreparedStream(TypedDict):
     events_to_dispatch: NotRequired[Optional[List[ProcessedEvents]]]
 
 class LangGraphAgent:
-    def __init__(self, *, name: str, graph: CompiledStateGraph, description: Optional[str] = None, config:  Union[Optional[RunnableConfig], dict] = None):
+    def __init__(self, *, name: str, graph: CompiledStateGraph, description: Optional[str] = None, config:  Union[Optional[RunnableConfig], dict] = None, enable_legacy_on_interrupt_event: bool = True, emit_interrupt_outcome: bool = False):
         self.name = name
         self.description = description
         self.graph = graph
         self.config = config or {}
+        self.enable_legacy_on_interrupt_event = enable_legacy_on_interrupt_event
+        # Opt-in: terminate interrupted runs with the AG-UI structured outcome
+        # RunFinishedEvent(outcome={"type": "interrupt", ...}). Default False so
+        # released clients that resume via forwardedProps.command.resume keep
+        # working until they adopt RunAgentInput.resume[] (the structured outcome
+        # makes them stop sending a resume directive). See _emit_interrupt_finish.
+        self.emit_interrupt_outcome = emit_interrupt_outcome
         self.messages_in_process: MessagesInProgressRecord = {}
         self.active_run: Optional[RunMetadata] = None
         self.constant_schema_keys = ['messages', 'tools']
@@ -148,6 +161,8 @@ class LangGraphAgent:
                 graph=self.graph,
                 description=self.description,
                 config=dict(self.config) if self.config else None,
+                enable_legacy_on_interrupt_event=self.enable_legacy_on_interrupt_event,
+                emit_interrupt_outcome=self.emit_interrupt_outcome,
             )
         except TypeError as exc:
             raise TypeError(
@@ -174,7 +189,7 @@ class LangGraphAgent:
             forwarded_props = {
                 camel_to_snake(k): v for k, v in input.forwarded_props.items()
             }
-        async for event_str in self._handle_stream_events(input.copy(update={"forwarded_props": forwarded_props})):
+        async for event_str in self._handle_stream_events(input.model_copy(update={"forwarded_props": forwarded_props})):
             yield event_str
 
     async def _handle_stream_events(self, input: RunAgentInput) -> AsyncGenerator[ProcessedEvents, None]:
@@ -203,11 +218,31 @@ class LangGraphAgent:
 
             agent_state = await self.graph.aget_state(config)
             command_input = forwarded_props.get('command', {}) if forwarded_props else {}
-            has_resume_input = (
+            legacy_command_resume = (
+                command_input.get('resume', None) if isinstance(command_input, dict) else None
+            )
+            legacy_has_resume = (
                 isinstance(command_input, dict)
                 and 'resume' in command_input
-                and command_input['resume'] is not None
+                and legacy_command_resume is not None
             )
+            agui_resume = list(input.resume) if input.resume else None
+            if agui_resume is not None and legacy_has_resume:
+                logger.warning(
+                    "both input.resume and forwardedProps.command.resume were provided; "
+                    "input.resume wins (thread_id=%r, run_id=%r)",
+                    thread_id, self.active_run.get("id"),
+                )
+            if legacy_has_resume and agui_resume is None:
+                logger.warning(
+                    "forwardedProps.command.resume is deprecated; please send "
+                    "RunAgentInput.resume[] (thread_id=%r, run_id=%r)",
+                    thread_id, self.active_run.get("id"),
+                )
+            # Truthiness, not `is not None`: an empty resume list means "no
+            # resume" (consistent with treating an absent resume as no-resume),
+            # so it must not suppress the regenerate / interrupt paths.
+            has_resume_input = bool(agui_resume) or legacy_has_resume
             # active_run was just reset to INITIAL_ACTIVE_RUN above, so
             # active_run["node_name"] is always None here — the else branch
             # was dead code. Resolve to None directly to make the intent
@@ -303,7 +338,13 @@ class LangGraphAgent:
                 event_type = event.get("event")
                 event_run_id = event.get("run_id")
                 if isinstance(event_run_id, str) and event_run_id:
-                    self.active_run["id"] = event_run_id
+                    # LangGraph's internal chain run_id. Track it separately
+                    # rather than overwriting active_run["id"] (the
+                    # client-supplied run_id from RunAgentInput): clobbering it
+                    # made RUN_FINISHED carry the chain UUID while RUN_STARTED
+                    # carried the client id, so the two disagreed (#1582). The
+                    # client id is what the protocol must echo back.
+                    self.active_run["langgraph_run_id"] = event_run_id
                 elif event_run_id is not None:
                     # Shape mismatch: some upstream emitted a non-string run_id.
                     # Keep the existing id rather than corrupting it.
@@ -414,7 +455,7 @@ class LangGraphAgent:
             # len() call crashed in that case. A plain truthiness check
             # handles both "None" and "empty tuple/list" uniformly.
             tasks = state.tasks if state.tasks else None
-            interrupts = tasks[0].interrupts if tasks else []
+            interrupts = self._collect_interrupts(state.tasks)
 
             # state.metadata can be None on freshly-initialised / empty checkpoints,
             # which would AttributeError on .get — coerce to empty dict first.
@@ -426,16 +467,6 @@ class LangGraphAgent:
 
             node_name = "__end__" if is_end_node else node_name
 
-            for interrupt in interrupts:
-                yield self._dispatch_event(
-                    CustomEvent(
-                        type=EventType.CUSTOM,
-                        name=LangGraphEventTypes.OnInterrupt.value,
-                        value=dump_json_safe(interrupt.value),
-                        raw_event=interrupt,
-                    )
-                )
-
             if self.active_run.get("node_name") != node_name:
                 for ev in self.handle_node_change(node_name):
                     yield ev
@@ -446,9 +477,20 @@ class LangGraphAgent:
             for ev in self.handle_node_change(None):
                 yield ev
 
-            yield self._dispatch_event(
-                RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=self.active_run["id"])
-            )
+            if interrupts:
+                for ev in self._emit_interrupt_finish(
+                    thread_id=thread_id,
+                    run_id=self.active_run["id"],
+                    lg_interrupts=interrupts,
+                ):
+                    yield self._dispatch_event(ev)
+            else:
+                yield self._dispatch_event(
+                    self._emit_success_finish(
+                        thread_id=thread_id,
+                        run_id=self.active_run["id"],
+                    )
+                )
         finally:
             self.active_run = None
 
@@ -468,13 +510,29 @@ class LangGraphAgent:
         config["configurable"]["thread_id"] = thread_id
         interrupts = self._collect_interrupts(agent_state.tasks)
         has_active_interrupts = len(interrupts) > 0
+
+        # AG-UI standard: RunAgentInput.resume = [ResumeEntry, ...]
+        agui_resume: Optional[list] = list(input.resume) if input.resume else None
+
+        # Legacy fallback: forwardedProps.command.resume (LangGraph private).
+        # The conflict / deprecation warnings are emitted once in ``run`` (the
+        # request entry point); ``prepare_stream`` only needs the values to
+        # construct the LangGraph Command and stays silent to avoid the
+        # duplicate-log issue the reviewer flagged.
         command_input = forwarded_props.get('command', {})
-        resume_input = command_input.get('resume', None) if isinstance(command_input, dict) else None
-        has_resume_input = (
+        legacy_command_resume = (
+            command_input.get('resume', None) if isinstance(command_input, dict) else None
+        )
+        legacy_has_resume = (
             isinstance(command_input, dict)
             and 'resume' in command_input
-            and resume_input is not None
+            and legacy_command_resume is not None
         )
+
+        # Truthiness, not `is not None`: an empty resume list means "no resume"
+        # (consistent with treating an absent resume as no-resume), so it must
+        # not suppress the regenerate / interrupt paths.
+        has_resume_input = bool(agui_resume) or legacy_has_resume
 
         self.active_run["schema_keys"] = self.get_schema_keys(config)
 
@@ -487,6 +545,21 @@ class LangGraphAgent:
         # resume values as present so falsy resume payloads remain valid while
         # resume=None follows the no-resume interrupt path. Fixes #1743.
         if not has_resume_input:
+            # Detect a content edit on any HumanMessage that exists in the checkpoint
+            # under the same ID. ``is_continuation`` below compares IDs only, so a
+            # same-ID edit is otherwise silently swallowed (the checkpoint keeps the
+            # old content and the user's edit is lost). Fixes #1748.
+            edited_message = self._detect_edited_human_message(
+                langchain_messages,
+                agent_state.values.get("messages", []),
+            )
+            if edited_message:
+                return await self.prepare_regenerate_stream(
+                    input=input,
+                    message_checkpoint=edited_message,
+                    config=config,
+                )
+
             non_system_messages = [msg for msg in langchain_messages if not isinstance(msg, SystemMessage)]
             if len(agent_state.values.get("messages", [])) > len(non_system_messages):
                 # Only trigger time-travel regeneration if the incoming messages are NOT already
@@ -525,21 +598,18 @@ class LangGraphAgent:
         events_to_dispatch = []
         if has_active_interrupts and not has_resume_input:
             events_to_dispatch.append(
-                RunStartedEvent(type=EventType.RUN_STARTED, thread_id=thread_id, run_id=self.active_run["id"])
-            )
-
-            for interrupt in interrupts:
-                events_to_dispatch.append(
-                    CustomEvent(
-                        type=EventType.CUSTOM,
-                        name=LangGraphEventTypes.OnInterrupt.value,
-                        value=dump_json_safe(interrupt.value),
-                        raw_event=interrupt,
-                    )
+                RunStartedEvent(
+                    type=EventType.RUN_STARTED,
+                    thread_id=thread_id,
+                    run_id=self.active_run["id"],
                 )
-
-            events_to_dispatch.append(
-                RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=self.active_run["id"])
+            )
+            events_to_dispatch.extend(
+                self._emit_interrupt_finish(
+                    thread_id=thread_id,
+                    run_id=self.active_run["id"],
+                    lg_interrupts=interrupts,
+                )
             )
             return {
                 "stream": None,
@@ -552,26 +622,27 @@ class LangGraphAgent:
             await self.graph.aupdate_state(config, state, as_node=self.active_run.get("node_name"))
 
         if has_resume_input:
-            if isinstance(resume_input, str):
-                # Contract: a string resume payload is forwarded raw to
-                # Command(resume=...) when not valid JSON. Callers may
-                # legitimately pass plain strings, but a malformed JSON
-                # *looking* string is almost always an integration bug —
-                # surface it at WARNING so it's visible without breaking
-                # the legitimate raw-string case.
-                raw_resume = resume_input
-                try:
-                    resume_input = json.loads(raw_resume)
-                except json.JSONDecodeError as exc:
-                    logger.warning(
-                        "failed to parse resume_input as JSON, treating as string "
-                        "(thread_id=%r, run_id=%r, error=%s): %r",
-                        thread_id,
-                        self.active_run.get("id"),
-                        exc,
-                        raw_resume[:200],
-                    )
-            stream_input = Command(resume=resume_input)
+            if agui_resume is not None:
+                stream_input = self._build_command_from_agui_resume(
+                    agui_resume,
+                    open_interrupts=self._interrupts_to_agui(interrupts),
+                )
+            else:
+                resume_payload = legacy_command_resume
+                if isinstance(resume_payload, str):
+                    raw_resume = resume_payload
+                    try:
+                        resume_payload = json.loads(raw_resume)
+                    except json.JSONDecodeError as exc:
+                        logger.warning(
+                            "failed to parse legacy resume_input as JSON, treating as string "
+                            "(thread_id=%r, run_id=%r, error=%s): %r",
+                            thread_id,
+                            self.active_run.get("id"),
+                            exc,
+                            raw_resume[:200],
+                        )
+                stream_input = Command(resume=resume_payload)
         else:
             payload_input = get_stream_payload_input(
                 mode=self.active_run["mode"],
@@ -645,12 +716,22 @@ class LangGraphAgent:
             as_node=next_nodes[0] if next_nodes else "__start__",
         )
 
+        # ``fork`` only carries the checkpoint-level configurable keys
+        # (``thread_id``, ``checkpoint_id``, ``checkpoint_ns``).  Pass it
+        # alone and runtime settings from the caller's config -- notably
+        # ``recursion_limit`` and ``callbacks`` -- are silently dropped,
+        # so LangGraph stamps the default ``recursion_limit=25`` and any
+        # tracing / observability callbacks are lost.  Merge the caller's
+        # config underneath the fork so checkpoint keys still win but
+        # everything else is preserved.  Fixes #1749.
+        merged_config = merge_configs(config, fork)
+
         stream_input = self.langgraph_default_merge_state(time_travel_checkpoint.values, [message_checkpoint], input)
         subgraphs_stream_enabled = input.forwarded_props.get('stream_subgraphs', True) if input.forwarded_props else True
 
         kwargs = self.get_stream_kwargs(
             input=stream_input,
-            config=fork,
+            config=merged_config,
             subgraphs=bool(subgraphs_stream_enabled),
             version="v2",
         )
@@ -676,7 +757,10 @@ class LangGraphAgent:
         try:
             input_schema = self.graph.get_input_jsonschema(config)
             output_schema = self.graph.get_output_jsonschema(config)
-            config_schema = self.graph.config_schema().schema()
+            if hasattr(self.graph, "get_config_jsonschema"):
+                config_schema = self.graph.get_config_jsonschema()
+            else:
+                config_schema = self.graph.config_schema().schema()
 
             input_schema_keys = list(input_schema["properties"].keys()) if "properties" in input_schema else []
             output_schema_keys = list(output_schema["properties"].keys()) if "properties" in output_schema else []
@@ -692,8 +776,12 @@ class LangGraphAgent:
             context_schema_keys: List[str] = []
             if hasattr(self.graph, "context_schema") and self.graph.context_schema is not None:
                 try:
-                    context_schema = self.graph.context_schema().schema()
-                    context_schema_keys = list(context_schema["properties"].keys()) if "properties" in context_schema else []
+                    if hasattr(self.graph, "get_context_jsonschema"):
+                        context_schema = self.graph.get_context_jsonschema()
+                    else:
+                        context_schema = self.graph.context_schema().schema()
+                    if context_schema is not None:
+                        context_schema_keys = list(context_schema["properties"].keys()) if "properties" in context_schema else []
                 except (AttributeError, TypeError, KeyError, ValueError, NotImplementedError) as ctx_exc:
                     logger.warning(
                         "get_schema_keys: context_schema introspection failed (%s: %s); "
@@ -871,17 +959,10 @@ class LangGraphAgent:
         # The A2UI schema goes into state["ag-ui"]["a2ui_schema"] so agents
         # can read it directly from state (e.g., for the generate_a2ui tool),
         # instead of it being dumped into the system prompt with all other context.
-        A2UI_SCHEMA_CONTEXT_DESCRIPTION = "A2UI Component Schema \u2014 available components for generating UI surfaces. Use these component names and props when creating A2UI operations."
-
-        all_context = input.context or []
-        a2ui_schema_value = None
-        regular_context = []
-        for entry in all_context:
-            desc = entry.get("description", "") if isinstance(entry, dict) else getattr(entry, "description", "")
-            if desc == A2UI_SCHEMA_CONTEXT_DESCRIPTION:
-                a2ui_schema_value = entry.get("value", "") if isinstance(entry, dict) else getattr(entry, "value", "")
-            else:
-                regular_context.append(entry)
+        # The split (constant + matcher) lives in the shared a2ui toolkit so the
+        # LangGraph and Strands adapters agree on it. Covered by
+        # test_a2ui_schema_context_routed_into_ag_ui_state.
+        a2ui_schema_value, regular_context = split_a2ui_schema_context(input.context)
 
         ag_ui_state: dict = {
             "tools": unique_tools,
@@ -889,6 +970,21 @@ class LangGraphAgent:
         }
         if a2ui_schema_value is not None:
             ag_ui_state["a2ui_schema"] = a2ui_schema_value
+
+        # Surface the A2UI tool-injection flag (set by the A2UI middleware via
+        # forwardedProps.injectA2UITool) into ag-ui state so graphs/tools can
+        # read it directly from state. It is written here whenever the merged
+        # state is built (start/continue runs) and then persists in the
+        # checkpoint, so resumed runs still see it. forwarded_props keys are
+        # snake-cased in run() (camel_to_snake turns "injectA2UITool" into
+        # "inject_a2_u_i_tool" — pinned by test_camel_to_snake_key_contract),
+        # so check the converted key first and fall back to the raw camelCase
+        # form for safety.
+        forwarded = input.forwarded_props or {}
+        if "inject_a2_u_i_tool" in forwarded:
+            ag_ui_state["inject_a2ui_tool"] = forwarded["inject_a2_u_i_tool"]
+        elif "injectA2UITool" in forwarded:
+            ag_ui_state["inject_a2ui_tool"] = forwarded["injectA2UITool"]
 
         return {
             **state,
@@ -945,6 +1041,183 @@ class LangGraphAgent:
             task_interrupts = getattr(task, "interrupts", None) or []
             interrupts.extend(task_interrupts)
         return interrupts
+
+    @staticmethod
+    def _normalized_content(content):
+        # Canonical form for edit detection: plain strings compare directly;
+        # structured/multimodal content compares via a key-order-insensitive
+        # projection so checkpoint re-serialization isn't mistaken for an edit.
+        if isinstance(content, str):
+            return content
+        return json.dumps(content, sort_keys=True, default=str)
+    
+    @staticmethod
+    def _detect_edited_human_message(
+        incoming_messages: List[BaseMessage],
+        checkpoint_messages: List[BaseMessage],
+    ) -> Optional[HumanMessage]:
+        """Return the earliest incoming ``HumanMessage`` whose content
+        was edited relative to the checkpoint, or ``None`` if no edit
+        was detected.
+
+        Two messages are considered to be the same message when they
+        share an ``id``; an edit is a same-``id`` pair with different
+        ``content``. The ``is_continuation`` heuristic in
+        ``prepare_stream`` compares ``id``\\ s only, so without this
+        check a same-id content edit is silently swallowed (the
+        checkpoint keeps the old content and the user's edit is lost).
+        Fixes #1748.
+        """
+        checkpoint_by_id = {
+            getattr(m, "id", None): m
+            for m in checkpoint_messages
+            if isinstance(m, HumanMessage) and getattr(m, "id", None)
+        }
+        if not checkpoint_by_id:
+            return None
+        for msg in incoming_messages:
+            if not isinstance(msg, HumanMessage) or not getattr(msg, "id", None):
+                continue
+            ckpt = checkpoint_by_id.get(msg.id)
+            if ckpt is not None and LangGraphAgent._normalized_content(ckpt.content) != LangGraphAgent._normalized_content(msg.content):
+                return msg
+        return None
+
+    def _interrupts_to_agui(self, lg_interrupts) -> List[AGUIInterrupt]:
+        """Map LangGraph task interrupts to AG-UI Interrupts.
+
+        Default: one-to-one via ``lg_interrupt_to_agui``. Override when a
+        single LangGraph interrupt carries multiple logical user-decisions
+        (e.g. HumanInTheLoopMiddleware's ``action_requests`` /
+        ``review_configs``) and you need to fan out N AG-UI Interrupts per
+        LangGraph interrupt — write the loop yourself in the override.
+        """
+        return lg_interrupts_to_agui(lg_interrupts)
+
+    def _emit_interrupt_finish(
+        self,
+        *,
+        thread_id: str,
+        run_id: str,
+        lg_interrupts: list,
+    ) -> List[ProcessedEvents]:
+        """Build the tail-events for an interrupt-terminated run.
+
+        Default (``emit_interrupt_outcome=False``, ``enable_legacy_on_interrupt_event=True``):
+          [CustomEvent(on_interrupt) * N, RunFinishedEvent]            # plain finish, no outcome
+        Opt-in (``emit_interrupt_outcome=True``):
+          [CustomEvent(on_interrupt) * N, RunFinishedEvent(outcome=Interrupt)]
+
+        ``emit_interrupt_outcome`` defaults to False: released clients that
+        resume via the legacy ``forwardedProps.command.resume`` channel stop
+        sending a resume directive once they observe the structured outcome,
+        which strands the run. It stays opt-in until those clients adopt
+        ``RunAgentInput.resume[]``.
+
+        The structured outcome is, however, emitted whenever the legacy
+        on_interrupt event is disabled (``enable_legacy_on_interrupt_event=False``),
+        even if ``emit_interrupt_outcome`` is False — otherwise the interrupt
+        would be surfaced by neither channel and silently swallowed.
+
+        Caller is responsible for any preceding STATE_SNAPSHOT / MESSAGES_SNAPSHOT.
+        """
+        agui_interrupts = self._interrupts_to_agui(lg_interrupts)
+        events: List[ProcessedEvents] = []
+        if self.enable_legacy_on_interrupt_event:
+            for raw, mapped in zip(lg_interrupts, agui_interrupts):
+                events.append(
+                    CustomEvent(
+                        type=EventType.CUSTOM,
+                        name=LangGraphEventTypes.OnInterrupt.value,
+                        value=dump_json_safe(raw.value),
+                        raw_event=raw,
+                    )
+                )
+        # Emit the structured outcome when opted in, OR whenever the legacy
+        # on_interrupt event is disabled — otherwise the interrupt would be
+        # surfaced by neither channel and silently swallowed.
+        include_outcome = (
+            self.emit_interrupt_outcome or not self.enable_legacy_on_interrupt_event
+        )
+        outcome = (
+            RunFinishedInterruptOutcome(type="interrupt", interrupts=agui_interrupts)
+            if include_outcome
+            else None
+        )
+        events.append(
+            RunFinishedEvent(
+                type=EventType.RUN_FINISHED,
+                thread_id=thread_id,
+                run_id=run_id,
+                outcome=outcome,
+            )
+        )
+        return events
+
+    def _emit_success_finish(
+        self, *, thread_id: str, run_id: str
+    ) -> RunFinishedEvent:
+        """Tail event for a non-interrupt run."""
+        return RunFinishedEvent(
+            type=EventType.RUN_FINISHED,
+            thread_id=thread_id,
+            run_id=run_id,
+        )
+
+    def _build_command_from_agui_resume(
+        self,
+        entries: list,
+        *,
+        open_interrupts: Optional[List[AGUIInterrupt]] = None,
+    ) -> Command:
+        """Convert AG-UI ResumeEntry[] into LangGraph Command(resume=...).
+
+        ``open_interrupts`` is the list of currently-pending AG-UI
+        Interrupts on the thread (already mapped via the hook above).
+        Subclasses may use it to align resume entries with the
+        framework-native action order.
+
+        Default implementation: single-resolved → payload, single-cancelled
+        → sentinel dict, multiple → __agui_resume_map__ sentinel.
+        """
+        if len(entries) == 1:
+            e = entries[0]
+            if e.status == "resolved":
+                return Command(resume=e.payload)
+            return Command(
+                resume={
+                    DEFAULT_RESUME_SENTINEL_CANCELLED: True,
+                    "interrupt_id": e.interrupt_id,
+                }
+            )
+        return Command(
+            resume={
+                DEFAULT_RESUME_SENTINEL_MAP: {
+                    e.interrupt_id: {
+                        "status": e.status,
+                        "payload": e.payload,
+                    }
+                    for e in entries
+                }
+            }
+        )
+
+    def get_capabilities(self) -> dict:
+        """Return the agent's capability declaration.
+
+        Subclasses can override to add custom HITL capability
+        declarations or other integration-specific fields.
+        """
+        return {
+            "identity": {"type": "langgraph"},
+            "humanInTheLoop": {
+                "supported": True,
+                "interrupts": True,
+                "approveWithEdits": True,
+            },
+            "state": {"snapshots": True, "deltas": False, "persistentState": True},
+            "transport": {"streaming": True},
+        }
 
     def get_state_snapshot(self, state: State) -> State:
         # Invariant: callers always operate within an active run.
@@ -1110,6 +1383,59 @@ class LangGraphAgent:
                     )
                 )
 
+            if tool_call_data and tool_call_data.get("name") and message_content is not None:
+                text_stream_id = None
+                if current_stream and current_stream.get("id") and not current_stream.get("tool_call_id"):
+                    text_stream_id = current_stream["id"]
+                elif message_content != "":
+                    text_stream_id = chunk_id
+                    if should_emit_messages:
+                        yield self._dispatch_event(
+                            TextMessageStartEvent(
+                                type=EventType.TEXT_MESSAGE_START,
+                                role="assistant",
+                                message_id=text_stream_id,
+                                raw_event=event,
+                            )
+                        )
+
+                if text_stream_id and should_emit_messages:
+                    if message_content != "":
+                        yield self._dispatch_event(
+                            TextMessageContentEvent(
+                                type=EventType.TEXT_MESSAGE_CONTENT,
+                                message_id=text_stream_id,
+                                delta=message_content,
+                                raw_event=event,
+                            )
+                        )
+                    yield self._dispatch_event(
+                        TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=text_stream_id, raw_event=event)
+                    )
+
+                if text_stream_id:
+                    self.messages_in_process[self.active_run["id"]] = None
+                    current_stream = None
+                    has_current_stream = False
+                is_message_end_event = False
+                is_tool_call_start_event = True
+                is_tool_call_args_event = False
+                is_tool_call_end_event = False
+                self.active_run["has_function_streaming"] = True
+
+            if is_message_end_event and tool_call_data and tool_call_data.get("name"):
+                yield self._dispatch_event(
+                    TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=current_stream["id"], raw_event=event)
+                )
+                self.messages_in_process[self.active_run["id"]] = None
+                current_stream = None
+                has_current_stream = False
+                is_message_end_event = False
+                is_tool_call_start_event = True
+                is_tool_call_args_event = False
+                is_tool_call_end_event = False
+                self.active_run["has_function_streaming"] = True
+
             if is_tool_call_end_event:
                 yield self._dispatch_event(
                     ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=current_stream["tool_call_id"], raw_event=event)
@@ -1172,18 +1498,19 @@ class LangGraphAgent:
                     return
 
                 if bool(current_stream and current_stream.get("id")) == False:
+                    message_id = self._get_or_pin_text_message_id(chunk_id)
                     yield self._dispatch_event(
                         TextMessageStartEvent(
                             type=EventType.TEXT_MESSAGE_START,
                             role="assistant",
-                            message_id=chunk_id,
+                            message_id=message_id,
                             raw_event=event,
                         )
                     )
                     self.set_message_in_progress(
                         self.active_run["id"],
                         MessageInProgress(
-                            id=chunk_id,
+                            id=message_id,
                             tool_call_id=None,
                             tool_call_name=None
                         )
@@ -1307,7 +1634,7 @@ class LangGraphAgent:
                                 type=EventType.TOOL_CALL_START,
                                 tool_call_id=tool_msg.tool_call_id,
                                 tool_call_name=tool_msg.name or event.get("name", ""),
-                                parent_message_id=tool_msg.id,
+                                parent_message_id=str(tool_msg.id or tool_msg.tool_call_id),
                                 raw_event=event,
                             )
                         )
@@ -1332,7 +1659,8 @@ class LangGraphAgent:
                         ToolCallResultEvent(
                             type=EventType.TOOL_CALL_RESULT,
                             tool_call_id=tool_msg.tool_call_id,
-                            message_id=str(uuid.uuid4()),
+                            # Match ToolMessage.id (or tool_call_id) so MESSAGES_SNAPSHOT merge works.
+                            message_id=str(tool_msg.id or tool_msg.tool_call_id),
                             content=normalize_tool_content(tool_msg.content),
                             role="tool"
                         )
@@ -1360,7 +1688,7 @@ class LangGraphAgent:
                         type=EventType.TOOL_CALL_START,
                         tool_call_id=tool_call_output.tool_call_id,
                         tool_call_name=tool_call_output.name or event.get("name", ""),
-                        parent_message_id=tool_call_output.id,
+                        parent_message_id=str(tool_call_output.id or tool_call_output.tool_call_id),
                         raw_event=event,
                     )
                 )
@@ -1385,7 +1713,8 @@ class LangGraphAgent:
                 ToolCallResultEvent(
                     type=EventType.TOOL_CALL_RESULT,
                     tool_call_id=tool_call_output.tool_call_id,
-                    message_id=str(uuid.uuid4()),
+                    # Match ToolMessage.id (or tool_call_id) so MESSAGES_SNAPSHOT merge works.
+                    message_id=str(tool_call_output.id or tool_call_output.tool_call_id),
                     content=normalize_tool_content(tool_call_output.content),
                     role="tool"
                 )
@@ -1420,6 +1749,17 @@ class LangGraphAgent:
             )
             return
 
+        # A text-less chunk is still meaningful when it carries the provider's
+        # canonical reasoning id (the `response.output_item.added` /
+        # `…summary_part.added` chunks): stash the id so the first text delta
+        # opens the reasoning message under it, WITHOUT opening a message here
+        # — a summary-less (store=true) reasoning item must keep rendering
+        # nothing.
+        if not reasoning_data["text"]:
+            if reasoning_data.get("id"):
+                self.active_run["pending_reasoning_id"] = reasoning_data["id"]
+            return
+
         reasoning_step_index = reasoning_data.get("index", 0)
 
         if (self.active_run.get("reasoning_process") and
@@ -1443,7 +1783,17 @@ class LangGraphAgent:
             self.active_run["reasoning_process"] = None
 
         if not self.active_run.get("reasoning_process"):
-            message_id = str(uuid.uuid4())
+            # Prefer the provider's canonical reasoning id (e.g. OpenAI
+            # ``rs_…``) when the stream carried one: the snapshot converter
+            # (_reasoning_block_to_agui_message) re-emits this same reasoning
+            # under that id, and only a matching id lets the client reconcile
+            # the streamed copy with the snapshot copy instead of rendering
+            # both.
+            message_id = (
+                reasoning_data.get("id")
+                or self.active_run.pop("pending_reasoning_id", None)
+                or str(uuid.uuid4())
+            )
             yield self._dispatch_event(
                 ReasoningStartEvent(
                     type=EventType.REASONING_START,
@@ -1542,6 +1892,20 @@ class LangGraphAgent:
             f"(thread_id={thread_id!r}, snapshots_scanned={len(history_list)})"
         )
 
+    def _get_or_pin_text_message_id(self, fallback_id: str) -> str:
+        """Returns the message_id to use for a TEXT_MESSAGE_START emission,
+        pinning the first id per node. chunk_id changes per LLM invocation,
+        so a text→tool→text sequence within one node would otherwise render
+        as multiple bubbles; pinning keeps them in one. handle_node_change
+        clears the pin on every node transition, so different nodes (e.g. a
+        supervisor routing to specialist agents) get fresh ids and stay in
+        separate bubbles. See #1317.
+        """
+        stored = self.active_run.get("current_text_message_id")
+        message_id = stored if stored is not None else fallback_id
+        self.active_run["current_text_message_id"] = message_id
+        return message_id
+
     def handle_node_change(self, node_name: Optional[str]) -> Generator[ProcessedEvents, None, None]:
         """
         Centralized method to handle node name changes and step transitions.
@@ -1563,6 +1927,10 @@ class LangGraphAgent:
             if node_name:
                 for event in self.start_step(node_name):
                     yield event
+
+            # Clear the pinned text message id: a new node should mint its own
+            # bubble. See RunMetadata.current_text_message_id.
+            self.active_run["current_text_message_id"] = None
 
         self.active_run["node_name"] = node_name
 
@@ -1609,9 +1977,14 @@ class LangGraphAgent:
             version=version,
         )
 
-        # Only add context if supported
+        # LangGraph may expose context either as a named parameter or through
+        # **kwargs, depending on the installed version.
         sig = inspect.signature(self.graph.astream_events)
-        if 'context' in sig.parameters:
+        accepts_context = (
+            'context' in sig.parameters
+            or any(param.kind == inspect.Parameter.VAR_KEYWORD for param in sig.parameters.values())
+        )
+        if accepts_context:
             base_context = {}
             if isinstance(config, dict) and 'configurable' in config and isinstance(config['configurable'], dict):
                 base_context.update(config['configurable'])
@@ -1663,4 +2036,9 @@ def dump_json_safe(value):
     # (not re-encoded with json.dumps). Callers passing pre-serialized JSON
     # strings get them back as-is; callers passing a raw non-JSON string get
     # that raw string back — no quoting is applied.
-    return json.dumps(value, default=json_safe_stringify) if not isinstance(value, str) else value
+    if isinstance(value, str):
+        return value
+    # Pre-process through make_json_safe to recursively convert non-string
+    # dict keys (e.g. UUID) before json.dumps, which only invokes ``default``
+    # for non-serializable values — never for keys.
+    return json.dumps(make_json_safe(value), default=json_safe_stringify)

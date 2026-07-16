@@ -1,4 +1,7 @@
-import { AssistantGraph, Message as LangGraphMessage } from "@langchain/langgraph-sdk";
+import {
+  AssistantGraph,
+  Message as LangGraphMessage,
+} from "@langchain/langgraph-sdk";
 import { MessageType } from "@langchain/core/messages";
 import {
   CustomEvent,
@@ -48,8 +51,8 @@ export type LangGraphToolWithName = {
     name: string;
     description: string;
     parameters: any;
-  },
-}
+  };
+};
 
 export type State<TDefinedState = Record<string, any>> = {
   [k in keyof TDefinedState]: TDefinedState[k] | null;
@@ -57,10 +60,13 @@ export type State<TDefinedState = Record<string, any>> = {
 export interface StateEnrichment {
   messages: LangGraphMessage[];
   tools: LangGraphToolWithName[];
-  'ag-ui': {
+  "ag-ui": {
     tools: LangGraphToolWithName[];
-    context: RunAgentInput['context']
-  }
+    context: RunAgentInput['context'];
+    // A2UI tool-injection flag forwarded by the A2UI middleware
+    // (forwardedProps.injectA2UITool). Present only when the middleware sets it.
+    inject_a2ui_tool?: boolean | string;
+  };
 }
 
 export type SchemaKeys = {
@@ -79,10 +85,10 @@ export type MessageInProgress = {
 
 export type ReasoningInProgress = {
   index: number;
-  type?: LangGraphReasoning['type'];
+  type?: LangGraphReasoning["type"];
   messageId: string;
   signature?: string;
-}
+};
 
 // Per-content-block tracking for v3 messages-channel translation.
 // Lives on RunMetadata so it resets cleanly between runs (activeRun is
@@ -110,7 +116,7 @@ export interface RunMetadata {
   exitingNode?: boolean;
   manuallyEmittedState?: State | null;
   threadId?: string;
-  graphInfo?: AssistantGraph
+  graphInfo?: AssistantGraph;
   hasFunctionStreaming?: boolean;
   // True once the platform-assigned run id is known (set from stream metadata)
   serverRunIdKnown?: boolean;
@@ -130,6 +136,17 @@ export interface RunMetadata {
   textBlockMessageIds: Map<number, string>;
   toolBlocks: Map<number, ToolBlockState>;
   reasoningBlocks: Map<number, ReasoningBlockState>;
+  // Pinned text message id for the current node. Set on the first
+  // auto-streamed text chunk emitted from a node (from the chunk's id) and
+  // reused for every subsequent TEXT_MESSAGE_START emitted from the same
+  // node, so text resuming after a tool call (or after a fresh model
+  // invocation within the same node) stays in the same UI bubble. Cleared
+  // by handleNodeChange on every node transition, so multi-node graphs
+  // (e.g. supervisor routing to specialist agents) preserve separate
+  // bubbles per node. Reset implicitly on the next run when activeRun is
+  // replaced. Not used by ManuallyEmitMessage events: those carry their
+  // own messageId and bypass this field entirely.
+  currentTextMessageId?: string;
 }
 
 // v3 messages-channel event payload. Shape mirrors what
@@ -223,7 +240,8 @@ interface LangGraphPlatformResultMessage extends BaseLangGraphPlatformMessage {
   name: string;
 }
 
-interface LangGraphPlatformActionExecutionMessage extends BaseLangGraphPlatformMessage {
+interface LangGraphPlatformActionExecutionMessage
+  extends BaseLangGraphPlatformMessage {
   tool_calls: ToolCall[];
 }
 
@@ -246,10 +264,15 @@ export interface PredictStateTool {
 }
 
 export interface LangGraphReasoning {
-  type: 'text';
+  type: "text";
   text: string;
   index: number;
   signature?: string;
+  // The provider's canonical id for the reasoning item (e.g. OpenAI
+  // `rs_…`), when the stream carries one. Used as the AG-UI reasoning
+  // message id so the streamed message reconciles with the snapshot copy
+  // emitted under the same id.
+  id?: string;
 }
 
 export type ProcessedEvents =

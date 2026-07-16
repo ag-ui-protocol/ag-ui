@@ -162,6 +162,55 @@ class TestMultimodalConversion(unittest.TestCase):
             "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA"
         )
 
+    def test_agui_input_metadata_not_leaked_to_langchain_blocks(self):
+        """AG-UI InputContent metadata must NOT be attached to the LangChain
+        content blocks handed to the model.
+
+        Attaching a top-level ``metadata`` key produces a non-standard content
+        block (e.g. ``{"type": "image_url", "image_url": {...}, "metadata": {...}}``)
+        that strict OpenAI-compatible providers reject with a 400
+        ("Unexpected keys in a message content image dict"), aborting the run.
+        The block must carry only spec-compliant keys. See issue #2100.
+        """
+        content_list = [
+            TextInputContent(
+                type="text",
+                text="Describe this image",
+                metadata={"source": "prompt"},
+            ),
+            ImageInputContent(
+                type="image",
+                source=InputContentUrlSource(
+                    type="url",
+                    value="https://example.com/photo.jpg",
+                ),
+                metadata={"provider_hint": "vision"},
+            ),
+            BinaryInputContent(
+                type="binary",
+                mime_type="image/png",
+                url="https://example.com/legacy.png",
+                metadata={"legacy": True},
+            ),
+        ]
+
+        lc_content = convert_agui_multimodal_to_langchain(content_list)
+
+        # No block leaks a top-level "metadata" key into the model payload.
+        for block in lc_content:
+            self.assertNotIn("metadata", block)
+
+        # Blocks remain spec-compliant and otherwise unchanged.
+        self.assertEqual(lc_content[0], {"type": "text", "text": "Describe this image"})
+        self.assertEqual(
+            lc_content[1],
+            {"type": "image_url", "image_url": {"url": "https://example.com/photo.jpg"}},
+        )
+        self.assertEqual(
+            lc_content[2],
+            {"type": "image_url", "image_url": {"url": "https://example.com/legacy.png"}},
+        )
+
     # ── AudioInputContent ───────────────────────────────────────────────
 
     def test_agui_audio_url_source_to_langchain(self):

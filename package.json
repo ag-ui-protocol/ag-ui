@@ -42,11 +42,14 @@
   "pnpm": {
     "overrides": {
       "langium": "3.2.0",
+      "@copilotkit/runtime>@ag-ui/a2ui-middleware": "0.0.8",
       "@copilotkit/runtime>@langchain/core": "0.3.80",
+      "@langchain/openai>@langchain/core": "0.3.80",
       "zod": "3.25.76",
       "@strands-agents/sdk>zod": "^4.4.3",
       "@ag-ui/aws-strands>zod": "^4.4.3",
-      "@ag-ui/aws-strands-examples>zod": "^4.4.3"
+      "@ag-ui/aws-strands-examples>zod": "^4.4.3",
+      "hono": "4.12.27"
     }
   }
 }

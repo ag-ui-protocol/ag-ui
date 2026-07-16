@@ -93,6 +93,22 @@ class StrandsAgentConfig:
     tool_behaviors: Dict[str, ToolBehavior] = field(default_factory=dict)
     state_context_builder: Optional[StateContextBuilder] = None
     session_manager_provider: Optional[SessionManagerProvider] = None
+    """Optional factory for creating per-thread SessionManager instances.
+
+    Called exactly once per thread_id the first time that thread is seen.
+    Subsequent requests on the same thread reuse the cached agent (and its
+    SessionManager). If the provider depends on per-request data (e.g. auth
+    tokens in ``forwarded_props``), be aware that only the first request's
+    data is used to initialise the session manager.
+
+    If the provider raises an exception the run yields a ``RUN_ERROR`` event
+    and returns early; the thread is NOT cached so the provider will be
+    retried on the next request.
+
+    If the provider returns ``None`` a warning is logged and the agent runs
+    without session persistence; the thread IS cached in this state, so the
+    provider will not be called again for the same thread.
+    """
     emit_messages_snapshot: bool = True
     """Emit ``MessagesSnapshotEvent`` at lifecycle boundaries (after the
     initial state snapshot, after each ``TOOL_CALL_END`` /
@@ -113,21 +129,23 @@ class StrandsAgentConfig:
     the frontend produced. Disable only if you manage Strands history
     yourself (e.g. via a custom ``session_manager``).
     """
-    """Optional factory for creating per-thread SessionManager instances.
+    a2ui: Optional[Dict[str, Any]] = None
+    """A2UI auto-injection config — everything A2UI-related in one
+    place. When the CopilotKit runtime forwards ``injectA2UITool`` (or
+    ``a2ui["inject_a2ui_tool"]`` opts in on a host that doesn't), the adapter
+    injects a ``generate_a2ui`` recovery tool and infers the model from the
+    wrapped agent — no manual ``get_a2ui_tools()`` needed. Keys:
 
-    Called exactly once per thread_id the first time that thread is seen.
-    Subsequent requests on the same thread reuse the cached agent (and its
-    SessionManager). If the provider depends on per-request data (e.g. auth
-    tokens in ``forwarded_props``), be aware that only the first request's
-    data is used to initialise the session manager.
-
-    If the provider raises an exception the run yields a ``RUN_ERROR`` event
-    and returns early; the thread is NOT cached so the provider will be
-    retried on the next request.
-
-    If the provider returns ``None`` a warning is logged and the agent runs
-    without session persistence; the thread IS cached in this state, so the
-    provider will not be called again for the same thread.
+    - ``inject_a2ui_tool`` — opt in without the runtime flag; a string also
+      names the injected render tool to drop.
+    - ``default_catalog_id`` — catalog id stamped into auto-injected surfaces
+      (must match the host renderer's catalog).
+    - ``guidelines`` — ``{"composition_guide": ...}`` teaches the sub-agent the
+      catalog's components; required for a real model to compose them.
+    - ``catalog`` — inline catalog for catalog-aware (semantic) recovery.
+    - ``recovery`` — recovery loop config. NOTE: keys are camelCase per the
+      shared toolkit contract — e.g. ``{"maxAttempts": 5}`` (a snake_case
+      ``max_attempts`` is silently ignored).
     """
 
 

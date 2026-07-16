@@ -45,6 +45,11 @@ import {
   type ToolResultContext,
 } from "./config";
 import { syncProxyTools } from "./client-proxy-tool";
+import {
+  planA2UIInjection,
+  isAutoInjectedA2UITool,
+  A2UI_STREAM_KEY,
+} from "./a2ui-tool";
 import { convertAguiContentToStrands, flattenContentToText } from "./utils";
 import type { SeenToolCall } from "./types";
 import { DEFAULT_LOGGER, resolveLogger, type Logger } from "./logger";
@@ -165,12 +170,19 @@ function _coerceText(content: unknown): string {
  * JSON object/array, emit it as `{ json: parsed }` so the LLM sees a real
  * structured result. Fall back to `{ text: ... }` for everything else.
  */
-function _buildToolResultContent(
+export function _buildToolResultContent(
   content: unknown,
 ): { text: string } | { json: unknown } {
   const text = _coerceText(content);
   const trimmed = text.trim();
-  if (trimmed.length === 0) return { text };
+  // Render-only frontend tools (e.g. CopilotKit `useComponent`) legitimately
+  // produce an empty client tool result. Forwarding an empty `text` block to
+  // the Strands model reaches OpenAI, which rejects tool messages with empty
+  // content (HTTP 400). Synthesize a non-empty acknowledgement instead — this
+  // matches the Python adapter's behavior. The UI-bound TOOL_CALL_RESULT event
+  // is emitted on a separate path and stays faithfully empty.
+  if (trimmed.length === 0)
+    return { text: "Tool executed successfully with no return value." };
   const first = trimmed[0];
   if (first !== "{" && first !== "[") return { text };
   try {
@@ -212,6 +224,30 @@ function _resolveToolUseId(
   }
   if (isFrontendTool) return uuid();
   return strandsToolId || uuid();
+}
+
+/**
+ * Emit a TOOL_CALL_END for every tracked tool call that started but never
+ * ended, so the stream is left with no active tool calls.
+ *
+ * Parallel tool fan-out (e.g. gpt-4o chaining weather + flights + dice in one
+ * turn) can leave sibling calls mid-flight: when a `stopStreamingAfterResult`
+ * tool returns first it halts the stream before the other calls reach their
+ * `contentBlockStop`/TOOL_CALL_END. Without draining them, the terminal
+ * RUN_FINISHED trips the AG-UI client verifier's "tool calls still active"
+ * guard (runtimeErrorCode INCOMPLETE_STREAM). Idempotent: flips `endEmitted`
+ * so a second drain (or a normal-path call after the events already went out)
+ * is a no-op.
+ */
+function* _drainPendingToolCalls(
+  seen: Map<string, SeenToolCall>,
+): Generator<BaseEvent> {
+  for (const [toolCallId, entry] of seen) {
+    if (entry.startEmitted && !entry.endEmitted) {
+      entry.endEmitted = true;
+      yield { type: EventType.TOOL_CALL_END, toolCallId } as BaseEvent;
+    }
+  }
 }
 
 /**
@@ -700,6 +736,59 @@ export class StrandsAgent {
         syncProxyTools(strandsAgent.toolRegistry, [], previous, this._log);
         this._proxyToolNamesByThread.set(threadId, new Set());
       }
+    }
+
+    // A2UI auto-injection. When the runtime forwards
+    // `injectA2UITool` (or the host opts in via config), register a
+    // `generate_a2ui` recovery tool bound to this agent's model and drop the
+    // injected `render_a2ui` proxy so the model calls generate_a2ui directly.
+    // `planA2UIInjection` returns null when injection is off, the model can't be
+    // inferred (orchestrator), or the dev already wired generate_a2ui.
+    // Wrapped so a failure here can NEVER escape after RUN_STARTED with no
+    // terminal RUN_ERROR (this block runs before the main try/catch below).
+    // Auto-injection is best-effort: if it throws, log and run without A2UI
+    // rather than crashing the turn.
+    try {
+      const registry = strandsAgent.toolRegistry;
+      // Auto-inject requires enumerating the registry to (a) remove our OWN
+      // prior-turn tool so the refresh carries THIS turn's messages/state, and
+      // (b) honor USER-PREVAILS (never touch a dev-wired generate_a2ui). Without
+      // `list()` we can do neither safely, so SKIP rather than risk clobbering a
+      // developer's tool. The real @strands-agents/sdk ToolRegistry always
+      // provides list(); this guard is a fail-loud backstop for alternates.
+      if (typeof registry.list !== "function") {
+        const wantsInject =
+          (inputData.forwardedProps as { injectA2UITool?: unknown } | undefined)
+            ?.injectA2UITool ?? this.config.a2ui?.injectA2UITool;
+        if (wantsInject) {
+          this._log.warn(
+            "[@ag-ui/aws-strands] A2UI tool injection requested but toolRegistry.list() " +
+              "is unavailable; skipping auto-injection for this run.",
+          );
+        }
+      } else {
+        for (const t of registry.list()) {
+          if (isAutoInjectedA2UITool(t)) registry.remove(t.name);
+        }
+        const existingToolNames = registry.list().map((t) => t.name);
+        const plan = planA2UIInjection({
+          model: (strandsAgent as { model?: unknown }).model ?? null,
+          input: inputData,
+          existingToolNames,
+          config: this.config.a2ui,
+          log: this._log,
+        });
+        if (plan) {
+          for (const name of plan.dropToolNames) registry.remove(name);
+          registry.add(plan.tool);
+        }
+      }
+    } catch (e) {
+      this._log.warn(
+        `[@ag-ui/aws-strands] A2UI auto-injection failed; running without A2UI for this turn: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
     }
 
     try {
@@ -1708,6 +1797,37 @@ export class StrandsAgent {
                 type: EventType.STATE_SNAPSHOT,
                 snapshot: (data as { state: Record<string, unknown> }).state,
               };
+            } else if (data && typeof data === "object" && A2UI_STREAM_KEY in data) {
+              // A2UI sub-agent streaming: re-emit the generate_a2ui
+              // tool's inner render_a2ui progress as synthetic TOOL_CALL events.
+              // The a2ui middleware's streaming path keys its "building"
+              // skeleton + progressive paint off these — without them the
+              // surface only paints in bulk from the final TOOL_CALL_RESULT.
+              const a2ui = (
+                data as {
+                  [A2UI_STREAM_KEY]: {
+                    kind: "start" | "args" | "end";
+                    toolCallId: string;
+                    toolCallName?: string;
+                    delta?: string;
+                  };
+                }
+              )[A2UI_STREAM_KEY];
+              if (a2ui.kind === "start") {
+                yield {
+                  type: EventType.TOOL_CALL_START,
+                  toolCallId: a2ui.toolCallId,
+                  toolCallName: a2ui.toolCallName ?? "render_a2ui",
+                };
+              } else if (a2ui.kind === "args" && a2ui.delta) {
+                yield {
+                  type: EventType.TOOL_CALL_ARGS,
+                  toolCallId: a2ui.toolCallId,
+                  delta: a2ui.delta,
+                };
+              } else if (a2ui.kind === "end") {
+                yield { type: EventType.TOOL_CALL_END, toolCallId: a2ui.toolCallId };
+              }
             }
             continue;
           }
@@ -1797,6 +1917,13 @@ export class StrandsAgent {
           };
         }
       }
+
+      // Close out any tool calls still in flight before RUN_FINISHED. On the
+      // halt path (stopStreamingAfterResult) the break above exits the loop
+      // with sibling parallel calls that emitted TOOL_CALL_START but never
+      // reached their TOOL_CALL_END; the normal path drains nothing (all ends
+      // already emitted). Either way the verifier must see zero active calls.
+      yield* _drainPendingToolCalls(toolCallsSeen);
 
       // Final state snapshot with `currentState` verbatim. Unlike the initial
       // snapshot this is not filtered — the initial filter exists only to

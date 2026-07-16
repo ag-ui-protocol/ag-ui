@@ -1,0 +1,30 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+namespace AGUI.Abstractions;
+
+/// <summary>
+/// Represents the response to an <see cref="InterruptRequestContent"/>, carrying the
+/// user-provided data back to the agent. The <see cref="Payload"/> shape is determined
+/// by the interrupt reason and matches the contract expected by the original request.
+/// </summary>
+// Keep in sync with sdks/typescript/packages/core/src/types.ts
+public sealed class InterruptResponseContent : Microsoft.Extensions.AI.InputResponseContent
+{
+    /// <summary>
+    /// Initializes a new instance of the <see cref="InterruptResponseContent"/> class.
+    /// </summary>
+    /// <param name="requestId">The unique identifier that correlates this response with its corresponding request.</param>
+    [JsonConstructor]
+    public InterruptResponseContent(string requestId)
+        : base(requestId)
+    {
+    }
+
+    /// <summary>
+    /// Gets or sets the opaque payload associated with the interrupt response.
+    /// </summary>
+    [JsonPropertyName("payload")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public JsonElement? Payload { get; set; }
+}

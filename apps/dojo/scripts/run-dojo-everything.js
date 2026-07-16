@@ -4,11 +4,12 @@ const { execSync } = require("child_process");
 const path = require("path");
 const concurrently = require("concurrently");
 
-// 1.2.1 ships the v3 thread-stream protocol (POST /threads/:tid/commands,
-// /stream/events, etc.) that the AG-UI transformer path depends on.
-// 1.1.13 returned 404 on those routes. Re-evaluate if the schema-extraction
-// regressions that prompted the original 1.1.13 pin resurface.
-const LANGGRAPH_CLI_VERSION = "1.2.1";
+// 1.2.3: the in-memory dev server provisions persistence itself, so graphs no
+// longer need to compile their own checkpointer for threads.getState (1.1.13
+// 500'd with "No checkpointer set" once the compiled MemorySaver was removed).
+// It also ships the v3 thread-stream protocol (POST /threads/:tid/commands,
+// /stream/events) that the AG-UI transformer path depends on.
+const LANGGRAPH_CLI_VERSION = "1.2.3";
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -274,6 +275,15 @@ const ALL_SERVICES = {
       env: { PORT: 8016 },
     },
   ],
+  "ag-ui-dotnet": [
+    {
+      command:
+        'dotnet run --project AGUIDojoServer/AGUIDojoServer.csproj --urls "http://localhost:8023" --no-build',
+      name: "AG-UI .NET SDK",
+      cwd: path.join(gitRoot, "sdks/dotnet/samples/AGUIClientServer"),
+      env: { PORT: 8023 },
+    },
+  ],
   dojo: [
     {
       command: "pnpm run start",
@@ -299,6 +309,7 @@ const ALL_SERVICES = {
         A2A_MIDDLEWARE_ORCHESTRATOR_URL: "http://localhost:8014",
         AGENT_FRAMEWORK_PYTHON_URL: "http://localhost:8015",
         AGENT_FRAMEWORK_DOTNET_URL: "http://localhost:8016",
+        AGUI_DOTNET_URL: "http://localhost:8023",
         AWS_STRANDS_URL: "http://localhost:8017",
         AWS_STRANDS_TYPESCRIPT_URL: "http://localhost:8022",
         CLAUDE_AGENT_SDK_PYTHON_URL: "http://localhost:8019",
@@ -334,6 +345,7 @@ const ALL_SERVICES = {
         A2A_MIDDLEWARE_ORCHESTRATOR_URL: "http://localhost:8014",
         AGENT_FRAMEWORK_PYTHON_URL: "http://localhost:8015",
         AGENT_FRAMEWORK_DOTNET_URL: "http://localhost:8016",
+        AGUI_DOTNET_URL: "http://localhost:8023",
         AWS_STRANDS_URL: "http://localhost:8017",
         AWS_STRANDS_TYPESCRIPT_URL: "http://localhost:8022",
         CLAUDE_AGENT_SDK_PYTHON_URL: "http://localhost:8019",

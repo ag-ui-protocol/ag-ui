@@ -1,12 +1,7 @@
 import { Subject } from "rxjs";
 import { toArray } from "rxjs/operators";
 import { firstValueFrom } from "rxjs";
-import {
-  BaseEvent,
-  EventType,
-  Message,
-  RunAgentInput,
-} from "@ag-ui/core";
+import { BaseEvent, EventType, Message, RunAgentInput } from "@ag-ui/core";
 import { defaultApplyEvents } from "../default";
 import { AbstractAgent } from "@/agent";
 import { AgentStateMutation } from "@/agent/subscriber";
@@ -110,7 +105,10 @@ describe("defaultApplyEvents with activity events", () => {
     expect(updates.length).toBe(3);
     expect(updates[0]?.messages?.[0]?.content).toEqual({ operations: [] });
     expect(updates[1]?.messages?.[0]?.content?.operations).toEqual([firstOperation]);
-    expect(updates[2]?.messages?.[0]?.content?.operations).toEqual([firstOperation, secondOperation]);
+    expect(updates[2]?.messages?.[0]?.content?.operations).toEqual([
+      firstOperation,
+      secondOperation,
+    ]);
   });
 
   it("does not replace existing activity message when replace is false", async () => {
@@ -150,7 +148,12 @@ describe("defaultApplyEvents with activity events", () => {
 
   it("replaces existing activity message when replace is true", async () => {
     const initial = [
-      { id: "activity-1", role: "activity" as const, activityType: "PLAN", content: { tasks: ["initial"] } },
+      {
+        id: "activity-1",
+        role: "activity" as const,
+        activityType: "PLAN",
+        content: { tasks: ["initial"] },
+      },
     ] as Message[];
 
     const updates = await emitAndCollect(initial, (events$) => {
@@ -422,7 +425,12 @@ describe("MESSAGES_SNAPSHOT preserves client-only messages", () => {
         { id: "m1", role: "user", content: "create a dashboard" },
         { id: "asst-1", role: "assistant", content: "I'll create that for you" },
         { id: "tool-stream", role: "tool", content: '{"a2ui": true}' },
-        { id: "act-1", role: "activity", activityType: "A2UI_SURFACE", content: { surface: "dashboard" } },
+        {
+          id: "act-1",
+          role: "activity",
+          activityType: "A2UI_SURFACE",
+          content: { surface: "dashboard" },
+        },
         { id: "asst-2", role: "assistant", content: "Here's your dashboard" },
       ] as Message[],
       [
@@ -433,8 +441,192 @@ describe("MESSAGES_SNAPSHOT preserves client-only messages", () => {
       ],
     );
 
-    expect(msgs.map((m) => m.id)).toEqual([
-      "m1", "asst-1", "act-1", "asst-2", "tool-canon",
-    ]);
+    expect(msgs.map((m) => m.id)).toEqual(["m1", "asst-1", "act-1", "asst-2", "tool-canon"]);
+  });
+});
+
+describe("MESSAGES_SNAPSHOT with snapshot-supplied reasoning", () => {
+  // When the backend includes reasoning in the snapshot (e.g. LangGraph
+  // re-deriving it from checkpointed content blocks), the snapshot is the
+  // source of truth for reasoning: the streamed copy — which carries a
+  // different, locally-generated id — must be replaced, not kept alongside.
+
+  it("replaces streamed reasoning with the snapshot's canonical copy when ids differ", async () => {
+    const msgs = await applySnapshot(
+      [
+        { id: "m1", role: "user", content: "What is the best car to buy?" },
+        { id: "uuid-a", role: "reasoning", content: "The user wants a car recommendation." },
+        { id: "lc-1", role: "assistant", content: "Based on my analysis…" },
+      ] as Message[],
+      [
+        { id: "m1", role: "user", content: "What is the best car to buy?" },
+        { id: "rs-1", role: "reasoning", content: "The user wants a car recommendation." },
+        { id: "resp-1", role: "assistant", content: "Based on my analysis…" },
+      ],
+    );
+
+    expect(msgs.filter((m) => m.role === "reasoning").length).toBe(1);
+    expect(msgs.map((m) => m.id)).toEqual(["m1", "rs-1", "resp-1"]);
+  });
+
+  it("replaces streamed reasoning when the snapshot arrives before the assistant streamed", async () => {
+    const msgs = await applySnapshot(
+      [
+        { id: "m1", role: "user", content: "What is the best car to buy?" },
+        { id: "uuid-a", role: "reasoning", content: "The user wants a car recommendation." },
+      ] as Message[],
+      [
+        { id: "m1", role: "user", content: "What is the best car to buy?" },
+        { id: "rs-1", role: "reasoning", content: "The user wants a car recommendation." },
+        { id: "resp-1", role: "assistant", content: "Based on my analysis…" },
+      ],
+    );
+
+    expect(msgs.filter((m) => m.role === "reasoning").length).toBe(1);
+    expect(msgs.map((m) => m.id)).toEqual(["m1", "rs-1", "resp-1"]);
+  });
+
+  it("converges multi-turn reasoning to one message per turn", async () => {
+    // Models turn 2 of the real flow: turn 1 already converged to canonical
+    // ids via its own end-of-run snapshot; turn 2's streamed reasoning and
+    // assistant still carry locally-generated ids.
+    const msgs = await applySnapshot(
+      [
+        { id: "u1", role: "user", content: "q1" },
+        { id: "rs-1", role: "reasoning", content: "thinking about q1" },
+        { id: "resp-1", role: "assistant", content: "a1" },
+        { id: "u2", role: "user", content: "q2" },
+        { id: "uuid-b", role: "reasoning", content: "thinking about q2" },
+        { id: "lc-2", role: "assistant", content: "a2" },
+      ] as Message[],
+      [
+        { id: "u1", role: "user", content: "q1" },
+        { id: "rs-1", role: "reasoning", content: "thinking about q1" },
+        { id: "resp-1", role: "assistant", content: "a1" },
+        { id: "u2", role: "user", content: "q2" },
+        { id: "rs-2", role: "reasoning", content: "thinking about q2" },
+        { id: "resp-2", role: "assistant", content: "a2" },
+      ],
+    );
+
+    expect(msgs.filter((m) => m.role === "reasoning").length).toBe(2);
+    expect(msgs.map((m) => m.id)).toEqual(["u1", "rs-1", "resp-1", "u2", "rs-2", "resp-2"]);
+  });
+
+  it("still preserves activity messages when the snapshot carries reasoning", async () => {
+    const msgs = await applySnapshot(
+      [
+        { id: "m1", role: "user", content: "hello" },
+        { id: "act-1", role: "activity", activityType: "PLAN", content: { tasks: ["a"] } },
+        { id: "uuid-a", role: "reasoning", content: "thinking" },
+        { id: "lc-1", role: "assistant", content: "hi" },
+      ] as Message[],
+      [
+        { id: "m1", role: "user", content: "hello" },
+        { id: "rs-1", role: "reasoning", content: "thinking" },
+        { id: "resp-1", role: "assistant", content: "hi" },
+      ],
+    );
+
+    expect(msgs.filter((m) => m.role === "activity").length).toBe(1);
+    expect(msgs.filter((m) => m.role === "reasoning").length).toBe(1);
+    expect(msgs.map((m) => m.id)).toEqual(["m1", "act-1", "rs-1", "resp-1"]);
+  });
+
+  it("updates an id-stable reasoning message with the snapshot version", async () => {
+    const msgs = await applySnapshot(
+      [
+        { id: "m1", role: "user", content: "hello" },
+        { id: "r1", role: "reasoning", content: "thinking" },
+        { id: "a1", role: "assistant", content: "hi" },
+      ] as Message[],
+      [
+        { id: "m1", role: "user", content: "hello" },
+        { id: "r1", role: "reasoning", content: "thinking", encryptedValue: "enc-1" } as Message,
+        { id: "a1", role: "assistant", content: "hi" },
+      ],
+    );
+
+    expect(msgs.filter((m) => m.role === "reasoning").length).toBe(1);
+    const reasoning = msgs.find((m) => m.id === "r1")! as { encryptedValue?: string };
+    expect(reasoning.encryptedValue).toBe("enc-1");
+  });
+});
+
+describe("MESSAGES_SNAPSHOT with snapshot-supplied activity", () => {
+  // A snapshot is a snapshot of every message, so once it carries any activity
+  // the backend is declaring the complete activity set: entries it repeats are
+  // replaced and ones it leaves out are dropped. A snapshot that carries no
+  // activity says nothing about it, and the client's activity is preserved —
+  // the same all-or-nothing rule `snapshotHasReasoning` applies to reasoning.
+
+  it("replaces an existing activity message with the snapshot version", async () => {
+    const msgs = await applySnapshot(
+      [
+        { id: "m1", role: "user", content: "hello" },
+        { id: "act-1", role: "activity", activityType: "PLAN", content: { tasks: ["stale"] } },
+        { id: "a1", role: "assistant", content: "hi" },
+      ] as Message[],
+      [
+        { id: "m1", role: "user", content: "hello" },
+        { id: "act-1", role: "activity", activityType: "PLAN", content: { tasks: ["fresh"] } },
+        { id: "a1", role: "assistant", content: "hi" },
+      ] as Message[],
+    );
+
+    expect(msgs.filter((m) => m.role === "activity").length).toBe(1);
+    expect(msgs.map((m) => m.id)).toEqual(["m1", "act-1", "a1"]);
+    const activity = msgs.find((m) => m.id === "act-1")! as { content?: { tasks?: string[] } };
+    expect(activity.content?.tasks).toEqual(["fresh"]);
+  });
+
+  it("appends an activity message the client does not have yet", async () => {
+    const msgs = await applySnapshot(
+      [{ id: "m1", role: "user", content: "hello" }] as Message[],
+      [
+        { id: "m1", role: "user", content: "hello" },
+        { id: "act-1", role: "activity", activityType: "PLAN", content: { tasks: ["fresh"] } },
+      ] as Message[],
+    );
+
+    expect(msgs.map((m) => m.id)).toEqual(["m1", "act-1"]);
+    const activity = msgs.find((m) => m.id === "act-1")! as { content?: { tasks?: string[] } };
+    expect(activity.content?.tasks).toEqual(["fresh"]);
+  });
+
+  it("drops a local activity the snapshot leaves out once the snapshot carries activity", async () => {
+    const msgs = await applySnapshot(
+      [
+        { id: "m1", role: "user", content: "hello" },
+        { id: "act-gone", role: "activity", activityType: "PLAN", content: { tasks: ["gone"] } },
+        { id: "act-1", role: "activity", activityType: "PLAN", content: { tasks: ["stale"] } },
+      ] as Message[],
+      [
+        { id: "m1", role: "user", content: "hello" },
+        { id: "act-1", role: "activity", activityType: "PLAN", content: { tasks: ["fresh"] } },
+      ] as Message[],
+    );
+
+    expect(msgs.map((m) => m.id)).toEqual(["m1", "act-1"]);
+    const activity = msgs.find((m) => m.id === "act-1")! as { content?: { tasks?: string[] } };
+    expect(activity.content?.tasks).toEqual(["fresh"]);
+  });
+
+  it("keeps client activity when the snapshot carries none", async () => {
+    const msgs = await applySnapshot(
+      [
+        { id: "m1", role: "user", content: "hello" },
+        { id: "act-1", role: "activity", activityType: "PLAN", content: { tasks: ["local"] } },
+        { id: "a1", role: "assistant", content: "hi" },
+      ] as Message[],
+      [
+        { id: "m1", role: "user", content: "hello" },
+        { id: "a1", role: "assistant", content: "hi" },
+      ] as Message[],
+    );
+
+    expect(msgs.map((m) => m.id)).toEqual(["m1", "act-1", "a1"]);
+    const activity = msgs.find((m) => m.id === "act-1")! as { content?: { tasks?: string[] } };
+    expect(activity.content?.tasks).toEqual(["local"]);
   });
 });

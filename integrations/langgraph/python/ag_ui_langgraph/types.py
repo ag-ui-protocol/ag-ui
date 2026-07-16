@@ -46,6 +46,10 @@ MessageInProgress = TypedDict("MessageInProgress", {
 RunMetadata = TypedDict("RunMetadata", {
     # Identification
     "id": str,
+    # LangGraph's internal chain run_id, tracked separately so it never
+    # overwrites the client-supplied "id" used for the protocol RUN_STARTED /
+    # RUN_FINISHED events (#1582).
+    "langgraph_run_id": NotRequired[Optional[str]],
     "thread_id": NotRequired[Optional[str]],
     # Run mode/flow
     "mode": NotRequired[Literal["start", "continue"]],
@@ -70,6 +74,17 @@ RunMetadata = TypedDict("RunMetadata", {
     "manually_emitted_state": NotRequired[Optional[State]],
     # Reasoning / thinking
     "reasoning_process": NotRequired[Optional[ThinkingProcess]],
+    # Pinned text message id for the current node. Set on the first
+    # auto-streamed text chunk emitted from a node (from the chunk's id) and
+    # reused for every subsequent TEXT_MESSAGE_START emitted from the same
+    # node, so text resuming after a tool call (or after a fresh model
+    # invocation within the same node) stays in the same UI bubble. Cleared
+    # by handle_node_change on every node transition, so multi-node graphs
+    # (e.g. supervisor routing to specialist agents) preserve separate
+    # bubbles per node. Reset implicitly on the next run when active_run is
+    # replaced. Not used by ManuallyEmitMessage events: those carry their
+    # own message_id and bypass this field entirely.
+    "current_text_message_id": NotRequired[Optional[str]],
 })
 
 MessagesInProgressRecord = Dict[str, Optional[MessageInProgress]]
@@ -111,4 +126,9 @@ LangGraphReasoning = TypedDict("LangGraphReasoning", {
     "text": str,
     "index": int,
     "signature": NotRequired[Optional[str]],
+    # The provider's canonical id for the reasoning item (e.g. OpenAI
+    # ``rs_…``), when the stream carries one. Used as the AG-UI reasoning
+    # message id so the streamed message reconciles with the snapshot copy
+    # emitted by ``_reasoning_block_to_agui_message`` under the same id.
+    "id": NotRequired[Optional[str]],
 })
