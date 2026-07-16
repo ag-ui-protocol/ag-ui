@@ -35,16 +35,20 @@ instead of starting fresh from ``translated.messages``.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from agents import Agent, Runner, function_tool
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 
 from ag_ui.core import CustomEvent, EventType, RunAgentInput
 from ag_ui.encoder import EventEncoder
 from ag_ui_openai_agents import AGUITranslator
+from ag_ui_openai_agents.engine import ClientToolPending
 from .constants import DEFAULT_MODEL
+
+logger = logging.getLogger(__name__)
 
 # Fake order book — good enough to make "approved" visibly do something.
 _ORDERS: dict[str, dict] = {
@@ -85,47 +89,65 @@ _encoder = EventEncoder()
 _pending_approvals: dict[str, object] = {}
 
 
-def _resolve_approval(
-    pending_state: Any,
+def resolve_approval(
+    store: dict[str, Any],
+    thread_id: str,
     forwarded_props: Any,
-) -> tuple[Any, bool | None]:
-    """Validate a decision for the paused run before an SSE response starts."""
+) -> tuple[Any, Any, bool]:
+    """Claim the paused run for this request when a matching decision arrived.
+
+    Pops first: whoever gets here wins, so a double-clicked Approve can't
+    resume the same run twice. Anything other than a decision that matches a
+    pending interruption abandons the paused run and starts a fresh turn —
+    the user moved on, and a thread should never be stuck waiting forever.
+
+    ``approve`` has to be a real bool. Truthiness would read the string
+    "false" as approval and run a refund the user declined, so a malformed
+    decision is treated as no decision at all.
+
+    Args:
+        store: thread_id -> paused RunState.
+        thread_id: The thread this request belongs to.
+        forwarded_props: The request's forwarded_props.
+
+    Returns:
+        (pending_state, item, approve) to resume, or (None, None, False) to
+        run the request fresh.
+    """
+    pending_state = store.pop(thread_id, None)
+    if pending_state is None:
+        return None, None, False
+
     decision = None
     if isinstance(forwarded_props, dict):
         decision = forwarded_props.get("approval")
-
-    if pending_state is None:
-        if decision is not None:
-            raise HTTPException(status_code=409, detail="No approval is pending")
-        return None, None
-
     if not isinstance(decision, dict):
-        raise HTTPException(status_code=409, detail="This thread is waiting for approval")
+        return None, None, False
 
-    call_id = decision.get("call_id")
     approve = decision.get("approve")
-    if not call_id or not isinstance(approve, bool):
-        raise HTTPException(status_code=409, detail="Invalid approval decision")
+    if not isinstance(approve, bool):
+        return None, None, False
 
     item = next(
         (
             item
             for item in pending_state.get_interruptions()
-            if getattr(item.raw_item, "call_id", None) == call_id
+            if getattr(item.raw_item, "call_id", None) == decision.get("call_id")
         ),
         None,
     )
     if item is None:
-        raise HTTPException(status_code=409, detail="Approval call_id does not match")
-    return item, approve
+        return None, None, False
+    return pending_state, item, approve
 
 
 @app.post("/")
 async def run(body: RunAgentInput) -> StreamingResponse:
     """Run or resume the approval-gated agent."""
 
-    pending_state = _pending_approvals.get(body.thread_id)
-    item, approve = _resolve_approval(pending_state, body.forwarded_props)
+    pending_state, item, approve = resolve_approval(
+        _pending_approvals, body.thread_id, body.forwarded_props
+    )
 
     async def stream():
         if item is not None:
@@ -133,7 +155,6 @@ async def run(body: RunAgentInput) -> StreamingResponse:
                 pending_state.approve(item)
             else:
                 pending_state.reject(item)
-            del _pending_approvals[body.thread_id]
             result = Runner.run_streamed(agent, pending_state)
         else:
             translated = _translator.to_openai(body)
@@ -144,9 +165,23 @@ async def run(body: RunAgentInput) -> StreamingResponse:
                 run_agent, input=translated.messages, context=translated.context
             )
 
-        raw_events = [event async for event in result.stream_events()]
+        # Collect as we go rather than in one comprehension: whatever streamed
+        # before a mid-drain stop still has to reach the client. A client-owned
+        # tool ends the run cleanly here; a real failure is kept and re-raised
+        # from replay() below, so to_agui sees it and handles it the same way
+        # it would on any other route.
+        raw_events = []
+        stream_error = None
+        try:
+            async for event in result.stream_events():
+                raw_events.append(event)
+        except ClientToolPending:
+            pass
+        except Exception as exc:
+            stream_error = exc
+
         end_custom_event = None
-        if result.interruptions:
+        if stream_error is None and result.interruptions:
             _pending_approvals[body.thread_id] = result.to_state()
             end_custom_event = CustomEvent(
                 type=EventType.CUSTOM,
@@ -164,10 +199,17 @@ async def run(body: RunAgentInput) -> StreamingResponse:
         async def replay():
             for event in raw_events:
                 yield event
+            if stream_error is not None:
+                raise stream_error
 
-        async for event in _translator.to_agui(
-            replay(), body, end_custom_event=end_custom_event
-        ):
-            yield _encoder.encode(event)
+        try:
+            async for event in _translator.to_agui(
+                replay(), body, end_custom_event=end_custom_event
+            ):
+                yield _encoder.encode(event)
+        except Exception:
+            # to_agui already sent RUN_ERROR before re-raising; log the real
+            # traceback here rather than let it escape the response.
+            logger.exception("Agent run failed")
 
     return StreamingResponse(stream(), media_type=_encoder.get_content_type())

@@ -10,6 +10,7 @@ EXAMPLES = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(EXAMPLES))
 
 from agents_examples import ag_ui_docs_copilot  # noqa: E402
+from agents_examples.docs_search import MarkdownSearchIndex  # noqa: E402
 
 
 def test_docs_copilot_loads_the_integration_readme() -> None:
@@ -33,6 +34,41 @@ def test_docs_copilot_has_a_documentation_specialist_tool() -> None:
         ag_ui_docs_copilot.ag_ui_protocol_docs_agent.name
         == "AG-UI Protocol Python Specialist"
     )
+    assert {
+        tool.name for tool in ag_ui_docs_copilot.ag_ui_openai_agents_docs_agent.tools
+    } == {"search_ag_ui_openai_agents_docs"}
+    assert {tool.name for tool in ag_ui_docs_copilot.ag_ui_protocol_docs_agent.tools} == {
+        "search_ag_ui_protocol_docs"
+    }
+
+
+def test_docs_copilot_retrieves_only_relevant_readme_sections() -> None:
+    excerpts = ag_ui_docs_copilot._AG_UI_OPENAI_AGENTS_DOCS_INDEX.search(
+        "How do I stream AGUITranslator events from a FastAPI endpoint?"
+    )
+
+    assert "Runner.run_streamed" in excerpts
+    assert len(excerpts) < len(ag_ui_docs_copilot.AG_UI_OPENAI_AGENTS_DOCS)
+    assert ag_ui_docs_copilot.AG_UI_OPENAI_AGENTS_DOCS not in (
+        ag_ui_docs_copilot.AG_UI_OPENAI_AGENTS_DOCS_INSTRUCTIONS
+    )
+    assert ag_ui_docs_copilot.AG_UI_PROTOCOL_DOCS not in (
+        ag_ui_docs_copilot.AG_UI_PROTOCOL_DOCS_INSTRUCTIONS
+    )
+
+    approval_excerpts = ag_ui_docs_copilot._AG_UI_OPENAI_AGENTS_DOCS_INDEX.search(
+        "How do I resume an interrupted run after approval?"
+    )
+    assert "## Backend tool approval (`needs_approval`)" in approval_excerpts
+
+
+def test_markdown_search_handles_empty_documents() -> None:
+    for document in ("", "  \n\t"):
+        index = MarkdownSearchIndex(document)
+        assert (
+            index.search("AGUITranslator")
+            == "No relevant section was found in this documentation source."
+        )
 
 
 def test_docs_copilot_keeps_the_direct_translator_flow_visible() -> None:

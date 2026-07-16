@@ -9,7 +9,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from fastapi import HTTPException
 
 EXAMPLES = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(EXAMPLES))
@@ -57,45 +56,88 @@ def _run_input(forwarded_props: Any = None) -> RunAgentInput:
         ),
     ],
 )
-def test_invalid_approval_keeps_the_pending_run(
+def test_a_request_without_a_valid_decision_starts_a_fresh_run(
     forwarded_props: Any,
     endpoint: Any,
     store: dict[str, object],
 ) -> None:
-    state = _PendingState()
+    # Both servers answer normally instead of refusing the request: a user who
+    # types something else instead of deciding abandons the paused run, and a
+    # thread that lost its approval card can still be talked to.
     store.clear()
-    store["thread_1"] = state
+    store["thread_1"] = _PendingState()
 
     try:
-        with pytest.raises(HTTPException) as exc_info:
-            asyncio.run(endpoint(_run_input(forwarded_props)))
+        response = asyncio.run(endpoint(_run_input(forwarded_props)))
 
-        assert exc_info.value.status_code == 409
-        assert store["thread_1"] is state
+        assert response.status_code == 200
+        assert store == {}
     finally:
         store.clear()
 
 
-def test_valid_approval_resolves_the_matching_item() -> None:
-    state = _PendingState()
+def test_approval_stream_error_keeps_what_already_streamed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The hand-drain is the only place an SDK failure can land outside
+    # to_agui's wrapper. Re-raising it from the replay puts it back inside, so
+    # the client still gets the events that made it out before the failure —
+    # and one RUN_ERROR, built by the translator like on every other route.
+    boom = RuntimeError("provider exploded")
 
-    item, approve = human_in_the_loop_approval._resolve_approval(
-        state,
-        {"approval": {"call_id": "call_1", "approve": True}},
+    async def stream_events():
+        yield "event_1"
+        raise boom
+
+    result = SimpleNamespace(
+        stream_events=stream_events,
+        interruptions=[],
+        to_state=lambda: None,
+    )
+    monkeypatch.setattr(
+        translator_server.Runner, "run_streamed", lambda *a, **k: result
     )
 
-    assert item is state.item
-    assert approve is True
+    seen: dict[str, Any] = {}
 
+    async def to_agui(events: Any, body: Any, **kwargs: Any):
+        seen["replayed"] = [event async for event in _drain(events, seen)]
+        yield SimpleNamespace(type="RUN_ERROR")
 
-def test_approval_without_a_pending_run_is_rejected() -> None:
-    with pytest.raises(HTTPException) as exc_info:
-        human_in_the_loop_approval._resolve_approval(
-            None,
-            {"approval": {"call_id": "call_1", "approve": True}},
-        )
+    async def _drain(events: Any, sink: dict[str, Any]):
+        try:
+            async for event in events:
+                yield event
+        except RuntimeError as exc:
+            sink["raised"] = exc
 
-    assert exc_info.value.status_code == 409
+    monkeypatch.setattr(
+        translator_server,
+        "translator",
+        SimpleNamespace(
+            to_openai=lambda run_input: SimpleNamespace(
+                messages=[], tools=[], context=[]
+            ),
+            to_agui=to_agui,
+        ),
+    )
+
+    async def collect() -> list[Any]:
+        return [
+            chunk
+            async for chunk in translator_server._stream_approval(
+                SimpleNamespace(agent=SimpleNamespace(tools=[])),
+                _run_input(),
+                None,
+                None,
+                False,
+            )
+        ]
+
+    asyncio.run(collect())
+
+    assert seen["replayed"] == ["event_1"], "partial output must survive the failure"
+    assert seen["raised"] is boom, "the error must reach to_agui, not be swallowed"
 
 
 def test_direct_server_forwards_context_to_the_sdk(monkeypatch: pytest.MonkeyPatch) -> None:

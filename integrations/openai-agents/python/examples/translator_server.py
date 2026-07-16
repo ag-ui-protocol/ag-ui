@@ -70,8 +70,9 @@ from fastapi.responses import StreamingResponse
 from ag_ui.core import CustomEvent, EventType, RunAgentInput
 from ag_ui.encoder import EventEncoder
 from ag_ui_openai_agents import AGUITranslator
+from ag_ui_openai_agents.engine import ClientToolPending
 from agents_examples import DemoConfig, build_registry
-from agents_examples.human_in_the_loop_approval import _resolve_approval
+from agents_examples.human_in_the_loop_approval import resolve_approval
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -120,8 +121,9 @@ async def run(agent_name: str, body: RunAgentInput) -> StreamingResponse:
         body.run_id,
     )
     if agent_name == "human_in_the_loop_approval":
-        pending_state = _PENDING_APPROVALS.get(body.thread_id)
-        item, approve = _resolve_approval(pending_state, body.forwarded_props)
+        pending_state, item, approve = resolve_approval(
+            _PENDING_APPROVALS, body.thread_id, body.forwarded_props
+        )
         return StreamingResponse(
             _stream_approval(demo, body, pending_state, item, approve),
             media_type=encoder.get_content_type(),
@@ -134,7 +136,7 @@ async def _stream_approval(
     body: RunAgentInput,
     pending_state: Any,
     item: Any,
-    approve: bool | None,
+    approve: bool,
 ):
     """Same shape as _stream, plus resuming from result.interruptions.
 
@@ -149,7 +151,6 @@ async def _stream_approval(
             pending_state.approve(item)
         else:
             pending_state.reject(item)
-        del _PENDING_APPROVALS[body.thread_id]
         result = Runner.run_streamed(agent, pending_state)
     else:
         translated = translator.to_openai(body)
@@ -168,14 +169,23 @@ async def _stream_approval(
     # straight to to_agui: end_custom_event has to already exist by the
     # time we call it, and interruptions aren't known until the drain
     # finishes.
+    # Collect as we go rather than in one comprehension: whatever streamed
+    # before a mid-drain stop still has to reach the client. A client-owned tool
+    # ends the run cleanly here; a real failure is kept and re-raised from
+    # _replay() below, so to_agui sees it and handles it the same way it would
+    # on any other route.
+    raw_events = []
+    stream_error = None
     try:
-        raw_events = [event async for event in result.stream_events()]
-    except Exception:
-        logger.exception("Agent run failed")
-        return
+        async for event in result.stream_events():
+            raw_events.append(event)
+    except ClientToolPending:
+        pass
+    except Exception as exc:
+        stream_error = exc
 
     end_custom_event = None
-    if result.interruptions:
+    if stream_error is None and result.interruptions:
         _PENDING_APPROVALS[body.thread_id] = result.to_state()
         end_custom_event = CustomEvent(
             type=EventType.CUSTOM,
@@ -193,6 +203,8 @@ async def _stream_approval(
     async def _replay():
         for event in raw_events:
             yield event
+        if stream_error is not None:
+            raise stream_error
 
     try:
         async for ag_event in translator.to_agui(

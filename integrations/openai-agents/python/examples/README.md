@@ -71,11 +71,12 @@ lists every registered agent. Demos map 1:1 onto the AG-UI Dojo feature pages.
 
 The main Copilot handles normal conversation without carrying the documentation
 in its instructions. Documentation and code questions are delegated to an
-`AG-UI OpenAI Agents Specialist` and `AG-UI Protocol Python Specialist`, which
-receive the integration and core SDK README files through the SDK's
-`Agent.as_tool()` API. Its endpoint keeps the direct `to_openai` →
-`Runner.run_streamed` → `to_agui` flow visible and adds no retrieval framework,
-vector database, or network dependency.
+`AG-UI OpenAI Agents Specialist` and `AG-UI Protocol Python Specialist` through
+the SDK's `Agent.as_tool()` API. Each specialist searches a local Markdown
+index first, so only the highest-ranked README sections enter the model context
+instead of the complete documentation. The retrieval is deterministic and adds
+no vector database, embedding request, or network dependency. The endpoint
+keeps the direct `to_openai` → `Runner.run_streamed` → `to_agui` flow visible.
 
 **Try:** `"Explain how to connect my existing OpenAI Agents SDK agent to AG-UI,
 then ask the Documentation Specialist for the smallest FastAPI streaming
@@ -144,9 +145,23 @@ through the shared loop:
    drops anything that arrives once a run is marked finished).
 2. The client's decision comes back on the _next_ request as
    `RunAgentInput.forwarded_props["approval"]` (`{"call_id", "approve"}`).
-   The server looks up the stored state, calls `state.approve()` /
+   `resolve_approval()` claims the stored state, calls `state.approve()` /
    `state.reject()`, and resumes with `Runner.run_streamed(agent, state)`
    instead of starting over from `translated.messages`.
+
+`resolve_approval()` takes the paused run out of the store before deciding
+anything, so a double-clicked Approve can't resume the same run twice — the
+second request finds nothing to claim. A request that _isn't_ a matching
+decision (a plain message, a stale `call_id`, an `approve` that isn't a real
+bool — `"false"` is a truthy string) abandons the paused run and answers
+normally rather than refusing: the user moved on, and a thread whose approval
+card got lost on a page refresh should still be usable.
+
+Both servers drain the SDK stream by hand here, which puts that part outside
+`to_agui`'s error handling. A failure mid-drain is kept and re-raised from the
+replay instead of reported on the spot, so it lands back inside `to_agui` and
+the route behaves like every other one: whatever already streamed still
+reaches the client, open sequences close, and `RUN_ERROR` goes out last.
 
 **Try:** `"I'd like a refund for ORD-1001."` — requires a client that renders
 `approval_request` custom events and sends the decision back via
