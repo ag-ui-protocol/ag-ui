@@ -158,3 +158,39 @@ class TestSequentialToolCallsHaveDistinctMessageIds:
                 f"tool_call {tc_id}: wire parent_message_id={parent_id} "
                 f"!= snapshot assistant id={snap_pairs[tc_id]}"
             )
+
+
+async def test_frontend_tool_keeps_strands_id_on_wire_and_in_snapshot():
+    """Frontend calls must preserve the provider id across persistence."""
+    thread_id = "frontend-stable-id"
+    stream = [
+        {
+            "current_tool_use": {
+                "name": "frontend_tool",
+                "toolUseId": "st-frontend",
+                "input": {},
+            }
+        },
+        {"event": {"contentBlockStop": {}}},
+    ]
+    agent = _build_agent(thread_id, stream)
+    inp = RunAgentInput(
+        thread_id=thread_id,
+        run_id="r1",
+        state={},
+        messages=[UserMessage(id="u1", content="run the frontend tool")],
+        tools=[Tool(name="frontend_tool", description="f", parameters={})],
+        context=[],
+        forwarded_props={},
+    )
+    events = await _collect(agent, inp)
+
+    start = next(e for e in events if e.type == EventType.TOOL_CALL_START)
+    assert start.tool_call_id == "st-frontend"
+
+    snapshots = [e for e in events if e.type == EventType.MESSAGES_SNAPSHOT]
+    final = snapshots[-1].messages
+    assistant = next(
+        m for m in final if isinstance(m, AssistantMessage) and m.tool_calls
+    )
+    assert assistant.tool_calls[0].id == "st-frontend"
