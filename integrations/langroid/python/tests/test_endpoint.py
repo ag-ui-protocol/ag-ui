@@ -47,6 +47,40 @@ class TestCreateLangroidApp(unittest.TestCase):
         response = client.get("/chat/health")
         self.assertEqual(response.status_code, 200)
 
+    def test_cors_preflight_returns_literal_wildcard_not_reflected_origin(self):
+        # Regression for #1940: a wildcard origin must not be reflected.
+        mock_agent = MagicMock()
+        agent = LangroidAgent(agent=mock_agent, name="test", description="")
+        client = TestClient(create_langroid_app(agent))
+
+        response = client.options(
+            "/",
+            headers={
+                "Origin": "https://evil.example.com",
+                "Access-Control-Request-Method": "POST",
+            },
+        )
+        allow_origin = response.headers.get("access-control-allow-origin")
+        self.assertEqual(allow_origin, "*")
+        self.assertNotEqual(allow_origin, "https://evil.example.com")
+
+    def test_cors_credentials_not_allowed_with_wildcard_origin(self):
+        # Regression for #1940: no credentialed any-origin posture.
+        mock_agent = MagicMock()
+        agent = LangroidAgent(agent=mock_agent, name="test", description="")
+        client = TestClient(create_langroid_app(agent))
+
+        response = client.options(
+            "/",
+            headers={
+                "Origin": "https://evil.example.com",
+                "Access-Control-Request-Method": "POST",
+            },
+        )
+        self.assertNotEqual(
+            response.headers.get("access-control-allow-credentials"), "true"
+        )
+
 
 class TestAddLangroidFastapiEndpoint(unittest.TestCase):
     """Test add_langroid_fastapi_endpoint function."""
