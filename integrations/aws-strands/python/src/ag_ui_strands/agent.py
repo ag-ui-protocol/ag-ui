@@ -287,6 +287,105 @@ def _build_strands_history(input_messages: List[Any]) -> List[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# Interrupt bookkeeping persistence
+# ---------------------------------------------------------------------------
+#
+# ``_pending_interrupts_by_thread`` and ``_last_resume_fingerprint`` are the
+# adapter's own bookkeeping (idempotency fingerprint + AG-UI-specific
+# interrupt metadata like responseSchema/expiresAt) layered on top of
+# Strands' native ``_interrupt_state``. Strands' own SessionManager already
+# persists/restores ``_interrupt_state`` (and, on a fresh process, the
+# per-thread agent + session are reconstructed before this bookkeeping is
+# consulted — see the resume-validation gate in ``run()``), but this
+# adapter-only bookkeeping lived purely in a Python dict on the
+# ``StrandsAgent`` instance, so a process restart lost it: rules 6/7
+# (payload-schema validation, expiresAt enforcement) would silently degrade,
+# and a replayed resume request would no longer be recognized as a duplicate
+# and could re-invoke the model/tool.
+#
+# To survive a restart, this bookkeeping is now mirrored into
+# ``strands_agent.state`` under a single namespaced key — the same
+# per-thread, SessionManager-persisted key-value store the adapter already
+# uses for ``agui_context``. On every read, if nothing is cached in-process
+# for this thread_id, fall back to what's persisted in state.
+
+_INTERRUPT_BOOKKEEPING_STATE_KEY = "ag_ui_interrupt_bookkeeping"
+
+
+def _load_persisted_interrupt_bookkeeping(
+    strands_agent: Any,
+) -> tuple[Dict[str, Interrupt] | None, str | None]:
+    """Read the persisted (fingerprint, pending-interrupts) pair from
+    ``strands_agent.state``, if present and well-formed.
+
+    Defensive by design: a test double (e.g. a bare ``MagicMock()`` standing
+    in for the Strands agent) will happily return another mock from
+    ``state.get(...)`` rather than ``None``, so every layer of the expected
+    shape is checked explicitly before trusting it. Anything that doesn't
+    match is treated as "nothing persisted" rather than raised.
+    """
+    try:
+        state = getattr(strands_agent, "state", None)
+        get = getattr(state, "get", None)
+        if not callable(get):
+            return None, None
+        raw = get(_INTERRUPT_BOOKKEEPING_STATE_KEY)
+    except Exception:  # noqa: BLE001 — never let bookkeeping restore crash a run
+        return None, None
+
+    if not isinstance(raw, dict):
+        return None, None
+
+    fingerprint = raw.get("last_resume_fingerprint")
+    if fingerprint is not None and not isinstance(fingerprint, str):
+        fingerprint = None
+
+    pending_raw = raw.get("pending_interrupts")
+    pending: Dict[str, Interrupt] | None = None
+    if isinstance(pending_raw, dict):
+        pending = {}
+        for interrupt_id, data in pending_raw.items():
+            if not isinstance(interrupt_id, str) or not isinstance(data, dict):
+                continue
+            try:
+                pending[interrupt_id] = Interrupt.model_validate(data)
+            except Exception:  # noqa: BLE001 — skip malformed entries, don't crash
+                continue
+
+    return pending, fingerprint
+
+
+def _persist_interrupt_bookkeeping(
+    strands_agent: Any,
+    pending: Dict[str, Interrupt] | None,
+    fingerprint: str | None,
+) -> None:
+    """Write the (fingerprint, pending-interrupts) pair to
+    ``strands_agent.state`` so it survives a process restart via whatever
+    SessionManager is wired up. Best-effort: a test double without a real
+    ``state.set(...)`` (or one that isn't JSON-serializable-friendly) must
+    never break the run over bookkeeping that's a durability nice-to-have,
+    not a correctness requirement for the current process.
+    """
+    try:
+        state = getattr(strands_agent, "state", None)
+        set_fn = getattr(state, "set", None)
+        if not callable(set_fn):
+            return
+        payload = {
+            "last_resume_fingerprint": fingerprint,
+            "pending_interrupts": (
+                {i_id: i.model_dump(mode="json") for i_id, i in pending.items()}
+                if pending
+                else {}
+            ),
+        }
+        set_fn(_INTERRUPT_BOOKKEEPING_STATE_KEY, payload)
+    except Exception as e:  # noqa: BLE001 — persistence is best-effort
+        logger.warning(f"Failed to persist interrupt bookkeeping to strands_agent.state: {e}")
+
+
+# ---------------------------------------------------------------------------
 # Strands-native interrupt hook
 # ---------------------------------------------------------------------------
 
@@ -668,6 +767,18 @@ class StrandsAgent:
                 return
 
         if resume_entries:
+            # Cold-restart fallback: if this process has nothing cached in
+            # memory for this thread_id, check whether the fingerprint/
+            # pending-interrupt bookkeeping was persisted to
+            # strands_agent.state by a prior process (see
+            # ``_load_persisted_interrupt_bookkeeping`` docstring above).
+            if thread_id not in self._pending_interrupts_by_thread and thread_id not in self._last_resume_fingerprint:
+                persisted_pending, persisted_fingerprint = _load_persisted_interrupt_bookkeeping(strands_agent)
+                if persisted_pending is not None:
+                    self._pending_interrupts_by_thread[thread_id] = persisted_pending
+                if persisted_fingerprint is not None:
+                    self._last_resume_fingerprint[thread_id] = persisted_fingerprint
+
             interrupt_state = getattr(strands_agent, "_interrupt_state", None)
             is_activated = interrupt_state is not None and getattr(interrupt_state, "activated", False) is True
 
@@ -860,6 +971,7 @@ class StrandsAgent:
             _resume_prompt: list | None = interrupt_responses
             # Fingerprint is stored after successful processing (below).
             self._pending_interrupts_by_thread.pop(thread_id, None)
+            _persist_interrupt_bookkeeping(strands_agent, None, None)
 
         # ── Start run ─────────────────────────────────────────────────────
         # Start run
@@ -1318,6 +1430,11 @@ class StrandsAgent:
                                     i.id: i for i in ag_ui_interrupts
                                 }
                                 self._last_resume_fingerprint.pop(input_data.thread_id, None)
+                                _persist_interrupt_bookkeeping(
+                                    strands_agent,
+                                    self._pending_interrupts_by_thread[input_data.thread_id],
+                                    None,
+                                )
                                 logger.debug(
                                     f"Strands interrupt detected: thread_id={input_data.thread_id}, "
                                     f"interrupt_ids={[i.id for i in ag_ui_interrupts]}"
@@ -2263,6 +2380,7 @@ class StrandsAgent:
                         usedforsecurity=False,
                     ).hexdigest()
                     self._last_resume_fingerprint[thread_id] = fp
+                    _persist_interrupt_bookkeeping(strands_agent, None, fp)
                 yield RunFinishedEvent(
                     type=EventType.RUN_FINISHED,
                     thread_id=input_data.thread_id,

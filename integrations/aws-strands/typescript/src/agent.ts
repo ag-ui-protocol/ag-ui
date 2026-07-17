@@ -28,6 +28,7 @@ import {
   type AssistantMessage as AguiAssistantMessage,
   type BaseEvent,
   type Interrupt as AguiInterrupt,
+  InterruptSchema as AguiInterruptSchema,
   type Message as AguiMessage,
   type ResumeEntry,
   type RunAgentInput,
@@ -681,20 +682,20 @@ export class StrandsAgent {
           inputData.resume!.map((e) => [e.interruptId, e.status, _sortKeys(e.payload)]),
         ))
         .digest("hex");
-      if (this._lastResumeFingerprint.get(threadId) === fingerprint) {
-        yield _runStarted(inputData);
-        yield { type: EventType.RUN_FINISHED, threadId: inputData.threadId, runId: inputData.runId, outcome: { type: "success" } };
-        return;
-      }
 
-      // Cold start with a session provider: the in-memory pending map is
-      // empty because the per-thread agent (and its SessionManager-restored
-      // native _interruptState) hasn't been constructed in this process
-      // yet. Restore it now — before deciding whether to skip validation —
-      // so an unknown/partial resume can't slip through solely because
-      // nothing has run on this process since the interrupt was raised.
+      // Cold-restart fallback: if this process has nothing cached in memory
+      // for this threadId, restore the per-thread agent first (so a
+      // SessionManager-backed appState can be read), then check whether the
+      // fingerprint/pending-interrupt bookkeeping was persisted there by a
+      // prior process (see loadPersistedInterruptBookkeeping doc above).
+      // Also covers cold-restart resume validation (comment 1): the agent
+      // must be restored before deciding whether to skip validation.
       let nativePendingIds: Set<string> | undefined;
-      if (!pending && this.config.sessionManagerProvider) {
+      if (
+        !pending &&
+        !this._lastResumeFingerprint.has(threadId) &&
+        this.config.sessionManagerProvider
+      ) {
         const restored = await this._ensureAgent(inputData, threadId);
         if ("error" in restored) {
           yield _runStarted(inputData);
@@ -707,9 +708,23 @@ export class StrandsAgent {
         if (interruptState?.activated && interruptState.interrupts) {
           nativePendingIds = new Set(interruptState.interrupts.keys());
         }
+        const { pending: persistedPending, fingerprint: persistedFingerprint } =
+          loadPersistedInterruptBookkeeping(restored.agent);
+        if (persistedPending) {
+          this._pendingInterruptsByThread.set(threadId, persistedPending);
+        }
+        if (persistedFingerprint) {
+          this._lastResumeFingerprint.set(threadId, persistedFingerprint);
+        }
         // Re-check the AG-UI-side map too: _ensureAgent may have raced with
         // another call that populated it while we awaited.
         pending = this._pendingInterruptsByThread.get(threadId);
+      }
+
+      if (this._lastResumeFingerprint.get(threadId) === fingerprint) {
+        yield _runStarted(inputData);
+        yield { type: EventType.RUN_FINISHED, threadId: inputData.threadId, runId: inputData.runId, outcome: { type: "success" } };
+        return;
       }
 
       if (!pending && !nativePendingIds) {
@@ -722,10 +737,10 @@ export class StrandsAgent {
       }
 
       if (!pending && nativePendingIds) {
-        // Best-effort validation against the restored native interrupt
-        // IDs only (rules 2/3). The full AG-UI interrupt metadata needed
-        // for rules 6/7 — responseSchema, expiresAt — is adapter-memory
-        // only and was lost on restart; it cannot be recovered here.
+        // Best-effort validation against the restored native interrupt IDs
+        // only (rules 2/3) — used when persisted AG-UI bookkeeping wasn't
+        // available (e.g. no sessionManagerProvider configured) but
+        // Strands' own native interrupt state was still restored.
         const unknown = inputData
           .resume!.map((entry) => entry.interruptId)
           .filter((id) => !nativePendingIds!.has(id));
@@ -865,6 +880,10 @@ export class StrandsAgent {
     }
     if (!hadError && fingerprint) {
       this._lastResumeFingerprint.set(threadId, fingerprint);
+      const strandsAgent = this._agentsByThread.get(threadId);
+      if (strandsAgent) {
+        persistInterruptBookkeeping(strandsAgent, null, fingerprint, this._log);
+      }
     }
   }
 
@@ -1226,6 +1245,7 @@ export class StrandsAgent {
             }),
         );
         this._pendingInterruptsByThread.delete(threadId);
+        persistInterruptBookkeeping(strandsAgent, null, null, this._log);
       }
       if (replayHistory && resumeEntries.length === 0) {
         const nativeHistory = await _buildStrandsHistory(
@@ -2179,6 +2199,7 @@ export class StrandsAgent {
           for (const i of aguiInterrupts) interruptMap.set(i.id, i);
           this._pendingInterruptsByThread.set(threadId, interruptMap);
           this._lastResumeFingerprint.delete(threadId);
+          persistInterruptBookkeeping(strandsAgent, interruptMap, null, this._log);
           yield {
             type: EventType.RUN_FINISHED,
             threadId: inputData.threadId,
@@ -2691,6 +2712,118 @@ function toResumeResponse(entry: ResumeEntry): unknown {
     return { status: "cancelled" };
   }
   return entry.payload as unknown;
+}
+
+// ---------------------------------------------------------------------------
+// Interrupt bookkeeping persistence
+// ---------------------------------------------------------------------------
+//
+// `_pendingInterruptsByThread` and `_lastResumeFingerprint` are the
+// adapter's own bookkeeping (idempotency fingerprint + AG-UI-specific
+// interrupt metadata like responseSchema/expiresAt) layered on top of
+// Strands' native `_interruptState`. Strands' own SessionManager already
+// persists/restores `_interruptState`, but this adapter-only bookkeeping
+// lived purely in an in-process Map, so a process restart lost it: rules
+// 6/7 (payload-schema validation, expiresAt enforcement) would silently
+// degrade, and a replayed resume request would no longer be recognized as
+// a duplicate and could re-invoke the model/tool.
+//
+// To survive a restart, this bookkeeping is now mirrored into
+// `strandsAgent.appState` under a single namespaced key — the same
+// per-thread, SessionManager-persisted key-value store available on every
+// Strands `Agent`. On every read, if nothing is cached in-process for this
+// threadId, fall back to what's persisted in appState.
+
+const INTERRUPT_BOOKKEEPING_STATE_KEY = "ag_ui_interrupt_bookkeeping";
+
+interface PersistedInterruptBookkeeping {
+  lastResumeFingerprint: string | null;
+  pendingInterrupts: Record<string, unknown>;
+}
+
+/**
+ * Read the persisted (fingerprint, pending-interrupts) pair from
+ * `strandsAgent.appState`, if present and well-formed.
+ *
+ * Defensive by design: a test double (e.g. a bare stub standing in for the
+ * Strands agent) may not have a real `appState`, or `appState.get(...)`
+ * could return something unexpected — every layer of the expected shape is
+ * checked explicitly before trusting it. Anything that doesn't match is
+ * treated as "nothing persisted" rather than thrown.
+ */
+function loadPersistedInterruptBookkeeping(
+  strandsAgent: unknown,
+): { pending: Map<string, AguiInterrupt> | null; fingerprint: string | null } {
+  try {
+    const appState = (strandsAgent as { appState?: unknown })?.appState as
+      | { get?: (key: string) => unknown }
+      | undefined;
+    if (!appState || typeof appState.get !== "function") {
+      return { pending: null, fingerprint: null };
+    }
+    const raw = appState.get(INTERRUPT_BOOKKEEPING_STATE_KEY);
+    if (!raw || typeof raw !== "object") {
+      return { pending: null, fingerprint: null };
+    }
+    const data = raw as Partial<PersistedInterruptBookkeeping>;
+
+    const fingerprint =
+      typeof data.lastResumeFingerprint === "string"
+        ? data.lastResumeFingerprint
+        : null;
+
+    let pending: Map<string, AguiInterrupt> | null = null;
+    if (data.pendingInterrupts && typeof data.pendingInterrupts === "object") {
+      pending = new Map();
+      for (const [id, value] of Object.entries(data.pendingInterrupts)) {
+        const parsed = AguiInterruptSchema.safeParse(value);
+        if (parsed.success) {
+          pending.set(id, parsed.data);
+        }
+      }
+    }
+    return { pending, fingerprint };
+  } catch {
+    return { pending: null, fingerprint: null };
+  }
+}
+
+/**
+ * Write the (fingerprint, pending-interrupts) pair to `strandsAgent.appState`
+ * so it survives a process restart via whatever SessionManager is wired up.
+ * Best-effort: a test double without a real `appState.set(...)` must never
+ * break the run over bookkeeping that's a durability nice-to-have, not a
+ * correctness requirement for the current process.
+ */
+function persistInterruptBookkeeping(
+  strandsAgent: unknown,
+  pending: Map<string, AguiInterrupt> | null,
+  fingerprint: string | null,
+  log?: Logger,
+): void {
+  try {
+    const appState = (strandsAgent as { appState?: unknown })?.appState as
+      | { set?: (key: string, value: unknown) => void }
+      | undefined;
+    if (!appState || typeof appState.set !== "function") {
+      return;
+    }
+    const pendingInterrupts: Record<string, unknown> = {};
+    if (pending) {
+      for (const [id, interrupt] of pending) {
+        pendingInterrupts[id] = interrupt;
+      }
+    }
+    const payload: PersistedInterruptBookkeeping = {
+      lastResumeFingerprint: fingerprint,
+      pendingInterrupts,
+    };
+    appState.set(INTERRUPT_BOOKKEEPING_STATE_KEY, payload);
+  } catch (e) {
+    log?.warn(
+      `${LOG_PREFIX} Failed to persist interrupt bookkeeping to strandsAgent.appState: ${_errorMessage(e)}`,
+    );
+  }
 }
 
 /** Strands `Interrupt` → AG-UI `Interrupt`. */
