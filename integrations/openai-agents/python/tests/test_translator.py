@@ -111,6 +111,26 @@ def test_to_openai_translates_messages_and_tools():
     assert bundle.tools[0].strict_json_schema is False
 
 
+def test_to_openai_keeps_a_tool_schema_that_omits_the_optional_type_key():
+    # "type": "object" is optional in JSON Schema; dropping the declared
+    # fields with it would leave the model calling the tool with no arguments.
+    run_input = _run_input()
+    run_input.tools = [
+        Tool(
+            name="confirm",
+            description="Ask the user to confirm.",
+            parameters={
+                "properties": {"reason": {"type": "string"}},
+                "required": ["reason"],
+            },
+        )
+    ]
+    schema = AGUITranslator().to_openai(run_input).tools[0].params_json_schema
+    assert schema["type"] == "object"
+    assert schema["properties"] == {"reason": {"type": "string"}}
+    assert schema["required"] == ["reason"]
+
+
 def test_to_openai_without_tools_leaves_bundle_empty():
     bundle = AGUITranslator().to_openai(_run_input())
     assert bundle.tools == []
@@ -332,6 +352,146 @@ def test_to_agui_run_error_message_overrides_exception_text():
     error = collected[-1]
     assert isinstance(error, RunErrorEvent)
     assert error.message == "Agent run failed"
+
+
+def test_to_agui_closes_open_windows_before_run_error():
+    # A client keying its teardown on *_END would spin forever on the
+    # half-streamed message if the error path skipped the flush.
+    class _ExplodingOutbound(_StubOutbound):
+        def translate(self, openai_event):
+            raise RuntimeError("boom")
+
+    translator = AGUITranslator(outbound_cls=_ExplodingOutbound)
+    collected: list = []
+
+    async def collect():
+        async for e in translator.to_agui(_fake_stream("a"), _run_input()):
+            collected.append(e)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        asyncio.run(collect())
+
+    assert [getattr(e, "name", None) for e in collected if isinstance(e, CustomEvent)] == [
+        "finalized"
+    ]
+    assert isinstance(collected[-1], RunErrorEvent)
+
+
+@pytest.mark.parametrize(
+    ("custom_event_arg", "invalid_value"),
+    [
+        ("start_custom_event", "not-a-custom-event"),
+        ("end_custom_event", False),
+    ],
+)
+def test_to_agui_cancels_the_sdk_run_when_custom_event_validation_fails(
+    custom_event_arg, invalid_value
+):
+    translator = AGUITranslator(outbound_cls=_StubOutbound)
+    result = MagicMock(spec=RunResultStreaming)
+
+    async def collect():
+        async for _ in translator.to_agui(
+            result,
+            _run_input(),
+            **{custom_event_arg: invalid_value},
+        ):
+            pass
+
+    with pytest.raises(TypeError, match=f"{custom_event_arg} must be a CustomEvent"):
+        asyncio.run(collect())
+
+    result.cancel.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("events_to_read", "closed_at"),
+    [
+        (1, "RUN_STARTED"),
+        (2, "the initial STATE_SNAPSHOT"),
+        (3, "the first streamed event"),
+    ],
+)
+def test_to_agui_cancels_the_sdk_run_when_the_consumer_stops_reading(
+    events_to_read, closed_at
+):
+    # A disconnected client closes this generator wherever it happens to be
+    # paused; without the cancel the SDK run keeps calling the model and
+    # running tools for nobody, whichever yield that was.
+    translator = AGUITranslator(outbound_cls=_StubOutbound)
+    result = MagicMock(spec=RunResultStreaming)
+    result.stream_events.return_value = _fake_stream("a", "b")
+    result.new_items = []
+
+    async def stop_after(event_count: int):
+        stream = translator.to_agui(result, _run_input(), initial_state={"k": "v"})
+        for _ in range(event_count):
+            await stream.__anext__()
+        await stream.aclose()
+
+    asyncio.run(stop_after(events_to_read))
+    assert result.cancel.call_count == 1, f"closing at {closed_at} must cancel the run"
+
+
+def test_to_agui_cancels_the_sdk_run_when_a_pending_step_is_cancelled():
+    # Task cancellation raises CancelledError at an await, not GeneratorExit
+    # at a yield — here while resolving an async initial_state source, before
+    # the stream section's own handler is even in play. The run must still be
+    # cancelled.
+    translator = AGUITranslator(outbound_cls=_StubOutbound)
+    result = MagicMock(spec=RunResultStreaming)
+    result.stream_events.return_value = _fake_stream("a")
+    result.new_items = []
+
+    async def never_resolves():
+        await asyncio.Event().wait()
+
+    async def cancel_mid_initial_state():
+        stream = translator.to_agui(
+            result, _run_input(), initial_state=never_resolves
+        )
+        await stream.__anext__()  # RUN_STARTED
+        pending = asyncio.create_task(stream.__anext__())
+        await asyncio.sleep(0)  # let it reach the await inside initial_state
+        pending.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+
+    asyncio.run(cancel_mid_initial_state())
+    result.cancel.assert_called_once()
+
+
+def test_to_agui_does_not_cancel_a_run_that_streamed_to_completion():
+    translator = AGUITranslator(outbound_cls=_StubOutbound)
+    result = MagicMock(spec=RunResultStreaming)
+    result.stream_events.return_value = _fake_stream("a")
+    result.new_items = []
+
+    async def collect():
+        return [e async for e in translator.to_agui(result, _run_input())]
+
+    asyncio.run(collect())
+    result.cancel.assert_not_called()
+
+
+def test_to_agui_does_not_cancel_when_closed_right_after_run_finished():
+    # A generator pauses at yield, so the consumer holds RUN_FINISHED while
+    # to_agui is still suspended on that line. Closing there is a normal end,
+    # not an interruption — the run finished, nothing is left to cancel.
+    translator = AGUITranslator(outbound_cls=_StubOutbound)
+    result = MagicMock(spec=RunResultStreaming)
+    result.stream_events.return_value = _fake_stream("a")
+    result.new_items = []
+
+    async def close_on_run_finished():
+        stream = translator.to_agui(result, _run_input())
+        async for event in stream:
+            if isinstance(event, RunFinishedEvent):
+                break  # implicit aclose while paused at the terminal yield
+        await stream.aclose()
+
+    asyncio.run(close_on_run_finished())
+    result.cancel.assert_not_called()
 
 
 def test_to_agui_emits_run_error_on_cancelled_error():

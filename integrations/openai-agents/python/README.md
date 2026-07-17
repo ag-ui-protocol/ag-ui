@@ -454,6 +454,10 @@ if translated_input.tools:
     run_agent = agent.clone(tools=[*agent.tools, *translated_input.tools])
 ```
 
+A tool's `parameters` pass through as its JSON Schema. `"type": "object"` is
+optional there — if it's missing it gets added, and the declared fields are
+kept as-is. Only a `None`/empty spec becomes an empty (parameter-less) schema.
+
 ### Lifecycle Events
 
 `to_agui` always wraps the stream: `RUN_STARTED` is the first event
@@ -491,6 +495,42 @@ async for event in translator.to_agui(
 Pass `emit_run_error=False` only if you emit your own terminal error event
 in an outer handler — otherwise the exception re-raises with no `RUN_ERROR`
 and the client just watches the stream stop.
+
+Open windows are closed before the error goes out: a run that dies while an
+assistant message is streaming still gets its `TEXT_MESSAGE_END` (and any
+open tool-call, reasoning, or step end) ahead of `RUN_ERROR`, so a client
+that keys its teardown on the `*_END` events doesn't leave the half-streamed
+message spinning forever.
+
+### Client Disconnects
+
+If the client goes away, the server stops iterating `to_agui` and `to_agui`
+cancels the SDK run for you (`RunResultStreaming.cancel()`) — the run is a
+separate task, and left alone it keeps calling the model and running tools for
+a client that will never see the result. Any exit before `RUN_FINISHED`
+triggers it: the generator being closed, the request task being cancelled
+(even while a state source is resolving), or a stream error — not just a
+disconnect mid-token-stream.
+
+This only applies when you hand `to_agui` the `RunResultStreaming` object:
+
+```python
+result = Runner.run_streamed(agent, input=translated_input.messages)
+async for event in translator.to_agui(result, run_input):  # cancelled on disconnect
+    yield encoder.encode(event)
+```
+
+Pass a bare `stream_events()` iterator instead and the run stays yours to
+cancel — `to_agui` won't end something it wasn't given:
+
+```python
+result = Runner.run_streamed(agent, input=translated_input.messages)
+try:
+    async for event in translator.to_agui(result.stream_events(), run_input):
+        yield encoder.encode(event)
+finally:
+    result.cancel()  # your iterator, your cleanup
+```
 
 ### Messages Snapshot
 

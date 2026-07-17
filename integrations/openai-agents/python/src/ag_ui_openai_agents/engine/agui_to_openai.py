@@ -591,10 +591,11 @@ class AGUIToOpenAITranslator:
     def _ensure_object_schema(parameters: Any) -> dict[str, Any]:
         """Normalize a possibly-empty tool parameter spec into a JSON Schema object.
 
-        The Responses API requires every function tool's schema to be a
+        The OpenAI Agents SDK expects every function tool's schema to be a
         JSON Schema object. AG-UI tools sometimes ship parameter-less
         specs as None or {}; those get coerced to an empty-but-valid
-        object.
+        object. A spec that declares real fields but omits the optional
+        top-level "type" keeps its fields — only the missing key is added.
 
         Args:
             parameters: The tool's raw parameter spec.
@@ -602,8 +603,10 @@ class AGUIToOpenAITranslator:
         Returns:
             A valid JSON Schema object.
         """
-        if not isinstance(parameters, dict) or "type" not in parameters:
+        if not isinstance(parameters, dict) or not parameters:
             return {"type": "object", "properties": {}, "additionalProperties": True}
+        if "type" not in parameters:
+            return {**parameters, "type": "object"}
         return parameters
 
     @staticmethod

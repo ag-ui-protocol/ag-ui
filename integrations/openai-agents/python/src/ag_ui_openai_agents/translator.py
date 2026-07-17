@@ -118,99 +118,110 @@ class AGUITranslator:
             TypeError: start_custom_event or end_custom_event was given but
                 is not a CustomEvent instance.
         """
-        # validate custom events
-        if start_custom_event and not isinstance(start_custom_event, CustomEvent):
-            raise TypeError(f"start_custom_event must be a CustomEvent, got {type(start_custom_event).__name__}")
-        if end_custom_event and not isinstance(end_custom_event, CustomEvent):
-            raise TypeError(f"end_custom_event must be a CustomEvent, got {type(end_custom_event).__name__}")
-
-        # 1. RUN_STARTED — always first
-        yield RunStartedEvent(
-            type=EventType.RUN_STARTED,
-            thread_id=run_input.thread_id,
-            run_id=run_input.run_id,
-            # Read defensively — older RunAgentInput versions lack the field.
-            parent_run_id=getattr(run_input, "parent_run_id", None),
-        )
-
-        # 2. start_custom_event (optional)
-        if start_custom_event:
-            yield start_custom_event
-
-        # 3. STATE_SNAPSHOT (initial) — resolve now ({} emits, None skips)
-        if initial_state is not None:
-            snapshot = await self._resolve_state_snapshot(initial_state)
-            if snapshot is not None:
-                yield StateSnapshotEvent(
-                    type=EventType.STATE_SNAPSHOT,
-                    snapshot=snapshot,
-                )
-
-        # Accept either the SDK result or an iterator already obtained from it.
-        stream_events = (
-            events.stream_events()
-            if isinstance(events, RunResultStreaming)
-            else events
-        )
-        outbound = self._outbound_cls()
+        lifecycle_completed = False
         try:
-            # Streamed STEP / TEXT / TOOL / REASONING events.
-            async for openai_event in stream_events:
-                for event in outbound.translate(openai_event):
+            # The SDK run is already active, so validation stays in cleanup scope.
+            if start_custom_event is not None and not isinstance(start_custom_event, CustomEvent):
+                raise TypeError(f"start_custom_event must be a CustomEvent, got {type(start_custom_event).__name__}")
+            if end_custom_event is not None and not isinstance(end_custom_event, CustomEvent):
+                raise TypeError(f"end_custom_event must be a CustomEvent, got {type(end_custom_event).__name__}")
+
+            # 1. RUN_STARTED — always first
+            yield RunStartedEvent(
+                type=EventType.RUN_STARTED,
+                thread_id=run_input.thread_id,
+                run_id=run_input.run_id,
+                # Read defensively — older RunAgentInput versions lack the field.
+                parent_run_id=getattr(run_input, "parent_run_id", None),
+            )
+
+            # 2. start_custom_event (optional)
+            if start_custom_event is not None:
+                yield start_custom_event
+
+            # 3. STATE_SNAPSHOT (initial) — resolve now ({} emits, None skips)
+            if initial_state is not None:
+                snapshot = await self._resolve_state_snapshot(initial_state)
+                if snapshot is not None:
+                    yield StateSnapshotEvent(
+                        type=EventType.STATE_SNAPSHOT,
+                        snapshot=snapshot,
+                    )
+
+            # Accept either the SDK result or an iterator already obtained from it.
+            stream_events = (
+                events.stream_events()
+                if isinstance(events, RunResultStreaming)
+                else events
+            )
+            outbound = self._outbound_cls()
+            try:
+                # Streamed STEP / TEXT / TOOL / REASONING events.
+                async for openai_event in stream_events:
+                    for event in outbound.translate(openai_event):
+                        yield event
+                # 4. Close any text, tool, reasoning, or step window still open.
+                for event in outbound.finalize():
                     yield event
-            # 4. Close any text, tool, reasoning, or step window still open.
-            for event in outbound.finalize():
-                yield event
-            # 5. STATE_SNAPSHOT (final, optional)
-            if final_state is not None:
-                snapshot = await self._resolve_state_snapshot(final_state)
-                if snapshot is not None:
-                    yield StateSnapshotEvent(
-                        type=EventType.STATE_SNAPSHOT,
-                        snapshot=snapshot,
+                # 5. STATE_SNAPSHOT (final, optional)
+                if final_state is not None:
+                    snapshot = await self._resolve_state_snapshot(final_state)
+                    if snapshot is not None:
+                        yield StateSnapshotEvent(
+                            type=EventType.STATE_SNAPSHOT,
+                            snapshot=snapshot,
+                        )
+                # 6. MESSAGES_SNAPSHOT (optional)
+                if emit_messages_snapshot:
+                    yield outbound.build_messages_snapshot(run_input)
+            except ClientToolPending:
+                # A client-owned tool ends this server run cleanly; its call
+                # events have already streamed to the frontend. Finish with
+                # steps 4–6.
+                # 4. Close any text, tool, reasoning, or step window still open.
+                for event in outbound.finalize():
+                    yield event
+                # 5. STATE_SNAPSHOT (final, optional)
+                if final_state is not None:
+                    snapshot = await self._resolve_state_snapshot(final_state)
+                    if snapshot is not None:
+                        yield StateSnapshotEvent(
+                            type=EventType.STATE_SNAPSHOT,
+                            snapshot=snapshot,
+                        )
+                # 6. MESSAGES_SNAPSHOT (optional)
+                if emit_messages_snapshot:
+                    yield outbound.build_messages_snapshot(run_input)
+            except (Exception, asyncio.CancelledError) as exc:
+                # CancelledError is not an Exception; both paths must close open
+                # protocol windows before emitting the terminal error.
+                for event in outbound.finalize():
+                    yield event
+                if emit_run_error:
+                    yield RunErrorEvent(
+                        type=EventType.RUN_ERROR,
+                        message=run_error_message or str(exc),
                     )
-            # 6. MESSAGES_SNAPSHOT (optional)
-            if emit_messages_snapshot:
-                yield outbound.build_messages_snapshot(run_input)
-        except ClientToolPending:
-            # A client-owned tool ends this server run cleanly; its call events
-            # have already streamed to the frontend. Finish with steps 4–6.
-            # 4. Close any text, tool, reasoning, or step window still open.
-            for event in outbound.finalize():
-                yield event
-            # 5. STATE_SNAPSHOT (final, optional)
-            if final_state is not None:
-                snapshot = await self._resolve_state_snapshot(final_state)
-                if snapshot is not None:
-                    yield StateSnapshotEvent(
-                        type=EventType.STATE_SNAPSHOT,
-                        snapshot=snapshot,
-                    )
-            # 6. MESSAGES_SNAPSHOT (optional)
-            if emit_messages_snapshot:
-                yield outbound.build_messages_snapshot(run_input)
-        except (Exception, asyncio.CancelledError) as exc:
-            # asyncio.CancelledError is BaseException, not Exception (3.8+) —
-            # a mid-stream cancellation (timeout, dropped connection) would
-            # otherwise skip this handler entirely and the client would see
-            # the stream just stop, with no RUN_ERROR and no RUN_FINISHED.
-            if emit_run_error:
-                yield RunErrorEvent(
-                    type=EventType.RUN_ERROR,
-                    message=run_error_message or str(exc),
-                )
-            raise
+                raise
 
-        # 7. end_custom_event (optional)
-        if end_custom_event:
-            yield end_custom_event
+            # 7. end_custom_event (optional)
+            if end_custom_event is not None:
+                yield end_custom_event
 
-        # 8. RUN_FINISHED — always last
-        yield RunFinishedEvent(
-            type=EventType.RUN_FINISHED,
-            thread_id=run_input.thread_id,
-            run_id=run_input.run_id,
-        )
+            # 8. RUN_FINISHED — always last
+            run_finished_event = RunFinishedEvent(
+                type=EventType.RUN_FINISHED,
+                thread_id=run_input.thread_id,
+                run_id=run_input.run_id,
+            )
+            # Set before yield because a consumer may close at the terminal event.
+            lifecycle_completed = True
+            yield run_finished_event
+        finally:
+            # Cancel an owned SDK result if AG-UI consumption stops early;
+            # callers retain ownership when they pass a bare iterator.
+            if not lifecycle_completed and isinstance(events, RunResultStreaming):
+                events.cancel()
 
     async def _resolve_state_snapshot(self, state: Any) -> Any:
         """Resolve a static, synchronous, or asynchronous state source."""
