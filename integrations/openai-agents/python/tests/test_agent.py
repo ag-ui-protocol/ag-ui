@@ -186,6 +186,25 @@ def test_custom_event_factories_run_once_per_request(patched_runner):
     assert calls == {"start": 2, "end": 2}
 
 
+@pytest.mark.parametrize("custom_event_arg", ["start_custom_event", "end_custom_event"])
+def test_custom_event_factory_failure_does_not_start_run(
+    patched_runner,
+    custom_event_arg,
+):
+    def failing_factory():
+        raise RuntimeError("event factory failed")
+
+    wrapper = OpenAIAgentsAgent(
+        Agent(name="assistant", instructions="hi"),
+        **{custom_event_arg: failing_factory},
+    )
+
+    with pytest.raises(RuntimeError, match="event factory failed"):
+        _collect(wrapper, _run_input())
+
+    assert patched_runner == []
+
+
 def test_name_defaults_to_agent_name():
     assert OpenAIAgentsAgent(Agent(name="helper", instructions="hi")).name == "helper"
     assert (

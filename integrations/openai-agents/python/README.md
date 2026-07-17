@@ -365,7 +365,7 @@ another request.
 
 `add_openai_agents_fastapi_endpoint` connects an `OpenAIAgentsAgent` to a
 FastAPI app. It is the highest-level option: it owns HTTP POST handling, AG-UI
-SSE encoding, and a small health endpoint, but not your agent's own behavior.
+SSE encoding, and an optional health endpoint, but not your agent's own behavior.
 
 ```python
 app = FastAPI()
@@ -377,6 +377,7 @@ add_openai_agents_fastapi_endpoint(app, wrapped_agent, "/assistant")
 | `app` | required | FastAPI application to register routes on. |
 | `agent` | required | `OpenAIAgentsAgent` to execute for incoming requests. |
 | `path` | `"/"` | POST route that accepts `RunAgentInput`. |
+| `include_health` | `True` | Whether to register `GET {path}/health`. |
 
 For `path="/assistant"`, the helper registers:
 
@@ -384,6 +385,8 @@ For `path="/assistant"`, the helper registers:
 |---|---|
 | `POST /assistant` | Runs the wrapper and returns encoded AG-UI SSE events. |
 | `GET /assistant/health` | Returns `{"status": "ok", "agent": {"name": ...}}`. |
+
+Pass `include_health=False` when the application owns its health route.
 
 The helper uses the request `Accept` header when creating `EventEncoder`, so
 its response content type matches AG-UI content negotiation. It adds routes

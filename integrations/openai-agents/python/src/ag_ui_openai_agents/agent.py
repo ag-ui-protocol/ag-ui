@@ -1,8 +1,4 @@
-"""Agent wrapper — an OpenAI Agents SDK Agent that speaks AG-UI.
-
-Wrap a plain SDK Agent, get one run_streamed(RunAgentInput) yielding AG-UI events,
-ready for add_openai_agents_fastapi_endpoint.
-"""
+"""Agent wrapper — an OpenAI Agents SDK Agent that speaks AG-UI."""
 
 from typing import Any, AsyncIterator, Callable
 
@@ -15,12 +11,8 @@ from .translator import AGUITranslator
 class OpenAIAgentsAgent:
     """Wrap an OpenAI Agents SDK Agent so it speaks the AG-UI protocol.
 
-    One instance per server process is fine. The wrapper holds no per-request
-    state: an SDK Agent is a config template that Runner.run_streamed never
-    mutates, and AGUITranslator is stateless on the inbound side and spins up a
-    fresh outbound engine per to_agui call. Client-declared tools arriving on a
-    request are merged onto a per-request agent.clone(), so concurrent requests
-    never see each other's tools.
+    The wrapper is reusable across requests. Client-declared tools are added to
+    a per-request agent clone, and output translation uses fresh per-run state.
 
     Example:
         from agents import Agent
@@ -49,17 +41,16 @@ class OpenAIAgentsAgent:
         emit_run_error: bool = True,
         run_error_message: str | None = None,
     ) -> None:
-        """Wrap OpenAI Agents SDK Agent.
+        """Configure an OpenAI Agents SDK Agent for AG-UI requests.
 
         Args:
             agent: The OpenAI Agents SDK Agent to serve.
             name: Public name for health/introspection. Defaults to agent.name.
             description: Optional human-readable description.
-            translator: An AGUITranslator to reuse. Defaults to a fresh one;
-                pass your own to inject engine subclasses (per-mapping overrides).
-            run_config: Passed straight to Runner.run_streamed on every run —
-                the place to set run-wide model settings. None uses the SDK
-                defaults (native OpenAI).
+            translator: Reusable translator. Provide one to customize mapping
+                through engine subclasses.
+            run_config: Run-wide OpenAI Agents SDK configuration. None uses the
+                SDK defaults.
             start_custom_event: A CustomEvent, or a zero-argument factory that
                 builds one per run, emitted after RUN_STARTED.
             initial_state: Passed to AGUITranslator.to_agui. Accepts the same
@@ -88,14 +79,10 @@ class OpenAIAgentsAgent:
         self._run_error_message = run_error_message
 
     async def run_streamed(self, input: RunAgentInput) -> AsyncIterator[BaseEvent]:
-        """Run the agent for one AG-UI request and yield AG-UI events.
+        """Translate one AG-UI request, run the agent, and yield AG-UI events.
 
-        Orchestration only — the translator does the mapping. to_openai turns the
-        request into SDK input items plus FunctionTool proxies for any
-        client-declared tools; those proxies are merged onto a per-request
-        clone so the static agent stays untouched. to_agui wraps the SDK stream
-        with the lifecycle events (RUN_STARTED/FINISHED/ERROR), the STATE and
-        MESSAGES snapshots, and the flush — nothing to hand-roll here.
+        Client tools are added to a per-request agent clone. The translator
+        handles input and output mapping, lifecycle events, and snapshots.
 
         Args:
             input: The incoming AG-UI RunAgentInput.
@@ -105,19 +92,21 @@ class OpenAIAgentsAgent:
         """
         translated = self._translator.to_openai(input)
 
-        agent = self.agent
+        run_agent = self.agent
         if translated.tools:
-            agent = agent.clone(tools=[*self.agent.tools, *translated.tools])
+            run_agent = self.agent.clone(
+                tools=[*self.agent.tools, *translated.tools]
+            )
+
+        start_custom_event = self._resolve_custom_event(self._start_custom_event)
+        end_custom_event = self._resolve_custom_event(self._end_custom_event)
 
         result = Runner.run_streamed(
-            agent,
+            run_agent,
             input=translated.messages,
             run_config=self._run_config,
             context=translated.context,
         )
-
-        start_custom_event = self._resolve_custom_event(self._start_custom_event)
-        end_custom_event = self._resolve_custom_event(self._end_custom_event)
 
         async for event in self._translator.to_agui(
             result,

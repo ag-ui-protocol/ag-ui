@@ -6,6 +6,7 @@ Wiring only — the wrapper's behavior is covered in test_agent.py:
 - POST on the given path streams the run as SSE frames.
 - A GET health check is registered next to it and reports the agent name.
 - Custom (non-root) paths get their health check at <path>/health.
+- Health registration can be disabled when the application owns that route.
 """
 
 from __future__ import annotations
@@ -84,3 +85,18 @@ def test_custom_path_places_health_under_it(monkeypatch):
     assert client.get("/my_agent/health").status_code == 200
     with client.stream("POST", "/my_agent", json=RUN_INPUT_JSON) as response:
         assert response.status_code == 200
+
+
+def test_health_can_be_disabled():
+    app = FastAPI()
+    wrapper = OpenAIAgentsAgent(Agent(name="assistant", instructions="hi"))
+    add_openai_agents_fastapi_endpoint(
+        app,
+        wrapper,
+        "/my_agent",
+        include_health=False,
+    )
+
+    routes = {(route.path, method) for route in app.routes for method in route.methods}
+    assert ("/my_agent", "POST") in routes
+    assert ("/my_agent/health", "GET") not in routes

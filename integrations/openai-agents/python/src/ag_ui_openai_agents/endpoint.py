@@ -1,10 +1,7 @@
-"""FastAPI endpoint helper for the OpenAI Agents SDK integration.
-
-Glue an OpenAIAgentsAgent to a FastAPI app in one call: SSE stream, content
-negotiation, health check.
-"""
+"""FastAPI endpoint helper for serving an OpenAI Agents SDK agent over AG-UI."""
 
 import logging
+from typing import AsyncIterator
 
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
@@ -20,18 +17,24 @@ def add_openai_agents_fastapi_endpoint(
     app: FastAPI,
     agent: OpenAIAgentsAgent,
     path: str = "/",
+    *,
+    include_health: bool = True,
 ) -> None:
     """Add an OpenAI Agents SDK agent endpoint to a FastAPI app.
 
     Args:
         app: The FastAPI application to register the route on.
         agent: The wrapped agent to serve.
-        path: The POST path for the agent. Defaults to "/". A GET health check
-            is registered alongside it.
+        path: The POST path for the agent. Defaults to "/".
+        include_health: Whether to register a GET health check alongside the
+            agent endpoint. Defaults to True.
     """
 
     @app.post(path)
-    async def openai_agents_endpoint(input_data: RunAgentInput, request: Request):
+    async def openai_agents_endpoint(
+        input_data: RunAgentInput,
+        request: Request,
+    ) -> StreamingResponse:
         """Run the agent and stream AG-UI events back to the client."""
         logger.info(
             "Starting agent run: agent=%s thread_id=%s run_id=%s",
@@ -42,7 +45,7 @@ def add_openai_agents_fastapi_endpoint(
         accept_header = request.headers.get("accept")
         encoder = EventEncoder(accept=accept_header)
 
-        async def event_generator():
+        async def event_generator() -> AsyncIterator[str]:
             async for event in agent.run_streamed(input_data):
                 yield encoder.encode(event)
 
@@ -51,7 +54,9 @@ def add_openai_agents_fastapi_endpoint(
             media_type=encoder.get_content_type(),
         )
 
-    @app.get(path.rstrip("/") + "/health")
-    def health():
-        """Health check."""
-        return {"status": "ok", "agent": {"name": agent.name}}
+    if include_health:
+
+        @app.get(path.rstrip("/") + "/health")
+        def health():
+            """Health check."""
+            return {"status": "ok", "agent": {"name": agent.name}}
