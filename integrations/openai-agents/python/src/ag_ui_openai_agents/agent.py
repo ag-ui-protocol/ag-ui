@@ -14,12 +14,8 @@ class OpenAIAgentsAgent:
     The wrapper is reusable across requests. Client-declared tools are added to
     a per-request agent clone, and output translation uses fresh per-run state.
 
-    This is the opinionated shortcut: it hides the run loop (to_openai,
-    Runner.run_streamed, to_agui) behind one call. If you need the run itself —
-    real token usage, interruptions, anything off the RunResultStreaming — use
-    the translator directly instead (see AGUITranslator); it hands you the
-    result so you can close over it. The wrapper deliberately does not grow a
-    parameter per such need.
+    This shortcut hides the run loop. Use ``AGUITranslator`` directly when
+    application logic needs access to ``RunResultStreaming``.
 
     Example:
         from agents import Agent
@@ -66,8 +62,9 @@ class OpenAIAgentsAgent:
                 RUN_FINISHED. Defaults to True.
             end_custom_event: CustomEvent emitted before the terminal event.
                 Its value may be static or a zero-argument sync/async factory.
-                To read the run result, compose the translator directly.
-            emit_run_error: Whether to emit RUN_ERROR when streaming fails.
+                Use the translator directly when its value needs the run result.
+            emit_run_error: Whether to emit RUN_ERROR for ordinary lifecycle
+                errors.
                 Defaults to True.
             run_error_message: Fixed RUN_ERROR message. None sends str(exc).
         """

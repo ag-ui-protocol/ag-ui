@@ -26,7 +26,7 @@ async for event in translator.to_agui(result, run_input):
 ```
 
 `to_agui(result, run_input)` also accepts `result.stream_events()` if your code already
-has the SDK event iterator. The stream is always wrapped with `RUN_STARTED`
+has the SDK event iterator. Ordinary runs are wrapped with `RUN_STARTED`
 (first) and `RUN_FINISHED`/`RUN_ERROR` (last); `thread_id` and `run_id` come
 from `run_input`. The event just before `RUN_FINISHED`
 is a `MESSAGES_SNAPSHOT` by default — see
@@ -299,7 +299,7 @@ the lifecycle IDs and message history for snapshots.
 | `final_state` | `None` | Static, sync, or async source for a final `STATE_SNAPSHOT`. |
 | `emit_messages_snapshot` | `True` | Add `MESSAGES_SNAPSHOT` before the terminal event. |
 | `end_custom_event` | `None` | A `CustomEvent` sent after the snapshots and before `RUN_FINISHED`; its value may be static or a sync/async factory. |
-| `emit_run_error` | `True` | Send `RUN_ERROR` if streaming raises, then re-raise the original exception. |
+| `emit_run_error` | `True` | Send `RUN_ERROR` for an ordinary lifecycle error, then re-raise it. |
 | `run_error_message` | `None` | Client-safe error text; by default the event uses `str(exception)`. |
 
 `initial_state` and `final_state` can each be a value, a zero-argument
@@ -322,9 +322,9 @@ end_custom_event                   (optional)
 RUN_FINISHED
 ```
 
-If the SDK stream raises, the translator emits `RUN_ERROR` when enabled and
-re-raises the original exception. It does not emit final state, a messages
-snapshot, `end_custom_event`, or `RUN_FINISHED` on that error path.
+If lifecycle processing raises an ordinary exception, the translator emits
+`RUN_ERROR` when enabled and re-raises it. It does not emit final state, a
+messages snapshot, `end_custom_event`, or `RUN_FINISHED` on that error path.
 
 ### `OpenAIAgentsAgent`
 
@@ -463,16 +463,10 @@ kept as-is. Only a `None`/empty spec becomes an empty (parameter-less) schema.
 
 ### Lifecycle Events
 
-`to_agui` always wraps the stream: `RUN_STARTED` is the first event
-yielded, and `RUN_FINISHED` is the last — or `RUN_ERROR` if the stream
-raises, in which case the exception is re-raised after that event so your
-own logging/observability still sees it. This covers `asyncio.CancelledError`
-too (a mid-stream timeout or dropped connection), not just ordinary
-exceptions — it's `BaseException`, not `Exception`, so a plain
-`except Exception` would miss it and the client would just see the
-stream stop with no `RUN_ERROR` and no `RUN_FINISHED`. `RUN_STARTED` and
-`RUN_FINISHED` are not optional — every caller needs them, so there's no
-flag to turn them off:
+`to_agui` starts ordinary runs with `RUN_STARTED` and ends them with
+`RUN_FINISHED`, or with `RUN_ERROR` when lifecycle processing raises an
+ordinary exception. The original exception is then re-raised for application
+logging. `RUN_STARTED` and `RUN_FINISHED` are not configurable:
 
 ```python
 async for event in translator.to_agui(result, run_input):
@@ -495,9 +489,8 @@ async for event in translator.to_agui(
     yield encoder.encode(event)
 ```
 
-Pass `emit_run_error=False` only if you emit your own terminal error event
-in an outer handler — otherwise the exception re-raises with no `RUN_ERROR`
-and the client just watches the stream stop.
+Pass `emit_run_error=False` only if an outer handler emits the terminal error;
+otherwise an ordinary exception re-raises without `RUN_ERROR`.
 
 Open windows are closed before the error goes out: a run that dies while an
 assistant message is streaming still gets its `TEXT_MESSAGE_END` (and any
@@ -510,10 +503,9 @@ message spinning forever.
 If the client goes away, the server stops iterating `to_agui` and `to_agui`
 cancels the SDK run for you (`RunResultStreaming.cancel()`) — the run is a
 separate task, and left alone it keeps calling the model and running tools for
-a client that will never see the result. Any exit before `RUN_FINISHED`
-triggers it: the generator being closed, the request task being cancelled
-(even while a state source is resolving), or a stream error — not just a
-disconnect mid-token-stream.
+a client that will never see the result. Generator closure and task
+cancellation emit no further events because the client cannot receive them.
+Any incomplete exit still cancels the owned run.
 
 This only applies when you hand `to_agui` the `RunResultStreaming` object:
 

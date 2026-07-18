@@ -6,8 +6,8 @@ Covers the public translator contract only — engine mappings have their own co
 - ``to_openai`` delegates to the inbound engine and populates ``tools``.
 - ``AGUITranslator.to_agui`` streams engine output live and appends the
   engine flush, with a fresh engine per call (reusable translator).
-- ``to_agui`` always wraps the stream with RUN_STARTED / RUN_FINISHED /
-  RUN_ERROR — not optional, thread_id/run_id come straight off run_input.
+- ``to_agui`` wraps ordinary runs with RUN_STARTED and a terminal lifecycle
+  event; cancellation stops an owned SDK run without emitting RUN_ERROR.
 - ``to_agui`` appends a MESSAGES_SNAPSHOT by default just before
   RUN_FINISHED; snapshot content itself is covered in
   ``engine/test_openai_to_agui_snapshot.py``,
@@ -39,6 +39,7 @@ from ag_ui.core import (
     UserMessage,
 )
 from ag_ui_openai_agents import AGUITranslator
+from ag_ui_openai_agents.engine import ClientToolPending
 
 
 def _run_input(
@@ -377,6 +378,37 @@ def test_to_agui_closes_open_windows_before_run_error():
     assert isinstance(collected[-1], RunErrorEvent)
 
 
+def test_to_agui_client_tool_pending_uses_the_normal_completion_path():
+    class _ClientToolOutbound(_StubOutbound):
+        def translate(self, openai_event):
+            raise ClientToolPending("confirm", "call-1", "{}")
+
+    translator = AGUITranslator(outbound_cls=_ClientToolOutbound)
+    end = CustomEvent(type=EventType.CUSTOM, name="end", value={})
+
+    async def collect():
+        return [
+            event
+            async for event in translator.to_agui(
+                _fake_stream("tool"),
+                _run_input(),
+                final_state={"status": "pending"},
+                end_custom_event=end,
+            )
+        ]
+
+    events = asyncio.run(collect())
+    assert any(
+        isinstance(event, CustomEvent) and event.name == "finalized"
+        for event in events
+    )
+    assert any(isinstance(event, StateSnapshotEvent) for event in events)
+    assert any(isinstance(event, MessagesSnapshotEvent) for event in events)
+    assert end in events
+    assert isinstance(events[-1], RunFinishedEvent)
+    assert not any(isinstance(event, RunErrorEvent) for event in events)
+
+
 def test_to_agui_resolves_custom_event_values_at_their_lifecycle_positions():
     translator = AGUITranslator(outbound_cls=_StubOutbound)
     state = {"status": "starting"}
@@ -549,9 +581,7 @@ def test_to_agui_emits_run_error_when_state_factory_fails(state_arg):
 def test_to_agui_cancels_the_sdk_run_when_the_consumer_stops_reading(
     events_to_read, closed_at
 ):
-    # A disconnected client closes this generator wherever it happens to be
-    # paused; without the cancel the SDK run keeps calling the model and
-    # running tools for nobody, whichever yield that was.
+    # Closing at any yield must stop the SDK run owned by this generator.
     translator = AGUITranslator(outbound_cls=_StubOutbound)
     result = MagicMock(spec=RunResultStreaming)
     result.stream_events.return_value = _fake_stream("a", "b")
@@ -568,10 +598,7 @@ def test_to_agui_cancels_the_sdk_run_when_the_consumer_stops_reading(
 
 
 def test_to_agui_cancels_the_sdk_run_when_a_pending_step_is_cancelled():
-    # Task cancellation raises CancelledError at an await, not GeneratorExit
-    # at a yield — here while resolving an async initial_state source, before
-    # the stream section's own handler is even in play. The run must still be
-    # cancelled.
+    # Cancellation while awaiting initial state must still stop the SDK run.
     translator = AGUITranslator(outbound_cls=_StubOutbound)
     result = MagicMock(spec=RunResultStreaming)
     result.stream_events.return_value = _fake_stream("a")
@@ -609,9 +636,7 @@ def test_to_agui_does_not_cancel_a_run_that_streamed_to_completion():
 
 
 def test_to_agui_does_not_cancel_when_closed_right_after_run_finished():
-    # A generator pauses at yield, so the consumer holds RUN_FINISHED while
-    # to_agui is still suspended on that line. Closing there is a normal end,
-    # not an interruption — the run finished, nothing is left to cancel.
+    # Closing while paused at the terminal yield is normal completion.
     translator = AGUITranslator(outbound_cls=_StubOutbound)
     result = MagicMock(spec=RunResultStreaming)
     result.stream_events.return_value = _fake_stream("a")

@@ -96,8 +96,8 @@ class AGUITranslator:
             7. end_custom_event (optional)
             8. RUN_FINISHED                   — always last; RUN_ERROR on failure
 
-        Errors yield ``RUN_ERROR`` by default, then the original exception is
-        re-raised. See the README for state, snapshots, and error details.
+        Ordinary errors close open stream windows, yield ``RUN_ERROR`` by
+        default, and re-raise. Cancellation only stops an owned SDK run.
 
         Args:
             events: A ``RunResultStreaming`` or its ``stream_events()`` iterator.
@@ -113,7 +113,8 @@ class AGUITranslator:
             end_custom_event: ``CustomEvent`` emitted before ``RUN_FINISHED``.
                 Its value may be static or a zero-argument sync/async factory
                 resolved just before emission.
-            emit_run_error: Emit ``RUN_ERROR`` before re-raising a stream error.
+            emit_run_error: Emit ``RUN_ERROR`` before re-raising an ordinary
+                error.
             run_error_message: Safe fixed ``RUN_ERROR`` message; defaults to ``str(exc)``.
 
         Yields:
@@ -122,9 +123,8 @@ class AGUITranslator:
         Raises:
             TypeError: A custom event is not a CustomEvent instance.
         """
-        # Actual failures emit RUN_ERROR; cancellation only stops an owned SDK run.
         lifecycle_completed = False
-        outbound: OpenAIToAGUITranslator | None = None
+        outbound = self._outbound_cls()
         try:
             # 1. RUN_STARTED — always first
             yield RunStartedEvent(
@@ -154,14 +154,13 @@ class AGUITranslator:
                 if isinstance(events, RunResultStreaming)
                 else events
             )
-            outbound = self._outbound_cls()
             try:
                 # Streamed STEP / TEXT / TOOL / REASONING events.
                 async for openai_event in stream_events:
                     for event in outbound.translate(openai_event):
                         yield event
             except ClientToolPending:
-                # Finish client-owned tool calls through the shared steps below.
+                # Client-owned tools complete through the shared path below.
                 pass
 
             # 4. Close any text, tool, reasoning, or step window still open.
@@ -192,9 +191,8 @@ class AGUITranslator:
             lifecycle_completed = True
             yield run_finished_event
         except Exception as exc:
-            if outbound is not None:
-                for event in outbound.finalize():
-                    yield event
+            for event in outbound.finalize():
+                yield event
             if emit_run_error:
                 yield RunErrorEvent(
                     type=EventType.RUN_ERROR,
