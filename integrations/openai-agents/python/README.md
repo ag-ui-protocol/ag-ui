@@ -586,53 +586,56 @@ The translator translates. Your run loop still owns orchestration:
 This keeps the integration framework-neutral. FastAPI, Starlette, Django,
 aiohttp, raw ASGI, WebSockets, or tests can all use the same translator calls.
 
-### Event Mapping
+### Message, Event, and ID Mapping
 
-Both directions, source of truth is `engine/agui_to_openai.py` and
-`engine/openai_to_agui.py`.
+Source of truth: `engine/agui_to_openai.py` (inbound) and
+`engine/openai_to_agui.py` (outbound).
 
-**Inbound** — AG-UI `Message` → OpenAI Agents SDK input item (`AGUIToOpenAITranslator`):
+#### Inbound: AG-UI → OpenAI SDK (`to_openai`)
 
-| AG-UI type | OpenAI Agents SDK input shape |
-|---|---|
-| `UserMessage` | `{"type": "message", "role": "user", "content": [...]}` (multimodal-aware) |
-| `SystemMessage` | `{"type": "message", "role": "system", ...}` |
-| `DeveloperMessage` | `{"type": "message", "role": "developer", ...}` |
-| `AssistantMessage` | optional text `message` item + one `function_call` item per `tool_calls` entry |
-| `ToolMessage` | `{"type": "function_call_output", "call_id": ..., "output": ...}` |
-| `ReasoningMessage` | `{"type": "reasoning", ...}` if `encrypted_value` is set, else dropped (plaintext reasoning isn't replayable) |
-| `ActivityMessage` | dropped (neither Responses nor Chat Completions has an equivalent model-input item; subclasses may override this mapping) |
-| `Tool` (client-declared) | SDK `FunctionTool` proxy that raises `ClientToolPending` when invoked |
-| Content parts: `TextInputContent`, `ImageInputContent`, `AudioInputContent`, `DocumentInputContent`, `BinaryInputContent` | `input_text` / `input_image` / `input_audio` / `input_file` parts |
-| `VideoInputContent` | dropped (neither Responses nor Chat Completions accepts video input) |
+| AG-UI message | OpenAI SDK input item | AG-UI ID in → OpenAI ID out |
+|---|---|---|
+| `UserMessage` | `message` (role `user`) | `message.id` dropped, not sent. All-unsupported content parts (e.g. video-only) drop the whole message. |
+| `SystemMessage` | `message` (role `system`) | `message.id` dropped, not sent. |
+| `DeveloperMessage` | `message` (role `developer`) | `message.id` dropped, not sent. |
+| `AssistantMessage` | `{"role": "assistant", ...}` (if text) + one `function_call` per tool call | `message.id` dropped. **`ToolCall.id` → `function_call.call_id`** (preserved 1:1). Empty text emits no item. |
+| `ToolMessage` | `function_call_output` | `message.id` dropped. **`tool_call_id` → `function_call_output.call_id`** (preserved 1:1). |
+| `ReasoningMessage` | `reasoning` item | **`message.id` → `reasoning.id`** (preserved 1:1), only when `encrypted_value` is set — plaintext-only reasoning is dropped, no item emitted. |
+| `ActivityMessage` | *(dropped)* | No SDK equivalent; dropped with a debug log, no ID involved. |
+| `RunAgentInput.tools` | `FunctionTool` proxy | No ID — tool `name` + JSON Schema pass through. |
 
-**Outbound** — SDK stream event → AG-UI `BaseEvent` (`OpenAIToAGUITranslator`):
+#### Outbound: OpenAI SDK → AG-UI (`to_agui`)
 
-| SDK event / item | AG-UI event(s) |
-|---|---|
-| `response.output_item.added` (message) | `TEXT_MESSAGE_START` |
-| `response.output_text.delta` / `response.refusal.delta` | `TEXT_MESSAGE_CONTENT` (lazy-opens the window if needed) |
-| `response.output_item.done` (message) / `response.output_text.done` | `TEXT_MESSAGE_END` |
-| `response.output_item.added` (function_call / hosted tool call) | `TOOL_CALL_START` |
-| `response.function_call_arguments.delta` | `TOOL_CALL_ARGS` |
-| `response.output_item.done` (function_call / hosted tool call) | `TOOL_CALL_END` |
-| `ToolCallOutputItem` | `TOOL_CALL_RESULT` |
-| `HandoffCallItem` | `TOOL_CALL_START` / `TOOL_CALL_ARGS` / `TOOL_CALL_END` (a handoff is a function call) |
-| `HandoffOutputItem` | `TOOL_CALL_RESULT` |
-| `response.reasoning_summary_text.delta` / `response.reasoning_text.delta` | `REASONING_START` (once) + `REASONING_MESSAGE_START` + `REASONING_MESSAGE_CONTENT` |
-| `response.reasoning_summary_part.done` / `response.reasoning_text.done` | `REASONING_MESSAGE_END` |
-| `ReasoningItem` (finished, with `encrypted_content`) | `REASONING_ENCRYPTED_VALUE` |
-| stream end / any open reasoning when text or a tool call opens | `REASONING_END` |
-| `AgentUpdatedStreamEvent` | `STEP_FINISHED` (previous agent, if any) + `STEP_STARTED` (new agent) |
-| `MCPApprovalRequestItem` | `CUSTOM` (name=`"mcp_approval_request"`) |
-| `MCPListToolsItem`, `MCPApprovalResponseItem` | dropped (server-side bookkeeping / echo) |
-| stream start / end (always, via `to_agui`) | `RUN_STARTED` / `RUN_FINISHED` (or `RUN_ERROR`) |
-| end of stream, `run_input` given (default) | `MESSAGES_SNAPSHOT` |
-| `initial_state` / `final_state`, if provided | `STATE_SNAPSHOT` |
+| OpenAI SDK item / event | AG-UI events | OpenAI ID in → AG-UI ID out |
+|---|---|---|
+| `message` item + `output_text`/`refusal` deltas | `TEXT_MESSAGE_START` / `CONTENT` / `END` | **item `id` → `message_id`** if real, else generate `msg_<hex>`. Same ID reused in `MESSAGES_SNAPSHOT`. |
+| `function_call`, hosted-tool call, or handoff call | `TOOL_CALL_START` / `ARGS` / `END` | **`call_id` → `tool_call_id`** first choice; falls back to item `id`, then generated `call_<hex>`. Same ID reused in the snapshot. |
+| `function_call_output` or handoff output | `TOOL_CALL_RESULT` | **`call_id` → `tool_call_id`** (passthrough). `message_id` is *derived*, not from the wire: `<call_id>-result`. Skipped entirely if `call_id` is missing. |
+| `reasoning` item + summary/reasoning-text deltas | `REASONING_START`, `REASONING_MESSAGE_START`/`CONTENT`/`END` per part, `REASONING_END` | **item `id` → phase `message_id`** if real, else generate `rs_<hex>`. First part reuses the phase ID; later parts get `<phase_id>-1`, `-2`, … (derived). Not included in `MESSAGES_SNAPSHOT`. |
+| `reasoning.encrypted_content` | `REASONING_ENCRYPTED_VALUE` (subtype `message`) | **phase `message_id` → `entity_id`** (reused, not new). Emitted at most once per reasoning item. |
+| `AgentUpdatedStreamEvent` (first agent, each handoff target) | `STEP_FINISHED` (previous) then `STEP_STARTED` | No ID at all — `step_name` is the agent's `name`, or `"agent"` if unnamed. |
+| `MCPApprovalRequestItem` | `CUSTOM` named `mcp_approval_request` | No AG-UI ID assigned; `value` carries the raw request as-is. |
+| `MCPListToolsItem`, `MCPApprovalResponseItem` | *(dropped)* | Server-side bookkeeping; dropped with a debug log, no ID involved. |
+| Run input / stream completion / error | `RUN_STARTED`, then `RUN_FINISHED`/`RUN_ERROR`; optional `STATE_SNAPSHOT`; `MESSAGES_SNAPSHOT` by default | **`RunAgentInput.thread_id`/`run_id` → same fields on the lifecycle events** (passthrough, not generated). |
 
-Unknown SDK event or item types translate to `[]` with a debug log —
-graceful degradation, never a raise. See `tests/engine/test_openai_to_agui.py` for
-the streaming behavior pinned event-by-event.
+#### ID rules that apply everywhere
+
+- **Real wire ID always wins.** Generated only when the SDK sends none, or
+  sends its `FAKE_RESPONSES_ID` placeholder (some non-Responses backends
+  stamp every item with it).
+- **Generated IDs mimic wire prefixes** (`msg_`, `call_`, `rs_<hex>`) so a
+  client can't tell generated from real.
+- **A hyphen marks an ID this package derived** (`<call_id>-result`,
+  `<phase_id>-1`) — wire IDs never contain one.
+- **Every streamed ID is reused verbatim in `MESSAGES_SNAPSHOT`** — one
+  resolution per item, so the streamed event and the snapshot entry can never
+  disagree. Reasoning is the one item type excluded from the snapshot.
+- **Internal-only correlation key:** raw response events key their open
+  windows by the real item ID, or by `__idx_<output_index>` when the ID is
+  missing/placeholder. That key is bookkeeping — it is never put on an AG-UI
+  event.
+- Unknown SDK message/event types are dropped with a debug log instead of
+  failing the run.
 
 ### Guardrails
 
@@ -752,24 +755,6 @@ if translated_input.context:
 run_agent = agent.clone(instructions=instructions)
 result = Runner.run_streamed(run_agent, input=translated_input.messages)
 ```
-
-## Capabilities
-
-The streaming translator supports the OpenAI Agents SDK stream shapes AG-UI
-clients care about:
-
-| Capability | AG-UI output |
-|---|---|
-| Assistant text | `TEXT_MESSAGE_START`, `TEXT_MESSAGE_CONTENT`, `TEXT_MESSAGE_END` |
-| Refusals | Text message events |
-| Tool calls | `TOOL_CALL_START`, streamed `TOOL_CALL_ARGS`, `TOOL_CALL_END`, `TOOL_CALL_RESULT` |
-| Reasoning text | `REASONING_START`, reasoning message events, `REASONING_END` |
-| Encrypted reasoning replay data | `REASONING_ENCRYPTED_VALUE` |
-| Hosted tools such as web search, file search, code interpreter | Tool call events |
-| Handoffs and agents-as-tools | Tool call events plus step events |
-| MCP approval requests | `CUSTOM` events |
-
-Unknown SDK event types are skipped with a debug log instead of crashing the run.
 
 ## Advanced: the engine layer
 
