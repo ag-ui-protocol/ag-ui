@@ -69,6 +69,8 @@ const Chat = () => {
           arguments: first.arguments,
         });
       },
+      onRunFinishedEvent: () => setResolvedCallId(null),
+      onRunErrorEvent: () => setResolvedCallId(null),
     });
     return () => subscription.unsubscribe();
   }, [agent]);

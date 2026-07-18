@@ -84,13 +84,13 @@ const SubagentsView = () => {
   useRenderTool({
     name: "research_topic",
     agentId: "subagents",
-    parameters: z.object({ topic: z.string().optional() }),
+    parameters: z.object({ input: z.string().optional() }),
     render: ({ toolCallId, status, args, result }: any) => (
       <DelegationTracker
         role="research"
         toolCallId={toolCallId}
         status={status}
-        preview={args?.topic}
+        preview={args?.input}
         result={result}
         onUpdate={track}
       />
@@ -100,13 +100,13 @@ const SubagentsView = () => {
   useRenderTool({
     name: "write_prose",
     agentId: "subagents",
-    parameters: z.object({ facts: z.string().optional() }),
+    parameters: z.object({ input: z.string().optional() }),
     render: ({ toolCallId, status, args, result }: any) => (
       <DelegationTracker
         role="writer"
         toolCallId={toolCallId}
         status={status}
-        preview={args?.facts}
+        preview={args?.input}
         result={result}
         onUpdate={track}
       />
@@ -116,13 +116,13 @@ const SubagentsView = () => {
   useRenderTool({
     name: "critique_draft",
     agentId: "subagents",
-    parameters: z.object({ draft: z.string().optional() }),
+    parameters: z.object({ input: z.string().optional() }),
     render: ({ toolCallId, status, args, result }: any) => (
       <DelegationTracker
         role="critic"
         toolCallId={toolCallId}
         status={status}
-        preview={args?.draft}
+        preview={args?.input}
         result={result}
         onUpdate={track}
       />
