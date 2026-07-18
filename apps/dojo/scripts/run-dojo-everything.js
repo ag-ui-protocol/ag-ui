@@ -224,13 +224,7 @@ const ALL_SERVICES = {
       command: "uv run dev",
       name: "OpenAI Agents SDK (Python)",
       cwd: path.join(integrationsRoot, "openai-agents/python/examples"),
-      env: {
-        PORT: 8024,
-        OPENAI_API_KEY: process.env.OPENAI_API_KEY || "test-key",
-        ...(!process.env.OPENAI_API_KEY && {
-          OPENAI_BASE_URL: "http://localhost:5555/v1",
-        }),
-      },
+      env: { PORT: 8024 },
     },
   ],
   "claude-agent-sdk-python": [
