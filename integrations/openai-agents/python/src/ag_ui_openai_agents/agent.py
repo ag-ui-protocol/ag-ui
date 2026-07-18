@@ -1,5 +1,6 @@
 """Agent wrapper — an OpenAI Agents SDK Agent that speaks AG-UI."""
 
+import logging
 from typing import Any, AsyncIterator
 
 from agents import Agent, RunConfig, Runner
@@ -7,12 +8,14 @@ from agents import Agent, RunConfig, Runner
 from ag_ui.core import BaseEvent, CustomEvent, RunAgentInput
 from .translator import AGUITranslator
 
+logger = logging.getLogger(__name__)
+
 
 class OpenAIAgentsAgent:
     """Wrap an OpenAI Agents SDK Agent so it speaks the AG-UI protocol.
 
-    The wrapper is reusable across requests. Client-declared tools are added to
-    a per-request agent clone, and output translation uses fresh per-run state.
+    The wrapper is reusable across requests. Non-conflicting client tools are
+    added to a per-request agent clone, and output uses fresh per-run state.
 
     This shortcut hides the run loop. Use ``AGUITranslator`` directly when
     application logic needs access to ``RunResultStreaming``.
@@ -97,9 +100,25 @@ class OpenAIAgentsAgent:
 
         run_agent = self.agent
         if translated.tools:
-            run_agent = self.agent.clone(
-                tools=[*self.agent.tools, *translated.tools]
-            )
+            server_tool_names = {
+                name
+                for tool in self.agent.tools
+                if (name := getattr(tool, "name", None)) is not None
+            }
+            client_tools = []
+            for tool in translated.tools:
+                if tool.name in server_tool_names:
+                    logger.warning(
+                        "Ignoring client tool %r because a server tool already uses this name",
+                        tool.name,
+                    )
+                    continue
+                client_tools.append(tool)
+
+            if client_tools:
+                run_agent = self.agent.clone(
+                    tools=[*self.agent.tools, *client_tools]
+                )
 
         result = Runner.run_streamed(
             run_agent,

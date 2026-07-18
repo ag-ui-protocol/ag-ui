@@ -19,7 +19,7 @@ import asyncio
 from unittest.mock import MagicMock
 
 import pytest
-from agents import Agent, RunConfig
+from agents import Agent, RunConfig, function_tool
 from agents.result import RunResultStreaming
 
 import ag_ui_openai_agents.agent as agent_module
@@ -107,6 +107,22 @@ def test_run_merges_client_tools_onto_clone(patched_runner):
     assert ran_agent is not sdk_agent, "client tools must go on a clone"
     assert [t.name for t in ran_agent.tools] == ["confirm"]
     assert sdk_agent.tools == [], "the static agent must stay untouched"
+
+
+def test_run_keeps_server_tool_when_client_name_conflicts(patched_runner, caplog):
+    @function_tool
+    def confirm() -> str:
+        """Confirm on the server."""
+        return "confirmed"
+
+    sdk_agent = Agent(name="assistant", instructions="hi", tools=[confirm])
+    wrapper = OpenAIAgentsAgent(sdk_agent)
+
+    _collect(wrapper, _run_input(with_tool=True))
+
+    assert patched_runner[0]["agent"] is sdk_agent
+    assert [tool.name for tool in sdk_agent.tools] == ["confirm"]
+    assert "Ignoring client tool 'confirm'" in caplog.text
 
 
 def test_run_config_passes_through(patched_runner):

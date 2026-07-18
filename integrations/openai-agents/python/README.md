@@ -163,6 +163,8 @@ add_openai_agents_fastapi_endpoint(app, agent, "/")
 - holds no per-request state — one instance serves every request; the SDK
   `Agent` is a config template, and client-declared tools are merged onto a
   per-request `clone()`, so concurrent requests never see each other's tools;
+- keeps the server tool when a client-declared tool uses the same name; the
+  conflicting client tool is ignored with a warning;
 - takes `run_config=...` to set run-wide model settings;
 - exposes `run_streamed(RunAgentInput) -> AsyncIterator[BaseEvent]` if you want
   to serve it on a transport other than FastAPI.
