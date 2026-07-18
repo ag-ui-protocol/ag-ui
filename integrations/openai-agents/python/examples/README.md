@@ -1,7 +1,7 @@
 # OpenAI Agents SDK examples
 
 Runnable demos for `ag_ui_openai_agents`, one mounted FastAPI app per agent.
-The aggregate server shows both integration styles:
+The aggregate server mounts each example application:
 
 - **`ag_ui_docs_copilot`** handles normal conversation with a small main
   Copilot and delegates integration questions to an
@@ -10,8 +10,6 @@ The aggregate server shows both integration styles:
 - The remaining focused feature apps use **`OpenAIAgentsAgent`** and
   `add_openai_agents_fastapi_endpoint` where their run does not require custom
   control.
-- **`translator_server.py`** remains a compact, centralized direct-translator
-  reference for the original focused demos.
 
 Model provider is **native OpenAI** (`OPENAI_API_KEY`). These examples exercise
 the direct OpenAI path deliberately, since that is the reference setup for the
@@ -134,7 +132,7 @@ AG-UI concept. Unlike `human_in_the_loop`, the tool has a real server-side
 implementation; the SDK itself pauses the run and reports a
 `ToolApprovalItem` on `result.interruptions` before the body ever executes.
 That's only known once the stream is fully drained, so this demo is
-hand-routed (see `server.py` / `translator_server.py`) instead of running
+hand-routed in its own application instead of running
 through the shared loop:
 
 1. First request runs normally; if `result.interruptions` is non-empty after

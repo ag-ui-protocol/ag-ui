@@ -11,7 +11,7 @@ Mechanically: when the model calls ``issue_refund``, the SDK stops the run
 ``result.interruptions``. That only becomes known once the stream is fully
 drained — there is no mid-stream event for it — so it can't go through the
 normal per-item translator dispatch the way ``MCPApprovalRequestItem`` does.
-The run loop (``server.py`` / ``translator_server.py``) checks
+The example's run loop checks
 ``result.interruptions`` right after ``to_agui()`` finishes, and if any are
 pending:
 
