@@ -25,6 +25,7 @@ from agents import (
     MCPApprovalRequestItem,
 )
 from agents.items import ToolCallItem, ToolCallOutputItem
+from agents.models.fake_id import FAKE_RESPONSES_ID
 from openai.types.responses import ResponseFunctionToolCall
 from openai.types.responses.response_output_item import McpApprovalRequest
 
@@ -302,6 +303,80 @@ def test_reasoning_summary_delta_opens_phase_and_part():
     assert events[2].delta == "thinking"
     # The phase stays open until finalize (only the part closed above).
     assert _types(engine.finalize()) == [EventType.REASONING_END]
+
+
+def test_fake_reasoning_id_starts_fresh_when_output_index_is_reused():
+    engine = OpenAIToAGUITranslator()
+    events = []
+
+    for encrypted in ("first", "second"):
+        events.extend(
+            _drive(
+                engine,
+                _added(OpenAIItemType.REASONING, id=FAKE_RESPONSES_ID),
+                _raw(
+                    OpenAIRawResponseEventType.REASONING_TEXT_DELTA,
+                    item_id=FAKE_RESPONSES_ID,
+                    output_index=0,
+                    delta="thinking",
+                ),
+                _raw(
+                    OpenAIRawResponseEventType.REASONING_TEXT_DONE,
+                    item_id=FAKE_RESPONSES_ID,
+                    output_index=0,
+                ),
+                _done(
+                    OpenAIItemType.REASONING,
+                    id=FAKE_RESPONSES_ID,
+                    encrypted_content=encrypted,
+                ),
+            )
+        )
+
+    # A new item must also reset the key when the previous provider turn
+    # omitted output_item.done but another output already closed its reasoning.
+    events.extend(
+        _drive(
+            engine,
+            _added(OpenAIItemType.REASONING, id=FAKE_RESPONSES_ID),
+            _raw(
+                OpenAIRawResponseEventType.REASONING_TEXT_DELTA,
+                item_id=FAKE_RESPONSES_ID,
+                output_index=0,
+                delta="thinking",
+            ),
+            _raw(
+                OpenAIRawResponseEventType.REASONING_TEXT_DONE,
+                item_id=FAKE_RESPONSES_ID,
+                output_index=0,
+            ),
+            _added(OpenAIItemType.MESSAGE, output_index=1, id="msg_1"),
+            _added(OpenAIItemType.REASONING, id=FAKE_RESPONSES_ID),
+            _raw(
+                OpenAIRawResponseEventType.REASONING_TEXT_DELTA,
+                item_id=FAKE_RESPONSES_ID,
+                output_index=0,
+                delta="thinking again",
+            ),
+        )
+    )
+
+    phase_ids = [
+        event.message_id for event in events if event.type == EventType.REASONING_START
+    ]
+    part_ids = [
+        event.message_id
+        for event in events
+        if event.type == EventType.REASONING_MESSAGE_START
+    ]
+    encrypted_values = [
+        event.encrypted_value
+        for event in events
+        if event.type == EventType.REASONING_ENCRYPTED_VALUE
+    ]
+
+    assert part_ids == phase_ids
+    assert encrypted_values == ["first", "second"]
 
 
 def test_reasoning_auto_closes_when_text_output_starts():

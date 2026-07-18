@@ -100,6 +100,10 @@ class OpenAIToAGUITranslator:
         self._reasoning_part_seq: dict[str, int] = {}  # key -> next part index
         self._reasoning_phase_ids: dict[str, str] = {}  # key -> phase message_id
 
+        # Active placeholder IDs: output_index -> unique internal key.
+        self._placeholder_window_keys: dict[Any, str] = {}
+        self._placeholder_window_seq = 0
+
         # Agent-step state for ordered STEP_FINISHED and STEP_STARTED events.
         self._current_step: str | None = None  # active step name
 
@@ -306,7 +310,7 @@ class OpenAIToAGUITranslator:
         item = read_attr(data, "item")
         item_type = read_attr(item, "type")
         item_id = read_attr(item, "id")
-        key = self._window_key(item_id, read_attr(data, "output_index"))
+        key = self._window_key(item_id, read_attr(data, "output_index"), start=True)
 
         if item_type == OpenAIItemType.MESSAGE:
             # Defer text until its first delta to avoid empty messages on tool-only
@@ -344,20 +348,26 @@ class OpenAIToAGUITranslator:
         """
         item = read_attr(data, "item")
         item_type = read_attr(item, "type")
-        key = self._window_key(read_attr(item, "id"), read_attr(data, "output_index"))
+        item_id = read_attr(item, "id")
+        output_index = read_attr(data, "output_index")
+        key = self._window_key(item_id, output_index)
 
         if item_type == OpenAIItemType.MESSAGE:
             # Discard a pending message if no text delta opened it; otherwise
             # _close_text closes the active sequence below.
             self._pending_text_ids.pop(key, None)
-            return self._close_text(key)
-        if item_type == OpenAIItemType.FUNCTION_CALL or item_type in HOSTED_TOOL_CALL_TYPES:
-            return self._close_tool_call(key)
-        if item_type == OpenAIItemType.REASONING:
+            events = self._close_text(key)
+        elif item_type == OpenAIItemType.FUNCTION_CALL or item_type in HOSTED_TOOL_CALL_TYPES:
+            events = self._close_tool_call(key)
+        elif item_type == OpenAIItemType.REASONING:
             events = self._emit_encrypted_value(key, item)
             events.extend(self._close_reasoning(key))
-            return events
-        return []
+        else:
+            events = []
+
+        if not self._is_real_id(item_id):
+            self._placeholder_window_keys.pop(output_index, None)
+        return events
 
     def translate_text_delta(self, data: Any) -> list[BaseEvent]:
         """Translate response.output_text.delta into TEXT_MESSAGE_CONTENT (lazy start).
@@ -814,25 +824,36 @@ class OpenAIToAGUITranslator:
         """
         return item_id if cls._is_real_id(item_id) else generate()
 
-    @classmethod
-    def _window_key(cls, item_id: Any, output_index: Any) -> str:
+    def _window_key(self, item_id: Any, output_index: Any, *, start: bool = False) -> str:
         """Return the internal key that correlates one output item's raw events.
 
         This key indexes open text, tool-call, and reasoning sequences; it is
         never emitted as an AG-UI ID. A real OpenAI item ID is used when
-        available. Missing or placeholder IDs fall back to ``output_index``,
-        which is unique per item within a response.
+        available. Placeholder IDs use ``output_index`` only while that item
+        is active, then receive a new internal key when the index is reused.
 
         Args:
             item_id: The item's wire id, or None.
             output_index: The item's position in the response.
+            start: Whether this event starts a new output item.
 
         Returns:
-            The OpenAI item ID, or ``__idx_<output_index>`` as a fallback.
+            The OpenAI item ID, or a unique internal placeholder key.
         """
-        if cls._is_real_id(item_id):
+        if self._is_real_id(item_id):
             return item_id
-        return f"__idx_{output_index}"
+        key = self._placeholder_window_keys.get(output_index)
+        active = key is not None and (
+            key in self._open_texts
+            or key in self._pending_text_ids
+            or key in self._open_tool_calls
+            or key in self._open_reasonings
+        )
+        if key is None or (start and not active):
+            key = f"__idx_{output_index}_{self._placeholder_window_seq}"
+            self._placeholder_window_seq += 1
+            self._placeholder_window_keys[output_index] = key
+        return key
 
     def _reconcile(
         self,
