@@ -3,36 +3,39 @@
 This example is a small documentation assistant for the AG-UI integration with
 the OpenAI Agents SDK.
 
-The main **Copilot** handles normal conversation without loading the
-documentation. For AG-UI documentation or code questions, it calls a second
-OpenAI Agents SDK agents, **AG-UI OpenAI Agents Specialist** and **AG-UI
-Protocol Python Specialist**, through
-`Agent.as_tool()`. Each specialist receives only its relevant local README.
+One **Copilot** agent handles normal conversation directly, and for AG-UI or
+OpenAI Agents SDK questions calls one of two tools, `read_ag_ui_protocol_docs`
+and `read_ag_ui_openai_agents_docs`, to read a single section of the relevant
+local README by heading.
 
 ## What it demonstrates
 
 ```text
-Copilot → OpenAI Agents / Protocol specialists (local READMEs)
+Copilot → read_ag_ui_protocol_docs / read_ag_ui_openai_agents_docs (local READMEs, one section at a time)
                                       ↓
 RunAgentInput → to_openai() → Runner.run_streamed() → to_agui() → SSE
 ```
 
 - Local documentation with no internet request or retrieval framework
-- An OpenAI Agents SDK documentation specialist used as a tool by Copilot
+- Table-of-contents instructions plus an on-demand section-read tool, instead
+  of loading a whole README into the prompt
 - A direct, visible AG-UI translator endpoint
 - Streaming lifecycle, text, and tool-call events to CopilotKit
 
-## Why the documentation is loaded directly
+## Why the documentation is loaded by section
 
-The integration README is small enough for this focused demo, so it is read
-once and included in the agents' instructions. This keeps the example
-deterministic and easy to copy. A production assistant with many or large
-documents should replace this with its own retrieval system.
+The integration README is small enough for this focused demo, so its heading
+list sits in the Copilot's instructions and each tool call reads back one
+matching section. This keeps the example deterministic, cheap, and fast to
+stream — an earlier version routed each question through a second
+sub-agent, which cost extra model round trips before the first token showed
+up. A production assistant with many or large documents should replace this
+with its own retrieval system.
 
 ## Try it
 
 - Ask how `AGUITranslator.to_openai()` and `to_agui()` connect the frontend and
   SDK.
-- Ask the OpenAI Agents Specialist to generate a minimal FastAPI streaming endpoint.
+- Ask for a minimal FastAPI streaming endpoint.
 - Ask which translator options control lifecycle events, snapshots, state, and
   errors.

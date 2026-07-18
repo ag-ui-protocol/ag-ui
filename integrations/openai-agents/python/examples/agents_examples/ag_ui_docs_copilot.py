@@ -1,7 +1,8 @@
-"""AG-UI documentation assistant with two focused specialists as tools."""
+"""AG-UI documentation assistant that reads local README sections on demand."""
 
 from __future__ import annotations
 
+import re
 from importlib.metadata import metadata
 
 from agents import Agent, Runner, function_tool
@@ -12,7 +13,8 @@ from ag_ui.core import RunAgentInput
 from ag_ui.encoder import EventEncoder
 from ag_ui_openai_agents import AGUITranslator
 from .constants import DEFAULT_MODEL
-from .docs_search import MarkdownSearchIndex
+
+_HEADING_RE = re.compile(r"^#{1,6}\s+(.+)$")
 
 
 def _load_distribution_readme(distribution: str) -> str:
@@ -23,124 +25,108 @@ def _load_distribution_readme(distribution: str) -> str:
     return document
 
 
-# ag-ui-protocol specialist: knows the core Python SDK documentation.
+class MarkdownSections:
+    """A Markdown document split by heading, read one section at a time.
+
+    The Copilot sees only the heading list in its instructions and fetches
+    the sections it needs on demand, so the full document never sits in a
+    prompt.
+    """
+
+    def __init__(self, document: str) -> None:
+        sections: dict[str, list[str]] = {}
+        heading = "Overview"
+        for line in document.splitlines():
+            match = _HEADING_RE.match(line)
+            if match:
+                heading = match.group(1).strip()
+            sections.setdefault(heading, []).append(line)
+        self._sections = {
+            name: content
+            for name, lines in sections.items()
+            if (content := "\n".join(lines).strip())
+        }
+
+    @property
+    def headings(self) -> str:
+        """The table of contents: one heading per line."""
+        return "\n".join(f"- {name}" for name in self._sections)
+
+    def read(self, heading: str) -> str:
+        """Return one section by heading (case-insensitive, substring ok)."""
+        wanted = heading.strip().lstrip("#").strip().lower()
+        for name, content in self._sections.items():
+            if name.lower() == wanted:
+                return content
+        for name, content in self._sections.items():
+            if wanted in name.lower():
+                return content
+        return f"No section matches {heading!r}. Available headings:\n{self.headings}"
+
+
+# ag-ui-protocol docs: the core Python SDK README.
 AG_UI_PROTOCOL_DOCS = _load_distribution_readme("ag-ui-protocol")
-_AG_UI_PROTOCOL_DOCS_INDEX = MarkdownSearchIndex(AG_UI_PROTOCOL_DOCS)
+_AG_UI_PROTOCOL_SECTIONS = MarkdownSections(AG_UI_PROTOCOL_DOCS)
 
 
 @function_tool
-def search_ag_ui_protocol_docs(query: str) -> str:
-    """Find relevant AG-UI Protocol Python documentation sections.
+def read_ag_ui_protocol_docs(heading: str) -> str:
+    """Read one AG-UI Protocol Python documentation section by its heading.
 
     Args:
-        query: The documentation question or API concepts to find.
+        heading: A heading from the "AG-UI Protocol docs" table of contents
+            in your instructions.
     """
-    return _AG_UI_PROTOCOL_DOCS_INDEX.search(query)
+    return _AG_UI_PROTOCOL_SECTIONS.read(heading)
 
 
-AG_UI_PROTOCOL_DOCS_INSTRUCTIONS = """You are the technical specialist for
-AG-UI Protocol's core Python SDK. Help developers understand ag_ui.core data
-models, RunAgentInput, messages, events, event types, and EventEncoder.
-
-Before answering, always call search_ag_ui_protocol_docs with a focused query.
-Treat its excerpts as your only source of truth. If the first search is
-insufficient, search once more with different API terms.
-
-Answer only the user's question. Retrieve and explain only the relevant parts
-of the documentation; do not add a broad tutorial or unrelated integration
-details. Be concise and practical. For code requests, provide only the
-smallest complete, production-readable Python snippet needed for the request,
-followed by a short explanation. Use documented APIs only. If the
-documentation does not establish an answer, say so briefly instead of
-guessing.
-"""
-
-ag_ui_protocol_docs_agent = Agent(
-    name="AG-UI Protocol Python Specialist",
-    model=DEFAULT_MODEL,
-    instructions=AG_UI_PROTOCOL_DOCS_INSTRUCTIONS,
-    tools=[search_ag_ui_protocol_docs],
-)
-
-
-# ag-ui-openai-agents specialist: knows the integration documentation.
+# ag-ui-openai-agents docs: this integration's README.
 AG_UI_OPENAI_AGENTS_DOCS = _load_distribution_readme("ag-ui-openai-agents")
-_AG_UI_OPENAI_AGENTS_DOCS_INDEX = MarkdownSearchIndex(AG_UI_OPENAI_AGENTS_DOCS)
+_AG_UI_OPENAI_AGENTS_SECTIONS = MarkdownSections(AG_UI_OPENAI_AGENTS_DOCS)
 
 
 @function_tool
-def search_ag_ui_openai_agents_docs(query: str) -> str:
-    """Find relevant AG-UI OpenAI Agents integration documentation sections.
+def read_ag_ui_openai_agents_docs(heading: str) -> str:
+    """Read one AG-UI OpenAI Agents integration documentation section.
 
     Args:
-        query: The documentation question or integration concepts to find.
+        heading: A heading from the "AG-UI OpenAI Agents docs" table of
+            contents in your instructions.
     """
-    return _AG_UI_OPENAI_AGENTS_DOCS_INDEX.search(query)
+    return _AG_UI_OPENAI_AGENTS_SECTIONS.read(heading)
 
 
-AG_UI_OPENAI_AGENTS_DOCS_INSTRUCTIONS = """You are the technical specialist for
-the AG-UI OpenAI Agents integration. Help developers understand the
-AGUITranslator API, AG-UI request translation, SDK streaming, FastAPI/SSE
-endpoints, tools, client tools, context, state, lifecycle events, errors, and
-testing.
-
-Before answering, always call search_ag_ui_openai_agents_docs with a focused
-query. Treat its excerpts as your only source of truth. If the first search is
-insufficient, search once more with different API terms.
-
-Answer only the user's question. Retrieve and explain only the relevant parts
-of the documentation; do not add a broad tutorial, related features, or extra
-options unless the user asks. Be concise and practical. For code requests,
-provide only the smallest complete, production-readable Python snippet needed
-for the request, followed by a short explanation. Use documented APIs only. Do
-not invent behavior or configuration. If the documentation does not establish
-an answer, say so briefly instead of guessing.
-"""
-
-ag_ui_openai_agents_docs_agent = Agent(
-    name="AG-UI OpenAI Agents Specialist",
-    model=DEFAULT_MODEL,
-    instructions=AG_UI_OPENAI_AGENTS_DOCS_INSTRUCTIONS,
-    tools=[search_ag_ui_openai_agents_docs],
-)
-
-
-# Main Copilot: handles normal conversation and delegates documentation work.
-copilot_instructions = """You are the developer-facing Copilot for an AG-UI
+copilot_instructions = f"""You are the developer-facing Copilot for an AG-UI
 application. Answer only what the user asks. Be clear, practical, and concise;
 do not add a tutorial, unrelated details, alternatives, or follow-up work
 unless requested. Handle ordinary conversation directly.
 
-For any question or request about AG-UI, the OpenAI Agents SDK, translator
-APIs, FastAPI endpoints, streaming, tools, client tools, state, lifecycle
-events, errors, tests, or Python implementation, call the relevant specialist
-before answering. Use ask_ag_ui_openai_agents_docs for the OpenAI Agents SDK
-integration and ask_ag_ui_protocol_docs for ag_ui.core protocol types and
-EventEncoder questions.
-Use only the part of the specialist's result that answers the user's question.
-Do not invent behavior or claim details a specialist did not provide. For code
-requests, make sure the relevant specialist is called."""
+For any question about AG-UI, the OpenAI Agents SDK, translator APIs, FastAPI
+endpoints, streaming, tools, client tools, state, lifecycle events, errors,
+tests, or Python implementation, pick the most relevant heading from the
+matching table of contents below and call the matching tool before answering.
+Use read_ag_ui_openai_agents_docs for OpenAI Agents SDK integration questions
+and read_ag_ui_protocol_docs for ag_ui.core protocol types and EventEncoder
+questions. Treat the returned section as your only source of truth. Read
+another section if the first one is not enough.
+
+Use only the part of the section that answers the user's question. Do not
+invent behavior or claim details the documentation did not provide. For code
+requests, provide only the smallest complete, production-readable Python
+snippet needed, followed by a short explanation. Use documented APIs only.
+
+AG-UI Protocol docs table of contents:
+{_AG_UI_PROTOCOL_SECTIONS.headings}
+
+AG-UI OpenAI Agents docs table of contents:
+{_AG_UI_OPENAI_AGENTS_SECTIONS.headings}
+"""
 
 copilot_agent = Agent(
     name="AG-UI Docs Copilot",
     model=DEFAULT_MODEL,
     instructions=copilot_instructions,
-    tools=[
-        ag_ui_protocol_docs_agent.as_tool(
-            tool_name="ask_ag_ui_protocol_docs",
-            tool_description=(
-                "Provide authoritative AG-UI core Python SDK guidance about "
-                "protocol types, RunAgentInput, events, and EventEncoder."
-            ),
-        ),
-        ag_ui_openai_agents_docs_agent.as_tool(
-            tool_name="ask_ag_ui_openai_agents_docs",
-            tool_description=(
-                "Provide authoritative AG-UI and OpenAI Agents SDK guidance, "
-                "including documented Python integration snippets."
-            ),
-        ),
-    ],
+    tools=[read_ag_ui_protocol_docs, read_ag_ui_openai_agents_docs],
 )
 
 # AGUI Translator Integration

@@ -3,10 +3,9 @@
 Runnable demos for `ag_ui_openai_agents`, one mounted FastAPI app per agent.
 The aggregate server mounts each example application:
 
-- **`ag_ui_docs_copilot`** handles normal conversation with a small main
-  Copilot and delegates integration questions to an
-  `AG-UI OpenAI Agents Specialist` and core protocol questions to an
-  `AG-UI Protocol Python Specialist` as tools.
+- **`ag_ui_docs_copilot`** handles normal conversation directly and reads
+  local README sections on demand via `read_ag_ui_openai_agents_docs` and
+  `read_ag_ui_protocol_docs` tools.
 - The remaining focused feature apps use **`OpenAIAgentsAgent`** and
   `add_openai_agents_fastapi_endpoint` where their run does not require custom
   control.
@@ -67,18 +66,18 @@ lists every registered agent. Demos map 1:1 onto the AG-UI Dojo feature pages.
 
 ### `ag_ui_docs_copilot`
 
-The main Copilot handles normal conversation without carrying the documentation
-in its instructions. Documentation and code questions are delegated to an
-`AG-UI OpenAI Agents Specialist` and `AG-UI Protocol Python Specialist` through
-the SDK's `Agent.as_tool()` API. Each specialist searches a local Markdown
-index first, so only the highest-ranked README sections enter the model context
-instead of the complete documentation. The retrieval is deterministic and adds
-no vector database, embedding request, or network dependency. The endpoint
-keeps the direct `to_openai` → `Runner.run_streamed` → `to_agui` flow visible.
+One Copilot agent handles normal conversation directly. Its instructions carry
+only the heading list (table of contents) for two local READMEs; for a
+documentation or code question it picks a heading and calls
+`read_ag_ui_openai_agents_docs` or `read_ag_ui_protocol_docs` to read that one
+section into context. The retrieval is deterministic and adds no vector
+database, embedding request, network dependency, or extra agent hop — the
+whole document never enters the prompt, and neither does a second model's
+paraphrase of it. The endpoint keeps the direct `to_openai` →
+`Runner.run_streamed` → `to_agui` flow visible.
 
 **Try:** `"Explain how to connect my existing OpenAI Agents SDK agent to AG-UI,
-then ask the Documentation Specialist for the smallest FastAPI streaming
-endpoint."`
+then give me the smallest FastAPI streaming endpoint."`
 
 ### `agentic_chat`
 

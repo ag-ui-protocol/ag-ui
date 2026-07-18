@@ -30,27 +30,27 @@ const AGUIDocsCopilot: React.FC<AGUIDocsCopilotProps> = ({ params }) => {
 
 const DocsChat = () => {
   useRenderTool({
-    name: "ask_ag_ui_openai_agents_docs",
+    name: "read_ag_ui_openai_agents_docs",
     agentId: "ag_ui_docs_copilot",
-    parameters: z.object({ input: z.string().optional() }),
+    parameters: z.object({ heading: z.string().optional() }),
     render: ({ status, args, result }: any) => (
       <DocsLookupProgress
         source="AG-UI OpenAI Agents"
         status={status}
-        query={args?.input}
+        heading={args?.heading}
         result={result}
       />
     ),
   });
   useRenderTool({
-    name: "ask_ag_ui_protocol_docs",
+    name: "read_ag_ui_protocol_docs",
     agentId: "ag_ui_docs_copilot",
-    parameters: z.object({ input: z.string().optional() }),
+    parameters: z.object({ heading: z.string().optional() }),
     render: ({ status, args, result }: any) => (
       <DocsLookupProgress
         source="AG-UI Protocol"
         status={status}
-        query={args?.input}
+        heading={args?.heading}
         result={result}
       />
     ),
@@ -92,54 +92,55 @@ const DocsChat = () => {
 function DocsLookupProgress({
   source,
   status,
-  query,
+  heading,
   result,
 }: {
   source: "AG-UI OpenAI Agents" | "AG-UI Protocol";
   status: "inProgress" | "executing" | "complete";
-  query?: string;
+  heading?: string;
   result?: string;
 }) {
   const complete = status === "complete";
-  const step = complete
-    ? "Answer ready"
-    : status === "executing"
-      ? "Finding the relevant section"
-      : `Opening the ${source} guide`;
+  const missed = complete && !!result && result.startsWith("No section matches");
 
   return (
-    <div className="my-2 max-w-md rounded-xl border border-blue-200/70 bg-blue-50/70 px-4 py-3 text-sm dark:border-blue-400/20 dark:bg-blue-950/30">
-      <div className="flex items-center gap-2 font-medium text-blue-900 dark:text-blue-100">
-        <span className={complete ? "" : "animate-pulse"}>
-          {complete ? "✓" : "📚"}
-        </span>
-        <span>
-          {complete ? `${source} docs consulted` : `Consulting ${source} docs`}
-        </span>
-        {!complete && (
-          <span
-            className="ml-auto flex gap-0.5"
-            aria-label="Docs search in progress"
-          >
-            <span className="animate-bounce">•</span>
-            <span className="animate-bounce [animation-delay:120ms]">•</span>
-            <span className="animate-bounce [animation-delay:240ms]">•</span>
+    <div className="my-2 flex max-w-md items-start gap-2.5 rounded-xl border border-blue-200/70 bg-blue-50/70 px-3.5 py-2.5 text-sm dark:border-blue-400/20 dark:bg-blue-950/30">
+      <span
+        className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs ${
+          missed
+            ? "bg-amber-200 text-amber-900 dark:bg-amber-400/20 dark:text-amber-200"
+            : complete
+              ? "bg-blue-200 text-blue-900 dark:bg-blue-400/20 dark:text-blue-200"
+              : "animate-pulse bg-blue-200/70 text-blue-900 dark:bg-blue-400/10 dark:text-blue-200"
+        }`}
+      >
+        {missed ? "!" : complete ? "✓" : "📖"}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline gap-1.5">
+          <span className="font-medium text-blue-900 dark:text-blue-100">
+            {source} docs
           </span>
-        )}
-      </div>
-      <div className="mt-1 text-xs text-blue-800/70 dark:text-blue-200/70">
-        {step}
-      </div>
-      {!complete && query && (
-        <div className="mt-2 line-clamp-2 text-xs text-blue-900/70 dark:text-blue-100/70">
-          {query}
+          {!complete && (
+            <span className="flex gap-0.5" aria-label="Reading section">
+              <span className="animate-bounce text-blue-500">•</span>
+              <span className="animate-bounce text-blue-500 [animation-delay:120ms]">
+                •
+              </span>
+              <span className="animate-bounce text-blue-500 [animation-delay:240ms]">
+                •
+              </span>
+            </span>
+          )}
         </div>
-      )}
-      {complete && result && (
-        <div className="mt-1 line-clamp-2 text-xs text-blue-900/70 dark:text-blue-100/70">
-          {source} specialist finished.
+        <div className="mt-0.5 truncate text-xs text-blue-800/80 dark:text-blue-200/70">
+          {heading
+            ? `${complete ? "Read" : "Reading"} "${heading}"`
+            : complete
+              ? "Section read"
+              : "Opening the guide"}
         </div>
-      )}
+      </div>
     </div>
   );
 }
