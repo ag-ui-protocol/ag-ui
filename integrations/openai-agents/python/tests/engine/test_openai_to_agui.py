@@ -24,9 +24,13 @@ from agents import (
     HandoffOutputItem,
     MCPApprovalRequestItem,
 )
-from agents.items import ToolCallItem, ToolCallOutputItem
+from agents.items import MessageOutputItem, ToolCallItem, ToolCallOutputItem
 from agents.models.fake_id import FAKE_RESPONSES_ID
-from openai.types.responses import ResponseFunctionToolCall
+from openai.types.responses import (
+    ResponseFunctionToolCall,
+    ResponseOutputMessage,
+    ResponseOutputText,
+)
 from openai.types.responses.response_output_item import McpApprovalRequest
 
 from ag_ui.core import EventType
@@ -69,6 +73,19 @@ def _done(item_type: OpenAIItemType, output_index: int = 0, **item) -> SimpleNam
 
 def _run_item(item) -> SimpleNamespace:
     return SimpleNamespace(type=OpenAIStreamEventType.RUN_ITEM, name="x", item=item)
+
+
+def _message_item(item_id: str, text: str) -> MessageOutputItem:
+    return MessageOutputItem(
+        agent=_AGENT,
+        raw_item=ResponseOutputMessage(
+            id=item_id,
+            type="message",
+            role="assistant",
+            status="completed",
+            content=[ResponseOutputText(type="output_text", text=text, annotations=[])],
+        ),
+    )
 
 
 def _agent_updated(name: str) -> SimpleNamespace:
@@ -126,7 +143,9 @@ def test_text_delta_lazily_opens_window_without_output_item_added():
     assert _types(events) == [EventType.TEXT_MESSAGE_START, EventType.TEXT_MESSAGE_CONTENT]
 
 
-def test_text_done_closes_window_when_output_item_done_is_skipped():
+def test_text_done_does_not_close_the_message_window():
+    # output_text.done ends one content part, not the message — the window
+    # must stay open for output_item.done to close.
     engine = OpenAIToAGUITranslator()
     events = _drive(
         engine,
@@ -134,7 +153,60 @@ def test_text_done_closes_window_when_output_item_done_is_skipped():
         _raw(OpenAIRawResponseEventType.TEXT_DELTA, item_id="msg_1", output_index=0, delta="hi"),
         _raw(OpenAIRawResponseEventType.TEXT_DONE, item_id="msg_1", output_index=0),
     )
+    assert EventType.TEXT_MESSAGE_END not in _types(events)
+    events = _drive(engine, _done(OpenAIItemType.MESSAGE, id="msg_1"))
+    assert _types(events) == [EventType.TEXT_MESSAGE_END]
+    assert events[0].message_id == "msg_1"
+
+
+def test_two_text_parts_stream_as_one_message():
+    # A message can carry several content parts, each with its own
+    # output_text.done. All of them belong to one AG-UI message id.
+    engine = OpenAIToAGUITranslator()
+    events = _drive(
+        engine,
+        _added(OpenAIItemType.MESSAGE, id="msg_1"),
+        _raw(OpenAIRawResponseEventType.TEXT_DELTA, item_id="msg_1", output_index=0, delta="First"),
+        _raw(OpenAIRawResponseEventType.TEXT_DONE, item_id="msg_1", output_index=0),
+        _raw(
+            OpenAIRawResponseEventType.TEXT_DELTA, item_id="msg_1", output_index=0, delta="Second"
+        ),
+        _raw(OpenAIRawResponseEventType.TEXT_DONE, item_id="msg_1", output_index=0),
+        _done(OpenAIItemType.MESSAGE, id="msg_1"),
+    )
+    assert _types(events) == [
+        EventType.TEXT_MESSAGE_START,
+        EventType.TEXT_MESSAGE_CONTENT,
+        EventType.TEXT_MESSAGE_CONTENT,
+        EventType.TEXT_MESSAGE_END,
+    ]
+    assert {e.message_id for e in events} == {"msg_1"}
+
+
+def test_run_item_commit_closes_text_when_output_item_done_is_skipped():
+    engine = OpenAIToAGUITranslator()
+    events = _drive(
+        engine,
+        _added(OpenAIItemType.MESSAGE, id="msg_1"),
+        _raw(OpenAIRawResponseEventType.TEXT_DELTA, item_id="msg_1", output_index=0, delta="hi"),
+        _raw(OpenAIRawResponseEventType.TEXT_DONE, item_id="msg_1", output_index=0),
+        _run_item(_message_item("msg_1", "hi")),
+    )
     assert _types(events)[-1] == EventType.TEXT_MESSAGE_END
+    assert events[-1].message_id == "msg_1"
+
+
+def test_finalize_closes_text_left_open_after_text_done():
+    engine = OpenAIToAGUITranslator()
+    _drive(
+        engine,
+        _added(OpenAIItemType.MESSAGE, id="msg_1"),
+        _raw(OpenAIRawResponseEventType.TEXT_DELTA, item_id="msg_1", output_index=0, delta="hi"),
+        _raw(OpenAIRawResponseEventType.TEXT_DONE, item_id="msg_1", output_index=0),
+    )
+    events = engine.finalize()
+    assert _types(events) == [EventType.TEXT_MESSAGE_END]
+    assert events[0].message_id == "msg_1"
 
 
 def test_refusal_delta_streams_into_the_text_window():

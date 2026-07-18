@@ -620,6 +620,16 @@ Source of truth: `engine/agui_to_openai.py` (inbound) and
 | `MCPListToolsItem`, `MCPApprovalResponseItem` | *(dropped)* | Server-side bookkeeping; dropped with a debug log, no ID involved. |
 | Run input / stream completion / error | `RUN_STARTED`, then `RUN_FINISHED`/`RUN_ERROR`; optional `STATE_SNAPSHOT`; `MESSAGES_SNAPSHOT` by default | **`RunAgentInput.thread_id`/`run_id` → same fields on the lifecycle events** (passthrough, not generated). |
 
+Text windows close on **item-level** signals only. `response.output_text.done`
+ends one content *part*, not the message — a message can carry several parts
+(multiple text blocks, or text followed by a refusal), so the translator
+ignores it and keeps streaming later parts into the same window under the same
+`message_id`. `TEXT_MESSAGE_END` is emitted by whichever of these arrives
+first: `response.output_item.done`, the run-item commit (for backends that
+skip the raw done), or `finalize()` (stream ended mid-message). Closing on the
+part-level done would split one wire message into several AG-UI messages, the
+later ones under generated IDs the snapshot could not merge.
+
 #### ID rules that apply everywhere
 
 - **Real wire ID always wins.** Generated only when the SDK sends none, or

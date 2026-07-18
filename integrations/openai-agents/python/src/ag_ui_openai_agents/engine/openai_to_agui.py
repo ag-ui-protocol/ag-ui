@@ -382,23 +382,23 @@ class OpenAIToAGUITranslator:
         return self._emit_text_content(key, read_attr(data, "delta") or "")
 
     def translate_text_done(self, data: Any) -> list[BaseEvent]:
-        """Translate response.output_text.done into an early TEXT_MESSAGE_END.
+        """Handle response.output_text.done without closing the message window.
 
-        Some model backends skip output_item.done; this closes the
-        window on the text-level done signal instead. Idempotent —
-        closing an already-closed window is a no-op.
+        This signal marks the end of one text content part, not the whole
+        assistant message — a message can carry several parts (multiple
+        output_text parts, or text followed by a refusal). Closing here
+        would split one wire message into several AG-UI messages, the
+        later ones under generated ids the snapshot can't merge. The
+        window closes on output_item.done instead, with the run-item
+        commit and finalize() as fallbacks when a backend skips it.
 
         Args:
             data: The raw output_text.done payload.
 
         Returns:
-            The closing event, or [] if already closed.
+            Always [] — the window outlives the content part.
         """
-        key = self._window_key(read_attr(data, "item_id"), read_attr(data, "output_index"))
-        # A text-level done with no delta ever seen: drop the deferred window
-        # the same way output_item.done does, so it never opens empty.
-        self._pending_text_ids.pop(key, None)
-        return self._close_text(key)
+        return []
 
     def translate_refusal_delta(self, data: Any) -> list[BaseEvent]:
         """Translate response.refusal.delta into TEXT_MESSAGE_CONTENT.
