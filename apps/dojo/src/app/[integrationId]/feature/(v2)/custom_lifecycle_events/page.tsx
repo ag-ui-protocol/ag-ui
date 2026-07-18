@@ -59,7 +59,6 @@ function UsageLabel({
     () => getRunUsage(runId),
     () => undefined,
   );
-
   if (
     message.role !== "assistant" ||
     position !== "after" ||
@@ -128,8 +127,11 @@ const Chat = () => {
         runUsage.delete(event.runId);
         usageListeners.forEach((listener) => listener());
       },
-      onCustomEvent: ({ event }) => {
-        const runId = currentRunId.current;
+      onCustomEvent: ({ event, input }) => {
+        // The subscriber context carries the run input for every event. Use
+        // it directly so usage events are not lost if RUN_STARTED and CUSTOM
+        // are delivered before the lifecycle callback updates the ref.
+        const runId = input.runId ?? currentRunId.current;
         if (!runId) return;
 
         const value = event.value as { tokens: number; cost_usd: number };

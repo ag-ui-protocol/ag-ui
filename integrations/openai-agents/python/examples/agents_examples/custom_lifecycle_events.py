@@ -35,29 +35,25 @@ def create_custom_lifecycle_events_agent() -> Agent:
     )
 
 
-def build_input_usage_event() -> CustomEvent:
+def build_input_usage_value() -> dict[str, float]:
     tokens = random.randint(20, 120)
-    return CustomEvent(
-        type=EventType.CUSTOM,
-        name="input_usage",
-        value={"tokens": tokens, "cost_usd": round(tokens * 0.00000015, 6)},
-    )
+    return {"tokens": tokens, "cost_usd": round(tokens * 0.00000015, 6)}
 
 
-def build_output_usage_event() -> CustomEvent:
+def build_output_usage_value() -> dict[str, float]:
     tokens = random.randint(120, 480)
-    return CustomEvent(
-        type=EventType.CUSTOM,
-        name="output_usage",
-        value={"tokens": tokens, "cost_usd": round(tokens * 0.0000006, 6)},
-    )
+    return {"tokens": tokens, "cost_usd": round(tokens * 0.0000006, 6)}
 
 
 agent = OpenAIAgentsAgent(
     create_custom_lifecycle_events_agent(),
     name="custom_lifecycle_events",
-    start_custom_event=build_input_usage_event,
-    end_custom_event=build_output_usage_event,
+    start_custom_event=CustomEvent(
+        type=EventType.CUSTOM, name="input_usage", value=build_input_usage_value
+    ),
+    end_custom_event=CustomEvent(
+        type=EventType.CUSTOM, name="output_usage", value=build_output_usage_value
+    ),
 )
 app = FastAPI(title="Custom lifecycle events AG-UI demo")
 add_openai_agents_fastapi_endpoint(app, agent, "/")
