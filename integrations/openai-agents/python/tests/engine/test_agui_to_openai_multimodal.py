@@ -11,6 +11,8 @@ from __future__ import annotations
 import warnings
 
 import pytest
+from pydantic import ValidationError
+
 from ag_ui.core import (
     AudioInputContent,
     BinaryInputContent,
@@ -23,8 +25,6 @@ from ag_ui.core import (
     UserMessage,
     VideoInputContent,
 )
-from pydantic import ValidationError
-
 from ag_ui_openai_agents import AGUITranslator
 from ag_ui_openai_agents.engine.agui_to_openai import AGUIToOpenAITranslator
 from ag_ui_openai_agents.engine.types import TranslatedInput
