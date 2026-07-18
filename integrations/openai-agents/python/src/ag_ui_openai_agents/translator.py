@@ -1,6 +1,5 @@
 """Translate between AG-UI requests and OpenAI Agents SDK streams."""
 
-import asyncio
 import inspect
 from typing import Any, AsyncIterator
 
@@ -104,10 +103,16 @@ class AGUITranslator:
             events: A ``RunResultStreaming`` or its ``stream_events()`` iterator.
             run_input: The request supplying lifecycle IDs and message history.
             start_custom_event: ``CustomEvent`` emitted after ``RUN_STARTED``.
-            initial_state: Optional static, sync, or async source for the first snapshot.
-            final_state: Optional static, sync, or async source for the final snapshot.
+                Its value may be static or a zero-argument sync/async factory.
+            initial_state: Optional source for the first snapshot. Static value
+                or zero-argument sync/async factory.
+            final_state: Optional source for the final snapshot. Static value or
+                zero-argument sync/async factory, resolved after the stream so it
+                can observe changes the run made.
             emit_messages_snapshot: Append ``MESSAGES_SNAPSHOT`` before finishing.
             end_custom_event: ``CustomEvent`` emitted before ``RUN_FINISHED``.
+                Its value may be static or a zero-argument sync/async factory
+                resolved just before emission.
             emit_run_error: Emit ``RUN_ERROR`` before re-raising a stream error.
             run_error_message: Safe fixed ``RUN_ERROR`` message; defaults to ``str(exc)``.
 
@@ -115,17 +120,12 @@ class AGUITranslator:
             AG-UI events ready to encode or send.
 
         Raises:
-            TypeError: start_custom_event or end_custom_event was given but
-                is not a CustomEvent instance.
+            TypeError: A custom event is not a CustomEvent instance.
         """
+        # Actual failures emit RUN_ERROR; cancellation only stops an owned SDK run.
         lifecycle_completed = False
+        outbound: OpenAIToAGUITranslator | None = None
         try:
-            # The SDK run is already active, so validation stays in cleanup scope.
-            if start_custom_event is not None and not isinstance(start_custom_event, CustomEvent):
-                raise TypeError(f"start_custom_event must be a CustomEvent, got {type(start_custom_event).__name__}")
-            if end_custom_event is not None and not isinstance(end_custom_event, CustomEvent):
-                raise TypeError(f"end_custom_event must be a CustomEvent, got {type(end_custom_event).__name__}")
-
             # 1. RUN_STARTED — always first
             yield RunStartedEvent(
                 type=EventType.RUN_STARTED,
@@ -137,11 +137,11 @@ class AGUITranslator:
 
             # 2. start_custom_event (optional)
             if start_custom_event is not None:
-                yield start_custom_event
+                yield await self._resolve_custom_event(start_custom_event)
 
             # 3. STATE_SNAPSHOT (initial) — resolve now ({} emits, None skips)
             if initial_state is not None:
-                snapshot = await self._resolve_state_snapshot(initial_state)
+                snapshot = await self._resolve_lifecycle_value(initial_state)
                 if snapshot is not None:
                     yield StateSnapshotEvent(
                         type=EventType.STATE_SNAPSHOT,
@@ -160,53 +160,27 @@ class AGUITranslator:
                 async for openai_event in stream_events:
                     for event in outbound.translate(openai_event):
                         yield event
-                # 4. Close any text, tool, reasoning, or step window still open.
-                for event in outbound.finalize():
-                    yield event
-                # 5. STATE_SNAPSHOT (final, optional)
-                if final_state is not None:
-                    snapshot = await self._resolve_state_snapshot(final_state)
-                    if snapshot is not None:
-                        yield StateSnapshotEvent(
-                            type=EventType.STATE_SNAPSHOT,
-                            snapshot=snapshot,
-                        )
-                # 6. MESSAGES_SNAPSHOT (optional)
-                if emit_messages_snapshot:
-                    yield outbound.build_messages_snapshot(run_input)
             except ClientToolPending:
-                # A client-owned tool ends this server run cleanly; its call
-                # events have already streamed to the frontend. Finish with
-                # steps 4–6.
-                # 4. Close any text, tool, reasoning, or step window still open.
-                for event in outbound.finalize():
-                    yield event
-                # 5. STATE_SNAPSHOT (final, optional)
-                if final_state is not None:
-                    snapshot = await self._resolve_state_snapshot(final_state)
-                    if snapshot is not None:
-                        yield StateSnapshotEvent(
-                            type=EventType.STATE_SNAPSHOT,
-                            snapshot=snapshot,
-                        )
-                # 6. MESSAGES_SNAPSHOT (optional)
-                if emit_messages_snapshot:
-                    yield outbound.build_messages_snapshot(run_input)
-            except (Exception, asyncio.CancelledError) as exc:
-                # CancelledError is not an Exception; both paths must close open
-                # protocol windows before emitting the terminal error.
-                for event in outbound.finalize():
-                    yield event
-                if emit_run_error:
-                    yield RunErrorEvent(
-                        type=EventType.RUN_ERROR,
-                        message=run_error_message or str(exc),
-                    )
-                raise
+                # Finish client-owned tool calls through the shared steps below.
+                pass
 
-            # 7. end_custom_event (optional)
+            # 4. Close any text, tool, reasoning, or step window still open.
+            for event in outbound.finalize():
+                yield event
+            # 5. STATE_SNAPSHOT (final, optional) — resolved after the stream.
+            if final_state is not None:
+                snapshot = await self._resolve_lifecycle_value(final_state)
+                if snapshot is not None:
+                    yield StateSnapshotEvent(
+                        type=EventType.STATE_SNAPSHOT,
+                        snapshot=snapshot,
+                    )
+            # 6. MESSAGES_SNAPSHOT (optional)
+            if emit_messages_snapshot:
+                yield outbound.build_messages_snapshot(run_input)
+            # 7. end_custom_event (optional) — resolved just before emitting.
             if end_custom_event is not None:
-                yield end_custom_event
+                yield await self._resolve_custom_event(end_custom_event)
 
             # 8. RUN_FINISHED — always last
             run_finished_event = RunFinishedEvent(
@@ -217,15 +191,38 @@ class AGUITranslator:
             # Set before yield because a consumer may close at the terminal event.
             lifecycle_completed = True
             yield run_finished_event
+        except Exception as exc:
+            if outbound is not None:
+                for event in outbound.finalize():
+                    yield event
+            if emit_run_error:
+                yield RunErrorEvent(
+                    type=EventType.RUN_ERROR,
+                    message=run_error_message or str(exc),
+                )
+            raise
         finally:
             # Cancel an owned SDK result if AG-UI consumption stops early;
             # callers retain ownership when they pass a bare iterator.
             if not lifecycle_completed and isinstance(events, RunResultStreaming):
                 events.cancel()
 
-    async def _resolve_state_snapshot(self, state: Any) -> Any:
-        """Resolve a static, synchronous, or asynchronous state source."""
-        value = state() if callable(state) else state
+    async def _resolve_custom_event(
+        self,
+        event: CustomEvent,
+    ) -> CustomEvent:
+        """Return a custom event with its value resolved."""
+        if not isinstance(event, CustomEvent):
+            raise TypeError(
+                f"custom event must be a CustomEvent, got {type(event).__name__}"
+            )
+        value = await self._resolve_lifecycle_value(event.value)
+        return event.model_copy(update={"value": value})
+
+    @staticmethod
+    async def _resolve_lifecycle_value(source: Any) -> Any:
+        """Resolve a static value or a synchronous/asynchronous factory."""
+        value = source() if callable(source) else source
         if inspect.isawaitable(value):
             value = await value
         return value

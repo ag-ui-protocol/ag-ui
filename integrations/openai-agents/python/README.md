@@ -294,19 +294,19 @@ the lifecycle IDs and message history for snapshots.
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `start_custom_event` | `None` | A `CustomEvent` sent after `RUN_STARTED`. |
+| `start_custom_event` | `None` | A `CustomEvent` sent after `RUN_STARTED`; its value may be static or a sync/async factory. |
 | `initial_state` | `None` | Static, sync, or async source for an initial `STATE_SNAPSHOT`. |
 | `final_state` | `None` | Static, sync, or async source for a final `STATE_SNAPSHOT`. |
 | `emit_messages_snapshot` | `True` | Add `MESSAGES_SNAPSHOT` before the terminal event. |
-| `end_custom_event` | `None` | A `CustomEvent` sent after the snapshots and before `RUN_FINISHED`. |
+| `end_custom_event` | `None` | A `CustomEvent` sent after the snapshots and before `RUN_FINISHED`; its value may be static or a sync/async factory. |
 | `emit_run_error` | `True` | Send `RUN_ERROR` if streaming raises, then re-raise the original exception. |
 | `run_error_message` | `None` | Client-safe error text; by default the event uses `str(exception)`. |
 
 `initial_state` and `final_state` can each be a value, a zero-argument
 function, or a zero-argument async function. A supplied `None` skips that
-snapshot; an empty `{}` is still a valid snapshot. Custom-event values must be
-`CustomEvent` objects. The wrapper supports factories for these events; the
-direct translator intentionally accepts the event object for this one run.
+snapshot; an empty `{}` is still a valid snapshot. Custom events are passed as
+complete `CustomEvent` objects. Their `value` may use the same static, sync, or
+async forms and is resolved immediately before the event is emitted.
 
 Successful runs follow this order:
 
@@ -347,11 +347,11 @@ wrapped_agent = OpenAIAgentsAgent(
 | `description` | `""` | Optional application metadata. |
 | `translator` | new `AGUITranslator` | Translator instance, including any custom engine classes. |
 | `run_config` | `None` | `RunConfig` passed to every `Runner.run_streamed` call. |
-| `start_custom_event` | `None` | A `CustomEvent` or zero-argument factory, emitted after `RUN_STARTED`. |
+| `start_custom_event` | `None` | A `CustomEvent` whose static or dynamic value is resolved after `RUN_STARTED`. |
 | `initial_state` | `None` | Same state-source forms as `AGUITranslator.to_agui`. |
 | `final_state` | `None` | Same state-source forms as `AGUITranslator.to_agui`. |
 | `emit_messages_snapshot` | `True` | Forwarded to `to_agui`. |
-| `end_custom_event` | `None` | A `CustomEvent` or zero-argument factory, emitted before the terminal event. |
+| `end_custom_event` | `None` | A `CustomEvent` whose static or dynamic value is resolved before the terminal event. |
 | `emit_run_error` | `True` | Forwarded to `to_agui`. |
 | `run_error_message` | `None` | Forwarded to `to_agui`. |
 

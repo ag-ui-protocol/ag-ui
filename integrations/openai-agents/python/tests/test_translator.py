@@ -377,6 +377,71 @@ def test_to_agui_closes_open_windows_before_run_error():
     assert isinstance(collected[-1], RunErrorEvent)
 
 
+def test_to_agui_resolves_custom_event_values_at_their_lifecycle_positions():
+    translator = AGUITranslator(outbound_cls=_StubOutbound)
+    state = {"status": "starting"}
+    start = CustomEvent(
+        type=EventType.CUSTOM,
+        name="start",
+        value={"status": "starting"},
+    )
+    end = CustomEvent(
+        type=EventType.CUSTOM,
+        name="end",
+        value=lambda: dict(state),
+    )
+
+    async def stream():
+        state["status"] = "complete"
+        yield "a"
+
+    async def collect():
+        return [
+            event
+            async for event in translator.to_agui(
+                stream(),
+                _run_input(),
+                start_custom_event=start,
+                end_custom_event=end,
+                emit_messages_snapshot=False,
+            )
+        ]
+
+    events = asyncio.run(collect())
+    lifecycle_events = [
+        event for event in events if getattr(event, "name", None) in {"start", "end"}
+    ]
+    assert [event.value for event in lifecycle_events] == [
+        {"status": "starting"},
+        {"status": "complete"},
+    ]
+    assert callable(end.value), "the reusable event must retain its factory"
+
+
+def test_to_agui_awaits_an_async_custom_event_value_factory():
+    translator = AGUITranslator(outbound_cls=_StubOutbound)
+
+    async def end_value():
+        return {"status": "complete"}
+
+    end = CustomEvent(type=EventType.CUSTOM, name="end", value=end_value)
+
+    async def collect():
+        return [
+            event
+            async for event in translator.to_agui(
+                _fake_stream(),
+                _run_input(),
+                end_custom_event=end,
+                emit_messages_snapshot=False,
+            )
+        ]
+
+    events = asyncio.run(collect())
+    emitted = next(event for event in events if getattr(event, "name", None) == "end")
+    assert emitted.value == {"status": "complete"}
+
+
 @pytest.mark.parametrize(
     ("custom_event_arg", "invalid_value"),
     [
@@ -389,6 +454,7 @@ def test_to_agui_cancels_the_sdk_run_when_custom_event_validation_fails(
 ):
     translator = AGUITranslator(outbound_cls=_StubOutbound)
     result = MagicMock(spec=RunResultStreaming)
+    result.stream_events.return_value = _fake_stream()
 
     async def collect():
         async for _ in translator.to_agui(
@@ -398,9 +464,77 @@ def test_to_agui_cancels_the_sdk_run_when_custom_event_validation_fails(
         ):
             pass
 
-    with pytest.raises(TypeError, match=f"{custom_event_arg} must be a CustomEvent"):
+    with pytest.raises(TypeError, match="custom event must be a CustomEvent"):
         asyncio.run(collect())
 
+    result.cancel.assert_called_once()
+
+
+@pytest.mark.parametrize("custom_event_arg", ["start_custom_event", "end_custom_event"])
+def test_to_agui_emits_run_error_when_custom_event_value_factory_fails(
+    custom_event_arg,
+):
+    translator = AGUITranslator(outbound_cls=_StubOutbound)
+    result = MagicMock(spec=RunResultStreaming)
+    result.stream_events.return_value = _fake_stream()
+    collected: list = []
+
+    def failing_value():
+        raise RuntimeError("value failed")
+
+    async def collect():
+        async for event in translator.to_agui(
+            result,
+            _run_input(),
+            emit_messages_snapshot=False,
+            **{
+                custom_event_arg: CustomEvent(
+                    type=EventType.CUSTOM,
+                    name="failing",
+                    value=failing_value,
+                )
+            },
+        ):
+            collected.append(event)
+
+    with pytest.raises(RuntimeError, match="value failed"):
+        asyncio.run(collect())
+
+    assert [
+        event.type
+        for event in collected
+        if event.type in {EventType.RUN_STARTED, EventType.RUN_ERROR}
+    ] == [EventType.RUN_STARTED, EventType.RUN_ERROR]
+    result.cancel.assert_called_once()
+
+
+@pytest.mark.parametrize("state_arg", ["initial_state", "final_state"])
+def test_to_agui_emits_run_error_when_state_factory_fails(state_arg):
+    translator = AGUITranslator(outbound_cls=_StubOutbound)
+    result = MagicMock(spec=RunResultStreaming)
+    result.stream_events.return_value = _fake_stream()
+    collected: list = []
+
+    def failing_state():
+        raise RuntimeError("state failed")
+
+    async def collect():
+        async for event in translator.to_agui(
+            result,
+            _run_input(),
+            emit_messages_snapshot=False,
+            **{state_arg: failing_state},
+        ):
+            collected.append(event)
+
+    with pytest.raises(RuntimeError, match="state failed"):
+        asyncio.run(collect())
+
+    assert [
+        event.type
+        for event in collected
+        if event.type in {EventType.RUN_STARTED, EventType.RUN_ERROR}
+    ] == [EventType.RUN_STARTED, EventType.RUN_ERROR]
     result.cancel.assert_called_once()
 
 
@@ -494,26 +628,26 @@ def test_to_agui_does_not_cancel_when_closed_right_after_run_finished():
     result.cancel.assert_not_called()
 
 
-def test_to_agui_emits_run_error_on_cancelled_error():
-    # asyncio.CancelledError is BaseException, not Exception (3.8+) — a
-    # mid-stream timeout/dropped-connection must still surface RUN_ERROR
-    # instead of silently ending the stream after whatever was last yielded.
+def test_to_agui_cancels_without_run_error_on_cancelled_error():
     class _CancelledOutbound(_StubOutbound):
         def translate(self, openai_event):
             raise asyncio.CancelledError()
 
     translator = AGUITranslator(outbound_cls=_CancelledOutbound)
+    result = MagicMock(spec=RunResultStreaming)
+    result.stream_events.return_value = _fake_stream("a")
     collected: list = []
 
     async def collect():
-        async for e in translator.to_agui(_fake_stream("a"), _run_input()):
+        async for e in translator.to_agui(result, _run_input()):
             collected.append(e)
 
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(collect())
 
     assert isinstance(collected[0], RunStartedEvent)
-    assert isinstance(collected[-1], RunErrorEvent)
+    assert not any(isinstance(event, RunErrorEvent) for event in collected)
+    result.cancel.assert_called_once()
 
 
 # ── AGUITranslator.to_agui (state snapshot) ──────────────────────────────

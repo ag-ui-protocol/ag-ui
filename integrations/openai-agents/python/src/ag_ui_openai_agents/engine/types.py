@@ -177,10 +177,8 @@ HOSTED_TOOL_CALL_TYPES: frozenset[str] = frozenset(
 class ClientToolPending(AgentsException):
     """Raised by a client-tool proxy to signal "stop, the UI owns this call".
 
-    The outer run loop catches it, cancels the SDK run after the current
-    turn, and persists the resulting RunState keyed by thread_id so the
-    next AG-UI request (which carries an AG-UI ToolMessage with the
-    client's result) can resume from the same point.
+    The AG-UI run closes normally after forwarding the tool call. The client
+    executes it and returns the result in a later request.
 
     Subclasses AgentsException deliberately: the SDK's own tool executor
     (agents.run_internal.tool_execution._run_single_tool) special-cases

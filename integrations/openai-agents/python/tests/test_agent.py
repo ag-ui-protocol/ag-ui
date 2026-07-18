@@ -127,18 +127,20 @@ def test_context_passes_through(patched_runner):
 
 
 def test_to_agui_options_pass_through(patched_runner, monkeypatch):
-    start = CustomEvent(type=EventType.CUSTOM, name="start", value={})
-    end = CustomEvent(type=EventType.CUSTOM, name="end", value={})
+    start_value = lambda: {"phase": "start"}
+    end_value = lambda: {"phase": "end"}
+    start = CustomEvent(type=EventType.CUSTOM, name="start", value=start_value)
+    end = CustomEvent(type=EventType.CUSTOM, name="end", value=end_value)
     initial_state = lambda: {"phase": "initial"}
     final_state = lambda: {"phase": "final"}
     translated_calls: list[dict] = []
     wrapper = OpenAIAgentsAgent(
         Agent(name="assistant", instructions="hi"),
-        start_custom_event=lambda: start,
+        start_custom_event=start,
         initial_state=initial_state,
         final_state=final_state,
         emit_messages_snapshot=False,
-        end_custom_event=lambda: end,
+        end_custom_event=end,
         emit_run_error=False,
         run_error_message="safe error",
     )
@@ -165,44 +167,85 @@ def test_to_agui_options_pass_through(patched_runner, monkeypatch):
     ]
 
 
-def test_custom_event_factories_run_once_per_request(patched_runner):
+def test_custom_event_value_factories_run_once_per_request(patched_runner):
     calls = {"start": 0, "end": 0}
 
-    def start_custom_event():
+    def start_value():
         calls["start"] += 1
-        return CustomEvent(type=EventType.CUSTOM, name="start", value={})
+        return {"call": calls["start"]}
 
-    def end_custom_event():
+    def end_value():
         calls["end"] += 1
-        return CustomEvent(type=EventType.CUSTOM, name="end", value={})
+        return {"call": calls["end"]}
 
     wrapper = OpenAIAgentsAgent(
         Agent(name="assistant", instructions="hi"),
-        start_custom_event=start_custom_event,
-        end_custom_event=end_custom_event,
+        start_custom_event=CustomEvent(
+            type=EventType.CUSTOM, name="start", value=start_value
+        ),
+        end_custom_event=CustomEvent(
+            type=EventType.CUSTOM, name="end", value=end_value
+        ),
     )
-    _collect(wrapper, _run_input())
-    _collect(wrapper, _run_input())
+    first = _collect(wrapper, _run_input())
+    second = _collect(wrapper, _run_input())
+
     assert calls == {"start": 2, "end": 2}
+    assert [event.value for event in first if isinstance(event, CustomEvent)] == [
+        {"call": 1},
+        {"call": 1},
+    ]
+    assert [event.value for event in second if isinstance(event, CustomEvent)] == [
+        {"call": 2},
+        {"call": 2},
+    ]
 
 
 @pytest.mark.parametrize("custom_event_arg", ["start_custom_event", "end_custom_event"])
-def test_custom_event_factory_failure_does_not_start_run(
-    patched_runner,
+def test_custom_event_value_factory_failure_emits_run_error_and_cancels(
+    monkeypatch,
     custom_event_arg,
 ):
     def failing_factory():
         raise RuntimeError("event factory failed")
 
+    captured: list = []
+    collected: list = []
+
+    def fake_run_streamed(agent, *, input, run_config=None, **kwargs):
+        result = MagicMock(spec=RunResultStreaming)
+        result.stream_events.return_value = _empty_stream()
+        result.new_items = []
+        captured.append(result)
+        return result
+
     wrapper = OpenAIAgentsAgent(
         Agent(name="assistant", instructions="hi"),
-        **{custom_event_arg: failing_factory},
+        **{
+            custom_event_arg: CustomEvent(
+                type=EventType.CUSTOM,
+                name="failing",
+                value=failing_factory,
+            )
+        },
     )
 
-    with pytest.raises(RuntimeError, match="event factory failed"):
-        _collect(wrapper, _run_input())
+    monkeypatch.setattr(agent_module.Runner, "run_streamed", fake_run_streamed)
 
-    assert patched_runner == []
+    async def collect():
+        async for event in wrapper.run_streamed(_run_input()):
+            collected.append(event)
+
+    with pytest.raises(RuntimeError, match="event factory failed"):
+        asyncio.run(collect())
+
+    assert len(captured) == 1, "the run must have started"
+    captured[0].cancel.assert_called_once()
+    assert [
+        event.type
+        for event in collected
+        if event.type in {EventType.RUN_STARTED, EventType.RUN_ERROR}
+    ] == [EventType.RUN_STARTED, EventType.RUN_ERROR]
 
 
 def test_name_defaults_to_agent_name():

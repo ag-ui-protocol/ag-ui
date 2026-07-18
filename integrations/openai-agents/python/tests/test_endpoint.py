@@ -20,6 +20,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import ag_ui_openai_agents.agent as agent_module
+from ag_ui.core import CustomEvent, EventType
 from ag_ui_openai_agents import OpenAIAgentsAgent, add_openai_agents_fastapi_endpoint
 
 RUN_INPUT_JSON = {
@@ -61,6 +62,33 @@ def test_post_streams_sse_run(client):
     assert '"RUN_STARTED"' in body
     assert '"RUN_FINISHED"' in body
     assert body.count("data: ") >= 2, "each event must be its own SSE frame"
+
+
+def test_post_resolves_dynamic_custom_event_values(monkeypatch):
+    def fake_run_streamed(agent, *, input, run_config=None, **kwargs):
+        result = MagicMock(spec=RunResultStreaming)
+        result.stream_events.return_value = _empty_stream()
+        return result
+
+    monkeypatch.setattr(agent_module.Runner, "run_streamed", fake_run_streamed)
+
+    app = FastAPI()
+    wrapper = OpenAIAgentsAgent(
+        Agent(name="assistant", instructions="hi"),
+        start_custom_event=CustomEvent(
+            type=EventType.CUSTOM,
+            name="request_metadata",
+            value=lambda: {"status": "dynamic"},
+        ),
+    )
+    add_openai_agents_fastapi_endpoint(app, wrapper, "/")
+
+    with TestClient(app).stream("POST", "/", json=RUN_INPUT_JSON) as response:
+        body = "".join(response.iter_text())
+
+    assert response.status_code == 200
+    assert '"name":"request_metadata"' in body
+    assert '"status":"dynamic"' in body
 
 
 def test_health_reports_agent_name(client):
