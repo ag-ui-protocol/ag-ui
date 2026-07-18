@@ -462,20 +462,20 @@ class AGUIToOpenAITranslator:
         """Translate an ImageInputContent part.
 
         URL sources pass through unchanged. Data sources become base64
-        data URLs so the Responses-API image_url field always receives
-        a single string.
+        data URLs. OpenAI requires a detail level, so AG-UI images use
+        ``auto``.
 
         Args:
             part: The AG-UI image content part.
 
         Returns:
-            {"type": "input_image", "image_url": ...}, or None if the
-            source has no usable value.
+            {"type": "input_image", "image_url": ..., "detail": "auto"},
+            or None if the source has no usable value.
         """
         url = self._data_source_to_url(part.source)
         if url is None:
             return None
-        return {"type": "input_image", "image_url": url}
+        return self._image_input(url)
 
     def translate_audio_content(
         self,
@@ -683,7 +683,7 @@ class AGUIToOpenAITranslator:
             return {"type": "input_text", "text": text}
         if part_type == "image":
             url = self._data_source_to_url(read_attr(part, "source"))
-            return {"type": "input_image", "image_url": url} if url else None
+            return self._image_input(url) if url else None
         # Don't recognize it — skip it rather than guess.
         logger.warning("Ignoring unsupported input content type: %s", part_type)
         return None
@@ -692,11 +692,16 @@ class AGUIToOpenAITranslator:
 
     def _binary_as_image(self, part: BinaryInputContent) -> dict[str, Any] | None:
         if part.url:
-            return {"type": "input_image", "image_url": part.url}
+            return self._image_input(part.url)
         if part.data:
             mime = part.mime_type or "application/octet-stream"
-            return {"type": "input_image", "image_url": f"data:{mime};base64,{part.data}"}
+            return self._image_input(f"data:{mime};base64,{part.data}")
         return None
+
+    @staticmethod
+    def _image_input(url: str) -> dict[str, Any]:
+        """Build an OpenAI image input with the required detail level."""
+        return {"type": "input_image", "image_url": url, "detail": "auto"}
 
     def _binary_as_audio(
         self,

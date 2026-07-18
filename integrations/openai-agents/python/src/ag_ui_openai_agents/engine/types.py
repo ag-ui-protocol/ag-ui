@@ -76,8 +76,7 @@ class TranslatedInput(BaseModel):
     # ── Translated payload (the actual work the translator does) ────────
     messages: list[TResponseInputItem]
     """Responses-API input items, ready to pass to Runner.run*(input=...).
-    Validation is skipped here because the SDK's own input types use forward
-    refs Pydantic can't resolve from this module."""
+    Pydantic validates these against the SDK's input-item types."""
 
     tools: SkipValidation[list[FunctionTool]] = []
     """FunctionTool proxies for the client's tools. Merge these with your

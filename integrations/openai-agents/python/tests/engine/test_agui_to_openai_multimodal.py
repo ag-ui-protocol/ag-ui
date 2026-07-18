@@ -2,15 +2,15 @@
 Tests for AGUIToOpenAITranslator's multimodal content mapping.
 
 Pins the wire shape each ``translate_*_content`` method produces (or the
-``None``/drop behavior when unsupported), per the table in
-``.dev/MESSAGES.md`` / ``.dev/INTEGRATIONS_MATRIX.md``. No network, no model;
-just the mapping.
+``None``/drop behavior when unsupported), and validates the final input against
+the OpenAI Agents SDK types. No network or model is used.
 """
 
 from __future__ import annotations
 
 import warnings
 
+import pytest
 from ag_ui.core import (
     AudioInputContent,
     BinaryInputContent,
@@ -18,11 +18,16 @@ from ag_ui.core import (
     ImageInputContent,
     InputContentDataSource,
     InputContentUrlSource,
+    RunAgentInput,
     TextInputContent,
     UserMessage,
     VideoInputContent,
 )
+from pydantic import ValidationError
+
+from ag_ui_openai_agents import AGUITranslator
 from ag_ui_openai_agents.engine.agui_to_openai import AGUIToOpenAITranslator
+from ag_ui_openai_agents.engine.types import TranslatedInput
 
 _engine = AGUIToOpenAITranslator()
 
@@ -41,7 +46,11 @@ def _binary(**kwargs) -> BinaryInputContent:
 def test_image_url_source_passes_through():
     part = ImageInputContent(source=InputContentUrlSource(value="https://x/y.png"))
     out = _engine.translate_image_content(part)
-    assert out == {"type": "input_image", "image_url": "https://x/y.png"}
+    assert out == {
+        "type": "input_image",
+        "image_url": "https://x/y.png",
+        "detail": "auto",
+    }
 
 
 def test_image_data_source_becomes_data_url():
@@ -49,7 +58,11 @@ def test_image_data_source_becomes_data_url():
         source=InputContentDataSource(value="Zm9v", mime_type="image/png")
     )
     out = _engine.translate_image_content(part)
-    assert out == {"type": "input_image", "image_url": "data:image/png;base64,Zm9v"}
+    assert out == {
+        "type": "input_image",
+        "image_url": "data:image/png;base64,Zm9v",
+        "detail": "auto",
+    }
 
 
 def test_image_with_no_usable_source_returns_none():
@@ -146,7 +159,11 @@ def test_video_is_always_dropped():
 def test_binary_image_mime_routes_to_image_url():
     part = _binary(mime_type="image/png", url="https://x/y.png")
     out = _engine.translate_binary_content(part)
-    assert out == {"type": "input_image", "image_url": "https://x/y.png"}
+    assert out == {
+        "type": "input_image",
+        "image_url": "https://x/y.png",
+        "detail": "auto",
+    }
 
 
 def test_binary_audio_mime_routes_to_input_audio():
@@ -171,13 +188,21 @@ def test_binary_other_mime_routes_to_file():
 def test_binary_as_image_prefers_url_over_data():
     part = _binary(mime_type="image/png", url="https://x/y.png", data="Zm9v")
     out = _engine._binary_as_image(part)
-    assert out == {"type": "input_image", "image_url": "https://x/y.png"}
+    assert out == {
+        "type": "input_image",
+        "image_url": "https://x/y.png",
+        "detail": "auto",
+    }
 
 
 def test_binary_as_image_falls_back_to_data():
     part = _binary(mime_type="image/png", data="Zm9v")
     out = _engine._binary_as_image(part)
-    assert out == {"type": "input_image", "image_url": "data:image/png;base64,Zm9v"}
+    assert out == {
+        "type": "input_image",
+        "image_url": "data:image/png;base64,Zm9v",
+        "detail": "auto",
+    }
 
 
 def test_binary_as_image_with_neither_returns_none():
@@ -234,7 +259,11 @@ def test_dispatch_dict_content_part_image():
     out = _engine._dispatch_dict_content_part(
         {"type": "image", "source": {"type": "url", "value": "https://x/y.png"}}
     )
-    assert out == {"type": "input_image", "image_url": "https://x/y.png"}
+    assert out == {
+        "type": "input_image",
+        "image_url": "https://x/y.png",
+        "detail": "auto",
+    }
 
 
 def test_dispatch_dict_content_part_unknown_type_returns_none():
@@ -251,6 +280,7 @@ def test_translate_content_part_dispatches_by_type():
     assert _engine.translate_content_part(image) == {
         "type": "input_image",
         "image_url": "https://x/y.png",
+        "detail": "auto",
     }
 
 
@@ -305,8 +335,72 @@ def test_mixed_multimodal_parts_translate_to_matching_blocks():
     blocks = [_engine.translate_content_part(p) for p in parts]
     assert blocks == [
         {"type": "input_text", "text": "what's this?"},
-        {"type": "input_image", "image_url": "https://x/y.png"},
+        {
+            "type": "input_image",
+            "image_url": "https://x/y.png",
+            "detail": "auto",
+        },
         {"type": "input_audio", "input_audio": {"data": "Zm9v", "format": "mp3"}},
         {"type": "input_file", "file_url": "https://x/y.pdf"},
         None,  # video: no Responses-API input block
     ]
+
+
+def test_image_survives_translated_input_validation():
+    run_input = RunAgentInput(
+        thread_id="t1",
+        run_id="r1",
+        messages=[
+            UserMessage(
+                id="u1",
+                role="user",
+                content=[
+                    ImageInputContent(
+                        source=InputContentUrlSource(value="https://x/y.png")
+                    )
+                ],
+            )
+        ],
+        tools=[],
+        state={},
+        context=[],
+        forwarded_props=None,
+    )
+
+    translated = AGUITranslator().to_openai(run_input)
+
+    assert translated.messages[0]["content"][0] == {
+        "type": "input_image",
+        "image_url": "https://x/y.png",
+        "detail": "auto",
+    }
+
+
+def test_translated_input_rejects_image_without_detail():
+    with pytest.raises(ValidationError) as exc_info:
+        TranslatedInput(
+            thread_id="t1",
+            run_id="r1",
+            messages=[
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_image",
+                            "image_url": "https://x/y.png",
+                        }
+                    ],
+                }
+            ],
+            tools=[],
+            state={},
+            context=[],
+            forwarded_props=None,
+        )
+
+    assert any(
+        error["loc"][-1] == "detail"
+        and "ResponseInputImageParam" in error["loc"]
+        for error in exc_info.value.errors()
+    )
