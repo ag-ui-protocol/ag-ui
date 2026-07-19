@@ -2,36 +2,42 @@
 
 ## What This Demo Shows
 
-`AGUITranslator.to_agui()` takes two optional params — `start_custom_event`
-and `end_custom_event` — each accepting only an AG-UI `CustomEvent` instance
-(anything else raises `TypeError`), default `None` (off). When set, one
-`CUSTOM` event is emitted right after `RUN_STARTED`, another right before
-`RUN_FINISHED`. This demo's `OpenAIAgentsAgent` wrapper forwards them to
-report fake usage split the way a real bill would be: `input_usage`
-(prompt tokens/cost — known before the model even runs) at the start,
-`output_usage` (completion tokens/cost — known only once the run is done)
-at the end — plain conversation otherwise, same agent as `agentic_chat`.
+`AGUITranslator.to_agui()` takes an optional `end_custom_event` param —
+an AG-UI `CustomEvent` instance (anything else raises `TypeError`), default
+`None` (off). When set, one `CUSTOM` event is emitted right before
+`RUN_FINISHED`. This demo uses it to report the run's real token usage:
+`run_usage`, with `input_tokens`/`output_tokens` read off the SDK's own
+`RunResultStreaming.context_wrapper.usage` after the stream finishes — plain
+conversation otherwise, same agent as `agentic_chat`.
+
+Real usage is only known once the run is done — there's no such thing as a
+true token count before the model has answered — so this only fires once,
+at the end, not at both `RUN_STARTED` and `RUN_FINISHED` like a
+demonstration bracketing pair would.
 
 ## How to Interact
 
 - "Say hi in one sentence."
 - "Tell me one interesting fact about AI."
 
-Each assistant reply has a compact usage label immediately above it. The label
-shows the input usage reported at the beginning of the run and the output usage
-reported at the end.
+Each assistant reply has a compact usage label immediately above it, showing
+the real input and output token counts for that run.
 
 ## Technical Details
 
-- `build_input_usage_event()`/`build_output_usage_event()`
-  (`agents_examples/custom_lifecycle_events.py`) build the two `CustomEvent`s
-  for each run; `OpenAIAgentsAgent` calls the builders and passes the results
-  to `to_agui(start_custom_event=..., end_custom_event=...)`
-- Both events are opaque to the translator — it only checks `isinstance(...,
-  CustomEvent)`, the `name`/`value` shape is entirely up to the caller
+- `agents_examples/custom_lifecycle_events.py` composes the translator
+  directly (`translator.to_openai`/`translator.to_agui`) instead of the
+  `OpenAIAgentsAgent` wrapper, because reading the run's real usage requires
+  the `RunResultStreaming` object the wrapper doesn't expose to a lifecycle
+  event factory
+- `end_custom_event`'s value is a zero-argument closure over that `result`,
+  resolved by the translator right before it emits the event — by then the
+  stream is fully drained and `context_wrapper.usage` holds the run's actual
+  totals
+- The translator itself is opaque to the event's contents — it only checks
+  `isinstance(..., CustomEvent)`; the `name`/`value` shape is entirely up to
+  the caller
 - The page captures the current `runId` from `RUN_STARTED`, associates the
-  custom usage events with that run in a small external store, then uses
+  `run_usage` event with that run in a small external store, then uses
   `CopilotKitProvider`'s stable `renderCustomMessages` configuration to render
-  the matching label above the assistant message
-- The token/cost numbers are fake — the point is the event bracketing, not
-  real usage accounting
+  the label above the assistant message

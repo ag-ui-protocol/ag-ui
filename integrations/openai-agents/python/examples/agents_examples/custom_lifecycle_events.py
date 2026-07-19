@@ -1,59 +1,66 @@
-"""Custom lifecycle events — CUSTOM events bracketing the run.
+"""Custom lifecycle events — a real usage summary right before RUN_FINISHED.
 
-Plain chat agent, same as agentic_chat — the point isn't the agent, it's
-the two builder functions below. The wrapper receives them as
-``start_custom_event``/``end_custom_event`` factories and forwards their
-results to the same-named ``to_agui()`` parameters
-params, so one
-CUSTOM event goes out right after RUN_STARTED and another right before
-RUN_FINISHED. Only CustomEvent instances are accepted there; anything else
-raises TypeError.
-
-input_usage fires at the start because prompt tokens/cost are known before
-the model even runs; output_usage fires at the end because completion
-tokens/cost are only known once the run is done. Numbers here are fake —
-the point is the event bracketing, not real usage accounting.
+Plain chat agent, same as agentic_chat — the point isn't the agent, it's the
+CUSTOM event at the end. The SDK only knows real input/output token counts
+once the run has finished, so this demo composes the translator directly
+(rather than the OpenAIAgentsAgent wrapper) to read them off the run result
+after the stream completes and before to_agui() emits RUN_FINISHED.
 """
 
 from __future__ import annotations
 
-import random
+from agents import Agent, Runner
+from fastapi import FastAPI, Request
+from fastapi.responses import StreamingResponse
 
-from agents import Agent
-from fastapi import FastAPI
-
-from ag_ui.core import CustomEvent, EventType
-from ag_ui_openai_agents import OpenAIAgentsAgent, add_openai_agents_fastapi_endpoint
+from ag_ui.core import CustomEvent, EventType, RunAgentInput
+from ag_ui.encoder import EventEncoder
+from ag_ui_openai_agents import AGUITranslator
 from .constants import DEFAULT_MODEL
 
-
-def create_custom_lifecycle_events_agent() -> Agent:
-    return Agent(
-        name="assistant",
-        model=DEFAULT_MODEL,
-        instructions="You are a helpful assistant. Be concise.",
-    )
-
-
-def build_input_usage_value() -> dict[str, float]:
-    tokens = random.randint(20, 120)
-    return {"tokens": tokens, "cost_usd": round(tokens * 0.00000015, 6)}
-
-
-def build_output_usage_value() -> dict[str, float]:
-    tokens = random.randint(120, 480)
-    return {"tokens": tokens, "cost_usd": round(tokens * 0.0000006, 6)}
-
-
-agent = OpenAIAgentsAgent(
-    create_custom_lifecycle_events_agent(),
-    name="custom_lifecycle_events",
-    start_custom_event=CustomEvent(
-        type=EventType.CUSTOM, name="input_usage", value=build_input_usage_value
-    ),
-    end_custom_event=CustomEvent(
-        type=EventType.CUSTOM, name="output_usage", value=build_output_usage_value
-    ),
+agent = Agent(
+    name="assistant",
+    model=DEFAULT_MODEL,
+    instructions="You are a helpful assistant. Be concise.",
 )
+
 app = FastAPI(title="Custom lifecycle events AG-UI demo")
-add_openai_agents_fastapi_endpoint(app, agent, "/")
+translator = AGUITranslator()
+
+
+@app.post("/")
+async def run_custom_lifecycle_events(
+    body: RunAgentInput, request: Request
+) -> StreamingResponse:
+    """Translate one AG-UI request into an SDK run, then report real token usage."""
+    encoder = EventEncoder(accept=request.headers.get("accept"))
+
+    async def stream():
+        # AGUI input -> OpenAI SDK
+        translated_input = translator.to_openai(body)
+        result = Runner.run_streamed(
+            agent,
+            input=translated_input.messages,
+            context=translated_input.context,
+        )
+
+        def usage_value() -> dict[str, int]:
+            # Resolved after the stream finishes, so these are the run's
+            # actual totals, not an estimate made up before anything ran.
+            usage = result.context_wrapper.usage
+            return {
+                "input_tokens": usage.input_tokens,
+                "output_tokens": usage.output_tokens,
+            }
+
+        end_custom_event = CustomEvent(
+            type=EventType.CUSTOM, name="run_usage", value=usage_value
+        )
+
+        # OpenAI SDK -> AGUI events
+        async for event in translator.to_agui(
+            result, body, end_custom_event=end_custom_event
+        ):
+            yield encoder.encode(event)
+
+    return StreamingResponse(stream(), media_type=encoder.get_content_type())

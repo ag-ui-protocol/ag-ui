@@ -1,11 +1,6 @@
 "use client";
 
-import React, {
-  useEffect,
-  useMemo,
-  useRef,
-  useSyncExternalStore,
-} from "react";
+import React, { useEffect, useMemo, useSyncExternalStore } from "react";
 import "@copilotkit/react-core/v2/styles.css";
 import {
   CopilotChat,
@@ -18,52 +13,45 @@ interface CustomLifecycleEventsProps {
   params: Promise<{ integrationId: string }>;
 }
 
-interface UsageInfo {
-  tokens: number;
-  costUsd: number;
-}
-
 interface RunUsage {
-  input?: UsageInfo;
-  output?: UsageInfo;
+  inputTokens: number;
+  outputTokens: number;
 }
 
-const runUsage = new Map<string, RunUsage>();
+// Keyed by the assistant message's own id rather than the framework's
+// run id: CopilotKit's message-to-run mapping only resolves reliably for
+// the first run in a session, so a run-id-keyed store silently drops usage
+// on every later turn. Message ids don't have that problem.
+const usageByMessageId = new Map<string, RunUsage>();
 const usageListeners = new Set<() => void>();
 
-function setRunUsage(runId: string, update: RunUsage) {
-  runUsage.set(runId, { ...runUsage.get(runId), ...update });
+function setMessageUsage(messageId: string, usage: RunUsage) {
+  usageByMessageId.set(messageId, usage);
   usageListeners.forEach((listener) => listener());
 }
 
-function subscribeRunUsage(listener: () => void) {
+function subscribeUsage(listener: () => void) {
   usageListeners.add(listener);
   return () => usageListeners.delete(listener);
 }
 
-function getRunUsage(runId?: string) {
-  return runId ? runUsage.get(runId) : undefined;
+function getMessageUsage(messageId: string) {
+  return usageByMessageId.get(messageId);
 }
 
 function UsageLabel({
   message,
   position,
-  runId,
 }: {
-  message: { role: string };
+  message: { id: string; role: string };
   position: "before" | "after";
-  runId?: string;
 }) {
   const usage = useSyncExternalStore(
-    subscribeRunUsage,
-    () => getRunUsage(runId),
+    subscribeUsage,
+    () => getMessageUsage(message.id),
     () => undefined,
   );
-  if (
-    message.role !== "assistant" ||
-    position !== "after" ||
-    (!usage?.input && !usage?.output)
-  ) {
+  if (message.role !== "assistant" || position !== "after" || !usage) {
     return null;
   }
 
@@ -72,17 +60,8 @@ function UsageLabel({
       className="mb-2 px-1 text-xs text-muted-foreground"
       aria-label="Run usage"
     >
-      {usage.input && (
-        <span>
-          ⬇️ {usage.input.tokens} tokens · ${usage.input.costUsd.toFixed(6)}
-        </span>
-      )}
-      {usage.input && usage.output && <span className="px-2"> </span>}
-      {usage.output && (
-        <span>
-          ⬆️ {usage.output.tokens} tokens · ${usage.output.costUsd.toFixed(6)}
-        </span>
-      )}
+      ⬇️ {usage.inputTokens} input tokens · ⬆️ {usage.outputTokens} output
+      tokens
     </div>
   );
 }
@@ -106,7 +85,6 @@ const CustomLifecycleEvents: React.FC<CustomLifecycleEventsProps> = ({
 
 const Chat = () => {
   const { agent } = useAgent({ agentId: "custom_lifecycle_events" });
-  const currentRunId = useRef<string | undefined>(undefined);
 
   useConfigureSuggestions({
     suggestions: [
@@ -122,35 +100,21 @@ const Chat = () => {
 
   useEffect(() => {
     const subscription = agent.subscribe({
-      onRunStartedEvent: ({ event }) => {
-        currentRunId.current = event.runId;
-        runUsage.delete(event.runId);
-        usageListeners.forEach((listener) => listener());
-      },
-      onCustomEvent: ({ event, input }) => {
-        // The subscriber context carries the run input for every event. Use
-        // it directly so usage events are not lost if RUN_STARTED and CUSTOM
-        // are delivered before the lifecycle callback updates the ref.
-        const runId = input.runId ?? currentRunId.current;
-        if (!runId) return;
+      onCustomEvent: ({ event, messages }) => {
+        if (event.name !== "run_usage") return;
+        // run_usage fires after MESSAGES_SNAPSHOT, so the assistant's
+        // reply is already the last message in this run's history.
+        const lastMessage = messages[messages.length - 1];
+        if (!lastMessage) return;
 
-        const value = event.value as { tokens: number; cost_usd: number };
-        if (event.name === "input_usage") {
-          setRunUsage(runId, {
-            input: { tokens: value.tokens, costUsd: value.cost_usd },
-          });
-        }
-        if (event.name === "output_usage") {
-          setRunUsage(runId, {
-            output: { tokens: value.tokens, costUsd: value.cost_usd },
-          });
-        }
-      },
-      onRunFinishedEvent: () => {
-        currentRunId.current = undefined;
-      },
-      onRunErrorEvent: () => {
-        currentRunId.current = undefined;
+        const value = event.value as {
+          input_tokens: number;
+          output_tokens: number;
+        };
+        setMessageUsage(lastMessage.id, {
+          inputTokens: value.input_tokens,
+          outputTokens: value.output_tokens,
+        });
       },
     });
     return () => subscription.unsubscribe();
