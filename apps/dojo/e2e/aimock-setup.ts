@@ -2,6 +2,7 @@ import { LLMock, type ChatMessage } from "@copilotkit/aimock";
 import * as path from "node:path";
 import { registerA2UIRecoveryFixtures } from "./a2ui-recovery-fixtures";
 import { registerA2UIADKFixtures } from "./a2ui-adk-fixtures";
+import { registerOpenAIAgentsFixtures } from "./openai-agents-fixtures";
 
 // Configurable so parallel worktrees / runs don't collide on one aimock port.
 const MOCK_PORT = Number(process.env.AIMOCK_PORT) || 5555;
@@ -31,6 +32,7 @@ export async function setupLLMock(): Promise<void> {
   // OSS-162 A2UI recovery showcase fixtures (predicate fixtures, must precede
   // the generic loadFixtureFile below).
   registerA2UIRecoveryFixtures(mockServer);
+  registerOpenAIAgentsFixtures(mockServer);
 
   // Extract text from message content — handles both string and array-of-parts
   // (Strands SDK sends content as [{type: "text", text: "..."}])
@@ -1339,6 +1341,12 @@ export async function setupLLMock(): Promise<void> {
         );
         if (hasCrewExitTool && textOf(last.content) === "Crew exited")
           return false;
+        const hasOpenAIAgentsSupervisorTools = req.tools?.some((t) =>
+          ["research_topic", "write_prose", "critique_draft"].includes(
+            t.function.name,
+          ),
+        );
+        if (hasOpenAIAgentsSupervisorTools) return false;
         return true;
       },
     },

@@ -20,8 +20,7 @@ demonstration bracketing pair would.
 - "Say hi in one sentence."
 - "Tell me one interesting fact about AI."
 
-Each assistant reply has a compact usage label immediately above it, showing
-the real input and output token counts for that run.
+The latest run's real input and output token counts appear above the chat.
 
 ## Technical Details
 
@@ -37,7 +36,5 @@ the real input and output token counts for that run.
 - The translator itself is opaque to the event's contents — it only checks
   `isinstance(..., CustomEvent)`; the `name`/`value` shape is entirely up to
   the caller
-- The page captures the current `runId` from `RUN_STARTED`, associates the
-  `run_usage` event with that run in a small external store, then uses
-  `CopilotKitProvider`'s stable `renderCustomMessages` configuration to render
-  the label above the assistant message
+- The page subscribes to `run_usage`, stores the latest value in local React
+  state, and renders it above the chat

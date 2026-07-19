@@ -3,11 +3,11 @@ import React, { useState } from "react";
 import "@copilotkit/react-core/v2/styles.css";
 import {
   CopilotChat,
-  CopilotKitProvider,
   useAgent,
   useCopilotKit,
   useConfigureSuggestions,
 } from "@copilotkit/react-core/v2";
+import { CopilotKit } from "@copilotkit/react-core";
 
 interface ApprovalProps {
   params: Promise<{ integrationId: string }>;
@@ -23,12 +23,13 @@ const Approval: React.FC<ApprovalProps> = ({ params }) => {
   const { integrationId } = React.use(params);
 
   return (
-    <CopilotKitProvider
+    <CopilotKit
       runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
+      agent="human_in_the_loop_approval"
     >
       <Chat />
-    </CopilotKitProvider>
+    </CopilotKit>
   );
 };
 
@@ -90,10 +91,16 @@ const Chat = () => {
   return (
     <div className="flex flex-col justify-center items-center h-full w-full gap-4">
       {pending && (
-        <ApprovalCard pending={pending} onApprove={() => respond(true)} onReject={() => respond(false)} />
+        <ApprovalCard
+          pending={pending}
+          onApprove={() => respond(true)}
+          onReject={() => respond(false)}
+        />
       )}
       {!pending && resolvedCallId && (
-        <div className="text-sm text-muted-foreground">Decision sent — waiting for the agent...</div>
+        <div className="text-sm text-muted-foreground">
+          Decision sent — waiting for the agent...
+        </div>
       )}
       <div className="h-full w-full md:w-8/10 md:h-8/10 rounded-lg">
         <CopilotChat
@@ -128,7 +135,8 @@ function ApprovalCard({
     >
       <h2 className="text-lg font-bold mb-2">Approval needed</h2>
       <p className="text-sm text-gray-600 mb-4">
-        The agent wants to call <code className="font-mono">{pending.toolName}</code> with:
+        The agent wants to call{" "}
+        <code className="font-mono">{pending.toolName}</code> with:
       </p>
       <pre className="bg-gray-50 rounded-lg p-3 text-xs mb-4 overflow-x-auto">
         {JSON.stringify(args, null, 2)}

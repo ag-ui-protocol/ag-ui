@@ -378,21 +378,6 @@ export const menuIntegrations = [
     ],
   },
   {
-    id: "openai-agents-python",
-    name: "OpenAI Agents SDK (Python)",
-    features: [
-      "ag_ui_docs_copilot",
-      "agentic_chat",
-      "backend_tool_rendering",
-      "human_in_the_loop",
-      "human_in_the_loop_approval",
-      "tool_based_generative_ui",
-      "subagents",
-      "custom_lifecycle_events",
-      "dynamic_system_prompt",
-    ],
-  },
-  {
     id: "langroid",
     name: "Langroid",
     features: [
@@ -406,5 +391,20 @@ export const menuIntegrations = [
     id: "watsonx",
     name: "IBM watsonx orchestrate",
     features: ["agentic_chat", "v1_agentic_chat"],
+  },
+  {
+    id: "openai-agents-python",
+    name: "OpenAI Agents (Python)",
+    features: [
+      "ag_ui_docs_copilot",
+      "agentic_chat",
+      "backend_tool_rendering",
+      "human_in_the_loop",
+      "human_in_the_loop_approval",
+      "tool_based_generative_ui",
+      "subagents",
+      "custom_lifecycle_events",
+      "dynamic_system_prompt",
+    ],
   },
 ] as const satisfies MenuIntegrationConfig[];
