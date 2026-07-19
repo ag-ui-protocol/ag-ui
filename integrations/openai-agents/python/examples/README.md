@@ -1,4 +1,4 @@
-# OpenAI Agents SDK examples
+# OpenAI Agents (Python) examples
 
 Runnable demos for `ag_ui_openai_agents`, one mounted FastAPI app per agent.
 The aggregate server mounts each example application:
@@ -14,19 +14,79 @@ Model provider is **native OpenAI** (`OPENAI_API_KEY`). These examples exercise
 the direct OpenAI path deliberately, since that is the reference setup for the
 library.
 
+## Prerequisites
+
+- Python 3.10 or newer
+- [`uv`](https://docs.astral.sh/uv/)
+- An OpenAI API key
+
+## Setup and configuration
+
+```bash
+cd integrations/openai-agents/python/examples
+uv sync --no-dev
+cp .env.example .env
+```
+
+Add your API key to `.env`. The example server recognizes:
+
+| Variable | Required | Purpose |
+|---|---:|---|
+| `OPENAI_API_KEY` | Yes | Authenticates OpenAI requests. |
+| `OPENAI_DEFAULT_MODEL` | No | Overrides the model shared by the examples. |
+| `OPENAI_AGENTS_DISABLE_TRACING` | No | Set to `true` to disable OpenAI Agents SDK tracing. |
+| `HOST` | No | Bind address; defaults to `0.0.0.0`. |
+| `PORT` | No | Server port; defaults to `8024`. |
+| `RELOAD` | No | Set to a non-empty value to restart the server after local code changes. |
+
+These examples use the OpenAI provider directly. Provider selection is not an
+AG-UI translator setting; applications that use another OpenAI Agents SDK
+model provider configure that provider when constructing their agents and
+runner.
+
 ## Running the server
 
 ```bash
-cd examples
-uv sync --no-dev
-cp .env.example .env   # fill in OPENAI_API_KEY
-uv run --no-dev python server.py
+uv run --env-file .env --no-dev python server.py
 ```
 
 Server runs on **http://localhost:8024** (the port the AG-UI Dojo expects;
 override with `PORT`). Tracing follows the SDK's own `OPENAI_AGENTS_DISABLE_TRACING`
 env var and default (`false` — tracing on); set it to `true` to disable
 tracing.
+
+## Available endpoints
+
+| Endpoint | Demonstrates |
+|---|---|
+| `/ag_ui_docs_copilot/` | Documentation retrieval through backend tools |
+| `/agentic_chat/` | Basic streamed conversation |
+| `/backend_tool_rendering/` | Backend function tools and rendered results |
+| `/human_in_the_loop/` | Frontend-owned tool execution |
+| `/human_in_the_loop_approval/` | Approval before a backend tool runs |
+| `/tool_based_generative_ui/` | UI rendered from frontend tool arguments |
+| `/subagents/` | OpenAI Agents SDK agents-as-tools orchestration |
+| `/custom_lifecycle_events/` | Custom events around a run |
+| `/dynamic_system_prompt/` | Instructions derived from AG-UI context |
+| `/health` | Server status and registered demo names |
+
+All demo endpoints accept AG-UI `RunAgentInput` requests and return an SSE
+event stream.
+
+## Testing with Dojo
+
+Start the example server, then run the Dojo from the repository root in a
+second terminal:
+
+```bash
+cd apps/dojo
+pnpm dev
+```
+
+Open `http://localhost:3000`, select **OpenAI Agents (Python)**, and choose a
+feature. The Dojo uses `http://localhost:8024` by default. Set
+`OPENAI_AGENTS_PYTHON_URL` in the Dojo environment if the backend uses another
+address.
 
 ## Automated tests
 
@@ -59,10 +119,6 @@ curl -N -X POST http://localhost:8024/agentic_chat/ \
 
 Swap the path to hit a different demo. `GET /health` on the aggregate server
 lists every registered agent. Demos map 1:1 onto the AG-UI Dojo feature pages.
-
-> The stateful demos (`shared_state`, `agentic_generative_ui`,
-> `predictive_state_updates`) are shelved together with the `AGUIContext`
-> state bridge — see `.dev/shelved/` in the package root.
 
 ## Agents
 
@@ -187,3 +243,50 @@ itself. Each specialist invocation appears to the client as a normal
 stay internal to the SDK.
 
 **Try:** `"Write a short piece about the history of coffee."`
+
+### `custom_lifecycle_events`
+
+Adds application-defined lifecycle events around the normal translated OpenAI
+Agents SDK stream. This demonstrates how an application can extend a run with
+AG-UI `CUSTOM` events without changing the translator's built-in mappings.
+
+### `dynamic_system_prompt`
+
+Builds OpenAI Agents SDK instructions from AG-UI context supplied with the
+request. This demonstrates application-owned prompt construction while the
+translator continues to handle messages and streamed events.
+
+## How the examples work
+
+- `server.py` mounts every example FastAPI application under its demo name.
+- Each module in `agents_examples/` owns its agent and endpoint behavior.
+- Most demos use `OpenAIAgentsAgent` and
+  `add_openai_agents_fastapi_endpoint`.
+- Demos that need custom lifecycle or pause/resume behavior use
+  `AGUITranslator` directly around `Runner.run_streamed(...)`.
+- The package dependency points to the parent integration in editable mode, so
+  local integration changes are used without publishing a wheel.
+
+## Adding an example
+
+1. Add a module under `agents_examples/` containing the agent and FastAPI app.
+2. Register its agent and app in `DEMOS` and `DEMO_APPS` in `server.py`.
+3. Add the endpoint and behavior to this README.
+4. Add focused tests under `tests/` and, when it is a Dojo feature, its Dojo
+   registration and end-to-end test.
+
+## Troubleshooting
+
+| Problem | Check |
+|---|---|
+| Server exits immediately | Set `OPENAI_API_KEY` in `examples/.env`. |
+| Dojo cannot connect | Confirm the server is on port `8024`, or set `OPENAI_AGENTS_PYTHON_URL` for Dojo. |
+| Endpoint returns 404 | Include the mounted demo path and its trailing slash, such as `/agentic_chat/`. |
+| Changes are not picked up | Set `RELOAD=1` or restart the example server. |
+| Example tests are not running | Run `uv run pytest` from the `examples` directory; the package suite does not collect them. |
+
+## References
+
+- [AG-UI Protocol documentation](https://docs.ag-ui.com/)
+- [OpenAI Agents SDK documentation](https://openai.github.io/openai-agents-python/)
+- [OpenAI Agents integration README](../README.md)
