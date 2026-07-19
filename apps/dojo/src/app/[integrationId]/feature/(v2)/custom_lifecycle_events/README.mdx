@@ -2,40 +2,29 @@
 
 ## What This Demo Shows
 
-`AGUITranslator.to_agui()` takes an optional `end_custom_event` param —
-an AG-UI `CustomEvent` instance (anything else raises `TypeError`), default
-`None` (off). When set, one `CUSTOM` event is emitted right before
-`RUN_FINISHED`. This demo uses it to report the run's real token usage:
-`run_usage`, with `input_tokens`/`output_tokens` read off the SDK's own
-`RunResultStreaming.context_wrapper.usage` after the stream finishes — plain
-conversation otherwise, same agent as `agentic_chat`.
+A custom AG-UI event can carry application-specific information alongside the
+standard run events. This example emits a `run_usage` event containing the
+actual input and output token counts, then displays those counts beneath the
+completed assistant message.
 
-Real usage is only known once the run is done — there's no such thing as a
-true token count before the model has answered — so this only fires once,
-at the end, not at both `RUN_STARTED` and `RUN_FINISHED` like a
-demonstration bracketing pair would.
+The usage is emitted at the end of the run because final token totals are only
+available after the OpenAI Agents SDK stream has completed.
 
 ## How to Interact
 
-- "Say hi in one sentence."
-- "Tell me one interesting fact about AI."
-
-Each assistant reply has a compact usage label immediately after it, showing
-the real input and output token counts for that run.
+- Ask: "Say hi in one sentence."
+- Ask: "Tell me one interesting fact about AI."
+- After the response completes, check the input and output token counts shown
+  directly below it.
 
 ## Technical Details
 
-- `agents_examples/custom_lifecycle_events.py` composes the translator
-  directly (`translator.to_openai`/`translator.to_agui`) instead of the
-  `OpenAIAgentsAgent` wrapper, because reading the run's real usage requires
-  the `RunResultStreaming` object the wrapper doesn't expose to a lifecycle
-  event factory
-- `end_custom_event`'s value is a zero-argument closure over that `result`,
-  resolved by the translator right before it emits the event — by then the
-  stream is fully drained and `context_wrapper.usage` holds the run's actual
-  totals
-- The translator itself is opaque to the event's contents — it only checks
-  `isinstance(..., CustomEvent)`; the `name`/`value` shape is entirely up to
-  the caller
-- The page associates each `run_usage` event with the completed assistant
-  message and renders the usage directly after that message
+- The backend uses `AGUITranslator` directly so it can access the
+  `RunResultStreaming` object and its final usage totals.
+- It passes a `CustomEvent` named `run_usage` through the translator's
+  `end_custom_event` option. The event is emitted immediately before
+  `RUN_FINISHED`.
+- The event value is resolved after the stream finishes, when
+  `context_wrapper.usage` contains the actual totals.
+- The frontend subscribes to `run_usage`, associates it with the completed
+  assistant message, and renders a compact usage label.

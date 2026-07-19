@@ -2,33 +2,26 @@
 
 ## What This Demo Shows
 
-The frontend sends a language choice over the AG-UI **context** channel — a
-plain `{description, value}` pair, no special class involved. The agent's
-`instructions` is a callable (`Agent.instructions`, the OpenAI Agents SDK's
-own dynamic-instructions feature) that reads the context list every turn and
-bakes "always reply in X" into the system prompt fresh, before each model
-call.
+The frontend sends the selected reply language through the AG-UI context
+channel. The backend reads that context on every run and uses the OpenAI Agents
+SDK dynamic-instructions API to rebuild the agent's system prompt.
 
-Context needs no `AGUIContext`/state machinery — it's read-only and
-regenerated every run. The shared `OpenAIAgentsAgent` wrapper passes the
-translated context into `Runner.run_streamed(..., context=...)`, so this demo
-uses the same mounted FastAPI-app pattern as the other examples.
+Changing the language affects the next response without restarting the server
+or storing the selection in agent state.
 
 ## How to Interact
 
-- Pick a language in the sidebar, then ask anything — the reply comes back
-  entirely in that language, regardless of what language you type in.
-- Switch languages mid-conversation and ask again — the next reply follows
-  the new choice immediately, no restart needed.
+- Select English, Arabic, or German in the sidebar, then ask a question.
+- Change the language and send another message. The next response follows the
+  new selection immediately.
 
 ## Technical Details
 
-- `useAgentContext({ description: "Reply language", value: language })` —
-  pushes the current pick onto `RunAgentInput.context` with every message
-- `dynamic_instructions(ctx, agent)` in
-  `examples/agents_examples/dynamic_system_prompt.py` reads
-  `ctx.context` (the raw `list[Context]` sent by the client) and returns a
-  fresh instructions string
-- The demo app is mounted by `examples/server.py` at
-  `/dynamic_system_prompt`; the aggregate OpenAI Agents server runs on port
-  8024
+- `useAgentContext` adds `{ description: "Reply language", value: language }`
+  to `RunAgentInput.context` on every request.
+- `OpenAIAgentsAgent` forwards the translated context to
+  `Runner.run_streamed(..., context=...)`.
+- The agent's `instructions` callable reads `RunContextWrapper.context` and
+  returns a new system prompt for that run.
+- Context is read-only request information in this example; no shared-state
+  bridge is required.

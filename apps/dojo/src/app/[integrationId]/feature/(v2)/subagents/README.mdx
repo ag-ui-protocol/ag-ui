@@ -2,29 +2,26 @@
 
 ## What This Demo Shows
 
-A supervisor agent stays in charge of the conversation and calls specialist
-agents as tools (`Agent.as_tool()`), possibly several in one turn, then
-synthesizes their outputs itself — a call-and-return delegation, not a
-handoff (control never transfers away from the supervisor). Same shape as
-CopilotKit's own LangGraph "subagents" showcase demo (a supervisor calling
-child agents as tools).
+A supervisor agent delegates a writing task to three specialist agents:
+researcher, writer, and critic. The supervisor remains responsible for the
+conversation, calls the specialists as tools, and produces the final response.
 
-A sidebar tracks the team live: role chips light up while a specialist is
-working, and a delegation log lists each call with its status and a
-preview of the input/output.
+The sidebar shows which specialist is working and records every delegation in
+order. Simple questions can be answered directly without calling the team.
 
 ## How to Interact
 
-- "Write a short piece about the history of coffee" (calls research,
-  writer, and critic specialists in sequence, then produces a final draft)
-- "What is 2 + 2?" (answered directly, no team involved)
+- Ask: "Write a short piece about the history of coffee." The supervisor
+  calls the researcher, writer, and critic before returning the final draft.
+- Ask: "What is 2 + 2?" The supervisor answers directly without delegating.
 
 ## Technical Details
 
-- Each specialist invocation is an ordinary `TOOL_CALL_START/ARGS/END` +
-  `TOOL_CALL_RESULT` sequence
-- The nested agents' own model turns stay internal to the SDK and are not
-  streamed as separate messages — the client sees one coherent transcript
-- The sidebar is built from three `useRenderTool` renderers (one per
-  specialist tool name), each reporting its status into shared page state
-  via a small tracker component
+- The OpenAI Agents SDK exposes each specialist through `Agent.as_tool()`.
+  This is call-and-return delegation; it is not a handoff of the conversation.
+- Each delegation becomes an AG-UI tool-call sequence followed by a
+  `TOOL_CALL_RESULT` event.
+- A `useRenderTool` renderer for each specialist updates the role indicators
+  and delegation log.
+- The specialists' internal model turns remain inside the OpenAI Agents SDK;
+  the client receives one supervisor-owned conversation.
