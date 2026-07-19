@@ -10,7 +10,6 @@ import os
 from pathlib import Path
 
 import uvicorn
-from agents import set_tracing_disabled
 from fastapi import FastAPI
 
 from agents_examples import (
@@ -25,7 +24,8 @@ from agents_examples import (
     tool_based_generative_ui,
 )
 
-set_tracing_disabled(True)
+# Tracing follows the SDK's own OPENAI_AGENTS_DISABLE_TRACING env var and its
+# own default (tracing on) — nothing to set up here.
 
 DEMOS = {
     "ag_ui_docs_copilot": ag_ui_docs_copilot.copilot_agent,

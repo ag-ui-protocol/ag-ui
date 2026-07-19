@@ -24,7 +24,9 @@ uv run --no-dev python server.py
 ```
 
 Server runs on **http://localhost:8024** (the port the AG-UI Dojo expects;
-override with `PORT`).
+override with `PORT`). Tracing follows the SDK's own `OPENAI_AGENTS_DISABLE_TRACING`
+env var and default (`false` — tracing on); set it to `true` to disable
+tracing.
 
 ## Automated tests
 
