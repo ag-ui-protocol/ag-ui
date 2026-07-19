@@ -2,6 +2,8 @@
 name = "ag-ui-openai-agents"
 version = "0.1.0"
 description = "AG-UI integration for OpenAI Agent SDK"
+license = "MIT"
+license-files = ["LICENSE"]
 readme = "README.md"
 authors = [
     { name = "Abdelrahman Abozied", email = "me@abdelrahman.ai" },
