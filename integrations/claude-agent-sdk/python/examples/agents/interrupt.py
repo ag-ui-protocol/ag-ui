@@ -78,15 +78,16 @@ def create_interrupt_adapter() -> ClaudeAgentAdapter:
 
         if verdict is None:
             # First sighting — pause the run and surface the interrupt.
-            return {"hookSpecificOutput": {"permissionDecision": "defer"}}
+            return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "defer"}}
 
         if verdict["resolved"]:
             # Approved: run the frozen call exactly as proposed.
-            return {"hookSpecificOutput": {"permissionDecision": "allow"}}
+            return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}
 
         # Cancelled: refuse the call; the model is told and can respond.
         return {
             "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
                 "permissionDecision": "deny",
                 "permissionDecisionReason": "User declined the file deletion.",
             }
