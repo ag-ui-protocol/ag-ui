@@ -613,9 +613,6 @@ class StrandsAgent:
                     core_kwargs = dict(self._agent_kwargs)
                     if self._hooks:
                         core_kwargs["hooks"] = list(self._hooks)
-                    # Ensure a stable agent_id so SessionManager can locate
-                    # snapshots after the in-memory cache is cleared.
-                    core_kwargs.setdefault("agent_id", self.name)
                     self._agents_by_thread[thread_id] = StrandsAgentCore(
                         model=self._model,
                         system_prompt=self._system_prompt,
