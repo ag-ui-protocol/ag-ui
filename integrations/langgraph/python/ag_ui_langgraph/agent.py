@@ -57,6 +57,7 @@ from ag_ui.core import (
     RunFinishedEvent,
     RunFinishedInterruptOutcome,
     RunStartedEvent,
+    TokenUsage,
     StateDeltaEvent,
     StateSnapshotEvent,
     StepFinishedEvent,
@@ -76,6 +77,7 @@ from ag_ui.core import (
     ReasoningEncryptedValueEvent,
 )
 from .interrupts import lg_interrupts_to_agui, DEFAULT_RESUME_SENTINEL_CANCELLED, DEFAULT_RESUME_SENTINEL_MAP
+from .usage import token_usage_from_chunk, aggregate_token_usage
 from ag_ui.encoder import EventEncoder
 from ag_ui_a2ui_toolkit import split_a2ui_schema_context
 
@@ -204,6 +206,7 @@ class LangGraphAgent:
             "streamed_tool_call_ids": set(),
             "model_made_tool_call": False,
             "state_reliable": True,
+            "usage": [],
         }
         self.active_run = INITIAL_ACTIVE_RUN
         try:
@@ -1150,6 +1153,7 @@ class LangGraphAgent:
                 thread_id=thread_id,
                 run_id=run_id,
                 outcome=outcome,
+                usage=self._collect_run_usage(),
             )
         )
         return events
@@ -1162,7 +1166,18 @@ class LangGraphAgent:
             type=EventType.RUN_FINISHED,
             thread_id=thread_id,
             run_id=run_id,
+            usage=self._collect_run_usage(),
         )
+
+    def _collect_run_usage(self) -> Optional[List[TokenUsage]]:
+        """Aggregate accumulated per-call usage for the terminal event.
+
+        Returns ``None`` (omitted field) when no provider usage was reported,
+        so consumers can treat missing usage as "not measured" rather than zero.
+        """
+        raw = self.active_run.get("usage", []) if self.active_run else []
+        aggregated = aggregate_token_usage(raw)
+        return aggregated or None
 
     def _build_command_from_agui_resume(
         self,
@@ -1252,6 +1267,21 @@ class LangGraphAgent:
 
             response_metadata = _chunk_get(chunk_raw, "response_metadata", None) or {}
             tool_call_chunks_list = _chunk_get(chunk_raw, "tool_call_chunks", None) or []
+
+            # Capture provider-reported token usage. LangChain attaches
+            # `usage_metadata` to the final streamed chunk (the one that also
+            # carries `finish_reason`), so this must run *before* the
+            # finish-reason early return below or usage would be dropped.
+            usage_metadata = _chunk_get(chunk_raw, "usage_metadata", None)
+            if usage_metadata:
+                ls_metadata = event.get("metadata") or {}
+                usage_entry = token_usage_from_chunk(
+                    usage_metadata,
+                    provider=ls_metadata.get("ls_provider"),
+                    model=ls_metadata.get("ls_model_name"),
+                )
+                if usage_entry is not None:
+                    self.active_run.setdefault("usage", []).append(usage_entry)
 
             if response_metadata.get('finish_reason', None):
                 return
