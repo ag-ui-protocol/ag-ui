@@ -11,8 +11,9 @@ export function isSubgraphStreamEvent(
   return event?.method === "lifecycle" && event?.params?.data?.type === "subgraph";
 }
 
-// "messages-tuple" stream mode produces SSE events with type "messages",
-// so we need to check for that mapping in addition to the direct mode name.
+// The "messages-tuple" stream mode surfaces in the v3 protocol as a
+// lifecycle event whose params.data.type is "message_tuple" (rather than
+// the legacy SSE "messages" event name), so we match on that data type.
 export function isMessageTupleEvent(event: StreamResponseChunk): event is StreamResponseChunk & { method: "lifecycle"; params: { data: { type: "message_tuple"; message: any } } } {
     // OLD:
     // streamResponseChunk.event === "messages" &&
