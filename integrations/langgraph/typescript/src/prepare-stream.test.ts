@@ -23,23 +23,10 @@
  *     normal `submitRun(payload)` path runs.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { Message as LangGraphMessage } from "@langchain/langgraph-sdk";
 import { LangGraphAgent } from "./agent";
 import type { LangGraphAgentConfig } from "./agent";
-
-// prepareStream now decides v2-vs-v3 via an OPTIONS probe of the server's
-// /threads/:id/stream/events route (supportsV3). Stub fetch with a
-// non-404 so these tests exercise the v3 ThreadStream path.
-beforeEach(() => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn().mockResolvedValue({ status: 200 } as Response),
-  );
-});
-afterEach(() => {
-  vi.unstubAllGlobals();
-});
 
 // ---------------------------------------------------------------------------
 // Helpers

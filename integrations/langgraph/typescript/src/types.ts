@@ -126,9 +126,10 @@ export interface RunMetadata {
   // emission is suppressed so optimistic UI state is not overwritten.
   modelMadeToolCall?: boolean;
   // True when the connected server speaks the v3 streaming protocol
-  // (the `/threads/:id/stream/events` route exists). Decided once per
-  // run via an OPTIONS probe and used to route between the v3 and
-  // legacy event bundles. Undefined until probed.
+  // (the `/threads/:id/stream/events` route exists). Decided at run time
+  // by attempting the v3 subscribe/submit and falling back to v2 on a
+  // missing-route 404 (memoised on the shared holder), then used to route
+  // between the v3 and legacy event bundles. Undefined until decided.
   isV3?: boolean;
   // v3 messages-channel translation state.
   // Indexed by content-block index inside the LangGraph protocol message.
