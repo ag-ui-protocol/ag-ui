@@ -27,7 +27,7 @@ import { AbstractAgent, EventType } from "@ag-ui/client";
 import type { Agent as LocalMastraAgent } from "@mastra/core/agent";
 import { RequestContext } from "@mastra/core/request-context";
 import { randomUUID } from "@ag-ui/client";
-import { compare } from "fast-json-patch";
+import jsonpatch from "fast-json-patch";
 import { parsePartialJson } from "@ai-sdk/ui-utils";
 import { Observable } from "rxjs";
 import type { MastraClient } from "@mastra/client-js";
@@ -43,6 +43,8 @@ import {
   getNetwork,
 } from "./utils";
 import { planA2UIInjection, type A2UIInjectConfig } from "./a2ui-tool";
+
+const { compare } = jsonpatch;
 
 type RemoteMastraAgent = ReturnType<MastraClient["getAgent"]>;
 

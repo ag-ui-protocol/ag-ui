@@ -204,8 +204,30 @@ def _build_strands_history(input_messages: List[Any]) -> List[Dict[str, Any]]:
     than a fresh prompt that re-fires the same tool every turn.
     """
     out: List[Dict[str, Any]] = []
+    pending_tool_results: List[Dict[str, Any]] = []
+
+    def flush_tool_results() -> None:
+        if not pending_tool_results:
+            return
+        out.append({"role": "user", "content": list(pending_tool_results)})
+        pending_tool_results.clear()
+
     for msg in input_messages or []:
         role = getattr(msg, "role", None)
+        if role == "tool":
+            pending_tool_results.append(
+                {
+                    "toolResult": {
+                        "toolUseId": getattr(msg, "tool_call_id", "") or "",
+                        "content": [{"text": _coerce_text(msg.content)}],
+                        "status": "success",
+                    }
+                }
+            )
+            continue
+
+        flush_tool_results()
+
         if role == "user":
             content = msg.content
             if isinstance(content, list):
@@ -252,21 +274,8 @@ def _build_strands_history(input_messages: List[Any]) -> List[Dict[str, Any]]:
             if not blocks:
                 blocks = [{"text": ""}]
             out.append({"role": "assistant", "content": blocks})
-        elif role == "tool":
-            out.append(
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "toolResult": {
-                                "toolUseId": getattr(msg, "tool_call_id", "") or "",
-                                "content": [{"text": _coerce_text(msg.content)}],
-                                "status": "success",
-                            }
-                        }
-                    ],
-                }
-            )
+
+    flush_tool_results()
     return out
 
 

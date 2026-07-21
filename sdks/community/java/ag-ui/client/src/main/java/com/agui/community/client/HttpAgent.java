@@ -108,9 +108,13 @@ public final class HttpAgent implements Agent {
                     httpClient.send(request, HttpResponse.BodyHandlers.ofLines());
 
             if (response.statusCode() >= 400) {
-                publisher.closeExceptionally(new HttpAgentException(
-                        "AG-UI endpoint returned HTTP " + response.statusCode()));
-                return;
+    String body;
+    try (Stream<String> lines = response.body()) {
+        body = lines.collect(Collectors.joining("\n"));   // drains + closes → releases connection
+    }
+    publisher.closeExceptionally(new HttpAgentException(
+            "AG-UI endpoint returned HTTP " + response.statusCode() + ": " + body));
+    return;
             }
 
             SseEventParser parser = new SseEventParser();
