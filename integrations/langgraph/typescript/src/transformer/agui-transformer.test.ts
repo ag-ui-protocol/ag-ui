@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { EventType } from "@ag-ui/core";
 import { aguiTransformer } from "./agui-transformer";
-import { LangGraphEventTypes } from "../types";
+import { CustomEventNames, LangGraphEventTypes } from "../types";
 
 type AnyEvent = { type: string; [k: string]: any };
 
@@ -346,6 +346,89 @@ describe("aguiTransformer", () => {
       expect(custom.length).toBe(1);
       expect(typeof custom[0].value).toBe("string");
       expect(custom[0].value).toBe("null");
+    });
+  });
+
+  // Finding (a): root `failed` must close open blocks/steps BEFORE the
+  // terminal RUN_ERROR — no block-END or STEP_FINISHED may trail it.
+  describe("root failed closes blocks before RUN_ERROR", () => {
+    it("emits no block-END or STEP_FINISHED after RUN_ERROR on an open stream", () => {
+      const { t, events, msg, process } = harness();
+      // Open a step, then a message with an open text block.
+      process("lifecycle", {
+        data: { event: "started" },
+        namespace: ["node:uuid"],
+      });
+      msg({ event: "message-start", id: "m1" });
+      msg({
+        event: "content-block-start",
+        index: 0,
+        content: { type: "text" },
+      });
+      msg({
+        event: "content-block-delta",
+        index: 0,
+        delta: { type: "text-delta", text: "hi" },
+      });
+      // Root failure.
+      process("lifecycle", {
+        data: { event: "failed", error: "boom" },
+        namespace: [],
+      });
+      // finalize() runs at run end; it must not append anything.
+      t.finalize?.();
+
+      const errIdx = events.findIndex((e) => e.type === EventType.RUN_ERROR);
+      expect(errIdx).toBeGreaterThanOrEqual(0);
+      expect(events[errIdx].message).toBe("boom");
+      // RUN_ERROR is the terminal event: nothing may follow it.
+      expect(errIdx).toBe(events.length - 1);
+      // The open text block and step were closed BEFORE the error.
+      const endIdx = events.findIndex(
+        (e) => e.type === EventType.TEXT_MESSAGE_END,
+      );
+      const stepIdx = events.findIndex(
+        (e) => e.type === EventType.STEP_FINISHED,
+      );
+      expect(endIdx).toBeGreaterThanOrEqual(0);
+      expect(endIdx).toBeLessThan(errIdx);
+      expect(stepIdx).toBeGreaterThanOrEqual(0);
+      expect(stepIdx).toBeLessThan(errIdx);
+      // Exactly one RUN_ERROR.
+      expect(only(events, EventType.RUN_ERROR).length).toBe(1);
+    });
+  });
+
+  // Finding (b): ManuallyEmitState must record the snapshot hash so the
+  // root-completed flush dedups an identical auto-snapshot.
+  describe("ManuallyEmitState snapshot dedup", () => {
+    it("emits a single STATE_SNAPSHOT when the manual value equals the auto-snapshot", () => {
+      const { events, process } = harness();
+      process("custom", {
+        data: {
+          name: CustomEventNames.ManuallyEmitState,
+          payload: { foo: "bar" },
+        },
+      });
+      // Root completion flushes snapshots from cached state. The cached
+      // state equals the manually emitted value, so no new snapshot.
+      process("lifecycle", { data: { event: "completed" }, namespace: [] });
+      expect(only(events, EventType.STATE_SNAPSHOT).length).toBe(1);
+    });
+
+    it("still emits a second STATE_SNAPSHOT when state changes after the manual emit", () => {
+      const { events, process } = harness();
+      process("custom", {
+        data: {
+          name: CustomEventNames.ManuallyEmitState,
+          payload: { foo: "bar" },
+        },
+      });
+      // A subsequent root values event changes state, so the flush must
+      // emit a fresh snapshot (dedup is by value, not blanket suppression).
+      process("values", { data: { foo: "baz" }, namespace: [] });
+      process("lifecycle", { data: { event: "completed" }, namespace: [] });
+      expect(only(events, EventType.STATE_SNAPSHOT).length).toBe(2);
     });
   });
 

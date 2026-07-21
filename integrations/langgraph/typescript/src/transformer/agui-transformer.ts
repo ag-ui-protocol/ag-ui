@@ -34,6 +34,11 @@ export const aguiTransformer = (): StreamTransformer<{
 }> => {
   const aguiChannel = StreamChannel.remote<ProcessedEvents>("agui");
   let initialized = false;
+  // Set once a terminal RUN_ERROR has been pushed (root `failed`
+  // lifecycle). AG-UI grammar forbids ANY event after RUN_ERROR, so
+  // every subsequent push — including finalize()'s block/step closes —
+  // is suppressed once this flips.
+  let runErrored = false;
 
   // Per-message tracking for text streaming. Keyed by content-block index so
   // multi-block messages (e.g. text + tool call in one assistant turn) don't
@@ -97,6 +102,9 @@ export const aguiTransformer = (): StreamTransformer<{
   const activeStepNames = new Set<string>();
 
   const push = (ev: ProcessedEvents) => {
+    // Nothing may follow a terminal RUN_ERROR. Drop late pushes so a
+    // block/step close (or any stray trailing event) can never trail it.
+    if (runErrored) return;
     aguiChannel.push(ev);
   };
 
@@ -162,6 +170,18 @@ export const aguiTransformer = (): StreamTransformer<{
     }
   };
 
+  // Close every run-scoped step still open, emitting the matching
+  // STEP_FINISHED. Shared by finalize() (run end) and the root `failed`
+  // path so a run that errors mid-step stays balanced with the close
+  // preceding the terminal RUN_ERROR.
+  const closeOpenSteps = () => {
+    for (const [nsKey, stepName] of activeSteps) {
+      push({ type: EventType.STEP_FINISHED, stepName });
+      activeSteps.delete(nsKey);
+      activeStepNames.delete(stepName);
+    }
+  };
+
   // Defer snapshot emission until the run reaches a stable point. Each
   // Pregel step (including transient sub-steps inside copilotkitMiddleware
   // that intercept then restore tool calls) emits its own `values` event;
@@ -210,16 +230,15 @@ export const aguiTransformer = (): StreamTransformer<{
     },
 
     finalize() {
+      // A root `failed` already closed blocks/steps and emitted the
+      // terminal RUN_ERROR; nothing may follow it, so skip entirely.
+      if (runErrored) return;
       // Lifecycle (RUN_*) is owned by agent.ts. Here we only close any
       // text/tool/reasoning blocks that didn't receive their
       // `content-block-finish` before the run ended, so AG-UI verify
       // doesn't reject the terminal event downstream.
       closeOpenMessageBlocks();
-      for (const [nsKey, stepName] of activeSteps) {
-        push({ type: EventType.STEP_FINISHED, stepName });
-        activeSteps.delete(nsKey);
-        activeStepNames.delete(stepName);
-      }
+      closeOpenSteps();
     },
 
     process(event: ProtocolEvent): boolean {
@@ -294,10 +313,19 @@ export const aguiTransformer = (): StreamTransformer<{
             const message = (
               event.params.data as { error?: string } | undefined
             )?.error;
+            // Close any open text/tool/reasoning blocks and steps FIRST so
+            // their END events precede the terminal RUN_ERROR. AG-UI grammar
+            // forbids events after RUN_ERROR; deferring these to finalize()
+            // (as before) trailed the END events behind it. Mirrors the
+            // message-error path's close-open-blocks-before-terminal ordering.
+            closeOpenMessageBlocks();
+            closeOpenSteps();
             push({
               type: EventType.RUN_ERROR,
               message: message ?? "Unknown error",
             });
+            // Latch so finalize() and any stray trailing push are suppressed.
+            runErrored = true;
           }
           break;
         }
@@ -783,6 +811,12 @@ export const aguiTransformer = (): StreamTransformer<{
             if (payload && typeof payload === "object") {
               cacheState(payload as State);
               const { messages: _m, ...stateOnly } = payload as any;
+              // Record the emitted snapshot's hash so the root-terminal
+              // flushSnapshots() dedups an identical auto-snapshot instead of
+              // re-emitting it. Without this the hash stays stale and the
+              // completed-flush ships a duplicate STATE_SNAPSHOT. Mirrors
+              // flushSnapshots' own hash bookkeeping.
+              lastStateSnapshotHash = JSON.stringify(stateOnly);
               push({ type: EventType.STATE_SNAPSHOT, snapshot: stateOnly });
             }
             // Falls through to the generic CUSTOM passthrough below
