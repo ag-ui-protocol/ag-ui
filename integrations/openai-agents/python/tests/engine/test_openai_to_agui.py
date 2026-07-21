@@ -23,6 +23,7 @@ from agents import (
     HandoffCallItem,
     HandoffOutputItem,
     MCPApprovalRequestItem,
+    ReasoningItem,
 )
 from agents.items import MessageOutputItem, ToolCallItem, ToolCallOutputItem
 from agents.models.fake_id import FAKE_RESPONSES_ID
@@ -30,7 +31,9 @@ from openai.types.responses import (
     ResponseFunctionToolCall,
     ResponseOutputMessage,
     ResponseOutputText,
+    ResponseReasoningItem,
 )
+from pydantic import BaseModel
 from openai.types.responses.response_output_item import McpApprovalRequest
 
 from ag_ui.core import EventType
@@ -141,6 +144,9 @@ def test_text_delta_lazily_opens_window_without_output_item_added():
         _raw(OpenAIRawResponseEventType.TEXT_DELTA, item_id="msg_1", output_index=0, delta="hi"),
     )
     assert _types(events) == [EventType.TEXT_MESSAGE_START, EventType.TEXT_MESSAGE_CONTENT]
+    # The real item id must be reused even on the lazy path — a generated id here
+    # would make a later MessageOutputItem commit fail to reconcile and duplicate.
+    assert {e.message_id for e in events} == {"msg_1"}
 
 
 def test_text_done_does_not_close_the_message_window():
@@ -297,7 +303,11 @@ def test_function_call_streams_start_args_end_under_the_call_id():
     )
 
 
-def test_function_call_args_delta_lazily_opens_the_call():
+def test_function_call_args_delta_before_added_buffers_then_finalize_flushes():
+    # A provider that streams args with no output_item.added has no call_id to
+    # emit yet, so the args are buffered (nothing on the wire) rather than opened
+    # under a throwaway id the later commit could not reconcile. If nothing ever
+    # opens the call, finalize flushes the buffer as one complete self-closing call.
     engine = OpenAIToAGUITranslator()
     events = _drive(
         engine,
@@ -308,7 +318,49 @@ def test_function_call_args_delta_lazily_opens_the_call():
             delta="{}",
         ),
     )
-    assert _types(events) == [EventType.TOOL_CALL_START, EventType.TOOL_CALL_ARGS]
+    assert events == [], "premature args must buffer, not open under a throwaway id"
+    closing = engine.finalize()
+    assert _types(closing) == [
+        EventType.TOOL_CALL_START,
+        EventType.TOOL_CALL_ARGS,
+        EventType.TOOL_CALL_END,
+    ]
+    assert {e.tool_call_id for e in closing} == {"fc_1"}
+    assert closing[1].delta == "{}"
+
+
+def test_args_before_added_then_run_item_commit_emits_no_duplicate():
+    # Regression: args stream before output_item.added, then the semantic
+    # ToolCallItem commit arrives with the real call_id. Must emit exactly one
+    # START/ARGS/END under the real call_id — not a duplicate (buffered id +
+    # committed id) as the pre-fix throwaway-id path produced.
+    engine = OpenAIToAGUITranslator()
+    buffered = _drive(
+        engine,
+        _raw(
+            OpenAIRawResponseEventType.FUNCTION_CALL_ARGUMENTS_DELTA,
+            item_id="fc_1",
+            output_index=0,
+            delta='{"city":"Cairo"}',
+        ),
+    )
+    assert buffered == []
+    raw = ResponseFunctionToolCall(
+        id="fc_1",
+        type="function_call",
+        call_id="call_1",
+        name="get_weather",
+        arguments='{"city":"Cairo"}',
+    )
+    commit = _drive(engine, _run_item(ToolCallItem(agent=_AGENT, raw_item=raw)))
+    assert _types(commit) == [
+        EventType.TOOL_CALL_START,
+        EventType.TOOL_CALL_ARGS,
+        EventType.TOOL_CALL_END,
+    ]
+    assert {e.tool_call_id for e in commit} == {"call_1"}
+    # Buffer was consumed by the commit — finalize has nothing left to flush.
+    assert engine.finalize() == []
 
 
 def test_hosted_tool_call_with_distinct_call_id_streams_once():
@@ -449,6 +501,52 @@ def test_fake_reasoning_id_starts_fresh_when_output_index_is_reused():
 
     assert part_ids == phase_ids
     assert encrypted_values == ["first", "second"]
+
+
+def test_reasoning_commit_surfaces_encrypted_value_on_skip_path():
+    # Reasoning streams and closes via raw events carrying no encrypted_content;
+    # the ReasoningItem run-item commit is then the only carrier of it. The skip
+    # path must still surface REASONING_ENCRYPTED_VALUE so replay data is not lost.
+    engine = OpenAIToAGUITranslator()
+    _drive(
+        engine,
+        _added(OpenAIItemType.REASONING, id="rs_1"),
+        _raw(
+            OpenAIRawResponseEventType.REASONING_TEXT_DELTA,
+            item_id="rs_1",
+            output_index=0,
+            delta="hmm",
+        ),
+        _raw(OpenAIRawResponseEventType.REASONING_TEXT_DONE, item_id="rs_1", output_index=0),
+        _done(OpenAIItemType.REASONING, id="rs_1"),  # no encrypted_content here
+    )
+    item = ReasoningItem(
+        agent=_AGENT,
+        raw_item=ResponseReasoningItem(
+            id="rs_1", type="reasoning", summary=[], encrypted_content="secret"
+        ),
+    )
+    events = _drive(engine, _run_item(item))
+    assert _types(events) == [EventType.REASONING_ENCRYPTED_VALUE]
+    assert events[0].encrypted_value == "secret"
+
+
+def test_tool_output_pydantic_model_serializes_its_fields():
+    # to_string should serialize a pydantic tool output to its field dict rather
+    # than an opaque quoted repr.
+    class Weather(BaseModel):
+        city: str
+        temp: int
+
+    engine = OpenAIToAGUITranslator()
+    item = ToolCallOutputItem(
+        agent=_AGENT,
+        raw_item={"type": "function_call_output", "call_id": "call_1", "output": "ignored"},
+        output=Weather(city="Cairo", temp=30),
+    )
+    events = _drive(engine, _run_item(item))
+    assert _types(events) == [EventType.TOOL_CALL_RESULT]
+    assert __import__("json").loads(events[0].content) == {"city": "Cairo", "temp": 30}
 
 
 def test_reasoning_auto_closes_when_text_output_starts():

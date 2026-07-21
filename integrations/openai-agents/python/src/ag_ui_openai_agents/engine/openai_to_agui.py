@@ -91,6 +91,10 @@ class OpenAIToAGUITranslator:
         # Tool-call sequences: keep streamed arguments and commits deduplicated.
         self._open_tool_calls: dict[str, str] = {}  # key -> tool_call_id
         self._seen_call_ids: set[str] = set()  # emitted tool_call_ids
+        # Args that streamed before a START (provider skipped output_item.added):
+        # buffered by window key until the real call_id is known, so we never
+        # emit a call under a throwaway id the later commit can't reconcile.
+        self._pending_tool_args: dict[str, str] = {}  # key -> buffered args
 
         # Reasoning sequences: track phases, parts, replay data, and reconciliation.
         self._open_reasonings: dict[str, str] = {}  # key -> phase message_id
@@ -154,6 +158,13 @@ class OpenAIToAGUITranslator:
         for key in list(self._open_texts):
             events.extend(self._close_text(key))
         for key in list(self._open_tool_calls):
+            events.extend(self._close_tool_call(key))
+        # Args that streamed before a START and never got one (no output_item.added
+        # and no run-item commit): emit as a complete self-closing call so the
+        # buffered arguments are not silently dropped. _open_tool_call flushes them.
+        for key in list(self._pending_tool_args):
+            call_id = key if self._is_real_id(key) else new_tool_call_id()
+            events.extend(self._open_tool_call(key, call_id, ""))
             events.extend(self._close_tool_call(key))
         for key in list(self._open_reasonings):
             events.extend(self._close_reasoning(key))
@@ -428,19 +439,22 @@ class OpenAIToAGUITranslator:
         if not delta:
             return []
         key = self._window_key(read_attr(data, "item_id"), read_attr(data, "output_index"))
-        events: list[BaseEvent] = []
         if key not in self._open_tool_calls:
-            # Some providers jump straight to args without an output_item.added,
-            # so open the call here if we haven't already.
-            events.extend(self._open_tool_call(key, new_tool_call_id(), ""))
-        events.append(
+            # No START yet: the provider streamed args before output_item.added,
+            # so the real call_id is not known here. Buffer the args; the window
+            # opens under the correct id at output_item.added or the run-item
+            # commit, and _open_tool_call flushes what we buffered. Opening under
+            # a throwaway id here would make the later commit fail to reconcile
+            # and emit a duplicate TOOL_CALL_START/ARGS/END.
+            self._pending_tool_args[key] = self._pending_tool_args.get(key, "") + delta
+            return []
+        return [
             ToolCallArgsEvent(
                 type=EventType.TOOL_CALL_ARGS,
                 tool_call_id=self._open_tool_calls[key],
                 delta=delta,
             )
-        )
-        return events
+        ]
 
     def translate_reasoning_delta(self, data: Any) -> list[BaseEvent]:
         """Translate reasoning deltas into REASONING_MESSAGE_CONTENT (lazy part start).
@@ -592,6 +606,9 @@ class OpenAIToAGUITranslator:
             Closing event, or the full START/[ARGS]/END sequence.
         """
         raw = item.raw_item
+        # A commit supersedes any args buffered before a START: its raw item
+        # carries the complete arguments, so discard the buffer to avoid re-emit.
+        self._pending_tool_args.pop(read_attr(raw, "id"), None)
         call_id = (
             getattr(item, "call_id", None)
             or read_attr(raw, "call_id")
@@ -672,7 +689,12 @@ class OpenAIToAGUITranslator:
             events.extend(self._close_reasoning(key))
             return events
         if action == "skip":
-            return []
+            # The phase already closed via a raw event, but the commit may be the
+            # only carrier of encrypted_content (some providers omit it on the raw
+            # done). Surface it so reasoning replay is not lost — _emit_encrypted_value
+            # guards against a double-emit. It arrives after REASONING_END in this
+            # path because the value is unknown until the commit; late beats dropped.
+            return self._emit_encrypted_value(key, raw)
         phase_id = self._resolve_id(raw_id, new_reasoning_id)
         events = self._open_reasoning(phase_id, phase_id)
         parts = [read_attr(entry, "text") for entry in (read_attr(raw, "summary") or [])]
@@ -917,9 +939,15 @@ class OpenAIToAGUITranslator:
             return []
         events: list[BaseEvent] = []
         if key not in self._open_texts:
-            # Open deferred text on its first delta; generate an ID if added is absent.
+            # Open deferred text on its first delta. Reuse the real item id when
+            # the window key is one (honors "IDs are reused when available"); only
+            # synthesize an id when the key is an internal placeholder.
             events.extend(
-                self._open_text(key, self._pending_text_ids.pop(key, None) or new_message_id())
+                self._open_text(
+                    key,
+                    self._pending_text_ids.pop(key, None)
+                    or (key if self._is_real_id(key) else new_message_id()),
+                )
             )
         events.append(
             TextMessageContentEvent(
@@ -957,6 +985,16 @@ class OpenAIToAGUITranslator:
                 tool_call_name=name,
             )
         )
+        # Flush any args that streamed before this START (see _pending_tool_args).
+        buffered = self._pending_tool_args.pop(key, None)
+        if buffered:
+            events.append(
+                ToolCallArgsEvent(
+                    type=EventType.TOOL_CALL_ARGS,
+                    tool_call_id=call_id,
+                    delta=buffered,
+                )
+            )
         return events
 
     def _close_tool_call(self, key: str) -> list[BaseEvent]:
@@ -1067,7 +1105,8 @@ class OpenAIToAGUITranslator:
     # LEVEL 4c — Snapshot message builders
     # ─────────────────────────────────────────────────────────────────────
     # Snapshot messages reuse streamed IDs so clients can merge without duplicates.
-    # Reasoning is omitted because plaintext reasoning cannot be replayed.
+    # Reasoning is omitted from the snapshot: clients persist replayable reasoning
+    # from the streamed REASONING_ENCRYPTED_VALUE events, not from this list.
 
     def _record_text(self, message_id: str, text: str) -> None:
         """Add an assistant text message to the snapshot."""

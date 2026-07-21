@@ -30,9 +30,10 @@ class TranslatedInput(BaseModel):
 
     Returned by ``AGUITranslator.to_openai()`` (or
     ``AGUIToOpenAITranslator.translate()`` directly, for advanced/per-mapping
-    use). Fields line up one-for-one with ``ag_ui.core.RunAgentInput`` — same
-    names, same required/optional split — so if you know the wire format you
-    already know this shape. Only ``messages`` and ``tools`` are actually
+    use). Fields mirror ``ag_ui.core.RunAgentInput`` by name, so if you know the
+    wire format you already know this shape. (``parent_run_id`` and ``resume``
+    are the newest core fields and are read defensively, so an older client may
+    not carry them.) Only ``messages`` and ``tools`` are actually
     translated into OpenAI Agents SDK types; everything else passes through
     unchanged for you to use however your app needs.
 

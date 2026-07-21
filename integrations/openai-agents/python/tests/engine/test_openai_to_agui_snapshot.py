@@ -121,6 +121,15 @@ def test_snapshot_ids_match_streamed_event_ids():
     assert call_ids == streamed_call_ids == {"call_1"}
     assert result_ids == streamed_result_ids == {"call_1-result"}
 
+    # Guard against duplicate emission that the set comparisons above would
+    # silently collapse: each id must appear on the wire exactly once.
+    start_ids = [e.message_id for e in streamed if e.type == EventType.TEXT_MESSAGE_START]
+    call_start_ids = [e.tool_call_id for e in streamed if e.type == EventType.TOOL_CALL_START]
+    result_event_ids = [e.message_id for e in streamed if e.type == EventType.TOOL_CALL_RESULT]
+    assert len(start_ids) == len(set(start_ids))
+    assert len(call_start_ids) == len(set(call_start_ids))
+    assert len(result_event_ids) == len(set(result_event_ids))
+
 
 # ── tool call + result round-trip ────────────────────────────────────────
 
