@@ -519,57 +519,37 @@ export class LangGraphAgent extends AbstractAgent {
   }
 
   /**
-   * Detect whether the connected server speaks the v3 streaming
-   * protocol. The v3 dev/platform server exposes a
-   * `/threads/:id/stream/events` route; older (≤0.6-era) servers do
-   * not, returning 404 for it.
+   * Whether the connected server speaks the v3 streaming protocol.
    *
-   * The langgraph team's recommended probe is an OPTIONS request to
-   * that endpoint: an existing route answers with a non-404 status
-   * (200/204/405/401/403…), while an absent route returns 404. OPTIONS
-   * avoids starting a run or mutating thread state.
+   * There is NO reliable passive probe: the langgraph-cli dev server
+   * answers every OPTIONS with 204 (blanket CORS preflight) and a plain
+   * GET on the v3 WebSocket route 404s even where v3 exists, so neither
+   * status nor headers distinguish v2 from v3. Instead we detect at run
+   * time: attempt the real v3 subscribe/submitRun and, if the v3 route
+   * is absent, it throws a 404 BEFORE any AG-UI event is emitted (the
+   * subscribe in `acquireTransformerThread`) — we catch that and fall
+   * back to the legacy v2 path. The result is memoised on the shared
+   * `v3Support` holder (a deployment's protocol version is stable) so
+   * later runs skip the doomed v3 attempt.
    *
-   * Result is memoised on the shared `v3Support` holder (a deployment's
-   * protocol version is stable), so the probe runs at most once per
-   * agent lineage. On any transport error we fall back to legacy (the
-   * conservative choice that keeps older servers working).
+   * `undefined` = not yet determined (attempt v3, fall back on 404);
+   * `true`/`false` = decided.
    */
-  protected async supportsV3(threadId: string): Promise<boolean> {
-    if (this.v3Support.value !== undefined) return this.v3Support.value;
-
-    const base = (this.config.deploymentUrl ?? "").replace(/\/+$/, "");
-    const url = `${base}/threads/${threadId}/stream/events`;
-    try {
-      const response = await fetch(url, {
-        method: "OPTIONS",
-        headers: this.buildProbeHeaders(),
-      });
-      this.v3Support.value = response.status !== 404;
-    } catch {
-      // Network/transport failure → assume legacy to stay safe.
-      this.v3Support.value = false;
-    }
-    return this.v3Support.value;
+  protected shouldAttemptV3(): boolean {
+    return this.v3Support.value !== false;
   }
 
   /**
-   * Best-effort headers for the v3 OPTIONS probe: static property
-   * headers, then per-request dynamic headers, then the API key as
-   * `x-api-key`. Auth isn't strictly required to tell a missing route
-   * (404) from a present one (which answers even when unauthorized),
-   * but we forward what we have so proxies that gate OPTIONS still let
-   * the request through.
+   * True when an error from a v3 subscribe/submit means "this server has
+   * no v3 route" (so we should fall back to v2), as opposed to a real
+   * failure we must surface. A missing route yields a 404 — an HTTP
+   * fundamental, not a version-specific quirk. The SDK surfaces it as
+   * `Protocol request failed: 404 Not Found` with no `.status`, so we
+   * match the message.
    */
-  private buildProbeHeaders(): Record<string, string> {
-    const headers: Record<string, string> = {
-      ...(this.config.propertyHeaders ?? {}),
-    };
-    const dynamic = this.config.headerFactory?.() ?? this.headers;
-    if (dynamic) Object.assign(headers, dynamic);
-    if (this.config.langsmithApiKey) {
-      headers["x-api-key"] = this.config.langsmithApiKey;
-    }
-    return headers;
+  protected isV3UnsupportedError(err: unknown): boolean {
+    const msg = err instanceof Error ? err.message : String(err ?? "");
+    return /\b404\b/.test(msg) || /protocol request failed/i.test(msg);
   }
 
   /**
@@ -794,38 +774,50 @@ export class LangGraphAgent extends AbstractAgent {
       config: payloadConfig,
     };
 
-    const isV3 = await this.supportsV3(threadId);
-    this.activeRun!.isV3 = isV3;
+    // Attempt v3 unless a prior run already proved this server is v2.
+    // The v3 subscribe/submit 404s BEFORE any event is emitted on a v2
+    // server, so we can fall back to the legacy path cleanly.
+    if (this.shouldAttemptV3()) {
+      try {
+        // v3-path regen: cached ThreadStream + persistent custom:agui
+        // sub, with the fork expressed via v3 `forkFrom` so the dev
+        // server roots the new run at the chosen checkpoint.
+        // Resume semantics don't apply on regen.
+        const sanitizedInput = sanitizeAssistantMessages(regenInput as Record<string, unknown>);
+        const { thread: streamingThread, aguiSub } =
+          await this.acquireTransformerThread(threadId);
+        const unsubscribeOnEvent = this.watchForRootTerminal(streamingThread, aguiSub);
 
-    if (isV3) {
-      // v3-path regen: cached ThreadStream + persistent custom:agui
-      // sub, with the fork expressed via v3 `forkFrom` so the dev
-      // server roots the new run at the chosen checkpoint.
-      // Resume semantics don't apply on regen.
-      const sanitizedInput = sanitizeAssistantMessages(regenInput as Record<string, unknown>);
-      const { thread: streamingThread, aguiSub } =
-        await this.acquireTransformerThread(threadId);
-      const unsubscribeOnEvent = this.watchForRootTerminal(streamingThread, aguiSub);
+        const submitted = await streamingThread.submitRun({
+          ...(input.forwardedProps ?? {}),
+          input: sanitizedInput,
+          config: payloadConfig,
+          metadata: (input.forwardedProps as { metadata?: Record<string, unknown> })?.metadata,
+          forkFrom: { checkpointId: forkedCheckpointId },
+        });
+        this.v3Support.value = true;
+        this.activeRun!.isV3 = true;
+        this.activeRun!.id = submitted?.run_id ?? this.activeRun!.id;
 
-      const submitted = await streamingThread.submitRun({
-        ...(input.forwardedProps ?? {}),
-        input: sanitizedInput,
-        config: payloadConfig,
-        metadata: (input.forwardedProps as { metadata?: Record<string, unknown> })?.metadata,
-        forkFrom: { checkpointId: forkedCheckpointId },
-      });
-      this.activeRun!.id = submitted?.run_id ?? this.activeRun!.id;
-
-      return {
-        streamResponse: aguiSub,
-        state: timeTravelCheckpoint as ThreadState<State>,
-        streamMode,
-        close: () => {
-          unsubscribeOnEvent();
-        },
-      };
+        return {
+          streamResponse: aguiSub,
+          state: timeTravelCheckpoint as ThreadState<State>,
+          streamMode,
+          close: () => {
+            unsubscribeOnEvent();
+          },
+        };
+      } catch (err) {
+        // Any failure attempting v3 falls back to the legacy v2 path for
+        // this run (the throw is pre-emission, so fallback is clean).
+        // Only a definitive "no v3 route" (404) is memoised as permanent
+        // v2; transient errors let the next run retry v3.
+        if (this.isV3UnsupportedError(err)) this.v3Support.value = false;
+        this.transformerThreads.delete(threadId);
+      }
     }
 
+    this.activeRun!.isV3 = false;
     return {
       streamResponse: this.client.runs.stream(
         threadId,
@@ -1168,67 +1160,81 @@ export class LangGraphAgent extends AbstractAgent {
       return this.subscriber.complete();
     }
 
-    const isV3 = await this.supportsV3(threadId);
-    this.activeRun!.isV3 = isV3;
+    // Attempt v3 unless a prior run already proved this server is v2.
+    // On a v2 server the subscribe/submit below 404s BEFORE any AG-UI
+    // event is emitted (verified: the throw is at `subscribe` inside
+    // acquireTransformerThread), so falling back to the legacy path is
+    // clean — no partial run, no double-emit.
+    if (this.shouldAttemptV3()) {
+      try {
+        const sanitizedInput = sanitizeAssistantMessages(payloadInput);
+        const { thread: streamingThread, aguiSub } =
+            await this.acquireTransformerThread(threadId);
+        const unsubscribeOnEvent = this.watchForRootTerminal(streamingThread, aguiSub);
 
-    if (!isV3) {
-      // Legacy (≤0.6-era) server: no v3 stream/events route. Drive the
-      // run through the classic `runs.stream` SSE path; the v2 event
-      // bundle (handleStreamEventsV2/handleSingleEventV2) translates it.
-      return {
-        streamResponse: this.client.runs.stream(
-          threadId,
-          this.assistant.assistant_id,
-          payload,
-        ),
-        state: threadState as ThreadState<State>,
-      };
+        const resumeRequested =
+            forwardedProps?.command?.resume !== undefined &&
+            forwardedProps?.command?.resume !== null;
+        const pendingInterrupt = this.findPendingInterrupt(
+            streamingThread,
+            agentState,
+            resumeRequested,
+        );
+
+        let runId: string | undefined;
+        if (resumeRequested && pendingInterrupt) {
+          // Resume routes through input.respond on the cached
+          // ThreadStream. The server assigns a fresh run_id we don't
+          // see in the response; activeRun.id stays stale until an
+          // event with the new id flows through.
+          await streamingThread.respondInput({
+            namespace: pendingInterrupt.namespace,
+            interrupt_id: pendingInterrupt.interruptId,
+            response: forwardedProps!.command!.resume,
+          });
+        } else {
+          const submitted = await streamingThread.submitRun({
+            ...payload,
+            input: sanitizedInput,
+            config: payload.config,
+            metadata: payload.metadata as Record<string, unknown>,
+          });
+          runId = submitted?.run_id;
+        }
+        this.v3Support.value = true;
+        this.activeRun!.isV3 = true;
+        this.activeRun!.id = runId ?? this.activeRun!.id;
+
+        return {
+          streamResponse: aguiSub,
+          state: threadState as ThreadState<State>,
+          // Per-run cleanup only — the cached thread + sub live on for
+          // the next request on this threadId.
+          close: () => {
+            unsubscribeOnEvent();
+          },
+        };
+      } catch (err) {
+        // Any failure attempting v3 falls back to the legacy v2 path for
+        // this run (the throw is pre-emission, so fallback is clean).
+        // Only a definitive "no v3 route" (404) is memoised as permanent
+        // v2; transient errors let the next run retry v3.
+        if (this.isV3UnsupportedError(err)) this.v3Support.value = false;
+        this.transformerThreads.delete(threadId);
+      }
     }
 
-    const sanitizedInput = sanitizeAssistantMessages(payloadInput);
-    const { thread: streamingThread, aguiSub } =
-        await this.acquireTransformerThread(threadId);
-    const unsubscribeOnEvent = this.watchForRootTerminal(streamingThread, aguiSub);
-
-    const resumeRequested =
-        forwardedProps?.command?.resume !== undefined &&
-        forwardedProps?.command?.resume !== null;
-    const pendingInterrupt = this.findPendingInterrupt(
-        streamingThread,
-        agentState,
-        resumeRequested,
-    );
-
-    let runId: string | undefined;
-    if (resumeRequested && pendingInterrupt) {
-      // Resume routes through input.respond on the cached
-      // ThreadStream. The server assigns a fresh run_id we don't
-      // see in the response; activeRun.id stays stale until an
-      // event with the new id flows through.
-      await streamingThread.respondInput({
-        namespace: pendingInterrupt.namespace,
-        interrupt_id: pendingInterrupt.interruptId,
-        response: forwardedProps!.command!.resume,
-      });
-    } else {
-      const submitted = await streamingThread.submitRun({
-        ...payload,
-        input: sanitizedInput,
-        config: payload.config,
-        metadata: payload.metadata as Record<string, unknown>,
-      });
-      runId = submitted?.run_id;
-    }
-    this.activeRun!.id = runId ?? this.activeRun!.id;
-
+    // Legacy server: no v3 stream/events route. Drive the run through the
+    // classic `runs.stream` SSE path; the v2 event bundle
+    // (handleStreamEventsV2/handleSingleEventV2) translates it.
+    this.activeRun!.isV3 = false;
     return {
-      streamResponse: aguiSub,
+      streamResponse: this.client.runs.stream(
+        threadId,
+        this.assistant.assistant_id,
+        payload,
+      ),
       state: threadState as ThreadState<State>,
-      // Per-run cleanup only — the cached thread + sub live on for
-      // the next request on this threadId.
-      close: () => {
-        unsubscribeOnEvent();
-      },
     };
   }
 
