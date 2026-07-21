@@ -239,8 +239,15 @@ def test_text_message_closed_by_raw_event_before_commit_still_snapshots():
         item=SimpleNamespace(type="message", id="msg_real"), output_index=0
     )
     engine.translate_output_item_added(added)
+    # A text delta must actually open the (deferred) message window, so that
+    # output_item.done closes it and appends msg_real to _closed_text_ids —
+    # otherwise the commit reconciles as "new" and this never exercises the
+    # "skip" branch the regression is about.
+    engine.translate_text_delta(
+        SimpleNamespace(item_id="msg_real", output_index=0, delta="hello")
+    )
     engine.translate_output_item_done(done)
-    assert engine._snapshot_messages == []  # raw close alone never records
+    assert engine._snapshot_messages == []  # streamed close alone never records
 
     # The run-item commit arrives after — must still record, under the
     # same id the raw close already used.

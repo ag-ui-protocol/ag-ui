@@ -303,11 +303,12 @@ def test_function_call_streams_start_args_end_under_the_call_id():
     )
 
 
-def test_function_call_args_delta_before_added_buffers_then_finalize_flushes():
+def test_function_call_args_delta_before_added_is_buffered_then_dropped_if_uncommitted():
     # A provider that streams args with no output_item.added has no call_id to
     # emit yet, so the args are buffered (nothing on the wire) rather than opened
-    # under a throwaway id the later commit could not reconcile. If nothing ever
-    # opens the call, finalize flushes the buffer as one complete self-closing call.
+    # under a throwaway id the later commit could not reconcile. With no
+    # output_item.added and no run-item commit ever arriving, the call was never
+    # completed by the SDK, so finalize drops the buffer (no phantom call).
     engine = OpenAIToAGUITranslator()
     events = _drive(
         engine,
@@ -319,14 +320,129 @@ def test_function_call_args_delta_before_added_buffers_then_finalize_flushes():
         ),
     )
     assert events == [], "premature args must buffer, not open under a throwaway id"
-    closing = engine.finalize()
-    assert _types(closing) == [
+    assert engine.finalize() == []
+
+
+def test_placeholder_id_args_before_added_flush_into_single_call():
+    # Chat-Completions-backed (FAKE id) backend streams args before
+    # output_item.added, then the added arrives. The buffered args must flush into
+    # the same call the added opens — one call under the real call_id, no split,
+    # and no internal placeholder key leaked onto the wire.
+    engine = OpenAIToAGUITranslator()
+    assert (
+        _drive(
+            engine,
+            _raw(
+                OpenAIRawResponseEventType.FUNCTION_CALL_ARGUMENTS_DELTA,
+                item_id=FAKE_RESPONSES_ID,
+                output_index=0,
+                delta='{"a":',
+            ),
+        )
+        == []
+    )
+    events = _drive(
+        engine,
+        _added(
+            OpenAIItemType.FUNCTION_CALL,
+            output_index=0,
+            id=FAKE_RESPONSES_ID,
+            call_id="call_1",
+            name="f",
+        ),
+        _raw(
+            OpenAIRawResponseEventType.FUNCTION_CALL_ARGUMENTS_DELTA,
+            item_id=FAKE_RESPONSES_ID,
+            output_index=0,
+            delta="1}",
+        ),
+        _done(
+            OpenAIItemType.FUNCTION_CALL,
+            output_index=0,
+            id=FAKE_RESPONSES_ID,
+            call_id="call_1",
+            name="f",
+        ),
+    )
+    assert _types(events) == [
+        EventType.TOOL_CALL_START,
+        EventType.TOOL_CALL_ARGS,
+        EventType.TOOL_CALL_ARGS,
+        EventType.TOOL_CALL_END,
+    ]
+    assert {e.tool_call_id for e in events} == {"call_1"}
+    assert "".join(e.delta for e in events if e.type == EventType.TOOL_CALL_ARGS) == '{"a":1}'
+    assert engine.finalize() == []
+
+
+def test_placeholder_id_args_then_commit_emits_no_phantom():
+    # FAKE-id backend streams args before any added, then commits via a
+    # ToolCallItem. The buffer (keyed by a placeholder the commit cannot address
+    # by id) must be consumed so finalize does not re-emit it as a phantom call.
+    engine = OpenAIToAGUITranslator()
+    assert (
+        _drive(
+            engine,
+            _raw(
+                OpenAIRawResponseEventType.FUNCTION_CALL_ARGUMENTS_DELTA,
+                item_id=FAKE_RESPONSES_ID,
+                output_index=0,
+                delta='{"a":1}',
+            ),
+        )
+        == []
+    )
+    raw = ResponseFunctionToolCall(
+        id=FAKE_RESPONSES_ID,
+        type="function_call",
+        call_id="call_1",
+        name="f",
+        arguments='{"a":1}',
+    )
+    commit = _drive(engine, _run_item(ToolCallItem(agent=_AGENT, raw_item=raw)))
+    assert _types(commit) == [
         EventType.TOOL_CALL_START,
         EventType.TOOL_CALL_ARGS,
         EventType.TOOL_CALL_END,
     ]
-    assert {e.tool_call_id for e in closing} == {"fc_1"}
-    assert closing[1].delta == "{}"
+    assert {e.tool_call_id for e in commit} == {"call_1"}
+    assert engine.finalize() == []
+
+
+def test_placeholder_id_text_delta_synthesizes_a_clean_message_id():
+    # A FAKE-id text delta with no output_item.added must synthesize a real
+    # generated id, never leak the internal "__idx_" placeholder window key.
+    engine = OpenAIToAGUITranslator()
+    events = _drive(
+        engine,
+        _raw(
+            OpenAIRawResponseEventType.TEXT_DELTA,
+            item_id=FAKE_RESPONSES_ID,
+            output_index=0,
+            delta="hi",
+        ),
+    )
+    assert _types(events) == [EventType.TEXT_MESSAGE_START, EventType.TEXT_MESSAGE_CONTENT]
+    mid = events[0].message_id
+    assert mid.startswith("msg_")
+    assert not mid.startswith("__idx_") and mid != FAKE_RESPONSES_ID
+
+
+def test_reasoning_delta_reuses_real_wire_id():
+    # Reasoning that streams deltas before output_item.added must still reuse the
+    # real wire id for the phase (honors the id-reuse invariant), not synthesize one.
+    engine = OpenAIToAGUITranslator()
+    events = _drive(
+        engine,
+        _raw(
+            OpenAIRawResponseEventType.REASONING_SUMMARY_DELTA,
+            item_id="rs_9",
+            output_index=0,
+            delta="think",
+        ),
+    )
+    starts = [e for e in events if e.type == EventType.REASONING_START]
+    assert starts and starts[0].message_id == "rs_9"
 
 
 def test_args_before_added_then_run_item_commit_emits_no_duplicate():

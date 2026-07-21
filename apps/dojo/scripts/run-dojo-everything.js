@@ -405,7 +405,7 @@ async function main() {
     OPENAI_BASE_URL: process.env.OPENAI_BASE_URL || "http://localhost:5555/v1",
     OPENAI_API_BASE: process.env.OPENAI_API_BASE || "http://localhost:5555/v1",
     OPENAI_API_KEY: process.env.OPENAI_API_KEY || "sk-mock",
-    OPENAI_CHAT_MODEL_ID: process.env.OPENAI_CHAT_MODEL_ID || "gpt-4o",
+    OPENAI_CHAT_MODEL_ID: process.env.OPENAI_CHAT_MODEL_ID || "gpt-5.5",
   };
 
   // LLMock: inject GOOGLE_GEMINI_BASE_URL so ADK middleware agents (which keep

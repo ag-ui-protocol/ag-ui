@@ -82,6 +82,11 @@ class OpenAIToAGUITranslator:
     ``RUN_STARTED``, ``RUN_FINISHED``, ``RUN_ERROR``, and message/state snapshots.
     """
 
+    # Prefix marking internal placeholder window keys minted by _window_key.
+    # These are correlation keys only and must never be emitted as AG-UI ids
+    # (unlike real wire item ids, which _is_real_id also reports truthy).
+    _PLACEHOLDER_PREFIX = "__idx_"
+
     def __init__(self) -> None:
         # Text sequences: defer empty messages and reconcile streamed commits.
         self._open_texts: dict[str, str] = {}  # key -> message_id
@@ -160,12 +165,16 @@ class OpenAIToAGUITranslator:
         for key in list(self._open_tool_calls):
             events.extend(self._close_tool_call(key))
         # Args that streamed before a START and never got one (no output_item.added
-        # and no run-item commit): emit as a complete self-closing call so the
-        # buffered arguments are not silently dropped. _open_tool_call flushes them.
+        # and no run-item commit) describe a tool call the SDK never committed —
+        # it is incomplete and has no known name/call_id, so drop it rather than
+        # surface a phantom empty-name call under a synthesized id.
         for key in list(self._pending_tool_args):
-            call_id = key if self._is_real_id(key) else new_tool_call_id()
-            events.extend(self._open_tool_call(key, call_id, ""))
-            events.extend(self._close_tool_call(key))
+            delta = self._pending_tool_args.pop(key)
+            logger.debug(
+                "Dropping %d buffered arg chars for uncommitted tool call (key=%s)",
+                len(delta),
+                key,
+            )
         for key in list(self._open_reasonings):
             events.extend(self._close_reasoning(key))
         if self._current_step is not None:
@@ -478,7 +487,13 @@ class OpenAIToAGUITranslator:
         key = self._window_key(read_attr(data, "item_id"), read_attr(data, "output_index"))
         events: list[BaseEvent] = []
         if key not in self._open_reasonings:
-            events.extend(self._open_reasoning(key, new_reasoning_id()))
+            # Reuse the real wire id when present (mirrors output_item.added), so
+            # the phase/part ids and REASONING_ENCRYPTED_VALUE entity_id round-trip.
+            events.extend(
+                self._open_reasoning(
+                    key, self._resolve_id(read_attr(data, "item_id"), new_reasoning_id)
+                )
+            )
         if key not in self._open_reasoning_parts:
             events.extend(self._open_reasoning_part(key))
         events.append(
@@ -606,9 +621,6 @@ class OpenAIToAGUITranslator:
             Closing event, or the full START/[ARGS]/END sequence.
         """
         raw = item.raw_item
-        # A commit supersedes any args buffered before a START: its raw item
-        # carries the complete arguments, so discard the buffer to avoid re-emit.
-        self._pending_tool_args.pop(read_attr(raw, "id"), None)
         call_id = (
             getattr(item, "call_id", None)
             or read_attr(raw, "call_id")
@@ -631,6 +643,16 @@ class OpenAIToAGUITranslator:
             # no BaseEvents to emit, but the snapshot still needs this call.
             self._record_tool_call(call_id, name, arguments)
             return []
+        # "new": never streamed as an open window. Any args buffered before a
+        # START are superseded by raw.arguments below, so drop the correlated
+        # buffer or finalize would re-emit it as a phantom call — by item id when
+        # real, else the oldest pending buffer (stream order), mirroring the FIFO
+        # placeholder reconciliation, since a commit carries no window key.
+        if (
+            self._pending_tool_args.pop(read_attr(raw, "id"), None) is None
+            and self._pending_tool_args
+        ):
+            self._pending_tool_args.pop(next(iter(self._pending_tool_args)), None)
         events = self._open_tool_call(call_id, call_id, name)
         if arguments:
             events.append(
@@ -834,6 +856,16 @@ class OpenAIToAGUITranslator:
         return bool(item_id) and item_id != FAKE_RESPONSES_ID
 
     @classmethod
+    def _is_placeholder_key(cls, key: Any) -> bool:
+        """True for internal placeholder window keys (``__idx_*``).
+
+        ``_is_real_id`` reports these truthy because they are neither empty nor
+        ``FAKE_RESPONSES_ID``, so a window-key reuse decision must also exclude
+        placeholders explicitly before treating the key as a wire id.
+        """
+        return isinstance(key, str) and key.startswith(cls._PLACEHOLDER_PREFIX)
+
+    @classmethod
     def _resolve_id(cls, item_id: Any, generate: Any) -> str:
         """Return the id if real, else a freshly generated one.
 
@@ -869,6 +901,7 @@ class OpenAIToAGUITranslator:
             key in self._open_texts
             or key in self._pending_text_ids
             or key in self._open_tool_calls
+            or key in self._pending_tool_args
             or key in self._open_reasonings
         )
         if key is None or (start and not active):
@@ -946,7 +979,11 @@ class OpenAIToAGUITranslator:
                 self._open_text(
                     key,
                     self._pending_text_ids.pop(key, None)
-                    or (key if self._is_real_id(key) else new_message_id()),
+                    or (
+                        key
+                        if self._is_real_id(key) and not self._is_placeholder_key(key)
+                        else new_message_id()
+                    ),
                 )
             )
         events.append(
@@ -1088,10 +1125,14 @@ class OpenAIToAGUITranslator:
             or already emitted.
         """
         encrypted = read_attr(item, "encrypted_content")
-        if not encrypted or key in self._emitted_encrypted_keys:
-            return []
-        self._emitted_encrypted_keys.add(key)
+        # Dedup on the stable phase id, not the caller's key: the raw-done path
+        # passes a window key (a placeholder for FAKE-id backends) while the
+        # run-item skip path passes the resolved phase id. Both map to the same
+        # phase id here, so keying the guard on it catches the cross-path dup.
         entity_id = self._reasoning_phase_ids.get(key, key)
+        if not encrypted or entity_id in self._emitted_encrypted_keys:
+            return []
+        self._emitted_encrypted_keys.add(entity_id)
         return [
             ReasoningEncryptedValueEvent(
                 type=EventType.REASONING_ENCRYPTED_VALUE,

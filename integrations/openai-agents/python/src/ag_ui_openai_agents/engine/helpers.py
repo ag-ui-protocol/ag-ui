@@ -5,8 +5,11 @@ can be reused by either translator without coupling them.
 """
 
 import json
+import logging
 import uuid
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -88,8 +91,8 @@ def to_string(value: Any) -> str:
     if callable(model_dump):
         try:
             value = model_dump()
-        except Exception:  # noqa: BLE001 — never let stringification raise
-            pass
+        except Exception as exc:  # noqa: BLE001 — never let stringification raise
+            logger.debug("model_dump() failed during stringification: %s", exc)
     try:
         return json.dumps(value, default=str)
     except (TypeError, ValueError):

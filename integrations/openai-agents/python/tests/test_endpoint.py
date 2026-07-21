@@ -183,3 +183,52 @@ def test_agent_error_is_logged_not_leaked_through_asgi(monkeypatch, caplog):
 
     assert '"RUN_ERROR"' in body
     assert "Agent run failed" in caplog.text
+
+
+def test_setup_error_before_streaming_still_emits_run_error(monkeypatch, caplog):
+    import logging
+
+    # Runner.run_streamed runs inside OpenAIAgentsAgent.run_streamed BEFORE
+    # to_agui, so a failure here never reaches to_agui's RUN_ERROR path. The
+    # endpoint must still surface a terminal RUN_ERROR rather than an empty 200.
+    def boom(agent, *, input, run_config=None, **kwargs):
+        raise RuntimeError("setup exploded")
+
+    monkeypatch.setattr(agent_module.Runner, "run_streamed", boom)
+
+    app = FastAPI()
+    wrapper = OpenAIAgentsAgent(Agent(name="assistant", instructions="hi"))
+    add_openai_agents_fastapi_endpoint(app, wrapper, "/")
+
+    with caplog.at_level(logging.ERROR):
+        with TestClient(app).stream("POST", "/", json=RUN_INPUT_JSON) as response:
+            assert response.status_code == 200
+            body = "".join(response.iter_text())
+
+    assert '"RUN_ERROR"' in body
+    assert "Agent run failed" in caplog.text
+
+
+def test_colliding_path_slugs_get_unique_operation_ids(monkeypatch):
+    def fake_run_streamed(agent, *, input, run_config=None, **kwargs):
+        result = MagicMock(spec=RunResultStreaming)
+        result.stream_events.return_value = _empty_stream()
+        return result
+
+    monkeypatch.setattr(agent_module.Runner, "run_streamed", fake_run_streamed)
+
+    # "/a/b" and "/a_b" both normalize to the slug "a_b"; the uniqueness guard
+    # must still hand out distinct operation ids.
+    app = FastAPI()
+    add_openai_agents_fastapi_endpoint(
+        app, OpenAIAgentsAgent(Agent(name="one", instructions="hi")), "/a/b"
+    )
+    add_openai_agents_fastapi_endpoint(
+        app, OpenAIAgentsAgent(Agent(name="two", instructions="hi")), "/a_b"
+    )
+    op_ids = [
+        operation["operationId"]
+        for path in app.openapi()["paths"].values()
+        for operation in path.values()
+    ]
+    assert len(op_ids) == len(set(op_ids)), f"operation ids must be unique: {op_ids}"
