@@ -135,6 +135,7 @@ def test_document_data_source_uses_file_data():
     out = _engine.translate_document_content(part)
     assert out == {
         "type": "input_file",
+        "filename": "document.pdf",
         "file_data": "data:application/pdf;base64,Zm9v",
     }
 
@@ -440,3 +441,110 @@ def test_translate_reads_resume_defensively_when_field_absent():
     assert result.resume is None
     assert result.parent_run_id is None
     assert result.thread_id == "t1"
+
+
+# ── document data source carries a synthesized filename ──────────────────
+
+
+def test_document_data_source_includes_synthesized_filename():
+    # The Responses API requires a filename alongside base64 file_data.
+    part = DocumentInputContent(
+        source=InputContentDataSource(value="Zm9v", mime_type="application/pdf")
+    )
+    out = _engine.translate_document_content(part)
+    assert out == {
+        "type": "input_file",
+        "filename": "document.pdf",
+        "file_data": "data:application/pdf;base64,Zm9v",
+    }
+
+
+# ── inbound message-type translation ─────────────────────────────────────
+
+
+def test_system_and_developer_messages_map_to_role_items():
+    from ag_ui.core import DeveloperMessage, SystemMessage
+
+    assert _engine.translate_message(
+        SystemMessage(id="s1", role="system", content="be nice")
+    ) == [{"type": "message", "role": "system", "content": [{"type": "input_text", "text": "be nice"}]}]
+    assert _engine.translate_message(
+        DeveloperMessage(id="d1", role="developer", content="dev note")
+    ) == [{"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "dev note"}]}]
+
+
+def test_assistant_message_maps_text_and_tool_calls_without_type_message():
+    from ag_ui.core import AssistantMessage, FunctionCall, ToolCall
+
+    msg = AssistantMessage(
+        id="a1",
+        role="assistant",
+        content="hi",
+        tool_calls=[
+            ToolCall(id="call_1", type="function", function=FunctionCall(name="f", arguments='{"x":1}'))
+        ],
+    )
+    items = _engine.translate_message(msg)
+    # Prior assistant text stays an EasyInputMessageParam: NO type="message".
+    assert items[0] == {"role": "assistant", "content": "hi"}
+    assert "type" not in items[0]
+    assert items[1] == {
+        "type": "function_call",
+        "call_id": "call_1",
+        "name": "f",
+        "arguments": '{"x":1}',
+    }
+
+
+def test_tool_message_surfaces_error_when_content_empty():
+    from ag_ui.core import ToolMessage
+
+    ok = _engine.translate_message(
+        ToolMessage(id="t1", role="tool", tool_call_id="call_1", content="result")
+    )
+    assert ok[0]["output"] == "result"
+
+    err = _engine.translate_message(
+        ToolMessage(id="t2", role="tool", tool_call_id="call_2", content="", error="boom")
+    )
+    assert err[0] == {"type": "function_call_output", "call_id": "call_2", "output": "boom"}
+
+
+def test_reasoning_message_replays_only_with_encrypted_value():
+    from ag_ui.core import ReasoningMessage
+
+    assert (
+        _engine.translate_message(ReasoningMessage(id="r1", role="reasoning", content="thinking"))
+        == []
+    )
+    items = _engine.translate_message(
+        ReasoningMessage(id="r2", role="reasoning", content="sum", encrypted_value="enc")
+    )
+    assert items == [
+        {
+            "type": "reasoning",
+            "id": "r2",
+            "encrypted_content": "enc",
+            "summary": [{"type": "summary_text", "text": "sum"}],
+        }
+    ]
+
+
+def test_activity_message_is_dropped():
+    from ag_ui.core import ActivityMessage
+
+    assert _engine.translate_message(
+        ActivityMessage(id="act1", role="activity", activity_type="typing", content={})
+    ) == []
+
+
+def test_translate_context_renders_nonempty_items():
+    from ag_ui.core import Context
+
+    rendered = _engine.translate_context(
+        [
+            Context(description="Language", value="German"),
+            Context(description="", value=""),
+        ]
+    )
+    assert rendered == "Language: German"

@@ -118,7 +118,10 @@ def test_run_keeps_server_tool_when_client_name_conflicts(patched_runner, caplog
     sdk_agent = Agent(name="assistant", instructions="hi", tools=[confirm])
     wrapper = OpenAIAgentsAgent(sdk_agent)
 
-    _collect(wrapper, _run_input(with_tool=True))
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        _collect(wrapper, _run_input(with_tool=True))
 
     assert patched_runner[0]["agent"] is sdk_agent
     assert [tool.name for tool in sdk_agent.tools] == ["confirm"]

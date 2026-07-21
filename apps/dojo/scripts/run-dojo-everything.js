@@ -322,6 +322,7 @@ const ALL_SERVICES = {
         CLAUDE_AGENT_SDK_PYTHON_URL: "http://localhost:8019",
         CLAUDE_AGENT_SDK_TYPESCRIPT_URL: "http://localhost:8020",
         LANGROID_URL: "http://localhost:8021",
+        OPENAI_AGENTS_PYTHON_URL: "http://localhost:8024",
         NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE:
           "cpkdojo.local___CopilotKit Feature Viewer",
       },
@@ -358,6 +359,7 @@ const ALL_SERVICES = {
         CLAUDE_AGENT_SDK_PYTHON_URL: "http://localhost:8019",
         CLAUDE_AGENT_SDK_TYPESCRIPT_URL: "http://localhost:8020",
         LANGROID_URL: "http://localhost:8021",
+        OPENAI_AGENTS_PYTHON_URL: "http://localhost:8024",
         NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE:
           "cpkdojo.local___CopilotKit Feature Viewer",
       },

@@ -7,7 +7,7 @@ from typing import AsyncIterator
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 
-from ag_ui.core import EventType, RunAgentInput, RunErrorEvent
+from ag_ui.core import EventType, RunAgentInput, RunErrorEvent, RunStartedEvent
 from ag_ui.encoder import EventEncoder
 from .agent import OpenAIAgentsAgent
 
@@ -62,21 +62,28 @@ def add_openai_agents_fastapi_endpoint(
         encoder = EventEncoder(accept=accept_header)
 
         async def event_generator() -> AsyncIterator[str]:
-            terminal_emitted = False
+            started = False
             try:
                 async for event in agent.run_streamed(input_data):
-                    if event.type in (EventType.RUN_FINISHED, EventType.RUN_ERROR):
-                        terminal_emitted = True
+                    if event.type == EventType.RUN_STARTED:
+                        started = True
                     yield encoder.encode(event)
             except Exception:
-                # For errors during the run, AGUITranslator.to_agui already
-                # emitted RUN_ERROR before re-raising. But the setup work in
-                # run_streamed (input translation, agent clone, Runner.run_streamed)
-                # happens before to_agui and can fail with nothing emitted, leaving
-                # the client an empty 200 indistinguishable from a clean run. Emit a
-                # terminal RUN_ERROR ourselves when none was sent. Swallow-and-log
-                # either way so no ASGI-level traceback severs the stream.
-                if not terminal_emitted:
+                # If the run never emitted RUN_STARTED it failed in setup (input
+                # translation / clone / Runner.run_streamed) before to_agui ran, so
+                # no lifecycle reached the client — an empty 200 otherwise. Emit a
+                # minimal well-formed RUN_STARTED + RUN_ERROR. If the run DID start,
+                # to_agui already handled the error per its emit_run_error config
+                # (possibly deliberately silent), so add nothing — just log. Either
+                # way, never sever the stream with an ASGI-level traceback.
+                if not started:
+                    yield encoder.encode(
+                        RunStartedEvent(
+                            type=EventType.RUN_STARTED,
+                            thread_id=input_data.thread_id,
+                            run_id=input_data.run_id,
+                        )
+                    )
                     yield encoder.encode(
                         RunErrorEvent(type=EventType.RUN_ERROR, message="Agent run failed")
                     )

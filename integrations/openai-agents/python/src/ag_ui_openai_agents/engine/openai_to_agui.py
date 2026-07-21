@@ -644,15 +644,12 @@ class OpenAIToAGUITranslator:
             self._record_tool_call(call_id, name, arguments)
             return []
         # "new": never streamed as an open window. Any args buffered before a
-        # START are superseded by raw.arguments below, so drop the correlated
-        # buffer or finalize would re-emit it as a phantom call — by item id when
-        # real, else the oldest pending buffer (stream order), mirroring the FIFO
-        # placeholder reconciliation, since a commit carries no window key.
-        if (
-            self._pending_tool_args.pop(read_attr(raw, "id"), None) is None
-            and self._pending_tool_args
-        ):
-            self._pending_tool_args.pop(next(iter(self._pending_tool_args)), None)
+        # START are superseded by raw.arguments below. Clear a buffer we can
+        # positively correlate by real item id; a placeholder buffer we cannot
+        # address by id is harmlessly dropped (never re-emitted) by finalize, so
+        # we must NOT blind-FIFO-drop here — that could evict a *different*
+        # still-streaming call's buffered args.
+        self._pending_tool_args.pop(read_attr(raw, "id"), None)
         events = self._open_tool_call(call_id, call_id, name)
         if arguments:
             events.append(
@@ -675,7 +672,10 @@ class OpenAIToAGUITranslator:
         Returns:
             A single TOOL_CALL_RESULT event, or [] if call_id is missing.
         """
-        call_id = item.call_id
+        # call_id is a property only on newer SDK ToolCallOutputItem; read it
+        # defensively (as translate_tool_call_item does) to support the declared
+        # openai-agents floor, falling back to the raw item.
+        call_id = getattr(item, "call_id", None) or read_attr(item.raw_item, "call_id")
         if not call_id:
             logger.debug("Tool output without call_id; skipping TOOL_CALL_RESULT")
             return []

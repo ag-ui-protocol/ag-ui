@@ -519,6 +519,20 @@ def test_tool_output_item_emits_tool_call_result():
     assert events[0].content == "sunny"
 
 
+def test_tool_output_call_id_falls_back_to_raw_item_when_property_absent():
+    # Older SDK ToolCallOutputItem has no `call_id` property; the translator must
+    # fall back to the raw item rather than raise AttributeError.
+    engine = OpenAIToAGUITranslator()
+    item = SimpleNamespace(
+        raw_item={"type": "function_call_output", "call_id": "call_1", "output": "sunny"},
+        output="sunny",
+    )
+    events = engine.translate_tool_call_output_item(item)
+    assert _types(events) == [EventType.TOOL_CALL_RESULT]
+    assert events[0].tool_call_id == "call_1"
+    assert events[0].content == "sunny"
+
+
 # ── reasoning streaming ──────────────────────────────────────────────────
 
 

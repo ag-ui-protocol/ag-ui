@@ -324,10 +324,13 @@ class AGUIToOpenAITranslator:
         Returns:
             {"type": "function_call_output", ...}
         """
+        # Surface an error-only tool result: a ToolMessage may report failure in
+        # `error` with empty content (read defensively — the field is newer).
+        # Without this the model receives a blank output and cannot recover.
         return {
             "type": "function_call_output",
             "call_id": message.tool_call_id,
-            "output": message.content or "",
+            "output": message.content or getattr(message, "error", None) or "",
         }
 
     def translate_activity_message(
@@ -558,8 +561,13 @@ class AGUIToOpenAITranslator:
         if source_type == "url":
             return {"type": "input_file", "file_url": value}
         if source_type == "data":
+            # The Responses API requires a filename alongside base64 file_data;
+            # DocumentInputContent carries none, so synthesize one from the mime
+            # subtype (mirrors _binary_as_file, which forwards a filename).
+            subtype = (mime or "application/octet-stream").split("/")[-1] or "bin"
             return {
                 "type": "input_file",
+                "filename": f"document.{subtype}",
                 "file_data": f"data:{mime or 'application/octet-stream'};base64,{value}",
             }
         return None
