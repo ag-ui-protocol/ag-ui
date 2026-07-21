@@ -761,43 +761,34 @@ class StrandsAgent:
             # understands the context and can generate a proper conclusion.
             user_message = ""
             if pending_tool_result_ids and input_data.messages:
+                # Collect ALL trailing tool results (not just the first). A parallel
+                # frontend-tool turn sends N results in one continuation run; the model
+                # must see every answer.
+                _result_parts: list[str] = []
                 for msg in reversed(input_data.messages):
                     if msg.role == "tool" and hasattr(msg, "tool_call_id"):
                         tool_name = _tool_call_id_to_name.get(msg.tool_call_id)
                         if tool_name and tool_name in frontend_tool_names:
-                            # Forward the ACTUAL frontend tool result so the model
-                            # can act on the human's decision (e.g. an approval
-                            # resolving to {"approved": false}). Previously this
-                            # discarded ``msg.content`` and hardcoded a success
-                            # string, silently breaking HITL — the model was told
-                            # the tool "executed successfully with no return value"
-                            # regardless of what the human actually returned.
-                            # Only fall back to that synthetic acknowledgement when
-                            # the result is genuinely empty.
                             result_text = (
                                 msg.content
                                 if isinstance(msg.content, str)
                                 else flatten_content_to_text(msg.content)
                             )
                             if result_text and result_text.strip():
-                                user_message = f"{tool_name} returned: {result_text}"
+                                _result_parts.append(f"{tool_name} returned: {result_text}")
                             else:
-                                user_message = f"{tool_name} executed successfully with no return value."
+                                _result_parts.append(
+                                    f"{tool_name} executed successfully with no return value."
+                                )
                         else:
-                            # Could not resolve the executed tool's name from
-                            # input messages or session history. Leave the
-                            # continuation message empty rather than guessing:
-                            # picking an arbitrary frontend tool would feed false
-                            # context to the LLM when several frontend tools exist.
-                            # Strands still has the real tool result in session
-                            # history to conclude the round-trip from.
                             logger.warning(
                                 f"Could not resolve tool name for tool_call_id={msg.tool_call_id} "
-                                f"from input messages or session history (assistant message with "
-                                f"tool_calls may be missing — delta-only payload). Leaving the "
-                                f"continuation message empty."
+                                f"from input messages or session history (delta-only payload). "
+                                f"Skipping this tool result in the continuation message."
                             )
+                    else:
                         break
+                user_message = "\n".join(reversed(_result_parts))
             elif input_data.messages:
                 for msg in reversed(input_data.messages):
                     if (msg.role == "user" or msg.role == "tool") and msg.content:
