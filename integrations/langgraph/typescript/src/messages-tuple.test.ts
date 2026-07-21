@@ -242,6 +242,68 @@ describe("messages-tuple stream mode", () => {
       expect(endEvents).toHaveLength(1);
       expect(endEvents[0].toolCallId).toBe("tc-1");
     });
+
+    // B2 — a tool-calling turn finishes with finish_reason "tool_calls", not
+    // "stop". Keying only on "stop" left the open tool call without its
+    // TOOL_CALL_END. Any terminal finish_reason must close the open block.
+    it('emits TOOL_CALL_END when finish_reason is "tool_calls"', () => {
+      const { agent, events } = createAgent();
+
+      agent.handleSingleEventV2([
+        {
+          type: "AIMessageChunk",
+          id: "msg-1",
+          content: "",
+          tool_call_chunks: [{ id: "tc-1", name: "search", args: "" }],
+          response_metadata: {},
+        },
+        {},
+      ]);
+      agent.handleSingleEventV2([
+        {
+          type: "AIMessageChunk",
+          id: "msg-1",
+          content: "",
+          response_metadata: { finish_reason: "tool_calls" },
+        },
+        {},
+      ]);
+
+      const endEvents = events.filter(
+        (e) => e.type === EventType.TOOL_CALL_END,
+      );
+      expect(endEvents).toHaveLength(1);
+      expect(endEvents[0].toolCallId).toBe("tc-1");
+    });
+
+    // B2 — a truncated text turn finishes with "length"; it must still close.
+    it('emits TEXT_MESSAGE_END when finish_reason is "length"', () => {
+      const { agent, events } = createAgent();
+
+      agent.handleSingleEventV2([
+        {
+          type: "AIMessageChunk",
+          id: "msg-1",
+          content: "partial",
+          response_metadata: {},
+        },
+        {},
+      ]);
+      agent.handleSingleEventV2([
+        {
+          type: "AIMessageChunk",
+          id: "msg-1",
+          content: "",
+          response_metadata: { finish_reason: "length" },
+        },
+        {},
+      ]);
+
+      const endEvents = events.filter(
+        (e) => e.type === EventType.TEXT_MESSAGE_END,
+      );
+      expect(endEvents).toHaveLength(1);
+    });
   });
 
   describe("handleMessagesTupleEvent edge cases", () => {

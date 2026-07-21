@@ -24,6 +24,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+import { EventType } from "@ag-ui/core";
 import type { Message as LangGraphMessage } from "@langchain/langgraph-sdk";
 import { LangGraphAgent } from "./agent";
 import type { LangGraphAgentConfig } from "./agent";
@@ -516,5 +517,132 @@ describe("resume vs submitRun routing (transformer branch)", () => {
     const entry = threadStreams.get("thread-1")!;
     expect(entry.thread.submitRun).toHaveBeenCalledTimes(1);
     expect(entry.thread.respondInput).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B5 — continuation mode is driven by forwardedProps.nodeName
+//
+// The mode check keyed on `this.activeRun.nodeName`, which is always
+// undefined at prepareStream time, so "continue" was dead and every run fell
+// through to "start". Driving it from nodeNameInput (forwardedProps.nodeName)
+// mirrors the Python reader and restores continuation state updates.
+// ---------------------------------------------------------------------------
+
+describe("B5: continuation mode driven by forwardedProps.nodeName", () => {
+  it("enters continue mode and updates state as the predecessor node", async () => {
+    const { config, client } = makeConfig();
+    client.assistants.getGraph = vi.fn().mockResolvedValue({
+      nodes: [{ id: "planner" }, { id: "writer" }],
+      edges: [{ source: "planner", target: "writer" }],
+    });
+    const { agent } = makeAgent(config);
+
+    await agent.prepareStream(
+      {
+        threadId: "thread-1",
+        runId: "run-1",
+        messages: [{ id: "u1", role: "user", content: "go" }],
+        tools: [],
+        context: [],
+        state: {},
+        forwardedProps: { nodeName: "writer" },
+      } as any,
+      ["events", "values"],
+    );
+
+    expect(client.threads.updateState).toHaveBeenCalledTimes(1);
+    expect(client.threads.updateState).toHaveBeenCalledWith(
+      "thread-1",
+      expect.objectContaining({ asNode: "planner" }),
+    );
+  });
+
+  it("stays in start mode (no updateState) when nodeName is absent", async () => {
+    const { config, client } = makeConfig();
+    const { agent } = makeAgent(config);
+
+    await agent.prepareStream(
+      {
+        threadId: "thread-1",
+        runId: "run-1",
+        messages: [{ id: "u1", role: "user", content: "go" }],
+        tools: [],
+        context: [],
+        state: {},
+        forwardedProps: {},
+      } as any,
+      ["events", "values"],
+    );
+
+    expect(client.threads.updateState).not.toHaveBeenCalled();
+  });
+
+  it("stays in start mode when nodeName is __end__", async () => {
+    const { config, client } = makeConfig();
+    const { agent } = makeAgent(config);
+
+    await agent.prepareStream(
+      {
+        threadId: "thread-1",
+        runId: "run-1",
+        messages: [{ id: "u1", role: "user", content: "go" }],
+        tools: [],
+        context: [],
+        state: {},
+        forwardedProps: { nodeName: "__end__" },
+      } as any,
+      ["events", "values"],
+    );
+
+    expect(client.threads.updateState).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A4 — interrupt-only fast path keeps the STEP balanced
+//
+// When there are outstanding interrupts and no resume, prepareStream emits
+// RUN_STARTED + interrupt-finish (RUN_FINISHED) inline. handleNodeChange with
+// a set forwardedProps.nodeName opened a STEP that dangled past RUN_FINISHED
+// (AG-UI verify forbids RUN_FINISHED while a step is active). The fast path
+// must close the step first.
+// ---------------------------------------------------------------------------
+
+describe("A4: interrupt-only fast path STEP balance", () => {
+  it("closes the node step before RUN_FINISHED when nodeName is set", async () => {
+    const agentState = {
+      values: { messages: [] },
+      tasks: [{ interrupts: [{ id: "int-1", value: "approve?" }] }],
+      next: ["writer"],
+      metadata: { writes: {} },
+    };
+    const { config } = makeConfig({ agentState });
+    const { agent, dispatched } = makeAgent(config);
+
+    await agent.prepareStream(
+      {
+        threadId: "thread-1",
+        runId: "run-1",
+        messages: [{ id: "u1", role: "user", content: "go" }],
+        tools: [],
+        context: [],
+        state: {},
+        forwardedProps: { nodeName: "writer" },
+      } as any,
+      ["events", "values"],
+    );
+
+    const types = dispatched.map((e) => e.type);
+    expect(types.filter((t) => t === EventType.STEP_STARTED)).toHaveLength(1);
+    expect(types.filter((t) => t === EventType.STEP_FINISHED)).toHaveLength(1);
+
+    const runFinishedIdx = types.indexOf(EventType.RUN_FINISHED);
+    const stepFinishedIdx = types.indexOf(EventType.STEP_FINISHED);
+    expect(runFinishedIdx).toBeGreaterThan(-1);
+    expect(stepFinishedIdx).toBeGreaterThan(-1);
+    // Step closes BEFORE the run finishes, and nothing re-opens a step after.
+    expect(stepFinishedIdx).toBeLessThan(runFinishedIdx);
+    expect(types.slice(runFinishedIdx + 1)).not.toContain(EventType.STEP_STARTED);
   });
 });

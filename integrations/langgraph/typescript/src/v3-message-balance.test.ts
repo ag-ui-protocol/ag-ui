@@ -18,6 +18,7 @@ import { describe, it, expect, vi } from "vitest";
 import { EventType } from "@ag-ui/core";
 import { LangGraphAgent } from "./agent";
 import type { LangGraphAgentConfig } from "./agent";
+import { CustomEventNames } from "./types";
 
 const EMPTY_STATE = {
   values: { messages: [] },
@@ -203,5 +204,137 @@ describe("deferred tool name", () => {
     expect(byType(dispatched, EventType.TOOL_CALL_END)).toHaveLength(1);
     const args = byType(dispatched, EventType.TOOL_CALL_ARGS);
     expect(args.map((a) => a.delta).join("")).toBe('{"q":1}');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A5 — block-delta arg correction ships only the common-prefix suffix
+// ---------------------------------------------------------------------------
+
+describe("block-delta arg correction (common-prefix diff)", () => {
+  it("ships only the suffix beyond the common prefix when the engine replaces the args buffer", async () => {
+    const dispatched = await runV3([
+      makeChunk("messages", { event: "message-start", id: "m1" }),
+      // START fires immediately (name present); args start empty.
+      makeChunk("messages", {
+        event: "content-block-start",
+        index: 0,
+        content: { type: "tool_call", id: "tc-1", name: "search", args: "" },
+      }),
+      // Normal append: cumulative extends the buffer → ship the tail.
+      makeChunk("messages", {
+        event: "content-block-delta",
+        index: 0,
+        delta: { type: "block-delta", fields: { args: '{"a":1' } },
+      }),
+      // Arg correction: cumulative does NOT start with the buffer. Common
+      // prefix is `{"` → only `b":2}` should be shipped (NOT the full string),
+      // so a delta-accumulating consumer never sees the shared head twice.
+      makeChunk("messages", {
+        event: "content-block-delta",
+        index: 0,
+        delta: { type: "block-delta", fields: { args: '{"b":2}' } },
+      }),
+      makeChunk("messages", { event: "content-block-finish", index: 0, content: { type: "tool_call" } }),
+    ]);
+    const args = byType(dispatched, EventType.TOOL_CALL_ARGS).map((a) => a.delta);
+    expect(args).toEqual(['{"a":1', 'b":2}']);
+    // Balanced.
+    expect(byType(dispatched, EventType.TOOL_CALL_START)).toHaveLength(1);
+    expect(byType(dispatched, EventType.TOOL_CALL_END)).toHaveLength(1);
+  });
+
+  it("still ships the plain suffix on a normal monotonic append", async () => {
+    const dispatched = await runV3([
+      makeChunk("messages", { event: "message-start", id: "m1" }),
+      makeChunk("messages", {
+        event: "content-block-start",
+        index: 0,
+        content: { type: "tool_call", id: "tc-1", name: "search", args: "" },
+      }),
+      makeChunk("messages", {
+        event: "content-block-delta",
+        index: 0,
+        delta: { type: "block-delta", fields: { args: '{"q":' } },
+      }),
+      makeChunk("messages", {
+        event: "content-block-delta",
+        index: 0,
+        delta: { type: "block-delta", fields: { args: '{"q":42}' } },
+      }),
+      makeChunk("messages", { event: "content-block-finish", index: 0, content: { type: "tool_call" } }),
+    ]);
+    const args = byType(dispatched, EventType.TOOL_CALL_ARGS).map((a) => a.delta);
+    expect(args.join("")).toBe('{"q":42}');
+    expect(args).toEqual(['{"q":', "42}"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A2 — v3-raw `custom` channel translates ManuallyEmit* (was silently dropped)
+// ---------------------------------------------------------------------------
+
+describe("v3-raw custom channel translation", () => {
+  it("expands ManuallyEmitMessage into balanced TEXT_MESSAGE_* events", async () => {
+    const dispatched = await runV3([
+      makeChunk("custom", {
+        name: CustomEventNames.ManuallyEmitMessage,
+        payload: { message_id: "man-1", message: "hello from a node" },
+      }),
+    ]);
+    const starts = byType(dispatched, EventType.TEXT_MESSAGE_START);
+    const contents = byType(dispatched, EventType.TEXT_MESSAGE_CONTENT);
+    const ends = byType(dispatched, EventType.TEXT_MESSAGE_END);
+    expect(starts).toHaveLength(1);
+    expect(contents).toHaveLength(1);
+    expect(ends).toHaveLength(1);
+    expect(starts[0].messageId).toBe("man-1");
+    expect(contents[0].delta).toBe("hello from a node");
+    expect(ends[0].messageId).toBe("man-1");
+    // No generic CUSTOM for the message helper (matches v2).
+    expect(byType(dispatched, EventType.CUSTOM)).toHaveLength(0);
+  });
+
+  it("expands ManuallyEmitToolCall into balanced TOOL_CALL_* events", async () => {
+    const dispatched = await runV3([
+      makeChunk("custom", {
+        name: CustomEventNames.ManuallyEmitToolCall,
+        payload: { id: "mtc-1", name: "do_thing", args: '{"x":1}' },
+      }),
+    ]);
+    const starts = byType(dispatched, EventType.TOOL_CALL_START);
+    const argsEv = byType(dispatched, EventType.TOOL_CALL_ARGS);
+    const ends = byType(dispatched, EventType.TOOL_CALL_END);
+    expect(starts).toHaveLength(1);
+    expect(starts[0].toolCallId).toBe("mtc-1");
+    expect(starts[0].toolCallName).toBe("do_thing");
+    expect(argsEv[0].delta).toBe('{"x":1}');
+    expect(ends).toHaveLength(1);
+  });
+
+  it("emits STATE_SNAPSHOT and a generic CUSTOM for ManuallyEmitState", async () => {
+    const dispatched = await runV3([
+      makeChunk("custom", {
+        name: CustomEventNames.ManuallyEmitState,
+        payload: { counter: 7 },
+      }),
+    ]);
+    const snapshots = byType(dispatched, EventType.STATE_SNAPSHOT);
+    expect(snapshots.length).toBeGreaterThanOrEqual(1);
+    expect(snapshots[0].snapshot).toEqual({ counter: 7 });
+    const custom = byType(dispatched, EventType.CUSTOM);
+    expect(custom).toHaveLength(1);
+    expect(custom[0].name).toBe(CustomEventNames.ManuallyEmitState);
+    expect(custom[0].value).toEqual({ counter: 7 });
+  });
+
+  it("passes an unknown custom event through as a generic CUSTOM", async () => {
+    const dispatched = await runV3([
+      makeChunk("custom", { name: "app_notification", payload: { level: "info" } }),
+    ]);
+    const custom = byType(dispatched, EventType.CUSTOM);
+    expect(custom).toHaveLength(1);
+    expect(custom[0].name).toBe("app_notification");
+    expect(custom[0].value).toEqual({ level: "info" });
   });
 });

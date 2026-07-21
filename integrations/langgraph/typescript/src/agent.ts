@@ -593,8 +593,8 @@ export class LangGraphAgent extends AbstractAgent {
     });
     // Subscribe to all standard v3 channels. The compile-time
     // `aguiTransformer` is NOT in the loop here — we receive raw
-    // ProtocolEvents (lifecycle, messages, values, updates,
-    // checkpoints, tasks, input, custom) and do the translation
+    // ProtocolEvents on the modes in DEFAULT_STREAM_MODES (values,
+    // messages, tools, lifecycle, tasks, custom) and do the translation
     // ourselves on the client side. Multi-channel + non-array params
     // disables the SDK's `unwrapNamedCustom`, so for-await yields the
     // raw Event envelope (method + params), not unwrapped payloads.
@@ -1026,17 +1026,23 @@ export class LangGraphAgent extends AbstractAgent {
       this.assistant.assistant_id,
     );
 
+    // Continuation is driven by the caller-supplied forwardedProps.nodeName
+    // (nodeNameInput), NOT activeRun.nodeName — the latter is always
+    // undefined at this point (nothing assigns it before the stream loop),
+    // so the old check made "continue" dead and every run fell through to
+    // "start". Mirrors the Python reader, which resolves the mode from
+    // node_name_input (agent.py: node_name_for_mode).
     const mode =
       !hasResume &&
       threadId &&
-      this.activeRun!.nodeName != "__end__" &&
-      this.activeRun!.nodeName
+      nodeNameInput != "__end__" &&
+      nodeNameInput
         ? "continue"
         : "start";
 
     if (mode === "continue") {
       const nodeBefore = this.activeRun!.graphInfo.edges.find(
-        (e) => e.target === this.activeRun!.nodeName,
+        (e) => e.target === nodeNameInput,
       );
       await this.client.threads.updateState(threadId, {
         values: inputState,
@@ -1202,6 +1208,14 @@ export class LangGraphAgent extends AbstractAgent {
       });
       this.handleNodeChange(nodeNameInput);
 
+      // Close any step opened by the handleNodeChange above before the
+      // terminal RUN_FINISHED. dispatchInterruptFinish emits RUN_FINISHED
+      // without closing an open step, and AG-UI verify forbids RUN_FINISHED
+      // while a STEP is still active. When forwardedProps.nodeName is set,
+      // handleNodeChange(nodeNameInput) starts a step that would otherwise
+      // dangle past the run end.
+      this.handleNodeChange(undefined);
+
       this.dispatchInterruptFinish({
         threadId,
         runId: input.runId,
@@ -1330,7 +1344,6 @@ export class LangGraphAgent extends AbstractAgent {
     const { forwardedProps } = input;
     const nodeNameInput = forwardedProps?.nodeName;
     this.subscriber = subscriber;
-    let shouldExit = false;
     if (!stream) return;
     // Reset per-run tracking of emitted tool call IDs
     this.emittedToolCallStartIds = new Set<string>();
@@ -1502,11 +1515,6 @@ export class LangGraphAgent extends AbstractAgent {
           this.handleNodeChange(currentNodeName);
         }
 
-        shouldExit =
-          shouldExit ||
-          (eventType === LangGraphEventTypes.OnCustomEvent &&
-            chunkData.name === CustomEventNames.Exit);
-
         // Parity with Python reader (langgraph_agent.py:447): update local state
         // cache from on_chain_end outputs so state stays fresh across node boundaries
         // without relying on a `values` stream chunk after every step.
@@ -1571,6 +1579,12 @@ export class LangGraphAgent extends AbstractAgent {
           this.handleNodeChange(currentNodeName);
         }
 
+        // Serialize the previous state BEFORE mutating, otherwise the diff
+        // below compares the object against itself. updatedState aliases
+        // state, so mutating updatedState.values also mutates state.values;
+        // capturing the string first is what makes the state-diff snapshot
+        // trigger actually fire.
+        const previousStateSerialized = JSON.stringify(state);
         updatedState.values =
           this.activeRun!.manuallyEmittedState ?? latestStateValues;
 
@@ -1579,7 +1593,7 @@ export class LangGraphAgent extends AbstractAgent {
         }
 
         const hasStateDiff =
-          JSON.stringify(updatedState) !== JSON.stringify(state);
+          JSON.stringify(updatedState) !== previousStateSerialized;
         // Suppress STATE_SNAPSHOT while a message is in progress, or while a
         // predict_state tool call is streaming args (modelMadeToolCall=true).
         // During tool arg streaming the graph state does not yet reflect the
@@ -1694,7 +1708,7 @@ export class LangGraphAgent extends AbstractAgent {
         let shouldEmitMessages = event.metadata["emit-messages"] ?? true;
         let shouldEmitToolCalls = event.metadata["emit-tool-calls"] ?? true;
 
-        if (event.data.chunk.response_metadata.finish_reason) return;
+        if (event.data.chunk.response_metadata?.finish_reason) return;
         let currentStream = this.getMessageInProgress(this.activeRun!.id);
         const hasCurrentStream = Boolean(currentStream?.id);
         const toolCallData = event.data.chunk.tool_call_chunks?.[0];
@@ -2073,7 +2087,6 @@ export class LangGraphAgent extends AbstractAgent {
     const { forwardedProps } = input;
     const nodeNameInput = forwardedProps?.nodeName;
     this.subscriber = subscriber;
-    let shouldExit = false;
     if (!stream) return;
     // Reset per-run tracking of emitted tool call IDs
     this.emittedToolCallStartIds = new Set<string>();
@@ -2219,6 +2232,19 @@ export class LangGraphAgent extends AbstractAgent {
         // from the `messages` channel (tool_call content blocks).
         if (eventType === "tools") {
           this.handleToolsEventV3(chunkData as V3ToolsEvent);
+          continue;
+        }
+
+        // Live custom events. v3 routes CopilotKit ManuallyEmit* helpers and
+        // app-specific notifications through the `custom` channel with
+        // `data: { name, payload }`. handleSingleEventV3 only understands the
+        // `messages` envelope, so without this branch these pass the stream
+        // filter and get dropped — whereas v2 (handleSingleEventV2) and the
+        // transformer both translate them. Handle here, early (like
+        // tasks/tools/values), so it is not gated by the node-name guard
+        // below.
+        if (eventType === "custom") {
+          this.handleCustomEventV3(chunkData as { name?: string; payload?: any });
           continue;
         }
 
@@ -2596,6 +2622,76 @@ export class LangGraphAgent extends AbstractAgent {
     }
   }
 
+  /**
+   * Translate a v3 raw `custom` channel event into AG-UI events. v3 delivers
+   * custom events as `{ name, payload }` (the payload is nested under
+   * `.payload`, unlike v2 where the fields sit directly on `event.data`).
+   * Expands the three well-known ManuallyEmit* names into the same concrete
+   * AG-UI events handleSingleEventV2's OnCustomEvent branch emits, and passes
+   * everything else — plus ManuallyEmitState — through as a generic CUSTOM so
+   * app listeners still receive it. Mirrors the transformer's `case "custom"`.
+   */
+  private handleCustomEventV3(chunkData: { name?: string; payload?: any }): void {
+    const name = chunkData?.name;
+    if (!name) return;
+    const payload = chunkData.payload;
+
+    if (name === CustomEventNames.ManuallyEmitMessage) {
+      this.dispatchEvent({
+        type: EventType.TEXT_MESSAGE_START,
+        role: "assistant",
+        messageId: payload?.message_id,
+      });
+      this.dispatchEvent({
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: payload?.message_id,
+        delta: payload?.message,
+      });
+      this.dispatchEvent({
+        type: EventType.TEXT_MESSAGE_END,
+        messageId: payload?.message_id,
+      });
+      return;
+    }
+
+    if (name === CustomEventNames.ManuallyEmitToolCall) {
+      this.dispatchEvent({
+        type: EventType.TOOL_CALL_START,
+        toolCallId: payload?.id,
+        toolCallName: payload?.name,
+        parentMessageId: payload?.id,
+      });
+      this.dispatchEvent({
+        type: EventType.TOOL_CALL_ARGS,
+        toolCallId: payload?.id,
+        delta: payload?.args,
+      });
+      this.dispatchEvent({
+        type: EventType.TOOL_CALL_END,
+        toolCallId: payload?.id,
+      });
+      return;
+    }
+
+    if (name === CustomEventNames.ManuallyEmitState) {
+      this.activeRun!.manuallyEmittedState = payload;
+      this.dispatchEvent({
+        type: EventType.STATE_SNAPSHOT,
+        snapshot: this.getStateSnapshot({
+          values: this.activeRun!.manuallyEmittedState!,
+        } as ThreadState<State>),
+      });
+      // Falls through to the generic CUSTOM passthrough below so listeners
+      // that key off the event name still get it (matches v2).
+    }
+
+    this.dispatchEvent({
+      type: EventType.CUSTOM,
+      name,
+      value: payload,
+    });
+  }
+
   handleSingleEventV3(data: V3MessageEvent | undefined): void {
     // Receives the inner `params.data` of a v3 `messages`-channel event.
     // Shape and switch mirror the server-side aguiTransformer's
@@ -2793,14 +2889,33 @@ export class LangGraphAgent extends AbstractAgent {
                 });
               }
             } else {
-              // Engine replaced the buffer (e.g. arg correction).
-              // Ship the full new string as one delta and reset.
+              // Engine replaced the buffer in place (e.g. arg correction),
+              // so the new value is NOT an extension of what we already
+              // streamed. TOOL_CALL_ARGS is append-only with no retraction,
+              // so re-sending the full new string would give a
+              // delta-concatenating consumer `oldBuffer + newFull`. Emit only
+              // the part beyond the longest common prefix instead, so we never
+              // re-send the shared head. Matches the transformer
+              // (agui-transformer.ts). The already-streamed divergent tail
+              // can't be retracted here; the authoritative args are
+              // re-delivered in the end-of-run MESSAGES_SNAPSHOT.
+              let common = 0;
+              const max = Math.min(tool.argsSoFar.length, cumulative.length);
+              while (
+                common < max &&
+                tool.argsSoFar[common] === cumulative[common]
+              ) {
+                common++;
+              }
+              const delta = cumulative.slice(common);
               tool.argsSoFar = cumulative;
-              this.dispatchEvent({
-                type: EventType.TOOL_CALL_ARGS,
-                toolCallId: tool.toolCallId,
-                delta: cumulative,
-              });
+              if (delta.length > 0) {
+                this.dispatchEvent({
+                  type: EventType.TOOL_CALL_ARGS,
+                  toolCallId: tool.toolCallId,
+                  delta,
+                });
+              }
             }
           }
         }
@@ -3005,7 +3120,11 @@ export class LangGraphAgent extends AbstractAgent {
           ? chunk.content.find((c: any) => c.type === "text")?.text
           : null;
     const toolCallChunks = chunk.tool_call_chunks;
-    const isFinished = chunk.response_metadata?.finish_reason === "stop";
+    // Any terminal finish_reason ends the open block, not just "stop".
+    // A tool-calling turn finishes with "tool_calls" and a truncated turn
+    // with "length"; keying only on "stop" left those turns' open
+    // TOOL_CALL / TEXT_MESSAGE blocks without their END event.
+    const isFinished = Boolean(chunk.response_metadata?.finish_reason);
     const currentStream = this.getMessageInProgress(this.activeRun!.id);
 
     // Handle tool call chunks
@@ -3152,7 +3271,7 @@ export class LangGraphAgent extends AbstractAgent {
     const reasoningStepIndex = reasoningData.index;
 
     if (
-      this.reasoningProcess?.index &&
+      this.reasoningProcess?.index != null &&
       this.reasoningProcess.index !== reasoningStepIndex
     ) {
       if (this.reasoningProcess.type) {
@@ -3567,6 +3686,16 @@ export class LangGraphAgent extends AbstractAgent {
     );
     const messagesAfter = targetStateMessages.slice(messageIndex + 1);
     if (messagesAfter.length) {
+      // Recurse into the parent checkpoint to find an earlier state where the
+      // message is last. Without a parent checkpoint (or one lacking a
+      // checkpoint_id) the recursive call would re-fetch the FULL history with
+      // no narrowing options, find the same targetState, and recurse forever.
+      // Guard the base case with a clear error instead of hanging.
+      if (!targetState.parent_checkpoint?.checkpoint_id) {
+        throw new Error(
+          `getCheckpointByMessage: message ${messageId} is not the last message in any reachable checkpoint (no parent checkpoint to recurse into).`,
+        );
+      }
       return this.getCheckpointByMessage(
         messageId,
         threadId,
