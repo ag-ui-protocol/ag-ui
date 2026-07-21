@@ -342,6 +342,13 @@ export class LangGraphAgent extends AbstractAgent {
   // Pause/resume bracket each run: SDK's `submitRun` calls
   // `#prepareForNextRun` which auto-resumes the sub.
   transformerThreads: Map<string, TransformerThreadEntry> = new Map();
+  // Set by prepareStream / prepareRegenerateStream when they have ALREADY
+  // terminated the subscriber themselves (e.g. an interrupt-only turn that
+  // completes the run, or an early error). runAgentStream checks this before
+  // treating a falsy preparedStream as "no stream" — otherwise it would call
+  // subscriber.error() on an already-completed/errored subscriber (an RxJS
+  // unhandled error on a common HITL path). Reset at the top of each run.
+  private preparedRunSettled: boolean = false;
   enableLegacyOnInterruptEvent: boolean;
   emitInterruptOutcome: boolean;
 
@@ -452,19 +459,25 @@ export class LangGraphAgent extends AbstractAgent {
     threadId: string;
     runId: string;
     lgInterrupts: LangGraphInterrupt[];
+    /**
+     * Skip the legacy CUSTOM OnInterrupt emission entirely, but still emit
+     * the terminating RUN_FINISHED (with the structured outcome when opted
+     * in). Set on the v3 transformer path: a compiled-in aguiTransformer
+     * already surfaced each interrupt as a CUSTOM OnInterrupt (its
+     * tasks→OnInterrupt translation), and those passthrough events are not
+     * recorded in this.emittedInterruptIds, so re-running the legacy loop
+     * here would double-render the prompt.
+     */
+    suppressLegacy?: boolean;
   }) {
-    const { threadId, runId, lgInterrupts } = args;
+    const { threadId, runId, lgInterrupts, suppressLegacy = false } = args;
     const aguiInterrupts: AGUIInterrupt[] = this.interruptsToAGUI(lgInterrupts);
 
-    if (this.enableLegacyOnInterruptEvent) {
+    if (this.enableLegacyOnInterruptEvent && !suppressLegacy) {
+      // Route through emitInterruptOnce so an interrupt already surfaced
+      // live on the v3 `tasks` channel is not emitted a second time here.
       for (const lg of lgInterrupts) {
-        this.dispatchEvent({
-          type: EventType.CUSTOM,
-          name: LangGraphEventTypes.OnInterrupt,
-          value:
-            typeof lg.value === "string" ? lg.value : JSON.stringify(lg.value),
-          rawEvent: lg,
-        });
+        this.emitInterruptOnce(lg);
       }
     }
 
@@ -540,16 +553,24 @@ export class LangGraphAgent extends AbstractAgent {
   }
 
   /**
-   * True when an error from a v3 subscribe/submit means "this server has
-   * no v3 route" (so we should fall back to v2), as opposed to a real
-   * failure we must surface. A missing route yields a 404 — an HTTP
-   * fundamental, not a version-specific quirk. The SDK surfaces it as
-   * `Protocol request failed: 404 Not Found` with no `.status`, so we
-   * match the message.
+   * True when an error from the v3 SUBSCRIBE means "this server has no v3
+   * route" (so we should fall back to v2), as opposed to a real failure we
+   * must surface. A missing route yields a 404 from the protocol endpoint;
+   * the SDK surfaces it as `Protocol request failed: 404 Not Found` with no
+   * `.status`.
+   *
+   * Require BOTH the protocol-request marker AND a 404. Matching 404 alone
+   * would misread an unrelated REST 404 (a missing thread/assistant, or a
+   * stale-interrupt respondInput 404) as "no v3 route"; matching the
+   * protocol marker alone would misread a transient protocol 5xx/timeout.
+   * Either mistake would wrongly memoise the shared `v3Support` holder to
+   * permanent v2. This predicate is consulted ONLY at the subscribe step
+   * (see prepareStream / prepareRegenerateStream); a submit/respondInput
+   * failure is never routed through it — those surface as real run errors.
    */
   protected isV3UnsupportedError(err: unknown): boolean {
     const msg = err instanceof Error ? err.message : String(err ?? "");
-    return /\b404\b/.test(msg) || /protocol request failed/i.test(msg);
+    return /protocol request failed/i.test(msg) && /\b404\b/.test(msg);
   }
 
   /**
@@ -666,6 +687,11 @@ export class LangGraphAgent extends AbstractAgent {
     this.cancelRequested = false;
     this.cancelSent = false;
     this.eventsStreamActive = false;
+    this.preparedRunSettled = false;
+    // Reset interrupt dedup for the whole run (not just the v3 handler) so
+    // prepareStream's early interrupt-only branch and dispatchInterruptFinish
+    // share one clean set across both protocol paths.
+    this.emittedInterruptIds = new Set<string>();
     this.subscriber = subscriber;
     if (!this.assistant) {
       this.assistant = await this.getAssistant();
@@ -686,12 +712,23 @@ export class LangGraphAgent extends AbstractAgent {
       streamMode,
     );
 
+    // prepareStream (or the prepareRegenerateStream it may delegate to) can
+    // legitimately terminate the subscriber itself — an interrupt-only turn
+    // completes the run, and error paths call subscriber.error(). In those
+    // cases it returns a falsy value; erroring again here would double-signal
+    // an already-settled subscriber. Only treat a falsy result as a genuine
+    // "no stream" when the run has NOT already been settled.
+    if (this.preparedRunSettled) {
+      return;
+    }
+
     if (!preparedStream) {
       return subscriber.error("No stream to regenerate");
     }
 
-    // prepareStream/prepareRegenerateStream decide the protocol via the
-    // OPTIONS probe and stamp `activeRun.isV3`. Route to the matching
+    // prepareStream/prepareRegenerateStream decide the protocol at run time
+    // — they attempt the real v3 subscribe/submit and fall back to v2 on a
+    // subscribe-404 — and stamp `activeRun.isV3`. Route to the matching
     // event bundle: v3 reads raw ProtocolEvents, legacy reads classic
     // SSE chunks.
     const streamModesArg = [
@@ -733,6 +770,8 @@ export class LangGraphAgent extends AbstractAgent {
     }
 
     if (!timeTravelCheckpoint) {
+      // Settled here — runAgentStream must not re-error the subscriber.
+      this.preparedRunSettled = true;
       return this.subscriber.error("No checkpoint found for message");
     }
 
@@ -775,45 +814,57 @@ export class LangGraphAgent extends AbstractAgent {
     };
 
     // Attempt v3 unless a prior run already proved this server is v2.
-    // The v3 subscribe/submit 404s BEFORE any event is emitted on a v2
-    // server, so we can fall back to the legacy path cleanly.
+    // Protocol detection is scoped to the SUBSCRIBE (see prepareStream):
+    // the v3 subscribe 404s BEFORE any event on a v2 server, so we fall
+    // back to the legacy path cleanly. A submitRun failure after a healthy
+    // subscribe is a real run error we surface, not a fallback trigger.
     if (this.shouldAttemptV3()) {
+      let transformer: TransformerThreadEntry | undefined;
       try {
-        // v3-path regen: cached ThreadStream + persistent custom:agui
-        // sub, with the fork expressed via v3 `forkFrom` so the dev
-        // server roots the new run at the chosen checkpoint.
-        // Resume semantics don't apply on regen.
-        const sanitizedInput = sanitizeAssistantMessages(regenInput as Record<string, unknown>);
-        const { thread: streamingThread, aguiSub } =
-          await this.acquireTransformerThread(threadId);
-        const unsubscribeOnEvent = this.watchForRootTerminal(streamingThread, aguiSub);
-
-        const submitted = await streamingThread.submitRun({
-          ...(input.forwardedProps ?? {}),
-          input: sanitizedInput,
-          config: payloadConfig,
-          metadata: (input.forwardedProps as { metadata?: Record<string, unknown> })?.metadata,
-          forkFrom: { checkpointId: forkedCheckpointId },
-        });
-        this.v3Support.value = true;
-        this.activeRun!.isV3 = true;
-        this.activeRun!.id = submitted?.run_id ?? this.activeRun!.id;
-
-        return {
-          streamResponse: aguiSub,
-          state: timeTravelCheckpoint as ThreadState<State>,
-          streamMode,
-          close: () => {
-            unsubscribeOnEvent();
-          },
-        };
+        transformer = await this.acquireTransformerThread(threadId);
       } catch (err) {
-        // Any failure attempting v3 falls back to the legacy v2 path for
-        // this run (the throw is pre-emission, so fallback is clean).
-        // Only a definitive "no v3 route" (404) is memoised as permanent
-        // v2; transient errors let the next run retry v3.
+        // Subscribe-scoped protocol detection: only a protocol 404
+        // memoises permanent v2; the pre-emission throw falls back to the
+        // legacy path for this run.
         if (this.isV3UnsupportedError(err)) this.v3Support.value = false;
         this.transformerThreads.delete(threadId);
+      }
+
+      if (transformer) {
+        // v3-path regen: cached ThreadStream + persistent raw-channel sub,
+        // with the fork expressed via v3 `forkFrom` so the dev server
+        // roots the new run at the chosen checkpoint. Resume semantics
+        // don't apply on regen.
+        const { thread: streamingThread, aguiSub } = transformer;
+        const unsubscribeOnEvent = this.watchForRootTerminal(streamingThread, aguiSub);
+        try {
+          const sanitizedInput = sanitizeAssistantMessages(regenInput as Record<string, unknown>);
+          const submitted = await streamingThread.submitRun({
+            ...(input.forwardedProps ?? {}),
+            input: sanitizedInput,
+            config: payloadConfig,
+            metadata: (input.forwardedProps as { metadata?: Record<string, unknown> })?.metadata,
+            forkFrom: { checkpointId: forkedCheckpointId },
+          });
+          this.v3Support.value = true;
+          this.activeRun!.isV3 = true;
+          this.activeRun!.id = submitted?.run_id ?? this.activeRun!.id;
+
+          return {
+            streamResponse: aguiSub,
+            state: timeTravelCheckpoint as ThreadState<State>,
+            streamMode,
+            close: () => {
+              unsubscribeOnEvent();
+            },
+          };
+        } catch (err) {
+          // submitRun failed after a healthy subscribe → real run error.
+          // Release the lifecycle listener (otherwise it leaks) and
+          // surface it; do NOT memoise v2, do NOT silently fall back.
+          unsubscribeOnEvent?.();
+          throw err;
+        }
       }
     }
 
@@ -1157,70 +1208,98 @@ export class LangGraphAgent extends AbstractAgent {
         lgInterrupts: interrupts,
       });
 
+      // The run is fully handled here (RUN_STARTED + interrupt-finish +
+      // RUN_FINISHED). Mark it settled so runAgentStream does NOT then
+      // error the now-completed subscriber on the falsy return.
+      this.preparedRunSettled = true;
       return this.subscriber.complete();
     }
 
     // Attempt v3 unless a prior run already proved this server is v2.
-    // On a v2 server the subscribe/submit below 404s BEFORE any AG-UI
-    // event is emitted (verified: the throw is at `subscribe` inside
-    // acquireTransformerThread), so falling back to the legacy path is
-    // clean — no partial run, no double-emit.
+    // Protocol detection is scoped to the v3 SUBSCRIBE: on a v2 server the
+    // subscribe inside acquireTransformerThread 404s BEFORE any AG-UI event
+    // is emitted, so falling back to the legacy path is clean — no partial
+    // run, no double-emit. A failure at submit/respondInput happens AFTER a
+    // healthy subscribe (v3 IS present), so it is a real run error we must
+    // surface — never a fallback trigger and never a v2 memoisation.
     if (this.shouldAttemptV3()) {
+      let transformer: TransformerThreadEntry | undefined;
       try {
-        const sanitizedInput = sanitizeAssistantMessages(payloadInput);
-        const { thread: streamingThread, aguiSub } =
-            await this.acquireTransformerThread(threadId);
-        const unsubscribeOnEvent = this.watchForRootTerminal(streamingThread, aguiSub);
-
-        const resumeRequested =
-            forwardedProps?.command?.resume !== undefined &&
-            forwardedProps?.command?.resume !== null;
-        const pendingInterrupt = this.findPendingInterrupt(
-            streamingThread,
-            agentState,
-            resumeRequested,
-        );
-
-        let runId: string | undefined;
-        if (resumeRequested && pendingInterrupt) {
-          // Resume routes through input.respond on the cached
-          // ThreadStream. The server assigns a fresh run_id we don't
-          // see in the response; activeRun.id stays stale until an
-          // event with the new id flows through.
-          await streamingThread.respondInput({
-            namespace: pendingInterrupt.namespace,
-            interrupt_id: pendingInterrupt.interruptId,
-            response: forwardedProps!.command!.resume,
-          });
-        } else {
-          const submitted = await streamingThread.submitRun({
-            ...payload,
-            input: sanitizedInput,
-            config: payload.config,
-            metadata: payload.metadata as Record<string, unknown>,
-          });
-          runId = submitted?.run_id;
-        }
-        this.v3Support.value = true;
-        this.activeRun!.isV3 = true;
-        this.activeRun!.id = runId ?? this.activeRun!.id;
-
-        return {
-          streamResponse: aguiSub,
-          state: threadState as ThreadState<State>,
-          // Per-run cleanup only — the cached thread + sub live on for
-          // the next request on this threadId.
-          close: () => {
-            unsubscribeOnEvent();
-          },
-        };
+        transformer = await this.acquireTransformerThread(threadId);
       } catch (err) {
-        // Any failure attempting v3 falls back to the legacy v2 path for
-        // this run (the throw is pre-emission, so fallback is clean).
-        // Only a definitive "no v3 route" (404) is memoised as permanent
-        // v2; transient errors let the next run retry v3.
+        // Subscribe failed → no clean v3 run this time. Only a definitive
+        // "no v3 route" (protocol 404) memoises permanent v2; transient
+        // errors leave v3Support undecided so the next run retries v3.
+        // Either way the throw is pre-emission, so fall through to the
+        // legacy path below for this run.
         if (this.isV3UnsupportedError(err)) this.v3Support.value = false;
         this.transformerThreads.delete(threadId);
+      }
+
+      if (transformer) {
+        const { thread: streamingThread, aguiSub } = transformer;
+        const unsubscribeOnEvent = this.watchForRootTerminal(streamingThread, aguiSub);
+        try {
+          const sanitizedInput = sanitizeAssistantMessages(payloadInput);
+
+          // Resume covers BOTH the canonical `input.resume[]` (aguiResume,
+          // already folded into effectiveCommand.resume above) and the
+          // legacy `forwardedProps.command.resume` — `hasResume` tracks
+          // either. Deriving it from the legacy field alone would send a
+          // canonical resume down the fresh-run submitRun path instead of
+          // resuming the interrupt.
+          const resumeRequested = hasResume;
+          const pendingInterrupt = this.findPendingInterrupt(
+              streamingThread,
+              agentState,
+              resumeRequested,
+          );
+
+          let runId: string | undefined;
+          if (resumeRequested && pendingInterrupt) {
+            // Resume routes through input.respond on the cached
+            // ThreadStream, carrying the RESOLVED resume value
+            // (effectiveCommand.resume — built from aguiResume or the
+            // parsed legacy field) rather than the raw legacy field, so a
+            // canonical input.resume[] resumes the interrupt too. The
+            // server assigns a fresh run_id we don't see in the response;
+            // activeRun.id stays stale until an event with the new id
+            // flows through.
+            await streamingThread.respondInput({
+              namespace: pendingInterrupt.namespace,
+              interrupt_id: pendingInterrupt.interruptId,
+              response: effectiveCommand?.resume,
+            });
+          } else {
+            const submitted = await streamingThread.submitRun({
+              ...payload,
+              input: sanitizedInput,
+              config: payload.config,
+              metadata: payload.metadata as Record<string, unknown>,
+            });
+            runId = submitted?.run_id;
+          }
+          this.v3Support.value = true;
+          this.activeRun!.isV3 = true;
+          this.activeRun!.id = runId ?? this.activeRun!.id;
+
+          return {
+            streamResponse: aguiSub,
+            state: threadState as ThreadState<State>,
+            // Per-run cleanup only — the cached thread + sub live on for
+            // the next request on this threadId.
+            close: () => {
+              unsubscribeOnEvent();
+            },
+          };
+        } catch (err) {
+          // submit/respondInput failed after a healthy subscribe: v3 IS
+          // supported, so this is a real run error. Release the lifecycle
+          // listener we just registered (otherwise it leaks) and surface
+          // the error — do NOT memoise v2, do NOT silently fall back.
+          unsubscribeOnEvent?.();
+          throw err;
+        }
       }
     }
 
@@ -1261,6 +1340,11 @@ export class LangGraphAgent extends AbstractAgent {
     this.activeRun!.prevNodeName = null;
     let latestStateValues = {} as ThreadState<State>["values"];
     let updatedState = state;
+    // Set once RUN_ERROR has been emitted. AG-UI verify forbids ANY event
+    // after RUN_ERROR, so all post-loop dispatching (node-step close,
+    // snapshots, RUN_FINISHED / interrupt-finish) must be skipped. Mirrors
+    // the identical guard in handleStreamEventsV3.
+    let runErrored = false;
 
     try {
       this.dispatchEvent({
@@ -1339,6 +1423,7 @@ export class LangGraphAgent extends AbstractAgent {
             message: streamResponseChunk.data.message,
             rawEvent: streamResponseChunk,
           });
+          runErrored = true;
           break;
         }
 
@@ -1527,6 +1612,17 @@ export class LangGraphAgent extends AbstractAgent {
         });
 
         this.handleSingleEventV2(chunkData);
+      }
+
+      // If the run already errored, RUN_ERROR is terminal — AG-UI verify
+      // rejects any further event. Skip all post-loop emission (node-step
+      // close, snapshots, RUN_FINISHED / interrupt-finish) and just finish
+      // the stream. Mirrors handleStreamEventsV3.
+      if (runErrored) {
+        this.cancelRequested = false;
+        this.cancelSent = false;
+        this.activeRun = undefined;
+        return subscriber.complete();
       }
 
       state = await this.client.threads.getState(threadId);
@@ -2187,18 +2283,14 @@ export class LangGraphAgent extends AbstractAgent {
           this.handleNodeChange(currentNodeName);
         }
 
-        // Parity with Python reader (langgraph_agent.py:447): update local state
-        // cache from on_chain_end outputs so state stays fresh across node boundaries
-        // without relying on a `values` stream chunk after every step.
-        // LangGraph JS doesn't emit `values` chunks with the latest state between
-        // tool execution and run end, so without this update, intermediate
-        // STATE_SNAPSHOTs go stale after a tool Command updates state.
-        if (
-            eventType === 'completed' &&
-            this.activeRun!.nodeName === currentNodeName
-        ) {
-          this.activeRun!.exitingNode = true;
-        }
+        // NOTE: the v2 handler mirrors the Python reader here, marking
+        // exitingNode on an on_chain_end for the active node so it can
+        // refresh the local state cache. The v3 protocol has no equivalent
+        // signal on this channel — `eventType` is the channel method
+        // ("messages"/"values"/"tasks"/...), never a lifecycle "completed"
+        // value — so there is nothing to key a node-exit off here. The
+        // dead `eventType === 'completed'` check was removed; the
+        // manuallyEmittedState flush below is left as a defensive no-op.
         if (this.activeRun!.exitingNode) {
           // Persist manually-emitted keys into latestStateValues before clearing,
           // so the next STATE_SNAPSHOT (which falls back to latestStateValues)
@@ -2305,12 +2397,13 @@ export class LangGraphAgent extends AbstractAgent {
             : (state.next[0] ?? Object.keys(writes)[0]);
       }
 
-      // Terminal interrupts (the run paused at interrupt()). Read from the
-      // persisted state (channel-independent), deduped against any already
-      // surfaced live via the `tasks` channel. Kept even in transformer
-      // mode: the dev server reports interrupts on `tasks`, which the
-      // transformer does not itself translate, so this is the HITL net.
-      interrupts.forEach((interrupt) => this.emitInterruptOnce(interrupt));
+      // Terminal interrupts (the run paused at interrupt()) are read from
+      // the persisted state (channel-independent) and terminated through
+      // dispatchInterruptFinish below — the same run-end path v2 uses — so
+      // the interrupt-outcome contract (emitInterruptOutcome /
+      // enableLegacyOnInterruptEvent) is honored identically on both
+      // protocols. The legacy CUSTOM emission there is deduped against any
+      // interrupt already surfaced live on the `tasks` channel.
 
       // Canonical snapshots + the final node-step are owned by the client
       // only when translating raw events. In transformer mode the
@@ -2349,11 +2442,26 @@ export class LangGraphAgent extends AbstractAgent {
         openTransformerSteps.clear();
       }
 
-      this.dispatchEvent({
-        type: EventType.RUN_FINISHED,
-        threadId,
-        runId: this.activeRun!.id,
-      });
+      if (interrupts.length) {
+        // Route the run-end interrupt through the shared terminator so v3
+        // honors the outcome contract exactly as v2 does. In transformer
+        // mode the transformer already emitted the CUSTOM OnInterrupt via
+        // its tasks→OnInterrupt translation (not recorded in
+        // emittedInterruptIds), so suppress the legacy re-emit there while
+        // still terminating with the structured RUN_FINISHED.
+        this.dispatchInterruptFinish({
+          threadId,
+          runId: this.activeRun!.id,
+          lgInterrupts: interrupts,
+          suppressLegacy: transformerMode,
+        });
+      } else {
+        this.dispatchEvent({
+          type: EventType.RUN_FINISHED,
+          threadId,
+          runId: this.activeRun!.id,
+        });
+      }
       // Reset cancel flags when run completes
       this.cancelRequested = false;
       this.cancelSent = false;
@@ -2518,12 +2626,22 @@ export class LangGraphAgent extends AbstractAgent {
         const blockType = data.content?.type;
         if (blockType === "text") {
           if (!run.activeMessageId) break;
-          run.textBlockMessageIds.set(data.index, run.activeMessageId);
-          this.dispatchEvent({
-            type: EventType.TEXT_MESSAGE_START,
-            messageId: run.activeMessageId,
-            role: "assistant",
-          });
+          const messageId = run.activeMessageId;
+          // A single message can carry multiple text content-blocks, all
+          // sharing the message id. Emit TEXT_MESSAGE_START only for the
+          // first block that opens this id — a second block reusing the id
+          // while the first is still open would otherwise duplicate the
+          // START (and later the END). END is emitted once the LAST block
+          // for the id closes (see content-block-finish / message-finish).
+          const alreadyOpen = this.isTextMessageOpen(run, messageId);
+          run.textBlockMessageIds.set(data.index, messageId);
+          if (!alreadyOpen) {
+            this.dispatchEvent({
+              type: EventType.TEXT_MESSAGE_START,
+              messageId,
+              role: "assistant",
+            });
+          }
         } else if (blockType === "reasoning" || blockType === "thinking") {
           // Standardized v3 `reasoning` plus the older
           // langchain-anthropic `thinking` alias. One reasoning
@@ -2584,18 +2702,13 @@ export class LangGraphAgent extends AbstractAgent {
             toolCallName,
             argsSoFar: initialArgs,
           });
-          this.dispatchEvent({
-            type: EventType.TOOL_CALL_START,
-            toolCallId,
-            toolCallName,
-            parentMessageId: run.activeMessageId,
-          });
-          if (initialArgs.length > 0) {
-            this.dispatchEvent({
-              type: EventType.TOOL_CALL_ARGS,
-              toolCallId,
-              delta: initialArgs,
-            });
+          // Defer TOOL_CALL_START until a name is known. Some engines omit
+          // the tool name on the opening block and deliver it on a later
+          // block-delta; emitting START now with an empty name would leave
+          // the client's tool call permanently nameless. emitToolCallStart
+          // flushes any buffered args once it fires.
+          if (toolCallName) {
+            this.emitToolCallStart(run, data.index);
           }
         }
         break;
@@ -2614,12 +2727,17 @@ export class LangGraphAgent extends AbstractAgent {
           let messageId: string | undefined = run.textBlockMessageIds.get(data.index);
           if (!messageId && run.activeMessageId) {
             messageId = run.activeMessageId;
+            // Same dedup as content-block-start: only START if this id is
+            // not already open under another content-block index.
+            const alreadyOpen = this.isTextMessageOpen(run, messageId);
             run.textBlockMessageIds.set(data.index, messageId);
-            this.dispatchEvent({
-              type: EventType.TEXT_MESSAGE_START,
-              messageId,
-              role: "assistant",
-            });
+            if (!alreadyOpen) {
+              this.dispatchEvent({
+                type: EventType.TEXT_MESSAGE_START,
+                messageId,
+                role: "assistant",
+              });
+            }
           }
           if (!messageId) break;
           this.dispatchEvent({
@@ -2655,7 +2773,14 @@ export class LangGraphAgent extends AbstractAgent {
           if (!tool) break;
           const fields = data.delta?.fields;
           if (fields?.name && !tool.toolCallName) tool.toolCallName = fields.name;
-          if (typeof fields?.args === "string") {
+
+          if (!this.emittedToolCallStartIds.has(tool.toolCallId)) {
+            // START was deferred pending a tool name. Buffer the cumulative
+            // args into argsSoFar; emit START (which flushes them) as soon
+            // as a name is available.
+            if (typeof fields?.args === "string") tool.argsSoFar = fields.args;
+            if (tool.toolCallName) this.emitToolCallStart(run, data.index);
+          } else if (typeof fields?.args === "string") {
             const cumulative: string = fields.args;
             if (cumulative.startsWith(tool.argsSoFar)) {
               const delta = cumulative.slice(tool.argsSoFar.length);
@@ -2693,8 +2818,13 @@ export class LangGraphAgent extends AbstractAgent {
         if (finishType === "text") {
           const messageId = run.textBlockMessageIds.get(data.index);
           if (messageId) {
-            this.dispatchEvent({ type: EventType.TEXT_MESSAGE_END, messageId });
             run.textBlockMessageIds.delete(data.index);
+            // Close the message only when no OTHER open content-block still
+            // references this id, so multiple text blocks sharing one id
+            // yield exactly one END (paired with the single START above).
+            if (!this.isTextMessageOpen(run, messageId)) {
+              this.dispatchEvent({ type: EventType.TEXT_MESSAGE_END, messageId });
+            }
           }
         } else if (finishType === "reasoning" || finishType === "thinking") {
           const r = run.reasoningBlocks.get(data.index);
@@ -2712,36 +2842,128 @@ export class LangGraphAgent extends AbstractAgent {
             run.reasoningBlocks.delete(data.index);
           }
         } else if (finishType === "tool_call_chunk" || finishType === "tool_call") {
-          const tool = run.toolBlocks.get(data.index);
-          if (tool) {
-            this.dispatchEvent({
-              type: EventType.TOOL_CALL_END,
-              toolCallId: tool.toolCallId,
-            });
-            run.toolBlocks.delete(data.index);
+          if (run.toolBlocks.has(data.index)) {
+            this.finalizeToolBlock(run, data.index);
           }
         }
         break;
       }
 
       case "message-finish": {
-        // Close any text blocks still open on this message. The server
-        // omits content-block-finish for implicitly-opened text blocks
-        // (text deltas reusing a reasoning block's index), so flush
-        // them here.
-        for (const [index, messageId] of run.textBlockMessageIds) {
-          this.dispatchEvent({ type: EventType.TEXT_MESSAGE_END, messageId });
-          run.textBlockMessageIds.delete(index);
-        }
+        // Close every block still open on this message. The server omits
+        // content-block-finish for implicitly-opened text blocks (text
+        // deltas reusing a reasoning block's index) and can end a message
+        // with a reasoning or tool_call block still open, so flush all
+        // three kinds here — otherwise they dangle past the message and
+        // AG-UI verify rejects the unbalanced stream.
+        this.closeOpenTextBlocks(run);
+        this.closeOpenReasoningBlocks(run);
+        this.closeOpenToolBlocks(run);
         run.activeMessageId = undefined;
         break;
       }
 
       case "message-error": {
+        // A message-level error can arrive with content blocks still open.
+        // Emit the matching END events (balanced START/END) before clearing
+        // so the client is not left with unterminated text / reasoning /
+        // tool blocks.
+        this.closeOpenTextBlocks(run);
+        this.closeOpenReasoningBlocks(run);
+        this.closeOpenToolBlocks(run);
         run.activeMessageId = undefined;
-        run.textBlockMessageIds.clear();
         break;
       }
+    }
+  }
+
+  /**
+   * True when `messageId` is already open under some content-block index
+   * in the current run's text tracker. Used to keep TEXT_MESSAGE_START /
+   * _END balanced when multiple text content-blocks share one message id.
+   */
+  private isTextMessageOpen(run: RunMetadata, messageId: string): boolean {
+    for (const openId of run.textBlockMessageIds.values()) {
+      if (openId === messageId) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Emit TOOL_CALL_START for a tool content-block exactly once, then flush
+   * any args buffered so far as a single TOOL_CALL_ARGS delta. Tracked via
+   * emittedToolCallStartIds (reset per run) so a deferred start (name
+   * arriving on a later block-delta) and the opening block can't both fire.
+   */
+  private emitToolCallStart(run: RunMetadata, index: number): void {
+    const tool = run.toolBlocks.get(index);
+    if (!tool) return;
+    if (this.emittedToolCallStartIds.has(tool.toolCallId)) return;
+    this.emittedToolCallStartIds.add(tool.toolCallId);
+    this.dispatchEvent({
+      type: EventType.TOOL_CALL_START,
+      toolCallId: tool.toolCallId,
+      toolCallName: tool.toolCallName,
+      parentMessageId: run.activeMessageId,
+    });
+    if (tool.argsSoFar.length > 0) {
+      this.dispatchEvent({
+        type: EventType.TOOL_CALL_ARGS,
+        toolCallId: tool.toolCallId,
+        delta: tool.argsSoFar,
+      });
+    }
+  }
+
+  /** Emit TOOL_CALL_END for a tool block and drop it from the tracker.
+   *  If its START was deferred and never fired (name never arrived), emit
+   *  a last-resort START+ARGS first so the call isn't silently dropped. */
+  private finalizeToolBlock(run: RunMetadata, index: number): void {
+    const tool = run.toolBlocks.get(index);
+    if (!tool) return;
+    if (!this.emittedToolCallStartIds.has(tool.toolCallId)) {
+      this.emitToolCallStart(run, index);
+    }
+    this.dispatchEvent({
+      type: EventType.TOOL_CALL_END,
+      toolCallId: tool.toolCallId,
+    });
+    run.toolBlocks.delete(index);
+  }
+
+  /** END every open text message exactly once (dedup by id), clear map. */
+  private closeOpenTextBlocks(run: RunMetadata): void {
+    const ended = new Set<string>();
+    for (const [index, messageId] of run.textBlockMessageIds) {
+      if (!ended.has(messageId)) {
+        ended.add(messageId);
+        this.dispatchEvent({ type: EventType.TEXT_MESSAGE_END, messageId });
+      }
+      run.textBlockMessageIds.delete(index);
+    }
+  }
+
+  /** Close every open reasoning block (message END if started + block END). */
+  private closeOpenReasoningBlocks(run: RunMetadata): void {
+    for (const [index, r] of run.reasoningBlocks) {
+      if (r.messageStarted) {
+        this.dispatchEvent({
+          type: EventType.REASONING_MESSAGE_END,
+          messageId: r.messageId,
+        });
+      }
+      this.dispatchEvent({
+        type: EventType.REASONING_END,
+        messageId: r.messageId,
+      });
+      run.reasoningBlocks.delete(index);
+    }
+  }
+
+  /** Close every open tool block via finalizeToolBlock. */
+  private closeOpenToolBlocks(run: RunMetadata): void {
+    for (const index of [...run.toolBlocks.keys()]) {
+      this.finalizeToolBlock(run, index);
     }
   }
 
