@@ -148,6 +148,36 @@ async function runPrepareStream(
   ]);
 }
 
+describe("prepareRegenerateStream payload", () => {
+  it("preserves context-schema values when regenerating", async () => {
+    const { agent, capturedPayload } = buildMockedAgent();
+    (agent as any).assistant = MOCK_ASSISTANT;
+    (agent as any).activeRun.schemaKeys = {
+      config: ["model"],
+      context: ["model"],
+    };
+    (agent as any).getCheckpointByMessage = vi.fn().mockResolvedValue({
+      values: { messages: [] },
+      checkpoint: { checkpoint_id: "checkpoint-1" },
+      next: [],
+    });
+    (agent as any).client.threads.updateState.mockResolvedValue({
+      checkpoint: { checkpoint_id: "fork-1" },
+    });
+
+    await agent.prepareRegenerateStream(
+      {
+        threadId: "thread-1",
+        messageCheckpoint: { id: "message-1", type: "human", content: "hi" },
+        forwardedProps: { config: { configurable: { model: "gpt-5" } } },
+      } as any,
+      ["values"],
+    );
+
+    expect(capturedPayload.value?.context).toEqual({ model: "gpt-5" });
+  });
+});
+
 // ─── Part A: prepareStream payload shape ─────────────────────────────────────
 
 describe("prepareStream payload partitioning", () => {

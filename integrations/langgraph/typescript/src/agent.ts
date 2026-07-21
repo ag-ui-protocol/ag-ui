@@ -478,6 +478,23 @@ export class LangGraphAgent extends AbstractAgent {
       });
     }
 
+    const contextSchemaKeys = new Set(
+      this.activeRun!.schemaKeys?.context ?? [],
+    );
+    const payloadContext = Object.fromEntries(
+      Object.entries(payloadConfig?.configurable ?? {}).filter(([key]) =>
+        contextSchemaKeys.has(key),
+      ),
+    );
+    const hasContext = Object.keys(payloadContext).length > 0;
+    if (hasContext && payloadConfig) {
+      const { configurable: _configurable, ...configWithoutConfigurable } =
+        payloadConfig;
+      payloadConfig = Object.keys(configWithoutConfigurable).length
+        ? configWithoutConfigurable
+        : undefined;
+    }
+
     const payload = {
       ...(input.forwardedProps ?? {}),
       input: this.langGraphDefaultMergeState(
@@ -489,6 +506,7 @@ export class LangGraphAgent extends AbstractAgent {
       checkpointId: fork.checkpoint.checkpoint_id!,
       streamMode,
       config: payloadConfig,
+      ...(hasContext ? { context: payloadContext } : {}),
     };
     return {
       streamResponse: this.client.runs.stream(
