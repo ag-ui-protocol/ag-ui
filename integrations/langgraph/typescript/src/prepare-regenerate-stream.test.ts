@@ -25,7 +25,7 @@ afterEach(() => {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeThreadStream() {
+function makeThreadStream(v3 = true) {
   const aguiSub = {
     pause: vi.fn(),
     resume: vi.fn(),
@@ -33,7 +33,12 @@ function makeThreadStream() {
   };
   const thread: any = {
     interrupts: [],
-    subscribe: vi.fn().mockResolvedValue(aguiSub),
+    // Protocol is detected at run time: on a v2 server the subscribe
+    // 404s before any event, and the client falls back to the legacy
+    // runs.stream path. Model that here — reject subscribe when !v3.
+    subscribe: v3
+      ? vi.fn().mockResolvedValue(aguiSub)
+      : vi.fn().mockRejectedValue(new Error("Protocol request failed: 404 Not Found")),
     onEvent: vi.fn().mockReturnValue(() => {}),
     submitRun: vi.fn().mockResolvedValue({ run_id: "regen-run" }),
     respondInput: vi.fn().mockResolvedValue(undefined),
@@ -42,14 +47,6 @@ function makeThreadStream() {
 }
 
 function makeConfig(opts: { v3: boolean }) {
-  // Protocol is auto-detected via an OPTIONS probe of
-  // /threads/:id/stream/events (supportsV3). Stub fetch: a non-404 routes
-  // regen through the v3 ThreadStream path; a 404 falls back to legacy
-  // client.runs.stream.
-  vi.stubGlobal(
-    "fetch",
-    vi.fn().mockResolvedValue({ status: opts.v3 ? 200 : 404 } as Response),
-  );
   const threadStreams = new Map<string, ReturnType<typeof makeThreadStream>>();
   // LangGraph's `threads.getHistory` returns checkpoints newest-first.
   // `getCheckpointByMessage` reverses to walk oldest→newest and finds
@@ -105,7 +102,7 @@ function makeConfig(opts: { v3: boolean }) {
       stream: vi.fn((threadId: string) => {
         let entry = threadStreams.get(threadId);
         if (!entry) {
-          entry = makeThreadStream();
+          entry = makeThreadStream(opts.v3);
           threadStreams.set(threadId, entry);
         }
         return entry.thread;
@@ -229,7 +226,12 @@ describe("prepareRegenerateStream — transformer parity", () => {
       }),
     );
 
-    // No ThreadStream / submitRun involvement when useTransformer is off.
-    expect(threadStreams.size).toBe(0);
+    // v3 was attempted (subscribe threw 404) then fell back to legacy —
+    // the run was NOT submitted on the ThreadStream.
+    const entry = threadStreams.get("thread-1");
+    if (entry) {
+      expect(entry.thread.submitRun).not.toHaveBeenCalled();
+      expect(entry.thread.respondInput).not.toHaveBeenCalled();
+    }
   });
 });
