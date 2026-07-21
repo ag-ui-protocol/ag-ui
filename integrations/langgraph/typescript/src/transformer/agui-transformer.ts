@@ -17,7 +17,12 @@ import {
   type StreamTransformer,
 } from "@langchain/langgraph";
 import { langchainMessagesToAgui } from "../utils";
-import { CustomEventNames, LangGraphEventTypes, ProcessedEvents, State } from "../types";
+import {
+  CustomEventNames,
+  LangGraphEventTypes,
+  ProcessedEvents,
+  State,
+} from "../types";
 import { EventType } from "@ag-ui/core";
 
 /**
@@ -40,11 +45,28 @@ export const aguiTransformer = (): StreamTransformer<{
   // cumulative `args` string the engine has reported — block-delta carries
   // the FULL accumulated value each time, not an incremental piece, so we
   // diff against this to derive the delta AG-UI expects.
+  // `started` tracks whether TOOL_CALL_START has been emitted yet. When a
+  // tool block opens without a name (the name only arrives on a later
+  // block-delta), we defer the START so it never goes out with a knowingly
+  // empty toolCallName, and buffer `argsSoFar` until we can flush it.
   const toolBlocks = new Map<
     number,
-    { toolCallId: string; toolCallName: string; argsSoFar: string }
+    {
+      toolCallId: string;
+      toolCallName: string;
+      argsSoFar: string;
+      started: boolean;
+      parentMessageId?: string;
+    }
   >();
   let activeMessageId: string | undefined;
+  // Whether the bare `activeMessageId` has already been handed to a text
+  // content-block in the current message. The first text block keeps the
+  // bare id so the streamed message reconciles with the MESSAGES_SNAPSHOT
+  // copy emitted under the same id; any additional text blocks in the same
+  // message get a distinct suffixed id so we never emit two
+  // TEXT_MESSAGE_START for one id. Reset at each message boundary.
+  let bareTextIdAssigned = false;
 
   // Per-reasoning-block tracking. Keyed by content-block index. The
   // standardized v3 format (per langgraph streaming-cookbook) emits
@@ -79,6 +101,66 @@ export const aguiTransformer = (): StreamTransformer<{
   };
 
   const isRootNamespace = (ns: readonly string[]) => ns.length === 0;
+
+  // Allocate the message id for a text content-block. See `bareTextIdAssigned`.
+  const allocateTextMessageId = (index: number): string => {
+    if (!bareTextIdAssigned) {
+      bareTextIdAssigned = true;
+      return activeMessageId as string;
+    }
+    return `${activeMessageId}:t:${index}`;
+  };
+
+  // Emit TOOL_CALL_START for a deferred tool block exactly once, flushing any
+  // args buffered while we waited for the name. Idempotent: safe to call from
+  // both the name-arrival path and every close path (so a tool that never got
+  // a name still produces a balanced START/END pair before its END).
+  const ensureToolStarted = (tool: {
+    toolCallId: string;
+    toolCallName: string;
+    argsSoFar: string;
+    started: boolean;
+    parentMessageId?: string;
+  }) => {
+    if (tool.started) return;
+    tool.started = true;
+    push({
+      type: EventType.TOOL_CALL_START,
+      toolCallId: tool.toolCallId,
+      toolCallName: tool.toolCallName,
+      parentMessageId: tool.parentMessageId,
+    });
+    if (tool.argsSoFar.length > 0) {
+      push({
+        type: EventType.TOOL_CALL_ARGS,
+        toolCallId: tool.toolCallId,
+        delta: tool.argsSoFar,
+      });
+    }
+  };
+
+  // Close every open message-scoped block (text / tool / reasoning), emitting
+  // the matching END events so the stream stays balanced, then clear the
+  // trackers. Shared by finalize() (run end), message-finish, and
+  // message-error so none of them can leave a dangling START. Steps are
+  // run-scoped, not message-scoped, so they are NOT closed here.
+  const closeOpenMessageBlocks = () => {
+    for (const [index, messageId] of textBlockMessageIds) {
+      push({ type: EventType.TEXT_MESSAGE_END, messageId });
+      textBlockMessageIds.delete(index);
+    }
+    for (const [index, tool] of toolBlocks) {
+      ensureToolStarted(tool);
+      push({ type: EventType.TOOL_CALL_END, toolCallId: tool.toolCallId });
+      toolBlocks.delete(index);
+    }
+    for (const [index, r] of reasoningBlocks) {
+      if (r.messageStarted)
+        push({ type: EventType.REASONING_MESSAGE_END, messageId: r.messageId });
+      push({ type: EventType.REASONING_END, messageId: r.messageId });
+      reasoningBlocks.delete(index);
+    }
+  };
 
   // Defer snapshot emission until the run reaches a stable point. Each
   // Pregel step (including transient sub-steps inside copilotkitMiddleware
@@ -132,19 +214,7 @@ export const aguiTransformer = (): StreamTransformer<{
       // text/tool/reasoning blocks that didn't receive their
       // `content-block-finish` before the run ended, so AG-UI verify
       // doesn't reject the terminal event downstream.
-      for (const [index, messageId] of textBlockMessageIds) {
-        push({ type: EventType.TEXT_MESSAGE_END, messageId });
-        textBlockMessageIds.delete(index);
-      }
-      for (const [index, tool] of toolBlocks) {
-        push({ type: EventType.TOOL_CALL_END, toolCallId: tool.toolCallId });
-        toolBlocks.delete(index);
-      }
-      for (const [index, r] of reasoningBlocks) {
-        if (r.messageStarted) push({ type: EventType.REASONING_MESSAGE_END, messageId: r.messageId });
-        push({ type: EventType.REASONING_END, messageId: r.messageId });
-        reasoningBlocks.delete(index);
-      }
+      closeOpenMessageBlocks();
       for (const [nsKey, stepName] of activeSteps) {
         push({ type: EventType.STEP_FINISHED, stepName });
         activeSteps.delete(nsKey);
@@ -159,7 +229,8 @@ export const aguiTransformer = (): StreamTransformer<{
 
       switch (event.method) {
         case "lifecycle": {
-          const status = (event.params.data as { event?: string } | undefined)?.event;
+          const status = (event.params.data as { event?: string } | undefined)
+            ?.event;
 
           // Non-root lifecycle events bracket individual graph nodes.
           // Translate them to AG-UI STEP_STARTED / STEP_FINISHED so
@@ -184,7 +255,11 @@ export const aguiTransformer = (): StreamTransformer<{
                 activeSteps.set(nsKey, stepName);
                 push({ type: EventType.STEP_STARTED, stepName });
               }
-            } else if (status === "completed" || status === "failed" || status === "interrupted") {
+            } else if (
+              status === "completed" ||
+              status === "failed" ||
+              status === "interrupted"
+            ) {
               const tracked = activeSteps.get(nsKey);
               if (tracked) {
                 activeSteps.delete(nsKey);
@@ -216,8 +291,13 @@ export const aguiTransformer = (): StreamTransformer<{
             // interrupt() call.
             flushSnapshots();
           } else if (status === "failed") {
-            const message = (event.params.data as { error?: string } | undefined)?.error;
-            push({ type: EventType.RUN_ERROR, message: message ?? "Unknown error" });
+            const message = (
+              event.params.data as { error?: string } | undefined
+            )?.error;
+            push({
+              type: EventType.RUN_ERROR,
+              message: message ?? "Unknown error",
+            });
           }
           break;
         }
@@ -231,10 +311,21 @@ export const aguiTransformer = (): StreamTransformer<{
             | { interrupt_id?: string; payload?: unknown }
             | undefined;
           if (!data) break;
+          // Dedup by interrupt id, mirroring the `tasks` path: the same
+          // interrupt can be re-broadcast (input + result frames) and the
+          // client should only render one prompt. Only ids we've seen are
+          // skipped; frames without an id fall through (can't dedup).
+          if (data.interrupt_id) {
+            if (emittedInterruptIds.has(data.interrupt_id)) break;
+            emittedInterruptIds.add(data.interrupt_id);
+          }
+          // `JSON.stringify(undefined)` returns the value `undefined`, not a
+          // string, but AG-UI CUSTOM requires a string value. Coerce, mapping
+          // a bare/undefined payload to the string "null".
           const value =
             typeof data.payload === "string"
               ? data.payload
-              : JSON.stringify(data.payload);
+              : JSON.stringify(data.payload ?? null);
           push({
             type: EventType.CUSTOM,
             name: LangGraphEventTypes.OnInterrupt,
@@ -265,6 +356,7 @@ export const aguiTransformer = (): StreamTransformer<{
               // ensures we only emit text events for AI text blocks.
               if (!data.id) break;
               activeMessageId = data.id;
+              bareTextIdAssigned = false;
               break;
             }
 
@@ -273,13 +365,17 @@ export const aguiTransformer = (): StreamTransformer<{
               const blockType = data.content?.type;
               if (blockType === "text") {
                 if (!activeMessageId) break;
-                textBlockMessageIds.set(data.index, activeMessageId);
+                const textId = allocateTextMessageId(data.index);
+                textBlockMessageIds.set(data.index, textId);
                 push({
                   type: EventType.TEXT_MESSAGE_START,
-                  messageId: activeMessageId,
+                  messageId: textId,
                   role: "assistant",
                 });
-              } else if (blockType === "reasoning" || blockType === "thinking") {
+              } else if (
+                blockType === "reasoning" ||
+                blockType === "thinking"
+              ) {
                 // Standardized v3 format ("reasoning") plus the older
                 // langchain-anthropic alias ("thinking"). Treat the
                 // content block as a single reasoning entity scoped to
@@ -290,9 +386,16 @@ export const aguiTransformer = (): StreamTransformer<{
                   messageId: reasoningId,
                   messageStarted: false,
                 });
-                push({ type: EventType.REASONING_START, messageId: reasoningId });
+                push({
+                  type: EventType.REASONING_START,
+                  messageId: reasoningId,
+                });
                 const block = data.content as
-                  | { reasoning?: string; thinking?: string; signature?: string }
+                  | {
+                      reasoning?: string;
+                      thinking?: string;
+                      signature?: string;
+                    }
                   | undefined;
                 const initial = block?.reasoning ?? block?.thinking ?? "";
                 if (initial.length > 0) {
@@ -330,31 +433,35 @@ export const aguiTransformer = (): StreamTransformer<{
                     encryptedValue: block.data,
                   } as ProcessedEvents);
                 }
-              } else if (blockType === "tool_call_chunk" || blockType === "tool_call") {
+              } else if (
+                blockType === "tool_call_chunk" ||
+                blockType === "tool_call"
+              ) {
                 const block = data.content as
-                  | { id?: string | null; name?: string | null; args?: string | null }
+                  | {
+                      id?: string | null;
+                      name?: string | null;
+                      args?: string | null;
+                    }
                   | undefined;
                 const toolCallId = block?.id ?? `tc-${data.index}`;
                 const toolCallName = block?.name ?? "";
-                const initialArgs = typeof block?.args === "string" ? block.args : "";
-                toolBlocks.set(data.index, {
+                const initialArgs =
+                  typeof block?.args === "string" ? block.args : "";
+                const tool = {
                   toolCallId,
                   toolCallName,
                   argsSoFar: initialArgs,
-                });
-                push({
-                  type: EventType.TOOL_CALL_START,
-                  toolCallId,
-                  toolCallName,
+                  started: false,
                   parentMessageId: activeMessageId,
-                });
-                if (initialArgs.length > 0) {
-                  push({
-                    type: EventType.TOOL_CALL_ARGS,
-                    toolCallId,
-                    delta: initialArgs,
-                  });
-                }
+                };
+                toolBlocks.set(data.index, tool);
+                // Only emit TOOL_CALL_START now if we already have the name.
+                // When the name is absent it may arrive on a later
+                // block-delta; defer the START (and buffer initialArgs) so it
+                // never goes out with an empty toolCallName. ensureToolStarted
+                // flushes the buffered args when it fires.
+                if (toolCallName) ensureToolStarted(tool);
               }
               break;
             }
@@ -371,7 +478,7 @@ export const aguiTransformer = (): StreamTransformer<{
                 // is taken care of on message-finish (or finalize).
                 let messageId = textBlockMessageIds.get(data.index);
                 if (!messageId && activeMessageId) {
-                  messageId = activeMessageId;
+                  messageId = allocateTextMessageId(data.index);
                   textBlockMessageIds.set(data.index, messageId);
                   push({
                     type: EventType.TEXT_MESSAGE_START,
@@ -385,12 +492,17 @@ export const aguiTransformer = (): StreamTransformer<{
                   messageId,
                   delta: data.delta?.text ?? "",
                 });
-              } else if (deltaType === "reasoning-delta" || deltaType === "thinking-delta") {
+              } else if (
+                deltaType === "reasoning-delta" ||
+                deltaType === "thinking-delta"
+              ) {
                 // Standardized v3 reasoning delta + older Anthropic
                 // thinking-delta alias.
                 const r = reasoningBlocks.get(data.index);
                 if (!r) break;
-                const delta = (data.delta as { reasoning?: string; thinking?: string } | undefined);
+                const delta = data.delta as
+                  | { reasoning?: string; thinking?: string }
+                  | undefined;
                 const text = delta?.reasoning ?? delta?.thinking ?? "";
                 if (text.length === 0) break;
                 if (!r.messageStarted) {
@@ -413,13 +525,28 @@ export const aguiTransformer = (): StreamTransformer<{
                 // so compute it by stripping the prefix we have already sent.
                 const tool = toolBlocks.get(data.index);
                 if (!tool) break;
-                const fields = (data.delta as { fields?: { args?: string; name?: string } } | undefined)?.fields;
+                const fields = (
+                  data.delta as
+                    | { fields?: { args?: string; name?: string } }
+                    | undefined
+                )?.fields;
                 if (fields?.name && !tool.toolCallName) {
                   tool.toolCallName = fields.name;
                 }
+                // If START was deferred pending a name and we now have one,
+                // emit it (which also flushes the buffered args) before
+                // streaming any further args this frame.
+                if (!tool.started && tool.toolCallName) {
+                  ensureToolStarted(tool);
+                }
                 if (typeof fields?.args === "string") {
                   const cumulative = fields.args;
-                  if (cumulative.startsWith(tool.argsSoFar)) {
+                  if (!tool.started) {
+                    // Still no name, so START hasn't gone out. Just buffer the
+                    // full cumulative; ensureToolStarted will flush it as one
+                    // delta once the name arrives (or at close, worst case).
+                    tool.argsSoFar = cumulative;
+                  } else if (cumulative.startsWith(tool.argsSoFar)) {
                     const delta = cumulative.slice(tool.argsSoFar.length);
                     tool.argsSoFar = cumulative;
                     if (delta.length > 0) {
@@ -430,15 +557,36 @@ export const aguiTransformer = (): StreamTransformer<{
                       });
                     }
                   } else {
-                    // Engine replaced the buffer (e.g. arg correction). Send
-                    // the full new string as a single delta and reset the
-                    // cumulative tracker.
+                    // Engine replaced the buffer in place (arg correction),
+                    // so the new value is NOT an extension of what we already
+                    // streamed. TOOL_CALL_ARGS is append-only with no
+                    // retraction, so re-sending the full new string would give
+                    // a delta-concatenating consumer `oldBuffer + newFull`.
+                    // Instead emit only the part beyond the longest common
+                    // prefix, so we never re-send the shared head. The already
+                    // streamed divergent tail can't be retracted here; the
+                    // authoritative args are re-delivered in the end-of-run
+                    // MESSAGES_SNAPSHOT.
+                    let common = 0;
+                    const max = Math.min(
+                      tool.argsSoFar.length,
+                      cumulative.length,
+                    );
+                    while (
+                      common < max &&
+                      tool.argsSoFar[common] === cumulative[common]
+                    ) {
+                      common++;
+                    }
+                    const delta = cumulative.slice(common);
                     tool.argsSoFar = cumulative;
-                    push({
-                      type: EventType.TOOL_CALL_ARGS,
-                      toolCallId: tool.toolCallId,
-                      delta: cumulative,
-                    });
+                    if (delta.length > 0) {
+                      push({
+                        type: EventType.TOOL_CALL_ARGS,
+                        toolCallId: tool.toolCallId,
+                        delta,
+                      });
+                    }
                   }
                 }
               }
@@ -466,9 +614,15 @@ export const aguiTransformer = (): StreamTransformer<{
                 const r = reasoningBlocks.get(data.index);
                 if (r) {
                   if (r.messageStarted) {
-                    push({ type: EventType.REASONING_MESSAGE_END, messageId: r.messageId });
+                    push({
+                      type: EventType.REASONING_MESSAGE_END,
+                      messageId: r.messageId,
+                    });
                   }
-                  push({ type: EventType.REASONING_END, messageId: r.messageId });
+                  push({
+                    type: EventType.REASONING_END,
+                    messageId: r.messageId,
+                  });
                   reasoningBlocks.delete(data.index);
                 }
               } else if (
@@ -477,7 +631,13 @@ export const aguiTransformer = (): StreamTransformer<{
               ) {
                 const tool = toolBlocks.get(data.index);
                 if (tool) {
-                  push({ type: EventType.TOOL_CALL_END, toolCallId: tool.toolCallId });
+                  // Flush a deferred START (name may never have arrived) so
+                  // the END has a matching START.
+                  ensureToolStarted(tool);
+                  push({
+                    type: EventType.TOOL_CALL_END,
+                    toolCallId: tool.toolCallId,
+                  });
                   toolBlocks.delete(data.index);
                 }
               }
@@ -485,21 +645,28 @@ export const aguiTransformer = (): StreamTransformer<{
             }
 
             case "message-finish": {
-              // Close any text blocks still open on this message. The
-              // server omits `content-block-finish` for implicitly-opened
-              // text blocks (text deltas reusing a reasoning block's
-              // index), so we need to flush them here.
-              for (const [index, messageId] of textBlockMessageIds) {
-                push({ type: EventType.TEXT_MESSAGE_END, messageId });
-                textBlockMessageIds.delete(index);
-              }
+              // Close every block still open on this message. The server can
+              // omit `content-block-finish` for implicitly-opened text blocks
+              // (text deltas reusing a reasoning block's index) and, in
+              // practice, for tool/reasoning blocks too; leaving a tool/
+              // reasoning entry in its map would let the next message's block
+              // at the same index overwrite it, so TOOL_CALL_START /
+              // REASONING_START would never get their END. Flush them all.
+              closeOpenMessageBlocks();
               activeMessageId = undefined;
+              bareTextIdAssigned = false;
               break;
             }
 
             case "message-error": {
+              // Same as message-finish: the message is done (abnormally), so
+              // close every open block first. Clearing the maps without
+              // emitting the END events would leave dangling
+              // TEXT_MESSAGE_START / TOOL_CALL_START / REASONING_START that
+              // finalize() can no longer close, unbalancing the stream.
+              closeOpenMessageBlocks();
               activeMessageId = undefined;
-              textBlockMessageIds.clear();
+              bareTextIdAssigned = false;
               break;
             }
           }
@@ -534,10 +701,13 @@ export const aguiTransformer = (): StreamTransformer<{
             if (!it?.id) continue;
             if (emittedInterruptIds.has(it.id)) continue;
             emittedInterruptIds.add(it.id);
+            // See the input.requested path: coerce to a string so a bare
+            // interrupt (no value) emits "null" rather than the value
+            // `undefined`, which AG-UI CUSTOM rejects.
             const value =
               typeof it.value === "string"
                 ? it.value
-                : JSON.stringify(it.value);
+                : JSON.stringify(it.value ?? null);
             push({
               type: EventType.CUSTOM,
               name: LangGraphEventTypes.OnInterrupt,
