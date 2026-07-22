@@ -19,7 +19,7 @@ import { collect, minimalRunInput, scriptedAgent } from "./helpers";
 // provider, and so we can stamp a pre-activated `_interruptState` onto the
 // instance to simulate what a real SessionManager would restore.
 let nextInterruptState:
-  | { activated: boolean; interrupts: Map<string, unknown> }
+  | { activated: boolean; interrupts: Map<string, unknown> | Record<string, unknown> }
   | undefined;
 let streamCalls = 0;
 
@@ -49,7 +49,18 @@ vi.mock("@strands-agents/sdk", async (importOriginal) => {
         return Array.from(this._tools.values());
       },
     };
-    _interruptState = nextInterruptState;
+    // Start without an interrupt so test cases only see the configured state
+    // when initialize() simulates SessionManager's InitializedEvent restore.
+    _interruptState: { activated: boolean; interrupts: Map<string, unknown> | Record<string, unknown> } = {
+      activated: false,
+      interrupts: {},
+    };
+    async initialize() {
+      this._interruptState = nextInterruptState ?? {
+        activated: false,
+        interrupts: {},
+      };
+    }
     async *stream() {
       streamCalls += 1;
       return { stopReason: "endTurn", message: { role: "assistant", content: [] } };
@@ -78,7 +89,7 @@ describe("Cold restart: resume validation must see session-restored interrupt st
     // SessionManager would have restored onto the freshly-constructed agent.
     nextInterruptState = {
       activated: true,
-      interrupts: new Map([["int-1", {}]]),
+      interrupts: { "int-1": {} },
     };
 
     const agent = new StrandsAgent({
@@ -154,6 +165,31 @@ describe("Cold restart: resume validation must see session-restored interrupt st
     ) as unknown as { code: string } | undefined;
     expect(err).toBeDefined();
     expect(err!.code).toBe("UNKNOWN_INTERRUPT_ID");
+  });
+
+  it("accepts a known interruptId restored as Strands' record-shaped state", async () => {
+    nextInterruptState = {
+      activated: true,
+      interrupts: { "int-1": {} },
+    };
+    streamCalls = 0;
+
+    const agent = new StrandsAgent({
+      agent: scriptedAgent(),
+      name: "t",
+      config: { sessionManagerProvider: () => new FakeSessionManager() },
+    });
+
+    const events = await collect(
+      agent,
+      minimalRunInput({
+        threadId: "cold-thread-record-shaped",
+        resume: [{ interruptId: "int-1", status: "resolved", payload: {} }],
+      }),
+    );
+
+    expect(events.some((event) => event.type === EventType.RUN_ERROR)).toBe(false);
+    expect(streamCalls).toBe(1);
   });
 
   it("rejects fresh input on a cold thread when SessionManager restores a pending interrupt", async () => {

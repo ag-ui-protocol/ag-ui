@@ -5,7 +5,7 @@
  * on the thread so the follow-up `resume[]` request is recognised as known
  * (rather than falling into the UNKNOWN_INTERRUPT_ID gate).
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { EventType, type BaseEvent, type RunAgentInput, type Interrupt as AguiInterrupt } from "@ag-ui/core";
 import {
   AgentResult as StrandsAgentResult,
@@ -88,6 +88,27 @@ describe("StrandsAgent native interrupt bridge (Strands SDK 1.1.0+)", () => {
       }
     )._pendingInterruptsByThread.get("thread-1");
     expect(pending?.has("int-1")).toBe(true);
+  });
+
+  it("checkpoints an interrupt before returning it to a resumable client", async () => {
+    const saveSnapshot = vi.fn().mockResolvedValue(undefined);
+    const stubAgent = scriptedAgent([], {
+      stream: makeAgentResultStream(
+        buildAgentResult([strandsInterrupt("int-1", "confirm_delete")]),
+      ) as never,
+      sessionManager: { saveSnapshot } as never,
+    });
+    const sa = new StrandsAgent({ agent: stubAgent, name: "t" });
+    (
+      sa as unknown as { _agentsByThread: Map<string, unknown> }
+    )._agentsByThread.set("thread-1", stubAgent);
+
+    await collect(sa);
+
+    expect(saveSnapshot).toHaveBeenCalledWith({
+      target: stubAgent,
+      isLatest: true,
+    });
   });
 
   it("accepts a matching resume[] and forwards InterruptResponseContent to Strands", async () => {

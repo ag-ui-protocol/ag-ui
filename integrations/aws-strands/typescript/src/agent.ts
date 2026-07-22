@@ -209,6 +209,21 @@ function _errorMessage(e: unknown): string {
 }
 
 /**
+ * Return native Strands interrupt IDs across SDK versions and test doubles.
+ *
+ * Strands' current InterruptState serializes `interrupts` as a Record, while
+ * older mocks used a Map. Supporting both keeps cold-start validation aligned
+ * with the state that SessionManager actually restores.
+ */
+function _nativeInterruptIds(interrupts: unknown): Set<string> {
+  if (interrupts instanceof Map) return new Set(interrupts.keys());
+  if (interrupts && typeof interrupts === "object") {
+    return new Set(Object.keys(interrupts));
+  }
+  return new Set();
+}
+
+/**
  * Resolve the AG-UI-side tool call id from an incoming Strands tool use.
  *
  * - If we've already seen this Strands tool (by internal id), reuse the
@@ -654,6 +669,32 @@ export class StrandsAgent {
           }
         }
       }
+      // SessionManager restores snapshots from its InitializedEvent hook. Run
+      // initialization now, before `run()` validates a cold-start resume;
+      // `stream()` otherwise initializes too late, after validation has
+      // rejected the restored interrupt IDs as unknown.
+      if (sessionManager) {
+        try {
+          const initialize = (
+            strandsAgent as unknown as { initialize?: () => Promise<void> }
+          ).initialize;
+          if (typeof initialize === "function") {
+            await initialize.call(strandsAgent);
+          }
+        } catch (e) {
+          const msg = _errorMessage(e);
+          this._log.error(
+            `${LOG_PREFIX} failed to initialize session manager for thread ${threadId}: ${msg}`,
+            e,
+          );
+          return {
+            error: _runError(
+              `Failed to initialize session manager: ${msg}`,
+              "SESSION_MANAGER_ERROR",
+            ),
+          };
+        }
+      }
       this._agentsByThread.set(threadId, strandsAgent);
       return { agent: strandsAgent };
     } finally {
@@ -700,11 +741,11 @@ export class StrandsAgent {
         }
         const interruptState = (
           restored.agent as unknown as {
-            _interruptState?: { activated?: boolean; interrupts?: Map<string, unknown> };
+            _interruptState?: { activated?: boolean; interrupts?: unknown };
           }
         )._interruptState;
-        if (interruptState?.activated && interruptState.interrupts) {
-          nativePendingIds = new Set(interruptState.interrupts.keys());
+        if (interruptState?.activated) {
+          nativePendingIds = _nativeInterruptIds(interruptState.interrupts);
         }
         const { pending: persistedPending, fingerprint: persistedFingerprint } =
           loadPersistedInterruptBookkeeping(restored.agent);
@@ -2224,6 +2265,23 @@ export class StrandsAgent {
           this._pendingInterruptsByThread.set(threadId, interruptMap);
           this._lastResumeFingerprint.delete(threadId);
           persistInterruptBookkeeping(strandsAgent, interruptMap, null, this._log);
+          // Strands' default SessionManager saves at the completed-invocation
+          // boundary. An interrupt exits the native loop before that durable
+          // snapshot is guaranteed, so explicitly checkpoint the restored
+          // native interrupt state and our appState bookkeeping before telling
+          // the client it may resume after a process restart.
+          try {
+            await strandsAgent.sessionManager?.saveSnapshot({
+              target: strandsAgent,
+              isLatest: true,
+            });
+          } catch (e) {
+            // Persistence is a durability enhancement. A broken backing store
+            // must not turn a successfully-raised interrupt into a failed run.
+            this._log.warn(
+              `${LOG_PREFIX} Failed to persist interrupt snapshot: ${_errorMessage(e)}`,
+            );
+          }
           yield {
             type: EventType.RUN_FINISHED,
             threadId: inputData.threadId,
