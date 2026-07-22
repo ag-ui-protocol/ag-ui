@@ -387,9 +387,12 @@ describe("Multimodal Message Conversion", () => {
   });
 
   describe("Provider-safe multimodal sidecar", () => {
-    // Helper: read the validated sidecar off a converted human message.
-    const sidecarOf = (message: LangGraphMessage): unknown =>
-      (message as any).response_metadata?.[AGUI_MULTIMODAL_SIDECAR_KEY];
+    // Helper: read the sidecar off a converted human message's response_metadata.
+    const sidecarOf = (message: LangGraphMessage): unknown => {
+      const responseMetadata = (message as { response_metadata?: Record<string, unknown> })
+        .response_metadata;
+      return responseMetadata?.[AGUI_MULTIMODAL_SIDECAR_KEY];
+    };
 
     describe("forward: provider-safe blocks + response_metadata sidecar", () => {
       it("emits legacy blocks with no metadata key and records the sidecar on response_metadata", () => {
@@ -444,6 +447,35 @@ describe("Multimodal Message Conversion", () => {
         // No metadata key when the source block had none.
         expect(sidecarOf(lcMessages[0])).toEqual([{ type: "audio" }]);
       });
+
+      it.each([
+        { type: "image", value: "https://example.com/i.jpg" },
+        { type: "audio", value: "https://example.com/a.mp3" },
+        { type: "video", value: "https://example.com/v.mp4" },
+        { type: "document", value: "https://example.com/d.pdf" },
+      ])(
+        "emits a provider-safe block and a typed sidecar entry for $type",
+        ({ type, value }) => {
+          const aguiMessage: UserMessage = {
+            id: `fwd-${type}`,
+            role: "user",
+            content: [
+              {
+                type,
+                source: { type: "url", value },
+                metadata: { k: type },
+              } as InputContent,
+            ],
+          };
+
+          const lcMessages = aguiMessagesToLangChain([aguiMessage]);
+
+          const blocks = lcMessages[0].content as Array<any>;
+          expect(blocks[0]).toEqual({ type: "image_url", image_url: { url: value } });
+          expect(blocks[0]).not.toHaveProperty("metadata");
+          expect(sidecarOf(lcMessages[0])).toEqual([{ type, metadata: { k: type } }]);
+        }
+      );
 
       it("does not attach a sidecar to text-only content", () => {
         const aguiMessage: UserMessage = {
@@ -530,6 +562,43 @@ describe("Multimodal Message Conversion", () => {
         const aguiMessages = langchainMessagesToAgui([lcMessage]);
 
         const part = (aguiMessages[0].content as Array<any>)[1];
+        expect(part.type).toBe("image");
+        expect(part.metadata).toBeUndefined();
+      });
+
+      it("ignores a longer-than-content sidecar and falls back to legacy behavior", () => {
+        const lcMessage = {
+          id: "rev-too-long",
+          type: "human",
+          content: [
+            { type: "image_url", image_url: { url: "https://example.com/x.jpg" } },
+          ],
+          // Length 2 but content has 1 block -> misaligned -> rejected.
+          response_metadata: {
+            [AGUI_MULTIMODAL_SIDECAR_KEY]: [{ type: "video" }, { type: "audio" }],
+          },
+        } as unknown as LangGraphMessage;
+
+        const aguiMessages = langchainMessagesToAgui([lcMessage]);
+
+        const part = (aguiMessages[0].content as Array<any>)[0];
+        expect(part.type).toBe("image");
+        expect(part.metadata).toBeUndefined();
+      });
+
+      it("ignores a non-object response_metadata and falls back to legacy behavior", () => {
+        const lcMessage = {
+          id: "rev-bad-response-metadata",
+          type: "human",
+          content: [
+            { type: "image_url", image_url: { url: "https://example.com/x.jpg" } },
+          ],
+          response_metadata: "oops",
+        } as unknown as LangGraphMessage;
+
+        const aguiMessages = langchainMessagesToAgui([lcMessage]);
+
+        const part = (aguiMessages[0].content as Array<any>)[0];
         expect(part.type).toBe("image");
         expect(part.metadata).toBeUndefined();
       });
@@ -675,8 +744,14 @@ describe("Multimodal Message Conversion", () => {
           };
 
           const lcMessages = aguiMessagesToLangChain([original]);
+          // The model-bound block is a plain legacy image_url with no metadata.
+          expect((lcMessages[0].content as Array<any>)[0]).not.toHaveProperty("metadata");
+
           // Simulate the LangGraph checkpoint JSON round-trip.
           const persisted = JSON.parse(JSON.stringify(lcMessages[0])) as LangGraphMessage;
+          // The sidecar survives serialization on response_metadata.
+          expect(sidecarOf(persisted)).toEqual([{ type: mediaContent.type, metadata }]);
+
           const roundTripped = langchainMessagesToAgui([persisted]);
 
           const part = (roundTripped[0].content as Array<any>)[0];
@@ -685,6 +760,49 @@ describe("Multimodal Message Conversion", () => {
           expect(part.metadata).toEqual(metadata);
         }
       );
+
+      it("preserves text/media index alignment across a checkpoint round-trip", () => {
+        const original: UserMessage = {
+          id: "rt-alignment",
+          role: "user",
+          content: [
+            { type: "text", text: "first" },
+            {
+              type: "audio",
+              source: { type: "url", value: "https://example.com/a.mp3" },
+              metadata: { lang: "en" },
+            } as AudioInputContent,
+            { type: "text", text: "second" },
+            {
+              type: "document",
+              source: { type: "url", value: "https://example.com/d.pdf" },
+            } as DocumentInputContent,
+          ],
+        };
+
+        const lcMessages = aguiMessagesToLangChain([original]);
+        for (const block of lcMessages[0].content as Array<any>) {
+          expect(block).not.toHaveProperty("metadata");
+        }
+
+        const persisted = JSON.parse(JSON.stringify(lcMessages[0])) as LangGraphMessage;
+        expect(sidecarOf(persisted)).toEqual([
+          null,
+          { type: "audio", metadata: { lang: "en" } },
+          null,
+          { type: "document" },
+        ]);
+
+        const roundTripped = langchainMessagesToAgui([persisted]);
+        const content = roundTripped[0].content as Array<any>;
+        expect(content).toHaveLength(4);
+        expect(content[0]).toEqual({ type: "text", text: "first" });
+        expect(content[1].type).toBe("audio");
+        expect(content[1].metadata).toEqual({ lang: "en" });
+        expect(content[2]).toEqual({ type: "text", text: "second" });
+        expect(content[3].type).toBe("document");
+        expect(content[3].metadata).toBeUndefined();
+      });
 
       it.each([
         { label: "primitive string", metadata: "just a string" },

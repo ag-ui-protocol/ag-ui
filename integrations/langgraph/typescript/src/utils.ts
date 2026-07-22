@@ -12,7 +12,6 @@ import {
   InputContentDataSource,
   InputContentUrlSource,
   InputContent,
-  UserMessage,
 } from "@ag-ui/client";
 
 export const DEFAULT_SCHEMA_KEYS = ["messages", "tools"];
@@ -217,7 +216,9 @@ function convertLangchainMultimodalToAgui(
     } else if (item.type === "image_url") {
       const imageUrl = typeof item.image_url === "string" ? item.image_url : item.image_url?.url;
 
-      if (!imageUrl) return;
+      // Guard against malformed checkpoint data (e.g. a non-string url); a bad
+      // block is skipped rather than crashing imageUrlToSource on `.startsWith`.
+      if (typeof imageUrl !== "string" || !imageUrl) return;
 
       // The sidecar is already validated, so an entry is either null or a record
       // with a known media type. Index alignment guarantees we only read the
@@ -276,8 +277,9 @@ function convertAguiMultimodalToLangchain(content: InputContent[]): {
         console.warn(`[convertAguiMultimodalToLangchain] Dropping ${item.type} content: source could not be converted to URL`);
       }
     } else if (item.type === "binary") {
-      // Legacy BinaryInputContent — backwards compatibility. Unchanged: no
-      // sidecar entry, so it reads back as the legacy image fallback.
+      // Legacy BinaryInputContent — backwards compatibility. Unchanged: records
+      // a null sidecar entry (to keep 1:1 index alignment), so it reads back as
+      // the legacy image fallback.
       let url: string;
 
       // Prioritize url, then data, then id
@@ -514,13 +516,13 @@ export function aguiMessagesToLangChain(messages: Message[]): LangGraphMessage[]
       case "user": {
         pendingReasoning = [];
         // Handle multimodal content
-        let content: UserMessage['content'];
+        let content: string | LangchainMultimodalBlock[];
         let responseMetadata: Record<string, unknown> | undefined;
         if (typeof message.content === "string") {
           content = message.content;
         } else if (Array.isArray(message.content)) {
           const converted = convertAguiMultimodalToLangchain(message.content);
-          content = converted.content as any;
+          content = converted.content;
           // Only attach the sidecar when it actually carries media info, so
           // text-only / legacy-binary-only messages stay free of extra metadata.
           if (converted.sidecar.some((entry) => entry !== null)) {
