@@ -10,7 +10,7 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@ag-ui/langgraph": "workspace:*",
+    "@ag-ui/langgraph": "0.0.41",
     "@copilotkit/sdk-js": "1.57.1",
     "@langchain/core": "^1.1.44",
     "@langchain/anthropic": "^0.3.0",
