@@ -47,28 +47,45 @@ type MediaInputContent =
   | VideoInputContent
   | DocumentInputContent;
 const DEFAULT_MEDIA_CONTENT_TYPE: MediaContentType = "image";
-export const AGUI_TYPE_KEY = "__agui_type" as const;
 
 /**
- * Metadata carried through a LangChain content block. Survives the LangGraph
- * checkpoint JSON round-trip as an inert extra key. `__agui_type` stashes the
- * original AG-UI media type so the reverse converter can restore it; defaults
- * to `"image"` when absent (legacy blocks written before this fix).
+ * Key under a HumanMessage's `response_metadata` that holds the multimodal
+ * sidecar. `response_metadata` is the internal checkpoint channel: LangGraph
+ * persists it through the checkpoint JSON round-trip, while provider request
+ * serializers do not forward it to the model (unlike `additional_kwargs`).
  */
-type LangchainBlockMetadata = Record<string, unknown>;
+export const AGUI_MULTIMODAL_SIDECAR_KEY = "__agui_multimodal" as const;
 
 /**
- * The shape carried through LangChain content blocks. `metadata` is an inert
- * extra key for LangChain/model providers that survives the LangGraph
- * checkpoint JSON round-trip. The original AG-UI media type is stashed inside
- * metadata as `__agui_type` so the reverse converter can restore it without
- * adding a separate top-level field to the block.
+ * A provider-valid LangChain content block. Only the legacy `text` and
+ * `image_url` shapes are emitted, with no extra keys, so strict
+ * OpenAI-compatible providers accept the block unchanged. AG-UI media type and
+ * metadata are carried out-of-band in the response_metadata sidecar instead.
  */
-type LangchainMultimodalBlock = {
+type LangchainMultimodalBlock =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
+/**
+ * A loosely-typed view of an incoming LangChain content block, used when
+ * reading messages back. LangChain's `image_url` may be a bare string or an
+ * object, so both are accepted.
+ */
+type LangchainContentBlock = {
   type: string;
   text?: string;
   image_url?: { url: string } | string;
-  metadata?: LangchainBlockMetadata;
+};
+
+/**
+ * One entry of the aligned multimodal sidecar, indexed 1:1 with the message's
+ * content blocks. `null` marks a block that carries no AG-UI media type (text
+ * or legacy binary). Otherwise it records the original media type and, when the
+ * source block had one, its arbitrary `InputContent.metadata`.
+ */
+type MultimodalSidecarEntry = null | {
+  type: MediaContentType;
+  metadata?: unknown;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -136,63 +153,82 @@ function mediaSourceToUrl(source: InputContentDataSource | InputContentUrlSource
   return null;
 }
 
+// Turn an `image_url` string back into an AG-UI content source. `data:` URLs are
+// parsed into a data source; everything else is treated as a plain URL.
+function imageUrlToSource(imageUrl: string): InputContentDataSource | InputContentUrlSource {
+  if (imageUrl.startsWith("data:")) {
+    // Format: data:mime_type;base64,data
+    const [header, data] = imageUrl.split(",", 2);
+    const mimeType = header.includes(":") ? header.split(":")[1].split(";")[0] : "image/png";
+    return { type: "data", value: data || "", mimeType };
+  }
+  return { type: "url", value: imageUrl };
+}
+
+/**
+ * Validate and normalize the raw multimodal sidecar read from a HumanMessage's
+ * `response_metadata`. Returns a sidecar aligned 1:1 with the message content
+ * blocks, or `null` when the value is missing or malformed in any way — a wrong
+ * length, a non-array, or an entry that is neither `null` nor a record carrying
+ * a known media `type`. Returning `null` makes the caller fall back to the
+ * legacy behavior instead of misattaching metadata to the wrong block.
+ */
+function parseMultimodalSidecar(raw: unknown, expectedLength: number): MultimodalSidecarEntry[] | null {
+  if (!Array.isArray(raw) || raw.length !== expectedLength) return null;
+
+  const parsed: MultimodalSidecarEntry[] = [];
+  for (const entry of raw) {
+    if (entry === null) {
+      parsed.push(null);
+      continue;
+    }
+    if (!isRecord(entry) || !isMediaContentType(entry.type)) return null;
+    const normalized: { type: MediaContentType; metadata?: unknown } = { type: entry.type };
+    // Preserve arbitrary metadata verbatim (primitives, arrays, objects). Only
+    // copy the key when it was actually present so absent metadata round-trips
+    // to `undefined` rather than an explicit `metadata: undefined`.
+    if ("metadata" in entry) normalized.metadata = entry.metadata;
+    parsed.push(normalized);
+  }
+  return parsed;
+}
+
 /**
  * Convert LangChain's multimodal content to AG-UI format.
  *
- * LangChain only supports `text` and `image_url` content blocks. `image_url`
- * blocks are converted back to the original AG-UI media type when the forward
- * converter tagged them with `__agui_type` (and any carried `metadata` is
- * restored); untagged blocks fall back to `DEFAULT_MEDIA_CONTENT_TYPE`.
+ * LangChain only supports `text` and `image_url` content blocks. Each
+ * `image_url` block is restored to its original AG-UI media type and metadata
+ * using the aligned `sidecar` (indexed by block position). Blocks with no valid
+ * sidecar entry fall back to `DEFAULT_MEDIA_CONTENT_TYPE` with no metadata,
+ * preserving the legacy behavior for untagged/legacy checkpoints.
  */
 function convertLangchainMultimodalToAgui(
-  content: Array<LangchainMultimodalBlock>
+  content: Array<LangchainContentBlock>,
+  sidecar: MultimodalSidecarEntry[] | null,
 ): InputContent[] {
   const aguiContent: InputContent[] = [];
 
-  for (const item of content) {
+  content.forEach((item, index) => {
     if (item.type === "text" && item.text) {
       aguiContent.push({
         type: "text",
         text: item.text,
       });
     } else if (item.type === "image_url") {
-      const imageUrl = typeof item.image_url === "string"
-        ? item.image_url
-        : item.image_url?.url;
+      const imageUrl = typeof item.image_url === "string" ? item.image_url : item.image_url?.url;
 
-      if (!imageUrl) continue;
+      if (!imageUrl) return;
 
-      // Restore the original media type from __agui_type in metadata, then
-      // strip it so the returned InputContent.metadata matches the original.
-      // Blocks without __agui_type fall back to image (preserves legacy behavior).
-      const rawMeta = isRecord(item.metadata) ? item.metadata : undefined;
-      const taggedType = rawMeta?.[AGUI_TYPE_KEY];
-      const restoredType = isMediaContentType(taggedType)
-        ? taggedType
-        : DEFAULT_MEDIA_CONTENT_TYPE;
-      let cleanMeta: LangchainBlockMetadata | undefined;
-      if (rawMeta !== undefined) {
-        const { [AGUI_TYPE_KEY]: _stripped, ...rest } = rawMeta;
-        cleanMeta = Object.keys(rest).length > 0 ? rest : undefined;
-      }
+      // The sidecar is already validated, so an entry is either null or a record
+      // with a known media type. Index alignment guarantees we only read the
+      // entry for this exact block.
+      const entry = sidecar?.[index] ?? null;
+      const restoredType = entry ? entry.type : DEFAULT_MEDIA_CONTENT_TYPE;
+      const metadata = entry && "metadata" in entry ? entry.metadata : undefined;
 
-      let source: InputContentDataSource | InputContentUrlSource;
-      // Parse data URLs to extract base64 data
-      if (imageUrl.startsWith("data:")) {
-        // Format: data:mime_type;base64,data
-        const [header, data] = imageUrl.split(",", 2);
-        const mimeType = header.includes(":")
-          ? header.split(":")[1].split(";")[0]
-          : "image/png";
-        source = { type: "data", value: data || "", mimeType };
-      } else {
-        // Regular URL
-        source = { type: "url", value: imageUrl };
-      }
-
-      aguiContent.push(createMediaInputContent(restoredType, source, cleanMeta));
+      aguiContent.push(createMediaInputContent(restoredType, imageUrlToSource(imageUrl), metadata));
     }
-  }
+  });
 
   return aguiContent;
 }
@@ -204,11 +240,17 @@ function convertLangchainMultimodalToAgui(
  * VideoInputContent, DocumentInputContent) as well as legacy BinaryInputContent
  * for backwards compatibility. All media types are routed through LangChain's
  * `image_url` format since that is the only media block type LangChain supports.
+ *
+ * Returns provider-valid content blocks (no extra keys) plus an aligned sidecar
+ * that records each media block's original AG-UI type and metadata so the
+ * reverse converter can restore them from `response_metadata`.
  */
-function convertAguiMultimodalToLangchain(
-  content: InputContent[]
-): LangchainMultimodalBlock[] {
+function convertAguiMultimodalToLangchain(content: InputContent[]): {
+  content: LangchainMultimodalBlock[];
+  sidecar: MultimodalSidecarEntry[];
+} {
   const langchainContent: LangchainMultimodalBlock[] = [];
+  const sidecar: MultimodalSidecarEntry[] = [];
 
   for (const item of content) {
     if (item.type === "text") {
@@ -216,25 +258,26 @@ function convertAguiMultimodalToLangchain(
         type: "text",
         text: item.text,
       });
+      sidecar.push(null);
     } else if (isMediaInputContent(item)) {
       // ImageInputContent, AudioInputContent, VideoInputContent, DocumentInputContent
       const url = mediaSourceToUrl(item.source);
       if (url) {
-        // Stash the original media type inside metadata as __agui_type so the
-        // reverse converter can restore it without a separate top-level field.
+        // The block stays a plain legacy image_url so strict providers accept
+        // it; the media type and metadata go into the sidecar instead.
         langchainContent.push({
           type: "image_url",
           image_url: { url },
-          metadata: {
-            ...(isRecord(item.metadata) ? item.metadata : {}),
-            [AGUI_TYPE_KEY]: item.type,
-          },
         });
+        const entry: { type: MediaContentType; metadata?: unknown } = { type: item.type };
+        if (item.metadata !== undefined) entry.metadata = item.metadata;
+        sidecar.push(entry);
       } else {
         console.warn(`[convertAguiMultimodalToLangchain] Dropping ${item.type} content: source could not be converted to URL`);
       }
     } else if (item.type === "binary") {
-      // Legacy BinaryInputContent — backwards compatibility
+      // Legacy BinaryInputContent — backwards compatibility. Unchanged: no
+      // sidecar entry, so it reads back as the legacy image fallback.
       let url: string;
 
       // Prioritize url, then data, then id
@@ -255,10 +298,11 @@ function convertAguiMultimodalToLangchain(
         type: "image_url",
         image_url: { url },
       });
+      sidecar.push(null);
     }
   }
 
-  return langchainContent;
+  return { content: langchainContent, sidecar };
 }
 
 // A reasoning content block as it appears on a LangChain assistant message
@@ -345,7 +389,12 @@ export function langchainMessagesToAgui(messages: LangGraphMessage[]): Message[]
         // Handle multimodal content
         let userContent: string | InputContent[];
         if (Array.isArray(message.content)) {
-          userContent = convertLangchainMultimodalToAgui(message.content as any);
+          const blocks = message.content as LangchainContentBlock[];
+          const rawSidecar = isRecord(message.response_metadata)
+            ? message.response_metadata[AGUI_MULTIMODAL_SIDECAR_KEY]
+            : undefined;
+          const sidecar = parseMultimodalSidecar(rawSidecar, blocks.length);
+          userContent = convertLangchainMultimodalToAgui(blocks, sidecar);
         } else {
           userContent = stringifyIfNeeded(resolveMessageContent(message.content));
         }
@@ -466,10 +515,17 @@ export function aguiMessagesToLangChain(messages: Message[]): LangGraphMessage[]
         pendingReasoning = [];
         // Handle multimodal content
         let content: UserMessage['content'];
+        let responseMetadata: Record<string, unknown> | undefined;
         if (typeof message.content === "string") {
           content = message.content;
         } else if (Array.isArray(message.content)) {
-          content = convertAguiMultimodalToLangchain(message.content) as any;
+          const converted = convertAguiMultimodalToLangchain(message.content);
+          content = converted.content as any;
+          // Only attach the sidecar when it actually carries media info, so
+          // text-only / legacy-binary-only messages stay free of extra metadata.
+          if (converted.sidecar.some((entry) => entry !== null)) {
+            responseMetadata = { [AGUI_MULTIMODAL_SIDECAR_KEY]: converted.sidecar };
+          }
         } else {
           content = String(message.content);
         }
@@ -479,6 +535,7 @@ export function aguiMessagesToLangChain(messages: Message[]): LangGraphMessage[]
           role: message.role,
           content,
           type: "human",
+          ...(responseMetadata ? { response_metadata: responseMetadata } : {}),
         } as LangGraphMessage);
         break;
       }
