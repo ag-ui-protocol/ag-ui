@@ -85,7 +85,11 @@ const ALL_TARGETS = {
     cwd: path.join(integrationsRoot, "langgraph/python/examples"),
   },
   "langgraph-platform-typescript": {
-    command: "pnpm install",
+    // --no-frozen-lockfile mirrors the mastra example prep: now that this
+    // example is a pnpm workspace member, the parallel build step regenerates
+    // package.json exports across the workspace, so a frozen install here can
+    // trip on that transient drift.
+    command: "pnpm install --no-frozen-lockfile",
     name: "LG Platform TS",
     cwd: path.join(integrationsRoot, "langgraph/typescript/examples"),
   },
