@@ -21,6 +21,7 @@ import { collect, minimalRunInput, scriptedAgent } from "./helpers";
 let nextInterruptState:
   | { activated: boolean; interrupts: Map<string, unknown> }
   | undefined;
+let streamCalls = 0;
 
 vi.mock("@strands-agents/sdk", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@strands-agents/sdk")>();
@@ -50,6 +51,7 @@ vi.mock("@strands-agents/sdk", async (importOriginal) => {
     };
     _interruptState = nextInterruptState;
     async *stream() {
+      streamCalls += 1;
       return { stopReason: "endTurn", message: { role: "assistant", content: [] } };
     }
   }
@@ -152,5 +154,32 @@ describe("Cold restart: resume validation must see session-restored interrupt st
     ) as unknown as { code: string } | undefined;
     expect(err).toBeDefined();
     expect(err!.code).toBe("UNKNOWN_INTERRUPT_ID");
+  });
+
+  it("rejects fresh input on a cold thread when SessionManager restores a pending interrupt", async () => {
+    nextInterruptState = {
+      activated: true,
+      interrupts: new Map([["int-1", {}]]),
+    };
+    streamCalls = 0;
+
+    const agent = new StrandsAgent({
+      agent: scriptedAgent(),
+      name: "t",
+      config: { sessionManagerProvider: () => new FakeSessionManager() },
+    });
+
+    const events = await collect(
+      agent,
+      minimalRunInput({ threadId: "cold-thread-fresh-input" }),
+    );
+
+    expect(events.map((event) => event.type)).toEqual([
+      EventType.RUN_STARTED,
+      EventType.RUN_ERROR,
+    ]);
+    const err = events[1] as unknown as { code: string };
+    expect(err.code).toBe("PENDING_INTERRUPTS");
+    expect(streamCalls).toBe(0);
   });
 });

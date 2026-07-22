@@ -186,6 +186,36 @@ describe("StrandsAgent resume[] gate (interrupts.mdx rules 2-7)", () => {
     ]);
   });
 
+  it("Rule 5: recognizes a replay when resume entries arrive in a different order", async () => {
+    const agent = new NeverRanAgent();
+    setPending(agent, "t", ["live-1", "live-2"]);
+
+    const firstResume = [
+      { interruptId: "live-1", status: "resolved" as const, payload: { approved: true } },
+      { interruptId: "live-2", status: "cancelled" as const },
+    ];
+    await collect(
+      agent,
+      minimalRunInput({ threadId: "t", runId: "r1", resume: firstResume }),
+    );
+    expect(agent.rawCalled).toBe(1);
+
+    const replay = await collect(
+      agent,
+      minimalRunInput({
+        threadId: "t",
+        runId: "r2",
+        resume: [...firstResume].reverse(),
+      }),
+    );
+
+    expect(agent.rawCalled).toBe(1);
+    expect(replay.map((event) => event.type)).toEqual([
+      EventType.RUN_STARTED,
+      EventType.RUN_FINISHED,
+    ]);
+  });
+
   it("Rule 7: rejects expired interrupt", async () => {
     const agent = new NeverRanAgent();
     const pending = (
@@ -242,5 +272,74 @@ describe("StrandsAgent resume[] gate (interrupts.mdx rules 2-7)", () => {
     ]);
     const err = events[1] as unknown as { code: string };
     expect(err.code).toBe("INVALID_PAYLOAD");
+  });
+
+  it("Rule 6: rejects a non-boolean approval value", async () => {
+    for (const invalidApproval of ["true", 1, null]) {
+      const agent = new NeverRanAgent();
+      const pending = setPending(agent, "t", ["val-1"]).get("t")!;
+      pending.get("val-1")!.responseSchema = {
+        type: "object",
+        properties: { approved: { type: "boolean" } },
+        required: ["approved"],
+      };
+
+      const events = await collect(
+        agent,
+        minimalRunInput({
+          threadId: "t",
+          runId: "r1",
+          resume: [{ interruptId: "val-1", status: "resolved", payload: { approved: invalidApproval } }],
+        }),
+      );
+
+      expect(agent.rawCalled).toBe(0);
+      const err = events[1] as unknown as { code: string; message: string };
+      expect(err.code).toBe("INVALID_PAYLOAD");
+      expect(err.message).toContain("approved");
+    }
+  });
+
+  it("Rule 6: accepts explicit denial and optional approve-with-edits fields", async () => {
+    const schema = {
+      type: "object",
+      properties: {
+        approved: { type: "boolean" },
+        editedArgs: { type: "object" },
+      },
+      required: ["approved"],
+    };
+
+    const denied = new NeverRanAgent();
+    const deniedPending = setPending(denied, "denied", ["val-1"]).get("denied")!;
+    deniedPending.get("val-1")!.responseSchema = schema;
+    const deniedEvents = await collect(
+      denied,
+      minimalRunInput({
+        threadId: "denied",
+        resume: [{ interruptId: "val-1", status: "resolved", payload: { approved: false } }],
+      }),
+    );
+    expect(denied.rawCalled).toBe(1);
+    expect(deniedEvents.some((event) => event.type === EventType.RUN_ERROR)).toBe(false);
+
+    const edited = new NeverRanAgent();
+    const editedPending = setPending(edited, "edited", ["val-2"]).get("edited")!;
+    editedPending.get("val-2")!.responseSchema = schema;
+    const editedEvents = await collect(
+      edited,
+      minimalRunInput({
+        threadId: "edited",
+        resume: [
+          {
+            interruptId: "val-2",
+            status: "resolved",
+            payload: { approved: true, editedArgs: { environment: "staging" } },
+          },
+        ],
+      }),
+    );
+    expect(edited.rawCalled).toBe(1);
+    expect(editedEvents.some((event) => event.type === EventType.RUN_ERROR)).toBe(false);
   });
 });

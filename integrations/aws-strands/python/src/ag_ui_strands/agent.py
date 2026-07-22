@@ -147,6 +147,77 @@ from .config import (
 from .utils import convert_agui_content_to_strands, flatten_content_to_text
 
 
+def _resume_fingerprint(resume_entries: list[ResumeEntry]) -> str:
+    """Return an order-independent idempotency fingerprint for ``resume[]``.
+
+    A resume addresses a set of pending interrupts, so clients may submit the
+    same entries in a different order when replaying a request. Canonicalizing
+    both payload object keys and entry order prevents that harmless difference
+    from re-invoking the model or tools.
+    """
+    canonical_entries = [
+        (entry.interrupt_id, entry.status, entry.payload)
+        for entry in resume_entries
+    ]
+    canonical_entries.sort(
+        key=lambda entry: json.dumps(
+            entry, sort_keys=True, default=str, separators=(",", ":")
+        )
+    )
+    serialized = json.dumps(
+        canonical_entries, sort_keys=True, default=str, separators=(",", ":")
+    )
+    return hashlib.md5(  # noqa: S324 -- non-security idempotency key
+        serialized.encode(), usedforsecurity=False
+    ).hexdigest()
+
+
+def _validate_object_payload_property_types(
+    schema: dict[str, Any], payload: dict[str, Any]
+) -> str | None:
+    """Validate supplied primitive object properties from a JSON Schema.
+
+    This intentionally complements, rather than replaces, the lightweight
+    required-field validation in ``run()``. It supports the primitive types
+    used by adapter-issued schemas without adding a full JSON Schema runtime.
+    """
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        return None
+
+    for field, field_schema in properties.items():
+        if field not in payload or not isinstance(field_schema, dict):
+            continue
+        expected_type = field_schema.get("type")
+        if not isinstance(expected_type, str):
+            continue
+        if _json_schema_type_matches(payload[field], expected_type):
+            continue
+        article = "an" if expected_type in {"object", "array"} else "a"
+        return f"field '{field}' must be {article} {expected_type}."
+
+    return None
+
+
+def _json_schema_type_matches(value: Any, expected_type: str) -> bool:
+    if expected_type == "boolean":
+        return isinstance(value, bool)
+    if expected_type == "string":
+        return isinstance(value, str)
+    if expected_type == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if expected_type == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if expected_type == "object":
+        return isinstance(value, dict)
+    if expected_type == "array":
+        return isinstance(value, list)
+    if expected_type == "null":
+        return value is None
+    # Unsupported JSON Schema constructs remain the caller's responsibility.
+    return True
+
+
 def _coerce_text(content: Any) -> str:
     """Best-effort string view of an AG-UI message content field."""
     if isinstance(content, str):
@@ -792,13 +863,7 @@ class StrandsAgent:
 
             if not is_activated:
                 # Rule 5: idempotency — check if this is a replay
-                fingerprint = hashlib.md5(  # noqa: S324
-                    json.dumps(
-                        [(e.interrupt_id, e.status, e.payload) for e in resume_entries],
-                        sort_keys=True, default=str,
-                    ).encode(),
-                    usedforsecurity=False,
-                ).hexdigest()
+                fingerprint = _resume_fingerprint(resume_entries)
                 if self._last_resume_fingerprint.get(thread_id) == fingerprint:
                     yield RunStartedEvent(
                         type=EventType.RUN_STARTED,
@@ -892,6 +957,18 @@ class StrandsAgent:
                             ev_started, ev_error = _error_events(
                                 input_data,
                                 f"Invalid payload for interrupt '{entry.interrupt_id}': missing required keys {missing_keys}.",
+                                "INVALID_PAYLOAD",
+                            )
+                            yield ev_started
+                            yield ev_error
+                            return
+                        type_error = _validate_object_payload_property_types(
+                            schema, payload
+                        )
+                        if type_error:
+                            ev_started, ev_error = _error_events(
+                                input_data,
+                                f"Invalid payload for interrupt '{entry.interrupt_id}': {type_error}",
                                 "INVALID_PAYLOAD",
                             )
                             yield ev_started
@@ -2350,13 +2427,7 @@ class StrandsAgent:
             else:
                 # Store fingerprint for idempotency only after successful processing
                 if resume_entries:
-                    fp = hashlib.md5(  # noqa: S324
-                        json.dumps(
-                            [(e.interrupt_id, e.status, e.payload) for e in resume_entries],
-                            sort_keys=True, default=str,
-                        ).encode(),
-                        usedforsecurity=False,
-                    ).hexdigest()
+                    fp = _resume_fingerprint(resume_entries)
                     self._last_resume_fingerprint[thread_id] = fp
                     _persist_interrupt_bookkeeping(strands_agent, None, fp)
                 yield RunFinishedEvent(

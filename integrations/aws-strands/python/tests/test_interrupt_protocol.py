@@ -29,6 +29,7 @@ from unittest.mock import MagicMock
 import pytest
 from ag_ui.core import (
     EventType,
+    Interrupt,
     RunAgentInput,
     Tool,
     UserMessage,
@@ -542,6 +543,158 @@ class TestResumeUnknownInterruptId:
 
 
 # ---------------------------------------------------------------------------
+# Resume: idempotency and payload type validation
+# ---------------------------------------------------------------------------
+
+
+class TestResumeValidation:
+    THREAD = "resume-validation-thread"
+
+    def _agent_with_pending_schema(self, schema: dict) -> tuple[StrandsAgent, Any]:
+        strands_interrupt = _make_strands_interrupt("my_tool", {}, "st-1")
+        interrupt_state = _make_interrupt_state(
+            activated=True,
+            interrupts={strands_interrupt.id: strands_interrupt},
+        )
+        agent = _build_agent(
+            self.THREAD,
+            _empty_stream(),
+            StrandsAgentConfig(),
+            interrupt_state,
+        )
+        agent._pending_interrupts_by_thread[self.THREAD] = {
+            strands_interrupt.id: Interrupt(
+                id=strands_interrupt.id,
+                reason="tool_call",
+                response_schema=schema,
+            )
+        }
+        return agent, interrupt_state
+
+    async def test_reordered_resume_replay_does_not_reinvoke_strands(self):
+        first = _make_strands_interrupt("my_tool", {}, "st-1")
+        second = _make_strands_interrupt("my_tool", {}, "st-2")
+        interrupt_state = _make_interrupt_state(
+            activated=True,
+            interrupts={first.id: first, second.id: second},
+        )
+        agent = _build_agent(
+            self.THREAD + "-reordered",
+            _empty_stream(),
+            StrandsAgentConfig(),
+            interrupt_state,
+        )
+        stream_calls = 0
+        inner = agent._agents_by_thread[self.THREAD + "-reordered"]
+        original_stream = inner.stream_async
+
+        async def _spy_stream(message: Any):
+            nonlocal stream_calls
+            stream_calls += 1
+            async for event in original_stream(message):
+                yield event
+
+        inner.stream_async = _spy_stream
+        first_resume = [
+            ResumeEntry(interrupt_id=first.id, status="resolved", payload={"approved": True}),
+            ResumeEntry(interrupt_id=second.id, status="cancelled"),
+        ]
+        await _collect(
+            agent,
+            _run_input(self.THREAD + "-reordered", resume=first_resume),
+        )
+        assert stream_calls == 1
+
+        # A completed native resume has no active interrupts. Simulate that
+        # state before replaying the equivalent entries in reverse order.
+        interrupt_state.activated = False
+        replay_events = await _collect(
+            agent,
+            _run_input(
+                self.THREAD + "-reordered",
+                resume=list(reversed(first_resume)),
+            ),
+        )
+        assert stream_calls == 1
+        assert any(event.type == EventType.RUN_FINISHED for event in replay_events)
+        assert not any(event.type == EventType.RUN_ERROR for event in replay_events)
+
+    async def test_non_boolean_approval_payload_is_rejected(self):
+        schema = {
+            "type": "object",
+            "properties": {"approved": {"type": "boolean"}},
+            "required": ["approved"],
+        }
+        for invalid_approval in ("true", 1, None):
+            agent, _ = self._agent_with_pending_schema(schema)
+            interrupt_id = next(iter(agent._pending_interrupts_by_thread[self.THREAD]))
+
+            events = await _collect(
+                agent,
+                _run_input(
+                    self.THREAD,
+                    resume=[
+                        ResumeEntry(
+                            interrupt_id=interrupt_id,
+                            status="resolved",
+                            payload={"approved": invalid_approval},
+                        )
+                    ],
+                ),
+            )
+
+            error = next(event for event in events if event.type == EventType.RUN_ERROR)
+            assert error.code == "INVALID_PAYLOAD"
+            assert "approved" in error.message
+
+    async def test_explicit_denial_and_optional_edited_args_are_valid(self):
+        schema = {
+            "type": "object",
+            "properties": {
+                "approved": {"type": "boolean"},
+                "editedArgs": {"type": "object"},
+            },
+            "required": ["approved"],
+        }
+        denied, _ = self._agent_with_pending_schema(schema)
+        denied_id = next(iter(denied._pending_interrupts_by_thread[self.THREAD]))
+        denied_events = await _collect(
+            denied,
+            _run_input(
+                self.THREAD,
+                resume=[
+                    ResumeEntry(
+                        interrupt_id=denied_id,
+                        status="resolved",
+                        payload={"approved": False},
+                    )
+                ],
+            ),
+        )
+        assert not any(event.type == EventType.RUN_ERROR for event in denied_events)
+
+        edited, _ = self._agent_with_pending_schema(schema)
+        edited_id = next(iter(edited._pending_interrupts_by_thread[self.THREAD]))
+        edited_events = await _collect(
+            edited,
+            _run_input(
+                self.THREAD,
+                resume=[
+                    ResumeEntry(
+                        interrupt_id=edited_id,
+                        status="resolved",
+                        payload={
+                            "approved": True,
+                            "editedArgs": {"environment": "staging"},
+                        },
+                    )
+                ],
+            ),
+        )
+        assert not any(event.type == EventType.RUN_ERROR for event in edited_events)
+
+
+# ---------------------------------------------------------------------------
 # StrandsInterruptHook auto-registration
 # ---------------------------------------------------------------------------
 
@@ -734,6 +887,4 @@ class TestGenericNativeInterrupt:
         interrupt = finished[0].outcome.interrupts[0]
         assert interrupt.reason == "tool_call"
         assert interrupt.response_schema is not None
-
-
 

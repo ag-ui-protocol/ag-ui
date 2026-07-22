@@ -27,7 +27,7 @@ from ag_ui.core import EventType, Interrupt, ResumeEntry, RunAgentInput, Tool, U
 from strands.agent.state import AgentState
 from strands.tools.registry import ToolRegistry
 
-from ag_ui_strands.agent import StrandsAgent
+from ag_ui_strands.agent import StrandsAgent, _resume_fingerprint
 from ag_ui_strands.config import StrandsAgentConfig, ToolBehavior
 
 
@@ -108,15 +108,7 @@ class TestIdempotencyFingerprintSurvivesRestart:
         # Compute the fingerprint exactly as the adapter does, and persist
         # it directly into state — simulating what a prior process wrote
         # before restarting.
-        import hashlib
-        import json
-        fingerprint = hashlib.md5(  # noqa: S324
-            json.dumps(
-                [(e.interrupt_id, e.status, e.payload) for e in resume],
-                sort_keys=True, default=str,
-            ).encode(),
-            usedforsecurity=False,
-        ).hexdigest()
+        fingerprint = _resume_fingerprint(resume)
         state.set(
             "ag_ui_interrupt_bookkeeping",
             {"last_resume_fingerprint": fingerprint, "pending_interrupts": {}},

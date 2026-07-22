@@ -677,11 +677,7 @@ export class StrandsAgent {
       let pending = this._pendingInterruptsByThread.get(threadId);
 
       // Rule 5: idempotency — detect replayed resumes
-      fingerprint = createHash("md5")
-        .update(JSON.stringify(
-          inputData.resume!.map((e) => [e.interruptId, e.status, _sortKeys(e.payload)]),
-        ))
-        .digest("hex");
+      fingerprint = resumeFingerprint(inputData.resume!);
 
       // Cold-restart fallback: if this process has nothing cached in memory
       // for this threadId, restore the per-thread agent first (so a
@@ -703,7 +699,9 @@ export class StrandsAgent {
           return;
         }
         const interruptState = (
-          restored.agent as { _interruptState?: { activated?: boolean; interrupts?: Map<string, unknown> } }
+          restored.agent as unknown as {
+            _interruptState?: { activated?: boolean; interrupts?: Map<string, unknown> };
+          }
         )._interruptState;
         if (interruptState?.activated && interruptState.interrupts) {
           nativePendingIds = new Set(interruptState.interrupts.keys());
@@ -834,6 +832,18 @@ export class StrandsAgent {
                   return;
                 }
               }
+              const typeError = validateObjectPayloadPropertyTypes(
+                schema,
+                entry.payload as Record<string, unknown>,
+              );
+              if (typeError) {
+                yield _runStarted(inputData);
+                yield _runError(
+                  `Invalid payload for interrupt '${entry.interruptId}': ${typeError}`,
+                  "INVALID_PAYLOAD",
+                );
+                return;
+              }
             }
           }
         }
@@ -852,6 +862,20 @@ export class StrandsAgent {
         if (cached) {
           const is = (cached as { _interruptState?: { activated: boolean } })._interruptState;
           if (is?.activated) hasPending = true;
+        } else if (this.config.sessionManagerProvider) {
+          // A cold process has no cached agent yet, but SessionManager may
+          // restore a native pending interrupt for this thread. Restore it
+          // before deciding whether new input may proceed (Rule 4).
+          const restored = await this._ensureAgent(inputData, threadId);
+          if ("error" in restored) {
+            yield _runStarted(inputData);
+            yield restored.error;
+            return;
+          }
+          const interruptState = (
+            restored.agent as { _interruptState?: { activated?: boolean } }
+          )._interruptState;
+          hasPending = interruptState?.activated === true;
         }
       }
       if (hasPending) {
@@ -3216,4 +3240,84 @@ function _sortKeys(val: unknown): unknown {
       },
       {} as Record<string, unknown>,
     );
+}
+
+/**
+ * Canonicalize resume entries before hashing so a semantically identical
+ * resume[] replay is recognized regardless of the client's entry ordering.
+ */
+function resumeFingerprint(entries: ResumeEntry[]): string {
+  const canonicalEntries = entries
+    .map(
+      (entry) =>
+        [entry.interruptId, entry.status, _sortKeys(entry.payload)] as const,
+    )
+    .sort((left, right) =>
+      JSON.stringify(left).localeCompare(JSON.stringify(right)),
+    );
+
+  return createHash("md5")
+    .update(JSON.stringify(canonicalEntries))
+    .digest("hex");
+}
+
+/**
+ * Deliberately small JSON Schema validator for object-property primitive
+ * types. Required-field validation is handled by the caller; this only
+ * validates fields that the client supplied. It keeps the adapter dependency
+ * free while ensuring an approval schema rejects e.g. { approved: "true" }.
+ */
+function validateObjectPayloadPropertyTypes(
+  schema: Record<string, unknown>,
+  payload: Record<string, unknown>,
+): string | undefined {
+  const properties = schema.properties;
+  if (
+    !properties ||
+    typeof properties !== "object" ||
+    Array.isArray(properties)
+  ) {
+    return undefined;
+  }
+
+  for (const [field, fieldSchema] of Object.entries(
+    properties as Record<string, unknown>,
+  )) {
+    if (!(field in payload) || !fieldSchema || typeof fieldSchema !== "object") {
+      continue;
+    }
+    const type = (fieldSchema as { type?: unknown }).type;
+    if (typeof type !== "string" || jsonSchemaTypeMatches(payload[field], type)) {
+      continue;
+    }
+    return `field '${field}' must be ${jsonSchemaTypeDescription(type)}.`;
+  }
+
+  return undefined;
+}
+
+function jsonSchemaTypeMatches(value: unknown, type: string): boolean {
+  switch (type) {
+    case "boolean":
+      return typeof value === "boolean";
+    case "string":
+      return typeof value === "string";
+    case "number":
+      return typeof value === "number" && Number.isFinite(value);
+    case "integer":
+      return typeof value === "number" && Number.isInteger(value);
+    case "object":
+      return value !== null && typeof value === "object" && !Array.isArray(value);
+    case "array":
+      return Array.isArray(value);
+    case "null":
+      return value === null;
+    default:
+      // Unsupported JSON Schema constructs remain the caller's responsibility.
+      return true;
+  }
+}
+
+function jsonSchemaTypeDescription(type: string): string {
+  return type === "object" || type === "array" ? `an ${type}` : `a ${type}`;
 }
