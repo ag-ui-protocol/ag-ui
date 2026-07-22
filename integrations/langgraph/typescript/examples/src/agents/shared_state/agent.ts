@@ -265,18 +265,14 @@ async function chatNode(state: AgentState, config?: RunnableConfig): Promise<Com
   });
 }
 
-// Define the graph
-const workflow = new StateGraph<AgentState>(AgentStateAnnotation);
-
-// Add nodes
-workflow.addNode("start_flow", startFlow);
-workflow.addNode("chat_node", chatNode);
-
-// Add edges
-workflow.setEntryPoint("start_flow");
-workflow.addEdge(START, "start_flow");
-workflow.addEdge("start_flow", "chat_node");
-workflow.addEdge("chat_node", END);
+// Define the graph. The builder calls are chained so the current
+// @langchain/langgraph typings track each node name through the graph type.
+const workflow = new StateGraph(AgentStateAnnotation)
+  .addNode("start_flow", startFlow)
+  .addNode("chat_node", chatNode)
+  .addEdge(START, "start_flow")
+  .addEdge("start_flow", "chat_node")
+  .addEdge("chat_node", END);
 
 // Compile the graph
 export const sharedStateGraph = workflow.compile({
