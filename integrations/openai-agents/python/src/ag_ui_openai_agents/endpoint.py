@@ -72,10 +72,13 @@ def add_openai_agents_fastapi_endpoint(
                 # If the run never emitted RUN_STARTED it failed in setup (input
                 # translation / clone / Runner.run_streamed) before to_agui ran, so
                 # no lifecycle reached the client — an empty 200 otherwise. Emit a
-                # minimal well-formed RUN_STARTED + RUN_ERROR. If the run DID start,
-                # to_agui already handled the error per its emit_run_error config
-                # (possibly deliberately silent), so add nothing — just log. Either
-                # way, never sever the stream with an ASGI-level traceback.
+                # minimal well-formed RUN_STARTED + RUN_ERROR — deliberately even
+                # when emit_run_error=False, since a silent empty 200 the client
+                # can't distinguish from success is worse than a terminal error at
+                # the transport boundary. If the run DID start, to_agui already
+                # handled the error per its emit_run_error config (possibly
+                # deliberately silent), so add nothing — just log. Either way,
+                # never sever the stream with an ASGI-level traceback.
                 if not started:
                     yield encoder.encode(
                         RunStartedEvent(

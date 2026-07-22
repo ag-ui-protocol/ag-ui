@@ -571,7 +571,15 @@ class OpenAIToAGUITranslator:
         """
         raw = item.raw_item
         raw_id = read_attr(raw, "id")
-        text = ItemHelpers.extract_text(raw) or ItemHelpers.extract_refusal(raw) or ""
+        # Concatenate text and refusal rather than falling back: extract_text
+        # ignores refusals and returns truthy whenever any output_text part
+        # exists, so `text or refusal` would drop a refusal that streamed
+        # (translate_refusal_delta feeds the same window) from the snapshot.
+        text = "".join(
+            part
+            for part in (ItemHelpers.extract_text(raw), ItemHelpers.extract_refusal(raw))
+            if part
+        )
         action, key = self._reconcile(raw_id, self._open_texts, self._closed_text_ids)
         if action == "close":
             # key is still open at this point — read its id before _close_text pops it.

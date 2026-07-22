@@ -106,6 +106,9 @@ def test_audio_format_from_mime_variants():
     assert fmt("audio/wav") == "wav"
     assert fmt("audio/wave") == "wav"
     assert fmt(None) == "wav"
+    # Content types carrying parameters must still match (params stripped).
+    assert fmt("audio/wav; codecs=1") == "wav"
+    assert fmt("audio/mpeg; rate=16000") == "mp3"
     # Chat Completions only takes wav/mp3 — anything else must map to None
     # so the caller drops the part instead of sending a rejectable request.
     assert fmt("audio/ogg") is None
@@ -382,34 +385,81 @@ def test_image_survives_translated_input_validation():
     }
 
 
-def test_translated_input_rejects_image_without_detail():
-    with pytest.raises(ValidationError) as exc_info:
-        TranslatedInput(
-            thread_id="t1",
-            run_id="r1",
-            messages=[
-                {
-                    "type": "message",
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_image",
-                            "image_url": "https://x/y.png",
-                        }
-                    ],
-                }
-            ],
-            tools=[],
-            state={},
-            context=[],
-            forwarded_props=None,
-        )
-
-    assert any(
-        error["loc"][-1] == "detail"
-        and "ResponseInputImageParam" in error["loc"]
-        for error in exc_info.value.errors()
+def test_translated_input_skips_message_validation():
+    # messages uses SkipValidation, so shapes that are not Responses input-item
+    # members (e.g. a detail-less image, or an input_audio block) construct
+    # without a ValidationError; the SDK validates what it consumes at run time.
+    ti = TranslatedInput(
+        thread_id="t1",
+        run_id="r1",
+        messages=[
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_image", "image_url": "https://x/y.png"}],
+            }
+        ],
+        tools=[],
+        state={},
+        context=[],
+        forwarded_props=None,
     )
+    assert ti.messages[0]["content"][0] == {
+        "type": "input_image",
+        "image_url": "https://x/y.png",
+    }
+
+
+def test_audio_user_message_survives_to_openai():
+    # input_audio is a Chat-Completions shape, not a Responses input-item member;
+    # with SkipValidation an audio request translates instead of crashing.
+    run_input = RunAgentInput(
+        thread_id="t1",
+        run_id="r1",
+        messages=[
+            UserMessage(
+                id="u1",
+                role="user",
+                content=[
+                    AudioInputContent(
+                        source=InputContentDataSource(value="Zm9v", mime_type="audio/wav")
+                    )
+                ],
+            )
+        ],
+        tools=[],
+        state={},
+        context=[],
+        forwarded_props=None,
+    )
+    translated = AGUITranslator().to_openai(run_input)
+    assert translated.messages[0]["content"][0] == {
+        "type": "input_audio",
+        "input_audio": {"data": "Zm9v", "format": "wav"},
+    }
+
+
+def test_reasoning_summary_survives_as_a_stable_list_through_to_openai():
+    from ag_ui.core import ReasoningMessage
+
+    run_input = RunAgentInput(
+        thread_id="t1",
+        run_id="r1",
+        messages=[
+            ReasoningMessage(
+                id="rs", role="reasoning", content="because", encrypted_value="enc"
+            )
+        ],
+        tools=[],
+        state={},
+        context=[],
+        forwarded_props=None,
+    )
+    translated = AGUITranslator().to_openai(run_input)
+    summary = translated.messages[0]["summary"]
+    # A real list that survives multiple reads, not a one-shot ValidatorIterator.
+    assert list(summary) == [{"type": "summary_text", "text": "because"}]
+    assert list(summary) == [{"type": "summary_text", "text": "because"}]
 
 
 # ── empty-content dropping ───────────────────────────────────────────────

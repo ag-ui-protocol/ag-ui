@@ -671,7 +671,9 @@ class AGUIToOpenAITranslator:
         """
         if not mime:
             return "wav"
-        subtype = mime.split("/", 1)[-1].lower()
+        # Strip any parameters (e.g. "audio/wav; codecs=1") and whitespace before
+        # matching, so a parameterized-but-valid content type isn't dropped.
+        subtype = mime.split("/", 1)[-1].split(";", 1)[0].strip().lower()
         # Same audio, lots of names for it — fold the common ones together.
         if subtype in ("mpeg", "mpeg3", "mp3"):
             return "mp3"

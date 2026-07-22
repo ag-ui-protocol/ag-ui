@@ -75,9 +75,16 @@ class TranslatedInput(BaseModel):
     None for a top-level run."""
 
     # ── Translated payload (the actual work the translator does) ────────
-    messages: list[TResponseInputItem]
+    messages: SkipValidation[list[TResponseInputItem]]
     """Responses-API input items, ready to pass to Runner.run*(input=...).
-    Pydantic validates these against the SDK's input-item types."""
+
+    Validation is skipped (like ``tools``). Two reasons: (1) audio parts use the
+    Chat-Completions ``input_audio`` shape, which is a valid model input for an
+    audio-capable agent but is not a member of the Responses input-item union, so
+    strict validation would reject an otherwise-usable request; (2) validating a
+    reasoning item's ``summary`` (typed ``Iterable`` in the SDK) materializes it as
+    a single-use ``ValidatorIterator`` that empties after one read. The SDK
+    validates the shape it actually consumes at run time."""
 
     tools: SkipValidation[list[FunctionTool]] = []
     """FunctionTool proxies for the client's tools. Merge these with your

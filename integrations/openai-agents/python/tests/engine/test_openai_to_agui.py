@@ -30,6 +30,7 @@ from agents.models.fake_id import FAKE_RESPONSES_ID
 from openai.types.responses import (
     ResponseFunctionToolCall,
     ResponseOutputMessage,
+    ResponseOutputRefusal,
     ResponseOutputText,
     ResponseReasoningItem,
 )
@@ -213,6 +214,28 @@ def test_finalize_closes_text_left_open_after_text_done():
     events = engine.finalize()
     assert _types(events) == [EventType.TEXT_MESSAGE_END]
     assert events[0].message_id == "msg_1"
+
+
+def test_message_with_text_and_refusal_records_both_in_snapshot():
+    # extract_text ignores refusals, so a naive `text or refusal` would drop the
+    # refusal from the snapshot even though it streamed into the same window.
+    engine = OpenAIToAGUITranslator()
+    raw = ResponseOutputMessage(
+        id="msg_1",
+        type="message",
+        role="assistant",
+        status="completed",
+        content=[
+            ResponseOutputText(type="output_text", text="Here is ", annotations=[]),
+            ResponseOutputRefusal(type="refusal", refusal="I can't help with that."),
+        ],
+    )
+    events = _drive(engine, _run_item(MessageOutputItem(agent=_AGENT, raw_item=raw)))
+    streamed = "".join(
+        e.delta for e in events if e.type == EventType.TEXT_MESSAGE_CONTENT
+    )
+    assert streamed == "Here is I can't help with that."
+    assert engine._snapshot_messages[0].content == "Here is I can't help with that."
 
 
 def test_refusal_delta_streams_into_the_text_window():
