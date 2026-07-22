@@ -344,37 +344,45 @@ async function supervisorAgent(state: TravelAgentState, config?: RunnableConfig)
   });
 }
 
-// Create subgraphs. The builder calls are chained so the current
-// @langchain/langgraph typings track each node name through the graph type.
-const flightsSubgraph = new StateGraph(TravelAgentStateAnnotation)
-  .addNode("flights_agent_chat_node", flightsFinder)
-  .addEdge(START, "flights_agent_chat_node")
-  .addEdge("flights_agent_chat_node", END)
-  .compile();
+// Create subgraphs
+const flightsGraph = new StateGraph(TravelAgentStateAnnotation);
+flightsGraph.addNode("flights_agent_chat_node", flightsFinder);
+flightsGraph.setEntryPoint("flights_agent_chat_node");
+flightsGraph.addEdge(START, "flights_agent_chat_node");
+flightsGraph.addEdge("flights_agent_chat_node", END);
+const flightsSubgraph = flightsGraph.compile();
 
-const hotelsSubgraph = new StateGraph(TravelAgentStateAnnotation)
-  .addNode("hotels_agent_chat_node", hotelsFinder)
-  .addEdge(START, "hotels_agent_chat_node")
-  .addEdge("hotels_agent_chat_node", END)
-  .compile();
+const hotelsGraph = new StateGraph(TravelAgentStateAnnotation);
+hotelsGraph.addNode("hotels_agent_chat_node", hotelsFinder);
+hotelsGraph.setEntryPoint("hotels_agent_chat_node");
+hotelsGraph.addEdge(START, "hotels_agent_chat_node");
+hotelsGraph.addEdge("hotels_agent_chat_node", END);
+const hotelsSubgraph = hotelsGraph.compile();
 
-const experiencesSubgraph = new StateGraph(TravelAgentStateAnnotation)
-  .addNode("experiences_agent_chat_node", experiencesFinder)
-  .addEdge(START, "experiences_agent_chat_node")
-  .addEdge("experiences_agent_chat_node", END)
-  .compile();
+const experiencesGraph = new StateGraph(TravelAgentStateAnnotation);
+experiencesGraph.addNode("experiences_agent_chat_node", experiencesFinder);
+experiencesGraph.setEntryPoint("experiences_agent_chat_node");
+experiencesGraph.addEdge(START, "experiences_agent_chat_node");
+experiencesGraph.addEdge("experiences_agent_chat_node", END);
+const experiencesSubgraph = experiencesGraph.compile();
 
-// Main supervisor workflow. Subgraph nodes are added before the edges that
-// reference them so the chained node-name types stay in scope.
-const workflow = new StateGraph(TravelAgentStateAnnotation)
-  .addNode("supervisor", supervisorAgent, { ends: ['flights_agent', 'hotels_agent', 'experiences_agent', END] })
-  .addNode("flights_agent", flightsSubgraph)
-  .addNode("hotels_agent", hotelsSubgraph)
-  .addNode("experiences_agent", experiencesSubgraph)
-  .addEdge(START, "supervisor")
-  .addEdge("flights_agent", "supervisor")
-  .addEdge("hotels_agent", "supervisor")
-  .addEdge("experiences_agent", "supervisor");
+// Main supervisor workflow
+const workflow = new StateGraph(TravelAgentStateAnnotation);
+
+// Add supervisor and subgraphs as nodes
+workflow.addNode("supervisor", supervisorAgent, { ends: ['flights_agent', 'hotels_agent', 'experiences_agent', END] });
+workflow.addNode("flights_agent", flightsSubgraph);
+workflow.addNode("hotels_agent", hotelsSubgraph);
+workflow.addNode("experiences_agent", experiencesSubgraph);
+
+// Set entry point
+workflow.setEntryPoint("supervisor");
+workflow.addEdge(START, "supervisor");
+
+// Add edges back to supervisor after each subgraph
+workflow.addEdge("flights_agent", "supervisor");
+workflow.addEdge("hotels_agent", "supervisor");
+workflow.addEdge("experiences_agent", "supervisor");
 
 // Compile the graph
 export const subGraphsAgentGraph = workflow.compile({

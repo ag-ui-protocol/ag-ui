@@ -7,7 +7,6 @@ packages:
   - integrations/community/*/typescript
   - integrations/aws-strands/typescript/examples
   - integrations/mastra/typescript/examples
-  - integrations/langgraph/typescript/examples
 
 ignoredBuiltDependencies:
   - nx

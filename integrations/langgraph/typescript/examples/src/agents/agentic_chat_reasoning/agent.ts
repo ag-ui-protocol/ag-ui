@@ -50,6 +50,7 @@ async function chatNode(state: AgentState, config?: RunnableConfig) {
   } else if (state.model === "Gemini") {
     model = new ChatGoogleGenerativeAI({
       model: "gemini-2.5-pro",
+      thinkingBudget: 1024,
     });
   } else {
     // Default: OpenAI

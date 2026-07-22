@@ -42,11 +42,10 @@ async function chatNode(state: AgentState, config?: RunnableConfig): Promise<Com
   });
 }
 
-// The builder calls are chained so the current @langchain/langgraph
-// typings track each node name through the graph type.
-const workflow = new StateGraph(AgentStateAnnotation)
-  .addNode("chat_node", chatNode)
-  .addEdge(START, "chat_node");
+const workflow = new StateGraph<AgentState>(AgentStateAnnotation);
+workflow.addNode("chat_node", chatNode);
+
+workflow.addEdge(START, "chat_node");
 
 export const toolBasedGenerativeUiGraph = workflow.compile({
   transformers: [aguiTransformer],

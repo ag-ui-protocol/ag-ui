@@ -256,27 +256,32 @@ async function processStepsNode(state: AgentState, config?: RunnableConfig): Pro
 }
 
 // Define the graph
-// The builder calls are chained so the current @langchain/langgraph
-// typings track each node name through the graph type.
-const workflow = new StateGraph(AgentStateAnnotation)
-  .addNode("start_flow", startFlow)
-  .addNode("chat_node", chatNode)
-  .addNode("process_steps_node", processStepsNode)
-  .addEdge(START, "start_flow")
-  .addEdge("start_flow", "chat_node")
-  .addEdge("process_steps_node", END)
-  .addConditionalEdges(
-    "chat_node",
-    (state: AgentState) => {
-      // This would be determined by the Command returned from chat_node
-      // For now, we'll assume the logic is handled in the Command's goto property
-      return "continue";
-    },
-    {
-      "process_steps_node": "process_steps_node",
-      "continue": END,
-    }
-  );
+const workflow = new StateGraph(AgentStateAnnotation);
+
+// Add nodes
+workflow.addNode("start_flow", startFlow);
+workflow.addNode("chat_node", chatNode);
+workflow.addNode("process_steps_node", processStepsNode);
+
+// Add edges
+workflow.setEntryPoint("start_flow");
+workflow.addEdge(START, "start_flow");
+workflow.addEdge("start_flow", "chat_node");
+workflow.addEdge("process_steps_node", END);
+
+// Add conditional edges from chat_node
+workflow.addConditionalEdges(
+  "chat_node",
+  (state: AgentState) => {
+    // This would be determined by the Command returned from chat_node
+    // For now, we'll assume the logic is handled in the Command's goto property
+    return "continue";
+  },
+  {
+    "process_steps_node": "process_steps_node",
+    "continue": END,
+  }
+);
 
 // Compile the graph
 export const humanInTheLoopGraph = workflow.compile({

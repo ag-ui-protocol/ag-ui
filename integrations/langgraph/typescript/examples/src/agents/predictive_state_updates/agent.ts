@@ -144,12 +144,14 @@ async function chatNode(state: AgentState, config?: RunnableConfig): Promise<Com
 }
 
 // Define the graph
-// The builder calls are chained so the current @langchain/langgraph
-// typings track each node name through the graph type.
-const workflow = new StateGraph(AgentStateAnnotation)
-  .addNode("chat_node", chatNode)
-  .addEdge(START, "chat_node")
-  .addEdge("chat_node", END);
+const workflow = new StateGraph(AgentStateAnnotation);
+
+// Add nodes
+workflow.addNode("chat_node", chatNode);
+
+// Add edges
+workflow.addEdge(START, "chat_node");
+workflow.addEdge("chat_node", END);
 
 // Compile the graph
 export const predictiveStateUpdatesGraph = workflow.compile({
