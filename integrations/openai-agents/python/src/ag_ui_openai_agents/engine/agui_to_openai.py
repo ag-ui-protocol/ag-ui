@@ -150,7 +150,7 @@ class AGUIToOpenAITranslator:
         lines = [
             f"{item.description}: {item.value}"
             for item in items
-            if item.description or item.value
+            if item.description and item.value
         ]
         return "\n".join(lines)
 
@@ -273,7 +273,13 @@ class AGUIToOpenAITranslator:
             "type": "reasoning",
             "id": message.id,
             "encrypted_content": message.encrypted_value,
-            "summary": [{"type": "summary_text", "text": message.content or ""}],
+            # Omit the summary entry entirely when there's no text — some backends
+            # reject a summary_text with an empty string.
+            "summary": (
+                [{"type": "summary_text", "text": message.content}]
+                if message.content
+                else []
+            ),
         }
 
     def translate_assistant_message(
@@ -563,7 +569,7 @@ class AGUIToOpenAITranslator:
         if source_type == "data":
             # The Responses API requires a filename alongside base64 file_data;
             # DocumentInputContent carries none, so synthesize one from the mime
-            # subtype (mirrors _binary_as_file, which forwards a filename).
+            # subtype (mirrors _binary_as_file).
             subtype = (mime or "application/octet-stream").split("/")[-1] or "bin"
             return {
                 "type": "input_file",
@@ -745,13 +751,14 @@ class AGUIToOpenAITranslator:
         if part.url:
             return {"type": "input_file", "file_url": part.url}
         if part.data:
-            payload = {
+            # The Responses API requires a filename alongside base64 file_data;
+            # synthesize one from the mime subtype when the part carries none.
+            subtype = mime.split("/")[-1] or "bin"
+            return {
                 "type": "input_file",
+                "filename": part.filename or f"file.{subtype}",
                 "file_data": f"data:{mime};base64,{part.data}",
             }
-            if part.filename:
-                payload["filename"] = part.filename
-            return payload
         return None
 
 

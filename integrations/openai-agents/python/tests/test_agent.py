@@ -158,6 +158,14 @@ def test_explicit_context_overrides_agui_context(patched_runner):
     assert patched_runner[0]["context"] is sentinel
 
 
+def test_no_context_defaults_to_none_not_empty_list(patched_runner):
+    # A context-less request must run with the SDK default (None), not [] —
+    # agents branching on `ctx.context is None` depend on this.
+    wrapper = OpenAIAgentsAgent(Agent(name="assistant", instructions="hi"))
+    _collect(wrapper, _run_input())  # _run_input has context=[]
+    assert patched_runner[0]["context"] is None
+
+
 def test_explicit_context_none_is_honored(patched_runner):
     # context=None is a real SDK context, distinct from "not provided".
     run_input = _run_input()

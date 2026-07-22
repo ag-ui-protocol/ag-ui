@@ -229,11 +229,15 @@ def test_binary_as_file_url_source():
     assert out == {"type": "input_file", "file_url": "https://x/y.pdf"}
 
 
-def test_binary_as_file_data_without_filename_omits_key():
+def test_binary_as_file_data_without_filename_synthesizes_one():
+    # Base64 file_data requires a filename (Responses API); synthesize from mime.
     part = _binary(mime_type="application/pdf", data="Zm9v")
     out = _engine._binary_as_file(part, "application/pdf")
-    assert out == {"type": "input_file", "file_data": "data:application/pdf;base64,Zm9v"}
-    assert "filename" not in out
+    assert out == {
+        "type": "input_file",
+        "filename": "file.pdf",
+        "file_data": "data:application/pdf;base64,Zm9v",
+    }
 
 
 # ── source resolution helper ──────────────────────────────────────────────
@@ -548,3 +552,30 @@ def test_translate_context_renders_nonempty_items():
         ]
     )
     assert rendered == "Language: German"
+
+
+# ── CR4 fixes: filename synthesis, context filtering, reasoning summary ───
+
+
+def test_translate_context_drops_items_missing_either_field():
+    from ag_ui.core import Context
+
+    rendered = _engine.translate_context(
+        [
+            Context(description="Language", value="German"),
+            Context(description="LabelOnly", value=""),
+            Context(description="", value="ValueOnly"),
+        ]
+    )
+    assert rendered == "Language: German"
+
+
+def test_reasoning_message_with_empty_content_omits_summary_entry():
+    from ag_ui.core import ReasoningMessage
+
+    items = _engine.translate_message(
+        ReasoningMessage(id="r3", role="reasoning", content="", encrypted_value="enc")
+    )
+    assert items == [
+        {"type": "reasoning", "id": "r3", "encrypted_content": "enc", "summary": []}
+    ]

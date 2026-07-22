@@ -82,6 +82,9 @@ def add_openai_agents_fastapi_endpoint(
                             type=EventType.RUN_STARTED,
                             thread_id=input_data.thread_id,
                             run_id=input_data.run_id,
+                            # Preserve parent linkage for nested/branched runs,
+                            # matching the normal to_agui RUN_STARTED path.
+                            parent_run_id=getattr(input_data, "parent_run_id", None),
                         )
                     )
                     yield encoder.encode(

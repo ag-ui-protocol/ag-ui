@@ -139,8 +139,13 @@ class OpenAIAgentsAgent:
                     tools=[*self.agent.tools, *client_tools]
                 )
 
+        # Fall back to the AG-UI ambient context; normalize an empty list to
+        # None so a context-less request matches the SDK's own default (None),
+        # not [] — agents that branch on `ctx.context is None` rely on this.
         context = (
-            self._context if self._context is not _UNSET_CONTEXT else translated.context
+            self._context
+            if self._context is not _UNSET_CONTEXT
+            else (translated.context or None)
         )
         result = Runner.run_streamed(
             run_agent,
