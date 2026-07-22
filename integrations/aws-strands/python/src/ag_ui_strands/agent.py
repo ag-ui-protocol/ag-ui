@@ -69,6 +69,29 @@ def _has_strands_session_manager(agent: Any) -> bool:
     )
 
 
+def _error_events(
+    input_data: "RunAgentInput",
+    message: str,
+    code: str,
+) -> tuple[Any, Any]:
+    """Return (RunStartedEvent, RunErrorEvent) tuple for early-exit error paths.
+    
+    Use with: yield ev1; yield ev2 where (ev1, ev2) = _error_events(...)
+    """
+    return (
+        RunStartedEvent(
+            type=EventType.RUN_STARTED,
+            thread_id=input_data.thread_id,
+            run_id=input_data.run_id,
+        ),
+        RunErrorEvent(
+            type=EventType.RUN_ERROR,
+            message=message,
+            code=code,
+        ),
+    )
+
+
 logger = logging.getLogger(__name__)
 from ag_ui.core import (
     AssistantMessage,
@@ -562,16 +585,13 @@ class StrandsAgent:
                                 f"session_manager_provider failed: {e}",
                                 exc_info=True,
                             )
-                            yield RunStartedEvent(
-                                type=EventType.RUN_STARTED,
-                                thread_id=input_data.thread_id,
-                                run_id=input_data.run_id,
+                            ev_started, ev_error = _error_events(
+                                input_data,
+                                f"Failed to initialize session manager: {e}",
+                                "SESSION_MANAGER_ERROR",
                             )
-                            yield RunErrorEvent(
-                                type=EventType.RUN_ERROR,
-                                message=f"Failed to initialize session manager: {e}",
-                                code="SESSION_MANAGER_ERROR",
-                            )
+                            yield ev_started
+                            yield ev_error
                             return
                         # Validate the provider return type at the boundary —
                         # otherwise a forgotten call or wrong type surfaces
@@ -585,19 +605,13 @@ class StrandsAgent:
                                 "expected a SessionManager instance.",
                                 actual,
                             )
-                            yield RunStartedEvent(
-                                type=EventType.RUN_STARTED,
-                                thread_id=input_data.thread_id,
-                                run_id=input_data.run_id,
+                            ev_started, ev_error = _error_events(
+                                input_data,
+                                f"session_manager_provider returned {actual}; expected a SessionManager instance",
+                                "SESSION_MANAGER_INVALID_TYPE",
                             )
-                            yield RunErrorEvent(
-                                type=EventType.RUN_ERROR,
-                                message=(
-                                    f"session_manager_provider returned {actual}; "
-                                    "expected a SessionManager instance"
-                                ),
-                                code="SESSION_MANAGER_INVALID_TYPE",
-                            )
+                            yield ev_started
+                            yield ev_error
                             return
                     if session_manager is None and self.config.session_manager_provider:
                         logger.warning(
@@ -751,16 +765,13 @@ class StrandsAgent:
                 strands_agent, "_interrupt_state", None
             )
             if interrupt_state is not None and getattr(interrupt_state, "activated", False) is True:
-                yield RunStartedEvent(
-                    type=EventType.RUN_STARTED,
-                    thread_id=input_data.thread_id,
-                    run_id=input_data.run_id,
+                ev_started, ev_error = _error_events(
+                    input_data,
+                    "Thread has pending interrupts. Include resume[] to address them.",
+                    "PENDING_INTERRUPTS",
                 )
-                yield RunErrorEvent(
-                    type=EventType.RUN_ERROR,
-                    message="Thread has pending interrupts. Include resume[] to address them.",
-                    code="PENDING_INTERRUPTS",
-                )
+                yield ev_started
+                yield ev_error
                 return
 
         if resume_entries:
@@ -803,16 +814,13 @@ class StrandsAgent:
                     return
 
                 if not self.config.session_manager_provider:
-                    yield RunStartedEvent(
-                        type=EventType.RUN_STARTED,
-                        thread_id=input_data.thread_id,
-                        run_id=input_data.run_id,
+                    ev_started, ev_error = _error_events(
+                        input_data,
+                        "No pending interrupt for this thread.",
+                        "UNKNOWN_INTERRUPT_ID",
                     )
-                    yield RunErrorEvent(
-                        type=EventType.RUN_ERROR,
-                        message="No pending interrupt for this thread.",
-                        code="UNKNOWN_INTERRUPT_ID",
-                    )
+                    yield ev_started
+                    yield ev_error
                     return
 
             pending_ids: set[str] = set(interrupt_state.interrupts.keys())
@@ -822,38 +830,26 @@ class StrandsAgent:
             # Rule 2: reject unknown interrupt IDs
             for entry in resume_entries:
                 if entry.interrupt_id not in pending_ids:
-                    yield RunStartedEvent(
-                        type=EventType.RUN_STARTED,
-                        thread_id=input_data.thread_id,
-                        run_id=input_data.run_id,
+                    ev_started, ev_error = _error_events(
+                        input_data,
+                        f"Unknown interrupt_id '{entry.interrupt_id}': no matching pending interrupt for this thread.",
+                        "UNKNOWN_INTERRUPT_ID",
                     )
-                    yield RunErrorEvent(
-                        type=EventType.RUN_ERROR,
-                        message=(
-                            f"Unknown interrupt_id '{entry.interrupt_id}': "
-                            "no matching pending interrupt for this thread."
-                        ),
-                        code="UNKNOWN_INTERRUPT_ID",
-                    )
+                    yield ev_started
+                    yield ev_error
                     return
 
             # Rule 3: all open interrupts must be addressed
             resumed_ids = {e.interrupt_id for e in resume_entries}
             missing_ids = pending_ids - resumed_ids
             if missing_ids:
-                yield RunStartedEvent(
-                    type=EventType.RUN_STARTED,
-                    thread_id=input_data.thread_id,
-                    run_id=input_data.run_id,
+                ev_started, ev_error = _error_events(
+                    input_data,
+                    f"Partial resume: missing interrupt IDs {sorted(missing_ids)}. All open interrupts must be addressed.",
+                    "PARTIAL_RESUME",
                 )
-                yield RunErrorEvent(
-                    type=EventType.RUN_ERROR,
-                    message=(
-                        f"Partial resume: missing interrupt IDs "
-                        f"{sorted(missing_ids)}. All open interrupts must be addressed."
-                    ),
-                    code="PARTIAL_RESUME",
-                )
+                yield ev_started
+                yield ev_error
                 return
 
             for entry in resume_entries:
@@ -863,16 +859,13 @@ class StrandsAgent:
                 if ag_ui_interrupt and getattr(ag_ui_interrupt, "expires_at", None):
                     expiry = datetime.fromisoformat(ag_ui_interrupt.expires_at)
                     if datetime.now(timezone.utc) > expiry:
-                        yield RunStartedEvent(
-                            type=EventType.RUN_STARTED,
-                            thread_id=input_data.thread_id,
-                            run_id=input_data.run_id,
+                        ev_started, ev_error = _error_events(
+                            input_data,
+                            f"Interrupt '{entry.interrupt_id}' has expired.",
+                            "INTERRUPT_EXPIRED",
                         )
-                        yield RunErrorEvent(
-                            type=EventType.RUN_ERROR,
-                            message=f"Interrupt '{entry.interrupt_id}' has expired.",
-                            code="INTERRUPT_EXPIRED",
-                        )
+                        yield ev_started
+                        yield ev_error
                         return
 
                 # Rule 6: basic payload validation against responseSchema
@@ -885,36 +878,24 @@ class StrandsAgent:
                     payload = entry.payload
                     if schema.get("type") == "object":
                         if not isinstance(payload, dict):
-                            yield RunStartedEvent(
-                                type=EventType.RUN_STARTED,
-                                thread_id=input_data.thread_id,
-                                run_id=input_data.run_id,
+                            ev_started, ev_error = _error_events(
+                                input_data,
+                                f"Invalid payload for interrupt '{entry.interrupt_id}': expected an object.",
+                                "INVALID_PAYLOAD",
                             )
-                            yield RunErrorEvent(
-                                type=EventType.RUN_ERROR,
-                                message=(
-                                    f"Invalid payload for interrupt '{entry.interrupt_id}': "
-                                    "expected an object."
-                                ),
-                                code="INVALID_PAYLOAD",
-                            )
+                            yield ev_started
+                            yield ev_error
                             return
                         required = schema.get("required", [])
                         missing_keys = [k for k in required if k not in payload]
                         if missing_keys:
-                            yield RunStartedEvent(
-                                type=EventType.RUN_STARTED,
-                                thread_id=input_data.thread_id,
-                                run_id=input_data.run_id,
+                            ev_started, ev_error = _error_events(
+                                input_data,
+                                f"Invalid payload for interrupt '{entry.interrupt_id}': missing required keys {missing_keys}.",
+                                "INVALID_PAYLOAD",
                             )
-                            yield RunErrorEvent(
-                                type=EventType.RUN_ERROR,
-                                message=(
-                                    f"Invalid payload for interrupt '{entry.interrupt_id}': "
-                                    f"missing required keys {missing_keys}."
-                                ),
-                                code="INVALID_PAYLOAD",
-                            )
+                            yield ev_started
+                            yield ev_error
                             return
 
                 if entry.status == "cancelled":
