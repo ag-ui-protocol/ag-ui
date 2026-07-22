@@ -158,6 +158,35 @@ describe("v3 tools channel → TOOL_CALL_RESULT", () => {
     expect(toolResults(dispatched)[0].content).toBe("done");
   });
 
+  it("unwraps the ToolNode result envelope to the inner content", async () => {
+    // LangGraph 1.3's tools channel reports tool-finished.output as the
+    // ToolNode result envelope { status, content }. The emitted
+    // TOOL_CALL_RESULT.content must be the inner ToolMessage content (the raw
+    // string a consumer parses), not the stringified wrapper — matching the v2
+    // path. Regression guard for A2UI surfaces (a2ui_operations live in the
+    // inner content and are invisible if the wrapper is stringified).
+    const inner = JSON.stringify({ a2ui_operations: [{ surfaceId: "hotel-comparison" }] });
+    const dispatched = await runV3([
+      makeChunk("tools", {
+        event: "tool-finished",
+        tool_call_id: "tc-1",
+        output: { status: "success", content: inner },
+      }),
+    ]);
+    expect(toolResults(dispatched)[0].content).toBe(inner);
+  });
+
+  it("flattens an array content envelope into a single string", async () => {
+    const dispatched = await runV3([
+      makeChunk("tools", {
+        event: "tool-finished",
+        tool_call_id: "tc-1",
+        output: { status: "success", content: [{ type: "text", text: "a" }, "b"] },
+      }),
+    ]);
+    expect(toolResults(dispatched)[0].content).toBe("ab");
+  });
+
   it("emits TOOL_CALL_RESULT carrying the error message on tool-error", async () => {
     const dispatched = await runV3([
       makeChunk("tools", { event: "tool-error", tool_call_id: "tc-1", message: "boom" }),

@@ -2601,13 +2601,32 @@ export class LangGraphAgent extends AbstractAgent {
   private handleToolsEventV3(data: V3ToolsEvent | undefined): void {
     if (!data) return;
     if (data.event === "tool-finished") {
+      // The v3 `tools` channel reports `tool-finished.output` as the LangGraph
+      // ToolNode result envelope (`{ status, content }`), so unwrap to the
+      // inner ToolMessage content. This matches the v2 path (which emits
+      // `toolCallOutput.content`), so TOOL_CALL_RESULT carries the same raw
+      // string consumers parse directly (e.g. the A2UI middleware, which reads
+      // top-level `a2ui_operations` and cannot see into a `content` wrapper).
+      const output = data.output;
+      const rawContent =
+        output && typeof output === "object" && "content" in output
+          ? (output as { content: unknown }).content
+          : output;
+      const content: string = Array.isArray(rawContent)
+        ? rawContent
+            .map((block: any) => {
+              if (typeof block === "string") return block;
+              if (block?.type === "text") return block.text;
+              return JSON.stringify(block);
+            })
+            .join("")
+        : typeof rawContent === "string"
+          ? rawContent
+          : JSON.stringify(rawContent ?? "");
       this.dispatchEvent({
         type: EventType.TOOL_CALL_RESULT,
         toolCallId: data.tool_call_id,
-        content:
-          typeof data.output === "string"
-            ? data.output
-            : JSON.stringify(data.output ?? ""),
+        content,
         messageId: randomUUID(),
         role: "tool",
       });
