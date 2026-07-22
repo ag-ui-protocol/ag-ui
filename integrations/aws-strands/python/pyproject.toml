@@ -6,10 +6,10 @@ license-files = ["LICENSE"]
 authors = [
     { name = "AG-UI Contributors" }
 ]
-requires-python = ">=3.12, <3.14"
+requires-python = ">=3.12"
 dependencies = [
     "ag-ui-a2ui-toolkit>=0.0.4",
-    "ag-ui-protocol>=0.1.18",
+    "ag-ui-protocol>=0.1.19",
     "fastapi>=0.115.12",
     "strands-agents>=1.15.0",
 ]
