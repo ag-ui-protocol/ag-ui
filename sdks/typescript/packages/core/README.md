@@ -22,14 +22,15 @@ yarn add @ag-ui/core
 ## Quick example
 
 ```ts
-import { EventSchemas, EventType } from "@ag-ui/core";
+import type { TextMessageContentEvent } from "@ag-ui/core";
+import { EventType } from "@ag-ui/core";
 
-// Validate an incoming event
-EventSchemas.parse({
+// Construct a typed event
+const event: TextMessageContentEvent = {
   type: EventType.TEXT_MESSAGE_CONTENT,
   messageId: "msg_123",
   delta: "Hello, world!",
-});
+};
 ```
 
 ## Documentation
