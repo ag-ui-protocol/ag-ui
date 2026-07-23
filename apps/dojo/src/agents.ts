@@ -632,6 +632,23 @@ export const agentsIntegrations = {
       tool_based_generative_ui: "tool_based_generative_ui",
     }),
 
+  "openai-agents-python": async () =>
+    mapAgents(
+      (path) =>
+        new HttpAgent({ url: `${envVars.openaiAgentsPythonUrl}/${path}/` }),
+      {
+        ag_ui_docs_copilot: "ag_ui_docs_copilot",
+        agentic_chat: "agentic_chat",
+        backend_tool_rendering: "backend_tool_rendering",
+        human_in_the_loop: "human_in_the_loop",
+        human_in_the_loop_approval: "human_in_the_loop_approval",
+        tool_based_generative_ui: "tool_based_generative_ui",
+        subagents: "subagents",
+        custom_lifecycle_events: "custom_lifecycle_events",
+        dynamic_system_prompt: "dynamic_system_prompt",
+      },
+    ),
+
   "claude-agent-sdk-python": async () =>
     mapAgents(
       (path) =>

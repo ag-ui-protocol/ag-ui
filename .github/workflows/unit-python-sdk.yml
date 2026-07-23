@@ -10,6 +10,7 @@ on:
       - "integrations/adk-middleware/python/**"
       - "integrations/aws-strands/python/**"
       - "integrations/langroid/python/**"
+      - "integrations/openai-agents/python/**"
       - ".github/workflows/unit-python-sdk.yml"
   pull_request:
     branches: [main]
@@ -20,6 +21,7 @@ on:
       - "integrations/adk-middleware/python/**"
       - "integrations/aws-strands/python/**"
       - "integrations/langroid/python/**"
+      - "integrations/openai-agents/python/**"
       - ".github/workflows/unit-python-sdk.yml"
 
 # Note: crew-ai uses Poetry (no uv.lock) — skipped for now.
@@ -335,3 +337,44 @@ jobs:
       - name: Run tests
         working-directory: integrations/langroid/python
         run: uv run python -m unittest discover tests -v
+
+  openai-agents-python:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Detect fork PR
+        id: fork-check
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" && \
+                "${GITHUB_EVENT_PULL_REQUEST_HEAD_REPO_FULL_NAME}" != "${{ github.repository }}" ]]; then
+            echo "prefix=fork-" >> "$GITHUB_OUTPUT"
+          else
+            echo "prefix=" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GITHUB_EVENT_PULL_REQUEST_HEAD_REPO_FULL_NAME: ${{ github.event.pull_request.head.repo.full_name }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
+        with:
+          version: ">=0.8.0"
+
+      - name: Load cached venv
+        id: cached-uv-dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: integrations/openai-agents/python/.venv
+          key: ${{ steps.fork-check.outputs.prefix }}venv-${{ runner.os }}-openai-agents-python-${{ hashFiles('integrations/openai-agents/python/uv.lock') }}
+
+      - name: Install dependencies
+        working-directory: integrations/openai-agents/python
+        run: uv sync
+
+      - name: Run tests
+        working-directory: integrations/openai-agents/python
+        run: uv run pytest
