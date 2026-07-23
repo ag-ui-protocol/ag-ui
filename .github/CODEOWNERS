@@ -6,6 +6,8 @@ docs/sdk/java @pascalwilbrink
 sdks/community/go @mattsp1290
 docs/sdk/go @mattsp1290
 
+sdks/community/rust @joshua-mo-143
+
 sdks/community/dart @mattsp1290
 docs/sdk/dart @mattsp1290
 
