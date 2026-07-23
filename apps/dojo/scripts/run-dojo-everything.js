@@ -235,6 +235,14 @@ const ALL_SERVICES = {
       },
     },
   ],
+  "cli-agent-orchestrator": [
+    {
+      command: "uv run dev",
+      name: "CLI Agent Orchestrator",
+      cwd: path.join(integrationsRoot, "cli-agent-orchestrator/python/examples"),
+      env: { PORT: 8024 },
+    },
+  ],
   "claude-agent-sdk-typescript": [
     {
       command: "npx tsx examples/server.ts",
@@ -311,6 +319,7 @@ const ALL_SERVICES = {
         AGUI_DOTNET_URL: "http://localhost:8023",
         AWS_STRANDS_URL: "http://localhost:8017",
         AWS_STRANDS_TYPESCRIPT_URL: "http://localhost:8022",
+        CAO_URL: "http://localhost:8024",
         CLAUDE_AGENT_SDK_PYTHON_URL: "http://localhost:8019",
         CLAUDE_AGENT_SDK_TYPESCRIPT_URL: "http://localhost:8020",
         LANGROID_URL: "http://localhost:8021",
@@ -347,6 +356,7 @@ const ALL_SERVICES = {
         AGUI_DOTNET_URL: "http://localhost:8023",
         AWS_STRANDS_URL: "http://localhost:8017",
         AWS_STRANDS_TYPESCRIPT_URL: "http://localhost:8022",
+        CAO_URL: "http://localhost:8024",
         CLAUDE_AGENT_SDK_PYTHON_URL: "http://localhost:8019",
         CLAUDE_AGENT_SDK_TYPESCRIPT_URL: "http://localhost:8020",
         LANGROID_URL: "http://localhost:8021",
