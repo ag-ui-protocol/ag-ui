@@ -1,0 +1,65 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit config for ag-ui-protocol/ag-ui.
+# High-signal reviews on real contributor code, low noise, plus repo-specific
+# checks for the restructured SDK/integration layout.
+language: en-US
+tone_instructions: >-
+  Be concise and technical. Skip praise and filler; focus on correctness,
+  security, regressions, and repo conventions. Prefer one high-signal comment
+  over several minor ones.
+
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  review_status: true
+  poem: false
+  sequence_diagrams: false
+
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches: [main]
+    ignore_title_keywords:
+      - "chore(release)"
+      - "chore: release"
+
+  path_filters:
+    - "!**/*.lock"
+    - "!**/pnpm-lock.yaml"
+    - "!**/uv.lock"
+    - "!**/Cargo.lock"
+    - "!**/dist/**"
+    - "!**/*.min.*"
+    - "!**/__snapshots__/**"
+    - "!**/fixtures/**"
+    - "!**/*.generated.*"
+
+  path_instructions:
+    - path: "sdks/**"
+      instructions: >-
+        The repo restructured: SDKs live under sdks/<lang>/ and integrations at the
+        top level. Flag additions under the retired top-level typescript-sdk/ or
+        python-sdk/ prefixes. sdks/community/java is intentionally a .gitkeep only —
+        the in-repo Java SDK was removed in favor of the external ag-ui-4j project;
+        flag PRs that re-introduce Java SDK source here.
+        When a change ports or claims parity with another SDK ("matches the TS/Python
+        version"), verify direction against the ACTUAL reference implementation, not
+        the PR description.
+    - path: "integrations/**/langgraph/**"
+      instructions: >-
+        For graph routing changes: ending the graph (goto END) on a frontend/HITL
+        tool call is the intended handoff to the frontend, not a dropped tool.
+        Flag re-routing an unresolved tool call that could break the
+        tool_call<->ToolMessage pairing or loop a node.
+
+  tools:
+    gitleaks: { enabled: true }
+    semgrep: { enabled: true }
+    actionlint: { enabled: true }
+
+knowledge_base:
+  learnings: { scope: auto }
+
+chat:
+  auto_reply: true
