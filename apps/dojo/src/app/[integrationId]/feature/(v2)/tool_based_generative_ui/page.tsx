@@ -1,8 +1,9 @@
 "use client";
 import React, { useState } from "react";
 import "@copilotkit/react-core/v2/styles.css";
-import { 
+import {
   useFrontendTool,
+  useRenderTool,
   useConfigureSuggestions,
   CopilotSidebar,
 } from "@copilotkit/react-core/v2";
@@ -30,7 +31,9 @@ interface Haiku {
   gradient: string;
 }
 
-export default function ToolBasedGenerativeUI({ params }: ToolBasedGenerativeUIProps) {
+export default function ToolBasedGenerativeUI({
+  params,
+}: ToolBasedGenerativeUIProps) {
   const { integrationId } = React.use(params);
   const { chatDefaultOpen } = useURLParams();
 
@@ -41,7 +44,7 @@ export default function ToolBasedGenerativeUI({ params }: ToolBasedGenerativeUIP
       agent="tool_based_generative_ui"
     >
       <SidebarWithSuggestions defaultOpen={chatDefaultOpen} />
-      <HaikuDisplay />
+      <HaikuDisplay integrationId={integrationId} />
     </CopilotKit>
   );
 }
@@ -80,54 +83,55 @@ const VALID_IMAGE_NAMES = [
   "Mount_Fuji_Lake_Reflection_Cherry_Blossoms_Sakura_Spring.jpg",
 ];
 
-function HaikuDisplay() {
+const haikuSchema = z.object({
+  japanese: z.array(z.string()).describe("3 lines of haiku in Japanese"),
+  english: z
+    .array(z.string())
+    .describe("3 lines of haiku translated to English"),
+  image_name: z
+    .string()
+    .describe(`One relevant image name from: ${VALID_IMAGE_NAMES.join(", ")}`),
+  gradient: z.string().describe("CSS Gradient color for the background"),
+});
+
+function HaikuDisplay({ integrationId }: { integrationId: string }) {
   const [activeIndex, setActiveIndex] = useState(0);
   const [haikus, setHaikus] = useState<Haiku[]>([
     {
       japanese: ["仮の句よ", "まっさらながら", "花を呼ぶ"],
-      english: ["A placeholder verse—", "even in a blank canvas,", "it beckons flowers."],
+      english: [
+        "A placeholder verse—",
+        "even in a blank canvas,",
+        "it beckons flowers.",
+      ],
       image_name: null,
       gradient: "",
     },
   ]);
 
-  useFrontendTool(
-    {
-      agentId: "tool_based_generative_ui",
-      name: "generate_haiku",
-       parameters: z.object({
-        japanese: z.array(z.string()).describe("3 lines of haiku in Japanese"),
-        english: z.array(z.string()).describe("3 lines of haiku translated to English"),
-        image_name: z.string().describe(`One relevant image name from: ${VALID_IMAGE_NAMES.join(", ")}`),
-        gradient: z.string().describe("CSS Gradient color for the background"),
-      })  ,
-      followUp: false,
-      handler: async ({ japanese, english, image_name, gradient }: { japanese: string[]; english: string[]; image_name: string; gradient: string }) => {
-        const newHaiku: Haiku = {
-          japanese: japanese || [],
-          english: english || [],
-          image_name: image_name || null,
-          gradient: gradient || "",
-        };
-        setHaikus((prev) => [
-          newHaiku,
-          ...prev.filter((h) => h.english[0] !== "A placeholder verse—"),
-        ]);
-        setActiveIndex(0);
-        return "Haiku generated!";
-      },
-      render: ({ args }: { args: Partial<Haiku> }) => {
-        if (!args.japanese) return <></>;
-        return <HaikuCard haiku={args as Haiku} />;
-      },
-    },
-    [haikus],
-  );
-
-  const currentHaiku = haikus[activeIndex];
+  const recordHaiku = React.useCallback((haiku: Haiku) => {
+    setHaikus((previous) => {
+      const key = haiku.japanese.join("\n");
+      if (previous.some((item) => item.japanese.join("\n") === key)) {
+        return previous;
+      }
+      return [
+        haiku,
+        ...previous.filter(
+          (item) => item.english[0] !== "A placeholder verse—",
+        ),
+      ];
+    });
+    setActiveIndex(0);
+  }, []);
 
   return (
     <div className="relative flex items-center justify-center h-full w-full">
+      {integrationId === "microsoft-agent-framework-python" ? (
+        <MicrosoftAgentFrameworkHaikuTool onGenerated={recordHaiku} />
+      ) : (
+        <FrontendHaikuTool onGenerated={recordHaiku} />
+      )}
       <div className="px-20 py-12 w-full max-w-4xl">
         <Carousel className="w-full" data-testid="haiku-carousel">
           <CarouselContent>
@@ -147,6 +151,90 @@ function HaikuDisplay() {
       </div>
     </div>
   );
+}
+
+function FrontendHaikuTool({
+  onGenerated,
+}: {
+  onGenerated: (haiku: Haiku) => void;
+}) {
+  useFrontendTool(
+    {
+      agentId: "tool_based_generative_ui",
+      name: "generate_haiku",
+      parameters: haikuSchema,
+      followUp: false,
+      handler: async ({
+        japanese,
+        english,
+        image_name,
+        gradient,
+      }: {
+        japanese: string[];
+        english: string[];
+        image_name: string;
+        gradient: string;
+      }) => {
+        const newHaiku: Haiku = {
+          japanese: japanese || [],
+          english: english || [],
+          image_name: image_name || null,
+          gradient: gradient || "",
+        };
+        onGenerated(newHaiku);
+        return "Haiku generated!";
+      },
+      render: ({ args }: { args: Partial<Haiku> }) => {
+        if (!args.japanese) return <></>;
+        return <HaikuCard haiku={args as Haiku} />;
+      },
+    },
+    [onGenerated],
+  );
+
+  return null;
+}
+
+function MicrosoftAgentFrameworkHaikuTool({
+  onGenerated,
+}: {
+  onGenerated: (haiku: Haiku) => void;
+}) {
+  useRenderTool(
+    {
+      agentId: "tool_based_generative_ui",
+      name: "generate_haiku",
+      parameters: haikuSchema,
+      render: ({ parameters }: any) => (
+        <RenderedHaiku parameters={parameters} onGenerated={onGenerated} />
+      ),
+    },
+    [onGenerated],
+  );
+
+  return null;
+}
+
+function RenderedHaiku({
+  parameters,
+  onGenerated,
+}: {
+  parameters: Partial<Haiku>;
+  onGenerated: (haiku: Haiku) => void;
+}) {
+  const complete =
+    parameters.japanese?.length === 3 &&
+    parameters.english?.length === 3 &&
+    typeof parameters.image_name === "string" &&
+    typeof parameters.gradient === "string";
+
+  React.useEffect(() => {
+    if (complete) {
+      onGenerated(parameters as Haiku);
+    }
+  }, [complete, onGenerated, parameters]);
+
+  return complete ? <HaikuCard haiku={parameters} /> : <></>;
 }
 
 function HaikuCard({ haiku }: { haiku: Partial<Haiku> }) {

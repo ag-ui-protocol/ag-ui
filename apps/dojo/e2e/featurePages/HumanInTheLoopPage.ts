@@ -23,7 +23,9 @@ export class HumanInTheLoopPage {
     this.chatInput = CopilotSelectors.chatTextarea(page);
     this.sendButton = CopilotSelectors.sendButton(page);
     this.plan = page.getByTestId("select-steps");
-    this.performStepsButton = page.getByRole("button", { name: "Confirm" });
+    this.performStepsButton = this.plan.getByRole("button", {
+      name: "Confirm",
+    });
     this.agentMessage = CopilotSelectors.assistantMessages(page);
     this.userMessage = CopilotSelectors.userMessages(page);
   }
