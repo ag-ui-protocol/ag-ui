@@ -1,0 +1,25 @@
+# Tool Confirmation
+
+## What This Demo Shows
+
+This demo showcases the **tool confirmation** HITL pattern:
+
+1. **Confirmation UI**: Tools marked with `requires_confirmation=True` pause before execution
+2. **Approve/Reject**: User reviews the tool call arguments and decides to proceed or cancel
+3. **Frontend-Defined Tools**: Tools are registered via `useHumanInTheLoop` hook
+
+## How to Interact
+
+1. Ask your Copilot to send an email:
+   - "Send an email to alice@example.com saying hello"
+   - "Delete all temporary files"
+
+2. Review the confirmation card that appears
+
+3. Click **Send Email** to approve or **Cancel** to reject
+
+## Technical Details
+
+- Backend: Minimal agent with no tools (tools come from frontend)
+- Frontend: Uses `useHumanInTheLoop` hook with custom `EmailConfirmationCard`
+- Response flows back via the `respond()` callback

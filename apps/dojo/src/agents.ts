@@ -377,6 +377,11 @@ export const agentsIntegrations = {
         predictive_state_updates: "predictive_state_updates",
         shared_state: "shared_state",
         tool_based_generative_ui: "tool_based_generative_ui",
+        tool_confirmation: "tool_confirmation",
+        user_input: "user_input",
+        backend_feedback: "backend_feedback",
+        team_human_in_the_loop: "team_human_in_the_loop",
+        nested_team_chat: "nested_team_chat",
       },
     ),
 
