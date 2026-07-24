@@ -296,6 +296,48 @@ def _build_strands_history(input_messages: List[Any]) -> List[Dict[str, Any]]:
     return out
 
 
+# Prefix of the ``description`` the A2UI middleware (@ag-ui/a2ui-middleware,
+# A2UI_SCHEMA_CONTEXT_DESCRIPTION) stamps on the context entry carrying the
+# component catalog. That entry is consumed via the ``render_a2ui`` tool path
+# (host-resolved catalog + tool guidelines), NOT by dumping the raw schema into
+# the prompt — injecting it derails A2UI rendering. Matched by prefix so a
+# punctuation/version drift in the full string can't let the catalog leak in.
+_A2UI_SCHEMA_CONTEXT_PREFIX = "A2UI Component Schema"
+
+
+def _format_agui_context(agui_context: List[Dict[str, Any]]) -> str:
+    """Render application-provided ``RunAgentInput.context`` as a text block for
+    the model prompt.
+
+    ``agui_context`` is stored on ``strands_agent.state`` for tools to read, but
+    nothing surfaces it to the model — so context the app injects (e.g. via
+    ``useCopilotReadable``) was invisible to the LLM. The A2UI component-schema
+    entry is excluded (handled by the ``render_a2ui`` tool path)."""
+    lines: List[str] = []
+    for ctx in agui_context or []:
+        description = (ctx.get("description") or "").strip()
+        if description.startswith(_A2UI_SCHEMA_CONTEXT_PREFIX):
+            continue
+        value = ctx.get("value")
+        value_str = value if isinstance(value, str) else json.dumps(value)
+        lines.append(f"- {description}: {value_str}" if description else f"- {value_str}")
+    if not lines:
+        return ""
+    return "Context provided by the application:\n" + "\n".join(lines)
+
+
+def _prepend_context_message(
+    history: List[Dict[str, Any]], context_block: str
+) -> List[Dict[str, Any]]:
+    """Insert ``context_block`` as a SEPARATE leading user message. We do not
+    modify the existing last user message — request routing / fixtures key off
+    the latest user (and system) message content, so altering it changes agent
+    behaviour. A distinct leading message reaches the model without that risk."""
+    if not context_block:
+        return history
+    return [{"role": "user", "content": [{"text": context_block}]}, *history]
+
+
 class StrandsAgent:
     """AWS Strands Agent wrapper for AG-UI integration."""
 
@@ -978,6 +1020,13 @@ class StrandsAgent:
                                     f"state_context_builder failed: {e}", exc_info=True
                                 )
                             break
+                # Surface application-provided context to the model as a leading
+                # message (the A2UI component schema is excluded — see
+                # _format_agui_context). It is also on ``strands_agent.state`` for
+                # tools, but the model only sees the message history.
+                native_history = _prepend_context_message(
+                    native_history, _format_agui_context(agui_context)
+                )
                 strands_agent.messages = native_history
                 # ``stream_async(None)`` tells Strands to use existing
                 # ``self.messages`` as-is. The LLM sees real tool results
@@ -1024,7 +1073,14 @@ class StrandsAgent:
                 )
             else:
                 # Legacy path: pass only the latest user message and trust
-                # Strands (via session_manager) to track history.
+                # Strands (via session_manager) to track history. Prepend any
+                # application context (A2UI schema excluded) so the model sees it.
+                if isinstance(user_message, str):
+                    _ctx_block = _format_agui_context(agui_context)
+                    if _ctx_block:
+                        user_message = (
+                            f"{_ctx_block}\n\n{user_message}" if user_message else _ctx_block
+                        )
                 agent_stream = strands_agent.stream_async(user_message)
 
             # Drop only the entries whose placeholder was actually corrected
