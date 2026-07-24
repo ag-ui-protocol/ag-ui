@@ -248,6 +248,20 @@ export const RunFinishedOutcomeSchema = z.discriminatedUnion("type", [
   RunFinishedInterruptOutcomeSchema,
 ]);
 
+// Reusable, numeric-only token usage summary. Deliberately carries no
+// content-bearing or identifying fields (no prompts, completions, messages,
+// thread/run/user IDs) — only provider/model labels and numeric token counts.
+// Unknown keys are stripped on parse, so content cannot ride along.
+export const TokenUsageSchema = z.object({
+  provider: z.string().optional(),
+  model: z.string().optional(),
+  inputTokens: z.number().optional(),
+  outputTokens: z.number().optional(),
+  totalTokens: z.number().optional(),
+  reasoningTokens: z.number().optional(),
+  cachedInputTokens: z.number().optional(),
+});
+
 export const RunFinishedEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.RUN_FINISHED),
   threadId: z.string(),
@@ -259,12 +273,21 @@ export const RunFinishedEventSchema = BaseEventSchema.extend({
   outcome: RunFinishedOutcomeSchema.nullable()
     .optional()
     .transform((v) => v ?? undefined),
+  // Optional per-(provider, model) token usage for the completed run. An array
+  // so runs that invoke multiple models keep them separate for downstream
+  // display; consumers that only need totals can sum across entries. Must be
+  // declared here (not relied upon via passthrough) so it survives the
+  // `EventSchemas` discriminated-union parse.
+  usage: z.array(TokenUsageSchema).optional(),
 });
 
 export const RunErrorEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.RUN_ERROR),
   message: z.string(),
   code: z.string().optional(),
+  // Optional partial usage for a run that failed after one or more model calls
+  // completed. Same numeric-only shape as RUN_FINISHED.
+  usage: z.array(TokenUsageSchema).optional(),
 });
 
 export const StepStartedEventSchema = BaseEventSchema.extend({
@@ -469,6 +492,7 @@ export type RawEvent = z.infer<typeof RawEventSchema>;
 export type CustomEvent = z.infer<typeof CustomEventSchema>;
 export type RunStartedEvent = z.infer<typeof RunStartedEventSchema>;
 export type RunFinishedEvent = z.infer<typeof RunFinishedEventSchema>;
+export type TokenUsage = z.infer<typeof TokenUsageSchema>;
 export type RunFinishedOutcome = z.infer<typeof RunFinishedOutcomeSchema>;
 export type RunFinishedSuccessOutcome = z.infer<typeof RunFinishedSuccessOutcomeSchema>;
 export type RunFinishedInterruptOutcome = z.infer<typeof RunFinishedInterruptOutcomeSchema>;

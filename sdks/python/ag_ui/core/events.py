@@ -39,6 +39,23 @@ RunFinishedOutcome = Annotated[
 ]
 
 
+class TokenUsage(ConfiguredBaseModel):
+    """
+    Numeric-only, per-(provider, model) token usage summary.
+
+    Deliberately carries no content-bearing or identifying fields (no prompts,
+    completions, messages, thread/run/user IDs) — only provider/model labels and
+    numeric token counts.
+    """
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+    reasoning_tokens: Optional[int] = None
+    cached_input_tokens: Optional[int] = None
+
+
 class EventType(str, Enum):
     """
     The type of event.
@@ -289,6 +306,10 @@ class RunFinishedEvent(BaseEvent):
     run_id: str
     result: Optional[Any] = None
     outcome: Optional[RunFinishedOutcome] = None
+    # Optional per-(provider, model) token usage for the completed run. A list
+    # so runs invoking multiple models keep them separate for downstream
+    # display; consumers needing only totals can sum across entries.
+    usage: Optional[List[TokenUsage]] = None
 
 
 class RunErrorEvent(BaseEvent):
@@ -298,6 +319,9 @@ class RunErrorEvent(BaseEvent):
     type: Literal[EventType.RUN_ERROR] = EventType.RUN_ERROR  # pyright: ignore[reportIncompatibleVariableOverride]
     message: str
     code: Optional[str] = None
+    # Optional partial usage for a run that failed after one or more model calls
+    # completed. Same numeric-only shape as RUN_FINISHED.
+    usage: Optional[List[TokenUsage]] = None
 
 
 class StepStartedEvent(BaseEvent):
