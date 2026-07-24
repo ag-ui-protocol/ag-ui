@@ -657,6 +657,7 @@ class LangGraphAgent:
         kwargs = self.get_stream_kwargs(
             input=stream_input,
             config=config,
+            context=self._langgraph_context_from_forwarded_props(input.forwarded_props),
             subgraphs=bool(subgraphs_stream_enabled),
             version="v2",
         )
@@ -732,6 +733,7 @@ class LangGraphAgent:
         kwargs = self.get_stream_kwargs(
             input=stream_input,
             config=merged_config,
+            context=self._langgraph_context_from_forwarded_props(input.forwarded_props),
             subgraphs=bool(subgraphs_stream_enabled),
             version="v2",
         )
@@ -1962,6 +1964,25 @@ class LangGraphAgent:
     # Probe the graph's astream_events signature for version-specific support
     # (notably the ``context`` parameter, added in newer LangGraph releases)
     # so this adapter remains backwards-compatible across LangGraph versions.
+    @staticmethod
+    def _langgraph_context_from_forwarded_props(forwarded_props: Any) -> Dict[str, Any]:
+        """Map agent-facing forwarded props into LangGraph runtime context.
+
+        Adapter-control props remain private to this integration; every other
+        forwarded prop is available to a graph's runtime context without
+        requiring an adapter release for each new agent feature.  This is not
+        an identity boundary: callers must authenticate and authorise any
+        tenant/user data independently of these client-controlled values.
+        """
+        if not isinstance(forwarded_props, dict):
+            return {}
+        adapter_control_props = {"command", "node_name", "stream_subgraphs"}
+        return {
+            key: value
+            for key, value in forwarded_props.items()
+            if key not in adapter_control_props
+        }
+
     def get_stream_kwargs(
             self,
             input: Any,
