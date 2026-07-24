@@ -313,6 +313,15 @@ const agentFilesMapper: Record<
     );
   },
   "spring-ai": () => ({}),
+  swarms: () => ({
+    agentic_chat: [
+      path.join(
+        __dirname,
+        integrationsFolderPath,
+        `/community/swarms/python/examples/server/__init__.py`,
+      ),
+    ],
+  }),
   ag2: (agentKeys: string[]) => {
     return agentKeys.reduce(
       (acc, agentId) => ({
