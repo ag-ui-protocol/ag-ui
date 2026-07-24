@@ -1,0 +1,284 @@
+import { describe, expect, it } from "vitest";
+import {
+  EventType,
+  type AssistantMessage,
+  type MessagesSnapshotEvent,
+  type StepFinishedEvent,
+  type StepStartedEvent,
+  type ToolCallStartEvent,
+} from "@ag-ui/client";
+import { jsonSchema, stepCountIs, streamText, tool } from "ai";
+import {
+  collectEvents,
+  eventsOfType,
+  finishStop,
+  finishToolCalls,
+  makeMockModel,
+  responseMetadata,
+  streamStart,
+} from "./helpers";
+
+const weatherTool = {
+  get_weather: tool({
+    description: "Get weather for a city",
+    inputSchema: jsonSchema<{ city: string }>({
+      type: "object",
+      properties: { city: { type: "string" } },
+      required: ["city"],
+    }),
+    execute: async ({ city }: { city: string }) => ({ city, ok: true }),
+  }),
+};
+
+describe("StreamHandler — multi-step", () => {
+  it("emits one STEP_STARTED and one STEP_FINISHED per step", async () => {
+    const model = makeMockModel((n) =>
+      n === 1
+        ? [
+            streamStart,
+            responseMetadata("s1"),
+            { type: "tool-input-start", id: "tc-1", toolName: "get_weather" },
+            { type: "tool-input-delta", id: "tc-1", delta: '{"city":"Tokyo"}' },
+            { type: "tool-input-end", id: "tc-1" },
+            {
+              type: "tool-call",
+              toolCallId: "tc-1",
+              toolName: "get_weather",
+              input: '{"city":"Tokyo"}',
+            },
+            finishToolCalls(),
+          ]
+        : [
+            streamStart,
+            responseMetadata("s2"),
+            { type: "text-start", id: "txt-final" },
+            { type: "text-delta", id: "txt-final", delta: "All done." },
+            { type: "text-end", id: "txt-final" },
+            finishStop(),
+          ],
+    );
+
+    const events = await collectEvents(
+      streamText({
+        model,
+        prompt: "Weather?",
+        tools: weatherTool,
+        stopWhen: stepCountIs(2),
+      }).fullStream,
+    );
+
+    const stepStarts = eventsOfType<StepStartedEvent>(events, EventType.STEP_STARTED);
+    const stepEnds = eventsOfType<StepFinishedEvent>(events, EventType.STEP_FINISHED);
+    expect(stepStarts).toHaveLength(2);
+    expect(stepEnds).toHaveLength(2);
+    expect(stepStarts.map((e) => e.stepName)).toEqual(["step-1", "step-2"]);
+    expect(stepEnds.map((e) => e.stepName)).toEqual(["step-1", "step-2"]);
+  });
+
+  it("rotates assistantMessage.id between steps (each step has a distinct id)", async () => {
+    const model = makeMockModel((n) =>
+      n === 1
+        ? [
+            streamStart,
+            responseMetadata("s1"),
+            { type: "text-start", id: "txt-a" },
+            { type: "text-delta", id: "txt-a", delta: "Step 1." },
+            { type: "text-end", id: "txt-a" },
+            { type: "tool-input-start", id: "tc-1", toolName: "get_weather" },
+            { type: "tool-input-delta", id: "tc-1", delta: '{"city":"Tokyo"}' },
+            { type: "tool-input-end", id: "tc-1" },
+            {
+              type: "tool-call",
+              toolCallId: "tc-1",
+              toolName: "get_weather",
+              input: '{"city":"Tokyo"}',
+            },
+            finishToolCalls(),
+          ]
+        : [
+            streamStart,
+            responseMetadata("s2"),
+            { type: "text-start", id: "txt-b" },
+            { type: "text-delta", id: "txt-b", delta: "Step 2." },
+            { type: "text-end", id: "txt-b" },
+            finishStop(),
+          ],
+    );
+
+    const events = await collectEvents(
+      streamText({
+        model,
+        prompt: "Hi",
+        tools: weatherTool,
+        stopWhen: stepCountIs(2),
+      }).fullStream,
+    );
+
+    const snapshot = events.find((e) => e.type === EventType.MESSAGES_SNAPSHOT) as MessagesSnapshotEvent;
+    const assistants = snapshot.messages.filter((m) => m.role === "assistant") as AssistantMessage[];
+    expect(assistants).toHaveLength(2);
+    expect(assistants[0].id).not.toBe(assistants[1].id);
+    expect(assistants[0].toolCalls?.length).toBeGreaterThan(0);
+    expect(assistants[1].content).toContain("Step 2");
+
+    // Step 1 streamed text "txt-a" before the tool call, so the assistant id
+    // is anchored to that text id and the tool call's TOOL_CALL_START
+    // parentMessageId points at it (not an orphan UUID).
+    expect(assistants[0].id).toBe("txt-a");
+    const toolStart = events.find(
+      (e) => e.type === EventType.TOOL_CALL_START,
+    ) as ToolCallStartEvent;
+    expect(toolStart.parentMessageId).toBe("txt-a");
+  });
+
+  it("TOOL_CALL_START.parentMessageId rotates per step", async () => {
+    const model = makeMockModel((n) =>
+      n === 1
+        ? [
+            streamStart,
+            responseMetadata("s1"),
+            { type: "tool-input-start", id: "tc-1", toolName: "get_weather" },
+            { type: "tool-input-end", id: "tc-1" },
+            {
+              type: "tool-call",
+              toolCallId: "tc-1",
+              toolName: "get_weather",
+              input: '{"city":"NYC"}',
+            },
+            finishToolCalls(),
+          ]
+        : n === 2
+          ? [
+              streamStart,
+              responseMetadata("s2"),
+              { type: "tool-input-start", id: "tc-2", toolName: "get_weather" },
+              { type: "tool-input-end", id: "tc-2" },
+              {
+                type: "tool-call",
+                toolCallId: "tc-2",
+                toolName: "get_weather",
+                input: '{"city":"Paris"}',
+              },
+              finishToolCalls(),
+            ]
+          : [streamStart, responseMetadata("s3"), finishStop()],
+    );
+
+    const events = await collectEvents(
+      streamText({
+        model,
+        prompt: "two cities",
+        tools: weatherTool,
+        stopWhen: stepCountIs(3),
+      }).fullStream,
+    );
+
+    const starts = eventsOfType<ToolCallStartEvent>(events, EventType.TOOL_CALL_START);
+    expect(starts).toHaveLength(2);
+    expect(starts[0].parentMessageId).toBeDefined();
+    expect(starts[1].parentMessageId).toBeDefined();
+    expect(starts[0].parentMessageId).not.toBe(starts[1].parentMessageId);
+  });
+
+  it("does NOT push a trailing empty assistant message after the last step", async () => {
+    const model = makeMockModel((n) =>
+      n === 1
+        ? [
+            streamStart,
+            responseMetadata("s1"),
+            { type: "text-start", id: "t1" },
+            { type: "text-delta", id: "t1", delta: "first" },
+            { type: "text-end", id: "t1" },
+            { type: "tool-input-start", id: "tc-1", toolName: "get_weather" },
+            { type: "tool-input-end", id: "tc-1" },
+            {
+              type: "tool-call",
+              toolCallId: "tc-1",
+              toolName: "get_weather",
+              input: '{"city":"Tokyo"}',
+            },
+            finishToolCalls(),
+          ]
+        : [
+            streamStart,
+            responseMetadata("s2"),
+            { type: "text-start", id: "t2" },
+            { type: "text-delta", id: "t2", delta: "second" },
+            { type: "text-end", id: "t2" },
+            finishStop(),
+          ],
+    );
+
+    const events = await collectEvents(
+      streamText({
+        model,
+        prompt: "hi",
+        tools: weatherTool,
+        stopWhen: stepCountIs(2),
+      }).fullStream,
+      { messages: [{ id: "u1", role: "user", content: "hi" }] },
+    );
+
+    const snapshot = events.find((e) => e.type === EventType.MESSAGES_SNAPSHOT) as MessagesSnapshotEvent;
+    // Expected: user + step1 assistant (toolCall) + tool result + step2 assistant — no trailing empty.
+    const assistants = snapshot.messages.filter((m) => m.role === "assistant");
+    expect(assistants).toHaveLength(2);
+    const trailing = assistants[assistants.length - 1] as AssistantMessage;
+    expect(trailing.content).toBe("second");
+  });
+
+  it("interleaves text segments and tool calls across multi-step (Anthropic 'check then answer' pattern)", async () => {
+    const model = makeMockModel((n) =>
+      n === 1
+        ? [
+            streamStart,
+            responseMetadata("s1"),
+            { type: "text-start", id: "intro" },
+            { type: "text-delta", id: "intro", delta: "Let me check." },
+            { type: "text-end", id: "intro" },
+            { type: "tool-input-start", id: "tc-1", toolName: "get_weather" },
+            { type: "tool-input-delta", id: "tc-1", delta: '{"city":"Tokyo"}' },
+            { type: "tool-input-end", id: "tc-1" },
+            {
+              type: "tool-call",
+              toolCallId: "tc-1",
+              toolName: "get_weather",
+              input: '{"city":"Tokyo"}',
+            },
+            finishToolCalls(),
+          ]
+        : [
+            streamStart,
+            responseMetadata("s2"),
+            { type: "text-start", id: "answer" },
+            { type: "text-delta", id: "answer", delta: "It's sunny." },
+            { type: "text-end", id: "answer" },
+            finishStop(),
+          ],
+    );
+
+    const events = await collectEvents(
+      streamText({
+        model,
+        prompt: "Weather?",
+        tools: weatherTool,
+        stopWhen: stepCountIs(2),
+      }).fullStream,
+    );
+
+    const types = events.map((e) => e.type);
+    // Step 1 text comes before tool start; step 2 text comes after tool result.
+    const introIdx = events.findIndex(
+      (e) => e.type === EventType.TEXT_MESSAGE_START && (e as unknown as { messageId: string }).messageId === "intro",
+    );
+    const toolStartIdx = events.findIndex((e) => e.type === EventType.TOOL_CALL_START);
+    const toolResultIdx = events.findIndex((e) => e.type === EventType.TOOL_CALL_RESULT);
+    const answerIdx = events.findIndex(
+      (e) => e.type === EventType.TEXT_MESSAGE_START && (e as unknown as { messageId: string }).messageId === "answer",
+    );
+
+    expect(introIdx).toBeLessThan(toolStartIdx);
+    expect(toolResultIdx).toBeLessThan(answerIdx);
+    expect(types).toContain(EventType.MESSAGES_SNAPSHOT);
+  });
+});
