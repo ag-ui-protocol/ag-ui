@@ -432,6 +432,69 @@ describe("A2UIMiddleware", () => {
       expect(new Set(componentSets).size).toBe(1);
     });
 
+    it("paints by-reference data: a data-only final op survives dedup when the surface streamed components but no data (OSS-2005)", async () => {
+      // By-reference (OSS-2005): the subagent streams path-bound components with
+      // NO data arg, so the streaming path paints components and records the
+      // surface in streamedSurfaceIds — but never streams data. The backend's
+      // final envelope then carries the host's externalData as a data-only
+      // updateDataModel for that SAME surface. The surfaceId-based dedup would
+      // normally drop it (surface already streamed); it must NOT, or the
+      // by-reference dataset never paints.
+      const middleware = new A2UIMiddleware({ defaultCatalogId: "cat://byref" });
+      const innerCallId = "tc-byref-inner";
+      const outerCallId = "tc-byref-outer";
+      const surfaceId = "s-byref";
+
+      // Components only — the subagent omits `data` entirely.
+      const componentsOnlyArgs = JSON.stringify({
+        surfaceId,
+        components: [
+          { id: "root", component: "Row", children: { componentId: "card", path: "/items" } },
+          { id: "card", component: "HotelCard", name: { path: "name" } },
+        ],
+      });
+
+      // Backend-merged final envelope: components already streamed; the data op
+      // carries the host externalData.
+      const finalEnvelope = JSON.stringify({
+        a2ui_operations: [
+          { version: "v0.9", createSurface: { surfaceId, catalogId: "cat://byref" } },
+          {
+            version: "v0.9",
+            updateComponents: {
+              surfaceId,
+              components: [
+                { id: "root", component: "Row", children: { componentId: "card", path: "/items" } },
+                { id: "card", component: "HotelCard", name: { path: "name" } },
+              ],
+            },
+          },
+          { version: "v0.9", updateDataModel: { surfaceId, path: "/", value: { items: [{ name: "Ritz" }, { name: "Plaza" }] } } },
+        ],
+      });
+
+      const mockAgent = new MockAgent([
+        { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
+        { type: EventType.TOOL_CALL_START, toolCallId: innerCallId, toolCallName: "render_a2ui" },
+        { type: EventType.TOOL_CALL_ARGS, toolCallId: innerCallId, delta: componentsOnlyArgs } as BaseEvent,
+        { type: EventType.TOOL_CALL_END, toolCallId: innerCallId },
+        { type: EventType.TOOL_CALL_RESULT, messageId: "m1", toolCallId: outerCallId, content: finalEnvelope } as BaseEvent,
+        { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
+      ]);
+
+      const events = await collectEvents(middleware.run(createRunAgentInput(), mockAgent));
+      const snapshots = events.filter(isPaint);
+
+      // The host's by-reference items must reach the renderer via some snapshot's
+      // updateDataModel — the dedup must not have swallowed the data-only op.
+      const dataItemCounts = snapshots.map((s) => {
+        const ops = (s as any).content.a2ui_operations as any[];
+        const dm = ops.find((op) => op.updateDataModel && op.updateDataModel.surfaceId === surfaceId);
+        return dm ? (dm.updateDataModel.value.items?.length ?? 0) : 0;
+      });
+      expect(Math.max(0, ...dataItemCounts)).toBe(2);
+    });
+
     it("never emits an empty surface (createSurface always rides with components)", async () => {
       const middleware = new A2UIMiddleware();
       const toolCallId = "tc-early-surface";

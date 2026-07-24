@@ -48,6 +48,40 @@ describe("augmentPromptWithValidationErrors", () => {
   });
 });
 
+// By-reference render (OSS-2005): the subagent emits path-bound components and
+// NO data; the dataset rides the host's externalData. The root List binds the
+// absolute path `/items`, so validation can only resolve it against the merged
+// data — not the (empty) args.data.
+const byRefArgs = { surfaceId: "s1", components: [root, goodCard] };
+const byRefData = { items: [{ name: "Ritz", rating: 4.8 }] };
+
+describe("runA2UIGenerationWithRecovery — by-reference data (OSS-2005)", () => {
+  it("validates against host externalData so a by-reference render passes without spurious retries", async () => {
+    const invokeSubagent = vi.fn(async () => byRefArgs);
+    const res = await runA2UIGenerationWithRecovery({
+      basePrompt: "P",
+      catalog: CATALOG,
+      invokeSubagent,
+      buildEnvelope,
+      externalData: byRefData,
+    });
+    expect(res.ok).toBe(true);
+    expect(invokeSubagent).toHaveBeenCalledTimes(1);
+  });
+
+  it("without externalData the same args fail binding validation — the bug the merge fixes", async () => {
+    const invokeSubagent = vi.fn(async () => byRefArgs);
+    const res = await runA2UIGenerationWithRecovery({
+      basePrompt: "P",
+      catalog: CATALOG,
+      invokeSubagent,
+      buildEnvelope,
+    });
+    expect(res.ok).toBe(false);
+    expect(res.attempts.some((a) => a.errors.some((e) => e.code === "unresolved_binding"))).toBe(true);
+  });
+});
+
 describe("runA2UIGenerationWithRecovery", () => {
   it("returns the valid envelope on the first attempt without retrying", async () => {
     const invokeSubagent = vi.fn(async () => goodArgs);

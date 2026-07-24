@@ -28,6 +28,7 @@ from ag_ui_a2ui_toolkit import (
     prepare_a2ui_request,
     resolve_a2ui_catalog,
     resolve_a2ui_tool_params,
+    resolve_external_data,
     split_a2ui_schema_context,
     update_components,
     update_data_model,
@@ -513,6 +514,20 @@ class TestBuildSubagentPrompt(unittest.TestCase):
     # the documented escape hatch (None → default; "" → block omitted).
     SUPPRESS = {"generation_guidelines": "", "design_guidelines": ""}
 
+    def test_by_reference_directs_omit_data_and_binds_to_shape(self):
+        prompt = build_subagent_prompt(
+            context_prompt="ctx",
+            guidelines=self.SUPPRESS,
+            external_data_outline='{\n  "flights": ["sample"]\n}',
+        )
+        self.assertIn("omit", prompt.lower())
+        self.assertIn("data", prompt)
+        self.assertIn("flights", prompt)
+
+    def test_by_reference_no_outline_no_section(self):
+        prompt = build_subagent_prompt(context_prompt="ctx", guidelines=self.SUPPRESS)
+        self.assertNotIn("provided externally", prompt.lower())
+
     def test_defaults_applied_when_unset(self):
         # No guidelines → both built-in blocks land in the prompt, with the
         # design block under its "## Design Guidelines" header (OSS-248).
@@ -650,6 +665,149 @@ class TestAssembleOps(unittest.TestCase):
         self.assertEqual(len(ops), 2)
 
 
+class TestAssembleOpsExternalData(unittest.TestCase):
+    """By-reference data merge (OSS-2005) — mirror of the TS suite."""
+
+    def test_external_data_paints_when_subagent_omits_data(self):
+        ops = assemble_ops(
+            intent="create",
+            surface_id="s1",
+            catalog_id="cat://x",
+            components=[{"id": "root", "component": "List"}],
+            external_data={"items": [{"name": "A"}, {"name": "B"}]},
+        )
+        self.assertEqual(len(ops), 3)
+        ud = next(op["updateDataModel"] for op in ops if "updateDataModel" in op)
+        self.assertEqual(ud["value"], {"items": [{"name": "A"}, {"name": "B"}]})
+        self.assertEqual(ud["path"], "/")
+
+    def test_external_data_shallow_merges_winning_per_key(self):
+        ops = assemble_ops(
+            intent="create",
+            surface_id="s1",
+            catalog_id="cat://x",
+            components=[{"id": "root", "component": "Column"}],
+            data={"form": {"name": ""}, "items": ["stale"]},
+            external_data={"items": [{"name": "fresh"}]},
+        )
+        ud = next(op["updateDataModel"] for op in ops if "updateDataModel" in op)
+        self.assertEqual(ud["value"], {"form": {"name": ""}, "items": [{"name": "fresh"}]})
+
+    def test_both_empty_omits_data_op(self):
+        ops = assemble_ops(
+            intent="create",
+            surface_id="s1",
+            catalog_id="cat://x",
+            components=[{"id": "root", "component": "Row"}],
+            data={},
+            external_data={},
+        )
+        self.assertFalse(any("updateDataModel" in op for op in ops))
+
+    def test_absent_external_data_is_behavior_compat(self):
+        ops = assemble_ops(
+            intent="create",
+            surface_id="s1",
+            catalog_id="cat://x",
+            components=[{"id": "root", "component": "Row"}],
+            data={"items": ["a"]},
+        )
+        ud = next(op["updateDataModel"] for op in ops if "updateDataModel" in op)
+        self.assertEqual(ud["value"], {"items": ["a"]})
+
+
+class TestBuildA2UIEnvelopeExternalData(unittest.TestCase):
+    """By-reference data merge through build_a2ui_envelope (OSS-2005)."""
+
+    def test_merges_external_data_when_no_data_arg(self):
+        env = json.loads(
+            build_a2ui_envelope(
+                args={"surfaceId": "s1", "components": [{"id": "root", "component": "List"}]},
+                is_update=False,
+                target_surface_id=None,
+                prior=None,
+                default_catalog_id="cat://x",
+                external_data={"flights": [{"id": 1}, {"id": 2}]},
+            )
+        )
+        ud = next(op["updateDataModel"] for op in env[A2UI_OPERATIONS_KEY] if "updateDataModel" in op)
+        self.assertEqual(ud["value"], {"flights": [{"id": 1}, {"id": 2}]})
+
+    def test_external_data_wins_over_regenerated_data(self):
+        env = json.loads(
+            build_a2ui_envelope(
+                args={
+                    "surfaceId": "s1",
+                    "components": [{"id": "root", "component": "List"}],
+                    "data": {"flights": ["model-regenerated"]},
+                },
+                is_update=False,
+                target_surface_id=None,
+                prior=None,
+                default_catalog_id="cat://x",
+                external_data={"flights": [{"id": 1}]},
+            )
+        )
+        ud = next(op["updateDataModel"] for op in env[A2UI_OPERATIONS_KEY] if "updateDataModel" in op)
+        self.assertEqual(ud["value"], {"flights": [{"id": 1}]})
+
+    def test_no_external_data_is_behavior_compat(self):
+        env = json.loads(
+            build_a2ui_envelope(
+                args={"surfaceId": "s1", "components": [{"id": "root", "component": "Row"}], "data": {"x": 1}},
+                is_update=False,
+                target_surface_id=None,
+                prior=None,
+                default_catalog_id="cat://x",
+            )
+        )
+        ud = next(op["updateDataModel"] for op in env[A2UI_OPERATIONS_KEY] if "updateDataModel" in op)
+        self.assertEqual(ud["value"], {"x": 1})
+
+
+class TestResolveExternalData(unittest.TestCase):
+    """By-reference data channels (OSS-2005) — mirror of the TS suite."""
+
+    @staticmethod
+    def _data_tool_msg(tool_call_id, data):
+        return {"type": "tool", "toolCallId": tool_call_id, "content": json.dumps(data)}
+
+    def test_returns_a2ui_data_blob_channel_a(self):
+        out = resolve_external_data(a2ui_data={"items": [{"id": 1}]}, messages=[])
+        self.assertEqual(out, {"items": [{"id": 1}]})
+
+    def test_falls_back_to_data_ref_message_channel_b(self):
+        out = resolve_external_data(
+            data_ref="call-7",
+            messages=[self._data_tool_msg("call-7", {"flights": [{"n": "AA"}]})],
+        )
+        self.assertEqual(out, {"flights": [{"n": "AA"}]})
+
+    def test_a2ui_data_wins_over_data_ref(self):
+        out = resolve_external_data(
+            a2ui_data={"winner": True},
+            data_ref="call-7",
+            messages=[self._data_tool_msg("call-7", {"loser": True})],
+        )
+        self.assertEqual(out, {"winner": True})
+
+    def test_none_when_neither_channel(self):
+        self.assertIsNone(resolve_external_data(messages=[]))
+
+    def test_none_when_data_ref_unmatched(self):
+        self.assertIsNone(
+            resolve_external_data(data_ref="missing", messages=[self._data_tool_msg("other", {"x": 1})])
+        )
+
+    def test_empty_a2ui_data_falls_through(self):
+        out = resolve_external_data(
+            a2ui_data={},
+            data_ref="call-7",
+            messages=[self._data_tool_msg("call-7", {"from_ref": 1})],
+        )
+        self.assertEqual(out, {"from_ref": 1})
+
+
 class TestWrapAsOperationsEnvelope(unittest.TestCase):
     def test_serializes_under_key(self):
         ops = [create_surface("s1", "c")]
@@ -683,6 +841,24 @@ def _prior_surface_message(surface_id: str):
             ]
         )
     )
+
+
+class TestPrepareA2UIRequestExternalData(unittest.TestCase):
+    def test_external_data_surfaces_truncated_shape_and_omit_directive(self):
+        prep = prepare_a2ui_request(
+            intent="create",
+            target_surface_id=None,
+            changes=None,
+            messages=[],
+            state={},
+            guidelines={"generation_guidelines": "", "design_guidelines": ""},
+            external_data={"items": [{"name": "A"}, {"name": "B"}, {"name": "C"}]},
+        )
+        self.assertIn("items", prep["prompt"])
+        self.assertIn("omit", prep["prompt"].lower())
+        # The full dataset must NOT be inlined — only a truncated sample.
+        self.assertNotIn('"B"', prep["prompt"])
+        self.assertNotIn('"C"', prep["prompt"])
 
 
 class TestPrepareA2UIRequest(unittest.TestCase):
