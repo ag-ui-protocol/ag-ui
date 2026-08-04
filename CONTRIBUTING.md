@@ -11,32 +11,25 @@ Here's how to get involved:
 Pick the right spot so we can help you faster:
 
 - **I want to contribute [Fixes / Feature Requests]** → [GitHub Issues](https://github.com/ag-ui-protocol/ag-ui/issues)
-- **"How do I...?** → [Discord](https://discord.gg/Jd3FzfdJa8) → `#-💎-contributing`
+- **"How do I...?"** → [Discord](https://discord.gg/Jd3FzfdJa8) → `#-💎-contributing`
 - **Introduce Yourself** → [Discord](https://discord.gg/Jd3FzfdJa8) → `🤝-intro`
 
 ---
 
 ## Want to Contribute Code?
 
-First, an important plea:
-**Please PLEASE reach out to us first before starting any significant work on new or existing features.**
+First, an important plea: **Please PLEASE reach out to us first before starting any significant work on new or existing features.**
 
-We love community contributions! That said, we want to make sure we're all on the same page before you start.
-Investing a lot of time and effort just to find out it doesn't align with the upstream project feels awful, and we don't want that to happen.
-It also helps to make sure the work you're planning isn't already in progress.
+We love community contributions! That said, we want to make sure we're all on the same page before you start. Investing a lot of time and effort just to find out it doesn't align with the upstream project feels awful, and we don't want that to happen. It also helps to make sure the work you're planning isn't already in progress.
 
-If you'd confirmed that the **[x]** work hasn't been started yet, please file an issue first: https://github.com/ag-ui-protocol/ag-ui/issues
+If you've confirmed the work hasn't been started yet, please file an issue first: <https://github.com/ag-ui-protocol/ag-ui/issues>
 
-1. **Find Something to Work On**
-   Browse open issues on [GitHub](https://github.com/ag-ui-protocol/ag-ui/issues).
-   Got your own idea? Open an issue first so we can start the discussion.
+1. **Find Something to Work On** Browse open issues on [GitHub](https://github.com/ag-ui-protocol/ag-ui/issues). Got your own idea? Open an issue first so we can start the discussion.
 
-2. **Ask to Be Assigned**
-   Comment on the issue and tag a code owner:
-   → [Code Owners](https://github.com/ag-ui-protocol/ag-ui/blob/main/.github/CODEOWNERS)
+2. **Ask to Be Assigned** Comment on the issue and tag a code owner:
+→ [Code Owners](https://github.com/ag-ui-protocol/ag-ui/blob/main/.github/CODEOWNERS)
 
-3. **Get on the Roadmap**
-   Once approved, you'll be assigned the issue, and it'll get added to our [roadmap](https://github.com/orgs/ag-ui-protocol/projects/1).
+3. **Get on the Roadmap** Once approved, you'll be assigned the issue, and it'll get added to our [roadmap](https://github.com/orgs/ag-ui-protocol/projects/1).
 
 4. **Coordinate With Others**
    - If you're collaborating or need feedback, start a thread in `#-💎-contributing` on Discord
@@ -44,148 +37,70 @@ If you'd confirmed that the **[x]** work hasn't been started yet, please file an
 
 5. **Open a Pull Request**
    - When you're ready, submit your PR
-   - In the description, include: `Fixes #<issue-number>`
-     (This links your PR to the issue and closes it automatically)
+   - In the description, include: `Fixes #<issue-number>` (This links your PR to the issue and closes it automatically)
 
 6. **Review & Merge**
    - A maintainer will review your code and leave comments if needed
-   - Once it's approved, we'll merge it and move the issue to "done."
-
-**NOTE:** All community integrations (ie, .NET, Golang SDK, etc.) will need to be maintained by the community member who made the contribution.
+   - Once it's approved, we'll merge it and move the issue to "done"
 
 ---
 
-## Step-by-Step Guide to Adding an Integration PR
+## Building a Community Integration
 
-This guide walks you through everything needed to submit an integration PR to AG-UI. It covers adding the integration code, examples, dojo configuration, end-to-end tests, and CI setup.
+Community integrations (framework adapters, language bindings, runtime connectors, etc.) are the heart of the AG-UI ecosystem. The protocol is only as useful as the agents, frameworks, and tools that speak it—and that's where you come in.
 
-Use existing integrations in `integrations/` (e.g., `integrations/adk-middleware/` or `integrations/langgraph/`) as reference implementations throughout.
+### Where Integrations Live
 
-### Step 1: Add Your Integration Folder
+**Community integrations are owned, hosted, and maintained by their authors in their own repositories.** This keeps you in control of your release cadence, your dependency choices, your issue tracker, and your roadmap. You ship when you're ready, version how you want, and respond to your own users directly.
 
-Your integration code goes inside the `integrations/` folder, under a subfolder named after your integration (e.g., `integrations/my-framework/`).
+The AG-UI repo's job is to make your integration discoverable—not to host its source. Once your integration is working and stable, you submit a small PR here that adds a pointer to it (name, description, link to your repo, supported features, language/runtime). That's it. No code, no examples, no CI plumbing in this repo.
 
-- **Language subfolder** — Organize by language. For example, if your integration is in Python, place it under `integrations/my-framework/python/`. If it supports multiple languages (e.g., Python and Rust), use separate subfolders like `python/` and `rust/`.
-- **Examples subfolder** — Include an `examples/` directory inside your language folder (e.g., `integrations/my-framework/python/examples/`). The dojo examples must live here, but you can include additional examples as well.
-- **TypeScript client folder (required)** — No matter what language the integration is in, you must also include a `typescript/` folder. At minimum, this contains the TypeScript client code that re-exports the HTTP agent. You can copy this from an existing integration like `integrations/adk-middleware/typescript/` as a reference. It includes a `package.json`, TypeScript config, and the client code itself. If your framework natively supports TypeScript, the full TypeScript implementation should also live in this package.
+### What Owning It Means
 
-**Example structure:**
-```
-integrations/my-framework/
-├── python/
-│   ├── examples/          # Dojo examples live here
-│   │   ├── pyproject.toml
-│   │   └── ...
-│   ├── pyproject.toml     # Integration package
-│   └── ...
-└── typescript/
-    ├── package.json
-    ├── tsconfig.json
-    └── src/
-        └── index.ts       # Re-exports the HTTP agent
-```
+Listing your integration here means putting your name on it. Users will find your repo through AG-UI, try it out, and form their first impression of the protocol through your code. That's a real responsibility, and we ask you to take it seriously:
 
-### Step 2: Register Your Integration in the Dojo
+- **You're the maintainer.** Issues, bug reports, security questions, and PRs from users land in your repo. You triage them. The AG-UI team isn't on call for your integration.
+- **The bar is high.** Listed integrations should feel production-grade—clean code, working examples, real documentation, a license, and a clear story for how someone gets from zero to a running agent. If it feels like a weekend hack, it's not ready to be listed yet.
+- **It has to work against the dojo.** The [AG-UI dojo](https://github.com/ag-ui-protocol/ag-ui/tree/main/apps/dojo) is how we (and your users) verify that an integration actually implements the protocol correctly. Your integration must run against the dojo and pass the feature tests for everything you claim to support. If you list `agentic_chat` and `human_in_the_loop` in your registry entry, both need to work end-to-end in the dojo.
+- **You keep it current.** AG-UI evolves. When the protocol or core SDKs change, you're expected to keep up within a reasonable window. Stale integrations confuse users and reflect badly on the whole ecosystem.
 
-You need to update three files inside `apps/dojo/src/` to make the dojo aware of your integration:
+None of this is meant to scare anyone off—we want as many integrations as possible. But "listed on AG-UI" should mean something, and the only way it does is if every integration behind that link clears the bar.
 
-- **`agents.ts`** — Add an entry for your integration. The **object key** you choose is important because it must match exactly in the other configuration files. If your framework supports multiple variants — different languages, runtimes, or transport modes — each variant gets its own separate entry. For example, LangGraph has entries for LangGraph Platform (Python), LangGraph FastAPI (Python), and LangGraph TypeScript.
-- **`menu.ts`** — Add your integration to the sidebar menu. The **`id`** must match the object key you used in `agents.ts`. The **`name`** is the human-readable display label shown in the left sidebar and does not need to match the ID. Each entry also defines which features it supports (e.g., `agentic_chat`, `human_in_the_loop`, `agentic_generative_ui`). This file is the single source of truth for integration configuration.
-- **`env.ts`** — Define the environment variable for your agent's hosted URL (one per agent). This is how the dojo knows where to reach your agent at runtime. The default should match whatever host/port your example code uses.
+### Why This Setup
 
-### Step 3: Configure the Agent Mapping
+A few reasons this works better for everyone:
 
-Each entry in `agents.ts` contains a mapping of feature keys. This is typically a one-to-one mapping where each key corresponds to one agent. For most integrations, this is simple — one feature maps to one agent name. If your framework handles multiple agents talking together, there may be multiple agents listed, but each still gets its own entry.
+- **You own the release cycle.** No waiting on AG-UI maintainers to cut a release when you fix a bug or add a feature.
+- **Your stack, your rules.** Build your integration with the tooling, language version, and dependencies that make sense for your framework's community.
+- **Tighter feedback loops.** Issues and PRs from your users land in your repo, where you're already paying attention.
+- **The protocol stays lean.** AG-UI itself can focus on the spec and core SDKs without taking on the maintenance load of every downstream integration.
 
-### Step 4: Set Up Environment Variables
+### How to Get Started
 
-Your example code must:
+1. **Build it in your own repo.** Use the [AG-UI spec](https://github.com/ag-ui-protocol/ag-ui) and existing integrations as reference. The [Discord `#-💎-contributing` channel](https://discord.gg/Jd3FzfdJa8) is the best place to ask questions while you build.
 
-- **Bind to host `0.0.0.0`** (or be overridable via the `HOST` environment variable)
-- **Respect the `PORT` environment variable** — when the dojo sets a specific port, your agent must bind to that exact port
+2. **Validate it against the dojo.** Spin up the dojo locally, point it at your integration, and confirm every feature you plan to claim actually works. This is the single best signal—both for you and for us—that the integration is real.
 
-The port values defined in `env.ts` must match the URLs configured in `agents.ts`. If they don't line up, the dojo won't be able to find your agent.
+3. **Polish before you list.** README with quickstart, working example, license, version compatibility notes, issue tracker enabled. Treat your repo like a real open-source project, because it is one.
 
-### Step 5: Add Dojo Scripts
+4. **Tell us about it.** Once it's stable and dojo-verified, open an issue on this repo titled `Integration listing: <your framework>`. Include:
+   - Link to your repo
+   - Short description (one or two sentences)
+   - Language(s) and runtime(s) supported
+   - Which AG-UI features your integration covers and confirmation they pass in the dojo
+   - License
 
-Add entries for your integration in the dojo script configuration at `apps/dojo/scripts/`. There are two scripts to update:
+5. **Submit the listing PR.** After a maintainer gives the green light on the issue, open a PR adding your entry to the community integrations registry. Maintainers will review for fit, accuracy, and basic quality, then merge.
 
-- **`prep-dojo-everything.js`** — This is the "prepare" command. It installs dependencies and builds your module (e.g., `pnpm install`, `uv sync`, `poetry install`, `go build`). It does **not** start any servers.
-- **`run-dojo-everything.js`** — This is the "run" command. It starts your integration's agent server.
-
-In both scripts, you add an entry to the `ALL_TARGETS` object. The **object key must match** the key you used in `agents.ts`. Each entry includes:
-- The **name** for logging
-- The **command** to execute (e.g., `uv sync` for prep, `uv run ...` for run)
-- The **working directory** (pointing into your `integrations/` examples folder)
-- **Environment variables** (optional) — for example, `PORT`
-
-**Important rules for `run-dojo-everything.js`:**
-- The **ports must not collide** with any other integration. Pick the next highest available port number.
-- The `dojo` and `dojo-dev` entries in the same file need environment variables that point to your service's port, so the dojo knows where to reach your agent.
-- If your integration runs **multiple agents**, you can have multiple entries in run. See `a2a-middleware` for an example of this pattern.
-
-At this point, you should be able to spin up the dojo locally and see your integration working.
-
-### Step 6: Add End-to-End Tests
-
-Every feature listed in your sidebar entry (in `menu.ts`) needs a corresponding end-to-end test. **Without tests, your PR will not be considered ready.**
-
-- **Create a test folder** for your integration inside `apps/dojo/e2e/tests/` (e.g., `apps/dojo/e2e/tests/myFrameworkTests/`). Each feature you support gets its own spec file inside this folder.
-- **Follow existing test patterns** — Look at how other integrations implement their tests. If other frameworks use shared helpers from `apps/dojo/e2e/featurePages/`, you should use `featurePages` too. However, some tests use framework-specific page objects in `apps/dojo/e2e/pages/<framework-name>/`. If the same test for other frameworks lives in `pages/some-framework`, you'll need to copy it to `pages/my-framework` and adapt it for your integration.
-- **Run tests locally** before submitting your PR. From `apps/dojo/`, in one terminal:
-  ```bash
-  ./scripts/prep-dojo-everything.js --only dojo,my-framework
-  ./scripts/run-dojo-everything.js --only dojo,my-framework
-  ```
-  Then in a separate terminal, from `apps/dojo/e2e/`:
-  ```bash
-  pnpm install
-  pnpm test tests/myFrameworkTests/
-  ```
-
-### Step 7: Add CI Configuration
-
-The end-to-end tests need to run in CI as well. Update the GitHub Actions workflow file at `.github/workflows/dojo-e2e.yml`:
-
-- **Add your integration to the test matrix** at the top of the workflow. The entry name must match the key you used in `agents.ts`. This tells CI which test path to use (e.g., `tests/myFrameworkTests`).
-- **Add a services section** that defines which services to build and run. The service names map back to the `prep-dojo` and `run-dojo` scripts. The CI workflow uses a `wait-on` command to check that services are responsive (via TCP/HTTP) before running tests.
-
-**Note:** Tests won't run by default on external PRs. The team will open a separate PR from within the repo to trigger CI, then merge the original contributor PR once tests pass.
-
-### Step 8 (Optional): Update CODEOWNERS
-
-This step is only needed if you want to be added as a co-owner who can merge changes to your integration without core team review. If this applies to you, update the `.github/CODEOWNERS` file to add yourself alongside the team:
-
-```
-integrations/my-framework @ag-ui-protocol/copilotkit @your-github-username
-```
-
-For most contributors, this is not required — the core team already owns all paths by default.
-
-### Quick Reference Checklist
-
-Use this checklist to verify your PR is complete before submitting:
-
-- [ ] Integration folder added under `integrations/` with language subfolder + examples
-- [ ] TypeScript client folder included (even for non-TS integrations)
-- [ ] `agents.ts` updated with integration entry and feature mapping (object key is the source of truth)
-- [ ] `menu.ts` updated with sidebar entry (`id` matches `agents.ts` key, `name` is human-readable)
-- [ ] `env.ts` updated with agent URL environment variable
-- [ ] Example code binds to `0.0.0.0` and respects `HOST`/`PORT` env vars
-- [ ] `prep-dojo-everything.js` and `run-dojo-everything.js` entries added (object keys match `agents.ts`)
-- [ ] Ports in `run-dojo-everything.js` do not collide with existing integrations
-- [ ] `dojo`/`dojo-dev` entries updated with env vars pointing to your service's port
-- [ ] End-to-end test spec files added for every supported feature
-- [ ] Tests pass locally
-- [ ] CI workflow matrix updated in `.github/workflows/dojo-e2e.yml` (entry name matches `agents.ts`)
+6. **Keep it alive.** If your integration goes dormant or breaks against newer AG-UI versions for an extended period, we may flag it as unmaintained in the registry or remove the listing. If life gets in the way, just let us know—we'd rather help find a co-maintainer than delist.
 
 ---
 
 ## Contributing a Community SDK
 
-If you're adding a new language SDK (e.g., Go, Java, Kotlin, Ruby, Rust) rather than a framework integration, place it in the `sdks/community/` folder. The team will add you as a code owner for that SDK so you can push changes without needing core team sign-off. Documentation for community SDKs also lives inside that SDK folder.
+If you're adding a new language SDK (e.g., Go, Java, Kotlin, Ruby, Rust) rather than a framework integration, the same principle applies: **SDKs live in their author's repo**, and we link to them from this repo.
 
-This is a separate process from adding an integration — see the steps above for framework integrations.
+Open an issue describing the SDK you want to build so we can coordinate, then follow the same listing flow above once it's ready. Documentation for community SDKs lives alongside the SDK itself.
 
 ---
 
@@ -201,9 +116,7 @@ Here's how to contribute:
 
 2. **Submit a PR**
    - Once assigned, make your edits and open a pull request.
-   - In the description, include: `Fixes #<issue-number>`
-     (This links your PR to the issue and closes it automatically)
-
+   - In the description, include: `Fixes #<issue-number>` (This links your PR to the issue and closes it automatically)
    - A maintainer will review it and merge if it looks good.
 
 That's it! Simple and appreciated.
@@ -212,5 +125,4 @@ That's it! Simple and appreciated.
 
 ## That's It!
 
-AG-UI is community-built, and every contribution helps shape where we go next.
-Big thanks for being part of it!
+AG-UI is community-built, and every contribution helps shape where we go next. Big thanks for being part of it!
