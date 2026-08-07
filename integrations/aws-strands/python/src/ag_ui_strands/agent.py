@@ -368,8 +368,26 @@ class StrandsAgent:
             behavior and behavior.skip_messages_snapshot
         )
 
-    async def run(self, input_data: RunAgentInput) -> AsyncIterator[Any]:
-        """Run the Strands agent and yield AG-UI events."""
+    async def run(
+        self,
+        input_data: RunAgentInput,
+        *,
+        invocation_state: dict[str, Any] | None = None,
+    ) -> AsyncIterator[Any]:
+        """Run the Strands agent and yield AG-UI events.
+
+        Args:
+            input_data: The AG-UI run request.
+            invocation_state: Optional request-scoped state forwarded unchanged
+                to the underlying Strands invocation. The state is available to
+                hooks and tools but is not added to the model context.
+        """
+
+        stream_kwargs = (
+            {"invocation_state": invocation_state}
+            if invocation_state is not None
+            else {}
+        )
 
         # Get or create agent instance for this thread. When a
         # session_manager_provider is configured, the SessionManager handles
@@ -988,7 +1006,7 @@ class StrandsAgent:
                 # ``self.messages`` as-is. The LLM sees real tool results
                 # (including ones produced by the frontend) and emits a
                 # proper follow-up turn instead of re-calling the tool.
-                agent_stream = strands_agent.stream_async(None)
+                agent_stream = strands_agent.stream_async(None, **stream_kwargs)
             elif reconcile_session_results:
                 try:
                     corrected_native_ids = reconcile_frontend_tool_results(
@@ -1025,12 +1043,16 @@ class StrandsAgent:
                     only_ids=set(resolved_native_results),
                 )
                 agent_stream = strands_agent.stream_async(
-                    None if reconciled else user_message
+                    None if reconciled else user_message,
+                    **stream_kwargs,
                 )
             else:
                 # Legacy path: pass only the latest user message and trust
                 # Strands (via session_manager) to track history.
-                agent_stream = strands_agent.stream_async(user_message)
+                agent_stream = strands_agent.stream_async(
+                    user_message,
+                    **stream_kwargs,
+                )
 
             # Drop only the entries whose placeholder was actually corrected
             # this turn — they won't recur. Entries that were NOT corrected
