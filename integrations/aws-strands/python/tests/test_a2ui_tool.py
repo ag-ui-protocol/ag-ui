@@ -31,8 +31,12 @@ from unittest.mock import MagicMock
 
 import pytest
 from ag_ui.core import Context, EventType, RunAgentInput, Tool, UserMessage
-from strands.interrupt import _InterruptState
 from strands.tools.registry import ToolRegistry
+
+try:
+    from strands.interrupt import _InterruptState
+except ImportError:  # Strands 1.15 keeps the state class in agent.interrupt.
+    from strands.agent.interrupt import InterruptState as _InterruptState
 
 from ag_ui_strands.a2ui_tool import (
     A2UI_STREAM_KEY,

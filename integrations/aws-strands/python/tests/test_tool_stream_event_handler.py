@@ -271,7 +271,9 @@ async def test_context_fields_populated():
     ]
 
     agent = _build_agent(stream_events, config)
-    await agent.run(_make_input()).__anext__()  # prime the generator
+    primed_run = agent.run(_make_input())
+    await primed_run.__anext__()
+    await primed_run.aclose()
     # Collect all events to drive the generator to completion
     events = [e async for e in agent.run(_make_input())]
 
