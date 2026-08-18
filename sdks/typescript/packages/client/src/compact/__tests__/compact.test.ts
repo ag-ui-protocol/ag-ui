@@ -1,6 +1,12 @@
 import { compactEvents } from "../compact";
+import { defaultApplyEvents } from "../../apply/default";
+import { AbstractAgent } from "@/agent";
+import { AgentStateMutation } from "@/agent/subscriber";
 import {
+  BaseEvent,
   EventType,
+  Message,
+  RunAgentInput,
   TextMessageStartEvent,
   TextMessageContentEvent,
   ToolCallStartEvent,
@@ -8,6 +14,33 @@ import {
   CustomEvent,
   StateSnapshotEvent,
 } from "@ag-ui/core";
+import { firstValueFrom, of } from "rxjs";
+import { toArray } from "rxjs/operators";
+
+async function serializeDefaultReducerResult(events: BaseEvent[]): Promise<string> {
+  const input: RunAgentInput = {
+    threadId: "t1",
+    runId: "restore",
+    state: {},
+    messages: [],
+    tools: [],
+    context: [],
+    forwardedProps: {},
+  };
+  const agent = { messages: [] } as unknown as AbstractAgent;
+  const mutations = await firstValueFrom(
+    defaultApplyEvents(input, of(...events), agent, []).pipe(toArray()),
+  );
+  const final = mutations.reduce<{ messages: Message[]; state: Record<string, unknown> }>(
+    (current, mutation: AgentStateMutation) => ({
+      messages: mutation.messages ?? current.messages,
+      state: mutation.state ?? current.state,
+    }),
+    { messages: input.messages, state: input.state },
+  );
+
+  return JSON.stringify(final);
+}
 
 describe("Event Compaction", () => {
   describe("Text Message Compaction", () => {
@@ -387,6 +420,123 @@ describe("Event Compaction", () => {
       expect(compacted[4].type).toBe(EventType.STATE_SNAPSHOT);
       expect((compacted[4] as StateSnapshotEvent).snapshot).toEqual({ step: 20 });
       expect(compacted[5].type).toBe(EventType.RUN_FINISHED);
+    });
+
+    it("should carry cumulative state across runs with add, replace, and remove deltas", () => {
+      const events = [
+        { type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" },
+        {
+          type: EventType.STATE_SNAPSHOT,
+          snapshot: { count: 1, label: "before", obsolete: true },
+        },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" },
+        { type: EventType.RUN_STARTED, threadId: "t1", runId: "r2" },
+        { type: EventType.STATE_DELTA, delta: [{ op: "add", path: "/added", value: "run-2" }] },
+        {
+          type: EventType.STATE_DELTA,
+          delta: [{ op: "replace", path: "/label", value: "after" }],
+        },
+        { type: EventType.STATE_DELTA, delta: [{ op: "remove", path: "/obsolete" }] },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r2" },
+      ];
+
+      const snapshots = compactEvents(events)
+        .filter((event): event is StateSnapshotEvent => event.type === EventType.STATE_SNAPSHOT)
+        .map((event) => event.snapshot);
+
+      expect(snapshots).toEqual([
+        { count: 1, label: "before", obsolete: true },
+        { count: 1, label: "after", added: "run-2" },
+      ]);
+    });
+
+    it.each([
+      {
+        operation: "add",
+        initialState: { count: 1, label: "kept" },
+        delta: [{ op: "add", path: "/added", value: true }],
+        finalState: { count: 1, label: "kept", added: true },
+      },
+      {
+        operation: "replace",
+        initialState: { count: 1, label: "kept" },
+        delta: [{ op: "replace", path: "/count", value: 2 }],
+        finalState: { count: 2, label: "kept" },
+      },
+      {
+        operation: "remove",
+        initialState: { count: 1, obsolete: true, label: "kept" },
+        delta: [{ op: "remove", path: "/obsolete" }],
+        finalState: { count: 1, label: "kept" },
+      },
+    ])(
+      "should preserve default reducer output byte-for-byte for a cross-run $operation delta",
+      async ({ operation, initialState, delta, finalState }) => {
+        const events: BaseEvent[] = [
+          { type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" },
+          { type: EventType.STATE_SNAPSHOT, snapshot: initialState },
+          { type: EventType.TEXT_MESSAGE_START, messageId: "msg-r1", role: "assistant" },
+          { type: EventType.TEXT_MESSAGE_CONTENT, messageId: "msg-r1", delta: "First " },
+          { type: EventType.TEXT_MESSAGE_CONTENT, messageId: "msg-r1", delta: "run" },
+          { type: EventType.TEXT_MESSAGE_END, messageId: "msg-r1" },
+          { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" },
+          { type: EventType.RUN_STARTED, threadId: "t1", runId: "r2" },
+          { type: EventType.TEXT_MESSAGE_START, messageId: "msg-r2", role: "assistant" },
+          { type: EventType.TEXT_MESSAGE_CONTENT, messageId: "msg-r2", delta: `${operation} ` },
+          { type: EventType.TEXT_MESSAGE_CONTENT, messageId: "msg-r2", delta: "delta" },
+          { type: EventType.TEXT_MESSAGE_END, messageId: "msg-r2" },
+          { type: EventType.STATE_DELTA, delta },
+          { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r2" },
+        ];
+
+        const raw = await serializeDefaultReducerResult(events);
+        const compacted = await serializeDefaultReducerResult(compactEvents(events));
+
+        expect(JSON.parse(raw)).toEqual({
+          messages: [
+            { id: "msg-r1", role: "assistant", content: "First run" },
+            { id: "msg-r2", role: "assistant", content: `${operation} delta` },
+          ],
+          state: finalState,
+        });
+        expect(compacted).toBe(raw);
+      },
+    );
+
+    it("should not emit another state snapshot for a later run without state events", () => {
+      const events = [
+        { type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" },
+        { type: EventType.STATE_SNAPSHOT, snapshot: { count: 1 } },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" },
+        { type: EventType.RUN_STARTED, threadId: "t1", runId: "r2" },
+        { type: EventType.TEXT_MESSAGE_START, messageId: "msg1", role: "assistant" },
+        { type: EventType.TEXT_MESSAGE_CONTENT, messageId: "msg1", delta: "No state change" },
+        { type: EventType.TEXT_MESSAGE_END, messageId: "msg1" },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r2" },
+      ];
+
+      const snapshots = compactEvents(events).filter(
+        (event) => event.type === EventType.STATE_SNAPSHOT,
+      );
+
+      expect(snapshots).toHaveLength(1);
+      expect((snapshots[0] as StateSnapshotEvent).snapshot).toEqual({ count: 1 });
+    });
+
+    it("should throw for an invalid delta after state was established in an earlier run", () => {
+      const events = [
+        { type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" },
+        { type: EventType.STATE_SNAPSHOT, snapshot: { existing: true } },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" },
+        { type: EventType.RUN_STARTED, threadId: "t1", runId: "r2" },
+        {
+          type: EventType.STATE_DELTA,
+          delta: [{ op: "replace", path: "/missing", value: "invalid" }],
+        },
+        { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r2" },
+      ];
+
+      expect(() => compactEvents(events)).toThrow();
     });
 
     it("should not emit state snapshot when no state events in run", () => {
