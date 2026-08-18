@@ -452,6 +452,14 @@ jobs:
         working-directory: integrations/aws-strands/python
         run: uv run --locked python -m pytest tests/ -v
 
+      - name: Verify Strands 1.15.0 compatibility
+        working-directory: integrations/aws-strands/python
+        run: |
+          uv run --isolated --with-editable . \
+            --with 'strands-agents==1.15.0' \
+            --with pytest --with pytest-asyncio \
+            python -m pytest tests/ -q
+
       - name: Assert no lockfile was rewritten
         # Must run when the tests FAIL: a job that rewrote a lockfile and then failed
         # its tests would otherwise skip this step and report only the test failure,
