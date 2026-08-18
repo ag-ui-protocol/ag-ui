@@ -37,7 +37,7 @@ The integration has three main layers:
 - **Configuration** – `StrandsAgentConfig` + `ToolBehavior` + `PredictStateMapping` let you describe tool-specific quirks declaratively (skip message snapshots, emit state, stream args, send confirm actions, etc.).
 - **Transport helpers** – `create_strands_app` and `add_strands_fastapi_endpoint` expose the agent via SSE. They are thin shells over the shared `ag_ui.encoder.EventEncoder`.
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for diagrams and a deeper dive.
+See [ARCHITECTURE.md](../ARCHITECTURE.md) for diagrams and a deeper dive.
 
 ## Key Files
 
@@ -73,7 +73,7 @@ Requests to the AC endpoint must be authenticated. You can configure your agent 
 
 For details on how AgentCore handles AG-UI requests, event streaming, and error formatting, see the [AG-UI protocol contract](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-agui-protocol-contract.html).
 
-To deploy, use the [AgentCore Starter Toolkit](https://github.com/awslabs/bedrock-agentcore-starter-toolkit):
+To deploy, use the [AgentCore Starter Toolkit](https://github.com/aws/bedrock-agentcore-starter-toolkit):
 
 ```bash
 pip install bedrock-agentcore-starter-toolkit
