@@ -1616,17 +1616,6 @@ def _commit_recovered_frontend_wait(
     replacement_batch: FrontendToolWaitBatch | None = None,
 ) -> None:
     """Sync a recovered tombstone and its checkpoint bookkeeping together."""
-    payload = {
-        "last_resume_fingerprint": fingerprint,
-        "pending_interrupts": (
-            {
-                interrupt_id: interrupt.model_dump(mode="json")
-                for interrupt_id, interrupt in pending.items()
-            }
-            if pending
-            else {}
-        ),
-    }
     agent.state.set(
         FRONTEND_TOOL_WAIT_STATE_KEY,
         (
@@ -1636,7 +1625,13 @@ def _commit_recovered_frontend_wait(
         ).to_dict(),
     )
     agent.state.set(_FRONTEND_TOOL_SERVER_RESPONSES_STATE_KEY, {})
-    agent.state.set(_INTERRUPT_BOOKKEEPING_STATE_KEY, payload)
+    _persist_interrupt_bookkeeping(
+        agent,
+        pending,
+        fingerprint,
+        strict=True,
+        synchronize=False,
+    )
     _sync_frontend_wait_state(agent)
 
 
@@ -2037,7 +2032,7 @@ def _load_persisted_interrupt_bookkeeping(
 
 def _persist_interrupt_bookkeeping(
     strands_agent: Any,
-    pending: Dict[str, Interrupt] | None,
+    pending: Mapping[str, Interrupt] | None,
     fingerprint: str | None,
     *,
     strict: bool = False,
@@ -2411,6 +2406,7 @@ class StrandsAgent:
         thread_id = input_data.thread_id or "default"
         core_created_this_run = False
         managed_request = self.config.session_manager_provider is not None
+        run_close_requested = False
 
         core_kwargs = dict(self._agent_kwargs)
         if self._hooks:
@@ -5257,27 +5253,16 @@ class StrandsAgent:
                                         )
                                         message_id = str(uuid.uuid4())
 
+            except GeneratorExit:
+                run_close_requested = True
+                raise
             finally:
                 try:
                     # Always close the delegated Strands stream. ``ag_running`` is
                     # false both when an async generator is exhausted and while it
                     # is suspended at a yield, so it cannot distinguish a closed
                     # stream from one whose model/tool cleanup still needs to run.
-                    try:
-                        await agent_stream.aclose()
-                    except (
-                        GeneratorExit,
-                        ValueError,
-                        RuntimeError,
-                        StopAsyncIteration,
-                    ):
-                        # Suppress context detachment errors - they occur when the generator
-                        # is closed in a different context, but don't affect functionality
-                        # These errors are logged by Strands internally, we just prevent them from propagating
-                        pass
-                    except Exception as e:
-                        # Log other errors but don't fail
-                        logger.warning(f"Error closing agent stream: {e}")
+                    await agent_stream.aclose()
                 finally:
                     if resume_proxy_overlay is not None:
                         resume_proxy_overlay.restore()
@@ -5547,6 +5532,12 @@ class StrandsAgent:
                 )
 
         except Exception as e:
+            # ``aclose()`` injects GeneratorExit at the suspended yield. If
+            # delegated Strands cleanup then fails, emitting RUN_ERROR here
+            # would illegally yield while closing and replace the real error
+            # with ``async generator ignored GeneratorExit``.
+            if run_close_requested:
+                raise
             if (
                 frontend_wait_batch_for_consumption is not None
                 and _frontend_wait_resume_was_accepted(

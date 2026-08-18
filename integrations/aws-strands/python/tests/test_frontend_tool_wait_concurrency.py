@@ -129,6 +129,70 @@ class _SuspendedInnerAgent(_BlockingInnerAgent):
         return child_stream
 
 
+class _CloseFailingInnerAgent(_BlockingInnerAgent):
+    """Fail the first delegated stream close, then serve retries normally."""
+
+    def __init__(self, cleanup_error: BaseException | None = None) -> None:
+        super().__init__()
+        self.cleanup_error = cleanup_error or RuntimeError(
+            "inner Strands stream cleanup failed"
+        )
+
+    def stream_async(self, prompt: Any) -> AsyncIterator[Any]:
+        del prompt
+        self.invocation_count += 1
+        invocation = self.invocation_count
+        self.entered(invocation).set()
+
+        if invocation > 1:
+
+            async def completed_stream() -> AsyncIterator[Any]:
+                yield {"result": _FakeAgentResult()}
+
+            return completed_stream()
+
+        cleanup_error = self.cleanup_error
+
+        class CloseFailingStream:
+            def __init__(self) -> None:
+                self._yielded = False
+
+            def __aiter__(self) -> "CloseFailingStream":
+                return self
+
+            async def __anext__(self) -> Any:
+                if self._yielded:
+                    raise StopAsyncIteration
+                self._yielded = True
+                return {"data": "streamed"}
+
+            async def aclose(self) -> None:
+                raise cleanup_error
+
+        return CloseFailingStream()
+
+
+class _CompleteThenCloseFailingInnerAgent(_BlockingInnerAgent):
+    """Raise from real async-generator cleanup after a complete event."""
+
+    def stream_async(self, prompt: Any) -> AsyncIterator[Any]:
+        del prompt
+        self.invocation_count += 1
+        invocation = self.invocation_count
+        self.entered(invocation).set()
+
+        async def stream() -> AsyncIterator[Any]:
+            if invocation > 1:
+                yield {"result": _FakeAgentResult()}
+                return
+            try:
+                yield {"complete": True}
+            finally:
+                raise RuntimeError("inner Strands stream cleanup failed")
+
+        return stream()
+
+
 class _CleanupGatedRun:
     def __init__(
         self,
@@ -418,6 +482,51 @@ async def test_async_generator_close_closes_suspended_strands_stream():
     assert child_stream.ag_frame is None
     events = await _bounded_wait(_collect(adapter, _input("thread-1", "run-2")))
     assert events[-1].type == EventType.RUN_FINISHED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "cleanup_error",
+    [
+        RuntimeError("inner RuntimeError cleanup failure"),
+        ValueError("inner ValueError cleanup failure"),
+        Exception("inner generic cleanup failure"),
+    ],
+    ids=["runtime", "value", "generic"],
+)
+async def test_strands_stream_close_error_propagates_and_releases_claim(
+    cleanup_error: Exception,
+):
+    inner = _CloseFailingInnerAgent(cleanup_error)
+    adapter = _build_agent({"thread-1": inner})
+    run = adapter.run(_input("thread-1", "run-1"))
+
+    while True:
+        event = await _bounded_wait(run.__anext__())
+        if event.type == EventType.TEXT_MESSAGE_START:
+            break
+
+    with pytest.raises(type(cleanup_error), match=str(cleanup_error)):
+        await _bounded_wait(run.aclose())
+
+    events = await _bounded_wait(_collect(adapter, _input("thread-1", "run-2")))
+    assert events[-1].type == EventType.RUN_FINISHED
+
+
+@pytest.mark.asyncio
+async def test_natural_strands_stream_close_error_emits_run_error_only():
+    inner = _CompleteThenCloseFailingInnerAgent()
+    adapter = _build_agent({"thread-1": inner})
+
+    events = await _bounded_wait(_collect(adapter, _input("thread-1", "run-1")))
+
+    errors = [event for event in events if event.type == EventType.RUN_ERROR]
+    assert len(errors) == 1
+    assert errors[0].message == "inner Strands stream cleanup failed"
+    assert not any(event.type == EventType.RUN_FINISHED for event in events)
+
+    retry = await _bounded_wait(_collect(adapter, _input("thread-1", "run-2")))
+    assert retry[-1].type == EventType.RUN_FINISHED
 
 
 @pytest.mark.asyncio

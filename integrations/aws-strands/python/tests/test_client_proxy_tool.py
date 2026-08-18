@@ -325,6 +325,7 @@ class TestSyncProxyTools:
         assert result == {"tool_a"}
         assert "tool_a" in registry.registry
         assert "tool_b" not in registry.registry
+        assert "tool_b" not in registry.dynamic_tools
 
     def test_preserves_native_tools(self):
         registry = self._fresh_registry()

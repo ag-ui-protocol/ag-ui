@@ -281,8 +281,7 @@ def sync_proxy_tools(
     for name in stale:
         existing = tool_registry.registry.get(name)
         if existing is not None and _is_proxy(existing):
-            del tool_registry.registry[name]
-            tool_registry.dynamic_tools.pop(name, None)
+            _replace_registered_tool(tool_registry, name, None)
             logger.debug("Removed stale proxy tool: %s", name)
 
     # --- Add / update proxy tools ---
