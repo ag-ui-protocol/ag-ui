@@ -136,6 +136,49 @@ interrupt_.response:`), so a falsy `payload` (`None`, `False`, `""`, `0`,
       return "charged"
   ```
 
+### Frontend tool waits
+
+For a client-provided tool with
+`ToolBehavior(continue_after_frontend_call=False)`, the adapter uses a native
+Strands interrupt only inside the Strands execution. The AG-UI exchange does
+not become an interrupt exchange: it remains the existing
+`TOOL_CALL_START` / `TOOL_CALL_ARGS` / `TOOL_CALL_END` events, a normal
+`RUN_FINISHED`, and a later matching `ToolMessage` result. Send that result on
+the same `thread_id` as the paused run.
+
+`ToolBehavior(continue_after_frontend_call=True)` is unchanged. It keeps the
+existing placeholder-based behavior, allowing the current run to continue;
+its later client result follows the existing reconciliation path rather than
+becoming a native frontend-tool wait.
+
+The adapter forwards a waiting tool's `ToolMessage.content` as the exact
+string supplied by the client. Presence, not truthiness, resolves a wait, so
+an empty string is valid. Strings that look like JSON (for example,
+`"false"`, `"0"`, `"null"`, `"[]"`, or `"{}"`) are not JSON-decoded or
+reconstructed into another type.
+
+Multiple waiting frontend-tool results can be returned in any order. A partial
+set is staged, and Strands does not resume until every waiting frontend result
+is present. If the same native checkpoint also has server-tool interrupts,
+frontend results still arrive as `ToolMessage`s while server-tool responses
+continue to arrive through `RunAgentInput.resume`; either response class may
+arrive first, and the adapter resumes only after all native interrupts in that
+checkpoint have responses.
+
+Without a `SessionManager`, a paused frontend-tool wait can resume on the same
+live `StrandsAgent` wrapper. To resume sequentially after wrapper recreation
+or on another load-balanced instance, use a compatible shared
+`SessionManager` backend with stable session and Strands agent identities.
+The configured `session_manager_provider` is called on every request and must
+return a fresh manager instance bound to that stable shared identity, so each
+request reloads authoritative state. That configuration does not require
+sticky sessions for sequential resume.
+
+The adapter rejects overlapping runs for one `thread_id` with a process-local
+guard. This is not distributed coordination: simultaneous requests for the
+same thread in different processes require atomic coordination from the
+deployment or session layer.
+
 ### Persistence and proxy-tool boundaries
 
 | Scenario                                                                        | Support boundary                                                                                                                                                                                                                                                                                 |
