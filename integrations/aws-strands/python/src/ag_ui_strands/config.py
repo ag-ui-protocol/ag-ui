@@ -16,9 +16,7 @@ from typing import (
 )
 
 from ag_ui.core import RunAgentInput
-
 from strands.session import SessionManager
-
 
 StatePayload = Dict[str, Any]
 
@@ -43,11 +41,17 @@ class ToolResultContext(ToolCallContext):
 
 
 ArgsStreamer = Callable[[ToolCallContext], AsyncIterator[str]]
-StateFromArgs = Callable[[ToolCallContext], Awaitable[Optional[StatePayload]] | Optional[StatePayload]]
-StateFromResult = Callable[[ToolResultContext], Awaitable[Optional[StatePayload]] | Optional[StatePayload]]
+StateFromArgs = Callable[
+    [ToolCallContext], Awaitable[Optional[StatePayload]] | Optional[StatePayload]
+]
+StateFromResult = Callable[
+    [ToolResultContext], Awaitable[Optional[StatePayload]] | Optional[StatePayload]
+]
 CustomResultHandler = Callable[[ToolResultContext], AsyncIterator[Any]]
 StateContextBuilder = Callable[[RunAgentInput, str], str]
-SessionManagerProvider = Callable[[RunAgentInput], Awaitable[Optional[SessionManager]] | Optional[SessionManager]]
+SessionManagerProvider = Callable[
+    [RunAgentInput], Awaitable[Optional[SessionManager]] | Optional[SessionManager]
+]
 
 
 @dataclass
@@ -138,19 +142,21 @@ class StrandsAgentConfig:
     session_manager_provider: Optional[SessionManagerProvider] = None
     """Optional factory for creating per-thread SessionManager instances.
 
-    Called exactly once per thread_id the first time that thread is seen.
-    Subsequent requests on the same thread reuse the cached agent (and its
-    SessionManager). If the provider depends on per-request data (e.g. auth
-    tokens in ``forwarded_props``), be aware that only the first request's
-    data is used to initialise the session manager.
+    Called for every request. Each non-``None`` result must be a fresh manager
+    instance; it initializes a fresh per-request Strands core from the shared
+    session so writes made by another process or wrapper are authoritative.
+    The provider may therefore use per-request data such as auth tokens in
+    ``forwarded_props``.
 
     If the provider raises an exception the run yields a ``RUN_ERROR`` event
     and returns early; the thread is NOT cached so the provider will be
     retried on the next request.
 
-    If the provider returns ``None`` a warning is logged and the agent runs
-    without session persistence; the thread IS cached in this state, so the
-    provider will not be called again for the same thread.
+    If the provider consistently returns ``None``, a warning is logged and the
+    existing unmanaged in-memory core is reused for that thread. Returning
+    ``None`` after the thread was session-managed fails loudly instead of
+    silently falling back to stale local state. The provider is called again
+    on the next request in either case.
     """
     emit_messages_snapshot: bool = True
     """Emit ``MessagesSnapshotEvent`` at lifecycle boundaries (after the
@@ -200,7 +206,9 @@ async def maybe_await(value: Any) -> Any:
     return value
 
 
-def normalize_predict_state(value: Optional[Iterable[PredictStateMapping]]) -> List[PredictStateMapping]:
+def normalize_predict_state(
+    value: Optional[Iterable[PredictStateMapping]],
+) -> List[PredictStateMapping]:
     """Normalize predict state config into a concrete list."""
 
     if value is None:
@@ -208,4 +216,3 @@ def normalize_predict_state(value: Optional[Iterable[PredictStateMapping]]) -> L
     if isinstance(value, PredictStateMapping):
         return [value]
     return list(value)
-
