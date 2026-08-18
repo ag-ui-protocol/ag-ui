@@ -436,7 +436,7 @@ public sealed class AGUIChatMessageExtensionsTest
 
     // https://github.com/microsoft/agent-framework/issues/3729
     [Fact]
-    public void RunAgentInput_MultimodalUserMessageContentArray_DeserializesAndMapsToChatContents()
+    public void RunAgentInput_LegacyBinaryUserMessageContent_DeserializesAndMapsToChatContents()
     {
         var json = """
             {
@@ -477,6 +477,179 @@ public sealed class AGUIChatMessageExtensionsTest
         Assert.Equal("image/png", dataContent.MediaType);
         Assert.Equal("pixel.png", dataContent.AdditionalProperties?["filename"]);
         Assert.Equal(System.Convert.FromBase64String("AQIDBA=="), dataContent.Data.ToArray());
+    }
+
+    // https://github.com/ag-ui-protocol/ag-ui/issues/2447
+    [Fact]
+    public void RunAgentInput_CanonicalMultimodalContent_DeserializesAndMapsInOrder()
+    {
+        var json = """
+            {
+              "threadId": "thread-1",
+              "runId": "run-1",
+              "messages": [
+                {
+                  "id": "m1",
+                  "role": "user",
+                  "name": "Alice",
+                  "content": [
+                    { "type": "text", "text": "Compare these files." },
+                    {
+                      "type": "image",
+                      "source": {
+                        "type": "url",
+                        "value": "https://example.com/image.png",
+                        "mimeType": "image/png"
+                      },
+                      "metadata": { "detail": "high" }
+                    },
+                    {
+                      "type": "audio",
+                      "source": {
+                        "type": "data",
+                        "value": "AQIDBA==",
+                        "mimeType": "audio/wav"
+                      }
+                    },
+                    {
+                      "type": "video",
+                      "source": {
+                        "type": "url",
+                        "value": "https://example.com/video.mp4"
+                      }
+                    },
+                    {
+                      "type": "document",
+                      "source": {
+                        "type": "data",
+                        "value": "JVBERg==",
+                        "mimeType": "application/pdf"
+                      },
+                      "metadata": {
+                        "filename": "report.pdf",
+                        "providerHint": { "quality": "high" }
+                      }
+                    }
+                  ]
+                }
+              ],
+              "context": []
+            }
+            """;
+
+        var input = JsonSerializer.Deserialize(json, AGUIJsonSerializerContext.Default.RunAgentInput);
+
+        Assert.NotNull(input);
+        var chatMessage = Assert.Single(input.Messages.AsChatMessages());
+        Assert.Equal(ChatRole.User, chatMessage.Role);
+        Assert.Equal("m1", chatMessage.MessageId);
+        Assert.Equal("Alice", chatMessage.AuthorName);
+        Assert.Collection(
+            chatMessage.Contents,
+            content => Assert.Equal("Compare these files.", Assert.IsType<TextContent>(content).Text),
+            content =>
+            {
+                var uri = Assert.IsType<UriContent>(content);
+                Assert.Equal("https://example.com/image.png", uri.Uri.ToString());
+                Assert.Equal("image/png", uri.MediaType);
+                Assert.Equal(
+                    "high",
+                    Assert.IsType<JsonElement>(uri.AdditionalProperties?["detail"]).GetString());
+            },
+            content =>
+            {
+                var data = Assert.IsType<DataContent>(content);
+                Assert.Equal("audio/wav", data.MediaType);
+                Assert.Equal(System.Convert.FromBase64String("AQIDBA=="), data.Data.ToArray());
+            },
+            content =>
+            {
+                var uri = Assert.IsType<UriContent>(content);
+                Assert.Equal("https://example.com/video.mp4", uri.Uri.ToString());
+                Assert.Equal("video/mp4", uri.MediaType);
+            },
+            content =>
+            {
+                var data = Assert.IsType<DataContent>(content);
+                Assert.Equal("application/pdf", data.MediaType);
+                Assert.Equal(System.Convert.FromBase64String("JVBERg=="), data.Data.ToArray());
+                Assert.Equal("report.pdf", data.Name);
+                Assert.Equal(
+                    "report.pdf",
+                    Assert.IsType<JsonElement>(data.AdditionalProperties?["filename"]).GetString());
+                var providerHint = Assert.IsType<JsonElement>(data.AdditionalProperties?["providerHint"]);
+                Assert.Equal("high", providerHint.GetProperty("quality").GetString());
+            });
+    }
+
+    [Theory]
+    [InlineData("image", "url", "image/png")]
+    [InlineData("image", "data", "image/png")]
+    [InlineData("audio", "url", "audio/wav")]
+    [InlineData("audio", "data", "audio/wav")]
+    [InlineData("video", "url", "video/mp4")]
+    [InlineData("video", "data", "video/mp4")]
+    [InlineData("document", "url", "application/pdf")]
+    [InlineData("document", "data", "application/pdf")]
+    public void AsChatMessages_CanonicalMediaTypes_MapBothSourceTypes(
+        string mediaType,
+        string sourceType,
+        string mimeType)
+    {
+        var url = $"https://example.com/content.{GetExtension(mediaType)}";
+        AGUIInputContentSource source = sourceType == "data"
+            ? new AGUIInputContentDataSource { Value = "AQIDBA==", MimeType = mimeType }
+            : new AGUIInputContentUrlSource
+            {
+                Value = url,
+                MimeType = mimeType
+            };
+        var message = new AGUIUserMessage
+        {
+            Id = "message-1",
+            Content = [CreateMediaInputContent(mediaType, source)]
+        };
+
+        var chatMessage = Assert.Single(new[] { message }.AsChatMessages());
+        var content = Assert.Single(chatMessage.Contents);
+
+        if (sourceType == "data")
+        {
+            var data = Assert.IsType<DataContent>(content);
+            Assert.Equal(mimeType, data.MediaType);
+            Assert.Equal(System.Convert.FromBase64String("AQIDBA=="), data.Data.ToArray());
+        }
+        else
+        {
+            var uri = Assert.IsType<UriContent>(content);
+            Assert.Equal(mimeType, uri.MediaType);
+            Assert.Equal(url, uri.Uri.ToString());
+        }
+    }
+
+    [Fact]
+    public void AsChatMessages_CanonicalMediaWithNonObjectMetadata_PreservesMetadataValue()
+    {
+        var message = new AGUIUserMessage
+        {
+            Content =
+            [
+                new AGUIImageInputContent
+                {
+                    Source = new AGUIInputContentDataSource
+                    {
+                        Value = "AQIDBA==",
+                        MimeType = "image/png"
+                    },
+                    Metadata = JsonSerializer.SerializeToElement("provider-specific")
+                }
+            ]
+        };
+
+        var chatMessage = Assert.Single(new[] { message }.AsChatMessages());
+        var data = Assert.IsType<DataContent>(Assert.Single(chatMessage.Contents));
+        var metadata = Assert.IsType<JsonElement>(data.AdditionalProperties?["metadata"]);
+        Assert.Equal("provider-specific", metadata.GetString());
     }
 
     // https://github.com/microsoft/agent-framework/issues/2699
@@ -577,5 +750,31 @@ public sealed class AGUIChatMessageExtensionsTest
         var assistantMessages = chatMessages.Where(m => m.Role == ChatRole.Assistant).ToList();
         Assert.Equal(2, assistantMessages.Count);
         Assert.All(assistantMessages, m => Assert.Single(m.Contents.OfType<FunctionCallContent>()));
+    }
+
+    private static AGUIMediaInputContent CreateMediaInputContent(
+        string mediaType,
+        AGUIInputContentSource source)
+    {
+        return mediaType switch
+        {
+            "image" => new AGUIImageInputContent { Source = source },
+            "audio" => new AGUIAudioInputContent { Source = source },
+            "video" => new AGUIVideoInputContent { Source = source },
+            "document" => new AGUIDocumentInputContent { Source = source },
+            _ => throw new InvalidOperationException($"Unexpected media type '{mediaType}'.")
+        };
+    }
+
+    private static string GetExtension(string mediaType)
+    {
+        return mediaType switch
+        {
+            "image" => "png",
+            "audio" => "wav",
+            "video" => "mp4",
+            "document" => "pdf",
+            _ => throw new InvalidOperationException($"Unexpected media type '{mediaType}'.")
+        };
     }
 }
