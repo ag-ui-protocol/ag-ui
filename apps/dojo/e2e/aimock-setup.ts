@@ -7,6 +7,10 @@ import {
   registerA2UICrewAIFixtures,
 } from "./a2ui-crewai-fixtures";
 import { registerInterruptCrewAIFixtures } from "./interrupt-crewai-fixtures";
+import {
+  registerStrandsFixtures,
+  strandsAnswersToolResultTurn,
+} from "./strands-fixtures";
 
 // Configurable so parallel worktrees / runs don't collide on one aimock port.
 const MOCK_PORT = Number(process.env.AIMOCK_PORT) || 5555;
@@ -46,6 +50,10 @@ export async function setupLLMock(): Promise<void> {
   // pause and the confirm call after the resume. Scoped to this flow's own
   // system prompts, before the generic loader.
   registerInterruptCrewAIFixtures(mockServer);
+
+  // AWS Strands interrupt (approve/deny) + predictive-state fixtures. Scoped to
+  // those demos' own system prompts, before the generic loader.
+  registerStrandsFixtures(mockServer);
 
   // Extract text from message content — handles both string and array-of-parts
   // (Strands SDK sends content as [{type: "text", text: "..."}])
@@ -1520,6 +1528,11 @@ export async function setupLLMock(): Promise<void> {
         // The predicate is scoped to that file's own prompts, so every other
         // integration's A2UI demo keeps this fallback.
         if (crewAIA2UIAnswersToolResultTurn(req)) return false;
+        // Don't match the AWS Strands interrupt / predictive-state tool-result
+        // turns: a generic acknowledgment would mask whether the booking was
+        // confirmed or refused, and whether the document edit was re-proposed.
+        // Scoped to those demos' own system prompts.
+        if (strandsAnswersToolResultTurn(req)) return false;
         return true;
       },
     },
