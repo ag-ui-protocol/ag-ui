@@ -83,6 +83,8 @@ class _ScriptedInnerAgent:
         failures: int = 0,
         next_interrupt: StrandsInterrupt | None = None,
         current_tool_use: dict[str, Any] | None = None,
+        force_stop_reason: str | None = None,
+        accept_resume_before_force_stop: bool = False,
     ) -> None:
         self.state = _State(
             {
@@ -112,6 +114,8 @@ class _ScriptedInnerAgent:
         self.failures = failures
         self.next_interrupt = next_interrupt
         self.current_tool_use = current_tool_use
+        self.force_stop_reason = force_stop_reason
+        self.accept_resume_before_force_stop = accept_resume_before_force_stop
 
     async def stream_async(self, prompt: Any):
         self.prompts.append(prompt)
@@ -123,6 +127,14 @@ class _ScriptedInnerAgent:
         if isinstance(prompt, list) and all(
             isinstance(item, dict) and "interruptResponse" in item for item in prompt
         ):
+            if self.force_stop_reason is not None:
+                if self.accept_resume_before_force_stop:
+                    self._interrupt_state.deactivate()
+                yield {
+                    "force_stop": True,
+                    "force_stop_reason": self.force_stop_reason,
+                }
+                return
             self._interrupt_state.deactivate()
             if self.next_interrupt is not None:
                 next_interrupt = self.next_interrupt
@@ -185,6 +197,8 @@ def _build_agent(
     failures: int = 0,
     next_interrupt: StrandsInterrupt | None = None,
     current_tool_use: dict[str, Any] | None = None,
+    force_stop_reason: str | None = None,
+    accept_resume_before_force_stop: bool = False,
 ) -> tuple[StrandsAgent, _ScriptedInnerAgent]:
     frontend_interrupts = [
         _frontend_interrupt(call.interrupt_id, call.native_tool_use_id)
@@ -197,6 +211,8 @@ def _build_agent(
         failures=failures,
         next_interrupt=next_interrupt,
         current_tool_use=current_tool_use,
+        force_stop_reason=force_stop_reason,
+        accept_resume_before_force_stop=accept_resume_before_force_stop,
     )
     adapter = StrandsAgent(
         _template_agent(), name="test-agent", config=StrandsAgentConfig()
@@ -1110,6 +1126,57 @@ async def test_resume_failure_leaves_complete_wait_retryable():
     assert _responses_by_id(inner.prompts[1])["interrupt-call"] == {
         FRONTEND_TOOL_RESPONSE_KEY: {"content": "answer", "is_error": False}
     }
+
+
+@pytest.mark.asyncio
+async def test_force_stop_before_frontend_resume_acceptance_preserves_retry():
+    reason = "provider failed before accepting the resume"
+    adapter, inner = _build_agent(
+        _batch("call"),
+        force_stop_reason=reason,
+        accept_resume_before_force_stop=False,
+    )
+
+    failed = await _collect(adapter, _input([_tool("call", "answer")]))
+
+    errors = [event for event in failed if event.type == EventType.RUN_ERROR]
+    assert [(event.code, event.message) for event in errors] == [
+        ("STRANDS_FORCE_STOP", reason)
+    ]
+    assert EventType.RUN_FINISHED not in _event_types(failed)
+    staged = _stored_batch(inner)
+    assert len(staged.calls) == 1
+    assert staged.calls[0].has_response is True
+    assert staged.last_completed_wire_ids == ()
+
+    inner.force_stop_reason = None
+    retried = await _collect(
+        adapter, _input([_tool("call", "answer")], run_id="run-2")
+    )
+
+    assert EventType.RUN_ERROR not in _event_types(retried)
+    assert _stored_batch(inner).calls == ()
+
+
+@pytest.mark.asyncio
+async def test_force_stop_after_frontend_resume_acceptance_consumes_response():
+    reason = "provider failed after accepting the resume"
+    adapter, inner = _build_agent(
+        _batch("call"),
+        force_stop_reason=reason,
+        accept_resume_before_force_stop=True,
+    )
+
+    events = await _collect(adapter, _input([_tool("call", "answer")]))
+
+    errors = [event for event in events if event.type == EventType.RUN_ERROR]
+    assert [(event.code, event.message) for event in errors] == [
+        ("STRANDS_FORCE_STOP", reason)
+    ]
+    assert EventType.RUN_FINISHED not in _event_types(events)
+    consumed = _stored_batch(inner)
+    assert consumed.calls == ()
+    assert consumed.last_completed_wire_ids == ("call",)
 
 
 @pytest.mark.asyncio
