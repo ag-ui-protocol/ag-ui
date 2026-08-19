@@ -217,20 +217,25 @@ public static class AGUIChatMessageExtensions
                             parts.Add(new AGUITextInputContent { Text = textContent.Text ?? string.Empty });
                             break;
                         case DataContent dataContent:
-                            parts.Add(new AGUIBinaryInputContent
-                            {
-                                MimeType = dataContent.MediaType ?? string.Empty,
-                                Data = dataContent.Data is { Length: > 0 } ? Convert.ToBase64String(dataContent.Data.ToArray()) : null,
-                                Filename = dataContent.AdditionalProperties?.TryGetValue("filename", out string? fn) == true ? fn : null
-                            });
+                            parts.Add(ConvertMediaContent(
+                                dataContent.MediaType,
+                                new AGUIInputContentDataSource
+                                {
+                                    Value = Convert.ToBase64String(dataContent.Data.ToArray()),
+                                    MimeType = dataContent.MediaType ?? string.Empty
+                                },
+                                dataContent.AdditionalProperties,
+                                dataContent.Name));
                             break;
                         case UriContent uriContent:
-                            parts.Add(new AGUIBinaryInputContent
-                            {
-                                MimeType = uriContent.MediaType ?? string.Empty,
-                                Url = uriContent.Uri?.ToString(),
-                                Filename = uriContent.AdditionalProperties?.TryGetValue("filename", out string? fn2) == true ? fn2 : null
-                            });
+                            parts.Add(ConvertMediaContent(
+                                uriContent.MediaType,
+                                new AGUIInputContentUrlSource
+                                {
+                                    Value = uriContent.Uri?.ToString() ?? string.Empty,
+                                    MimeType = uriContent.MediaType
+                                },
+                                uriContent.AdditionalProperties));
                             break;
                         default:
                             parts.Add(new AGUITextInputContent { Text = content.ToString() ?? string.Empty });
@@ -311,6 +316,57 @@ public static class AGUIChatMessageExtensions
             aguiMessage.Id = message.MessageId;
             yield return aguiMessage;
         }
+    }
+
+    private static AGUIMediaInputContent ConvertMediaContent(
+        string? mediaType,
+        AGUIInputContentSource source,
+        AdditionalPropertiesDictionary? additionalProperties,
+        string? filename = null)
+    {
+        AGUIMediaInputContent content = mediaType switch
+        {
+            { } value when value.StartsWith("image/", StringComparison.OrdinalIgnoreCase) =>
+                new AGUIImageInputContent(),
+            { } value when value.StartsWith("audio/", StringComparison.OrdinalIgnoreCase) =>
+                new AGUIAudioInputContent(),
+            { } value when value.StartsWith("video/", StringComparison.OrdinalIgnoreCase) =>
+                new AGUIVideoInputContent(),
+            _ => new AGUIDocumentInputContent()
+        };
+
+        content.Source = source;
+        content.Metadata = ConvertAdditionalProperties(additionalProperties, filename);
+        return content;
+    }
+
+    private static JsonElement? ConvertAdditionalProperties(
+        AdditionalPropertiesDictionary? additionalProperties,
+        string? filename)
+    {
+        if ((additionalProperties is null || additionalProperties.Count == 0) &&
+            string.IsNullOrEmpty(filename))
+        {
+            return null;
+        }
+
+        IDictionary<string, object?> metadata = new Dictionary<string, object?>();
+        if (additionalProperties is not null)
+        {
+            foreach (var property in additionalProperties)
+            {
+                metadata[property.Key] = property.Value;
+            }
+        }
+
+        if (!string.IsNullOrEmpty(filename) && !metadata.ContainsKey("filename"))
+        {
+            metadata["filename"] = filename;
+        }
+
+        return JsonSerializer.SerializeToElement(
+            metadata,
+            AGUIJsonSerializerContext.Default.GetTypeInfo(typeof(IDictionary<string, object?>))!);
     }
 
     /// <summary>

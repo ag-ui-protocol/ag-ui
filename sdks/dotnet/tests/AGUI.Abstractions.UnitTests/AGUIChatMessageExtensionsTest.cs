@@ -652,6 +652,59 @@ public sealed class AGUIChatMessageExtensionsTest
         Assert.Equal("provider-specific", metadata.GetString());
     }
 
+    [Theory]
+    [InlineData("image/png", typeof(AGUIImageInputContent))]
+    [InlineData("audio/wav", typeof(AGUIAudioInputContent))]
+    [InlineData("video/mp4", typeof(AGUIVideoInputContent))]
+    [InlineData("application/pdf", typeof(AGUIDocumentInputContent))]
+    public void AsAGUIMessages_DataContent_MapsAdditionalPropertiesToCanonicalMetadata(
+        string mimeType,
+        Type expectedContentType)
+    {
+        var content = new DataContent(System.Convert.FromBase64String("AQIDBA=="), mimeType)
+        {
+            Name = "content.bin",
+            AdditionalProperties = new AdditionalPropertiesDictionary
+            {
+                ["providerHint"] = "high",
+                ["nested"] = JsonSerializer.SerializeToElement(new { quality = "original" })
+            }
+        };
+        var message = new ChatMessage(ChatRole.User, [content]);
+
+        var aguiMessage = Assert.IsType<AGUIUserMessage>(Assert.Single(new[] { message }.AsAGUIMessages()));
+        var media = Assert.IsAssignableFrom<AGUIMediaInputContent>(Assert.Single(aguiMessage.Content));
+
+        Assert.IsType(expectedContentType, media);
+        var source = Assert.IsType<AGUIInputContentDataSource>(media.Source);
+        Assert.Equal(mimeType, source.MimeType);
+        Assert.Equal("AQIDBA==", source.Value);
+        Assert.Equal("high", media.Metadata?.GetProperty("providerHint").GetString());
+        Assert.Equal("original", media.Metadata?.GetProperty("nested").GetProperty("quality").GetString());
+        Assert.Equal("content.bin", media.Metadata?.GetProperty("filename").GetString());
+    }
+
+    [Fact]
+    public void AsAGUIMessages_UriContent_MapsAdditionalPropertiesToCanonicalMetadata()
+    {
+        var content = new UriContent(new Uri("https://example.com/image.png"), "image/png")
+        {
+            AdditionalProperties = new AdditionalPropertiesDictionary
+            {
+                ["detail"] = "high"
+            }
+        };
+        var message = new ChatMessage(ChatRole.User, [content]);
+
+        var aguiMessage = Assert.IsType<AGUIUserMessage>(Assert.Single(new[] { message }.AsAGUIMessages()));
+        var image = Assert.IsType<AGUIImageInputContent>(Assert.Single(aguiMessage.Content));
+        var source = Assert.IsType<AGUIInputContentUrlSource>(image.Source);
+
+        Assert.Equal("https://example.com/image.png", source.Value);
+        Assert.Equal("image/png", source.MimeType);
+        Assert.Equal("high", image.Metadata?.GetProperty("detail").GetString());
+    }
+
     // https://github.com/microsoft/agent-framework/issues/2699
     // When a client (e.g. @ag-ui/client) splits parallel tool calls into separate assistant
     // messages, AsChatMessages coalesces them into a single assistant message so the
