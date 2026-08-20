@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
+import threading
 from collections.abc import Sequence
 from pathlib import Path
 from types import SimpleNamespace
@@ -31,6 +33,7 @@ from ag_ui_strands.agent import (
     _frontend_wait_consumption_is_durable,
     _has_unrecoverable_frontend_wait_result,
     _is_native_interrupt_state,
+    _sync_session_state,
     _load_persisted_interrupt_bookkeeping,
     _persist_interrupt_bookkeeping,
     _recover_disjoint_checkpoint_after_consumed_wait,
@@ -656,9 +659,10 @@ def test_consumption_proof_rejects_noncanonical_native_result_history(
     assert not _frontend_wait_consumption_is_durable(core, batch)
 
 
-def test_strict_bookkeeping_requires_writable_agent_state():
+@pytest.mark.asyncio
+async def test_strict_bookkeeping_requires_writable_agent_state():
     with pytest.raises(RuntimeError, match="not writable"):
-        _persist_interrupt_bookkeeping(
+        await _persist_interrupt_bookkeeping(
             SimpleNamespace(state=SimpleNamespace()),
             {},
             None,
@@ -5006,4 +5010,65 @@ class TestRestorationAuditSkipsOnlyForeignCores:
             SimpleNamespace(_interrupt_state=interrupt_state),
             FrontendToolWaitBatch(),
             {},
+        )
+
+
+class TestSessionWritesStayOffTheEventLoop:
+    """A backend write must not stall every other request in the process.
+
+    ``SessionManager.sync_agent`` is synchronous and writes to a file, a
+    database or S3. This path calls it many times per request, so inline it
+    holds the loop — and therefore every concurrent stream — for the duration
+    of each write.
+    """
+
+    class _BlockingSessionManager:
+        def __init__(self) -> None:
+            self.started = threading.Event()
+            self.release = threading.Event()
+            self.threads: list[int] = []
+
+        def sync_agent(self, agent: Any) -> None:
+            del agent
+            self.threads.append(threading.get_ident())
+            self.started.set()
+            assert self.release.wait(timeout=5.0)
+
+    async def test_the_loop_keeps_running_during_a_write(self):
+        session_manager = self._BlockingSessionManager()
+        agent = SimpleNamespace(
+            session_manager=session_manager, _session_manager=None
+        )
+
+        write = asyncio.create_task(_sync_session_state(agent))
+
+        async def wait_for_the_write_to_start() -> None:
+            while not session_manager.started.is_set():
+                await asyncio.sleep(0.001)
+
+        try:
+            # Only reachable if the loop is still scheduling coroutines while
+            # the write is in flight. Inline, this deadlocks until the timeout.
+            await asyncio.wait_for(wait_for_the_write_to_start(), timeout=5.0)
+        finally:
+            session_manager.release.set()
+            await asyncio.wait_for(write, timeout=5.0)
+
+        assert session_manager.threads == [session_manager.threads[0]]
+        assert threading.get_ident() not in session_manager.threads
+
+    async def test_the_write_still_completes_before_the_caller_resumes(self):
+        session_manager = self._BlockingSessionManager()
+        session_manager.release.set()
+        agent = SimpleNamespace(
+            session_manager=session_manager, _session_manager=None
+        )
+
+        await asyncio.wait_for(_sync_session_state(agent), timeout=5.0)
+
+        assert session_manager.started.is_set()
+
+    async def test_an_unmanaged_agent_writes_nothing(self):
+        await _sync_session_state(
+            SimpleNamespace(session_manager=None, _session_manager=None)
         )

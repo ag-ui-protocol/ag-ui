@@ -216,14 +216,29 @@ def _get_strands_session_manager(agent: Any) -> Any:
     )
 
 
-def _sync_frontend_wait_state(agent: Any) -> None:
-    """Synchronously persist an adapter-owned frontend-wait transition."""
+async def _sync_session_state(agent: Any) -> None:
+    """Flush agent state through the SessionManager without blocking the loop.
+
+    ``SessionManager.sync_agent`` is synchronous and writes to whatever backend
+    the deployment configured — a file, a database, S3. Calling it inline stalls
+    the event loop, and therefore every other request the process is serving,
+    for the duration of that write. It runs many times per request on this path,
+    so the stall compounds. A worker thread keeps the wait ordered against this
+    run — the write still completes before the event it guards is yielded — while
+    leaving the loop free.
+    """
     session_manager = _get_strands_session_manager(agent)
-    if session_manager is not None:
-        session_manager.sync_agent(agent)
+    if session_manager is None:
+        return
+    await asyncio.to_thread(session_manager.sync_agent, agent)
 
 
-def _mark_frontend_wait_end_handed_off(
+async def _sync_frontend_wait_state(agent: Any) -> None:
+    """Persist an adapter-owned frontend-wait transition."""
+    await _sync_session_state(agent)
+
+
+async def _mark_frontend_wait_end_handed_off(
     agent: Any,
     batch: "FrontendToolWaitBatch",
     wire_tool_call_id: str,
@@ -231,7 +246,7 @@ def _mark_frontend_wait_end_handed_off(
     """Persist one ToolCallEnd handoff before advancing the event stream."""
     marked = batch.mark_end_handed_off(wire_tool_call_id)
     agent.state.set(FRONTEND_TOOL_WAIT_STATE_KEY, marked.to_dict())
-    _sync_frontend_wait_state(agent)
+    await _sync_frontend_wait_state(agent)
     return marked
 
 
@@ -1727,7 +1742,7 @@ def _frontend_wait_consumption_is_durable(
     return True
 
 
-def _mark_frontend_wait_consumed(
+async def _mark_frontend_wait_consumed(
     agent: Any,
     batch: FrontendToolWaitBatch,
     fingerprint: str | None,
@@ -1737,7 +1752,7 @@ def _mark_frontend_wait_consumed(
         batch.mark_consumed().to_dict(),
     )
     agent.state.set(_FRONTEND_TOOL_SERVER_RESPONSES_STATE_KEY, {})
-    _persist_interrupt_bookkeeping(
+    await _persist_interrupt_bookkeeping(
         agent,
         None,
         fingerprint,
@@ -1745,7 +1760,7 @@ def _mark_frontend_wait_consumed(
     )
 
 
-def _commit_recovered_frontend_wait(
+async def _commit_recovered_frontend_wait(
     agent: Any,
     batch: FrontendToolWaitBatch,
     pending: Mapping[str, Interrupt] | None,
@@ -1763,14 +1778,14 @@ def _commit_recovered_frontend_wait(
         ).to_dict(),
     )
     agent.state.set(_FRONTEND_TOOL_SERVER_RESPONSES_STATE_KEY, {})
-    _persist_interrupt_bookkeeping(
+    await _persist_interrupt_bookkeeping(
         agent,
         pending,
         fingerprint,
         strict=True,
         synchronize=False,
     )
-    _sync_frontend_wait_state(agent)
+    await _sync_frontend_wait_state(agent)
 
 
 def _resume_fingerprint(resume_entries: list[ResumeEntry]) -> str:
@@ -2168,7 +2183,7 @@ def _load_persisted_interrupt_bookkeeping(
     return pending, fingerprint
 
 
-def _persist_interrupt_bookkeeping(
+async def _persist_interrupt_bookkeeping(
     strands_agent: Any,
     pending: Mapping[str, Interrupt] | None,
     fingerprint: str | None,
@@ -2206,9 +2221,8 @@ def _persist_interrupt_bookkeeping(
         set_fn(_INTERRUPT_BOOKKEEPING_STATE_KEY, payload)
         if synchronize:
             session_manager = _get_strands_session_manager(strands_agent)
-            sync_agent = getattr(session_manager, "sync_agent", None)
-            if callable(sync_agent):
-                sync_agent(strands_agent)
+            if callable(getattr(session_manager, "sync_agent", None)):
+                await _sync_session_state(strands_agent)
     except Exception as e:  # noqa: BLE001 — caller selects strictness
         if strict:
             raise
@@ -2922,7 +2936,7 @@ class StrandsAgent:
                         for interrupt in recovered_visible_interrupts
                     }
             try:
-                _commit_recovered_frontend_wait(
+                await _commit_recovered_frontend_wait(
                     strands_agent,
                     frontend_wait_batch,
                     recovered_pending,
@@ -3020,7 +3034,7 @@ class StrandsAgent:
                 else None
             )
             try:
-                _commit_recovered_frontend_wait(
+                await _commit_recovered_frontend_wait(
                     strands_agent,
                     frontend_wait_batch,
                     recovered_pending,
@@ -3168,7 +3182,7 @@ class StrandsAgent:
                     for interrupt_id in active_visible_ids
                 ]
             try:
-                _sync_frontend_wait_state(strands_agent)
+                await _sync_frontend_wait_state(strands_agent)
             except Exception as exc:
                 ev_started, ev_error = _error_events(
                     input_data, str(exc), "STRANDS_ERROR"
@@ -3298,7 +3312,7 @@ class StrandsAgent:
                         pending_wait_ag_ui,
                         accepted_frontend_wait_resume_fingerprint,
                     )
-                    _persist_interrupt_bookkeeping(
+                    await _persist_interrupt_bookkeeping(
                         strands_agent,
                         pending_wait_ag_ui,
                         accepted_frontend_wait_resume_fingerprint,
@@ -3311,7 +3325,7 @@ class StrandsAgent:
                     has_wait_response_work
                     and frontend_wait_resume_prompt is None
                 ):
-                    _sync_frontend_wait_state(strands_agent)
+                    await _sync_frontend_wait_state(strands_agent)
             except Exception as exc:
                 ev_started, ev_error = _error_events(
                     input_data, str(exc), "STRANDS_ERROR"
@@ -3334,7 +3348,7 @@ class StrandsAgent:
                 # replays an End that this wrapper already handed off.
                 if not has_wait_response_work:
                     try:
-                        _sync_frontend_wait_state(strands_agent)
+                        await _sync_frontend_wait_state(strands_agent)
                     except Exception as exc:
                         ev_started, ev_error = _error_events(
                             input_data, str(exc), "STRANDS_ERROR"
@@ -3391,7 +3405,7 @@ class StrandsAgent:
                             tool_call_id=call.wire_tool_call_id,
                         )
                     finally:
-                        staged_wait_batch = _mark_frontend_wait_end_handed_off(
+                        staged_wait_batch = await _mark_frontend_wait_end_handed_off(
                             strands_agent,
                             staged_wait_batch,
                             call.wire_tool_call_id,
@@ -3444,7 +3458,7 @@ class StrandsAgent:
                         AG_UI_TOOL_CALL_MAP_STATE_KEY,
                         replay_tool_meta,
                     )
-                    _sync_frontend_wait_state(strands_agent)
+                    await _sync_frontend_wait_state(strands_agent)
 
                 for call in standard_calls:
                     try:
@@ -3453,7 +3467,7 @@ class StrandsAgent:
                             tool_call_id=call.wire_tool_call_id,
                         )
                     finally:
-                        staged_wait_batch = _mark_frontend_wait_end_handed_off(
+                        staged_wait_batch = await _mark_frontend_wait_end_handed_off(
                             strands_agent,
                             staged_wait_batch,
                             call.wire_tool_call_id,
@@ -4446,7 +4460,7 @@ class StrandsAgent:
                     pending_resume_interrupts,
                     accepted_server_resume_fingerprint,
                 )
-                _persist_interrupt_bookkeeping(
+                await _persist_interrupt_bookkeeping(
                     strands_agent,
                     pending_resume_interrupts,
                     accepted_server_resume_fingerprint,
@@ -5569,7 +5583,7 @@ class StrandsAgent:
                 else:
                     consumed_frontend_wait_batch = frontend_wait_batch_for_consumption
                     frontend_wait_batch_for_consumption = None
-                    _mark_frontend_wait_consumed(
+                    await _mark_frontend_wait_consumed(
                         strands_agent,
                         consumed_frontend_wait_batch,
                         accepted_frontend_wait_resume_fingerprint,
@@ -5696,7 +5710,7 @@ class StrandsAgent:
                     cache_interrupt_bookkeeping(
                         pending_interrupts, superseding_resume_fingerprint
                     )
-                    _persist_interrupt_bookkeeping(
+                    await _persist_interrupt_bookkeeping(
                         strands_agent,
                         pending_interrupts,
                         superseding_resume_fingerprint,
@@ -5722,7 +5736,7 @@ class StrandsAgent:
                     cache_interrupt_bookkeeping(
                         None, superseding_resume_fingerprint
                     )
-                    _persist_interrupt_bookkeeping(
+                    await _persist_interrupt_bookkeeping(
                         strands_agent,
                         None,
                         superseding_resume_fingerprint,
@@ -5737,7 +5751,7 @@ class StrandsAgent:
                         )
                     finally:
                         if hidden_batch.call_for_wire_id(_fe_tool_use_id):
-                            hidden_batch = _mark_frontend_wait_end_handed_off(
+                            hidden_batch = await _mark_frontend_wait_end_handed_off(
                                 strands_agent,
                                 hidden_batch,
                                 _fe_tool_use_id,
@@ -5780,7 +5794,7 @@ class StrandsAgent:
             # Keep the later sync: result delivery metadata and a checkpoint
             # halt flag must be durable before a standard End is exposed.
             if hidden_batch.calls and checkpoint_delivery.metadata_changed:
-                _sync_frontend_wait_state(strands_agent)
+                await _sync_frontend_wait_state(strands_agent)
             if deferred_frontend_tool_ends:
                 for _fe_tool_use_id in deferred_frontend_tool_ends:
                     try:
@@ -5790,7 +5804,7 @@ class StrandsAgent:
                         )
                     finally:
                         if hidden_batch.call_for_wire_id(_fe_tool_use_id):
-                            hidden_batch = _mark_frontend_wait_end_handed_off(
+                            hidden_batch = await _mark_frontend_wait_end_handed_off(
                                 strands_agent,
                                 hidden_batch,
                                 _fe_tool_use_id,
@@ -5816,14 +5830,14 @@ class StrandsAgent:
                 if resume_entries:
                     fp = _resume_fingerprint(resume_entries)
                     cache_interrupt_bookkeeping(None, fp)
-                    _persist_interrupt_bookkeeping(strands_agent, None, fp)
+                    await _persist_interrupt_bookkeeping(strands_agent, None, fp)
                 elif combined_wait_resume_accepted:
                     # The visible server response may have been staged on an
                     # earlier request and the frontend ToolMessage arrived
                     # last. The combined native resume still consumed both
                     # channels, so clear stale visible bookkeeping now.
                     cache_interrupt_bookkeeping(None, None)
-                    _persist_interrupt_bookkeeping(strands_agent, None, None)
+                    await _persist_interrupt_bookkeeping(strands_agent, None, None)
                 yield RunFinishedEvent(
                     type=EventType.RUN_FINISHED,
                     thread_id=input_data.thread_id,
@@ -5847,7 +5861,7 @@ class StrandsAgent:
                 consumed_frontend_wait_batch = frontend_wait_batch_for_consumption
                 frontend_wait_batch_for_consumption = None
                 try:
-                    _mark_frontend_wait_consumed(
+                    await _mark_frontend_wait_consumed(
                         strands_agent,
                         consumed_frontend_wait_batch,
                         accepted_frontend_wait_resume_fingerprint,
