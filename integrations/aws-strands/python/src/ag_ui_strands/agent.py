@@ -13,6 +13,7 @@ import uuid
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from importlib.metadata import version as distribution_version
 from typing import Any, AsyncIterator, Dict, List, Tuple
 
 from strands import Agent as StrandsAgentCore
@@ -81,19 +82,111 @@ _TOOL_CALL_MAP_MAX = 512
 # tool receives this in place of a real answer and can treat it as a denial.
 INTERRUPT_CANCELLED = {"cancelled": True}
 
+# Reserved native-interrupt name prefix for interrupts this adapter's approval
+# hook raises. Anything else is a generic native interrupt.
+_TOOL_APPROVAL_NAME_PREFIX = "ag_ui:tool_call:"
+
+
+def _strands_uses_presence_based_interrupt_responses(installed_version: str) -> bool:
+    """Return the interrupt-response contract of a Strands SDK version."""
+    try:
+        major, minor = map(int, installed_version.split(".", 2)[:2])
+    except ValueError as exc:
+        raise RuntimeError(
+            "Cannot determine interrupt response semantics for "
+            f"strands-agents version {installed_version!r}"
+        ) from exc
+    return (major, minor) >= (1, 19)
+
+
+# Strands 1.15 through 1.18 returns a recorded response only when it is truthy.
+# Version 1.19 changed that predicate to presence (``response is not None``).
+_STRANDS_USES_PRESENCE_BASED_INTERRUPT_RESPONSES = (
+    _strands_uses_presence_based_interrupt_responses(
+        distribution_version("strands-agents")
+    )
+)
+
+
+def _tool_approval_response_schema() -> dict:
+    """The response contract advertised for a tool-approval interrupt.
+
+    Single source for both the schema published on the AG-UI ``Interrupt`` and
+    the resume-payload validation, so a resume can still be checked when the
+    AG-UI bookkeeping did not survive a process restart.
+    """
+    return {
+        "type": "object",
+        "properties": {"approved": {"type": "boolean"}},
+        "required": ["approved"],
+    }
+
+
+def _is_tool_approval_interrupt(native_interrupt: Any) -> bool:
+    """True when a native Strands interrupt came from the approval hook."""
+    name = getattr(native_interrupt, "name", None)
+    return (
+        isinstance(name, str)
+        and name.startswith(_TOOL_APPROVAL_NAME_PREFIX)
+        and isinstance(getattr(native_interrupt, "reason", None), dict)
+    )
+
 
 def _wrap_resume_response(status: str, payload: Any) -> dict:
     """Package a ``ResumeEntry`` for Strands' ``interruptResponse`` shape.
 
-    Strands' resume gate is truthiness-based (i.e. ``if interrupt_.response:``),
-    so a raw falsy payload (``None``, ``False``, ``""``, ``0``, ``[]``, ``{}``)
-    re-raises the same interrupt and re-runs the tool body — an infinite approve loop.
-    Always hand Strands a truthy envelope; up to the tool implementation to properly
-    destructures it (e.g. via ``.get("cancelled")`` / ``.get("response")``).
+    Supported Strands releases read a recorded answer either by truthiness
+    (1.15 through 1.18) or by presence (1.19+). Forwarding a raw falsy payload
+    can therefore re-raise the same interrupt and re-run the tool body on the
+    compatibility floor. Always hand Strands a truthy envelope; the tool
+    implementation unwraps it via ``.get("cancelled")`` / ``.get("response")``.
     """
     if status == "cancelled":
         return dict(INTERRUPT_CANCELLED)
     return {"response": payload}
+
+
+def _native_resume_response(entry: Any, native_interrupt: Any) -> Any:
+    """Return the answer Strands records when this entry is forwarded.
+
+    One definition, read both by the batch the run forwards and by the replay
+    comparison below, so the two cannot disagree about what was submitted.
+    """
+    if _is_tool_approval_interrupt(native_interrupt):
+        return {"approved": False} if entry.status == "cancelled" else entry.payload
+    return _wrap_resume_response(entry.status, entry.payload)
+
+
+def _replays_recorded_answers(interrupt_state: Any, resume_entries: Any) -> bool:
+    """True when this batch re-submits exactly the answers the checkpoint holds.
+
+    Strands records the submitted answers before it reruns hooks and the parked
+    tool execution, and clears the checkpoint only once that work succeeds. So a
+    hook failure, or a crash after session persistence, can restore a checkpoint
+    that is activated with every interrupt already answered. That thread has no
+    way forward: fresh input is refused because the checkpoint is active, and a
+    resume finds nothing open to address. Handing Strands the identical batch is
+    the way out, because it lets the SDK finish the parked execution. The
+    checkpoint itself must be left alone: clearing it would discard exactly that
+    parked execution. Anything short of an exact replay stays refused.
+    """
+    recorded = getattr(interrupt_state, "interrupts", {}) or {}
+    if not recorded or len(resume_entries) != len(recorded):
+        return False
+    addressed: set[str] = set()
+    for entry in resume_entries:
+        interrupt_id = getattr(entry, "interrupt_id", None)
+        native_interrupt = recorded.get(interrupt_id)
+        if native_interrupt is None or interrupt_id in addressed:
+            return False
+        addressed.add(interrupt_id)
+        if not _native_interrupt_is_answered(native_interrupt):
+            return False
+        if native_interrupt.response != _native_resume_response(
+            entry, native_interrupt
+        ):
+            return False
+    return True
 
 
 def _get_strands_session_manager(agent: Any) -> Any:
@@ -137,23 +230,14 @@ def _strands_interrupt_to_agui(strands_interrupt: Any) -> "Interrupt":
     name = getattr(strands_interrupt, "name", None) or "interrupt"
     raw_reason = getattr(strands_interrupt, "reason", None)
 
-    is_tool_approval = (
-        isinstance(name, str)
-        and name.startswith("ag_ui:tool_call:")
-        and isinstance(raw_reason, dict)
-    )
-    if is_tool_approval:
+    if _is_tool_approval_interrupt(strands_interrupt):
         tool_name = raw_reason.get("tool_name", "unknown")
         return Interrupt(
             id=s_id,
             reason="tool_call",
             message=f"Approve call to {tool_name}?",
             tool_call_id=raw_reason.get("tool_use_id"),
-            response_schema={
-                "type": "object",
-                "properties": {"approved": {"type": "boolean"}},
-                "required": ["approved"],
-            },
+            response_schema=_tool_approval_response_schema(),
             metadata={
                 "tool_name": tool_name,
                 "tool_input": raw_reason.get("tool_input", {}),
@@ -168,6 +252,34 @@ def _strands_interrupt_to_agui(strands_interrupt: Any) -> "Interrupt":
         response_schema=None,
         metadata={"reason": raw_reason} if raw_reason is not None else None,
     )
+
+
+def _native_interrupt_is_answered(interrupt: Any) -> bool:
+    """True when this interrupt already carries an answer Strands will hand back.
+
+    Match the installed SDK's own ``ToolContext.interrupt`` predicate. Strands
+    1.15 through 1.18 uses truthiness; 1.19 and later uses presence, with
+    ``None`` as the unanswered default.
+    """
+    response = getattr(interrupt, "response", None)
+    if _STRANDS_USES_PRESENCE_BASED_INTERRUPT_RESPONSES:
+        return response is not None
+    return bool(response)
+
+
+def _open_native_interrupts(interrupts: Any) -> dict:
+    """Return the entries of ``interrupts`` still awaiting a human, keyed by id.
+
+    The native interrupt state is the only record of what is still in flight, and
+    every "is anything still open?" decision reads it through this one predicate,
+    so the pause this run reports and the resume the next one submits cannot
+    disagree and strand a client between them.
+    """
+    return {
+        interrupt_id: interrupt
+        for interrupt_id, interrupt in (interrupts or {}).items()
+        if not _native_interrupt_is_answered(interrupt)
+    }
 
 
 def _extract_interrupts(agent: Any, terminal_result: Any) -> list:
@@ -185,14 +297,18 @@ def _extract_interrupts(agent: Any, terminal_result: Any) -> list:
                 return list(interrupts)
     interrupt_state = getattr(agent, "_interrupt_state", None)
     if interrupt_state is not None and getattr(interrupt_state, "activated", False):
-        # Mirrors Strands' own gate (strands/types/interrupt.py: ``if interrupt_.response:``)
-        # — an interrupt with a truthy response was already answered by a prior partial
-        # resume and must not be re-reported as still pending.
-        return [
-            interrupt
-            for interrupt in getattr(interrupt_state, "interrupts", {}).values()
-            if not getattr(interrupt, "response", None)
-        ]
+        open_interrupts = _open_native_interrupts(
+            getattr(interrupt_state, "interrupts", {})
+        )
+        if not open_interrupts:
+            # The checkpoint is still activated yet every interrupt is answered
+            # under the installed SDK's semantics, so this run reports success
+            # while the agent may remain parked.
+            logger.debug(
+                "Native interrupt state is activated but every interrupt is "
+                "answered; reporting no pending interrupts"
+            )
+        return list(open_interrupts.values())
     return []
 
 
@@ -252,12 +368,16 @@ def _preflight_resume_entries(
             "A submitted resume must contain at least one entry"
         )
 
-    current_interrupts = getattr(interrupt_state, "interrupts", {})
-    open_interrupts = {
-        interrupt_id: interrupt
-        for interrupt_id, interrupt in current_interrupts.items()
-        if not getattr(interrupt, "response", None)
-    }
+    open_interrupts = _open_native_interrupts(
+        getattr(interrupt_state, "interrupts", {})
+    )
+    # An active checkpoint whose every interrupt is answered is a thread the SDK
+    # parked mid-resume (see _replays_recorded_answers). The interrupts an exact
+    # replay may address are the answered ones it is replaying.
+    if _replays_recorded_answers(interrupt_state, resume_entries):
+        addressable = dict(getattr(interrupt_state, "interrupts", {}) or {})
+    else:
+        addressable = open_interrupts
     seen_ids: set[str] = set()
     for entry in resume_entries:
         interrupt_id = getattr(entry, "interrupt_id", None)
@@ -270,13 +390,13 @@ def _preflight_resume_entries(
                 f"Resume contains duplicate interrupt id: {interrupt_id}"
             )
         seen_ids.add(interrupt_id)
-        interrupt = open_interrupts.get(interrupt_id)
+        interrupt = addressable.get(interrupt_id)
         if interrupt is None:
             return _interrupt_resume_error(
                 f"Resume references an interrupt that is not open: {interrupt_id}"
             )
 
-    missing_ids = set(open_interrupts) - seen_ids
+    missing_ids = set(addressable) - seen_ids
     if require_complete and missing_ids:
         return RunErrorEvent(
             type=EventType.RUN_ERROR,
@@ -299,14 +419,22 @@ def _preflight_resume_entries(
                     code="INTERRUPT_EXPIRED",
                 )
 
-        if (
-            entry.status != "resolved"
-            or not ag_ui_interrupt
-            or not getattr(ag_ui_interrupt, "response_schema", None)
+        schema = (
+            getattr(ag_ui_interrupt, "response_schema", None)
+            if ag_ui_interrupt
+            else None
+        )
+        if not schema and _is_tool_approval_interrupt(
+            addressable.get(entry.interrupt_id)
         ):
+            # AG-UI bookkeeping can be lost to a restart while the native
+            # interrupt is restored. A tool approval's contract is fixed, so
+            # validate against it rather than waving the payload through.
+            schema = _tool_approval_response_schema()
+
+        if entry.status != "resolved" or not schema:
             continue
 
-        schema = ag_ui_interrupt.response_schema
         payload = entry.payload
         if schema.get("type") != "object":
             continue
@@ -1226,25 +1354,6 @@ def _validate_visible_wait_interrupt_bookkeeping(
     return visible_ids, None
 
 
-def _native_response_for_entry(native_interrupt: Any, entry: Any) -> Any:
-    is_tool_approval = (
-        isinstance(getattr(native_interrupt, "name", None), str)
-        and native_interrupt.name.startswith("ag_ui:tool_call:")
-        and isinstance(getattr(native_interrupt, "reason", None), dict)
-    )
-    if entry.status == "cancelled":
-        return (
-            {"approved": False}
-            if is_tool_approval
-            else _wrap_resume_response(entry.status, entry.payload)
-        )
-    return (
-        entry.payload
-        if is_tool_approval
-        else _wrap_resume_response(entry.status, entry.payload)
-    )
-
-
 def _staged_server_responses_match_retry(
     resume_entries: list[Any],
     staged: Mapping[str, Any],
@@ -1298,8 +1407,8 @@ def _stage_server_resume_entries(
             )
         native_interrupt = current.get(interrupt_id)
         if interrupt_id not in result:
-            result[interrupt_id] = _native_response_for_entry(
-                native_interrupt, entry
+            result[interrupt_id] = _native_resume_response(
+                entry, native_interrupt
             )
     return result, None
 
@@ -2124,7 +2233,7 @@ class StrandsInterruptHook:
         #   - raises InterruptException (first call, no response yet) → suspends loop
         #   - returns the human response payload (resume call) → enforce decision
         response = event.interrupt(
-            f"ag_ui:tool_call:{tool_name}",
+            f"{_TOOL_APPROVAL_NAME_PREFIX}{tool_name}",
             reason={
                 "tool_name": tool_name,
                 "tool_input": event.tool_use.get("input", {}),
@@ -2343,7 +2452,10 @@ class StrandsAgent:
         self._agents_by_thread: Dict[str, StrandsAgentCore] = agents_by_thread if agents_by_thread is not None else {}
         # Track proxy tool names registered per thread
         self._proxy_tool_names_by_thread: Dict[str, set] = {}
-        # Store full AG-UI Interrupt objects per thread for resume validation
+        # AG-UI interrupt metadata per thread: the answer shape advertised to
+        # the client and validated on the way back, the tool card an interrupt
+        # belongs to, and an expiry. Never consulted to decide whether anything
+        # is pending; the native interrupt state answers that on its own.
         self._pending_interrupts_by_thread: Dict[str, Dict[str, Interrupt]] = {}
         # Fingerprint of last successfully-processed resume per thread (idempotency)
         self._last_resume_fingerprint: Dict[str, str] = {}
@@ -3265,7 +3377,10 @@ class StrandsAgent:
                 )
 
         # Rule 4: reject new input against a parked checkpoint before context
-        # or tool registries can be updated by a run that will not proceed.
+        # or tool registries can be updated by a run that will not proceed. The
+        # SDK owns the checkpoint, so a checkpoint it still holds active blocks
+        # the turn and is left exactly as it stands: deactivating it here would
+        # discard the tool use and tool results parked behind it.
         if (
             not resume_submitted
             and getattr(interrupt_state, "activated", False) is True
@@ -3476,30 +3591,18 @@ class StrandsAgent:
                 ag_ui_interrupt = pending_ag_ui.get(entry.interrupt_id)
                 native_interrupt = interrupt_state.interrupts.get(entry.interrupt_id)
 
-                if entry.status == "cancelled":
-                    # Track tool_call_ids for cancelled tool-bound interrupts
-                    if ag_ui_interrupt and getattr(ag_ui_interrupt, "tool_call_id", None):
-                        _resumed_tool_call_ids.add(ag_ui_interrupt.tool_call_id)
-                    # Include a denial response so Strands marks this interrupt
-                    # as responded (prevents re-raising on resume).
+                if entry.status in ("cancelled", "resolved"):
+                    # A cancelled entry still carries a response, so Strands
+                    # marks the interrupt answered and stops re-raising it.
                     interrupt_responses.append({
                         "interruptResponse": {
                             "interruptId": entry.interrupt_id,
-                            "response": _native_response_for_entry(
-                                native_interrupt, entry
+                            "response": _native_resume_response(
+                                entry, native_interrupt
                             ),
                         }
                     })
-                elif entry.status == "resolved":
-                    interrupt_responses.append({
-                        "interruptResponse": {
-                            "interruptId": entry.interrupt_id,
-                            "response": _native_response_for_entry(
-                                native_interrupt, entry
-                            ),
-                        }
-                    })
-                    # Track tool_call_ids for resumed interrupts (suppress re-emission)
+                    # Track tool_call_ids so the tool card is not re-emitted.
                     if ag_ui_interrupt and getattr(ag_ui_interrupt, "tool_call_id", None):
                         _resumed_tool_call_ids.add(ag_ui_interrupt.tool_call_id)
 
