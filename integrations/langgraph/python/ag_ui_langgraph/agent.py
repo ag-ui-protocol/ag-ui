@@ -124,6 +124,22 @@ class PreparedStream(TypedDict):
     events_to_dispatch: NotRequired[Optional[List[ProcessedEvents]]]
 
 class LangGraphAgent:
+    # Behavior flags added after the initial release, declared at class level so
+    # that reading one never depends on __init__ having assigned it. Subclasses
+    # whose signatures predate a flag still resolve it through the class instead
+    # of raising AttributeError mid-stream. __init__ shadows these per instance.
+    enable_legacy_on_interrupt_event: bool = True
+    emit_interrupt_outcome: bool = False
+    emit_raw_events: bool = True
+
+    # Kept in sync with the flags above: clone() forwards these to __init__ when
+    # the concrete class accepts them and assigns them afterwards when it does not.
+    _CLONE_FLAGS = (
+        "enable_legacy_on_interrupt_event",
+        "emit_interrupt_outcome",
+        "emit_raw_events",
+    )
+
     def __init__(self, *, name: str, graph: CompiledStateGraph, description: Optional[str] = None, config:  Union[Optional[RunnableConfig], dict] = None, enable_legacy_on_interrupt_event: bool = True, emit_interrupt_outcome: bool = False, emit_raw_events: bool = True):
         self.name = name
         self.description = description
@@ -163,18 +179,27 @@ class LangGraphAgent:
     def clone(self) -> Self:
         """Create a fresh copy with clean per-request state.
 
-        Subclasses that add required __init__ parameters must override clone()
+        The contract for subclasses is the four keyword arguments below: any
+        subclass whose __init__ accepts (name, graph, description, config) can
+        be cloned. Behavior flags in ``_CLONE_FLAGS`` are forwarded through
+        __init__ when the concrete class accepts them, and assigned onto the
+        clone afterwards when it does not — dropping them instead would
+        silently reset a non-default flag (e.g. ``emit_raw_events=False``) on
+        every request.
+
+        Subclasses that add *required* __init__ parameters must override clone()
         to pass those parameters through.
         """
+        flags = {name: getattr(self, name) for name in self._CLONE_FLAGS}
+        accepted, deferred = self._partition_clone_flags(flags)
+
         try:
-            return type(self)(
+            clone = type(self)(
                 name=self.name,
                 graph=self.graph,
                 description=self.description,
                 config=dict(self.config) if self.config else None,
-                enable_legacy_on_interrupt_event=self.enable_legacy_on_interrupt_event,
-                emit_interrupt_outcome=self.emit_interrupt_outcome,
-                emit_raw_events=self.emit_raw_events,
+                **accepted,
             )
         except TypeError as exc:
             raise TypeError(
@@ -182,6 +207,27 @@ class LangGraphAgent:
                 f"__init__ accepts (name, graph, description, config) as "
                 f"keyword arguments: {exc}"
             ) from exc
+
+        for name, value in deferred.items():
+            setattr(clone, name, value)
+
+        return clone
+
+    def _partition_clone_flags(self, flags: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
+        """Split flags into those __init__ accepts and those it does not."""
+        try:
+            params = inspect.signature(type(self).__init__).parameters
+        except (TypeError, ValueError):
+            # Unintrospectable __init__ (C-level, exotic decorator): assume it
+            # takes only the four documented parameters and assign the rest.
+            return {}, dict(flags)
+
+        if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+            return dict(flags), {}
+
+        accepted = {name: value for name, value in flags.items() if name in params}
+        deferred = {name: value for name, value in flags.items() if name not in params}
+        return accepted, deferred
 
     def _dispatch_event(self, event: ProcessedEvents) -> ProcessedEvents:
         if event.type == EventType.RAW:
