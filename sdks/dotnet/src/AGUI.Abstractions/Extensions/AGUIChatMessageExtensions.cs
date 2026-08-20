@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 
@@ -314,20 +315,31 @@ public static class AGUIChatMessageExtensions
         AdditionalPropertiesDictionary? additionalProperties,
         string? filename = null)
     {
-        AGUIMediaInputContent content = mediaType switch
+        AGUIMediaInputContent content = GetTopLevelMediaType(mediaType) switch
         {
-            { } value when value.StartsWith("image/", StringComparison.OrdinalIgnoreCase) =>
-                new AGUIImageInputContent(),
-            { } value when value.StartsWith("audio/", StringComparison.OrdinalIgnoreCase) =>
-                new AGUIAudioInputContent(),
-            { } value when value.StartsWith("video/", StringComparison.OrdinalIgnoreCase) =>
-                new AGUIVideoInputContent(),
+            "image" => new AGUIImageInputContent(),
+            "audio" => new AGUIAudioInputContent(),
+            "video" => new AGUIVideoInputContent(),
             _ => new AGUIDocumentInputContent()
         };
 
         content.Source = source;
         content.Metadata = ConvertAdditionalProperties(additionalProperties, filename);
         return content;
+    }
+
+    private static string? GetTopLevelMediaType(string? mediaType)
+    {
+        if (!MediaTypeHeaderValue.TryParse(mediaType, out var parsed) ||
+            parsed.MediaType is not { } parsedMediaType)
+        {
+            return null;
+        }
+
+        var separator = parsedMediaType.IndexOf('/');
+        return separator > 0
+            ? parsedMediaType.Substring(0, separator).ToLowerInvariant()
+            : null;
     }
 
     private static JsonElement? ConvertAdditionalProperties(

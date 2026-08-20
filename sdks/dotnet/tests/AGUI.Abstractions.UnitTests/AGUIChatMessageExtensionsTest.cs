@@ -662,8 +662,10 @@ public sealed class AGUIChatMessageExtensionsTest
 
     [Theory]
     [InlineData("image/png", typeof(AGUIImageInputContent))]
+    [InlineData("IMAGE/PNG", typeof(AGUIImageInputContent))]
     [InlineData("audio/wav", typeof(AGUIAudioInputContent))]
     [InlineData("video/mp4", typeof(AGUIVideoInputContent))]
+    [InlineData("video/mp4; codecs=avc1", typeof(AGUIVideoInputContent))]
     [InlineData("application/pdf", typeof(AGUIDocumentInputContent))]
     public void AsAGUIMessages_DataContent_MapsAdditionalPropertiesToCanonicalMetadata(
         string mimeType,
