@@ -279,3 +279,63 @@ async def test_full_history_over_512_messages_resumes_from_bounded_checkpoint():
     assert model.calls == 2
     assert not any(event["type"] == "RUN_ERROR" for event in second)
     assert "exact-long-history-result" in repr(model.seen_messages[-1])
+
+
+class _BlockingEndpointModel(Model):
+    """Holds the first run open so a contender can arrive mid-stream."""
+
+    def __init__(self) -> None:
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    def get_config(self):
+        return {}
+
+    def update_config(self, **kwargs):
+        pass
+
+    async def structured_output(
+        self, output_model, prompt, **kwargs
+    ):  # pragma: no cover
+        if False:
+            yield {}
+
+    async def stream(self, messages, tool_specs=None, system_prompt=None, **kwargs):
+        self.entered.set()
+        await self.release.wait()
+        yield {"messageStart": {"role": "assistant"}}
+        yield {"contentBlockDelta": {"delta": {"text": "done"}}}
+        yield {"contentBlockStop": {}}
+        yield {"messageStop": {"stopReason": "end_turn"}}
+
+
+@pytest.mark.asyncio
+async def test_a_busy_thread_answers_thread_busy_over_http():
+    """A contender gets a readable protocol error, not a stream that dies."""
+    model = _BlockingEndpointModel()
+    tool = _tool("unused_tool")
+    adapter = StrandsAgent(Agent(model=model, tools=[]), name="endpoint-busy")
+    app = create_strands_app(adapter, path="/agent", ping_path=None)
+
+    first = asyncio.create_task(_post(app, _input("busy-thread", tool)))
+    try:
+        await asyncio.wait_for(model.entered.wait(), timeout=5.0)
+
+        contender = await _post(
+            app, _input("busy-thread", tool, run_id="run-contender")
+        )
+    finally:
+        model.release.set()
+        first_events = await asyncio.wait_for(first, timeout=5.0)
+
+    assert [event["type"] for event in contender] == ["RUN_STARTED", "RUN_ERROR"]
+    assert contender[1]["code"] == "THREAD_BUSY"
+    assert 'thread "busy-thread"' in contender[1]["message"]
+    assert contender[0]["runId"] == "run-contender"
+
+    # The rejected contender must not have disturbed the run it collided with.
+    assert [event["type"] for event in first_events][-1] == "RUN_FINISHED"
+
+    # And the thread is usable again once the first run finishes.
+    after = await _post(app, _input("busy-thread", tool, run_id="run-after"))
+    assert not any(event["type"] == "RUN_ERROR" for event in after)

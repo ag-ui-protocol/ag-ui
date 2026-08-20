@@ -13,6 +13,7 @@ import pytest
 from ag_ui.core import EventType, RunAgentInput
 from strands.tools.registry import ToolRegistry
 
+import ag_ui_strands.agent as agent_module
 from ag_ui_strands.agent import (
     StrandsAgent,
     _cancellation_from_exception_chain,
@@ -22,6 +23,16 @@ from ag_ui_strands.config import StrandsAgentConfig
 
 _T = TypeVar("_T")
 _WAIT_TIMEOUT_SECONDS = 5.0
+
+
+def _assert_thread_busy(events: Sequence[Any], thread_id: str) -> None:
+    """A rejected contender is a RUN_STARTED/RUN_ERROR pair, never a raise."""
+    assert [event.type for event in events] == [
+        EventType.RUN_STARTED,
+        EventType.RUN_ERROR,
+    ]
+    assert events[1].code == "THREAD_BUSY"
+    assert f'thread "{thread_id}"' in events[1].message
 
 
 async def _bounded_wait(awaitable: Awaitable[_T]) -> _T:
@@ -383,11 +394,10 @@ async def test_same_thread_overlap_is_rejected_before_second_strands_invocation(
 
     try:
         await _bounded_wait(inner.entered(1).wait())
-        with pytest.raises(
-            RuntimeError,
-            match=r"run already active for thread_id='thread-1'",
-        ):
-            await _bounded_wait(_collect(adapter, _input("thread-1", "run-2")))
+        _assert_thread_busy(
+            await _bounded_wait(_collect(adapter, _input("thread-1", "run-2"))),
+            "thread-1",
+        )
         assert inner.invocation_count == 1
     finally:
         inner.release(1)
@@ -550,11 +560,12 @@ async def test_async_generator_close_holds_claim_until_delegate_cleanup_finishes
             "delegate cleanup must start before the outer run releases its claim"
         )
         assert not close_task.done()
-        with pytest.raises(
-            RuntimeError,
-            match=r"run already active for thread_id='thread-1'",
-        ):
-            await _bounded_wait(_collect(adapter, _input("thread-1", "run-contender")))
+        _assert_thread_busy(
+            await _bounded_wait(
+                _collect(adapter, _input("thread-1", "run-contender"))
+            ),
+            "thread-1",
+        )
         assert scripted.calls == 1
     finally:
         scripted.allow_cleanup.set()
@@ -585,13 +596,12 @@ async def test_cancelled_close_drains_delegate_before_releasing_claim():
     try:
         for contender_run_id in ("run-contender-1", "run-contender-2"):
             close_task.cancel()
-            with pytest.raises(
-                RuntimeError,
-                match=r"run already active for thread_id='thread-1'",
-            ):
+            _assert_thread_busy(
                 await _bounded_wait(
                     _collect(adapter, _input("thread-1", contender_run_id))
-                )
+                ),
+                "thread-1",
+            )
             assert not close_task.done()
             assert not scripted.cleanup_finished.is_set()
             assert scripted.calls == 1
@@ -627,13 +637,12 @@ async def test_cancelled_close_preserves_cancellation_when_cleanup_fails(
     try:
         for contender_run_id in ("run-contender-1", "run-contender-2"):
             close_task.cancel()
-            with pytest.raises(
-                RuntimeError,
-                match=r"run already active for thread_id='thread-1'",
-            ):
+            _assert_thread_busy(
                 await _bounded_wait(
                     _collect(adapter, _input("thread-1", contender_run_id))
-                )
+                ),
+                "thread-1",
+            )
             assert not close_task.done()
             assert not scripted.cleanup_finished.is_set()
             assert scripted.calls == 1
@@ -680,11 +689,12 @@ async def test_cancellation_entering_cleanup_wins_over_cleanup_error(
     await _bounded_wait(scripted.cleanup_started.wait())
     try:
         assert not next_task.done()
-        with pytest.raises(
-            RuntimeError,
-            match=r"run already active for thread_id='thread-1'",
-        ):
-            await _bounded_wait(_collect(adapter, _input("thread-1", "run-contender")))
+        _assert_thread_busy(
+            await _bounded_wait(
+                _collect(adapter, _input("thread-1", "run-contender"))
+            ),
+            "thread-1",
+        )
         assert scripted.calls == 1
     finally:
         scripted.allow_cleanup.set()
@@ -732,11 +742,12 @@ async def test_real_generator_cleanup_cannot_mask_initiating_cancellation(
     await _bounded_wait(scripted.cleanup_started.wait())
     try:
         assert not next_task.done()
-        with pytest.raises(
-            RuntimeError,
-            match=r"run already active for thread_id='thread-1'",
-        ):
-            await _bounded_wait(_collect(adapter, _input("thread-1", "run-contender")))
+        _assert_thread_busy(
+            await _bounded_wait(
+                _collect(adapter, _input("thread-1", "run-contender"))
+            ),
+            "thread-1",
+        )
         assert scripted.calls == 1
     finally:
         scripted.allow_cleanup.set()
@@ -864,12 +875,114 @@ async def test_empty_thread_id_uses_default_claim_key():
 
     try:
         await _bounded_wait(inner.entered(1).wait())
-        with pytest.raises(
-            RuntimeError,
-            match=r"run already active for thread_id='default'",
-        ):
-            await _bounded_wait(_collect(adapter, _input("", "run-2")))
+        _assert_thread_busy(
+            await _bounded_wait(_collect(adapter, _input("", "run-2"))),
+            "default",
+        )
         assert inner.invocation_count == 1
     finally:
         inner.release(1)
         await _bounded_task(first)
+
+
+@pytest.mark.asyncio
+async def test_overrunning_cleanup_releases_the_thread_claim(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A cleanup that never finishes must not hold its thread forever."""
+    monkeypatch.setattr(agent_module, "_RUN_CLEANUP_TIMEOUT_SECONDS", 0.01)
+    adapter = _build_agent({})
+    scripted = _CleanupGatedRun()
+    adapter._run_unlocked = scripted.run_unlocked
+    run = adapter.run(_input("thread-1", "run-1"))
+    assert await _bounded_wait(run.__anext__()) == "first-event"
+
+    # allow_cleanup is deliberately never set before the close returns: this is
+    # the hung model call / hung session write the bound exists for.
+    await _bounded_wait(run.aclose())
+    assert not scripted.cleanup_finished.is_set()
+
+    assert await _bounded_wait(_collect(adapter, _input("thread-1", "run-2"))) == [
+        "replacement-event"
+    ]
+    assert scripted.calls == 2
+
+    abandoned = set(adapter._active_threads._abandoned_cleanups)
+    assert len(abandoned) == 1
+
+    scripted.allow_cleanup.set()
+    await _bounded_wait(asyncio.gather(*abandoned))
+    assert scripted.cleanup_finished.is_set()
+    # Settling drops the retained reference, so an idle wrapper holds nothing.
+    assert not adapter._active_threads._abandoned_cleanups
+    for delegate in scripted.delegates:
+        await _bounded_wait(delegate.aclose())
+
+
+@pytest.mark.asyncio
+async def test_cleanup_within_the_bound_is_still_awaited(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The bound must not turn an ordinary cleanup into an abandoned one."""
+    monkeypatch.setattr(agent_module, "_RUN_CLEANUP_TIMEOUT_SECONDS", 5.0)
+    adapter = _build_agent({})
+    scripted = _CleanupGatedRun()
+    adapter._run_unlocked = scripted.run_unlocked
+    run = adapter.run(_input("thread-1", "run-1"))
+    assert await _bounded_wait(run.__anext__()) == "first-event"
+
+    close_task = asyncio.create_task(run.aclose())
+    await _bounded_wait(scripted.cleanup_started.wait())
+    assert not close_task.done()
+
+    scripted.allow_cleanup.set()
+    await _bounded_task(close_task)
+
+    assert scripted.cleanup_finished.is_set()
+    assert not adapter._active_threads._abandoned_cleanups
+    for delegate in scripted.delegates:
+        await _bounded_wait(delegate.aclose())
+
+
+@pytest.mark.asyncio
+async def test_abandoned_cleanup_cannot_release_a_later_runs_claim(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """An overrun cleanup finishing late must not free somebody else's thread.
+
+    Abandoning releases the claim so the thread is usable again, but the
+    abandoned cleanup still runs its own release on the way out. By then the
+    thread can belong to a newer run, and releasing by id alone would hand that
+    run's exclusivity to a third caller.
+    """
+    monkeypatch.setattr(agent_module, "_RUN_CLEANUP_TIMEOUT_SECONDS", 0.01)
+    adapter = _build_agent({})
+    scripted = _CleanupGatedRun(block_iteration=True)
+    adapter._run_unlocked = scripted.run_unlocked
+    abandoned_run = adapter.run(_input("thread-1", "run-1"))
+    assert await _bounded_wait(abandoned_run.__anext__()) == "first-event"
+    await _bounded_wait(abandoned_run.aclose())
+    [abandoned_cleanup] = list(adapter._active_threads._abandoned_cleanups)
+
+    # A second run takes the freed thread and is still holding it.
+    successor = adapter.run(_input("thread-1", "run-2"))
+    assert await _bounded_wait(successor.__anext__()) == "replacement-event"
+
+    # The abandoned cleanup now finishes and releases.
+    scripted.allow_cleanup.set()
+    await _bounded_wait(asyncio.gather(abandoned_cleanup))
+    assert scripted.cleanup_finished.is_set()
+
+    # The successor still owns the thread, so a contender is still refused.
+    contender = await _bounded_wait(
+        _collect(adapter, _input("thread-1", "run-contender"))
+    )
+    assert scripted.calls == 2, (
+        "a contender started a run on a thread the successor still owns"
+    )
+    _assert_thread_busy(contender, "thread-1")
+
+    scripted.allow_iteration.set()
+    await _bounded_wait(successor.aclose())
+    for delegate in scripted.delegates:
+        await _bounded_wait(delegate.aclose())

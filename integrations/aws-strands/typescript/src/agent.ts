@@ -600,7 +600,7 @@ export class StrandsAgent {
    * Threads with an in-flight run. Strands `Agent.stream()` throws if a
    * second invocation is started on a busy agent; we detect the collision
    * up front and emit a protocol-shaped RUN_ERROR/THREAD_BUSY instead.
-   * TypeScript-only: the Python adapter has no equivalent guard.
+   * The Python adapter carries the same guard and the same error code.
    */
   private readonly _activeRunsByThread = new Set<string>();
   /** Outstanding AG-UI interrupt objects per thread, used to validate

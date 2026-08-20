@@ -48,6 +48,10 @@ class _CleanupGatedEndpointAgent:
     def run(self, input_data: RunAgentInput) -> AsyncIterator[Any]:
         async def stream() -> AsyncIterator[Any]:
             thread_id = input_data.thread_id or "default"
+            # This double's own way of making "the claim is still held"
+            # observable. The adapter answers a contender with
+            # RUN_ERROR/THREAD_BUSY; these tests are about endpoint cleanup,
+            # not that contract, and a raise is the sharper signal here.
             if thread_id in self.active_threads:
                 raise RuntimeError(f"run already active for thread_id={thread_id!r}")
 
@@ -101,6 +105,7 @@ class _CancellationEntryEndpointStream:
     async def __anext__(self) -> Any:
         thread_id = self._input_data.thread_id or "default"
         if self._invocation is None:
+            # Same claim-held signal as _CleanupGatedEndpointAgent above.
             if thread_id in self._owner.active_threads:
                 raise RuntimeError(f"run already active for thread_id={thread_id!r}")
             self._owner.active_threads.add(thread_id)

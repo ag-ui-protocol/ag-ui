@@ -82,6 +82,22 @@ _TOOL_CALL_MAP_MAX = 512
 # tool receives this in place of a real answer and can treat it as a denial.
 INTERRUPT_CANCELLED = {"cancelled": True}
 
+# Message for a rejected overlapping run. Worded identically to the TypeScript
+# bridge so a client sees one contract across both, and kept next to the code
+# it pairs with rather than inlined at the one call site.
+_THREAD_BUSY_MESSAGE_TEMPLATE = (
+    'Another run is already in progress on thread "{thread_id}". Wait for '
+    "RUN_FINISHED before starting a new run on the same thread."
+)
+
+# Upper bound on how long a finishing run may hold its thread claim while its
+# cleanup drains. Cleanup delegates into Strands, which can block on a model
+# call or a session write, and an unbounded wait turns one hung call into a
+# thread that answers THREAD_BUSY for the life of the process. Generous, since
+# every ordinary cleanup finishes in milliseconds and the bound exists only to
+# convert "wedged forever" into "late".
+_RUN_CLEANUP_TIMEOUT_SECONDS = 30.0
+
 # Reserved native-interrupt name prefix for interrupts this adapter's approval
 # hook raises. Anything else is a generic native interrupt.
 _TOOL_APPROVAL_NAME_PREFIX = "ag_ui:tool_call:"
@@ -2258,22 +2274,53 @@ class StrandsInterruptHook:
 
 
 class _ActiveThreadRuns:
-    """Track active wrapper-local runs without queueing contenders."""
+    """Track active wrapper-local runs without queueing contenders.
+
+    A claim is identified by a token rather than by its thread id alone. An
+    abandoned cleanup keeps running after its claim was released, and it will
+    still try to release on its way out; by then the thread may belong to a
+    later run, and releasing by id would hand that run's exclusivity away.
+    """
 
     def __init__(self) -> None:
         self._lock = asyncio.Lock()
-        self._ids: set[str] = set()
+        self._claims: dict[str, object] = {}
+        self._abandoned_cleanups: set[asyncio.Task] = set()
 
-    async def claim(self, thread_id: str) -> bool:
+    async def claim(self, thread_id: str) -> object | None:
+        """Return a token owning ``thread_id``, or ``None`` if it is taken."""
         async with self._lock:
-            if thread_id in self._ids:
-                return False
-            self._ids.add(thread_id)
-            return True
+            if thread_id in self._claims:
+                return None
+            token = object()
+            self._claims[thread_id] = token
+            return token
 
-    async def release(self, thread_id: str) -> None:
+    async def release(self, thread_id: str, token: object) -> None:
+        """Release ``thread_id`` only if ``token`` still owns it."""
         async with self._lock:
-            self._ids.discard(thread_id)
+            if self._claims.get(thread_id) is token:
+                del self._claims[thread_id]
+
+    def abandon(
+        self, thread_id: str, token: object, cleanup_task: asyncio.Task
+    ) -> None:
+        """Release an overrunning claim without awaiting anything.
+
+        Deliberately synchronous. This runs on the path where the caller is
+        often already being cancelled, and ``await lock.acquire()`` would raise
+        there and skip the release, leaving the thread claimed for the life of
+        the process. Reading and deleting one dict entry cannot interleave with
+        ``claim``'s check-then-add, since neither awaits between them.
+
+        The task is retained until it settles because the event loop holds only
+        a weak reference to it, and a garbage-collected cleanup task would
+        cancel the very work this path is trying to let finish.
+        """
+        if self._claims.get(thread_id) is token:
+            del self._claims[thread_id]
+        self._abandoned_cleanups.add(cleanup_task)
+        cleanup_task.add_done_callback(self._abandoned_cleanups.discard)
 
 
 def _cancellation_from_exception_chain(
@@ -2305,8 +2352,19 @@ async def _drain_cleanup(
     log_context: Mapping[str, Any],
     caller_cancellation: asyncio.CancelledError | None = None,
     observed_cleanup_error: BaseException | None = None,
+    timeout: float | None = None,
+    on_abandoned: Callable[[asyncio.Task], None] | None = None,
 ) -> None:
-    """Shield cleanup to completion before propagating caller cancellation."""
+    """Shield cleanup to completion before propagating caller cancellation.
+
+    ``timeout`` bounds that wait. Cleanup delegates to whatever the run was
+    doing — a model call, a session write — and any of those can hang, so
+    without a bound the wait is unbounded too and everything it gates stays
+    gated forever. On expiry ``on_abandoned`` is handed the still-running task
+    so its owner can release what it was holding, and the task is left to
+    finish on its own rather than cancelled, because cancelling a half-written
+    session is worse than a late one.
+    """
 
     async def capture_cleanup_outcome() -> BaseException | None:
         try:
@@ -2317,13 +2375,52 @@ async def _drain_cleanup(
 
     cleanup_task = asyncio.create_task(capture_cleanup_outcome())
     pending_cancellation = caller_cancellation
+    loop = asyncio.get_running_loop()
+    # A single deadline rather than a per-iteration timeout: a caller that is
+    # cancelled repeatedly re-enters this loop, and a fresh budget each time
+    # would make the bound unbounded again.
+    deadline = None if timeout is None else loop.time() + timeout
 
     while not cleanup_task.done():
+        remaining = None if deadline is None else deadline - loop.time()
+        if remaining is not None and remaining <= 0:
+            break
         try:
-            await asyncio.shield(cleanup_task)
+            if remaining is None:
+                await asyncio.shield(cleanup_task)
+            else:
+                await asyncio.wait_for(asyncio.shield(cleanup_task), remaining)
+        except asyncio.TimeoutError:
+            break
         except asyncio.CancelledError as exc:
             if pending_cancellation is None:
                 pending_cancellation = exc
+
+    if not cleanup_task.done():
+        logger.error(
+            "Cleanup did not finish within %ss; abandoning it and releasing "
+            "what it was holding",
+            timeout,
+            extra=dict(log_context),
+        )
+        if on_abandoned is not None:
+            on_abandoned(cleanup_task)
+        if pending_cancellation is not None:
+            if observed_cleanup_error is not None:
+                logger.error(
+                    cancellation_error_message,
+                    exc_info=(
+                        type(observed_cleanup_error),
+                        observed_cleanup_error,
+                        observed_cleanup_error.__traceback__,
+                    ),
+                    extra=dict(log_context),
+                )
+                raise pending_cancellation from observed_cleanup_error
+            raise pending_cancellation
+        if observed_cleanup_error is not None:
+            raise observed_cleanup_error
+        return
 
     cleanup_error = cleanup_task.result()
 
@@ -2361,17 +2458,24 @@ async def _close_run_stream_and_release(
     run_stream: Any,
     active_threads: _ActiveThreadRuns,
     thread_id: str,
+    claim_token: object,
     *,
     caller_cancellation: asyncio.CancelledError | None = None,
     observed_cleanup_error: BaseException | None = None,
+    cleanup_timeout: float | None = None,
 ) -> None:
     """Drain delegated cleanup before releasing a thread claim."""
+    # Resolved here rather than as a default so the bound stays one module
+    # global, readable and overridable in one place.
+    timeout = (
+        _RUN_CLEANUP_TIMEOUT_SECONDS if cleanup_timeout is None else cleanup_timeout
+    )
 
     async def cleanup() -> None:
         try:
             await run_stream.aclose()
         finally:
-            await active_threads.release(thread_id)
+            await active_threads.release(thread_id, claim_token)
 
     await _drain_cleanup(
         cleanup,
@@ -2381,6 +2485,10 @@ async def _close_run_stream_and_release(
         log_context={"thread_id": thread_id},
         caller_cancellation=caller_cancellation,
         observed_cleanup_error=observed_cleanup_error,
+        timeout=timeout,
+        on_abandoned=lambda task: active_threads.abandon(
+            thread_id, claim_token, task
+        ),
     )
 
 
@@ -2481,8 +2589,21 @@ class StrandsAgent:
     async def run(self, input_data: RunAgentInput) -> AsyncIterator[Any]:
         """Run once for a thread, rejecting overlapping wrapper-local runs."""
         thread_id = input_data.thread_id or "default"
-        if not await self._active_threads.claim(thread_id):
-            raise RuntimeError(f"run already active for thread_id={thread_id!r}")
+        claim_token = await self._active_threads.claim(thread_id)
+        if claim_token is None:
+            # A rejected contender is a protocol outcome, not a crash. Raising
+            # here surfaces only after the transport has already answered 200
+            # and opened the event stream, so the client sees the stream die
+            # with nothing in it. Emit the same RUN_ERROR/THREAD_BUSY pair the
+            # TypeScript bridge emits instead.
+            ev_started, ev_error = _error_events(
+                input_data,
+                _THREAD_BUSY_MESSAGE_TEMPLATE.format(thread_id=thread_id),
+                "THREAD_BUSY",
+            )
+            yield ev_started
+            yield ev_error
+            return
         run_stream = self._run_unlocked(input_data)
         caller_cancellation: asyncio.CancelledError | None = None
         observed_cleanup_error: BaseException | None = None
@@ -2502,6 +2623,7 @@ class StrandsAgent:
                 run_stream,
                 self._active_threads,
                 thread_id,
+                claim_token,
                 caller_cancellation=caller_cancellation,
                 observed_cleanup_error=observed_cleanup_error,
             )
