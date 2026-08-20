@@ -174,13 +174,13 @@ arrive first, and the adapter resumes only after all native interrupts in that
 checkpoint have responses.
 
 Without a `SessionManager`, a paused frontend-tool wait can resume on the same
-live `StrandsAgent` wrapper. To resume sequentially after wrapper recreation
-or on another load-balanced instance, use a compatible shared
-`SessionManager` backend with stable session and Strands agent identities.
-The configured `session_manager_provider` is called on every request and must
-return a fresh manager instance bound to that stable shared identity, so each
-request reloads authoritative state. That configuration does not require
-sticky sessions for sequential resume.
+live `StrandsAgent` wrapper. To resume after the wrapper is recreated, use a
+compatible shared `SessionManager` backend with stable session and Strands
+agent identities. `session_manager_provider` keeps its existing lifecycle: it
+is called once per `thread_id`, and the resulting manager and core are reused
+for that thread. A live wrapper therefore serves a paused wait from its own
+cached core, and resuming on a different instance requires that instance to
+see the thread for the first time.
 
 The adapter rejects overlapping runs for one `thread_id` with a process-local
 guard. This is not distributed coordination: simultaneous requests for the

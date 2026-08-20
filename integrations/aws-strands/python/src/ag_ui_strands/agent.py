@@ -2666,128 +2666,81 @@ class StrandsAgent:
     async def _run_unlocked(self, input_data: RunAgentInput) -> AsyncIterator[Any]:
         """Run the Strands agent and yield AG-UI events."""
 
-        # Get or create the agent instance for this request. Session-managed
-        # cores are intentionally reconstructed from a fresh provider-created
-        # manager on every request so the shared store, rather than a stale
-        # wrapper-local core, remains authoritative across load-balanced runs.
-        # Without a provider, state continues to live in the cached per-thread
-        # core.
+        # Get or create the agent instance for this thread. When a
+        # session_manager_provider is configured, the SessionManager handles
+        # conversation persistence; otherwise state is held in-memory per thread.
         thread_id = input_data.thread_id or "default"
         core_created_this_run = False
-        managed_request = self.config.session_manager_provider is not None
         run_close_requested = False
 
+        # Only forward ``hooks`` when the caller actually supplied providers.
+        # Passing ``hooks=None`` or ``hooks=[]`` risks being interpreted
+        # differently by future StrandsAgentCore versions (e.g. as "disable
+        # default hooks"), so we omit the kwarg entirely when there's nothing
+        # to forward.
         core_kwargs = dict(self._agent_kwargs)
         if self._hooks:
             core_kwargs["hooks"] = list(self._hooks)
 
-        if managed_request:
-            try:
-                session_manager = await maybe_await(
-                    self.config.session_manager_provider(input_data)
-                )
-            except Exception as e:
-                logger.error(
-                    f"session_manager_provider failed: {e}",
-                    exc_info=True,
-                )
-                ev_started, ev_error = _error_events(
-                    input_data,
-                    f"Failed to initialize session manager: {e}",
-                    "SESSION_MANAGER_ERROR",
-                )
-                yield ev_started
-                yield ev_error
-                return
-            if session_manager is not None and not isinstance(
-                session_manager, SessionManager
-            ):
-                actual = type(session_manager).__name__
-                logger.error(
-                    "session_manager_provider returned %s; expected a SessionManager instance.",
-                    actual,
-                )
-                ev_started, ev_error = _error_events(
-                    input_data,
-                    f"session_manager_provider returned {actual}; expected a SessionManager instance",
-                    "SESSION_MANAGER_INVALID_TYPE",
-                )
-                yield ev_started
-                yield ev_error
-                return
-
-            cached_agent = self._agents_by_thread.get(thread_id)
-            if (
-                session_manager is not None
-                and cached_agent is not None
-                and _get_strands_session_manager(cached_agent) is None
-            ):
-                ev_started, ev_error = _error_events(
-                    input_data,
-                    "session_manager_provider returned a manager after this "
-                    "thread was initialized without session persistence",
-                    "SESSION_MANAGER_ERROR",
-                )
-                yield ev_started
-                yield ev_error
-                return
-            if session_manager is None and cached_agent is not None:
-                if _get_strands_session_manager(cached_agent) is not None:
-                    ev_started, ev_error = _error_events(
-                        input_data,
-                        "session_manager_provider returned None after this thread was session-managed",
-                        "SESSION_MANAGER_ERROR",
-                    )
-                    yield ev_started
-                    yield ev_error
-                    return
-                logger.warning(
-                    f"session_manager_provider returned None for thread_id={thread_id}; "
-                    "reusing the existing in-memory agent"
-                )
-            else:
-                if session_manager is None:
-                    logger.warning(
-                        f"session_manager_provider returned None for thread_id={thread_id}; "
-                        "agent will run without session persistence"
-                    )
-                try:
-                    fresh_agent = StrandsAgentCore(
-                        model=self._model,
-                        system_prompt=self._system_prompt,
-                        tools=self._tools,
-                        session_manager=session_manager,
-                        **core_kwargs,
-                    )
-                except Exception as e:
-                    logger.error(
-                        "Failed to initialize session-managed Strands agent: %s",
-                        e,
-                        exc_info=True,
-                    )
-                    ev_started, ev_error = _error_events(
-                        input_data,
-                        f"Failed to initialize session manager: {e}",
-                        "SESSION_MANAGER_ERROR",
-                    )
-                    yield ev_started
-                    yield ev_error
-                    return
-                self._agents_by_thread[thread_id] = fresh_agent
-                # These mirrors belong to the core that was just replaced.
-                # Reload their durable counterparts below.
-                self._pending_interrupts_by_thread.pop(thread_id, None)
-                self._last_resume_fingerprint.pop(thread_id, None)
-                self._proxy_tool_names_by_thread.pop(thread_id, None)
-                core_created_this_run = True
-        elif thread_id not in self._agents_by_thread:
+        if thread_id not in self._agents_by_thread:
             async with self._thread_init_lock:
+                # Double-check inside the lock: another coroutine may have
+                # completed initialization while we were waiting.
                 if thread_id not in self._agents_by_thread:
+                    session_manager = None
+                    if self.config.session_manager_provider:
+                        try:
+                            session_manager = await maybe_await(
+                                self.config.session_manager_provider(input_data)
+                            )
+                        except Exception as e:
+                            # ERROR (not WARNING): the run is being aborted.
+                            # exc_info=True preserves the full traceback so
+                            # programming errors (TypeError, NameError, ...)
+                            # in the provider surface clearly rather than
+                            # looking like an infrastructure problem.
+                            logger.error(
+                                f"session_manager_provider failed: {e}",
+                                exc_info=True,
+                            )
+                            ev_started, ev_error = _error_events(
+                                input_data,
+                                f"Failed to initialize session manager: {e}",
+                                "SESSION_MANAGER_ERROR",
+                            )
+                            yield ev_started
+                            yield ev_error
+                            return
+                        # Validate the provider return type at the boundary —
+                        # otherwise a forgotten call or wrong type surfaces
+                        # deep inside Strands with a confusing traceback.
+                        if session_manager is not None and not isinstance(
+                            session_manager, SessionManager
+                        ):
+                            actual = type(session_manager).__name__
+                            logger.error(
+                                "session_manager_provider returned %s; "
+                                "expected a SessionManager instance.",
+                                actual,
+                            )
+                            ev_started, ev_error = _error_events(
+                                input_data,
+                                f"session_manager_provider returned {actual}; expected a SessionManager instance",
+                                "SESSION_MANAGER_INVALID_TYPE",
+                            )
+                            yield ev_started
+                            yield ev_error
+                            return
+                    if session_manager is None and self.config.session_manager_provider:
+                        logger.warning(
+                            f"session_manager_provider returned None for thread_id={thread_id}; "
+                            "agent will run without session persistence"
+                        )
                     self._agents_by_thread[thread_id] = StrandsAgentCore(
                         model=self._model,
                         system_prompt=self._system_prompt,
                         tools=self._tools,
-                        session_manager=None,
+                        session_manager=session_manager,
                         **core_kwargs,
                     )
                     core_created_this_run = True

@@ -104,22 +104,15 @@ This document explains how the AWS Strands integration inside `integrations/aws-
 
 `StrandsAgentConfig` allows each tool to define bespoke behavior without editing the adapter:
 
-| Primitive                                 | Purpose                                                                                                                                          |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `tool_behaviors: Dict[str, ToolBehavior]` | Per-tool overrides keyed by the Strands tool name.                                                                                               |
-| `state_context_builder`                   | Callable that enriches the outgoing prompt with the current shared state (useful for reiterating plan steps, recipes, etc.).                     |
-| `session_manager_provider`                | Factory invoked on every request; each non-`None` result must be a fresh manager bound to the thread's stable shared session and agent identity. |
-| `emit_messages_snapshot`                  | Global opt-out of the four-point `MESSAGES_SNAPSHOT` emission. Default `True`.                                                                   |
-| `replay_history_into_strands`             | Global opt-out of the per-run Strands history reconciliation. Default `True`.                                                                    |
+| Primitive                                 | Purpose                                                                                                                      |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `tool_behaviors: Dict[str, ToolBehavior]` | Per-tool overrides keyed by the Strands tool name.                                                                           |
+| `state_context_builder`                   | Callable that enriches the outgoing prompt with the current shared state (useful for reiterating plan steps, recipes, etc.). |
+| `session_manager_provider`                | Factory invoked once per thread to produce a per-thread `SessionManager`.                                                    |
+| `emit_messages_snapshot`                  | Global opt-out of the four-point `MESSAGES_SNAPSHOT` emission. Default `True`.                                               |
+| `replay_history_into_strands`             | Global opt-out of the per-run Strands history reconciliation. Default `True`.                                                |
 
 `ToolBehavior` captures how the adapter should react:
-
-The provider lifecycle is intentionally request-scoped, which differs from the
-adapter's former once-per-thread contract. Reusing a manager instance is not
-supported: a fresh manager/core pair reloads authoritative durable state on
-every request, allowing sequential cross-process resume without sticky
-sessions. Returning `None` consistently selects the cached in-memory mode;
-switching a live thread between managed and unmanaged modes fails loudly.
 
 - `skip_messages_snapshot`: Suppresses the `MessagesSnapshotEvent` that would normally follow this tool's `TOOL_CALL_END` / `TOOL_CALL_RESULT` events. Use when `custom_result_handler` already emits its own snapshot and you want to avoid duplicates.
 - `continue_after_frontend_call`: Keeps the stream alive after emitting a frontend tool call.

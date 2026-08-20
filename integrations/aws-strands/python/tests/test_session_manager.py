@@ -126,24 +126,21 @@ class TestSessionManagerProvider:
         assert kwargs.get("session_manager") is mock_session_manager
 
     @pytest.mark.asyncio
-    async def test_provider_refreshes_managed_core_for_every_request(self):
-        """Every managed request restores a fresh authoritative session view."""
-        managers = [_mock_session_manager(), _mock_session_manager()]
-        provider = MagicMock(side_effect=managers)
+    async def test_provider_not_called_for_existing_thread(self):
+        """Provider is NOT called again for subsequent requests on the same thread."""
+        mock_session_manager = _mock_session_manager()
+        provider = MagicMock(return_value=mock_session_manager)
         agent = _make_base_agent(session_manager_provider=provider)
         thread_id = "cached-thread"
 
         with patch("ag_ui_strands.agent.StrandsAgentCore") as MockCore:
-            instances = [_make_mock_instance(), _make_mock_instance()]
-            for instance, manager in zip(instances, managers):
-                instance._session_manager = manager
-            MockCore.side_effect = instances
+            MockCore.return_value = _make_mock_instance()
             await _collect_events(agent, _make_run_input(thread_id=thread_id, run_id="run-1"))
             await _collect_events(agent, _make_run_input(thread_id=thread_id, run_id="run-2"))
 
-        assert provider.call_count == 2
-        assert MockCore.call_count == 2
-        assert agent._agents_by_thread[thread_id] is instances[-1]
+        # Provider and constructor each called only once despite two runs
+        provider.assert_called_once()
+        MockCore.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_provider_exception_yields_error_events(self):
@@ -261,8 +258,8 @@ class TestSessionManagerProvider:
         assert EventType.RUN_FINISHED not in [e.type for e in events]
 
     @pytest.mark.asyncio
-    async def test_provider_returning_none_reuses_unmanaged_core(self, caplog):
-        """Repeated None results preserve the thread's in-memory core."""
+    async def test_provider_returns_none_logs_warning(self, caplog):
+        """Provider returning None logs a warning but continues the run."""
         import logging
 
         provider = MagicMock(return_value=None)
@@ -271,61 +268,11 @@ class TestSessionManagerProvider:
         with patch("ag_ui_strands.agent.StrandsAgentCore") as MockCore:
             MockCore.return_value = _make_mock_instance()
             with caplog.at_level(logging.WARNING, logger="ag_ui_strands.agent"):
-                first = await _collect_events(agent, _make_run_input(run_id="run-1"))
-                second = await _collect_events(agent, _make_run_input(run_id="run-2"))
+                events = await _collect_events(agent, _make_run_input())
 
-        assert EventType.RUN_FINISHED in [event.type for event in first]
-        assert EventType.RUN_FINISHED in [event.type for event in second]
-        assert provider.call_count == 2
-        MockCore.assert_called_once()
+        event_types = [e.type for e in events]
+        assert EventType.RUN_FINISHED in event_types
         assert any("returned None" in msg for msg in caplog.messages)
-
-    @pytest.mark.asyncio
-    async def test_provider_rejects_unmanaged_to_managed_transition(self):
-        """A late manager must not silently discard the live in-memory core."""
-        manager = _mock_session_manager()
-        provider = MagicMock(side_effect=[None, manager])
-        agent = _make_base_agent(session_manager_provider=provider)
-        unmanaged_core = _make_mock_instance()
-
-        with patch("ag_ui_strands.agent.StrandsAgentCore") as MockCore:
-            MockCore.return_value = unmanaged_core
-            first = await _collect_events(agent, _make_run_input(run_id="run-1"))
-            second = await _collect_events(agent, _make_run_input(run_id="run-2"))
-
-        assert EventType.RUN_FINISHED in [event.type for event in first]
-        assert [event.type for event in second] == [
-            EventType.RUN_STARTED,
-            EventType.RUN_ERROR,
-        ]
-        assert second[-1].code == "SESSION_MANAGER_ERROR"
-        assert "manager after this thread was initialized without" in second[-1].message
-        MockCore.assert_called_once()
-        assert agent._agents_by_thread["thread-1"] is unmanaged_core
-
-    @pytest.mark.asyncio
-    async def test_managed_core_initialization_failure_is_structured(self):
-        """A reused or broken manager must not escape core construction."""
-        manager = _mock_session_manager()
-        provider = MagicMock(return_value=manager)
-        agent = _make_base_agent(session_manager_provider=provider)
-
-        with patch("ag_ui_strands.agent.StrandsAgentCore") as MockCore:
-            first_instance = _make_mock_instance()
-            first_instance._session_manager = manager
-            MockCore.side_effect = [
-                first_instance,
-                RuntimeError("manager was already initialized"),
-            ]
-            await _collect_events(agent, _make_run_input(run_id="run-1"))
-            second = await _collect_events(agent, _make_run_input(run_id="run-2"))
-
-        assert [event.type for event in second] == [
-            EventType.RUN_STARTED,
-            EventType.RUN_ERROR,
-        ]
-        assert second[-1].code == "SESSION_MANAGER_ERROR"
-        assert "already initialized" in second[-1].message
 
     @pytest.mark.asyncio
     async def test_session_manager_plain_turn_does_not_replay_history(self):
