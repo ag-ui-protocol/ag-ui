@@ -32,7 +32,7 @@ internal sealed class ToolCallBuilder
                 $"Cannot send 'TOOL_CALL_START' event: A tool call with ID '{evt.ToolCallId}' is already in progress. Complete it with 'TOOL_CALL_END' first.");
         }
 
-        _activeToolCalls[evt.ToolCallId] = new ToolCallState(evt.ToolCallName);
+        _activeToolCalls[evt.ToolCallId] = new ToolCallState(evt.ToolCallName, evt.ParentMessageId);
     }
 
     public void AppendArgs(ToolCallArgsEvent evt)
@@ -66,6 +66,14 @@ internal sealed class ToolCallBuilder
         {
             ConversationId = _conversationId,
             ResponseId = _responseId,
+            // The id the TypeScript reducer mints for the assistant message carrying
+            // this call (parentMessageId ?? toolCallId). Required for more than
+            // parity: ToChatResponse merges an update's AdditionalProperties into the
+            // CURRENT MESSAGE only when the update carries a message identity — an
+            // id-less update's properties are hoisted onto the ChatResponse, so a
+            // delegation whose output is only tool activity lost its attribution on
+            // the way back out through AsAGUIMessages.
+            MessageId = state.ParentMessageId ?? evt.ToolCallId,
             CreatedAt = DateTimeOffset.UtcNow,
             RawRepresentation = evt
         });
@@ -185,12 +193,15 @@ internal sealed class ToolCallBuilder
 
     private sealed class ToolCallState
     {
-        public ToolCallState(string name)
+        public ToolCallState(string name, string? parentMessageId)
         {
             Name = name;
+            ParentMessageId = parentMessageId;
         }
 
         public string Name { get; }
+
+        public string? ParentMessageId { get; }
 
         public StringBuilder Arguments { get; } = new();
     }

@@ -588,6 +588,7 @@ var evt = new SubagentFinishedEvent { SubagentRunId = "sub-1" };
 | `Type` | `type` | `"SUBAGENT_FINISHED"` | Event discriminator |
 | `SubagentRunId` | `subagentRunId` | `string` | Matches the id from `SubagentStartedEvent` |
 | `Result` | `result` | `object?` | Optional payload, mirroring `RunFinishedEvent.Result` |
+| `Outcome` | `outcome` | `SubagentFinishedOutcome?` | `SubagentFinishedSuccessOutcome` or `SubagentFinishedSuspendedOutcome` (with optional `InterruptIds`); `null` means success (the legacy reading). Suspended says the subagent is checkpointed awaiting outside input; `InterruptIds` names the run-level interrupts whose answers resume it. |
 
 ### SubagentErrorEvent
 

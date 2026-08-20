@@ -87,19 +87,16 @@ internal static class EventStreamConverter
     }
 
     /// <summary>
-    /// Owner for an update, tried in the order the update can identify its entity: its
-    /// MessageId; the entity id of the event that produced it (this is what covers
-    /// reasoning updates, which carry no MessageId); then the call id of any function call
-    /// or result it carries (tool-call updates, likewise without a MessageId).
+    /// Owner for an update, tried from the most specific identity to the least: the
+    /// entity id of the event that produced it (which knows whether it lives in the
+    /// message or the tool-call namespace); then its MessageId; then the call id of any
+    /// function call or result it carries. The event key must come before MessageId:
+    /// updates carry a MessageId for the coalescer's sake, and with the SDK-default
+    /// MessageId == ToolCallId result shape, reading the message namespace first handed
+    /// a tool CALL's update the result MESSAGE's owner.
     /// </summary>
     private static string? ResolveOwner(ChatResponseUpdate update, Dictionary<string, string?> owners)
     {
-        if (update.MessageId is not null
-            && owners.TryGetValue(MessageKey(update.MessageId), out var byMessage))
-        {
-            return byMessage;
-        }
-
         if (update.RawRepresentation is BaseEvent evt)
         {
             foreach (var entityKey in AttributedEntityKeys(evt))
@@ -109,6 +106,12 @@ internal static class EventStreamConverter
                     return byEntity;
                 }
             }
+        }
+
+        if (update.MessageId is not null
+            && owners.TryGetValue(MessageKey(update.MessageId), out var byMessage))
+        {
+            return byMessage;
         }
 
         foreach (var content in update.Contents)
@@ -1120,6 +1123,10 @@ internal static class EventStreamConverter
                     {
                         ConversationId = conversationId,
                         ResponseId = responseId,
+                        // The wire id of the tool message this event mints. Without it the
+                        // coalescer hoists the update's attribution onto the ChatResponse
+                        // instead of the message (see ToolCallBuilder.EndToolCall).
+                        MessageId = toolResult.MessageId,
                         RawRepresentation = toolResult
                     };
 
@@ -1146,6 +1153,9 @@ internal static class EventStreamConverter
                         Role = ChatRole.Assistant,
                         ConversationId = conversationId,
                         ResponseId = responseId,
+                        // Message identity keeps the update's attribution on the message
+                        // through ToChatResponse (see ToolCallBuilder.EndToolCall).
+                        MessageId = reasoningContent.MessageId,
                         Contents = [new TextReasoningContent(reasoningContent.Delta) { RawRepresentation = reasoningContent }],
                         RawRepresentation = reasoningContent
                     };

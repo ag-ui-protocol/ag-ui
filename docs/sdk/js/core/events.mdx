@@ -618,6 +618,7 @@ type SubagentFinishedEvent = BaseEvent & {
   type: EventType.SUBAGENT_FINISHED
   subagentRunId: string
   result?: any
+  outcome?: { type: "success" } | { type: "suspended"; interruptIds?: string[] }
 }
 ```
 
@@ -625,6 +626,7 @@ type SubagentFinishedEvent = BaseEvent & {
 | --------------- | -------- | -------------------------------------------------- |
 | `subagentRunId` | `string` | Matches the id from `SubagentStartedEvent`          |
 | `result`        | `any`    | Optional payload, mirroring `RunFinishedEvent.result` |
+| `outcome`       | `SubagentFinishedOutcome` | Optional discriminated union; omitted means success (the legacy reading). `{ type: "suspended", interruptIds?: string[] }` says the subagent is checkpointed awaiting outside input; `interruptIds` names the run-level interrupts whose answers resume it. |
 
 ### SubagentErrorEvent
 

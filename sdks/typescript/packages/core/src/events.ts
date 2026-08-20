@@ -118,6 +118,11 @@ export const ThinkingTextMessageStartEventSchema = BaseEventSchema.extend({
 export const ThinkingTextMessageContentEventSchema = TextMessageContentEventSchema.omit({
   messageId: true,
   type: true,
+  // Not an attribution carrier: the deprecated THINKING_* family predates
+  // subagents and is excluded from the attribution table — Python and .NET
+  // declare no such field, and inheriting it here from the text schema made
+  // TypeScript silently accept what the other SDKs reject.
+  subagentRunId: true,
 }).extend({
   type: z.literal(EventType.THINKING_TEXT_MESSAGE_CONTENT),
 });

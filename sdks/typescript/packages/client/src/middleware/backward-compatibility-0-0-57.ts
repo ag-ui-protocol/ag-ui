@@ -112,6 +112,28 @@ export class BackwardCompatibility_0_0_57 extends Middleware {
           }
         }
 
+        // RUN_FINISHED's interrupt outcome attributes each interrupt to the subagent
+        // that raised it (Interrupt.subagentRunId) — nested, so the shallow top-level
+        // strip above never reaches it. A genuinely pre-subagent agent cannot emit it;
+        // like the rest of this direction, this normalizes mixed/proxied pipelines so
+        // no fragment of the subagent contract leaks without its lifecycle context.
+        if (stripped.type === EventType.RUN_FINISHED) {
+          const runFinished = stripped as BaseEvent & {
+            outcome?: { type?: string; interrupts?: MessageLike[] };
+          };
+          if (runFinished.outcome && Array.isArray(runFinished.outcome.interrupts)) {
+            return {
+              ...runFinished,
+              outcome: {
+                ...runFinished.outcome,
+                interrupts: runFinished.outcome.interrupts.map((interrupt) =>
+                  stripSubagentRunId(interrupt),
+                ),
+              },
+            } as BaseEvent;
+          }
+        }
+
         // RUN_STARTED may echo the run input, whose messages also carry subagentRunId.
         if (stripped.type === EventType.RUN_STARTED) {
           const runStarted = stripped as BaseEvent & { input?: { messages?: MessageLike[] } };

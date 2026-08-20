@@ -18,7 +18,6 @@ export const verifyEvents =
     // ACTIVITY_DELTA, so they need an owner tracked for them just like text messages —
     // see `owners.activity`. This set only records that the activity exists, which is
     // what tells a replacing snapshot from a first one.
-    const activeActivities = new Set<string>(); // known activity IDs
     // Reasoning messages are opened by REASONING_START / REASONING_MESSAGE_START and
     // continued by REASONING_MESSAGE_CONTENT/END and REASONING_END, all keyed by the same
     // id — the last ID-keyed entity that had no owner check, so an s2 delta could be
@@ -95,7 +94,6 @@ export const verifyEvents =
     const resetRunState = () => {
       activeMessages.clear();
       activeToolCalls.clear();
-      activeActivities.clear();
       activeReasoning.clear();
       owners.message.clear();
       owners.toolCall.clear();
@@ -536,10 +534,29 @@ export const verifyEvents =
             // replace:false the reducer leaves the existing message alone, so overwriting
             // the tracked owner here would let a following ACTIVITY_DELTA under the new
             // tag patch a message still owned by someone else.
-            const isNew = !activeActivities.has(messageId);
+            // "Known" is the owners map itself — .NET gates on its activityOwners the
+            // same way. A separate known-ids set that MESSAGES_SNAPSHOT seeding never
+            // filled let a replace:false snapshot re-own a seeded activity: the seeded
+            // owner was overwritten and a following delta under the new tag patched a
+            // message the reducer still attributes to the original owner.
+            const isNew = !owners.activity.has(messageId);
             if (isNew || (event.replace as boolean | undefined) !== false) {
-              activeActivities.add(messageId);
               owners.activity.set(messageId, { subagentRunId: (event.subagentRunId as string | undefined) });
+            }
+            return of(event);
+          }
+
+          case EventType.TOOL_CALL_RESULT: {
+            // A creation event: it mints the tool message the reducer inserts, so the
+            // minted id must be on record — otherwise reopening it through another
+            // producer's text events passed and appended their content into this
+            // message. Recorded unconditionally, mirroring .NET: TOOL_CALL_RESULT
+            // carries its own attribution (the executor can differ from the caller),
+            // and an untagged result mints a parent-owned message, so the newest mint
+            // wins rather than the first writer.
+            const resultMessageId = (event.messageId as string | undefined);
+            if (typeof resultMessageId === "string") {
+              owners.message.set(resultMessageId, { subagentRunId: (event.subagentRunId as string | undefined) });
             }
             return of(event);
           }

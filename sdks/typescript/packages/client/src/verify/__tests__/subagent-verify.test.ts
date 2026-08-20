@@ -1183,6 +1183,145 @@ describe("verifyEvents subagent ownership seeded from snapshots", () => {
   });
 });
 
+describe("verifyEvents activity ownership survives a replace:false snapshot", () => {
+  const run = (inputEvents: BaseEvent[]) =>
+    firstValueFrom(verifyEvents(false)(from(inputEvents)).pipe(toArray()));
+
+  const expectRejectedWith = async (inputEvents: BaseEvent[], message: RegExp) => {
+    let caught: unknown;
+    try {
+      await run(inputEvents);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(AGUIError);
+    expect((caught as Error).message).toMatch(message);
+  };
+
+  const started = { type: EventType.RUN_STARTED, threadId: "t", runId: "r" } as RunStartedEvent;
+  const finished = { type: EventType.RUN_FINISHED, threadId: "t", runId: "r" } as RunFinishedEvent;
+  const seededActivity = {
+    type: EventType.MESSAGES_SNAPSHOT,
+    messages: [
+      { id: "a", role: "activity", activityType: "PLAN", content: {}, subagentRunId: "s1" },
+    ],
+  } as BaseEvent;
+
+  // The "known activity" gate is the owners map that snapshot seeding fills —
+  // .NET gates on its activityOwners the same way. A separate known-ids set let
+  // a replace:false snapshot pass the is-new test on a seeded activity and
+  // re-own it, so the following delta patched a message the reducer still
+  // attributes to s1.
+  it("rejects a delta under the re-owner after a replace:false snapshot on a seeded activity", async () => {
+    await expectRejectedWith(
+      [
+        started,
+        seededActivity,
+        {
+          type: EventType.ACTIVITY_SNAPSHOT,
+          messageId: "a",
+          activityType: "PLAN",
+          content: {},
+          replace: false,
+          subagentRunId: "s2",
+        } as BaseEvent,
+        {
+          type: EventType.ACTIVITY_DELTA,
+          messageId: "a",
+          patch: [],
+          subagentRunId: "s2",
+        } as BaseEvent,
+      ],
+      /does not match the activity 'a' opener's subagent 's1'/i,
+    );
+  });
+
+  it("accepts a REPLACING snapshot re-owning a seeded activity, and the new owner's delta", async () => {
+    const events = await run([
+      started,
+      seededActivity,
+      {
+        type: EventType.ACTIVITY_SNAPSHOT,
+        messageId: "a",
+        activityType: "PLAN",
+        content: {},
+        replace: true,
+        subagentRunId: "s2",
+      } as BaseEvent,
+      {
+        type: EventType.ACTIVITY_DELTA,
+        messageId: "a",
+        patch: [],
+        subagentRunId: "s2",
+      } as BaseEvent,
+      finished,
+    ]);
+    expect(events).toHaveLength(5);
+  });
+});
+
+describe("verifyEvents tool result mints an owned message", () => {
+  const run = (inputEvents: BaseEvent[]) =>
+    firstValueFrom(verifyEvents(false)(from(inputEvents)).pipe(toArray()));
+
+  const expectRejectedWith = async (inputEvents: BaseEvent[], message: RegExp) => {
+    let caught: unknown;
+    try {
+      await run(inputEvents);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(AGUIError);
+    expect((caught as Error).message).toMatch(message);
+  };
+
+  const started = { type: EventType.RUN_STARTED, threadId: "t", runId: "r" } as RunStartedEvent;
+  const finished = { type: EventType.RUN_FINISHED, threadId: "t", runId: "r" } as RunFinishedEvent;
+  const s1Result = {
+    type: EventType.TOOL_CALL_RESULT,
+    messageId: "m",
+    toolCallId: "tc",
+    content: "done",
+    subagentRunId: "s1",
+  } as BaseEvent;
+
+  // TOOL_CALL_RESULT mints the tool message the reducer inserts. Without an
+  // ownership record for the minted id, reopening it through another
+  // producer's text events passed and appended their content into it.
+  it("rejects reopening a result-minted message under a different subagent", async () => {
+    await expectRejectedWith(
+      [
+        started,
+        s1Result,
+        { type: EventType.TEXT_MESSAGE_START, messageId: "m", role: "assistant", subagentRunId: "s2" } as BaseEvent,
+      ],
+      /does not match the message 'm' opener's subagent 's1'/i,
+    );
+  });
+
+  it("rejects a tagged reopen of a message minted by an UNTAGGED result", async () => {
+    await expectRejectedWith(
+      [
+        started,
+        { type: EventType.TOOL_CALL_RESULT, messageId: "m", toolCallId: "tc", content: "done" } as BaseEvent,
+        { type: EventType.TEXT_MESSAGE_START, messageId: "m", role: "assistant", subagentRunId: "s2" } as BaseEvent,
+      ],
+      /\(the parent agent\)/i,
+    );
+  });
+
+  it("accepts an untagged or same-owner reopen of a result-minted message", async () => {
+    const events = await run([
+      started,
+      s1Result,
+      { type: EventType.TEXT_MESSAGE_START, messageId: "m", role: "assistant", subagentRunId: "s1" } as BaseEvent,
+      { type: EventType.TEXT_MESSAGE_END, messageId: "m" } as BaseEvent,
+      finished,
+    ]);
+    expect(events).toHaveLength(5);
+  });
+});
+
 describe("verifyEvents subagent lifecycle required fields", () => {
   const started = { type: EventType.RUN_STARTED, threadId: "t", runId: "r" } as RunStartedEvent;
 

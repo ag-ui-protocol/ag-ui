@@ -1687,6 +1687,39 @@ public sealed class ProtocolRuleTest
     }
 
     [Fact]
+    public async Task Subagent_AttributionOnlyOutput_SurvivesCoalescingWithoutATextMessage()
+    {
+        // The round-trip above interleaves a text message, so the id-less tool updates
+        // joined a message that already carried the owner. A delegation whose visible
+        // output is ONLY tool activity has no text update to ride on: every update has a
+        // null MessageId, the coalescer hoists their AdditionalProperties to the
+        // ChatResponse, and AsAGUIMessages reads attribution per message — so the next
+        // turn sent the subagent's work back as the parent's.
+        var events = new BaseEvent[]
+        {
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new SubagentStartedEvent { SubagentRunId = "s1", Name = "researcher" },
+            new ToolCallStartEvent { ToolCallId = "tc1", ToolCallName = "search", SubagentRunId = "s1" },
+            new ToolCallArgsEvent { ToolCallId = "tc1", Delta = "{}", SubagentRunId = "s1" },
+            new ToolCallEndEvent { ToolCallId = "tc1", SubagentRunId = "s1" },
+            new ToolCallResultEvent { MessageId = "tr1", ToolCallId = "tc1", Content = "42", SubagentRunId = "s1" },
+            new SubagentFinishedEvent { SubagentRunId = "s1" },
+            new RunFinishedEvent { ThreadId = "t1", RunId = "r1" }
+        };
+
+        var updates = await ProcessEventsAsync(events);
+
+        var response = updates.ToChatResponse();
+        var roundTripped = response.Messages.AsAGUIMessages().ToList();
+
+        var attributable = roundTripped
+            .Where(m => m is AGUIAssistantMessage { ToolCalls.Count: > 0 } or AGUIToolMessage)
+            .ToList();
+        Assert.NotEmpty(attributable);
+        Assert.All(attributable, m => Assert.Equal("s1", m.SubagentRunId));
+    }
+
+    [Fact]
     public async Task Parent_ResponseMessages_StayUnattributed()
     {
         // Control: an unattributed run must not acquire the key.

@@ -107,6 +107,62 @@ describe("BackwardCompatibility_0_0_57", () => {
     ]);
   });
 
+  it("strips subagentRunId from RUN_FINISHED outcome interrupts (nested, not top-level)", async () => {
+    // Interrupt.subagentRunId is nested inside the outcome, so the shallow
+    // top-level strip never reaches it — the one fragment of the subagent
+    // contract that leaked through the downgrade.
+    const middleware = new BackwardCompatibility_0_0_57();
+    const events: BaseEvent[] = [
+      { type: EventType.RUN_STARTED, threadId: "thread-1", runId: "run-1" } as any,
+      {
+        type: EventType.RUN_FINISHED,
+        threadId: "thread-1",
+        runId: "run-1",
+        outcome: {
+          type: "interrupt",
+          interrupts: [
+            { id: "int-1", reason: "approval", subagentRunId: "s1" },
+            { id: "int-2", reason: "approval" },
+          ],
+        },
+      } as any,
+    ];
+
+    const result = await lastValueFrom(
+      middleware.run(createInput(), new MockAgent(events)).pipe(toArray()),
+    );
+
+    const runFinished = result[1] as any;
+    expect(runFinished.outcome.type).toBe("interrupt");
+    expect(runFinished.outcome.interrupts).toHaveLength(2);
+    expect(runFinished.outcome.interrupts[0].id).toBe("int-1");
+    expect(runFinished.outcome.interrupts[0].reason).toBe("approval");
+    expect(runFinished.outcome.interrupts[0].subagentRunId).toBeUndefined();
+    expect(runFinished.outcome.interrupts[1].subagentRunId).toBeUndefined();
+  });
+
+  it("leaves a RUN_FINISHED success outcome untouched", async () => {
+    const middleware = new BackwardCompatibility_0_0_57();
+    const events: BaseEvent[] = [
+      { type: EventType.RUN_STARTED, threadId: "thread-1", runId: "run-1" } as any,
+      {
+        type: EventType.RUN_FINISHED,
+        threadId: "thread-1",
+        runId: "run-1",
+        outcome: { type: "success" },
+        result: { ok: true },
+      } as any,
+    ];
+
+    const result = await lastValueFrom(
+      middleware.run(createInput(), new MockAgent(events)).pipe(toArray()),
+    );
+
+    const runFinished = result[1] as any;
+    expect(runFinished.outcome).toEqual({ type: "success" });
+    expect(runFinished.result).toEqual({ ok: true });
+  });
+
   it("warns when dropping a SUBAGENT_* lifecycle event (suppressible)", async () => {
     const middleware = new BackwardCompatibility_0_0_57();
     const events: BaseEvent[] = [

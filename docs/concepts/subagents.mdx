@@ -41,7 +41,7 @@ So:
 - **Do not** persist anything by `subagentRunId` expecting it to be meaningful on
   a later run, and do not treat two invocations of one subagent as sharing a
   value. Use `name` when you mean "which kind of subagent this is".
-- **One exception**: a subagent that finished with `outcome: "suspended"`
+- **One exception**: a subagent that finished with `outcome: { type: "suspended" }`
   **may** reuse its id on a resuming run. Producers that can correlate the
   resumed work with the suspended invocation should do so, and a client must
   treat that later `SubagentStarted` as a continuation (waiting → running),
