@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from ag_ui.core import (
@@ -29,6 +30,7 @@ from ag_ui_strands.agent import (
     StrandsAgent,
     _frontend_wait_consumption_is_durable,
     _has_unrecoverable_frontend_wait_result,
+    _is_native_interrupt_state,
     _load_persisted_interrupt_bookkeeping,
     _persist_interrupt_bookkeeping,
     _recover_disjoint_checkpoint_after_consumed_wait,
@@ -4953,3 +4955,55 @@ async def test_fresh_wrapper_mixed_modes_uses_assistant_call_provenance_for_true
     assert EventType.RUN_ERROR not in _types(second)
     assert EventType.RUN_FINISHED in _types(second)
     assert model.calls == 3
+
+
+class TestRestorationAuditSkipsOnlyForeignCores:
+    """Which cores join the audit is decided by shape, not by provenance.
+
+    The audit reads ``activated`` and ``interrupts`` off the core's native
+    checkpoint. A core that cannot answer those two questions is skipped. That
+    is a question about the object, not about where it was constructed, and a
+    stand-in that answers them faithfully takes part like any other core.
+    """
+
+    def test_a_real_core_takes_part(self):
+        assert _is_native_interrupt_state(
+            Agent(model=_PersistenceModel(), tools=[])._interrupt_state
+        )
+        # And the audit reached its real work rather than short-circuiting.
+        assert _guard_rejects([ToolMessage(id="r", tool_call_id="wire", content="ok")])
+
+    def test_a_faithful_stand_in_takes_part(self):
+        assert _is_native_interrupt_state(
+            SimpleNamespace(activated=False, interrupts={})
+        )
+
+    @pytest.mark.parametrize(
+        "interrupt_state",
+        [
+            None,
+            SimpleNamespace(),
+            SimpleNamespace(activated=False),
+            SimpleNamespace(interrupts={}),
+            SimpleNamespace(activated="yes", interrupts={}),
+            SimpleNamespace(activated=False, interrupts=[]),
+            MagicMock(),
+        ],
+        ids=[
+            "absent",
+            "empty",
+            "no-interrupts",
+            "no-activated",
+            "activated-not-a-bool",
+            "interrupts-not-a-mapping",
+            "answers-everything-with-nothing",
+        ],
+    )
+    def test_a_core_that_cannot_answer_is_skipped(self, interrupt_state: Any):
+        assert not _is_native_interrupt_state(interrupt_state)
+        assert not _has_unrecoverable_frontend_wait_result(
+            _input("skip-thread", (), run_id="skip-run", messages=[]),
+            SimpleNamespace(_interrupt_state=interrupt_state),
+            FrontendToolWaitBatch(),
+            {},
+        )

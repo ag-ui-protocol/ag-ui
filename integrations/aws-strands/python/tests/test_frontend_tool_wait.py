@@ -1,10 +1,13 @@
 import json
 import math
 from dataclasses import is_dataclass
+from pathlib import Path
 from typing import get_type_hints
+from unittest.mock import MagicMock
 
 import pytest
 
+import ag_ui_strands
 from ag_ui_strands.frontend_tool_wait import (
     FRONTEND_TOOL_RESPONSE_KEY,
     FRONTEND_TOOL_WAIT_INTERRUPT_NAME,
@@ -17,6 +20,7 @@ from ag_ui_strands.frontend_tool_wait import (
     MAX_COMPLETED_WIRE_IDS,
     try_unwrap_frontend_tool_response,
     unwrap_frontend_tool_response,
+    load_frontend_tool_wait,
     wrap_frontend_tool_response,
 )
 
@@ -351,3 +355,46 @@ def test_tombstone_bounds_roundtrip_and_partial_consumption_are_strict():
         )
     with pytest.raises(ValueError, match="partial"):
         FrontendToolWaitBatch(calls=[_call("a")]).mark_consumed()
+
+
+class _StubState:
+    def __init__(self, value: object) -> None:
+        self._value = value
+
+    def get(self, key: str) -> object:
+        del key
+        return self._value
+
+
+def test_no_production_module_branches_on_the_test_framework():
+    """Production control flow must not depend on where an object came from.
+
+    A check for ``unittest.mock`` makes test doubles shape real behaviour, and
+    makes absent state indistinguishable from malformed state for anything
+    mock-like that reaches production. Doubles are fixed at the double.
+    """
+    package = Path(ag_ui_strands.__file__).parent
+    offenders = sorted(
+        module.relative_to(package).as_posix()
+        for module in package.rglob("*.py")
+        if "unittest.mock" in module.read_text()
+    )
+    assert offenders == []
+
+
+def test_absent_wait_state_loads_empty_and_malformed_state_fails_loudly():
+    assert load_frontend_tool_wait(_StubState(None)) == FrontendToolWaitBatch()
+    assert load_frontend_tool_wait(object()) == FrontendToolWaitBatch()
+
+    # Anything present but not a persisted batch is a corrupt store, not an
+    # absent one. Reading it as absent would silently drop parked calls.
+    for malformed in ("not-a-batch", 7, [], object()):
+        with pytest.raises(ValueError, match="malformed frontend tool wait batch"):
+            load_frontend_tool_wait(_StubState(malformed))
+
+
+def test_a_mock_state_is_no_longer_privileged():
+    """The one case the removed check existed to wave through now raises."""
+    assert isinstance(MagicMock().get("anything"), MagicMock)
+    with pytest.raises(ValueError, match="malformed frontend tool wait batch"):
+        load_frontend_tool_wait(MagicMock())

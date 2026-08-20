@@ -18,6 +18,7 @@ from unittest.mock import MagicMock
 import pytest
 from ag_ui.core import EventType, StateSnapshotEvent
 from strands.tools.registry import ToolRegistry
+from strands.agent.state import AgentState
 
 from ag_ui_strands.agent import StrandsAgent
 from ag_ui_strands.config import StrandsAgentConfig, ToolBehavior, ToolStreamEventContext
@@ -47,6 +48,10 @@ def _build_agent(
     )
 
     mock_inner = MagicMock()
+    # A real AgentState, not the mock's auto-vivified one: the adapter reads
+    # persisted wait state off it, and a mock answers every key with an object
+    # that is neither absent nor well-formed.
+    mock_inner.state = AgentState()
     mock_inner.tool_registry = ToolRegistry()
     mock_inner._interrupt_state = None
 

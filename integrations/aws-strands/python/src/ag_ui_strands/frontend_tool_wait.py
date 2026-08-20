@@ -469,10 +469,7 @@ def load_frontend_tool_wait(state: Any) -> FrontendToolWaitBatch:
     if not callable(get):
         return FrontendToolWaitBatch()
     raw = get(FRONTEND_TOOL_WAIT_STATE_KEY)
-    # Bare MagicMock agents are common in the adapter's legacy tests. Their
-    # undeclared ``state.get`` returns another mock, which means "absent", not
-    # persisted malformed JSON. Real persisted batches are mappings.
-    if raw is None or type(raw).__module__ == "unittest.mock":
+    if raw is None:
         return FrontendToolWaitBatch()
     if not isinstance(raw, Mapping):
         raise ValueError("malformed frontend tool wait batch")

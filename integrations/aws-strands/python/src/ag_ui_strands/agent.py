@@ -283,6 +283,20 @@ def _native_interrupt_is_answered(interrupt: Any) -> bool:
     return bool(response)
 
 
+def _is_native_interrupt_state(interrupt_state: Any) -> bool:
+    """True when this object is shaped like Strands' native checkpoint state.
+
+    Structural rather than an isinstance check against a private SDK class, and
+    structural rather than a check on where the object came from: the question
+    is whether ``activated`` and ``interrupts`` can be read as the audit below
+    reads them, and a stand-in that answers them faithfully is as good as the
+    real thing.
+    """
+    return isinstance(getattr(interrupt_state, "activated", None), bool) and isinstance(
+        getattr(interrupt_state, "interrupts", None), Mapping
+    )
+
+
 def _open_native_interrupts(interrupts: Any) -> dict:
     """Return the entries of ``interrupts`` still awaiting a human, keyed by id.
 
@@ -634,10 +648,9 @@ def _has_unrecoverable_frontend_wait_result(
     ``agent_id``. Every trailing ToolMessage must have evidence tied to its
     exact ID; current declarations or name-only placeholders are insufficient.
     """
-    interrupt_state = getattr(agent, "_interrupt_state", None)
-    if interrupt_state is None or type(interrupt_state).__module__ == "unittest.mock":
-        # Custom/test cores that do not expose Strands' native checkpoint
-        # state cannot participate in this restoration audit.
+    if not _is_native_interrupt_state(getattr(agent, "_interrupt_state", None)):
+        # A core that does not expose Strands' native checkpoint state cannot
+        # participate in this restoration audit.
         return False
 
     trailing_tool_messages: list[Any] = []
@@ -792,9 +805,9 @@ def _partition_frontend_wait_interrupts(
     state = getattr(agent, "state", None)
     tool_meta = state.get(AG_UI_TOOL_CALL_MAP_STATE_KEY) if state is not None else None
     wire_map = state.get(AG_UI_WIRE_MAP_STATE_KEY) if state is not None else None
-    if tool_meta is None or type(tool_meta).__module__ == "unittest.mock":
+    if tool_meta is None:
         tool_meta = {}
-    if wire_map is None or type(wire_map).__module__ == "unittest.mock":
+    if wire_map is None:
         wire_map = {}
     if not isinstance(tool_meta, dict) or not isinstance(wire_map, dict):
         raise ValueError("malformed frontend wait provenance metadata")
@@ -1320,7 +1333,7 @@ def _load_staged_server_responses(state: Any) -> dict[str, Any]:
     if not callable(get):
         return {}
     raw = get(_FRONTEND_TOOL_SERVER_RESPONSES_STATE_KEY)
-    if raw is None or type(raw).__module__ == "unittest.mock":
+    if raw is None:
         return {}
     if not isinstance(raw, dict):
         raise ValueError("malformed staged server interrupt responses")
