@@ -157,6 +157,14 @@ an empty string is valid. Strings that look like JSON (for example,
 `"false"`, `"0"`, `"null"`, `"[]"`, or `"{}"`) are not JSON-decoded or
 reconstructed into another type.
 
+A waiting tool's `TOOL_CALL_END` is delivered at least once. It is recorded as
+handed off only once the consumer asks for the next event, so a stream that
+drops before that point replays the same `TOOL_CALL_END` on the next request for
+that thread. Clients should treat a repeated `TOOL_CALL_END` for a
+`toolCallId` they already hold as a no-op. The alternative — recording the
+handoff when the event is written — silently loses it on a dropped connection
+and leaves the tool call with no way to complete.
+
 Multiple waiting frontend-tool results can be returned in any order. A partial
 set is staged, and Strands does not resume until every waiting frontend result
 is present. If the same native checkpoint also has server-tool interrupts,

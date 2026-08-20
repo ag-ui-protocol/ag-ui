@@ -1053,7 +1053,10 @@ async def test_false_mode_end_is_exposed_only_after_wait_checkpoint_is_durable(
     assert len(batch.calls) == 1
     call = batch.calls[0]
     assert call.wire_tool_call_id == exposed_end.tool_call_id
-    assert call.end_handed_off is True
+    # The consumer took the End and stopped, so it never came back for the next
+    # event. The handoff stays unrecorded and the End is re-exposed later; the
+    # subject here is only that the checkpoint was already durable by then.
+    assert call.end_handed_off is False
     assert all(
         isinstance(identifier, str) and identifier
         for identifier in (
@@ -1114,8 +1117,10 @@ async def test_disconnect_replays_only_unhanded_multiwait_ends_without_strands(
     assert first_end_id == wire_ids[0]
     restored = _restored_core(model, tmp_path, thread_id)
     interrupted = load_frontend_tool_wait(restored.state)
+    # Nothing is handed off: the consumer broke at the first End without asking
+    # for another event, so delivery of even that one is unproven.
     assert [call.end_handed_off for call in interrupted.calls] == [
-        True,
+        False,
         False,
         False,
     ]
@@ -1194,10 +1199,18 @@ async def test_disconnect_replays_only_unhanded_multiwait_ends_without_strands(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("custom_args", [False, True], ids=["streaming", "custom"])
-async def test_sequential_no_result_reconnects_advance_one_handoff_at_a_time(
+async def test_reconnect_re_exposes_every_unacknowledged_end(
     tmp_path: Path,
     custom_args: bool,
 ):
+    """An End the consumer never took must be exposed again, in order.
+
+    A handoff is recorded once the yield returns, which is the consumer coming
+    back for the next event. Anything short of that — a dropped connection, a
+    consumer that stops reading — leaves the End unacknowledged, and the next
+    request replays it. Delivery is therefore at least once rather than at most
+    once: a duplicate is recoverable, a lost End strands the tool call.
+    """
     thread_id = f"multiwait-sequential-reconnect-{custom_args}"
     model = _PersistenceModel(("first", "second", "third"))
     tools = [_tool("first"), _tool("second"), _tool("third")]
@@ -1211,60 +1224,55 @@ async def test_sequential_no_result_reconnects_advance_one_handoff_at_a_time(
             tool.name: ToolBehavior(args_streamer=args_streamer) for tool in tools
         }
 
-    first_stream = _adapter(
-        model,
-        tools,
-        tmp_path,
-        thread_id,
-        tool_behaviors=behaviors,
-    ).run(
-        _input(
-            thread_id,
+    def handoffs() -> list[bool]:
+        return [
+            call.end_handed_off
+            for call in load_frontend_tool_wait(
+                _restored_core(model, tmp_path, thread_id).state
+            ).calls
+        ]
+
+    async def take_ends(run_id: str, count: int) -> list[str]:
+        """Consume until ``count`` Ends have been seen, then drop the stream."""
+        stream = _adapter(
+            model,
             tools,
-            run_id="run-1",
-            messages=[UserMessage(id="user-1", content="call all three")],
+            tmp_path,
+            thread_id,
+            tool_behaviors=behaviors,
+        ).run(
+            _input(
+                thread_id,
+                tools,
+                run_id=run_id,
+                messages=(
+                    [UserMessage(id="user-1", content="call all three")]
+                    if run_id == "run-1"
+                    else []
+                ),
+            )
         )
-    )
+        seen: list[str] = []
+        try:
+            async for event in stream:
+                if event.type == EventType.TOOL_CALL_START:
+                    wire_ids.append(event.tool_call_id)
+                elif event.type == EventType.TOOL_CALL_END:
+                    seen.append(event.tool_call_id)
+                    if len(seen) == count:
+                        break
+        finally:
+            await stream.aclose()
+        return seen
+
     wire_ids: list[str] = []
-    try:
-        async for event in first_stream:
-            if event.type == EventType.TOOL_CALL_START:
-                wire_ids.append(event.tool_call_id)
-            elif event.type == EventType.TOOL_CALL_END:
-                break
-    finally:
-        await first_stream.aclose()
+    assert await take_ends("run-1", 1) == [wire_ids[0]]
+    assert handoffs() == [False, False, False]
 
-    assert [
-        call.end_handed_off
-        for call in load_frontend_tool_wait(
-            _restored_core(model, tmp_path, thread_id).state
-        ).calls
-    ] == [True, False, False]
-
-    second_stream = _adapter(
-        model,
-        tools,
-        tmp_path,
-        thread_id,
-        tool_behaviors=behaviors,
-    ).run(_input(thread_id, tools, run_id="run-2", messages=[]))
-    second_end_id = None
-    try:
-        async for event in second_stream:
-            if event.type == EventType.TOOL_CALL_END:
-                second_end_id = event.tool_call_id
-                break
-    finally:
-        await second_stream.aclose()
-
-    assert second_end_id == wire_ids[1]
-    assert [
-        call.end_handed_off
-        for call in load_frontend_tool_wait(
-            _restored_core(model, tmp_path, thread_id).state
-        ).calls
-    ] == [True, True, False]
+    # Taking two Ends proves the first one was delivered — the consumer came
+    # back for another event — and leaves the second unacknowledged.
+    assert await take_ends("run-2", 2) == wire_ids[:2]
+    assert handoffs() == [True, False, False]
 
     third = await _collect(
         _adapter(
@@ -1280,16 +1288,25 @@ async def test_sequential_no_result_reconnects_advance_one_handoff_at_a_time(
     assert _types(third) == [
         EventType.RUN_STARTED,
         EventType.TOOL_CALL_END,
+        EventType.TOOL_CALL_END,
         EventType.RUN_FINISHED,
     ]
-    assert _end_ids(third) == [wire_ids[2]]
-    assert model.calls == 1
-    assert all(
-        call.end_handed_off
-        for call in load_frontend_tool_wait(
-            _restored_core(model, tmp_path, thread_id).state
-        ).calls
+    assert _end_ids(third) == wire_ids[1:]
+    assert handoffs() == [True, True, True]
+
+    # Nothing is left to replay once every End has been acknowledged.
+    fourth = await _collect(
+        _adapter(
+            model,
+            tools,
+            tmp_path,
+            thread_id,
+            tool_behaviors=behaviors,
+        ),
+        _input(thread_id, tools, run_id="run-4", messages=[]),
     )
+    assert _types(fourth) == [EventType.RUN_STARTED, EventType.RUN_FINISHED]
+    assert model.calls == 1
 
 
 @pytest.mark.asyncio
@@ -1359,7 +1376,7 @@ async def test_scrambled_native_interrupts_replay_in_deferred_end_order(
     restored = load_frontend_tool_wait(_restored_core(model, tmp_path, thread_id).state)
     assert [call.wire_tool_call_id for call in restored.calls] == expected_order
     assert [call.end_handed_off for call in restored.calls] == [
-        True,
+        False,
         False,
         False,
         False,
@@ -1376,7 +1393,10 @@ async def test_scrambled_native_interrupts_replay_in_deferred_end_order(
         _input(thread_id, tools, run_id="run-2", messages=[]),
     )
 
-    assert _end_ids(replayed) == expected_order[1:]
+    # Every End replays in the persisted deferred order, the interrupted one
+    # included: the ordering guarantee is what this test is about, and it now
+    # covers the whole batch rather than the tail.
+    assert _end_ids(replayed) == expected_order
     assert model.calls == 1
 
 
@@ -1461,7 +1481,7 @@ async def test_mixed_custom_backend_standard_disconnect_preserves_replay_order(
     assert {
         call.wire_tool_call_id: call.end_handed_off for call in interrupted.calls
     } == {
-        wire_by_name[custom_order[0]]: True,
+        wire_by_name[custom_order[0]]: False,
         wire_by_name[custom_order[1]]: False,
         wire_by_name[standard_name]: False,
     }
@@ -1497,12 +1517,16 @@ async def test_mixed_custom_backend_standard_disconnect_preserves_replay_order(
     assert relevant == [
         EventType.RUN_STARTED,
         EventType.TOOL_CALL_END,
+        EventType.TOOL_CALL_END,
         EventType.TOOL_CALL_RESULT,
         EventType.STATE_SNAPSHOT,
         EventType.TOOL_CALL_END,
         EventType.RUN_FINISHED,
     ]
+    # The interrupted custom End replays alongside the ones that never shipped,
+    # and the custom-before-backend-before-standard ordering still holds.
     assert _end_ids(replayed) == [
+        wire_by_name[custom_order[0]],
         wire_by_name[custom_order[1]],
         wire_by_name[standard_name],
     ]

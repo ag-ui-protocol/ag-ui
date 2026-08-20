@@ -243,7 +243,15 @@ async def _mark_frontend_wait_end_handed_off(
     batch: "FrontendToolWaitBatch",
     wire_tool_call_id: str,
 ) -> "FrontendToolWaitBatch":
-    """Persist one ToolCallEnd handoff before advancing the event stream."""
+    """Persist one ToolCallEnd handoff before advancing the event stream.
+
+    Call this only after the ``yield`` that emitted the End has returned, which
+    is the consumer coming back for the next event. Wrapping the yield in
+    ``try``/``finally`` to "make sure" the handoff is recorded does the opposite
+    of what it looks like: ``finally`` also runs when the generator is closed at
+    that yield, so a dropped connection is recorded as a delivery and the End is
+    never exposed again. Delivery here is deliberately at least once.
+    """
     marked = batch.mark_end_handed_off(wire_tool_call_id)
     agent.state.set(FRONTEND_TOOL_WAIT_STATE_KEY, marked.to_dict())
     await _sync_frontend_wait_state(agent)
@@ -3399,17 +3407,15 @@ class StrandsAgent:
                     yield _interrupt_resume_error(str(exc))
                     return
                 for call in custom_calls:
-                    try:
-                        yield ToolCallEndEvent(
-                            type=EventType.TOOL_CALL_END,
-                            tool_call_id=call.wire_tool_call_id,
-                        )
-                    finally:
-                        staged_wait_batch = await _mark_frontend_wait_end_handed_off(
-                            strands_agent,
-                            staged_wait_batch,
-                            call.wire_tool_call_id,
-                        )
+                    yield ToolCallEndEvent(
+                        type=EventType.TOOL_CALL_END,
+                        tool_call_id=call.wire_tool_call_id,
+                    )
+                    staged_wait_batch = await _mark_frontend_wait_end_handed_off(
+                        strands_agent,
+                        staged_wait_batch,
+                        call.wire_tool_call_id,
+                    )
 
                 raw_tool_meta = strands_agent.state.get(
                     AG_UI_TOOL_CALL_MAP_STATE_KEY
@@ -3461,17 +3467,15 @@ class StrandsAgent:
                     await _sync_frontend_wait_state(strands_agent)
 
                 for call in standard_calls:
-                    try:
-                        yield ToolCallEndEvent(
-                            type=EventType.TOOL_CALL_END,
-                            tool_call_id=call.wire_tool_call_id,
-                        )
-                    finally:
-                        staged_wait_batch = await _mark_frontend_wait_end_handed_off(
-                            strands_agent,
-                            staged_wait_batch,
-                            call.wire_tool_call_id,
-                        )
+                    yield ToolCallEndEvent(
+                        type=EventType.TOOL_CALL_END,
+                        tool_call_id=call.wire_tool_call_id,
+                    )
+                    staged_wait_batch = await _mark_frontend_wait_end_handed_off(
+                        strands_agent,
+                        staged_wait_batch,
+                        call.wire_tool_call_id,
+                    )
                 yield ev_finished
                 return
 
@@ -5744,18 +5748,16 @@ class StrandsAgent:
                     )
             if deferred_custom_frontend_tool_ends:
                 for _fe_tool_use_id in deferred_custom_frontend_tool_ends:
-                    try:
-                        yield ToolCallEndEvent(
-                            type=EventType.TOOL_CALL_END,
-                            tool_call_id=_fe_tool_use_id,
+                    yield ToolCallEndEvent(
+                        type=EventType.TOOL_CALL_END,
+                        tool_call_id=_fe_tool_use_id,
+                    )
+                    if hidden_batch.call_for_wire_id(_fe_tool_use_id):
+                        hidden_batch = await _mark_frontend_wait_end_handed_off(
+                            strands_agent,
+                            hidden_batch,
+                            _fe_tool_use_id,
                         )
-                    finally:
-                        if hidden_batch.call_for_wire_id(_fe_tool_use_id):
-                            hidden_batch = await _mark_frontend_wait_end_handed_off(
-                                strands_agent,
-                                hidden_batch,
-                                _fe_tool_use_id,
-                            )
                 deferred_custom_frontend_tool_ends = []
 
             # Strands parks completed backend results in checkpoint context when
@@ -5797,18 +5799,16 @@ class StrandsAgent:
                 await _sync_frontend_wait_state(strands_agent)
             if deferred_frontend_tool_ends:
                 for _fe_tool_use_id in deferred_frontend_tool_ends:
-                    try:
-                        yield ToolCallEndEvent(
-                            type=EventType.TOOL_CALL_END,
-                            tool_call_id=_fe_tool_use_id,
+                    yield ToolCallEndEvent(
+                        type=EventType.TOOL_CALL_END,
+                        tool_call_id=_fe_tool_use_id,
+                    )
+                    if hidden_batch.call_for_wire_id(_fe_tool_use_id):
+                        hidden_batch = await _mark_frontend_wait_end_handed_off(
+                            strands_agent,
+                            hidden_batch,
+                            _fe_tool_use_id,
                         )
-                    finally:
-                        if hidden_batch.call_for_wire_id(_fe_tool_use_id):
-                            hidden_batch = await _mark_frontend_wait_end_handed_off(
-                                strands_agent,
-                                hidden_batch,
-                                _fe_tool_use_id,
-                            )
             deferred_frontend_tool_ends = []
 
             # Final state snapshot before finishing
