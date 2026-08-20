@@ -1438,7 +1438,7 @@ def _build_frontend_wait_resume_prompt(
     combined = {**frontend_responses, **staged_server_responses}
     prompt: list[dict[str, Any]] = []
     for interrupt_id, interrupt in current.items():
-        if getattr(interrupt, "response", None):
+        if _native_interrupt_is_answered(interrupt):
             return None, _interrupt_resume_error(
                 f"Resume references an interrupt that is not open: {interrupt_id}"
             )
@@ -1539,7 +1539,7 @@ def _validate_frontend_wait_metadata(
             )
 
         native_interrupt = current.get(call.interrupt_id)
-        if native_interrupt is None or getattr(native_interrupt, "response", None):
+        if native_interrupt is None or _native_interrupt_is_answered(native_interrupt):
             return _interrupt_resume_error(
                 f"Frontend wait interrupt is not open: {call.interrupt_id}"
             )
@@ -1600,7 +1600,7 @@ def _frontend_wait_resume_was_accepted(
     current = getattr(interrupt_state, "interrupts", {})
     return all(
         call.interrupt_id not in current
-        or bool(getattr(current[call.interrupt_id], "response", None))
+        or _native_interrupt_is_answered(current[call.interrupt_id])
         for call in batch.calls
     )
 

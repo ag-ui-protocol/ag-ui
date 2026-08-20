@@ -24,7 +24,15 @@ from strands.agent.state import AgentState
 from strands.interrupt import Interrupt as StrandsInterrupt
 from strands.tools.registry import ToolRegistry
 
-from ag_ui_strands.agent import StrandsAgent, _build_strands_history
+import ag_ui_strands.agent as agent_module
+from ag_ui_strands.agent import (
+    StrandsAgent,
+    _build_frontend_wait_resume_prompt,
+    _build_strands_history,
+    _frontend_wait_resume_was_accepted,
+    _native_interrupt_is_answered,
+    _validate_frontend_wait_metadata,
+)
 from ag_ui_strands.config import StrandsAgentConfig
 from ag_ui_strands.frontend_tool_wait import (
     FRONTEND_TOOL_RESPONSE_KEY,
@@ -1246,3 +1254,105 @@ async def test_pure_server_interrupt_resume_behavior_is_unchanged():
     assert _responses_by_id(inner.prompts[0]) == {
         server.id: {"response": {"approved": False}}
     }
+
+
+class TestFrontendWaitAnsweredPredicate:
+    """Openness decisions in the wait path follow the installed SDK.
+
+    Strands changed its own recorded-response predicate in 1.19: truthiness
+    below, presence at and above. Every wait-path check reads the adapter's
+    shared predicate, so a falsy answer cannot be open to one of them and
+    answered to the other and strand the thread between them.
+    """
+
+    FALSY_ANSWERS = [False, 0, "", [], {}]
+    FALSY_ANSWER_IDS = ["false", "zero", "empty-string", "empty-list", "empty-dict"]
+
+    @staticmethod
+    def _use_presence(monkeypatch: Any, presence_based: bool) -> None:
+        monkeypatch.setattr(
+            agent_module,
+            "_STRANDS_USES_PRESENCE_BASED_INTERRUPT_RESPONSES",
+            presence_based,
+        )
+
+    @pytest.mark.parametrize("presence_based", [False, True], ids=["truthy", "presence"])
+    @pytest.mark.parametrize("answer", FALSY_ANSWERS, ids=FALSY_ANSWER_IDS)
+    def test_a_tracked_wait_answered_falsy_is_closed(
+        self, monkeypatch: Any, answer: Any, presence_based: bool
+    ) -> None:
+        self._use_presence(monkeypatch, presence_based)
+        batch = _batch("wire-1")
+        _, inner = _build_agent(batch)
+        inner._interrupt_state.interrupts["interrupt-wire-1"].response = answer
+
+        error = _validate_frontend_wait_metadata(inner, batch)
+
+        if presence_based:
+            assert error is not None
+            assert error.message == "Frontend wait interrupt is not open: interrupt-wire-1"
+        else:
+            assert error is None
+
+    @pytest.mark.parametrize("presence_based", [False, True], ids=["truthy", "presence"])
+    @pytest.mark.parametrize("answer", FALSY_ANSWERS, ids=FALSY_ANSWER_IDS)
+    def test_a_server_sibling_answered_falsy_refuses_the_resume(
+        self, monkeypatch: Any, answer: Any, presence_based: bool
+    ) -> None:
+        self._use_presence(monkeypatch, presence_based)
+        batch = FrontendToolWaitBatch(
+            calls=[
+                FrontendToolWaitCall(
+                    interrupt_id="interrupt-wire-1",
+                    native_tool_use_id="native-wire-1",
+                    wire_tool_call_id="wire-1",
+                    content="from the client",
+                    has_response=True,
+                    end_handed_off=True,
+                )
+            ],
+            checkpoint_message_ids=("historical-user",),
+        )
+        server = _server_interrupt()
+        _, inner = _build_agent(batch, server_interrupts=[server])
+        inner._interrupt_state.interrupts[server.id].response = answer
+
+        prompt, error = _build_frontend_wait_resume_prompt(
+            inner, batch, {server.id: {"response": {"approved": True}}}
+        )
+
+        if presence_based:
+            assert prompt is None
+            assert error is not None
+            assert error.message == (
+                f"Resume references an interrupt that is not open: {server.id}"
+            )
+        else:
+            assert error is None
+            assert _responses_by_id(prompt).keys() == {"interrupt-wire-1", server.id}
+
+    @pytest.mark.parametrize("presence_based", [False, True], ids=["truthy", "presence"])
+    @pytest.mark.parametrize("answer", FALSY_ANSWERS, ids=FALSY_ANSWER_IDS)
+    def test_acceptance_reads_a_falsy_answer_as_accepted(
+        self, monkeypatch: Any, answer: Any, presence_based: bool
+    ) -> None:
+        self._use_presence(monkeypatch, presence_based)
+        batch = _batch("wire-1")
+        _, inner = _build_agent(batch)
+        inner._interrupt_state.interrupts["interrupt-wire-1"].response = answer
+
+        assert _frontend_wait_resume_was_accepted(inner, batch) is presence_based
+
+    @pytest.mark.parametrize("answer", FALSY_ANSWERS, ids=FALSY_ANSWER_IDS)
+    def test_every_wait_check_agrees_with_the_installed_sdk(self, answer: Any) -> None:
+        """No monkeypatch: the three checks must agree on the real release."""
+        batch = _batch("wire-1")
+        _, inner = _build_agent(batch)
+        interrupt = inner._interrupt_state.interrupts["interrupt-wire-1"]
+        interrupt.response = answer
+        answered = _native_interrupt_is_answered(interrupt)
+
+        metadata_error = _validate_frontend_wait_metadata(inner, batch)
+
+        assert (metadata_error is not None) is answered
+        assert _frontend_wait_resume_was_accepted(inner, batch) is answered
