@@ -197,6 +197,10 @@ internal sealed class ToolCallBuilder
         _activeToolCalls.Clear();
         _pendingToolCallIds.Clear();
         _buffer.Clear();
+        // Minted identities are per run like everything else here: entity ids are
+        // run-global, so a later run reusing a call id must not coalesce its
+        // call-scoped encrypted values under the previous run's parent message.
+        _mintedMessageIds.Clear();
     }
 
     private static IDictionary<string, object?>? DeserializeArguments(string argsJson, JsonSerializerOptions options)

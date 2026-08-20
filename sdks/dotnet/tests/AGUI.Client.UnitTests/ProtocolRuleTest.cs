@@ -1805,6 +1805,46 @@ public sealed class ProtocolRuleTest
     }
 
     [Fact]
+    public async Task Subagent_CallIdReuseAcrossRuns_DoesNotInheritTheEarlierRunsMessage()
+    {
+        // Minted message identities are per run: entity ids are run-global, so a
+        // second run may reference tc1 WITHOUT restarting it (an attribution-only
+        // encrypted value). A restart overwrites the stale entry, so the leak shows
+        // only on this shape: the stale lookup handed run two's value run ONE's
+        // parent message identity.
+        var events = new BaseEvent[]
+        {
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new ToolCallStartEvent { ToolCallId = "tc1", ToolCallName = "search", ParentMessageId = "run1-msg" },
+            new ToolCallEndEvent { ToolCallId = "tc1" },
+            new ToolCallResultEvent { MessageId = "tr1", ToolCallId = "tc1", Content = "done" },
+            new RunFinishedEvent { ThreadId = "t1", RunId = "r1" },
+            new RunStartedEvent { ThreadId = "t1", RunId = "r2" },
+            new SubagentStartedEvent { SubagentRunId = "s1", Name = "researcher" },
+            new ReasoningEncryptedValueEvent
+            {
+                Subtype = "tool-call",
+                EntityId = "tc1",
+                EncryptedValue = "opaque",
+                SubagentRunId = "s1"
+            },
+            new SubagentFinishedEvent { SubagentRunId = "s1" },
+            new RunFinishedEvent { ThreadId = "t1", RunId = "r2" }
+        };
+
+        var updates = await ProcessEventsAsync(events);
+
+        var encryptedUpdate = Assert.Single(
+            updates,
+            u => u.Contents.OfType<TextReasoningContent>().Any(c => c.ProtectedData is not null));
+        // Run two never minted a message for tc1, so the fallback is the call id
+        // itself — never run one's "run1-msg". (Owner resolution is out of scope
+        // here: nothing in run two recorded an owner for tc1, so this update
+        // resolves to none — the pin is the message identity, not attribution.)
+        Assert.Equal("tc1", encryptedUpdate.MessageId);
+    }
+
+    [Fact]
     public async Task Parent_ResponseMessages_StayUnattributed()
     {
         // Control: an unattributed run must not acquire the key.
