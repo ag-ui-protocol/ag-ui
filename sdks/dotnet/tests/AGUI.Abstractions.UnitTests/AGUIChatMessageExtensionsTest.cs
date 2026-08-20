@@ -552,9 +552,8 @@ public sealed class AGUIChatMessageExtensionsTest
                 var uri = Assert.IsType<UriContent>(content);
                 Assert.Equal("https://example.com/image.png", uri.Uri.ToString());
                 Assert.Equal("image/png", uri.MediaType);
-                Assert.Equal(
-                    "high",
-                    Assert.IsType<JsonElement>(uri.AdditionalProperties?["detail"]).GetString());
+                var metadata = Assert.IsType<JsonElement>(uri.AdditionalProperties?["metadata"]);
+                Assert.Equal("high", metadata.GetProperty("detail").GetString());
             },
             content =>
             {
@@ -574,12 +573,21 @@ public sealed class AGUIChatMessageExtensionsTest
                 Assert.Equal("application/pdf", data.MediaType);
                 Assert.Equal(System.Convert.FromBase64String("JVBERg=="), data.Data.ToArray());
                 Assert.Equal("report.pdf", data.Name);
-                Assert.Equal(
-                    "report.pdf",
-                    Assert.IsType<JsonElement>(data.AdditionalProperties?["filename"]).GetString());
-                var providerHint = Assert.IsType<JsonElement>(data.AdditionalProperties?["providerHint"]);
+                var metadata = Assert.IsType<JsonElement>(data.AdditionalProperties?["metadata"]);
+                Assert.Equal("report.pdf", metadata.GetProperty("filename").GetString());
+                var providerHint = metadata.GetProperty("providerHint");
                 Assert.Equal("high", providerHint.GetProperty("quality").GetString());
             });
+
+        var roundTripped = Assert.IsType<AGUIUserMessage>(
+            Assert.Single(new[] { chatMessage }.AsAGUIMessages()));
+        var roundTrippedImage = Assert.IsType<AGUIImageInputContent>(roundTripped.Content[1]);
+        Assert.Equal("high", roundTrippedImage.Metadata?.GetProperty("detail").GetString());
+        var roundTrippedDocument = Assert.IsType<AGUIDocumentInputContent>(roundTripped.Content[4]);
+        Assert.Equal("report.pdf", roundTrippedDocument.Metadata?.GetProperty("filename").GetString());
+        Assert.Equal(
+            "high",
+            roundTrippedDocument.Metadata?.GetProperty("providerHint").GetProperty("quality").GetString());
     }
 
     [Theory]

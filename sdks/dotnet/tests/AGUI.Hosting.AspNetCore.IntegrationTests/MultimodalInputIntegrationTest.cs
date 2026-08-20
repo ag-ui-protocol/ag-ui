@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Text;
+using System.Text.Json;
 using AGUI.Protobuf;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -98,7 +99,8 @@ public sealed class MultimodalInputIntegrationTest : IntegrationTestBase
                 var uri = Assert.IsType<UriContent>(content);
                 Assert.Equal("https://example.com/chart.png", uri.Uri.ToString());
                 Assert.Equal("image/png", uri.MediaType);
-                Assert.Equal("high", uri.AdditionalProperties?["detail"]?.ToString());
+                var metadata = Assert.IsType<JsonElement>(uri.AdditionalProperties?["metadata"]);
+                Assert.Equal("high", metadata.GetProperty("detail").GetString());
             },
             content =>
             {
@@ -106,7 +108,8 @@ public sealed class MultimodalInputIntegrationTest : IntegrationTestBase
                 Assert.Equal(System.Convert.FromBase64String("JVBERg=="), data.Data.ToArray());
                 Assert.Equal("application/pdf", data.MediaType);
                 Assert.Equal("report.pdf", data.Name);
-                Assert.Equal("report.pdf", data.AdditionalProperties?["filename"]?.ToString());
+                var metadata = Assert.IsType<JsonElement>(data.AdditionalProperties?["metadata"]);
+                Assert.Equal("report.pdf", metadata.GetProperty("filename").GetString());
             });
     }
 }

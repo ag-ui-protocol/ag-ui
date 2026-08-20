@@ -171,27 +171,17 @@ public static class AGUIChatMessageExtensions
             return;
         }
 
-        if (value.ValueKind == JsonValueKind.Object)
+        content.AdditionalProperties = new AdditionalPropertiesDictionary
         {
-            foreach (var property in value.EnumerateObject())
-            {
-                content.AdditionalProperties ??= new AdditionalPropertiesDictionary();
-                content.AdditionalProperties[property.Name] = property.Value.Clone();
+            ["metadata"] = value.Clone()
+        };
 
-                if (content is DataContent dataContent &&
-                    property.NameEquals("filename") &&
-                    property.Value.ValueKind == JsonValueKind.String)
-                {
-                    dataContent.Name = property.Value.GetString();
-                }
-            }
-        }
-        else
+        if (content is DataContent dataContent &&
+            value.ValueKind == JsonValueKind.Object &&
+            value.TryGetProperty("filename", out var filename) &&
+            filename.ValueKind == JsonValueKind.String)
         {
-            content.AdditionalProperties = new AdditionalPropertiesDictionary
-            {
-                ["metadata"] = value.Clone()
-            };
+            dataContent.Name = filename.GetString();
         }
     }
 
@@ -348,6 +338,12 @@ public static class AGUIChatMessageExtensions
             string.IsNullOrEmpty(filename))
         {
             return null;
+        }
+
+        if (additionalProperties?.Count == 1 &&
+            additionalProperties.TryGetValue("metadata", out JsonElement preservedMetadata))
+        {
+            return preservedMetadata.Clone();
         }
 
         IDictionary<string, object?> metadata = new Dictionary<string, object?>();
