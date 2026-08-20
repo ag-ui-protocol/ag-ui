@@ -1172,11 +1172,20 @@ internal static class EventStreamConverter
 
                 case ReasoningEncryptedValueEvent encryptedValue:
                 {
+                    // `subtype` selects the namespace: a message-scoped value's EntityId IS
+                    // its message id; a call-scoped value joins the message minted for its
+                    // call (see ToolCallBuilder.EndToolCall for why identity is required).
+                    var encryptedMessageId = encryptedValue.Subtype == "tool-call"
+                        ? (encryptedValue.EntityId is { } callId
+                            ? toolCallBuilder.MintedMessageIdFor(callId) ?? callId
+                            : null)
+                        : encryptedValue.EntityId;
                     var update = new ChatResponseUpdate
                     {
                         Role = ChatRole.Assistant,
                         ConversationId = conversationId,
                         ResponseId = responseId,
+                        MessageId = encryptedMessageId,
                         Contents = [new TextReasoningContent(null) { ProtectedData = encryptedValue.EncryptedValue, RawRepresentation = encryptedValue }],
                         RawRepresentation = encryptedValue
                     };

@@ -1720,6 +1720,91 @@ public sealed class ProtocolRuleTest
     }
 
     [Fact]
+    public async Task Subagent_EncryptedOnlyReasoning_SurvivesCoalescing()
+    {
+        // Same coalescer rule as the attribution-only case above: an encrypted
+        // reasoning value is the ONLY content some providers stream for a reasoning
+        // step, its update carried no MessageId, and the round trip came back
+        // parent-owned.
+        var events = new BaseEvent[]
+        {
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new SubagentStartedEvent { SubagentRunId = "s1", Name = "researcher" },
+            new ReasoningMessageStartEvent { MessageId = "r1", Role = "reasoning", SubagentRunId = "s1" },
+            new ReasoningEncryptedValueEvent { EntityId = "r1", EncryptedValue = "opaque", SubagentRunId = "s1" },
+            new ReasoningMessageEndEvent { MessageId = "r1", SubagentRunId = "s1" },
+            new SubagentFinishedEvent { SubagentRunId = "s1" },
+            new RunFinishedEvent { ThreadId = "t1", RunId = "r1" }
+        };
+
+        var updates = await ProcessEventsAsync(events);
+        var response = updates.ToChatResponse();
+        var roundTripped = response.Messages.AsAGUIMessages().ToList();
+
+        // The encrypted-only update coalesces into an assistant message (the reverse
+        // mapping has no reasoning-message case for protected-data-only content) — the
+        // owner must ride it regardless of the shape it lands in.
+        var assistant = roundTripped.OfType<AGUIAssistantMessage>().ToList();
+        Assert.NotEmpty(assistant);
+        Assert.All(assistant, m => Assert.Equal("s1", m.SubagentRunId));
+    }
+
+    [Fact]
+    public async Task Subagent_InterruptedToolCall_ApprovalKeepsAttributionAcrossTheTurn()
+    {
+        // FlushWithInterrupts replaces the buffered call update with a
+        // ToolApprovalRequestContent update; dropping the buffered update's message
+        // identity re-opened the coalescer hole for exactly the HITL turn where
+        // attribution matters most.
+        var events = new BaseEvent[]
+        {
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new SubagentStartedEvent { SubagentRunId = "s1", Name = "researcher" },
+            new ToolCallStartEvent { ToolCallId = "tc1", ToolCallName = "dangerous", SubagentRunId = "s1" },
+            new ToolCallArgsEvent { ToolCallId = "tc1", Delta = "{}", SubagentRunId = "s1" },
+            new ToolCallEndEvent { ToolCallId = "tc1", SubagentRunId = "s1" },
+            new SubagentFinishedEvent
+            {
+                SubagentRunId = "s1",
+                Outcome = new SubagentFinishedSuspendedOutcome { InterruptIds = ["int-1"] }
+            },
+            new RunFinishedEvent
+            {
+                ThreadId = "t1",
+                RunId = "r1",
+                Outcome = new RunFinishedInterruptOutcome
+                {
+                    Interrupts =
+                    {
+                        new AGUIInterrupt
+                        {
+                            Id = "int-1",
+                            Reason = InterruptReasons.ToolCall,
+                            ToolCallId = "tc1",
+                            SubagentRunId = "s1"
+                        }
+                    }
+                }
+            }
+        };
+
+        var updates = await ProcessEventsAsync(events);
+
+        var approvalUpdate = Assert.Single(
+            updates, u => u.Contents.OfType<ToolApprovalRequestContent>().Any());
+        Assert.Equal("s1", Owner(approvalUpdate));
+        Assert.NotNull(approvalUpdate.MessageId);
+
+        var response = updates.ToChatResponse();
+        var roundTripped = response.Messages.AsAGUIMessages().ToList();
+        // The approval content maps back to an assistant message; whatever shape it
+        // lands in, the subagent's ownership must survive the turn.
+        var assistant = roundTripped.OfType<AGUIAssistantMessage>().ToList();
+        Assert.NotEmpty(assistant);
+        Assert.All(assistant, m => Assert.Equal("s1", m.SubagentRunId));
+    }
+
+    [Fact]
     public async Task Parent_ResponseMessages_StayUnattributed()
     {
         // Control: an unattributed run must not acquire the key.

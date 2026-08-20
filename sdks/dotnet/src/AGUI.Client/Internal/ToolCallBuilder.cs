@@ -13,6 +13,12 @@ internal sealed class ToolCallBuilder
     private readonly Dictionary<string, ToolCallState> _activeToolCalls = new();
     private readonly HashSet<string> _pendingToolCallIds = new(StringComparer.Ordinal);
     private readonly List<ChatResponseUpdate> _buffer = new();
+
+    // callId -> the message id the TypeScript reducer mints for the assistant message
+    // carrying that call (parentMessageId ?? toolCallId). Kept for the whole run: a
+    // call-scoped REASONING_ENCRYPTED_VALUE can arrive after the call flushed, and its
+    // update must join the same coalesced message.
+    private readonly Dictionary<string, string> _mintedMessageIds = new(StringComparer.Ordinal);
     private string? _conversationId;
     private string? _responseId;
 
@@ -33,6 +39,7 @@ internal sealed class ToolCallBuilder
         }
 
         _activeToolCalls[evt.ToolCallId] = new ToolCallState(evt.ToolCallName, evt.ParentMessageId);
+        _mintedMessageIds[evt.ToolCallId] = evt.ParentMessageId ?? evt.ToolCallId;
     }
 
     public void AppendArgs(ToolCallArgsEvent evt)
@@ -78,6 +85,13 @@ internal sealed class ToolCallBuilder
             RawRepresentation = evt
         });
     }
+
+    /// <summary>
+    /// The message id minted for the assistant message carrying <paramref name="toolCallId"/>,
+    /// or null when the call was never started in this run.
+    /// </summary>
+    public string? MintedMessageIdFor(string toolCallId) =>
+        _mintedMessageIds.TryGetValue(toolCallId, out var id) ? id : null;
 
     public IReadOnlyList<ChatResponseUpdate> AddResult(string toolCallId, ChatResponseUpdate resultUpdate)
     {
@@ -149,6 +163,11 @@ internal sealed class ToolCallBuilder
                 {
                     ConversationId = update.ConversationId,
                     ResponseId = update.ResponseId,
+                    // The buffered call update's message identity must survive the
+                    // replacement, or the coalescer hoists this update's attribution
+                    // onto the ChatResponse and the approval comes back parent-owned
+                    // (see EndToolCall).
+                    MessageId = update.MessageId,
                     CreatedAt = update.CreatedAt,
                     RawRepresentation = update.RawRepresentation
                 });
