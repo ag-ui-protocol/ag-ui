@@ -315,11 +315,11 @@ public static class AGUIChatMessageExtensions
         AdditionalPropertiesDictionary? additionalProperties,
         string? filename = null)
     {
-        AGUIMediaInputContent content = GetTopLevelMediaType(mediaType) switch
+        AGUIMediaInputContent content = GetMediaTypeKind(mediaType) switch
         {
-            "image" => new AGUIImageInputContent(),
-            "audio" => new AGUIAudioInputContent(),
-            "video" => new AGUIVideoInputContent(),
+            MediaTypeKind.Image => new AGUIImageInputContent(),
+            MediaTypeKind.Audio => new AGUIAudioInputContent(),
+            MediaTypeKind.Video => new AGUIVideoInputContent(),
             _ => new AGUIDocumentInputContent()
         };
 
@@ -328,18 +328,35 @@ public static class AGUIChatMessageExtensions
         return content;
     }
 
-    private static string? GetTopLevelMediaType(string? mediaType)
+    private static MediaTypeKind GetMediaTypeKind(string? mediaType)
     {
         if (!MediaTypeHeaderValue.TryParse(mediaType, out var parsed) ||
             parsed.MediaType is not { } parsedMediaType)
         {
-            return null;
+            return MediaTypeKind.Other;
         }
 
-        var separator = parsedMediaType.IndexOf('/');
-        return separator > 0
-            ? parsedMediaType.Substring(0, separator).ToLowerInvariant()
-            : null;
+        var mediaTypeSpan = parsedMediaType.AsSpan();
+        var separator = mediaTypeSpan.IndexOf('/');
+        if (separator <= 0)
+        {
+            return MediaTypeKind.Other;
+        }
+
+        var topLevelType = mediaTypeSpan.Slice(0, separator);
+        if (topLevelType.Equals("image".AsSpan(), StringComparison.OrdinalIgnoreCase))
+        {
+            return MediaTypeKind.Image;
+        }
+
+        if (topLevelType.Equals("audio".AsSpan(), StringComparison.OrdinalIgnoreCase))
+        {
+            return MediaTypeKind.Audio;
+        }
+
+        return topLevelType.Equals("video".AsSpan(), StringComparison.OrdinalIgnoreCase)
+            ? MediaTypeKind.Video
+            : MediaTypeKind.Other;
     }
 
     private static JsonElement? ConvertAdditionalProperties(
@@ -375,6 +392,14 @@ public static class AGUIChatMessageExtensions
         return JsonSerializer.SerializeToElement(
             metadata,
             AGUIJsonSerializerContext.Default.GetTypeInfo(typeof(IDictionary<string, object?>))!);
+    }
+
+    private enum MediaTypeKind
+    {
+        Other,
+        Image,
+        Audio,
+        Video
     }
 
     /// <summary>
