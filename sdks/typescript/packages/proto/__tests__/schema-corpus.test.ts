@@ -419,11 +419,13 @@ describe("flattened outcome guards", () => {
     expect((decode(extended) as { stepName?: string }).stepName).toBe("plan");
   });
 
-  it("rejects an out-of-enum patch operation", () => {
+  it.each([99, -1])("rejects an out-of-enum patch operation (%s)", (op) => {
+    // 99 reverse-maps to undefined; -1 to ts-proto's synthetic
+    // UNRECOGNIZED. Both must reject rather than invent an operation.
     const bytes = protoEvents.Event.encode({
       stateDelta: {
         baseEvent: { type: protoEvents.EventType.STATE_DELTA },
-        delta: [{ op: 99, path: "/x" }],
+        delta: [{ op, path: "/x" }],
       },
     } as never).finish();
     expect(() => decode(bytes)).toThrow(/unknown patch operation/);
@@ -440,15 +442,57 @@ describe("flattened outcome guards", () => {
     expect((decode(extended) as { stepName?: string }).stepName).toBe("plan");
   });
 
+  it("does not count a known tag inside an unknown group as a duplicate", () => {
+    const valid = encode({
+      type: EventType.STEP_FINISHED,
+      stepName: "plan",
+    } as never);
+    // Field 90 group wrapping field 16 varint 0 and a nested empty group —
+    // all unknown-field content a protobuf decoder skips wholesale.
+    const group = new Uint8Array([
+      0xd3,
+      0x05, // SGROUP 90
+      0x80,
+      0x01,
+      0x00, // field 16, varint 0 — inside the group
+      0xdb,
+      0x05,
+      0xdc,
+      0x05, // nested SGROUP/EGROUP 91
+      0xd4,
+      0x05, // EGROUP 90
+    ]);
+    const extended = new Uint8Array([...valid, ...group]);
+    expect((decode(extended) as { stepName?: string }).stepName).toBe("plan");
+  });
+
   it("rejects a repeated envelope tag hidden by an overlong varint", () => {
     const valid = encode({
       type: EventType.STEP_FINISHED,
       stepName: "plan",
     } as never);
-    // Field 16 (step_finished) again, its tag varint encoded overlong: the
-    // real reader masks the fifth byte to four bits and still sees field 16.
-    const overlong = new Uint8Array([0x82, 0x81, 0x80, 0x80, 0x10, 0x00]);
+    // Field 16 (step_finished) again with the SAME valid payload, its tag
+    // varint encoded overlong: the real reader masks the fifth byte to four
+    // bits and still sees field 16, so only canonical-equivalent duplicate
+    // detection catches it — a weaker duplicate would decode fine.
+    const payload = valid.slice(2); // length byte + message body
+    const overlong = new Uint8Array([0x82, 0x81, 0x80, 0x80, 0x10, ...payload]);
     const extended = new Uint8Array([...valid, ...overlong]);
+    expect(() => decode(extended)).toThrow();
+  });
+
+  it("rejects a zero field tag", () => {
+    const valid = encode({
+      type: EventType.STEP_FINISHED,
+      stepName: "plan",
+    } as never);
+    const second = encode({
+      type: EventType.TEXT_MESSAGE_START,
+      messageId: "m1",
+    } as never);
+    // Canonical decoders reject field zero; ts-proto silently stops reading
+    // and would surface only the first event.
+    const extended = new Uint8Array([...valid, 0x00, 0x00, ...second]);
     expect(() => decode(extended)).toThrow();
   });
 

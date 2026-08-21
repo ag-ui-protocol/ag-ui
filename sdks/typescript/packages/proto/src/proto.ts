@@ -457,6 +457,12 @@ function assertNoRepeatedTopLevelTags(data: Uint8Array): void {
     const tag = varint();
     const field = Math.floor(tag / 8);
     const wireType = tag % 8;
+    // Field zero is not a legal tag: canonical decoders reject it while
+    // ts-proto silently stops reading, which would truncate the stream in
+    // one runtime and error in another.
+    if (field === 0) {
+      throw new Error("Invalid event");
+    }
     if (wireType === 3) {
       groupDepth += 1;
       continue;
