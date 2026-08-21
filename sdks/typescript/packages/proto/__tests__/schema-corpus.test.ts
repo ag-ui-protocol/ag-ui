@@ -44,10 +44,7 @@ for (const anchor of readdirSync(FIXTURES_DIR).sort()) {
     if (!file.endsWith(".json") || file.endsWith(".expect.json")) continue;
     cases.push({
       name: `${anchor}/${file}`,
-      document: JSON.parse(readFileSync(join(dir, file), "utf8")) as Record<
-        string,
-        unknown
-      >,
+      document: JSON.parse(readFileSync(join(dir, file), "utf8")) as Record<string, unknown>,
     });
   }
 }
@@ -63,30 +60,31 @@ const RECORDED_HANDWRITTEN_REJECTIONS = new Set(["RunStartedEvent/with-input.jso
 
 /** What the JSON path materialises: validated where the SDK knows the type. */
 function materialise(document: Record<string, unknown>): unknown {
-  return KNOWN_TO_CORE.has(document.type as string)
-    ? EventSchemas.parse(document)
-    : document;
+  return KNOWN_TO_CORE.has(document.type as string) ? EventSchemas.parse(document) : document;
 }
 
 describe("every valid event fixture round-trips over the binary transport", () => {
-  it("has fixtures to run", () => {
-    expect(cases.length).toBeGreaterThan(0);
+  it("covers all 31 event types", () => {
+    // A deleted fixture directory must not silently shrink the corpus.
+    const covered = new Set(cases.map((entry) => entry.document.type));
+    const declared = Object.values(EventType).filter(
+      (value) => !String(value).startsWith("THINKING"),
+    );
+    expect(declared.filter((value) => !covered.has(value))).toEqual([]);
+    expect(covered.size).toBe(31);
   });
 
-  it.each(cases.map((entry) => [entry.name, entry] as const))(
-    "%s",
-    (name, entry) => {
-      if (RECORDED_HANDWRITTEN_REJECTIONS.has(name)) {
-        expect(() => materialise(entry.document)).toThrow();
-        const bytes = encode(entry.document as never);
-        expect(() => decode(bytes)).toThrow();
-        return;
-      }
-      const expected = materialise(entry.document);
-      const decoded = decode(encode(expected as never));
-      expect(decoded).toEqual(expected);
-    },
-  );
+  it.each(cases.map((entry) => [entry.name, entry] as const))("%s", (name, entry) => {
+    if (RECORDED_HANDWRITTEN_REJECTIONS.has(name)) {
+      expect(() => materialise(entry.document)).toThrow();
+      const bytes = encode(entry.document as never);
+      expect(() => decode(bytes)).toThrow();
+      return;
+    }
+    const expected = materialise(entry.document);
+    const decoded = decode(encode(expected as never));
+    expect(decoded).toEqual(expected);
+  });
 });
 
 describe("byte fixtures", () => {
@@ -95,9 +93,7 @@ describe("byte fixtures", () => {
   // with WRITE_PROTO_BYTE_FIXTURES=1 when the wire deliberately changes.
   const write = process.env.WRITE_PROTO_BYTE_FIXTURES === "1";
 
-  const byteCases = cases.filter(
-    (entry) => !RECORDED_HANDWRITTEN_REJECTIONS.has(entry.name),
-  );
+  const byteCases = cases.filter((entry) => !RECORDED_HANDWRITTEN_REJECTIONS.has(entry.name));
 
   it.each(byteCases.map((entry) => [entry.name, entry] as const))(
     "%s matches its committed bytes",
@@ -110,10 +106,7 @@ describe("byte fixtures", () => {
         writeFileSync(path, bytes);
         return;
       }
-      expect(
-        existsSync(path),
-        `${path} missing — run with WRITE_PROTO_BYTE_FIXTURES=1`,
-      ).toBe(true);
+      expect(existsSync(path), `${path} missing — run with WRITE_PROTO_BYTE_FIXTURES=1`).toBe(true);
       const committed = new Uint8Array(readFileSync(path));
       expect(Buffer.from(bytes).equals(Buffer.from(committed))).toBe(true);
       expect(decode(committed)).toEqual(expected);
@@ -122,9 +115,7 @@ describe("byte fixtures", () => {
 
   it("has no stale byte fixtures", () => {
     if (write || !existsSync(BYTES_DIR)) return;
-    const expected = new Set(
-      byteCases.map((entry) => `${entry.name.replace(/[/]/g, "__")}.bin`),
-    );
+    const expected = new Set(byteCases.map((entry) => `${entry.name.replace(/[/]/g, "__")}.bin`));
     const stale = readdirSync(BYTES_DIR).filter((file) => !expected.has(file));
     expect(stale).toEqual([]);
   });

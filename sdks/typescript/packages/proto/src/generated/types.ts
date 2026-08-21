@@ -341,7 +341,7 @@ export interface Interrupt {
    * divergence rather than settled.
    */
   responseSchema?:
-    | { [key: string]: any }
+    | any
     | undefined;
   /**
    * When the interrupt stops being answerable. Deliberately unconstrained rather
@@ -356,7 +356,7 @@ export interface Interrupt {
     | undefined;
   /** Extra information attached to this interrupt. */
   metadata?:
-    | { [key: string]: any }
+    | any
     | undefined;
   /**
    * The subagent invocation this belongs to. Absent means the parent agent
@@ -1693,13 +1693,13 @@ export const Interrupt: MessageFns<Interrupt> = {
       writer.uint32(34).string(message.toolCallId);
     }
     if (message.responseSchema !== undefined) {
-      Struct.encode(Struct.wrap(message.responseSchema), writer.uint32(42).fork()).join();
+      Value.encode(Value.wrap(message.responseSchema), writer.uint32(42).fork()).join();
     }
     if (message.expiresAt !== undefined) {
       writer.uint32(50).string(message.expiresAt);
     }
     if (message.metadata !== undefined) {
-      Struct.encode(Struct.wrap(message.metadata), writer.uint32(58).fork()).join();
+      Value.encode(Value.wrap(message.metadata), writer.uint32(58).fork()).join();
     }
     if (message.subagentRunId !== undefined) {
       writer.uint32(66).string(message.subagentRunId);
@@ -1751,7 +1751,7 @@ export const Interrupt: MessageFns<Interrupt> = {
             break;
           }
 
-          message.responseSchema = Struct.unwrap(Struct.decode(reader, reader.uint32()));
+          message.responseSchema = Value.unwrap(Value.decode(reader, reader.uint32()));
           continue;
         }
         case 6: {
@@ -1767,7 +1767,7 @@ export const Interrupt: MessageFns<Interrupt> = {
             break;
           }
 
-          message.metadata = Struct.unwrap(Struct.decode(reader, reader.uint32()));
+          message.metadata = Value.unwrap(Value.decode(reader, reader.uint32()));
           continue;
         }
         case 8: {

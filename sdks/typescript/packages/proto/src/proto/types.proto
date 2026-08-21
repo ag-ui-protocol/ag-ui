@@ -248,7 +248,7 @@ message Interrupt {
   // reference client rejects, at the cost of rejecting the boolean schemas JSON
   // Schema also permits — a bare true for "any answer". Recorded as a known
   // divergence rather than settled.
-  optional google.protobuf.Struct response_schema = 5;
+  optional google.protobuf.Value response_schema = 5;
   // When the interrupt stops being answerable. Deliberately unconstrained rather
   // than a date-time format, because producers already disagree about the
   // representation and tightening it here would reject streams that work today.
@@ -257,7 +257,7 @@ message Interrupt {
   // looking permanently unexpired.
   optional string expires_at = 6;
   // Extra information attached to this interrupt.
-  optional google.protobuf.Struct metadata = 7;
+  optional google.protobuf.Value metadata = 7;
   // The subagent invocation this belongs to. Absent means the parent agent
   // produced it directly.
   optional string subagent_run_id = 8;

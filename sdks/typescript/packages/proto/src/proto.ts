@@ -165,13 +165,12 @@ const fromWireMessage = (value: unknown): LooseRecord => {
   const wire = asRecord(value) ?? {};
   const message: LooseRecord = { ...wire };
   const role = typeof wire.role === "string" ? wire.role : "";
-  if (PARTS_CONTENT_ROLES.has(role) && Array.isArray(wire.contentParts)) {
-    const parts = wire.contentParts
+  if (PARTS_CONTENT_ROLES.has(role) && wire.content === undefined) {
+    // String content rides the content field; anything else is the parts
+    // array — including an empty one, which is valid content of its own.
+    message.content = asArray(wire.contentParts)
       .map((part: unknown) => fromProtoContentPart(part))
       .filter((part: unknown) => part !== undefined);
-    if (parts.length > 0) {
-      message.content = parts;
-    }
   }
   if (MAP_CONTENT_ROLES.has(role) && wire.activityContent !== undefined) {
     message.content = wire.activityContent;

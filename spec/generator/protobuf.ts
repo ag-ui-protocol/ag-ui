@@ -81,6 +81,17 @@ const MERGE_SPLIT: Record<string, (field: string) => string> = {
   openMap: (field) => `activity_${field}`,
 };
 
+/**
+ * Fields whose deployed proto type differs from the mechanical mapping.
+ * Value and Struct encode differently, so changing a deployed field's type
+ * silently corrupts old streams — these two shipped as Value before the
+ * schema constrained them to objects, and the wire keeps what shipped.
+ */
+const WIRE_TYPE_OVERRIDE: Record<string, string> = {
+  "Interrupt.response_schema": "google.protobuf.Value",
+  "Interrupt.metadata": "google.protobuf.Value",
+};
+
 /** Which file each non-event definition is emitted into. */
 const FILE_OF: Record<string, string> = {
   EventType: "events.proto",
@@ -328,9 +339,10 @@ function makeField(
     jsonName?: string;
   },
 ): WireField {
+  const key = `${scope}.${name}`;
   return {
     name,
-    type,
+    type: WIRE_TYPE_OVERRIDE[key] ?? type,
     label: options.repeated ? "repeated " : options.optional ? "optional " : "",
     number: freeze.numberFor(`${scope}.${name}`, "field"),
     comment: options.comment,
@@ -535,7 +547,7 @@ export function buildWireModel(
         number: freeze.numberFor(`EventType.${value}`, "enum"),
       }))
       .sort((a, b) => a.number - b.number),
-    reserved: [],
+    reserved: freeze.reservedIn("EventType"),
     file: "events.proto",
   });
 
@@ -813,7 +825,7 @@ export function buildWireModel(
             name: enumName,
             comment: `The ${definition.discriminator} discriminator of ${scope}.`,
             values: values.sort((a, b) => a.number - b.number),
-            reserved: [],
+            reserved: freeze.reservedIn(enumName),
             file: FILE_OF[name] ?? DEFAULT_FILE,
           });
           const fields: WireField[] = [
