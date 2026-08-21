@@ -216,16 +216,10 @@ const fromWireRunAgentInput = (value: unknown): LooseRecord | undefined => {
   if (rec.parentRunId !== undefined) output.parentRunId = rec.parentRunId;
   if (rec.state !== undefined) output.state = rec.state;
   output.messages = asArray(rec.messages).map(fromWireMessage);
-  if (asArray(rec.tools).length > 0) {
-    output.tools = asArray(rec.tools);
-  }
-  if (asArray(rec.context).length > 0) {
-    output.context = asArray(rec.context);
-  }
+  output.tools = asArray(rec.tools);
+  output.context = asArray(rec.context);
   if (rec.forwardedProps !== undefined) output.forwardedProps = rec.forwardedProps;
-  if (asArray(rec.resume).length > 0) {
-    output.resume = asArray(rec.resume);
-  }
+  output.resume = asArray(rec.resume);
   return output;
 };
 

@@ -50,13 +50,33 @@ for (const anchor of readdirSync(FIXTURES_DIR).sort()) {
 }
 
 /**
- * Schema-valid documents the handwritten models reject, each a required-ness
- * divergence RECONCILIATION.md records. The JSON path rejects these too, so
- * "binary matches JSON" here means: encode carries the document structurally
- * (with the encoder's warn-and-fallback), and decode raises the same
- * validation error the JSON path would.
+ * Schema-valid documents the handwritten models reject (a required-ness
+ * divergence RECONCILIATION.md records: handwritten RunAgentInput requires
+ * tools and context). The binary transport cannot tell an absent array from
+ * an empty one, so decode materialises the input arrays as present-and-empty
+ * — the one form every layer accepts. The JSON path still rejects the raw
+ * document; over binary the stream normalises and validates.
+ *
+ * A further recorded divergence, invisible to these assertions: the
+ * handwritten schemas strip Interrupt.subagentRunId (it lands with #2350), so
+ * the JSON path and the binary path both lose it today even though the wire
+ * carries field 8 for it. The byte fixtures therefore do not exercise that
+ * slot yet.
  */
-const RECORDED_HANDWRITTEN_REJECTIONS = new Set(["RunStartedEvent/with-input.json"]);
+const BINARY_NORMALISED: Record<
+  string,
+  ((document: Record<string, unknown>) => unknown) | undefined
+> = {
+  "RunStartedEvent/with-input.json": (document) => ({
+    ...document,
+    input: {
+      ...(document.input as Record<string, unknown>),
+      tools: [],
+      context: [],
+      resume: [],
+    },
+  }),
+};
 
 /** What the JSON path materialises: validated where the SDK knows the type. */
 function materialise(document: Record<string, unknown>): unknown {
@@ -75,10 +95,11 @@ describe("every valid event fixture round-trips over the binary transport", () =
   });
 
   it.each(cases.map((entry) => [entry.name, entry] as const))("%s", (name, entry) => {
-    if (RECORDED_HANDWRITTEN_REJECTIONS.has(name)) {
+    const normalise = BINARY_NORMALISED[name];
+    if (normalise) {
       expect(() => materialise(entry.document)).toThrow();
-      const bytes = encode(entry.document as never);
-      expect(() => decode(bytes)).toThrow();
+      const decoded = decode(encode(entry.document as never));
+      expect(decoded).toEqual(normalise(entry.document));
       return;
     }
     const expected = materialise(entry.document);
@@ -93,13 +114,15 @@ describe("byte fixtures", () => {
   // with WRITE_PROTO_BYTE_FIXTURES=1 when the wire deliberately changes.
   const write = process.env.WRITE_PROTO_BYTE_FIXTURES === "1";
 
-  const byteCases = cases.filter((entry) => !RECORDED_HANDWRITTEN_REJECTIONS.has(entry.name));
+  const byteCases = cases;
 
   it.each(byteCases.map((entry) => [entry.name, entry] as const))(
     "%s matches its committed bytes",
-    (_name, entry) => {
-      const expected = materialise(entry.document);
-      const bytes = encode(expected as never);
+    (name, entry) => {
+      const normalise = BINARY_NORMALISED[name];
+      const encodeInput = normalise ? entry.document : materialise(entry.document);
+      const expected = normalise ? normalise(entry.document) : encodeInput;
+      const bytes = encode(encodeInput as never);
       const path = join(BYTES_DIR, `${entry.name.replace(/[/]/g, "__")}.bin`);
       if (write) {
         mkdirSync(BYTES_DIR, { recursive: true });

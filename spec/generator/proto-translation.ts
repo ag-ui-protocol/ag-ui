@@ -251,15 +251,12 @@ export function emitProtoTranslation(wire: WireModel): string {
         to.push(`    ${field.name}: ${encodeExpr},`);
         const decodeMapper =
           itemDef?.kind === "union" ? ".map(fromWireMessage)" : "";
-        if (field.required) {
-          from.push(
-            `  output.${field.name} = asArray(rec.${field.name})${decodeMapper};`,
-          );
-        } else {
-          from.push(
-            `  if (asArray(rec.${field.name}).length > 0) {\n    output.${field.name} = asArray(rec.${field.name})${decodeMapper};\n  }`,
-          );
-        }
+        // Always present on decode, empty included: the wire cannot tell an
+        // absent array from an empty one, and present-empty is the one form
+        // every layer accepts (the handwritten input schema requires the keys).
+        from.push(
+          `  output.${field.name} = asArray(rec.${field.name})${decodeMapper};`,
+        );
         continue;
       }
       to.push(`    ${field.name}: input.${field.name},`);
