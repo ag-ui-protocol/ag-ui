@@ -589,6 +589,26 @@ const fromWireMessage = (value: unknown): LooseRecord => {
   return message;
 };
 
+/**
+ * ts-proto materialises absent optional fields as undefined-valued keys, on
+ * nested objects too. An absent field stays absent: the keys go.
+ */
+const dropUndefinedDeep = (value: unknown): void => {
+  if (Array.isArray(value)) {
+    for (const entry of value) dropUndefinedDeep(entry);
+    return;
+  }
+  const rec = asRecord(value);
+  if (!rec) return;
+  for (const key of Object.keys(rec)) {
+    if (rec[key] === undefined) {
+      delete rec[key];
+    } else {
+      dropUndefinedDeep(rec[key]);
+    }
+  }
+};
+
 const normalizeItemMetadata = (value: unknown): LooseRecord => ({
   ...(asRecord(value) ?? {}),
   metadata: normalizeMetadata(asRecord(value)?.metadata),
@@ -650,7 +670,8 @@ export function decode(data: Uint8Array): BaseEvent {
     throw new Error("Invalid event");
   }
   decoded.type = protoEvents.EventType[base.type as number];
-  if (typeof decoded.type !== "string") {
+  // ts-proto's synthetic UNRECOGNIZED (-1) reverse-maps to a string too.
+  if (typeof decoded.type !== "string" || decoded.type === "UNRECOGNIZED") {
     throw new Error("Invalid event");
   }
   decoded.timestamp = base.timestamp;
@@ -664,11 +685,7 @@ export function decode(data: Uint8Array): BaseEvent {
 
 ${decodeCases.join("\n")}
 
-  Object.keys(decoded).forEach((key) => {
-    if (decoded[key] === undefined) {
-      delete decoded[key];
-    }
-  });
+  dropUndefinedDeep(decoded);
 
   // Same gate as encode: validate what the SDK knows, carry the rest.
   if (KNOWN_TO_CORE.has(decoded.type as string)) {

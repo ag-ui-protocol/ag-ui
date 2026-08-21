@@ -78,6 +78,19 @@ const BINARY_NORMALISED: Record<
   }),
 };
 
+/** No own key anywhere may hold undefined: absent means absent. */
+function expectNoUndefinedKeys(value: unknown, path = "$"): void {
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => expectNoUndefinedKeys(entry, `${path}[${index}]`));
+    return;
+  }
+  if (value === null || typeof value !== "object") return;
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    expect(entry, `${path}.${key} is an undefined-valued key`).not.toBe(undefined);
+    expectNoUndefinedKeys(entry, `${path}.${key}`);
+  }
+}
+
 /** What the JSON path materialises: validated where the SDK knows the type. */
 function materialise(document: Record<string, unknown>): unknown {
   return KNOWN_TO_CORE.has(document.type as string) ? EventSchemas.parse(document) : document;
@@ -105,6 +118,9 @@ describe("every valid event fixture round-trips over the binary transport", () =
     const expected = materialise(entry.document);
     const decoded = decode(encode(expected as never));
     expect(decoded).toEqual(expected);
+    // toEqual cannot see undefined-valued keys, so absent-stays-absent gets
+    // its own gate.
+    expectNoUndefinedKeys(decoded);
   });
 });
 
