@@ -385,10 +385,15 @@ export function encode(event: BaseEvent): Uint8Array {
  */
 export function decode(data: Uint8Array): BaseEvent {
   const envelope = protoEvents.Event.decode(data);
-  const entry = Object.entries(envelope).find(([, value]) => value !== undefined);
-  if (!entry) {
+  // Exactly one oneof entry. ts-proto's field-per-entry decoding cannot
+  // reproduce protobuf's last-field-wins for a malformed envelope carrying
+  // several, so the deterministic behaviour is to reject it loudly rather
+  // than silently pick a different event than another runtime would.
+  const populated = Object.entries(envelope).filter(([, value]) => value !== undefined);
+  if (populated.length !== 1) {
     throw new Error("Invalid event");
   }
+  const entry = populated[0];
   // The oneof entry selected the message shape, so it names the type; a
   // base_event.type that disagrees is a malformed event, not a tiebreak.
   const entryType = ENVELOPE_TYPE[entry[0]];
