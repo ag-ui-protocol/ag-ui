@@ -228,7 +228,7 @@ export const transformChunks =
             // half-assembled message — the same class of cross-lane damage as closing on
             // an unrelated subagent's terminal. Events that carry no tag read as the
             // parent lane, which is what they are.
-            return [...closeLane((event as { subagentRunId?: string }).subagentRunId), event];
+            return [...closeLane((event as { subagentRunId?: string | null }).subagentRunId ?? undefined), event];
           // Run-level events describe the run as a whole rather than any one producer
           // within it, so every lane closes — otherwise a subagent's chunk stream would
           // outlive the run that carried it. MESSAGES_SNAPSHOT belongs here too: it
@@ -257,9 +257,9 @@ export const transformChunks =
           case EventType.SUBAGENT_FINISHED:
           case EventType.SUBAGENT_ERROR: {
             // Its own lane only. A terminal with no id is malformed and must not be read
-            // as closing the parent lane.
-            const terminalOwner = (event as { subagentRunId?: string }).subagentRunId;
-            if (terminalOwner === undefined) return [event];
+            // as closing the parent lane — a runtime null reads the same as absent.
+            const terminalOwner = (event as { subagentRunId?: string | null }).subagentRunId;
+            if (terminalOwner == null) return [event];
             return [...closeLane(terminalOwner), event];
           }
           case EventType.TEXT_MESSAGE_CHUNK: {
@@ -267,7 +267,7 @@ export const transformChunks =
             const lane = resolveLane(
               "text",
               messageChunkEvent.messageId,
-              messageChunkEvent.subagentRunId,
+              messageChunkEvent.subagentRunId ?? undefined,
               "TEXT_MESSAGE_CHUNK",
               "text message",
             );
@@ -366,7 +366,7 @@ export const transformChunks =
             const lane = resolveLane(
               "tool",
               toolCallChunkEvent.toolCallId,
-              toolCallChunkEvent.subagentRunId,
+              toolCallChunkEvent.subagentRunId ?? undefined,
               "TOOL_CALL_CHUNK",
               "tool call",
             );
@@ -460,7 +460,7 @@ export const transformChunks =
             const lane = resolveLane(
               "reasoning",
               reasoningChunkEvent.messageId,
-              reasoningChunkEvent.subagentRunId,
+              reasoningChunkEvent.subagentRunId ?? undefined,
               "REASONING_MESSAGE_CHUNK",
               "reasoning message",
             );

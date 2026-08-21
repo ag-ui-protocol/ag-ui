@@ -711,7 +711,17 @@ export const defaultApplyEvents = (
           applyMutation(mutation);
 
           if (mutation.stopPropagation !== true) {
-            const { messages: newMessages } = event as MessagesSnapshotEvent;
+            const { messages: rawNewMessages } = event as MessagesSnapshotEvent;
+            // A runtime null tag reads as absent — it must not persist into state
+            // and ride the next run's serialized input (the schemas forbid null;
+            // this reducer also runs on unverified inputs).
+            const newMessages = rawNewMessages.map((m) =>
+              (m as { subagentRunId?: string | null }).subagentRunId === null
+                ? (({ subagentRunId: _null, ...rest }) => rest as typeof m)(
+                    m as typeof m & { subagentRunId: null },
+                  )
+                : m,
+            );
 
             // Edit-based merge: update existing messages with snapshot data while
             // preserving client-only messages the backend leaves out of the
@@ -992,7 +1002,14 @@ export const defaultApplyEvents = (
             // Check if the event contains input with messages
             if (runStartedEvent.input?.messages) {
               // Add messages that aren't already present (checked by ID)
-              for (const message of runStartedEvent.input.messages) {
+              for (const rawMessage of runStartedEvent.input.messages) {
+                // Same null-as-absent rule as the snapshot merge above.
+                const message =
+                  (rawMessage as { subagentRunId?: string | null }).subagentRunId === null
+                    ? (({ subagentRunId: _null, ...rest }) => rest as typeof rawMessage)(
+                        rawMessage as typeof rawMessage & { subagentRunId: null },
+                      )
+                    : rawMessage;
                 const existingMessage = messages.find((m) => m.id === message.id);
                 if (!existingMessage) {
                   messages.push(message);
@@ -1039,7 +1056,15 @@ export const defaultApplyEvents = (
           // can't mutate the agent's tracked state through array aliasing.
           if (mutation.stopPropagation !== true) {
             agent.pendingInterrupts =
-              finishedParams.outcome === "interrupt" ? [...finishedParams.interrupts] : [];
+              finishedParams.outcome === "interrupt"
+                ? finishedParams.interrupts.map((interrupt) =>
+                    (interrupt as { subagentRunId?: string | null }).subagentRunId === null
+                      ? (({ subagentRunId: _null, ...rest }) => rest as typeof interrupt)(
+                          interrupt as typeof interrupt & { subagentRunId: null },
+                        )
+                      : interrupt,
+                  )
+                : [];
           }
 
           return emitUpdates();

@@ -129,16 +129,28 @@ export const verifyEvents =
     // (RunAgentInput.messages without the RUN_STARTED echo) never passes this
     // operator and cannot be seeded; producers replaying such ids must tag
     // consistently with that history.
-    const seedOwnersFromMessages = (rawMessages: unknown, authoritative: boolean) => {
+    const seedOwnersFromMessages = (
+      rawMessages: unknown,
+      authoritative: boolean,
+    ): AGUIError | undefined => {
       const messages = (rawMessages ?? []) as Array<{
         id?: string;
         role?: string;
-        subagentRunId?: string;
+        subagentRunId?: string | null;
         toolCalls?: Array<{ id?: string }>;
       }>;
-      if (!Array.isArray(messages)) return;
+      if (!Array.isArray(messages)) return undefined;
       for (const msg of messages) {
         if (!msg || typeof msg.id !== "string") continue;
+        // Null is rejected on nested message tags for the same reason as on the
+        // event's own tag above: the schemas forbid it, in-process producers
+        // bypass them, and a seeded null otherwise persists into state and onto
+        // the next run's serialized input.
+        if (msg.subagentRunId === null) {
+          return new AGUIError(
+            `Cannot send a message (id '${msg.id}') with 'subagentRunId: null'. The field is optional — omit it entirely.`,
+          );
+        }
         // Owners are per entity KIND (see `owners` above), so the message must
         // seed the bucket its role streams through — a reasoning message's
         // continuations are checked against `owners.reasoning`, not `.message`.
@@ -153,10 +165,11 @@ export const verifyEvents =
         }
         for (const tc of msg.toolCalls ?? []) {
           if (tc && typeof tc.id === "string" && (authoritative || !owners.toolCall.has(tc.id))) {
-            owners.toolCall.set(tc.id, { subagentRunId: msg.subagentRunId });
+            owners.toolCall.set(tc.id, { subagentRunId: msg.subagentRunId ?? undefined });
           }
         }
       }
+      return undefined;
     };
 
     // Subagent attribution consistency: a continuation/close event must not
@@ -279,6 +292,36 @@ export const verifyEvents =
                     `Cannot send '${eventType}' with '${field}: null'. The field is optional — omit it entirely.`,
                   ),
               );
+            }
+          }
+          // One level deeper: the suspended outcome's interruptIds is optional too.
+          const finishedOutcome = (event as { outcome?: { interruptIds?: unknown } | null }).outcome;
+          if (finishedOutcome && finishedOutcome.interruptIds === null) {
+            return throwError(
+              () =>
+                new AGUIError(
+                  `Cannot send '${eventType}' with 'outcome.interruptIds: null'. The field is optional — omit it entirely.`,
+                ),
+            );
+          }
+        }
+        if (eventType === EventType.RUN_FINISHED) {
+          // Interrupt attribution is per interrupt inside the outcome; the same
+          // no-null rule applies there (the reducer copies these into
+          // agent.pendingInterrupts verbatim).
+          const outcome = (event as {
+            outcome?: { type?: string; interrupts?: Array<{ id?: string; subagentRunId?: unknown }> } | null;
+          }).outcome;
+          if (outcome?.type === "interrupt" && Array.isArray(outcome.interrupts)) {
+            for (const interrupt of outcome.interrupts) {
+              if (interrupt && interrupt.subagentRunId === null) {
+                return throwError(
+                  () =>
+                    new AGUIError(
+                      `Cannot send 'RUN_FINISHED' with an interrupt (id '${interrupt.id}') carrying 'subagentRunId: null'. The field is optional — omit it entirely.`,
+                    ),
+                );
+              }
             }
           }
         }
@@ -791,7 +834,10 @@ export const verifyEvents =
             // Authoritative: the snapshot restates the conversation and the reducer
             // replaces each message, so its owners replace recorded ones. See
             // seedOwnersFromMessages.
-            seedOwnersFromMessages((event as { messages?: unknown }).messages, true);
+            {
+              const seedErr = seedOwnersFromMessages((event as { messages?: unknown }).messages, true);
+              if (seedErr) return throwError(() => seedErr);
+            }
             return of(event);
           }
 
@@ -802,10 +848,13 @@ export const verifyEvents =
             // The input echo carries replayed history the reducer applies, so it
             // seeds ownership like a snapshot does (non-authoritatively — it is
             // history, not a rewrite). See seedOwnersFromMessages.
-            seedOwnersFromMessages(
-              ((event as { input?: { messages?: unknown } }).input ?? {}).messages,
-              false,
-            );
+            {
+              const seedErr = seedOwnersFromMessages(
+                ((event as { input?: { messages?: unknown } }).input ?? {}).messages,
+                false,
+              );
+              if (seedErr) return throwError(() => seedErr);
+            }
             return of(event);
           }
 

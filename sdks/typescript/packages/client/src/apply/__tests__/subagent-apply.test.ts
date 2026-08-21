@@ -113,6 +113,49 @@ describe("defaultApplyEvents with subagentRunId attribution", () => {
     expect("subagentRunId" in (message as object)).toBe(false);
   });
 
+  it("strips a null tag from snapshot messages and the input echo — nothing persists it", async () => {
+    const events$ = new Subject<BaseEvent>();
+    const initialState: RunAgentInput = {
+      messages: [],
+      state: {},
+      threadId: "test-thread",
+      runId: "test-run",
+      tools: [],
+      context: [],
+    };
+    const agent = createAgent(initialState.messages);
+    const result$ = defaultApplyEvents(initialState, events$, agent, []);
+    const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
+
+    events$.next({
+      type: EventType.RUN_STARTED,
+      input: {
+        messages: [{ id: "echo1", role: "assistant", content: "x", subagentRunId: null }],
+      },
+    } as unknown as RunStartedEvent);
+    events$.next({
+      type: EventType.MESSAGES_SNAPSHOT,
+      messages: [
+        { id: "snap1", role: "assistant", content: "y", subagentRunId: null },
+        { id: "snap2", role: "assistant", content: "z", subagentRunId: "s1" },
+      ],
+    } as unknown as BaseEvent);
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    events$.complete();
+
+    const stateUpdates = await stateUpdatesPromise;
+    const finalMessages = stateUpdates[stateUpdates.length - 1]?.messages ?? [];
+    const byId = new Map(finalMessages.map((m) => [m.id, m]));
+    expect("subagentRunId" in (byId.get("snap1") as object)).toBe(false);
+    expect((byId.get("snap2") as { subagentRunId?: string }).subagentRunId).toBe("s1");
+    // The echo message was replaced by the snapshot merge or kept — either way
+    // no message in final state carries a null tag.
+    for (const m of finalMessages) {
+      expect((m as { subagentRunId?: unknown }).subagentRunId).not.toBeNull();
+    }
+  });
+
   it("should copy subagentRunId from TOOL_CALL_RESULT onto the newly created tool message", async () => {
     const events$ = new Subject<BaseEvent>();
     const initialState: RunAgentInput = {

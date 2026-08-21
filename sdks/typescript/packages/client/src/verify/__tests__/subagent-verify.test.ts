@@ -1358,6 +1358,62 @@ describe("verifyEvents rejects null anywhere on the subagent surface", () => {
     );
   });
 
+  it("rejects a null tag nested in MESSAGES_SNAPSHOT and the RUN_STARTED input echo", async () => {
+    await expectRejectedWith(
+      [
+        started,
+        {
+          type: EventType.MESSAGES_SNAPSHOT,
+          messages: [{ id: "m", role: "assistant", content: "x", subagentRunId: null }],
+        } as unknown as BaseEvent,
+      ],
+      /message \(id 'm'\) with 'subagentRunId: null'/i,
+    );
+    await expectRejectedWith(
+      [
+        {
+          type: EventType.RUN_STARTED,
+          threadId: "t",
+          runId: "r",
+          input: {
+            messages: [{ id: "m", role: "assistant", content: "x", subagentRunId: null }],
+          },
+        } as unknown as BaseEvent,
+      ],
+      /message \(id 'm'\) with 'subagentRunId: null'/i,
+    );
+  });
+
+  it("rejects null one level deeper: outcome.interruptIds and interrupt tags", async () => {
+    await expectRejectedWith(
+      [
+        started,
+        { type: EventType.SUBAGENT_STARTED, subagentRunId: "s1", name: "r" } as BaseEvent,
+        {
+          type: EventType.SUBAGENT_FINISHED,
+          subagentRunId: "s1",
+          outcome: { type: "suspended", interruptIds: null },
+        } as unknown as BaseEvent,
+      ],
+      /'outcome.interruptIds: null'/i,
+    );
+    await expectRejectedWith(
+      [
+        started,
+        {
+          type: EventType.RUN_FINISHED,
+          threadId: "t",
+          runId: "r",
+          outcome: {
+            type: "interrupt",
+            interrupts: [{ id: "int-1", reason: "approval", subagentRunId: null }],
+          },
+        } as unknown as BaseEvent,
+      ],
+      /interrupt \(id 'int-1'\) carrying 'subagentRunId: null'/i,
+    );
+  });
+
   it("rejects null on the lifecycle events' optional fields", async () => {
     await expectRejectedWith(
       [

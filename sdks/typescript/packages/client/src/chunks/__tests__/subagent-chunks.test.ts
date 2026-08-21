@@ -371,3 +371,38 @@ describe("transformChunks subagentRunId propagation", () => {
     );
   });
 });
+
+describe("a runtime null tag reads as the parent lane", () => {
+  // The schemas reject null, but this transform runs BEFORE verification in the
+  // agent pipeline, so a runtime null must not mint its own Map lane distinct
+  // from the parent's undefined — that produced overlapping starts for what is
+  // one parent stream.
+  it("null-tagged and untagged parent chunks share one lane", async () => {
+    const events$ = from([
+      {
+        type: EventType.TEXT_MESSAGE_CHUNK,
+        messageId: "m1",
+        delta: "a",
+        subagentRunId: null,
+      } as unknown as BaseEvent,
+      { type: EventType.TEXT_MESSAGE_CHUNK, messageId: "m2", delta: "b" } as BaseEvent,
+    ]);
+    const out = await firstValueFrom(transformChunks(false)(events$).pipe(toArray()));
+
+    const starts = out.filter((e) => e.type === EventType.TEXT_MESSAGE_START);
+    expect(starts).toHaveLength(2);
+    // One lane: the second opener closes the first stream before starting.
+    const firstEndIdx = out.findIndex((e) => e.type === EventType.TEXT_MESSAGE_END);
+    const secondStartIdx = out.findIndex(
+      (e) =>
+        e.type === EventType.TEXT_MESSAGE_START &&
+        (e as { messageId?: string }).messageId === "m2",
+    );
+    expect(firstEndIdx).toBeGreaterThan(-1);
+    expect(firstEndIdx).toBeLessThan(secondStartIdx);
+    // And nothing re-emits the null.
+    for (const e of out) {
+      expect((e as { subagentRunId?: unknown }).subagentRunId).not.toBeNull();
+    }
+  });
+});
