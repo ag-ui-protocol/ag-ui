@@ -304,7 +304,15 @@ const BASE_MODEL = `class GeneratedBaseModel(BaseModel):
     model_config = ConfigDict(
         extra="allow",
         alias_generator=to_camel,
-        populate_by_name=True,
+        # Wire names only: accepting the snake_case attribute name as input
+        # would invent meaning for a key the wire never defined — an unknown
+        # message_id must land in the extras, not populate messageId.
+        validate_by_alias=True,
+        validate_by_name=False,
+        # No lax coercion: the schema's "false" is not False and its "42" is
+        # not 42. (Strict ints also reject 1.0, where JSON Schema accepts a
+        # zero-fraction float — the rarer, safer direction.)
+        strict=True,
     )
 
     def model_dump(self, **kwargs: Any) -> Any:

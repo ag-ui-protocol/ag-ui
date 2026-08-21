@@ -144,6 +144,14 @@ RECORDED_DIVERGENCES = {
         "add/replace/test value of null; the generated models keep it — null "
         "there is data, not absence"
     ),
+    ("CUSTOM", "value"): (
+        "handwritten exclude_none drops an explicit null payload; the "
+        "generated models keep it — on an any-JSON field null is data"
+    ),
+    ("TEXT_MESSAGE_END", "rawEvent"): (
+        "handwritten exclude_none drops an explicit null rawEvent; the "
+        "generated models keep it — on an any-JSON field null is data"
+    ),
 }
 
 # Schema-valid documents the handwritten models reject outright, each a
@@ -181,7 +189,12 @@ class GeneratedAgainstHandwritten(unittest.TestCase):
                     parsed.model_dump_json(by_alias=True, exclude_none=True)
                 )
                 for key in set(ours) | set(theirs):
-                    if ours.get(key) == theirs.get(key):
+                    # Presence matters: an omitted key and an explicit null
+                    # must not compare equal, or data loss hides.
+                    if (
+                        (key in ours) == (key in theirs)
+                        and ours.get(key) == theirs.get(key)
+                    ):
                         continue
                     divergence = (document["type"], key)
                     self.assertIn(
