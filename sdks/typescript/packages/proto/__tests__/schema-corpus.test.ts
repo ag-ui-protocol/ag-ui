@@ -12,6 +12,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { EventSchemas, EventType } from "@ag-ui/core";
+import * as protoEvents from "../src/generated/events";
 import { decode, encode } from "../src/proto";
 
 /**
@@ -58,10 +59,10 @@ for (const anchor of readdirSync(FIXTURES_DIR).sort()) {
  * document; over binary the stream normalises and validates.
  *
  * A further recorded divergence, invisible to these assertions: the
- * handwritten schemas strip Interrupt.subagentRunId (it lands with #2350), so
- * the JSON path and the binary path both lose it today even though the wire
- * carries field 8 for it. The byte fixtures therefore do not exercise that
- * slot yet.
+ * handwritten schemas strip subagentRunId from nested interrupts and messages
+ * (it lands with #2350), so the JSON path and the binary path both lose it
+ * today even though the wire carries Interrupt field 8 and Message field 10.
+ * The byte fixtures therefore do not exercise those slots yet.
  */
 const BINARY_NORMALISED: Record<
   string,
@@ -158,6 +159,60 @@ describe("byte fixtures", () => {
     const expected = new Set(byteCases.map((entry) => `${entry.name.replace(/[/]/g, "__")}.bin`));
     const stale = readdirSync(BYTES_DIR).filter((file) => !expected.has(file));
     expect(stale).toEqual([]);
+  });
+});
+
+describe("malformed wire input", () => {
+  // The decode guards, each pinned: whatever a hostile or broken producer
+  // sends, decode answers with an error, never with a different event than
+  // another runtime would surface.
+  const wrap = (payload: Record<string, unknown>): Uint8Array =>
+    protoEvents.Event.encode(payload as never).finish();
+
+  it("rejects an envelope with no populated entry", () => {
+    expect(() => decode(wrap({}))).toThrow();
+  });
+
+  it("rejects a payload without a base event", () => {
+    expect(() => decode(wrap({ toolCallEnd: { toolCallId: "c1" } }))).toThrow();
+  });
+
+  it("rejects an unmappable base event type", () => {
+    expect(() =>
+      decode(wrap({ toolCallEnd: { baseEvent: { type: 99 }, toolCallId: "c1" } })),
+    ).toThrow();
+  });
+
+  it("rejects the synthetic UNRECOGNIZED type", () => {
+    expect(() =>
+      decode(wrap({ toolCallEnd: { baseEvent: { type: -1 }, toolCallId: "c1" } })),
+    ).toThrow();
+  });
+
+  it("rejects a base event type that disagrees with the envelope entry", () => {
+    expect(() =>
+      decode(
+        wrap({
+          stepStarted: {
+            baseEvent: { type: protoEvents.EventType.STEP_FINISHED },
+            stepName: "plan",
+          },
+        }),
+      ),
+    ).toThrow(/envelope carries STEP_STARTED/);
+  });
+
+  it("rejects an envelope with more than one populated entry", () => {
+    const first = encode({
+      type: EventType.TEXT_MESSAGE_START,
+      messageId: "m1",
+    } as never);
+    const second = encode({
+      type: EventType.STEP_FINISHED,
+      stepName: "plan",
+    } as never);
+    const concatenated = new Uint8Array([...first, ...second]);
+    expect(() => decode(concatenated)).toThrow();
   });
 });
 
