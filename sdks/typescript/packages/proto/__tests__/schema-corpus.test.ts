@@ -440,6 +440,18 @@ describe("flattened outcome guards", () => {
     expect((decode(extended) as { stepName?: string }).stepName).toBe("plan");
   });
 
+  it("rejects a repeated envelope tag hidden by an overlong varint", () => {
+    const valid = encode({
+      type: EventType.STEP_FINISHED,
+      stepName: "plan",
+    } as never);
+    // Field 16 (step_finished) again, its tag varint encoded overlong: the
+    // real reader masks the fifth byte to four bits and still sees field 16.
+    const overlong = new Uint8Array([0x82, 0x81, 0x80, 0x80, 0x10, 0x00]);
+    const extended = new Uint8Array([...valid, ...overlong]);
+    expect(() => decode(extended)).toThrow();
+  });
+
   it("rejects a repeated envelope tag", () => {
     const first = encode({
       type: EventType.STEP_FINISHED,

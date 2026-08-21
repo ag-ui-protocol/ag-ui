@@ -435,12 +435,17 @@ function assertNoRepeatedTopLevelTags(data: Uint8Array): void {
   const seen = new Set<number>();
   let offset = 0;
   const varint = (): number => {
+    // Mirrors the wire reader's uint32 truncation exactly: the fifth byte
+    // contributes only its low four bits, later bytes none — otherwise an
+    // overlong encoding of a tag would dodge duplicate detection while the
+    // real decoder still reads the canonical field number.
     let result = 0;
     let shift = 0;
     for (;;) {
       if (offset >= data.length) throw new Error("Invalid event");
       const byte = data[offset++];
-      if (shift < 32) result += (byte & 0x7f) * 2 ** shift;
+      if (shift < 28) result += (byte & 0x7f) * 2 ** shift;
+      else if (shift === 28) result += (byte & 0x0f) * 2 ** 28;
       shift += 7;
       if ((byte & 0x80) === 0) return result;
     }
