@@ -639,15 +639,20 @@ const fromWireMessage = (value: unknown): LooseRecord => {
   const role = typeof wire.role === "string" ? wire.role : "";
   // Content carriers are role-exclusive; a message carrying a carrier its
   // role does not use would lose data whichever one decode preferred.
+  if (
+    !PARTS_CONTENT_ROLES.has(role) &&
+    asArray(wire.contentParts).length > 0
+  ) {
+    throw new Error(
+      "Invalid event: message carries content parts for a role that has none",
+    );
+  }
   if (wire.activityContent !== undefined && !MAP_CONTENT_ROLES.has(role)) {
     throw new Error(
       "Invalid event: message carries activity content for a non-activity role",
     );
   }
-  if (
-    MAP_CONTENT_ROLES.has(role) &&
-    (wire.content !== undefined || asArray(wire.contentParts).length > 0)
-  ) {
+  if (MAP_CONTENT_ROLES.has(role) && wire.content !== undefined) {
     throw new Error(
       "Invalid event: activity content cannot ride with other content forms",
     );

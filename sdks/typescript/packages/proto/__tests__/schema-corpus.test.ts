@@ -371,6 +371,24 @@ describe("flattened outcome guards", () => {
     ).toThrow(/cannot carry interruptIds/);
   });
 
+  it("rejects content parts on a role that has none", () => {
+    const bytes = protoEvents.Event.encode({
+      messagesSnapshot: {
+        baseEvent: { type: protoEvents.EventType.MESSAGES_SNAPSHOT },
+        messages: [
+          {
+            id: "a1",
+            role: "assistant",
+            content: "hi",
+            toolCalls: [],
+            contentParts: [{ text: { text: "erased" } }],
+          },
+        ],
+      },
+    } as never).finish();
+    expect(() => decode(bytes)).toThrow(/role that has none/);
+  });
+
   it("rejects an activity message carrying string content", () => {
     const bytes = protoEvents.Event.encode({
       messagesSnapshot: {
