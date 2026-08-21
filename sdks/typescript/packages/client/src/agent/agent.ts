@@ -446,6 +446,14 @@ export abstract class AbstractAgent {
     ) {
       if (onRunInitializedMutation.messages) {
         this.messages = onRunInitializedMutation.messages;
+        // This assignment lands AFTER prepareRunAgentInput sanitized the input,
+        // so the no-null rule must be re-applied here — a subscriber mutation is
+        // the one writer that can still put a null tag on the wire.
+        for (const message of onRunInitializedMutation.messages) {
+          if ((message as { subagentRunId?: string | null }).subagentRunId === null) {
+            delete (message as { subagentRunId?: string | null }).subagentRunId;
+          }
+        }
         input.messages = onRunInitializedMutation.messages;
         subscribers.forEach((subscriber) => {
           subscriber.onMessagesChanged?.({

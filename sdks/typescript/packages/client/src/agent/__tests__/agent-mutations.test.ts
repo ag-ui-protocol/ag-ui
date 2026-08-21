@@ -506,7 +506,7 @@ describe("prepareRunAgentInput strips null attribution tags", () => {
     }
   }
 
-  it("never serializes subagentRunId: null from seeded or mutated messages", () => {
+  it("never serializes subagentRunId: null from seeded messages", () => {
     // initialMessages and subscriber mutations are not schema-checked, and the
     // schemas forbid null — a receiving agent would reject the whole run. The
     // input assembly is the egress chokepoint (PNI-199 alignment).
@@ -522,5 +522,36 @@ describe("prepareRunAgentInput strips null attribution tags", () => {
     expect("subagentRunId" in (byId.get("m1") as object)).toBe(false);
     expect((byId.get("m2") as { subagentRunId?: string }).subagentRunId).toBe("s1");
     expect(JSON.stringify(input)).not.toContain('"subagentRunId":null');
+  });
+});
+
+describe("onRunInitialized mutations cannot put a null tag on the wire", () => {
+  it("sanitizes messages assigned to input AFTER prepareRunAgentInput ran", async () => {
+    // The mutation assignment lands after the egress sanitizer, so it needs its
+    // own — reproduced sending {"subagentRunId":null} in the request body.
+    let sentInput: RunAgentInput | undefined;
+    class CaptureAgent extends AbstractAgent {
+      run(input: RunAgentInput): Observable<BaseEvent> {
+        sentInput = input;
+        return of(
+          { type: "RUN_STARTED", threadId: input.threadId, runId: input.runId },
+          { type: "RUN_FINISHED", threadId: input.threadId, runId: input.runId },
+        ) as unknown as Observable<BaseEvent>;
+      }
+    }
+    const agent = new CaptureAgent({});
+    const subscriber: AgentSubscriber = {
+      onRunInitialized: () => ({
+        messages: [
+          { id: "m1", role: "user", content: "hello", subagentRunId: null } as never,
+        ],
+      }),
+    };
+
+    await agent.runAgent({}, subscriber);
+
+    expect(sentInput).toBeDefined();
+    expect(JSON.stringify(sentInput)).not.toContain('"subagentRunId":null');
+    expect("subagentRunId" in (sentInput!.messages[0] as object)).toBe(false);
   });
 });

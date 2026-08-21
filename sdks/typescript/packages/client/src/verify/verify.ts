@@ -294,10 +294,24 @@ export const verifyEvents =
               );
             }
           }
-          // One level deeper: the suspended outcome's interruptIds is optional too,
-          // and its ELEMENTS are schema-required strings — a null entry is just as
-          // illegal as the field being null.
-          const finishedOutcome = (event as { outcome?: { interruptIds?: unknown } | null }).outcome;
+          // One level deeper: the outcome's discriminant is schema-required — the
+          // union only has two members, so anything else (including null) is the
+          // same in-process bypass as the field-level nulls above.
+          const finishedOutcome = (event as {
+            outcome?: { type?: unknown; interruptIds?: unknown } | null;
+          }).outcome;
+          if (
+            finishedOutcome &&
+            finishedOutcome.type !== "success" &&
+            finishedOutcome.type !== "suspended"
+          ) {
+            return throwError(
+              () =>
+                new AGUIError(
+                  `Cannot send '${eventType}' with outcome type '${String(finishedOutcome.type)}'. The outcome is either { type: "success" } or { type: "suspended" }.`,
+                ),
+            );
+          }
           if (finishedOutcome && finishedOutcome.interruptIds === null) {
             return throwError(
               () =>

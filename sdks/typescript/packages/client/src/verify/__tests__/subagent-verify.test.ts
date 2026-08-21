@@ -1476,6 +1476,30 @@ describe("verifyEvents rejects non-string interruptIds entries", () => {
     expect((caught as Error).message).toMatch(/non-string entry in 'outcome.interruptIds'/i);
   });
 
+  it("rejects an outcome whose discriminant is not success or suspended", async () => {
+    // The schema's discriminated union rejects these on the wire; the verifier
+    // must reject them in-process too — a null discriminant slipped through the
+    // field-level checks.
+    for (const badType of [null, "paused", undefined]) {
+      let caught: unknown;
+      try {
+        await run([
+          { type: EventType.RUN_STARTED, threadId: "t", runId: "r" } as RunStartedEvent,
+          { type: EventType.SUBAGENT_STARTED, subagentRunId: "s1", name: "r" } as BaseEvent,
+          {
+            type: EventType.SUBAGENT_FINISHED,
+            subagentRunId: "s1",
+            outcome: { type: badType },
+          } as unknown as BaseEvent,
+        ]);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught, `outcome.type=${String(badType)}`).toBeInstanceOf(AGUIError);
+      expect((caught as Error).message).toMatch(/outcome type/i);
+    }
+  });
+
   it("accepts a well-formed interruptIds list", async () => {
     const events = await run([
       { type: EventType.RUN_STARTED, threadId: "t", runId: "r" } as RunStartedEvent,
