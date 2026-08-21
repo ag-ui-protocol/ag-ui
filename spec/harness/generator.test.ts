@@ -99,9 +99,13 @@ describe("the generator", () => {
         if (!entry.name.endsWith(".ts") && !entry.name.endsWith(".tsx"))
           continue;
         const source = readFileSync(path, "utf8");
+        // Every syntactic route to a module: from-clauses, dynamic import()
+        // and import("...") type queries, bare side-effect imports, require.
         if (
           /from\s+["'][^"']*generated[/"']/.test(source) ||
-          /import\s*\(\s*["'][^"']*generated[/"']/.test(source)
+          /import\s*\(\s*["'][^"']*generated[/"']/.test(source) ||
+          /import\s+["'][^"']*generated[/"']/.test(source) ||
+          /require\s*\(\s*["'][^"']*generated[/"']/.test(source)
         ) {
           offenders.push(relative(srcDir, path));
         }
