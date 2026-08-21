@@ -1487,7 +1487,7 @@ export interface ResumeEntry {
   /**
    * Whether the interrupt was answered or abandoned.
    */
-  status: string;
+  status: "resolved" | "cancelled";
   /**
    * The answer the agent asked for and will act on. Any JSON value.
    */
@@ -2292,7 +2292,7 @@ export interface SubagentFinishedSuspendedOutcome {
   /**
    * The run-level interrupts this subagent raised itself. May be empty or
    * absent: a subagent suspended because a descendant interrupted owns no
-   * interrupt of its own.
+   * interrupt of its own. Each item: An Interrupt.id.
    */
   interruptIds?: string[];
 }

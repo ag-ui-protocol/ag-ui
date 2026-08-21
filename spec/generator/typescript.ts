@@ -76,6 +76,8 @@ function tsType(type: TypeExpr): string {
       return "any";
     case "openMap":
       return "Record<string, any>";
+    case "stringEnum":
+      return type.values.map((value) => JSON.stringify(value)).join(" | ");
     case "ref":
       return type.name;
     case "array": {
@@ -101,7 +103,11 @@ function fieldTags(field: Field): string[] {
 function emitInterface(definition: ObjectDefinition): string {
   const fields = definition.fields
     .map((field) => {
-      const doc = jsdoc(field.description, fieldTags(field), "  ");
+      const description =
+        field.type.kind === "array" && field.type.itemsDescription !== undefined
+          ? `${field.description} Each item: ${field.type.itemsDescription}`
+          : field.description;
+      const doc = jsdoc(description, fieldTags(field), "  ");
       const optional = field.required ? "" : "?";
       return `${doc}\n  ${field.name}${optional}: ${tsType(field.type)};`;
     })
@@ -164,6 +170,8 @@ function zodType(type: TypeExpr): string {
       return "z.any()";
     case "openMap":
       return "z.record(z.string(), z.any())";
+    case "stringEnum":
+      return `z.enum([${type.values.map((value) => JSON.stringify(value)).join(", ")}])`;
     case "ref":
       return `${type.name}Schema`;
     case "array": {
@@ -176,14 +184,27 @@ function zodType(type: TypeExpr): string {
   }
 }
 
-function emitSchemaDefinition(definition: Definition): string {
+function emitSchemaDefinition(
+  definition: Definition,
+  anyAliases: Set<string>,
+): string {
   const doc = jsdoc(definition.description);
   switch (definition.kind) {
     case "object": {
       const fields = definition.fields
         .map((field) => {
+          // zod treats a property whose schema accepts undefined as an
+          // optional key, so a required arbitrary-JSON field needs an explicit
+          // presence check or a missing key would parse.
+          const acceptsUndefined =
+            field.type.kind === "any" ||
+            (field.type.kind === "ref" && anyAliases.has(field.type.name));
+          const presence =
+            field.required && acceptsUndefined
+              ? ".refine((value) => value !== undefined)"
+              : "";
           const optional = field.required ? "" : ".optional()";
-          return `  ${field.name}: ${zodType(field.type)}${optional},`;
+          return `  ${field.name}: ${zodType(field.type)}${presence}${optional},`;
         })
         .join("\n");
       // looseObject on purpose: the spec is strict, the implementation is
@@ -221,10 +242,20 @@ export function emitSchemas(model: ProtocolModel): string {
     `import { z } from "zod/v4";`,
     ...(usesEnum ? [`import { ${TS_ENUM} } from "./types";`] : []),
   ].join("\n");
+  const anyAliases = new Set(
+    model.definitions
+      .filter(
+        (definition) =>
+          definition.kind === "alias" && definition.type.kind === "any",
+      )
+      .map((definition) => definition.name),
+  );
   return [
     banner(model),
     imports,
-    ...model.definitions.map(emitSchemaDefinition),
+    ...model.definitions.map((definition) =>
+      emitSchemaDefinition(definition, anyAliases),
+    ),
     "",
   ].join("\n\n");
 }
@@ -250,10 +281,10 @@ import type * as s from "./schemas";
  * emitted independently, so a generator bug that makes one field optional in
  * one and required in the other would otherwise ship silently. Each assertion
  * compares the schema's inferred output with the interface, after stripping
- * index signatures on both sides — looseObject infers one by design, and the
- * open-by-key positions carry one on both sides, so the comparison is over the
- * declared fields. A mismatch is a compile error on every build of this
- * package.
+ * looseObject's own index signature (its value is exactly unknown) while
+ * keeping the open-by-key positions' index signatures (their value is any),
+ * so records stay compared and only the passthrough artefact is ignored. A
+ * mismatch is a compile error on every build of this package.
  */
 type IsAny<T> = 0 extends 1 & T ? true : false;
 type DeepClean<T> =
@@ -262,7 +293,15 @@ type DeepClean<T> =
     : T extends readonly (infer U)[]
       ? DeepClean<U>[]
       : T extends object
-        ? { [K in keyof T as string extends K ? never : K]: DeepClean<T[K]> }
+        ? {
+            [K in keyof T as string extends K
+              ? unknown extends T[K]
+                ? IsAny<T[K]> extends true
+                  ? K
+                  : never
+                : K
+              : K]: DeepClean<T[K]>;
+          }
         : T;
 type Equal<A, B> =
   (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2

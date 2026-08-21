@@ -1,9 +1,10 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { join, relative } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildModel } from "../generator/ir";
 import { generateFiles, OUTPUT_DIR, SCHEMA_PATH } from "../generator/generate";
 import { schema } from "./validator";
+import * as generatedSchemas from "../../sdks/typescript/packages/core/src/generated/schemas";
 
 const files = await generateFiles();
 const model = buildModel(schema);
@@ -43,7 +44,7 @@ describe("the generator", () => {
   it("derives the version constant from the schema's own address", () => {
     // The constant is never typed by a human: it is the version segment of the
     // $id, which is also the directory the schema lives in.
-    const directory = SCHEMA_PATH.split("/").at(-2);
+    const directory = basename(dirname(SCHEMA_PATH));
     expect(model.version).toBe(directory);
     const version = files.find((file) => file.name === "version.ts");
     expect(version?.content).toContain(
@@ -72,6 +73,17 @@ describe("the generator", () => {
     expect(model.mixins).toEqual(["Attributable", "BaseEvent", "BaseMessage"]);
   });
 
+  it("mentions the generated directory nowhere in the package manifest", () => {
+    // The import-graph test below proves nothing reachable from index.ts
+    // touches generated/; this closes the other door — a package.json entry
+    // (exports, files, main) pointing into it directly.
+    const manifest = readFileSync(
+      join(OUTPUT_DIR, "..", "..", "package.json"),
+      "utf8",
+    );
+    expect(manifest).not.toContain("generated");
+  });
+
   it("keeps the generated directory out of the package's reachable surface", () => {
     // index.ts is the only entry, so nothing outside generated/ importing from
     // it means nothing exports it. The existing types keep their import paths.
@@ -95,5 +107,54 @@ describe("the generator", () => {
     expect(existsSync(srcDir)).toBe(true);
     walk(srcDir);
     expect(offenders).toEqual([]);
+  });
+});
+
+describe("the generated zod schemas against the fixture corpus", () => {
+  // The fixtures are the behavioural contract, so the generated validators
+  // must agree with them wherever the semantics are meant to coincide. The one
+  // deliberate divergence is closure: the spec is strict and the generated zod
+  // is loose (unknown keys survive for the strip-and-warn middleware), so a
+  // fixture rejected only by unevaluatedProperties is expected to parse.
+  const FIXTURES_DIR = join(dirname(SCHEMA_PATH), "fixtures");
+  const schemas = generatedSchemas as unknown as Record<
+    string,
+    { safeParse: (value: unknown) => { success: boolean } }
+  >;
+
+  const collect = (
+    kind: "valid" | "invalid",
+  ): Array<[string, string, string]> => {
+    const entries: Array<[string, string, string]> = [];
+    for (const anchor of readdirSync(FIXTURES_DIR).sort()) {
+      const dir = join(FIXTURES_DIR, anchor, kind);
+      if (!existsSync(dir)) continue;
+      for (const file of readdirSync(dir).sort()) {
+        if (!file.endsWith(".json") || file.endsWith(".expect.json")) continue;
+        entries.push([`${anchor}/${kind}/${file}`, anchor, join(dir, file)]);
+      }
+    }
+    return entries;
+  };
+
+  it.each(collect("valid"))("%s parses", (_name, anchor, path) => {
+    const validator = schemas[`${anchor}Schema`];
+    expect(validator, `no generated schema for ${anchor}`).toBeDefined();
+    const document = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    expect(validator.safeParse(document).success).toBe(true);
+  });
+
+  const rejected = collect("invalid").filter(([, , path]) => {
+    const expectation = JSON.parse(
+      readFileSync(path.replace(/\.json$/, ".expect.json"), "utf8"),
+    ) as { keyword: string };
+    return expectation.keyword !== "unevaluatedProperties";
+  });
+
+  it.each(rejected)("%s fails to parse", (_name, anchor, path) => {
+    const validator = schemas[`${anchor}Schema`];
+    expect(validator, `no generated schema for ${anchor}`).toBeDefined();
+    const document = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    expect(validator.safeParse(document).success).toBe(false);
   });
 });

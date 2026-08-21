@@ -92,7 +92,14 @@ export type TypeExpr =
   | { kind: "any" }
   | { kind: "openMap" }
   | { kind: "ref"; name: string }
-  | { kind: "array"; items: TypeExpr; minItems?: number }
+  | { kind: "stringEnum"; values: string[] }
+  | {
+      kind: "array";
+      items: TypeExpr;
+      minItems?: number;
+      /** The items subschema's own description, so no meaning is dropped. */
+      itemsDescription?: string;
+    }
   | { kind: "union"; members: TypeExpr[] };
 
 type Json = Record<string, unknown>;
@@ -190,6 +197,17 @@ function readType(
     return { kind: "literal", value: requireString(node.const, path, "const") };
   }
 
+  if (Array.isArray(node.enum)) {
+    if (node.type !== "string" && node.type !== undefined) {
+      throw new SchemaReadError(path, "enum on a non-string position");
+    }
+    const values = node.enum as unknown[];
+    if (!values.every((value) => typeof value === "string")) {
+      throw new SchemaReadError(path, "enum with a non-string member");
+    }
+    return { kind: "stringEnum", values: values as string[] };
+  }
+
   if (Array.isArray(node.oneOf)) {
     return {
       kind: "union",
@@ -238,6 +256,10 @@ function readType(
         items: readType(items as Json, defs, `${path}/items`),
       };
       if (typeof node.minItems === "number") expr.minItems = node.minItems;
+      const itemsDescription = (items as Json).description;
+      if (typeof itemsDescription === "string") {
+        expr.itemsDescription = itemsDescription;
+      }
       return expr;
     }
     case undefined: {

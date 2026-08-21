@@ -182,7 +182,7 @@ export const StateSnapshotEventSchema = z.looseObject({
   rawEvent: z.any().optional(),
   metadata: MetadataSchema.optional(),
   subagentRunId: SubagentRunIdSchema.optional(),
-  snapshot: StateSchema,
+  snapshot: StateSchema.refine((value) => value !== undefined),
 });
 
 /**
@@ -199,7 +199,7 @@ export const JsonPointerSchema = z.string().regex(new RegExp("^(/([^/~]|~[01])*)
 export const AddOperationSchema = z.looseObject({
   op: z.literal("add"),
   path: JsonPointerSchema,
-  value: z.any(),
+  value: z.any().refine((value) => value !== undefined),
 });
 
 /**
@@ -216,7 +216,7 @@ export const RemoveOperationSchema = z.looseObject({
 export const ReplaceOperationSchema = z.looseObject({
   op: z.literal("replace"),
   path: JsonPointerSchema,
-  value: z.any(),
+  value: z.any().refine((value) => value !== undefined),
 });
 
 /**
@@ -243,7 +243,7 @@ export const CopyOperationSchema = z.looseObject({
 export const TestOperationSchema = z.looseObject({
   op: z.literal("test"),
   path: JsonPointerSchema,
-  value: z.any(),
+  value: z.any().refine((value) => value !== undefined),
 });
 
 /**
@@ -557,7 +557,7 @@ export const RawEventSchema = z.looseObject({
   rawEvent: z.any().optional(),
   metadata: MetadataSchema.optional(),
   subagentRunId: SubagentRunIdSchema.optional(),
-  event: z.any(),
+  event: z.any().refine((value) => value !== undefined),
   source: z.string().optional(),
 });
 
@@ -572,7 +572,7 @@ export const CustomEventSchema = z.looseObject({
   metadata: MetadataSchema.optional(),
   subagentRunId: SubagentRunIdSchema.optional(),
   name: z.string(),
-  value: z.any(),
+  value: z.any().refine((value) => value !== undefined),
 });
 
 /**
@@ -599,7 +599,7 @@ export const ContextSchema = z.looseObject({
  */
 export const ResumeEntrySchema = z.looseObject({
   interruptId: z.string(),
-  status: z.string(),
+  status: z.enum(["resolved", "cancelled"]),
   payload: z.any().optional(),
   metadata: MetadataSchema.optional(),
 });
