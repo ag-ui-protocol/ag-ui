@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 
 from ag_ui_langgraph.agent import LangGraphAgent
 
@@ -22,6 +23,32 @@ class _GraphWithoutContext:
 
     def astream_events(self, input, subgraphs=False, version="v2"):
         raise NotImplementedError
+
+
+class _RecordingGraph:
+    nodes = {}
+
+    def __init__(self):
+        self.stream_kwargs = None
+
+    def get_input_jsonschema(self, config):
+        return {"properties": {"messages": {}, "tools": {}}}
+
+    def get_output_jsonschema(self, config):
+        return {"properties": {"messages": {}}}
+
+    def get_config_jsonschema(self):
+        return {"properties": {"configurable": {}}}
+
+    def astream_events(self, input, subgraphs=False, version="v2", config=None, context=None):
+        self.stream_kwargs = {
+            "input": input,
+            "subgraphs": subgraphs,
+            "version": version,
+            "config": config,
+            "context": context,
+        }
+        return object()
 
 
 class GetStreamKwargsTest(unittest.TestCase):
@@ -61,6 +88,46 @@ class GetStreamKwargsTest(unittest.TestCase):
 
         self.assertNotIn("context", kwargs)
         self.assertEqual(kwargs["config"], {"configurable": {"thread_id": "t-3"}})
+
+
+class ForwardedPropsRuntimeContextTest(unittest.IsolatedAsyncioTestCase):
+    async def test_agent_facing_forwarded_props_reach_langgraph_runtime_context(self):
+        graph = _RecordingGraph()
+        agent = LangGraphAgent(name="test", graph=graph)
+        agent.active_run = {"id": "run-1", "mode": "start"}
+        run_input = SimpleNamespace(
+            thread_id="thread-1",
+            run_id="run-1",
+            state={},
+            messages=[],
+            tools=[],
+            context=[],
+            forwarded_props={
+                "deep_thinking": True,
+                "model_options": {"reasoning_effort": "high"},
+                "command": {},
+                "node_name": "adapter-private",
+                "stream_subgraphs": False,
+            },
+            resume=None,
+        )
+        agent_state = SimpleNamespace(values={"messages": []}, tasks=[])
+
+        await agent.prepare_stream(
+            run_input,
+            agent_state,
+            {"configurable": {"thread_id": "thread-1", "tenant": "tenant-a"}},
+        )
+
+        self.assertEqual(
+            graph.stream_kwargs["context"],
+            {
+                "thread_id": "thread-1",
+                "tenant": "tenant-a",
+                "deep_thinking": True,
+                "model_options": {"reasoning_effort": "high"},
+            },
+        )
 
 
 if __name__ == "__main__":
