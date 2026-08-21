@@ -29,6 +29,44 @@ function toCamelCase(str: string): string {
 const KNOWN_TO_CORE = new Set<string>(Object.values(EventType));
 
 /**
+ * The envelope's oneof entry names, mapped to the event type each carries.
+ * The entry selected the message shape, so it is authoritative on decode.
+ */
+const ENVELOPE_TYPE: Record<string, string | undefined> = {
+  textMessageStart: "TEXT_MESSAGE_START",
+  textMessageContent: "TEXT_MESSAGE_CONTENT",
+  textMessageEnd: "TEXT_MESSAGE_END",
+  textMessageChunk: "TEXT_MESSAGE_CHUNK",
+  toolCallStart: "TOOL_CALL_START",
+  toolCallArgs: "TOOL_CALL_ARGS",
+  toolCallEnd: "TOOL_CALL_END",
+  toolCallChunk: "TOOL_CALL_CHUNK",
+  toolCallResult: "TOOL_CALL_RESULT",
+  stateSnapshot: "STATE_SNAPSHOT",
+  stateDelta: "STATE_DELTA",
+  messagesSnapshot: "MESSAGES_SNAPSHOT",
+  activitySnapshot: "ACTIVITY_SNAPSHOT",
+  activityDelta: "ACTIVITY_DELTA",
+  raw: "RAW",
+  custom: "CUSTOM",
+  runStarted: "RUN_STARTED",
+  runFinished: "RUN_FINISHED",
+  runError: "RUN_ERROR",
+  stepStarted: "STEP_STARTED",
+  stepFinished: "STEP_FINISHED",
+  reasoningStart: "REASONING_START",
+  reasoningMessageStart: "REASONING_MESSAGE_START",
+  reasoningMessageContent: "REASONING_MESSAGE_CONTENT",
+  reasoningMessageEnd: "REASONING_MESSAGE_END",
+  reasoningMessageChunk: "REASONING_MESSAGE_CHUNK",
+  reasoningEnd: "REASONING_END",
+  reasoningEncryptedValue: "REASONING_ENCRYPTED_VALUE",
+  subagentStarted: "SUBAGENT_STARTED",
+  subagentFinished: "SUBAGENT_FINISHED",
+  subagentError: "SUBAGENT_ERROR",
+};
+
+/**
  * Narrows metadata to the object the wire format declares, or nothing.
  *
  * On the validated path the schema has already guaranteed this. On the fallback
@@ -347,20 +385,31 @@ export function encode(event: BaseEvent): Uint8Array {
  */
 export function decode(data: Uint8Array): BaseEvent {
   const envelope = protoEvents.Event.decode(data);
-  const found = Object.values(envelope).find((value) => value !== undefined);
-  if (!found) {
+  const entry = Object.entries(envelope).find(([, value]) => value !== undefined);
+  if (!entry) {
     throw new Error("Invalid event");
   }
-  const decoded = found as LooseRecord;
+  // The oneof entry selected the message shape, so it names the type; a
+  // base_event.type that disagrees is a malformed event, not a tiebreak.
+  const entryType = ENVELOPE_TYPE[entry[0]];
+  if (entryType === undefined) {
+    throw new Error("Invalid event");
+  }
+  const decoded = entry[1] as LooseRecord;
   const base = asRecord(decoded.baseEvent);
   if (!base) {
     throw new Error("Invalid event");
   }
-  decoded.type = protoEvents.EventType[base.type as number];
-  // ts-proto's synthetic UNRECOGNIZED (-1) reverse-maps to a string too.
-  if (typeof decoded.type !== "string" || decoded.type === "UNRECOGNIZED") {
-    throw new Error("Invalid event");
+  const declaredType = protoEvents.EventType[base.type as number];
+  if (declaredType !== entryType) {
+    throw new Error(
+      "Invalid event: envelope carries " +
+        entryType +
+        " but the base event declares " +
+        String(declaredType),
+    );
   }
+  decoded.type = entryType;
   decoded.timestamp = base.timestamp;
   decoded.rawEvent = base.rawEvent;
   // Struct decodes an absent object to undefined, so an event that carried no

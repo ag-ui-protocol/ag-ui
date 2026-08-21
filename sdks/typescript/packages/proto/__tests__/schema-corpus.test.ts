@@ -113,6 +113,7 @@ describe("every valid event fixture round-trips over the binary transport", () =
       expect(() => materialise(entry.document)).toThrow();
       const decoded = decode(encode(entry.document as never));
       expect(decoded).toEqual(normalise(entry.document));
+      expectNoUndefinedKeys(decoded);
       return;
     }
     const expected = materialise(entry.document);
