@@ -216,6 +216,25 @@ describe("malformed wire input", () => {
   });
 });
 
+describe("content part guards", () => {
+  it("rejects a content part with no recognisable arm", () => {
+    const bytes = protoEvents.Event.encode({
+      messagesSnapshot: {
+        baseEvent: { type: protoEvents.EventType.MESSAGES_SNAPSHOT },
+        messages: [
+          {
+            id: "u1",
+            role: "user",
+            toolCalls: [],
+            contentParts: [{}],
+          },
+        ],
+      },
+    } as never).finish();
+    expect(() => decode(bytes)).toThrow(/unreadable content part/);
+  });
+});
+
 describe("flattened outcome guards", () => {
   const wrap = (payload: Record<string, unknown>): Uint8Array =>
     protoEvents.Event.encode(payload as never).finish();

@@ -630,10 +630,17 @@ const fromWireMessage = (value: unknown): LooseRecord => {
   const role = typeof wire.role === "string" ? wire.role : "";
   if (PARTS_CONTENT_ROLES.has(role) && wire.content === undefined) {
     // String content rides the content field; anything else is the parts
-    // array — including an empty one, which is valid content of its own.
-    message.content = asArray(wire.contentParts)
-      .map((part: unknown) => fromProtoContentPart(part))
-      .filter((part: unknown) => part !== undefined);
+    // array — including an empty one, which is valid content of its own. A
+    // part with no recognisable arm is rejected, not erased: the JSON path
+    // rejects an unknown part type too, and a vanishing image changes what
+    // the message says.
+    message.content = asArray(wire.contentParts).map((part: unknown) => {
+      const converted = fromProtoContentPart(part);
+      if (converted === undefined) {
+        throw new Error("Invalid event: unreadable content part");
+      }
+      return converted;
+    });
   }
   if (MAP_CONTENT_ROLES.has(role) && wire.activityContent !== undefined) {
     message.content = wire.activityContent;
