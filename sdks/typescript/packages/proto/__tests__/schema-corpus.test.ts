@@ -389,6 +389,25 @@ describe("flattened outcome guards", () => {
     expect(() => decode(bytes)).toThrow(/role that has none/);
   });
 
+  it("rejects activity content on a role that has none", () => {
+    const bytes = protoEvents.Event.encode({
+      messagesSnapshot: {
+        baseEvent: { type: protoEvents.EventType.MESSAGES_SNAPSHOT },
+        messages: [
+          {
+            id: "a1",
+            role: "assistant",
+            content: "hi",
+            activityContent: { progress: 1 },
+            toolCalls: [],
+            contentParts: [],
+          },
+        ],
+      },
+    } as never).finish();
+    expect(() => decode(bytes)).toThrow(/non-activity role/);
+  });
+
   it("rejects an activity message carrying string content", () => {
     const bytes = protoEvents.Event.encode({
       messagesSnapshot: {
@@ -540,6 +559,10 @@ describe("the wire code drift gate", () => {
           ? walk(join(dir, entry.name), `${prefix}${entry.name}/`)
           : [`${prefix}${entry.name}`],
       );
+    // The absolute override must be honoured as given: a rebased path would
+    // mint a junk directory inside the package (and an invalid drive-mixed
+    // path on Windows).
+    expect(existsSync(join(packageDir, out.replace(/^[/\\]/, "")))).toBe(false);
     const committedDir = join(packageDir, "src", "generated");
     const fresh = walk(out).sort();
     expect(walk(committedDir).sort()).toEqual(fresh);
