@@ -975,6 +975,14 @@ function renderMessage(message: WireMessage, indent = ""): string[] {
 }
 
 function renderEnum(wireEnum: WireEnum): string[] {
+  // proto3 requires the first enum value to be zero, so an orphaned zero
+  // cannot simply become reserved — retiring it is a wire design decision
+  // (an UNSPECIFIED placeholder, usually), not something to generate blind.
+  if (wireEnum.reserved.includes(0)) {
+    throw new WireError(
+      `enum ${wireEnum.name}: the zero value was removed — decide its replacement before generating`,
+    );
+  }
   const lines: string[] = [];
   lines.push(...comment(wireEnum.comment, ""));
   lines.push(`enum ${wireEnum.name} {`);

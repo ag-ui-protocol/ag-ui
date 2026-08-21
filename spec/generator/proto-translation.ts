@@ -645,8 +645,14 @@ export function decode(data: Uint8Array): BaseEvent {
     throw new Error("Invalid event");
   }
   const decoded = found as LooseRecord;
-  const base = asRecord(decoded.baseEvent) ?? {};
+  const base = asRecord(decoded.baseEvent);
+  if (!base) {
+    throw new Error("Invalid event");
+  }
   decoded.type = protoEvents.EventType[base.type as number];
+  if (typeof decoded.type !== "string") {
+    throw new Error("Invalid event");
+  }
   decoded.timestamp = base.timestamp;
   decoded.rawEvent = base.rawEvent;
   // Struct decodes an absent object to undefined, so an event that carried no
