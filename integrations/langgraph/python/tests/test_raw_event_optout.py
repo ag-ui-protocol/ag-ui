@@ -50,6 +50,20 @@ class TestEmitRawEventsOptOut(unittest.TestCase):
         cloned = agent.clone()
         self.assertFalse(cloned.emit_raw_events)
 
+    def test_dispatch_event_on_instance_built_without_init(self):
+        """_dispatch_event must not require __init__ to have set the flag.
+
+        Downstream test doubles construct agents via object.__new__ and set
+        only the fields they exercise; before emit_raw_events became a
+        class-level default that raised AttributeError on every event.
+        """
+        agent = object.__new__(LangGraphAgent)
+        ev = TextMessageEndEvent(
+            type=EventType.TEXT_MESSAGE_END, message_id="m1", raw_event={"big": "payload"}
+        )
+        out = agent._dispatch_event(ev)
+        self.assertEqual(out.raw_event, {"big": "payload"})
+
 
 if __name__ == "__main__":
     unittest.main()

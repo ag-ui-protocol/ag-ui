@@ -17,6 +17,20 @@ class SubclassAgent(LangGraphAgent):
         return "subclass behavior"
 
 
+class LegacySignatureAgent(LangGraphAgent):
+    """Subclass whose __init__ predates the emit/interrupt flags.
+
+    This is the shape of ``copilotkit.LangGraphAGUIAgent``: a closed
+    keyword-only signature accepting exactly the four parameters clone()
+    documents. Every kwarg clone() adds beyond those four breaks it, and
+    because add_langgraph_fastapi_endpoint clones per request, that break is
+    a 500 on every request rather than a startup error.
+    """
+
+    def __init__(self, *, name, graph, description=None, config=None):
+        super().__init__(name=name, graph=graph, description=description, config=config)
+
+
 class TestClone(unittest.TestCase):
     """Test that clone() preserves subclass identity and behavior."""
 
@@ -25,6 +39,55 @@ class TestClone(unittest.TestCase):
         graph = MagicMock()
         graph.config_specs = []
         return graph
+
+    def test_clone_subclass_with_legacy_signature(self):
+        """A subclass accepting only the four documented params must clone."""
+        agent = LegacySignatureAgent(name="test", graph=self._make_graph())
+        cloned = agent.clone()
+        self.assertIsInstance(cloned, LegacySignatureAgent)
+        self.assertEqual(cloned.name, "test")
+
+    def test_clone_carries_flags_through_legacy_signature(self):
+        """Flags the subclass __init__ cannot accept still reach the clone.
+
+        Dropping them would silently revert emit_raw_events=False to the
+        default on every request, reintroducing the OSS-607 payload bloat
+        with no error anywhere.
+        """
+        agent = LegacySignatureAgent(name="test", graph=self._make_graph())
+        agent.emit_raw_events = False
+        agent.emit_interrupt_outcome = True
+        agent.enable_legacy_on_interrupt_event = False
+
+        cloned = agent.clone()
+
+        self.assertFalse(cloned.emit_raw_events)
+        self.assertTrue(cloned.emit_interrupt_outcome)
+        self.assertFalse(cloned.enable_legacy_on_interrupt_event)
+
+    def test_clone_carries_flags_when_init_accepts_them(self):
+        """The constructor path stays the one used when the subclass accepts it."""
+        agent = SubclassAgent(
+            name="test",
+            graph=self._make_graph(),
+            emit_raw_events=False,
+            emit_interrupt_outcome=True,
+        )
+        cloned = agent.clone()
+        self.assertFalse(cloned.emit_raw_events)
+        self.assertTrue(cloned.emit_interrupt_outcome)
+
+    def test_dispatch_event_survives_missing_flags(self):
+        """Reading a flag must not require __init__ to have run.
+
+        Flags introduced after the fact are class-level defaults, so instances
+        built without them (partially constructed test doubles, subclasses that
+        skip super().__init__) still dispatch instead of raising AttributeError.
+        """
+        agent = object.__new__(LegacySignatureAgent)
+        self.assertTrue(agent.emit_raw_events)
+        self.assertFalse(agent.emit_interrupt_outcome)
+        self.assertTrue(agent.enable_legacy_on_interrupt_event)
 
     def test_clone_returns_same_class(self):
         """clone() should return an instance of the same class, not the base."""
