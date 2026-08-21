@@ -70,7 +70,8 @@ export const BaseEventSchema = z
     timestamp: z.number().optional(),
     rawEvent: z.any().optional(),
     // Declared once here so every event type carries it. See
-    // OptionalMetadataSchema for why an explicit null parses as absent.
+    // OptionalMetadataSchema for why an explicit null is rejected rather than
+    // tolerated the way parentMessageId and outcome are.
     metadata: OptionalMetadataSchema,
   })
   .passthrough();
@@ -389,28 +390,26 @@ export const ReasoningEncryptedValueEventSchema = BaseEventSchema.extend({
   subagentRunId: z.string().optional(),
 });
 
-// The optional fields accept `null` and treat it as omitted, for the same reason
-// ToolCallStartEvent.parentMessageId does: .NET producers serialize optional fields as
-// JSON `null` (System.Text.Json), so a schema that rejected null would fail on a stream
-// the .NET SDK considers valid — the interop regression this repo has already fixed once.
-const nullableOptionalString = z
-  .string()
-  .nullable()
-  .optional()
-  .transform((v) => v ?? undefined);
+// No null tolerance anywhere on the subagent surface: these fields are new with
+// this PR, so no producer has ever legally written `null` for them — since
+// PNI-199 the Python and .NET SDKs omit valueless fields at the source, and the
+// three legacy tolerances (TOOL_CALL_START/CHUNK.parentMessageId,
+// RUN_FINISHED.outcome) stay a closed set awaiting their middleware shim
+// (PNI-207). Absent is the only spelling; an explicit null fails the parse,
+// exactly like `metadata`.
 
 export const SubagentStartedEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.SUBAGENT_STARTED),
   subagentRunId: z.string(),
   name: z.string(),
-  description: nullableOptionalString,
-  parentSubagentRunId: nullableOptionalString,
+  description: z.string().optional(),
+  parentSubagentRunId: z.string().optional(),
   // Link back to the tool call (and the message that held it) that spawned this
   // subagent, for the agents-as-tools pattern (e.g. deepagents `task`). Lets a
   // consumer correlate the subagent to its spawning call without inspecting
   // rawEvent.metadata.
-  parentToolCallId: nullableOptionalString,
-  parentMessageId: nullableOptionalString,
+  parentToolCallId: z.string().optional(),
+  parentMessageId: z.string().optional(),
 });
 
 export const SubagentFinishedSuccessOutcomeSchema = z
@@ -447,18 +446,18 @@ export const SubagentFinishedEventSchema = BaseEventSchema.extend({
   subagentRunId: z.string(),
   // The subagent's completion payload, mirroring RUN_FINISHED.result.
   result: z.any().optional(),
-  // Accept `null` and treat it as omitted, for the same Pydantic-producer
-  // reason as RUN_FINISHED.outcome above.
-  outcome: SubagentFinishedOutcomeSchema.nullable()
-    .optional()
-    .transform((v) => v ?? undefined),
+  // Strictly optional: absent means success (the legacy reading); an explicit
+  // null is rejected. RUN_FINISHED.outcome's null tolerance is legacy debt from
+  // producers that shipped before PNI-199 — this field is newer than the fix,
+  // so it never inherits the debt.
+  outcome: SubagentFinishedOutcomeSchema.optional(),
 });
 
 export const SubagentErrorEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.SUBAGENT_ERROR),
   subagentRunId: z.string(),
   message: z.string(),
-  code: nullableOptionalString,
+  code: z.string().optional(),
 });
 
 export const EventSchemas = z.discriminatedUnion("type", [

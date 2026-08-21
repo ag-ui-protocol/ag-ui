@@ -27,6 +27,5 @@ public sealed class StateSnapshotEvent : BaseEvent
     /// run's state exactly as an unattributed one does.
     /// </summary>
     [JsonPropertyName("subagentRunId")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SubagentRunId { get; set; }
 }

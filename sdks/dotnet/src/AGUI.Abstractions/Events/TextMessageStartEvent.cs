@@ -15,7 +15,6 @@ public sealed class TextMessageStartEvent : BaseEvent
     public string Role { get; set; } = string.Empty;
 
     [JsonPropertyName("name")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Name { get; set; }
 
     /// <summary>
@@ -23,6 +22,5 @@ public sealed class TextMessageStartEvent : BaseEvent
     /// produced it directly.
     /// </summary>
     [JsonPropertyName("subagentRunId")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SubagentRunId { get; set; }
 }

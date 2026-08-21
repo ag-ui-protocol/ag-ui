@@ -21,6 +21,5 @@ public sealed class SubagentFinishedSuspendedOutcome : SubagentFinishedOutcome
     /// owns no interrupt itself.
     /// </summary>
     [JsonPropertyName("interruptIds")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IList<string>? InterruptIds { get; set; }
 }

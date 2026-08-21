@@ -31,7 +31,6 @@ public sealed class SubagentStartedEvent : BaseEvent
     /// Gets or sets an optional human-readable description of what the subagent does.
     /// </summary>
     [JsonPropertyName("description")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Description { get; set; }
 
     /// <summary>
@@ -40,7 +39,6 @@ public sealed class SubagentStartedEvent : BaseEvent
     /// identity link rather than by the order events arrive in.
     /// </summary>
     [JsonPropertyName("parentSubagentRunId")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? ParentSubagentRunId { get; set; }
 
     /// <summary>
@@ -49,13 +47,11 @@ public sealed class SubagentStartedEvent : BaseEvent
     /// spawning call without inspecting <see cref="BaseEvent.RawEvent"/>.
     /// </summary>
     [JsonPropertyName("parentToolCallId")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? ParentToolCallId { get; set; }
 
     /// <summary>
     /// Gets or sets the identifier of the message that held the spawning tool call.
     /// </summary>
     [JsonPropertyName("parentMessageId")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? ParentMessageId { get; set; }
 }

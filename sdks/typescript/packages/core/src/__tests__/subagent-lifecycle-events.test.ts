@@ -41,32 +41,44 @@ describe("subagent lifecycle events", () => {
     expect(() => EventSchemas.parse(err)).not.toThrow();
   });
 
-  it("accepts JSON null for optional fields and treats it as omitted", () => {
-    // .NET producers serialize optional fields as null (System.Text.Json). A schema that
-    // rejected null would fail on a stream the .NET SDK considers valid — the same interop
-    // regression already fixed once for ToolCallStartEvent.parentMessageId.
+  it("rejects JSON null for optional fields — absent is the only spelling", () => {
+    // The subagent surface postdates PNI-199, when the Python and .NET SDKs
+    // started omitting valueless fields at the source. No producer has ever
+    // legally written null here, so unlike the three grandfathered legacy
+    // tolerances (PNI-207) there is no debt to tolerate: null is illegal.
+    for (const field of [
+      "description",
+      "parentSubagentRunId",
+      "parentToolCallId",
+      "parentMessageId",
+    ]) {
+      expect(() =>
+        SubagentStartedEventSchema.parse({
+          type: EventType.SUBAGENT_STARTED,
+          subagentRunId: "s1",
+          name: "researcher",
+          [field]: null,
+        }),
+      ).toThrow();
+    }
+
+    expect(() =>
+      SubagentErrorEventSchema.parse({
+        type: EventType.SUBAGENT_ERROR,
+        subagentRunId: "s1",
+        message: "boom",
+        code: null,
+      }),
+    ).toThrow();
+
+    // And omission parses cleanly — the legal spelling.
     const started = SubagentStartedEventSchema.parse({
       type: EventType.SUBAGENT_STARTED,
       subagentRunId: "s1",
       name: "researcher",
-      description: null,
-      parentSubagentRunId: null,
-      parentToolCallId: null,
-      parentMessageId: null,
     });
-
     expect(started.description).toBeUndefined();
     expect(started.parentSubagentRunId).toBeUndefined();
-    expect(started.parentToolCallId).toBeUndefined();
-    expect(started.parentMessageId).toBeUndefined();
-
-    const errored = SubagentErrorEventSchema.parse({
-      type: EventType.SUBAGENT_ERROR,
-      subagentRunId: "s1",
-      message: "boom",
-      code: null,
-    });
-    expect(errored.code).toBeUndefined();
   });
 
   it("requires name on SUBAGENT_STARTED and message on SUBAGENT_ERROR", () => {
@@ -76,11 +88,20 @@ describe("subagent lifecycle events", () => {
     expect(() => EventSchemas.parse({ type: EventType.SUBAGENT_ERROR, subagentRunId: "s" })).toThrow();
   });
 
-  it("parses SUBAGENT_FINISHED outcomes and treats null as omitted", () => {
+  it("parses SUBAGENT_FINISHED outcomes and rejects an explicit null", () => {
+    // RUN_FINISHED.outcome tolerates null as legacy debt from pre-PNI-199
+    // producers; this field is newer than the fix and never inherits it.
+    expect(() =>
+      SubagentFinishedEventSchema.parse({
+        type: EventType.SUBAGENT_FINISHED,
+        subagentRunId: "s1",
+        outcome: null,
+      }),
+    ).toThrow();
+
     const legacy = SubagentFinishedEventSchema.parse({
       type: EventType.SUBAGENT_FINISHED,
       subagentRunId: "s1",
-      outcome: null, // Pydantic producers serialize the no-outcome case as null
     });
     expect(legacy.outcome).toBeUndefined();
 

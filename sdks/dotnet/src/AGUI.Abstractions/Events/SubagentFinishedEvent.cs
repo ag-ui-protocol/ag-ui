@@ -31,7 +31,6 @@ public sealed class SubagentFinishedEvent : BaseEvent
     /// <see cref="RunFinishedEvent.Result"/>.
     /// </summary>
     [JsonPropertyName("result")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public JsonElement? Result { get; set; }
 
     /// <summary>
@@ -39,6 +38,5 @@ public sealed class SubagentFinishedEvent : BaseEvent
     /// Null means legacy success.
     /// </summary>
     [JsonPropertyName("outcome")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public SubagentFinishedOutcome? Outcome { get; set; }
 }

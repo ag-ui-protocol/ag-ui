@@ -11,7 +11,6 @@ namespace AGUI.Abstractions;
 public abstract class AGUIMessage
 {
     [JsonPropertyName("id")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Id { get; set; }
 
     [JsonPropertyName("role")]
@@ -24,7 +23,6 @@ public abstract class AGUIMessage
     /// that ran, so attribution has to travel per message rather than per event.
     /// </summary>
     [JsonPropertyName("subagentRunId")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SubagentRunId { get; set; }
 
     /// <summary>
@@ -49,6 +47,5 @@ public abstract class AGUIMessage
     /// reducer of its own is separate work.
     /// </remarks>
     [JsonPropertyName("metadata")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public JsonElement? Metadata { get; set; }
 }

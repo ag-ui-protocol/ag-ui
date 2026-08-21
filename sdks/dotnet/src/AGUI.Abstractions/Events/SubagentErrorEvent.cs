@@ -33,6 +33,5 @@ public sealed class SubagentErrorEvent : BaseEvent
     /// Gets or sets an optional machine-readable error code.
     /// </summary>
     [JsonPropertyName("code")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Code { get; set; }
 }
