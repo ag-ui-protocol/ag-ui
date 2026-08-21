@@ -17,6 +17,8 @@ import { createModel } from "./model-factory";
 import { createA2UIDynamicSchemaAgent } from "./api/a2ui-dynamic-schema";
 import { createA2UIFixedSchemaAgent } from "./api/a2ui-fixed-schema";
 import { createA2UIRecoveryAgent } from "./api/a2ui-recovery";
+import { createInterruptAgent } from "./api/interrupt";
+import { createPredictiveStateUpdatesAgent } from "./api/predictive-state-updates";
 
 function mountAgent(
   app: express.Express,
@@ -317,6 +319,21 @@ async function main(): Promise<void> {
       name: "human_in_the_loop",
       description: "HITL agent",
     }),
+  );
+
+  /* ---------------- interrupt ---------------- */
+  // `schedule_meeting` pauses itself mid-body by calling the tool context's
+  // `interrupt()`, and resumes with the time the user picked. See ./api/interrupt.
+  mountAgent(app, "/interrupt", await createInterruptAgent());
+
+  /* ---------------- predictive-state-updates ---------------- */
+  // `write_document` is a FRONTEND tool; the predictState mapping tells the UI
+  // to paint `state.document` from its streaming args. See
+  // ./api/predictive-state-updates.
+  mountAgent(
+    app,
+    "/predictive-state-updates",
+    await createPredictiveStateUpdatesAgent(),
   );
 
   /* ---------------- tool-based-generative-ui ---------------- */

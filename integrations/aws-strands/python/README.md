@@ -6,7 +6,9 @@ This package exposes a lightweight wrapper that lets any `strands.Agent` speak t
 
 - Python 3.10+
 - `poetry` (recommended) or `pip`
-- A Strands-compatible model key (e.g., `GOOGLE_API_KEY` for Gemini)
+- A model key for the provider `MODEL_PROVIDER` selects. It defaults to
+  `openai`, which requires `OPENAI_API_KEY`; `anthropic` and `gemini` need
+  `ANTHROPIC_API_KEY` and `GOOGLE_API_KEY` instead.
 
 ## Quick Start
 
@@ -20,12 +22,21 @@ poetry run python -m server
 
 It exposes:
 
-| Route                     | Description                  |
-| ------------------------- | ---------------------------- |
-| `/agentic-chat`           | Frontend tool demo           |
-| `/backend-tool-rendering` | Backend tool rendering demo  |
-| `/shared-state`           | Shared recipe state          |
-| `/agentic-generative-ui`  | Agentic UI with PredictState |
+| Route                       | Description                                    |
+| --------------------------- | ---------------------------------------------- |
+| `/agentic-chat`             | Frontend tool demo                             |
+| `/agentic-chat-reasoning`   | Reasoning / thinking event streaming           |
+| `/agentic-chat-multimodal`  | Multimodal image / document analysis           |
+| `/backend-tool-rendering`   | Backend tool rendering demo                    |
+| `/shared-state`             | Shared recipe state                            |
+| `/agentic-generative-ui`    | Agentic UI with PredictState                   |
+| `/human-in-the-loop`        | Frontend proxy tool with halt-after-call       |
+| `/interrupt`                | Tool pauses to ask the user for a meeting time |
+| `/predictive-state-updates` | Document editor driven by streaming tool args  |
+| `/tool-based-generative-ui` | Frontend-rendered tool (`generate_haiku`)      |
+| `/a2ui-dynamic-schema`      | A2UI surfaces composed on the fly              |
+| `/a2ui-fixed-schema`        | A2UI from fixed-layout backend tools           |
+| `/a2ui-recovery`            | A2UI validate-and-retry recovery loop          |
 
 This is the easiest way to test multiple flows locally. Each route still follows the pattern described below (Strands agent → wrapper → FastAPI).
 
@@ -37,7 +48,7 @@ The integration has three main layers:
 - **Configuration** – `StrandsAgentConfig` + `ToolBehavior` + `PredictStateMapping` let you describe tool-specific quirks declaratively (skip message snapshots, emit state, stream args, send confirm actions, etc.).
 - **Transport helpers** – `create_strands_app` and `add_strands_fastapi_endpoint` expose the agent via SSE. They are thin shells over the shared `ag_ui.encoder.EventEncoder`.
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for diagrams and a deeper dive.
+See [../ARCHITECTURE.md](../ARCHITECTURE.md) for diagrams and a deeper dive.
 
 ## Key Files
 

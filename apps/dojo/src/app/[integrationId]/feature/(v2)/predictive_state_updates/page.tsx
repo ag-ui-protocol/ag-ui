@@ -184,6 +184,13 @@ const DocumentEditor = () => {
   });
   const [placeholderVisible, setPlaceholderVisible] = useState(false);
   const [currentDocument, setCurrentDocument] = useState("");
+  // Which proposals the user has already answered, keyed by the tool call each
+  // one belongs to. This lives here rather than inside the card because the
+  // card is rebuilt whenever the document in shared state changes, and a
+  // decision held inside it would be erased by the very write that records it.
+  const [decisions, setDecisions] = useState<Record<string, boolean>>({});
+  const recordDecision = (toolCallId: string, accepted: boolean) =>
+    setDecisions((prev) => ({ ...prev, [toolCallId]: accepted }));
 
   useConfigureSuggestions({
     suggestions: [
@@ -256,8 +263,18 @@ const DocumentEditor = () => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPlaceholderVisible(text.length === 0);
 
-    if (!isLoading) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+    // Only adopt the editor's text as the document when the editor is showing a
+    // DOCUMENT. While a change is proposed it shows a DIFF instead, insertions in
+    // <em> and deletions in <s>, and reading that as text flattens the markup: a
+    // struck-out "Atlantis" beside an inserted "Lola" becomes the literal word
+    // "AtlantisLola". Adopting that made it both the stored document and the text
+    // a rejection restored. The window is open because a run ENDS while the
+    // proposal waits, the tool that asks the user being owned by the browser.
+    // Italic and strike-through are reserved for diffs here, which is what makes
+    // their presence a reliable signal (the agent is told not to emit them).
+    const showsDiff = /<(?:s|em)[\s>/]/.test(editor?.getHTML() ?? "");
+
+    if (!isLoading && !showsDiff) {
       setCurrentDocument(text);
       setAgentState({
         document: text,
@@ -270,11 +287,13 @@ const DocumentEditor = () => {
     {
       agentId: "predictive_state_updates",
       name: "confirm_changes",
-      render: ({ args, respond, status }) => (
+      render: ({ args, respond, status, toolCallId }) => (
         <ConfirmChanges
           args={args}
           respond={respond}
           status={status}
+          decided={decisions[toolCallId]}
+          onDecide={(accepted) => recordDecision(toolCallId, accepted)}
           onReject={() => {
             editor?.commands.setContent(fromMarkdown(currentDocument));
             setAgentState({ document: currentDocument });
@@ -287,7 +306,7 @@ const DocumentEditor = () => {
         />
       ),
     },
-    [agentState?.document],
+    [agentState?.document, decisions],
   );
 
   // Action to write the document.
@@ -299,13 +318,15 @@ const DocumentEditor = () => {
        parameters: z.object({
         document: z.string().describe("The full updated document in markdown format"),
       }) ,
-      render({ args, status, respond }: { args: { document?: string }; status: string; respond?: (result: unknown) => Promise<void> }) {
+      render({ args, status, respond, toolCallId }: { args: { document?: string }; status: string; respond?: (result: unknown) => Promise<void>; toolCallId: string }) {
         if (status === "executing") {
           return (
             <ConfirmChanges
               args={args}
               respond={respond}
               status={status}
+              decided={decisions[toolCallId]}
+              onDecide={(accepted) => recordDecision(toolCallId, accepted)}
               onReject={() => {
                 editor?.commands.setContent(fromMarkdown(currentDocument));
                 setAgentState({ document: currentDocument });
@@ -321,7 +342,7 @@ const DocumentEditor = () => {
         return <></>;
       },
     },
-    [agentState?.document],
+    [agentState?.document, decisions],
   );
 
   return (
@@ -340,12 +361,18 @@ interface ConfirmChangesProps {
   args: { document?: string };
   respond?: (result: unknown) => Promise<void>;
   status: string;
+  /** The answer already given for this tool call, or undefined if unanswered. */
+  decided?: boolean;
+  onDecide: (accepted: boolean) => void;
   onReject: () => void;
   onConfirm: () => void;
 }
 
-function ConfirmChanges({ args: _args, respond, status, onReject, onConfirm }: ConfirmChangesProps) {
-  const [accepted, setAccepted] = useState<boolean | null>(null);
+function ConfirmChanges({ args: _args, respond, status, decided, onDecide, onReject, onConfirm }: ConfirmChangesProps) {
+  // Read from the parent rather than from local state: this component is rebuilt
+  // whenever the document in shared state changes, and answering causes exactly
+  // that, so a local answer would be discarded the moment it was given.
+  const accepted = decided ?? null;
   return (
     <div
       data-testid="confirm-changes-modal"
@@ -363,7 +390,7 @@ function ConfirmChanges({ args: _args, respond, status, onReject, onConfirm }: C
             disabled={status !== "executing"}
             onClick={() => {
               if (respond) {
-                setAccepted(false);
+                onDecide(false);
                 onReject();
                 respond({ accepted: false });
               }
@@ -379,7 +406,7 @@ function ConfirmChanges({ args: _args, respond, status, onReject, onConfirm }: C
             disabled={status !== "executing"}
             onClick={() => {
               if (respond) {
-                setAccepted(true);
+                onDecide(true);
                 onConfirm();
                 respond({ accepted: true });
               }
