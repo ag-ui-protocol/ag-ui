@@ -26,10 +26,11 @@ function sanitizeOutgoingInput(input: RunAgentInput): RunAgentInput {
   const messages = input.messages.map((message) => {
     if ((message as { subagentRunId?: string | null }).subagentRunId === null) {
       changed = true;
-      const { subagentRunId: _null, ...rest } = message as typeof message & {
-        subagentRunId: null;
-      };
-      return rest as typeof message;
+      // Spread + delete rather than rest-destructuring: Message is a union, and
+      // rest types may only be created from object types under tsc.
+      const copy = { ...message } as typeof message & { subagentRunId?: string | null };
+      delete copy.subagentRunId;
+      return copy as typeof message;
     }
     return message;
   });

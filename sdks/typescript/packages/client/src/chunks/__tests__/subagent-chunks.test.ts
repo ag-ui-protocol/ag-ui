@@ -1,6 +1,7 @@
 import { of, concat, from, firstValueFrom } from "rxjs";
 import { toArray } from "rxjs/operators";
 import { transformChunks } from "../transform";
+import type { BaseEvent } from "@ag-ui/core";
 import {
   EventType,
   TextMessageChunkEvent,

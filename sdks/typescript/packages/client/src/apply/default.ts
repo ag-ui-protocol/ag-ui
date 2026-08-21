@@ -715,13 +715,14 @@ export const defaultApplyEvents = (
             // A runtime null tag reads as absent — it must not persist into state
             // and ride the next run's serialized input (the schemas forbid null;
             // this reducer also runs on unverified inputs).
-            const newMessages = rawNewMessages.map((m) =>
-              (m as { subagentRunId?: string | null }).subagentRunId === null
-                ? (({ subagentRunId: _null, ...rest }) => rest as typeof m)(
-                    m as typeof m & { subagentRunId: null },
-                  )
-                : m,
-            );
+            const newMessages = rawNewMessages.map((m) => {
+              if ((m as { subagentRunId?: string | null }).subagentRunId !== null) return m;
+              // Spread + delete: Message is a union, so rest-destructuring is a
+              // tsc error (TS2700).
+              const copy = { ...m } as typeof m & { subagentRunId?: string | null };
+              delete copy.subagentRunId;
+              return copy as typeof m;
+            });
 
             // Edit-based merge: update existing messages with snapshot data while
             // preserving client-only messages the backend leaves out of the
@@ -1004,12 +1005,14 @@ export const defaultApplyEvents = (
               // Add messages that aren't already present (checked by ID)
               for (const rawMessage of runStartedEvent.input.messages) {
                 // Same null-as-absent rule as the snapshot merge above.
-                const message =
-                  (rawMessage as { subagentRunId?: string | null }).subagentRunId === null
-                    ? (({ subagentRunId: _null, ...rest }) => rest as typeof rawMessage)(
-                        rawMessage as typeof rawMessage & { subagentRunId: null },
-                      )
-                    : rawMessage;
+                let message = rawMessage;
+                if ((rawMessage as { subagentRunId?: string | null }).subagentRunId === null) {
+                  const copy = { ...rawMessage } as typeof rawMessage & {
+                    subagentRunId?: string | null;
+                  };
+                  delete copy.subagentRunId;
+                  message = copy as typeof rawMessage;
+                }
                 const existingMessage = messages.find((m) => m.id === message.id);
                 if (!existingMessage) {
                   messages.push(message);
@@ -1057,13 +1060,16 @@ export const defaultApplyEvents = (
           if (mutation.stopPropagation !== true) {
             agent.pendingInterrupts =
               finishedParams.outcome === "interrupt"
-                ? finishedParams.interrupts.map((interrupt) =>
-                    (interrupt as { subagentRunId?: string | null }).subagentRunId === null
-                      ? (({ subagentRunId: _null, ...rest }) => rest as typeof interrupt)(
-                          interrupt as typeof interrupt & { subagentRunId: null },
-                        )
-                      : interrupt,
-                  )
+                ? finishedParams.interrupts.map((interrupt) => {
+                    if ((interrupt as { subagentRunId?: string | null }).subagentRunId !== null) {
+                      return interrupt;
+                    }
+                    const copy = { ...interrupt } as typeof interrupt & {
+                      subagentRunId?: string | null;
+                    };
+                    delete copy.subagentRunId;
+                    return copy as typeof interrupt;
+                  })
                 : [];
           }
 
