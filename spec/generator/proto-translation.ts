@@ -546,6 +546,11 @@ ${sourceEntries
 const fromProtoSource = (source: unknown): unknown => {
   const rec = asRecord(source);
   if (!rec) return undefined;
+  // Exactly one populated arm: a source carrying several is malformed, and
+  // picking one would silently discard the rest.
+  if ([${sourceEntries.map((entry) => `rec.${entry.entry}`).join(", ")}].filter(Boolean).length > 1) {
+    throw new Error("Invalid event: source carries more than one arm");
+  }
 ${sourceEntries
   .map(
     (entry) => `  if (rec.${entry.entry}) {
@@ -590,6 +595,10 @@ ${partEntries.map(toPartCase).join("\n")}
 const fromProtoContentPart = (part: unknown): unknown => {
   const rec = asRecord(part);
   if (!rec) return undefined;
+  // Exactly one populated arm, as with the source above.
+  if ([${partEntries.map((entry) => `rec.${entry.entry}`).join(", ")}].filter(Boolean).length > 1) {
+    throw new Error("Invalid event: content part carries more than one arm");
+  }
 ${partEntries.map(fromPartCase).join("\n")}
   return undefined;
 };
@@ -628,6 +637,17 @@ const fromWireMessage = (value: unknown): LooseRecord => {
   const wire = asRecord(value) ?? {};
   const message: LooseRecord = { ...wire };
   const role = typeof wire.role === "string" ? wire.role : "";
+  if (
+    PARTS_CONTENT_ROLES.has(role) &&
+    wire.content !== undefined &&
+    asArray(wire.contentParts).length > 0
+  ) {
+    // String content and parts together is a contradiction the encoder never
+    // writes; resolving it either way would silently discard the other half.
+    throw new Error(
+      "Invalid event: message carries both string content and content parts",
+    );
+  }
   if (PARTS_CONTENT_ROLES.has(role) && wire.content === undefined) {
     // String content rides the content field; anything else is the parts
     // array — including an empty one, which is valid content of its own. A

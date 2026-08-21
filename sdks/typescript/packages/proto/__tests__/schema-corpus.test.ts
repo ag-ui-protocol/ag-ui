@@ -235,6 +235,56 @@ describe("content part guards", () => {
   });
 });
 
+describe("content part guards (exclusivity)", () => {
+  const message = (fields: Record<string, unknown>): Uint8Array =>
+    protoEvents.Event.encode({
+      messagesSnapshot: {
+        baseEvent: { type: protoEvents.EventType.MESSAGES_SNAPSHOT },
+        messages: [{ id: "u1", role: "user", toolCalls: [], ...fields }],
+      },
+    } as never).finish();
+
+  it("rejects string content alongside content parts", () => {
+    expect(() =>
+      decode(message({ content: "ok", contentParts: [{ text: { text: "hi" } }] })),
+    ).toThrow(/both string content and content parts/);
+  });
+
+  it("rejects a part carrying more than one arm", () => {
+    expect(() =>
+      decode(
+        message({
+          contentParts: [
+            {
+              text: { text: "hi" },
+              image: { source: { url: { value: "u" } } },
+            },
+          ],
+        }),
+      ),
+    ).toThrow(/more than one arm/);
+  });
+
+  it("rejects a source carrying more than one arm", () => {
+    expect(() =>
+      decode(
+        message({
+          contentParts: [
+            {
+              image: {
+                source: {
+                  url: { value: "u" },
+                  data: { value: "d", mimeType: "image/png" },
+                },
+              },
+            },
+          ],
+        }),
+      ),
+    ).toThrow(/more than one arm/);
+  });
+});
+
 describe("flattened outcome guards", () => {
   const wrap = (payload: Record<string, unknown>): Uint8Array =>
     protoEvents.Event.encode(payload as never).finish();
