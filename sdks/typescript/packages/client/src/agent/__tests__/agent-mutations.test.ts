@@ -495,3 +495,32 @@ describe("Agent Mutations", () => {
     });
   });
 });
+
+describe("prepareRunAgentInput strips null attribution tags", () => {
+  class InputProbeAgent extends AbstractAgent {
+    run(): Observable<BaseEvent> {
+      return of();
+    }
+    probeInput() {
+      return this.prepareRunAgentInput({});
+    }
+  }
+
+  it("never serializes subagentRunId: null from seeded or mutated messages", () => {
+    // initialMessages and subscriber mutations are not schema-checked, and the
+    // schemas forbid null — a receiving agent would reject the whole run. The
+    // input assembly is the egress chokepoint (PNI-199 alignment).
+    const agent = new InputProbeAgent({
+      initialMessages: [
+        { id: "m1", role: "assistant", content: "x", subagentRunId: null } as never,
+        { id: "m2", role: "assistant", content: "y", subagentRunId: "s1" } as never,
+      ],
+    });
+
+    const input = agent.probeInput();
+    const byId = new Map(input.messages.map((m) => [m.id, m]));
+    expect("subagentRunId" in (byId.get("m1") as object)).toBe(false);
+    expect((byId.get("m2") as { subagentRunId?: string }).subagentRunId).toBe("s1");
+    expect(JSON.stringify(input)).not.toContain('"subagentRunId":null');
+  });
+});

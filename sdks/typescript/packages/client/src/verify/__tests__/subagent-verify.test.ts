@@ -1451,6 +1451,51 @@ describe("verifyEvents rejects null anywhere on the subagent surface", () => {
   });
 });
 
+describe("verifyEvents rejects non-string interruptIds entries", () => {
+  const run = (inputEvents: BaseEvent[]) =>
+    firstValueFrom(verifyEvents(false)(from(inputEvents)).pipe(toArray()));
+
+  it("rejects a null element inside outcome.interruptIds", async () => {
+    // The field-level null check alone let `interruptIds: [null]` through,
+    // contradicting the string[] schema.
+    let caught: unknown;
+    try {
+      await run([
+        { type: EventType.RUN_STARTED, threadId: "t", runId: "r" } as RunStartedEvent,
+        { type: EventType.SUBAGENT_STARTED, subagentRunId: "s1", name: "r" } as BaseEvent,
+        {
+          type: EventType.SUBAGENT_FINISHED,
+          subagentRunId: "s1",
+          outcome: { type: "suspended", interruptIds: [null] },
+        } as unknown as BaseEvent,
+      ]);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(AGUIError);
+    expect((caught as Error).message).toMatch(/non-string entry in 'outcome.interruptIds'/i);
+  });
+
+  it("accepts a well-formed interruptIds list", async () => {
+    const events = await run([
+      { type: EventType.RUN_STARTED, threadId: "t", runId: "r" } as RunStartedEvent,
+      { type: EventType.SUBAGENT_STARTED, subagentRunId: "s1", name: "r" } as BaseEvent,
+      {
+        type: EventType.SUBAGENT_FINISHED,
+        subagentRunId: "s1",
+        outcome: { type: "suspended", interruptIds: ["int-1"] },
+      } as BaseEvent,
+      {
+        type: EventType.RUN_FINISHED,
+        threadId: "t",
+        runId: "r",
+        outcome: { type: "interrupt", interrupts: [{ id: "int-1", reason: "approval" }] },
+      } as unknown as BaseEvent,
+    ]);
+    expect(events).toHaveLength(4);
+  });
+});
+
 describe("verifyEvents subagent lifecycle required fields", () => {
   const started = { type: EventType.RUN_STARTED, threadId: "t", runId: "r" } as RunStartedEvent;
 

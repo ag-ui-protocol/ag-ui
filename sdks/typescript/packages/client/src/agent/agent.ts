@@ -390,6 +390,17 @@ export abstract class AbstractAgent {
 
   protected prepareRunAgentInput(parameters?: RunAgentParameters): RunAgentInput {
     const clonedMessages = structuredClone_(this.messages) as Message[];
+    // Egress chokepoint for the no-null rule on attribution (PNI-199 alignment):
+    // the verifier and reducer keep event-derived state clean, but messages also
+    // enter through the constructor's initialMessages and subscriber mutations,
+    // neither of which is schema-checked. A null tag must never be serialized
+    // onto the wire — the schemas forbid it, so a receiving agent would reject
+    // the whole run. Absent is the only spelling.
+    for (const message of clonedMessages) {
+      if ((message as { subagentRunId?: string | null }).subagentRunId === null) {
+        delete (message as { subagentRunId?: string | null }).subagentRunId;
+      }
+    }
     const messagesWithoutActivity = clonedMessages.filter((message) => message.role !== "activity");
 
     return {

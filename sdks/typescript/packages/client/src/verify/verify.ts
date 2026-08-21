@@ -294,13 +294,27 @@ export const verifyEvents =
               );
             }
           }
-          // One level deeper: the suspended outcome's interruptIds is optional too.
+          // One level deeper: the suspended outcome's interruptIds is optional too,
+          // and its ELEMENTS are schema-required strings — a null entry is just as
+          // illegal as the field being null.
           const finishedOutcome = (event as { outcome?: { interruptIds?: unknown } | null }).outcome;
           if (finishedOutcome && finishedOutcome.interruptIds === null) {
             return throwError(
               () =>
                 new AGUIError(
                   `Cannot send '${eventType}' with 'outcome.interruptIds: null'. The field is optional — omit it entirely.`,
+                ),
+            );
+          }
+          if (
+            finishedOutcome &&
+            Array.isArray(finishedOutcome.interruptIds) &&
+            (finishedOutcome.interruptIds as unknown[]).some((id) => typeof id !== "string")
+          ) {
+            return throwError(
+              () =>
+                new AGUIError(
+                  `Cannot send '${eventType}' with a non-string entry in 'outcome.interruptIds'. Interrupt ids are strings.`,
                 ),
             );
           }
