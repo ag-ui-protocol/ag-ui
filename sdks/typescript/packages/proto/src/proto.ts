@@ -442,7 +442,15 @@ export function decode(data: Uint8Array): BaseEvent {
     payload.interrupts = record.interrupts;
     delete record.interrupts;
     delete record.outcome;
+    if (wireOutcome === undefined) {
+      if (asArray(payload.interrupts).length > 0) {
+        throw new Error("Invalid event: absent outcome cannot carry interrupts");
+      }
+    }
     if (wireOutcome === "success") {
+      if (asArray(payload.interrupts).length > 0) {
+        throw new Error("Invalid event: outcome success cannot carry interrupts");
+      }
       record.outcome = { type: "success" };
     }
     if (wireOutcome === "interrupt") {
@@ -464,7 +472,15 @@ export function decode(data: Uint8Array): BaseEvent {
     payload.interruptIds = record.interruptIds;
     delete record.interruptIds;
     delete record.outcome;
+    if (wireOutcome === undefined) {
+      if (asArray(payload.interruptIds).length > 0) {
+        throw new Error("Invalid event: absent outcome cannot carry interruptIds");
+      }
+    }
     if (wireOutcome === "success") {
+      if (asArray(payload.interruptIds).length > 0) {
+        throw new Error("Invalid event: outcome success cannot carry interruptIds");
+      }
       record.outcome = { type: "success" };
     }
     if (wireOutcome === "suspended") {

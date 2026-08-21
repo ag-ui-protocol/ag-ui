@@ -352,11 +352,45 @@ ${branches}
               : `, ...(asArray(payload.${field.name}).length > 0 ? { ${field.name}: payload.${field.name} } : {})`,
           )
           .join("");
-        return `    if (wireOutcome === ${JSON.stringify(entry.value)}) {
+        // Payload that belongs to a different case is a contradiction — a
+        // success carrying interrupts would finish the run with one pending —
+        // so it rejects rather than silently vanishing.
+        const ownNames = new Set(entry.payload.map((field) => field.name));
+        const foreign = [
+          ...new Set(
+            spec.cases.flatMap((other) =>
+              other.payload
+                .map((field) => field.name)
+                .filter((name) => !ownNames.has(name)),
+            ),
+          ),
+        ];
+        const foreignChecks = foreign
+          .map(
+            (name) => `
+      if (asArray(payload.${name}).length > 0) {
+        throw new Error("Invalid event: ${spec.jsonField} ${entry.value} cannot carry ${name}");
+      }`,
+          )
+          .join("");
+        return `    if (wireOutcome === ${JSON.stringify(entry.value)}) {${foreignChecks}
       record.${spec.jsonField} = { type: ${JSON.stringify(entry.value)}${pairs} };
     }`;
       })
       .join("\n");
+    const allPayloadNames = [
+      ...new Set(
+        spec.cases.flatMap((entry) => entry.payload.map((f) => f.name)),
+      ),
+    ];
+    const absentChecks = allPayloadNames
+      .map(
+        (name) => `
+      if (asArray(payload.${name}).length > 0) {
+        throw new Error("Invalid event: absent ${spec.jsonField} cannot carry ${name}");
+      }`,
+      )
+      .join("");
     const knownValues = spec.cases.map((entry) => entry.value);
     decodeCases.push(`  if (decoded.type === ${JSON.stringify(spec.eventType)}) {
     const record = decoded as LooseRecord;
@@ -372,6 +406,8 @@ ${branches}
     const payload: LooseRecord = {};
 ${payloadNames.map((name) => `    payload.${name} = record.${name};\n    delete record.${name};`).join("\n")}
     delete record.${spec.jsonField};
+    if (wireOutcome === undefined) {${absentChecks}
+    }
 ${rebuild}
   }`);
   }
