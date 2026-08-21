@@ -341,6 +341,65 @@ describe("flattened outcome guards", () => {
     ).toThrow(/cannot carry interrupts/);
   });
 
+  it("rejects an unknown subagent outcome value", () => {
+    expect(() =>
+      decode(
+        wrap({
+          subagentFinished: {
+            baseEvent: { type: protoEvents.EventType.SUBAGENT_FINISHED },
+            subagentRunId: "s1",
+            outcome: "cancelled",
+            interruptIds: [],
+          },
+        }),
+      ),
+    ).toThrow(/unknown outcome/);
+  });
+
+  it("rejects an absent subagent outcome carrying interrupt ids", () => {
+    expect(() =>
+      decode(
+        wrap({
+          subagentFinished: {
+            baseEvent: { type: protoEvents.EventType.SUBAGENT_FINISHED },
+            subagentRunId: "s1",
+            outcome: "",
+            interruptIds: ["i1"],
+          },
+        }),
+      ),
+    ).toThrow(/cannot carry interruptIds/);
+  });
+
+  it("rejects an activity message carrying string content", () => {
+    const bytes = protoEvents.Event.encode({
+      messagesSnapshot: {
+        baseEvent: { type: protoEvents.EventType.MESSAGES_SNAPSHOT },
+        messages: [
+          {
+            id: "a1",
+            role: "activity",
+            content: "lost",
+            activityContent: { progress: 1 },
+            toolCalls: [],
+            contentParts: [],
+          },
+        ],
+      },
+    } as never).finish();
+    expect(() => decode(bytes)).toThrow(/other content forms/);
+  });
+
+  it("rejects a repeated envelope tag", () => {
+    const first = encode({
+      type: EventType.STEP_FINISHED,
+      stepName: "plan",
+    } as never);
+    const second = encode({ type: EventType.STEP_FINISHED } as never);
+    const concatenated = new Uint8Array([...first, ...second]);
+    expect(() => decode(concatenated)).toThrow();
+  });
+
   it("rejects a subagent success carrying interrupt ids", () => {
     expect(() =>
       decode(

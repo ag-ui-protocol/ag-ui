@@ -212,6 +212,17 @@ const fromWireMessage = (value: unknown): LooseRecord => {
   const wire = asRecord(value) ?? {};
   const message: LooseRecord = { ...wire };
   const role = typeof wire.role === "string" ? wire.role : "";
+  // Content carriers are role-exclusive; a message carrying a carrier its
+  // role does not use would lose data whichever one decode preferred.
+  if (wire.activityContent !== undefined && !MAP_CONTENT_ROLES.has(role)) {
+    throw new Error("Invalid event: message carries activity content for a non-activity role");
+  }
+  if (
+    MAP_CONTENT_ROLES.has(role) &&
+    (wire.content !== undefined || asArray(wire.contentParts).length > 0)
+  ) {
+    throw new Error("Invalid event: activity content cannot ride with other content forms");
+  }
   if (
     PARTS_CONTENT_ROLES.has(role) &&
     wire.content !== undefined &&
@@ -408,7 +419,54 @@ export function encode(event: BaseEvent): Uint8Array {
 /**
  * Decodes the protobuf wire format to an event.
  */
+/**
+ * Rejects a wire envelope whose top level repeats a field tag. Canonical
+ * protobuf merges repeated message occurrences where ts-proto overwrites, so
+ * two runtimes would surface different events; neither silent behaviour is
+ * acceptable for a malformed stream.
+ */
+function assertNoRepeatedTopLevelTags(data: Uint8Array): void {
+  const seen = new Set<number>();
+  let offset = 0;
+  const varint = (): number => {
+    let result = 0;
+    let shift = 0;
+    for (;;) {
+      if (offset >= data.length) throw new Error("Invalid event");
+      const byte = data[offset++];
+      if (shift < 32) result += (byte & 0x7f) * 2 ** shift;
+      shift += 7;
+      if ((byte & 0x80) === 0) return result;
+    }
+  };
+  while (offset < data.length) {
+    const tag = varint();
+    const field = Math.floor(tag / 8);
+    const wireType = tag % 8;
+    if (seen.has(field)) {
+      throw new Error("Invalid event");
+    }
+    seen.add(field);
+    if (wireType === 0) {
+      varint();
+    } else if (wireType === 1) {
+      offset += 8;
+    } else if (wireType === 2) {
+      // Two statements on purpose: offset += varint() would capture offset
+      // before the call advances it past the length bytes.
+      const length = varint();
+      offset += length;
+    } else if (wireType === 5) {
+      offset += 4;
+    } else {
+      throw new Error("Invalid event");
+    }
+    if (offset > data.length) throw new Error("Invalid event");
+  }
+}
+
 export function decode(data: Uint8Array): BaseEvent {
+  assertNoRepeatedTopLevelTags(data);
   const envelope = protoEvents.Event.decode(data);
   // Exactly one oneof entry. ts-proto's field-per-entry decoding cannot
   // reproduce protobuf's last-field-wins for a malformed envelope carrying
