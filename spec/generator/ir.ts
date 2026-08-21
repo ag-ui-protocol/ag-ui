@@ -190,6 +190,19 @@ function readType(
     if (!ref.startsWith("#/$defs/")) {
       throw new SchemaReadError(path, `reference outside this file: ${ref}`);
     }
+    // In 2020-12 a $ref applies alongside its siblings, so a constraint next
+    // to one would combine with the target — a construct this reader does not
+    // model and must not silently drop. Annotations are fine.
+    for (const key of Object.keys(node)) {
+      if (
+        !["$ref", "description", "default", "contentEncoding"].includes(key)
+      ) {
+        throw new SchemaReadError(
+          path,
+          `unmodelled sibling "${key}" next to a $ref`,
+        );
+      }
+    }
     return { kind: "ref", name: ref.replace("#/$defs/", "") };
   }
 
@@ -468,8 +481,12 @@ function assertVocabulary(root: Json): void {
         (value as unknown[]).forEach((child, index) =>
           step(child, `${path}/${key}/${index}`),
         );
-      } else if (key === "items") {
-        step(value, `${path}/items`);
+      } else if (
+        key === "items" ||
+        key === "additionalProperties" ||
+        key === "unevaluatedProperties"
+      ) {
+        step(value, `${path}/${key}`);
       }
     }
   };

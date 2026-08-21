@@ -82,7 +82,9 @@ function tsType(type: TypeExpr): string {
       return type.name;
     case "array": {
       const items = tsType(type.items);
-      return type.items.kind === "union" ? `(${items})[]` : `${items}[]`;
+      const needsParens =
+        type.items.kind === "union" || type.items.kind === "stringEnum";
+      return needsParens ? `(${items})[]` : `${items}[]`;
     }
     case "union":
       return type.members.map(tsType).join(" | ");
@@ -242,14 +244,24 @@ export function emitSchemas(model: ProtocolModel): string {
     `import { z } from "zod/v4";`,
     ...(usesEnum ? [`import { ${TS_ENUM} } from "./types";`] : []),
   ].join("\n");
-  const anyAliases = new Set(
-    model.definitions
-      .filter(
-        (definition) =>
-          definition.kind === "alias" && definition.type.kind === "any",
-      )
-      .map((definition) => definition.name),
-  );
+  // Transitive: an alias of an alias of any accepts undefined just the same.
+  const anyAliases = new Set<string>();
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const definition of model.definitions) {
+      if (definition.kind !== "alias" || anyAliases.has(definition.name))
+        continue;
+      const target = definition.type;
+      if (
+        target.kind === "any" ||
+        (target.kind === "ref" && anyAliases.has(target.name))
+      ) {
+        anyAliases.add(definition.name);
+        grew = true;
+      }
+    }
+  }
   return [
     banner(model),
     imports,
