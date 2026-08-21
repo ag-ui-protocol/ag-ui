@@ -800,11 +800,23 @@ function assertNoRepeatedTopLevelTags(data: Uint8Array): void {
       if ((byte & 0x80) === 0) return result;
     }
   };
+  // Legacy group wire types nest; everything inside a group is an unknown
+  // field a protobuf decoder skips, so the scan skips it too.
+  let groupDepth = 0;
   while (offset < data.length) {
     const tag = varint();
     const field = Math.floor(tag / 8);
     const wireType = tag % 8;
-    if (ENVELOPE_TAGS.has(field)) {
+    if (wireType === 3) {
+      groupDepth += 1;
+      continue;
+    }
+    if (wireType === 4) {
+      groupDepth -= 1;
+      if (groupDepth < 0) throw new Error("Invalid event");
+      continue;
+    }
+    if (groupDepth === 0 && ENVELOPE_TAGS.has(field)) {
       if (seen.has(field)) {
         throw new Error("Invalid event");
       }
@@ -826,6 +838,7 @@ function assertNoRepeatedTopLevelTags(data: Uint8Array): void {
     }
     if (offset > data.length) throw new Error("Invalid event");
   }
+  if (groupDepth !== 0) throw new Error("Invalid event");
 }
 
 export function decode(data: Uint8Array): BaseEvent {

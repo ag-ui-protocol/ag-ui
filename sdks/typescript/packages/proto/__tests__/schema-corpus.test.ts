@@ -429,6 +429,17 @@ describe("flattened outcome guards", () => {
     expect(() => decode(bytes)).toThrow(/unknown patch operation/);
   });
 
+  it("ignores unknown group fields, per protobuf rules", () => {
+    const valid = encode({
+      type: EventType.STEP_FINISHED,
+      stepName: "plan",
+    } as never);
+    // Field 90 as an empty legacy group: SGROUP then EGROUP.
+    const group = new Uint8Array([0xd3, 0x05, 0xd4, 0x05]);
+    const extended = new Uint8Array([...valid, ...group]);
+    expect((decode(extended) as { stepName?: string }).stepName).toBe("plan");
+  });
+
   it("rejects a repeated envelope tag", () => {
     const first = encode({
       type: EventType.STEP_FINISHED,
