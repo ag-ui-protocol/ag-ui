@@ -99,7 +99,10 @@ describe("the generator", () => {
         if (!entry.name.endsWith(".ts") && !entry.name.endsWith(".tsx"))
           continue;
         const source = readFileSync(path, "utf8");
-        if (/from\s+["'][^"']*generated[/"']/.test(source)) {
+        if (
+          /from\s+["'][^"']*generated[/"']/.test(source) ||
+          /import\s*\(\s*["'][^"']*generated[/"']/.test(source)
+        ) {
           offenders.push(relative(srcDir, path));
         }
       }
@@ -157,4 +160,36 @@ describe("the generated zod schemas against the fixture corpus", () => {
     const document = JSON.parse(readFileSync(path, "utf8")) as unknown;
     expect(validator.safeParse(document).success).toBe(false);
   });
+
+  // The tolerant layer's whole promise is that unknown keys SURVIVE the parse
+  // — the strip-and-warn middleware needs to see them, and a re-serialising
+  // intermediary must not lose them. A silent switch from looseObject to a
+  // stripping z.object would pass every assertion above; this is what fails.
+  const objectAnchors = new Set(
+    model.definitions
+      .filter((definition) => definition.kind === "object")
+      .map((definition) => definition.name),
+  );
+  const probeable = collect("valid").filter(([, anchor]) =>
+    objectAnchors.has(anchor),
+  );
+
+  it.each(probeable)(
+    "%s keeps an unknown key through the parse",
+    (_name, anchor, path) => {
+      const validator = schemas[`${anchor}Schema`] as {
+        safeParse: (value: unknown) => {
+          success: boolean;
+          data?: Record<string, unknown>;
+        };
+      };
+      const document = JSON.parse(readFileSync(path, "utf8")) as Record<
+        string,
+        unknown
+      >;
+      const result = validator.safeParse({ ...document, xPassthroughProbe: 1 });
+      expect(result.success).toBe(true);
+      expect(result.data?.xPassthroughProbe).toBe(1);
+    },
+  );
 });
