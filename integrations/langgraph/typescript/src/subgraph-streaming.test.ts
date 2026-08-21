@@ -13,7 +13,6 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { MockedFunction } from "vitest";
-import { Subject } from "rxjs";
 import { EventType } from "@ag-ui/core";
 import type { MessagesSnapshotEvent, StateSnapshotEvent } from "@ag-ui/core";
 import { LangGraphAgent } from "./agent";
@@ -377,13 +376,11 @@ describe("subgraph change trigger", () => {
     return { agent, dispatched, config };
   }
 
-  async function driveAgent(agent: LangGraphAgent, chunks: any[]) {
-    let resolve: () => void;
-    const done = new Promise<void>((r) => (resolve = r));
-
-    const events$ = new Subject<any>();
-    const results: any[] = [];
-
+  async function driveAgent(
+    agent: LangGraphAgent,
+    chunks: any[],
+    expectedError?: Error,
+  ) {
     // Patch prepareStream to return our synthetic chunk stream
     (agent as any).prepareStream = vi.fn().mockResolvedValue({
       streamResponse: (async function* () {
@@ -410,8 +407,8 @@ describe("subgraph change trigger", () => {
       await new Promise<void>((res, rej) => {
         obs.subscribe({ next: () => {}, error: rej, complete: res });
       });
-    } catch (_) {
-      // Expected — we don't have a real server
+    } catch (error) {
+      if (error !== expectedError) throw error;
     }
   }
 
@@ -507,6 +504,7 @@ describe("subgraph change trigger", () => {
       "Subgraph has a future-only route",
     );
 
+    const stopAfterBoundary = new Error("stop after boundary snapshot");
     const chunks = [
       {
         event: "values",
@@ -539,10 +537,10 @@ describe("subgraph change trigger", () => {
           },
         },
       },
-      new Error("stop after boundary snapshot"),
+      stopAfterBoundary,
     ];
 
-    await driveAgent(agent, chunks);
+    await driveAgent(agent, chunks, stopAfterBoundary);
 
     expect(getState).not.toHaveBeenCalled();
 
@@ -572,6 +570,97 @@ describe("subgraph change trigger", () => {
     expect(messagesSnap?.messages.map((message) => message.id)).not.toContain(
       "s1",
     );
+  });
+
+  it("falls back after ordered root values are consumed by an earlier boundary", async () => {
+    const { agent, dispatched, config } = makeStreamingAgent();
+    const user = msg("u1", "human", "AMS to SF");
+    const rootAssistant = msg("r1", "ai", "Root has current route");
+    const committedSubgraphAssistant = msg(
+      "s1",
+      "ai",
+      "Subgraph committed a hotel",
+    );
+    const getState = setMockGetState(config, {
+      values: {
+        messages: [user, rootAssistant, committedSubgraphAssistant],
+        itinerary: {
+          route: "root route",
+          hotel: "Hotel Zoe",
+        },
+      },
+      metadata: { writes: {} },
+    });
+    (agent as any).getStateSnapshot = vi
+      .fn()
+      .mockImplementation((state: LangGraphThreadState<unknown>) => state.values);
+
+    const stopAfterExitBoundary = new Error("stop after exit boundary snapshot");
+    const chunks = [
+      {
+        event: "values",
+        data: {
+          messages: [user, rootAssistant],
+          itinerary: { route: "root route" },
+        },
+      },
+      {
+        event: "events",
+        data: {
+          event: "on_chain_start",
+          metadata: {
+            langgraph_node: "hotels_agent",
+            langgraph_checkpoint_ns:
+              "hotels_agent:abc|hotels_agent_chat_node:xyz",
+          },
+        },
+      },
+      {
+        event: "values|hotels_agent:abc",
+        data: {
+          messages: [committedSubgraphAssistant],
+          itinerary: { hotel: "Hotel Zoe" },
+        },
+      },
+      {
+        event: "events",
+        data: {
+          event: "on_chain_end",
+          metadata: {
+            langgraph_node: "supervisor",
+            langgraph_checkpoint_ns: "supervisor:def",
+          },
+          data: { output: {} },
+        },
+      },
+      stopAfterExitBoundary,
+    ];
+
+    await driveAgent(agent, chunks, stopAfterExitBoundary);
+
+    expect(getState).toHaveBeenCalledTimes(1);
+    const stateSnapshots = dispatched.filter(
+      (event): event is StateSnapshotEvent =>
+        event?.type === EventType.STATE_SNAPSHOT,
+    );
+    expect(stateSnapshots.map((event) => event.snapshot)).toContainEqual({
+      messages: [user, rootAssistant, committedSubgraphAssistant],
+      itinerary: {
+        route: "root route",
+        hotel: "Hotel Zoe",
+      },
+    });
+
+    const messagesSnapshots = dispatched.filter(
+      (event): event is MessagesSnapshotEvent =>
+        event?.type === EventType.MESSAGES_SNAPSHOT,
+    );
+    expect(messagesSnapshots).toHaveLength(2);
+    expect(messagesSnapshots[1].messages.map((message) => message.id)).toEqual([
+      "u1",
+      "r1",
+      "s1",
+    ]);
   });
 });
 
