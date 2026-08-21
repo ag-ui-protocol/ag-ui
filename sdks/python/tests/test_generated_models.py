@@ -205,6 +205,62 @@ class GeneratedAgainstHandwritten(unittest.TestCase):
                     )
 
 
+class WireFidelity(unittest.TestCase):
+    """
+    The config choices that keep the generated models honest about the wire,
+    each pinned so a silent regression (strict off, name-based validation on,
+    exclude_none back) fails here rather than nowhere.
+    """
+
+    def test_no_lax_coercion(self):
+        # The schema's "false" is not False and its "42" is not 42.
+        for document in (
+            {
+                "type": "ACTIVITY_SNAPSHOT",
+                "messageId": "m",
+                "activityType": "p",
+                "content": {},
+                "replace": "false",
+            },
+            {
+                "type": "TEXT_MESSAGE_CONTENT",
+                "messageId": "m",
+                "delta": "d",
+                "timestamp": "42",
+            },
+        ):
+            with self.subTest(document["type"]):
+                with self.assertRaises(ValidationError):
+                    GENERATED_EVENT.validate_python(document)
+
+    def test_snake_case_is_not_a_wire_name(self):
+        # An unknown message_id must not populate messageId — the tolerant
+        # layer keeps unknown keys, it does not invent meaning for them.
+        with self.assertRaises(ValidationError):
+            GENERATED_EVENT.validate_python(
+                {"type": "TEXT_MESSAGE_END", "message_id": "m"}
+            )
+        event = GENERATED_EVENT.validate_python(
+            {"type": "TEXT_MESSAGE_END", "messageId": "m", "message_id": "other"}
+        )
+        self.assertEqual(event.message_id, "m")
+        self.assertEqual(event.model_dump()["message_id"], "other")
+
+    def test_null_as_data_survives_serialization(self):
+        # exclude_unset, not exclude_none: an explicit null on an any-JSON
+        # field is data and must come out the other side.
+        custom = GENERATED_EVENT.validate_python(
+            {"type": "CUSTOM", "name": "n", "value": None}
+        )
+        self.assertIn("value", json.loads(custom.model_dump_json()))
+        delta = GENERATED_EVENT.validate_python(
+            {"type": "STATE_DELTA", "delta": [{"op": "add", "path": "/x", "value": None}]}
+        )
+        operation = json.loads(delta.model_dump_json())["delta"][0]
+        self.assertIn("value", operation)
+        self.assertIsNone(operation["value"])
+
+
 class GeneratedPackageShape(unittest.TestCase):
     def test_version_constant(self):
         self.assertEqual(generated_version.PROTOCOL_VERSION, "draft")
