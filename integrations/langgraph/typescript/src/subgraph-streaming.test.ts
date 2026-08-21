@@ -387,7 +387,10 @@ describe("subgraph change trigger", () => {
     // Patch prepareStream to return our synthetic chunk stream
     (agent as any).prepareStream = vi.fn().mockResolvedValue({
       streamResponse: (async function* () {
-        for (const c of chunks) yield c;
+        for (const c of chunks) {
+          if (c instanceof Error) throw c;
+          yield c;
+        }
       })(),
       state: { values: { messages: [] } } as any,
     });
@@ -487,6 +490,88 @@ describe("subgraph change trigger", () => {
     if (ids.includes("f1")) {
       expect(ids.indexOf("f1")).toBeLessThan(ids.indexOf("h1"));
     }
+  });
+
+  it("uses only root values for subgraph boundary snapshots", async () => {
+    const { agent, dispatched, config } = makeStreamingAgent();
+    const getState = vi.mocked(config.client!.threads.getState);
+    (agent as any).getStateSnapshot = vi
+      .fn()
+      .mockImplementation((state: LangGraphThreadState<unknown>) => state.values);
+
+    const user = msg("u1", "human", "AMS to SF");
+    const rootAssistant = msg("r1", "ai", "Root has current route");
+    const futureSubgraphAssistant = msg(
+      "s1",
+      "ai",
+      "Subgraph has a future-only route",
+    );
+
+    const chunks = [
+      {
+        event: "values",
+        data: {
+          messages: [user, rootAssistant],
+          itinerary: {
+            route: "root route",
+          },
+        },
+      },
+      {
+        event: "values|hotels_agent:abc",
+        data: {
+          messages: [futureSubgraphAssistant],
+          itinerary: {
+            route: "subgraph route",
+            hotel: "Hotel Zoe",
+          },
+          futureOnly: true,
+        },
+      },
+      {
+        event: "events",
+        data: {
+          event: "on_chain_start",
+          metadata: {
+            langgraph_node: "hotels_agent",
+            langgraph_checkpoint_ns:
+              "hotels_agent:abc|hotels_agent_chat_node:xyz",
+          },
+        },
+      },
+      new Error("stop after boundary snapshot"),
+    ];
+
+    await driveAgent(agent, chunks);
+
+    expect(getState).not.toHaveBeenCalled();
+
+    const stateSnap = dispatched.find(
+      (event): event is StateSnapshotEvent =>
+        event?.type === EventType.STATE_SNAPSHOT,
+    );
+    expect(stateSnap).toBeDefined();
+    expect(stateSnap?.snapshot).toEqual({
+      messages: [user, rootAssistant],
+      itinerary: {
+        route: "root route",
+      },
+    });
+    expect(stateSnap?.snapshot).not.toHaveProperty("futureOnly");
+    expect(stateSnap?.snapshot.itinerary).not.toHaveProperty("hotel");
+
+    const messagesSnap = dispatched.find(
+      (event): event is MessagesSnapshotEvent =>
+        event?.type === EventType.MESSAGES_SNAPSHOT,
+    );
+    expect(messagesSnap).toBeDefined();
+    expect(messagesSnap?.messages.map((message) => message.id)).toEqual([
+      "u1",
+      "r1",
+    ]);
+    expect(messagesSnap?.messages.map((message) => message.id)).not.toContain(
+      "s1",
+    );
   });
 });
 

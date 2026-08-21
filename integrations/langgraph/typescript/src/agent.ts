@@ -880,7 +880,8 @@ export class LangGraphAgent extends AbstractAgent {
 
     this.activeRun!.prevNodeName = null;
     let latestStateValues = {} as ThreadState<State>["values"];
-    let hasOrderedStateValues = false;
+    let latestRootStateValues = {} as ThreadState<State>["values"];
+    let hasOrderedRootStateValues = false;
     let updatedState = state;
 
     try {
@@ -972,7 +973,8 @@ export class LangGraphAgent extends AbstractAgent {
             ...latestStateValues,
             ...chunk.data,
           };
-          hasOrderedStateValues = true;
+          latestRootStateValues = chunk.data;
+          hasOrderedRootStateValues = true;
           continue;
         } else if (
           subgraphsStreamEnabled &&
@@ -982,7 +984,6 @@ export class LangGraphAgent extends AbstractAgent {
             ...latestStateValues,
             ...chunk.data,
           };
-          hasOrderedStateValues = true;
           continue;
         }
 
@@ -1012,8 +1013,8 @@ export class LangGraphAgent extends AbstractAgent {
           this.currentSubgraph = currentSubgraph;
           await this.getStateAndMessagesSnapshots(
             threadId,
-            latestStateValues,
-            hasOrderedStateValues,
+            latestRootStateValues,
+            hasOrderedRootStateValues,
           );
         }
 
