@@ -448,10 +448,40 @@ function referencesOf(definition: Definition): string[] {
 }
 
 /**
+ * Walks every subschema position in the document and asserts its keywords are
+ * modelled. The readers below assert too, but only where they look — this
+ * catches an unmodelled constraint parked somewhere no reader visits, such as
+ * a mixin's own top level, before anything is silently dropped.
+ */
+function assertVocabulary(root: Json): void {
+  const step = (node: unknown, path: string): void => {
+    if (typeof node !== "object" || node === null || Array.isArray(node))
+      return;
+    const object = node as Json;
+    assertKnownKeywords(object, path);
+    for (const [key, value] of Object.entries(object)) {
+      if (key === "properties" || key === "$defs") {
+        for (const [name, child] of Object.entries(value as Json)) {
+          step(child, `${path}/${key}/${name}`);
+        }
+      } else if (key === "allOf" || key === "oneOf") {
+        (value as unknown[]).forEach((child, index) =>
+          step(child, `${path}/${key}/${index}`),
+        );
+      } else if (key === "items") {
+        step(value, `${path}/items`);
+      }
+    }
+  };
+  step(root, "#");
+}
+
+/**
  * Reads the whole schema into the model. Throws on any construct outside the
  * vocabulary this file understands.
  */
 export function buildModel(schema: Json): ProtocolModel {
+  assertVocabulary(schema);
   const schemaId = requireString(schema.$id, "#", "$id");
   const versionMatch = /\/spec\/([^/]+)\/schema\.json$/.exec(schemaId);
   if (!versionMatch) {
