@@ -65,7 +65,7 @@ type SnapshotHarness = {
     threadId: string,
     orderedStateValues?: LangGraphThreadState<unknown>["values"],
     hasOrderedStateValues?: boolean,
-  ) => Promise<void>;
+  ) => Promise<LangGraphThreadState<unknown>["values"]>;
 };
 
 type LangGraphClient = NonNullable<LangGraphAgentConfig["client"]>;
@@ -544,19 +544,20 @@ describe("subgraph change trigger", () => {
 
     expect(getState).not.toHaveBeenCalled();
 
-    const stateSnap = dispatched.find(
+    const stateSnapshots = dispatched.filter(
       (event): event is StateSnapshotEvent =>
         event?.type === EventType.STATE_SNAPSHOT,
     );
-    expect(stateSnap).toBeDefined();
-    expect(stateSnap?.snapshot).toEqual({
+    expect(stateSnapshots.map((event) => event.snapshot)).toContainEqual({
       messages: [user, rootAssistant],
       itinerary: {
         route: "root route",
       },
     });
-    expect(stateSnap?.snapshot).not.toHaveProperty("futureOnly");
-    expect(stateSnap?.snapshot.itinerary).not.toHaveProperty("hotel");
+    for (const stateSnapshot of stateSnapshots) {
+      expect(stateSnapshot.snapshot).not.toHaveProperty("futureOnly");
+      expect(stateSnapshot.snapshot.itinerary).not.toHaveProperty("hotel");
+    }
 
     const messagesSnap = dispatched.find(
       (event): event is MessagesSnapshotEvent =>
