@@ -99,14 +99,12 @@ describe("the generator", () => {
         if (!entry.name.endsWith(".ts") && !entry.name.endsWith(".tsx"))
           continue;
         const source = readFileSync(path, "utf8");
-        // Every syntactic route to a module: from-clauses, dynamic import()
-        // and import("...") type queries, bare side-effect imports, require.
-        if (
-          /from\s+["'][^"']*generated[/"']/.test(source) ||
-          /import\s*\(\s*["'][^"']*generated[/"']/.test(source) ||
-          /import\s+["'][^"']*generated[/"']/.test(source) ||
-          /require\s*\(\s*["'][^"']*generated[/"']/.test(source)
-        ) {
+        // Not by import syntax — by path. Every route to a module (from,
+        // import(), import-type queries, side-effect imports, require,
+        // template literals) has to name the module's path, so the scan flags
+        // any reference to the generated directory instead of enumerating
+        // syntaxes.
+        if (/(\.\/|\.\.\/|src\/|@\/)generated\b/.test(source)) {
           offenders.push(relative(srcDir, path));
         }
       }
@@ -177,6 +175,44 @@ describe("the generated zod schemas against the fixture corpus", () => {
   const probeable = collect("valid").filter(([, anchor]) =>
     objectAnchors.has(anchor),
   );
+
+  // The union schemas never run above — every fixture anchor is an object
+  // definition — so a broken union (a discriminated union on the wrong key
+  // throws at parse time) would pass the whole suite. Every valid fixture of
+  // a union member also parses against the union it belongs to.
+  const unions = model.definitions.filter(
+    (definition) => definition.kind === "union",
+  );
+  const unionCases: Array<[string, string, string]> = unions.flatMap((union) =>
+    union.kind === "union"
+      ? collect("valid")
+          .filter(([, anchor]) => union.members.includes(anchor))
+          .map(
+            ([name, , path]) =>
+              [`${name} against ${union.name}Schema`, union.name, path] as [
+                string,
+                string,
+                string,
+              ],
+          )
+      : [],
+  );
+
+  it("has union member fixtures to run", () => {
+    expect(unionCases.length).toBeGreaterThan(0);
+  });
+
+  it.each(unionCases)("%s parses", (_name, unionName, path) => {
+    const validator = schemas[`${unionName}Schema`];
+    const document = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    expect(validator.safeParse(document).success).toBe(true);
+  });
+
+  it("rejects a document that is not an event, through the union", () => {
+    expect(
+      schemas.EventSchema.safeParse({ type: "NOT_AN_EVENT" }).success,
+    ).toBe(false);
+  });
 
   it.each(probeable)(
     "%s keeps an unknown key through the parse",
