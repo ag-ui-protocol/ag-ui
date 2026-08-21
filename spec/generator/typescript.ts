@@ -171,7 +171,14 @@ function zodType(type: TypeExpr): string {
     case "any":
       return "z.any()";
     case "openMap":
-      return "z.record(z.string(), z.any())";
+      // Not z.record: its key schema rejects prototype-named keys such as
+      // "constructor", which are valid JSON the spec accepts. z.custom checks
+      // "plain object" and passes the value through untouched.
+      return (
+        "z.custom<Record<string, any>>(" +
+        '(value) => typeof value === "object" && value !== null && !Array.isArray(value)' +
+        ")"
+      );
     case "stringEnum":
       return `z.enum([${type.values.map((value) => JSON.stringify(value)).join(", ")}])`;
     case "ref":

@@ -19,7 +19,9 @@ export const EventTypeSchema = z.enum(EventType);
  * reserved for the protocol's own use; reservation is by convention, since
  * validating the shape of a key's value would contradict being open by key.
  */
-export const MetadataSchema = z.record(z.string(), z.any());
+export const MetadataSchema = z.custom<Record<string, any>>(
+  (value) => typeof value === "object" && value !== null && !Array.isArray(value),
+);
 
 /**
  * An opaque handle for one subagent invocation, not a reusable name for a
@@ -470,7 +472,9 @@ export const ActivityMessageSchema = z.looseObject({
   id: z.string(),
   role: z.literal("activity"),
   activityType: z.string(),
-  content: z.record(z.string(), z.any()),
+  content: z.custom<Record<string, any>>(
+    (value) => typeof value === "object" && value !== null && !Array.isArray(value),
+  ),
   metadata: MetadataSchema.optional(),
 });
 
@@ -529,7 +533,9 @@ export const ActivitySnapshotEventSchema = z.looseObject({
   subagentRunId: SubagentRunIdSchema.optional(),
   messageId: z.string(),
   activityType: z.string(),
-  content: z.record(z.string(), z.any()),
+  content: z.custom<Record<string, any>>(
+    (value) => typeof value === "object" && value !== null && !Array.isArray(value),
+  ),
   replace: z.boolean().optional(),
 });
 
@@ -657,7 +663,11 @@ export const InterruptSchema = z.looseObject({
   reason: z.string(),
   message: z.string().optional(),
   toolCallId: z.string().optional(),
-  responseSchema: z.record(z.string(), z.any()).optional(),
+  responseSchema: z
+    .custom<
+      Record<string, any>
+    >((value) => typeof value === "object" && value !== null && !Array.isArray(value))
+    .optional(),
   expiresAt: z.string().optional(),
   metadata: MetadataSchema.optional(),
 });
