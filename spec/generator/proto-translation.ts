@@ -357,12 +357,18 @@ ${branches}
     }`;
       })
       .join("\n");
+    const knownValues = spec.cases.map((entry) => entry.value);
     decodeCases.push(`  if (decoded.type === ${JSON.stringify(spec.eventType)}) {
     const record = decoded as LooseRecord;
     const wireOutcome =
       typeof record.${spec.jsonField} === "string" && record.${spec.jsonField} !== ""
         ? (record.${spec.jsonField} as string)
         : undefined;
+    // An unknown discriminator must not silently decode to "no ${spec.jsonField}",
+    // which would imply success; the JSON path errors on it, so this does too.
+    if (wireOutcome !== undefined && !${JSON.stringify(knownValues)}.includes(wireOutcome)) {
+      throw new Error("Invalid event: unknown ${spec.jsonField} " + wireOutcome);
+    }
     const payload: LooseRecord = {};
 ${payloadNames.map((name) => `    payload.${name} = record.${name};\n    delete record.${name};`).join("\n")}
     delete record.${spec.jsonField};

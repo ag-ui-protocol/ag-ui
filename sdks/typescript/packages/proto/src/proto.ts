@@ -433,6 +433,11 @@ export function decode(data: Uint8Array): BaseEvent {
       typeof record.outcome === "string" && record.outcome !== ""
         ? (record.outcome as string)
         : undefined;
+    // An unknown discriminator must not silently decode to "no outcome",
+    // which would imply success; the JSON path errors on it, so this does too.
+    if (wireOutcome !== undefined && !["success", "interrupt"].includes(wireOutcome)) {
+      throw new Error("Invalid event: unknown outcome " + wireOutcome);
+    }
     const payload: LooseRecord = {};
     payload.interrupts = record.interrupts;
     delete record.interrupts;
@@ -450,6 +455,11 @@ export function decode(data: Uint8Array): BaseEvent {
       typeof record.outcome === "string" && record.outcome !== ""
         ? (record.outcome as string)
         : undefined;
+    // An unknown discriminator must not silently decode to "no outcome",
+    // which would imply success; the JSON path errors on it, so this does too.
+    if (wireOutcome !== undefined && !["success", "suspended"].includes(wireOutcome)) {
+      throw new Error("Invalid event: unknown outcome " + wireOutcome);
+    }
     const payload: LooseRecord = {};
     payload.interruptIds = record.interruptIds;
     delete record.interruptIds;

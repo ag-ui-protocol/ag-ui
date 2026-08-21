@@ -2,6 +2,8 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildModel } from "../generator/ir";
+import { buildWireModel, emitProtoFiles } from "../generator/protobuf";
+import { FREEZE_PATH } from "../generator/generate";
 import {
   generateFiles,
   PROTO_OUTPUT_DIR,
@@ -146,6 +148,38 @@ describe("the generator", () => {
       "utf8",
     );
     expect(manifest).not.toContain("generated");
+  });
+});
+
+describe("the wire freeze machinery", () => {
+  const committedFreeze = readFileSync(FREEZE_PATH, "utf8");
+
+  it("turns an orphaned slot into a reserved number", () => {
+    // A freeze entry whose schema field is gone must become a protobuf
+    // reserved statement — in messages and in enums alike.
+    const doctored =
+      committedFreeze +
+      "Interrupt.legacy_field = 9\n" +
+      "JsonPatchOperationType.LEGACY = 6\n";
+    const wire = buildWireModel(model, doctored);
+    const byName = Object.fromEntries(
+      emitProtoFiles(wire).map((file) => [file.name, file.content]),
+    );
+    expect(byName["types.proto"]).toContain("reserved 9;");
+    expect(byName["patch.proto"]).toContain("reserved 6;");
+  });
+
+  it("refuses to reserve an orphaned zero enum value", () => {
+    // proto3 requires the first enum value to be zero; retiring it is a wire
+    // design decision, not something to generate blind.
+    const doctored = committedFreeze
+      .replace(
+        "JsonPatchOperationType.ADD = 0",
+        "JsonPatchOperationType.ADD_OLD = 0",
+      )
+      .replace("JsonPatchOperation.op = 1", "JsonPatchOperation.op = 1");
+    const wire = buildWireModel(model, doctored);
+    expect(() => emitProtoFiles(wire)).toThrow(/zero value was removed/);
   });
 });
 
