@@ -300,10 +300,15 @@ export const verifyEvents =
           const finishedOutcome = (event as {
             outcome?: { type?: unknown; interruptIds?: unknown } | null;
           }).outcome;
+          // Only undefined is absent; every PRESENT value must be a valid outcome
+          // (`finishedOutcome &&` let "" / false / 0 through — null is rejected by
+          // the field-level check above, kept out of this condition so the two
+          // checks stay order-independent).
           if (
-            finishedOutcome &&
-            finishedOutcome.type !== "success" &&
-            finishedOutcome.type !== "suspended"
+            finishedOutcome !== undefined &&
+            finishedOutcome !== null &&
+            (finishedOutcome as { type?: unknown }).type !== "success" &&
+            (finishedOutcome as { type?: unknown }).type !== "suspended"
           ) {
             return throwError(
               () =>

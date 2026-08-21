@@ -1500,6 +1500,28 @@ describe("verifyEvents rejects non-string interruptIds entries", () => {
     }
   });
 
+  it("rejects falsy PRESENT outcomes — only undefined is absent", async () => {
+    // `finishedOutcome &&` skipped "" / false / 0, all of which the schema
+    // rejects.
+    for (const badOutcome of ["", false, 0]) {
+      let caught: unknown;
+      try {
+        await run([
+          { type: EventType.RUN_STARTED, threadId: "t", runId: "r" } as RunStartedEvent,
+          { type: EventType.SUBAGENT_STARTED, subagentRunId: "s1", name: "r" } as BaseEvent,
+          {
+            type: EventType.SUBAGENT_FINISHED,
+            subagentRunId: "s1",
+            outcome: badOutcome,
+          } as unknown as BaseEvent,
+        ]);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught, `outcome=${JSON.stringify(badOutcome)}`).toBeInstanceOf(AGUIError);
+    }
+  });
+
   it("accepts a well-formed interruptIds list", async () => {
     const events = await run([
       { type: EventType.RUN_STARTED, threadId: "t", runId: "r" } as RunStartedEvent,

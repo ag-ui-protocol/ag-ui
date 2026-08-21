@@ -1,4 +1,5 @@
 import { AbstractAgent } from "../agent";
+import { HttpAgent } from "../http";
 import { AgentSubscriber } from "../subscriber";
 import {
   BaseEvent,
@@ -553,5 +554,65 @@ describe("onRunInitialized mutations cannot put a null tag on the wire", () => {
     expect(sentInput).toBeDefined();
     expect(JSON.stringify(sentInput)).not.toContain('"subagentRunId":null');
     expect("subagentRunId" in (sentInput!.messages[0] as object)).toBe(false);
+  });
+});
+
+describe("the terminal HTTP egress strips null tags from every later writer", () => {
+  // Middlewares and in-place input mutations run AFTER every upstream
+  // sanitizer; requestInit is the last point before the bytes leave.
+  class BodyProbeAgent extends HttpAgent {
+    public capturedBody: string | undefined;
+    probeBody(input: RunAgentInput) {
+      this.capturedBody = this.requestInit(input).body as string;
+      return this.capturedBody;
+    }
+  }
+
+  it("a middleware-replaced message list cannot serialize a null tag", () => {
+    const agent = new BodyProbeAgent({ url: "http://localhost/agent" });
+    const body = agent.probeBody({
+      threadId: "t",
+      runId: "r",
+      tools: [],
+      context: [],
+      state: {},
+      messages: [
+        { id: "m1", role: "user", content: "hello", subagentRunId: null } as never,
+        { id: "m2", role: "assistant", content: "x", subagentRunId: "s1" } as never,
+      ],
+    });
+    expect(body).not.toContain('"subagentRunId":null');
+    expect(body).toContain('"subagentRunId":"s1"');
+  });
+
+  it("an in-place onRunInitialized mutation cannot serialize a null tag", async () => {
+    let sentBody: string | undefined;
+    class CaptureHttpAgent extends HttpAgent {
+      run(input: RunAgentInput): Observable<BaseEvent> {
+        sentBody = this.requestInit(input).body as string;
+        return of(
+          { type: "RUN_STARTED", threadId: input.threadId, runId: input.runId },
+          { type: "RUN_FINISHED", threadId: input.threadId, runId: input.runId },
+        ) as unknown as Observable<BaseEvent>;
+      }
+    }
+    const agent = new CaptureHttpAgent({ url: "http://localhost/agent" });
+    const subscriber: AgentSubscriber = {
+      onRunInitialized: ({ input }) => {
+        // Mutating the input directly, not returning messages — the round-4
+        // sanitizer never sees this write.
+        (input.messages as unknown[]).push({
+          id: "m1",
+          role: "user",
+          content: "hello",
+          subagentRunId: null,
+        });
+        return {};
+      },
+    };
+
+    await agent.runAgent({}, subscriber);
+    expect(sentBody).toBeDefined();
+    expect(sentBody).not.toContain('"subagentRunId":null');
   });
 });
