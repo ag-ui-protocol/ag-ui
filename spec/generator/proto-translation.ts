@@ -425,10 +425,15 @@ ${rebuild}
   }`);
     decodeCases.push(`  if (decoded.type === ${JSON.stringify(entry.eventType)} && Array.isArray(decoded.${entry.jsonField})) {
     for (const operation of decoded.${entry.jsonField} as LooseRecord[]) {
-      operation.op =
+      const opName =
         protoPatch.JsonPatchOperationType[
           operation.op as protoPatch.JsonPatchOperationType
-        ].toLowerCase();
+        ];
+      // A wire value outside the enum must not invent an operation.
+      if (typeof opName !== "string" || opName === "UNRECOGNIZED") {
+        throw new Error("Invalid event: unknown patch operation");
+      }
+      operation.op = opName.toLowerCase();
       Object.keys(operation).forEach((key) => {
         if (operation[key] === undefined) {
           delete operation[key];
@@ -465,6 +470,13 @@ ${rebuild}
   }
 
   /* ---------------- the file ---------------- */
+
+  const eventMessage = wire.messages.find(
+    (message) => message.name === "Event",
+  );
+  const envelopeTagNumbers = (eventMessage?.oneof?.entries ?? [])
+    .map((entry) => entry.number)
+    .join(", ");
 
   const envelopeTypeEntries = wire.envelope
     .map((entry) => {
@@ -514,6 +526,8 @@ const KNOWN_TO_CORE = new Set<string>(Object.values(EventType));
 const ENVELOPE_TYPE: Record<string, string | undefined> = {
 ${envelopeTypeEntries}
 };
+/** The envelope's known field numbers, for the repeated-tag scan. */
+const ENVELOPE_TAGS = new Set<number>([${envelopeTagNumbers}]);
 
 /**
  * Narrows metadata to the object the wire format declares, or nothing.
@@ -766,10 +780,11 @@ ${encodeCases.join("\n")}
  * Decodes the protobuf wire format to an event.
  */
 /**
- * Rejects a wire envelope whose top level repeats a field tag. Canonical
- * protobuf merges repeated message occurrences where ts-proto overwrites, so
- * two runtimes would surface different events; neither silent behaviour is
- * acceptable for a malformed stream.
+ * Rejects a wire envelope that repeats a KNOWN event tag. Canonical protobuf
+ * merges repeated message occurrences where ts-proto overwrites, so two
+ * runtimes would surface different events; neither silent behaviour is
+ * acceptable. Unknown field numbers are protobuf's to ignore — repeated or
+ * not — so forward compatibility is untouched.
  */
 function assertNoRepeatedTopLevelTags(data: Uint8Array): void {
   const seen = new Set<number>();
@@ -789,10 +804,12 @@ function assertNoRepeatedTopLevelTags(data: Uint8Array): void {
     const tag = varint();
     const field = Math.floor(tag / 8);
     const wireType = tag % 8;
-    if (seen.has(field)) {
-      throw new Error("Invalid event");
+    if (ENVELOPE_TAGS.has(field)) {
+      if (seen.has(field)) {
+        throw new Error("Invalid event");
+      }
+      seen.add(field);
     }
-    seen.add(field);
     if (wireType === 0) {
       varint();
     } else if (wireType === 1) {

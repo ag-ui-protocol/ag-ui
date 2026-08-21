@@ -408,6 +408,27 @@ describe("flattened outcome guards", () => {
     expect(() => decode(bytes)).toThrow(/other content forms/);
   });
 
+  it("ignores duplicated unknown envelope fields, per protobuf rules", () => {
+    const valid = encode({
+      type: EventType.STEP_FINISHED,
+      stepName: "plan",
+    } as never);
+    // Field 90, length-delimited, empty — twice. Unknown, so ignored.
+    const unknown = new Uint8Array([0xd2, 0x05, 0x00, 0xd2, 0x05, 0x00]);
+    const extended = new Uint8Array([...valid, ...unknown]);
+    expect((decode(extended) as { stepName?: string }).stepName).toBe("plan");
+  });
+
+  it("rejects an out-of-enum patch operation", () => {
+    const bytes = protoEvents.Event.encode({
+      stateDelta: {
+        baseEvent: { type: protoEvents.EventType.STATE_DELTA },
+        delta: [{ op: 99, path: "/x" }],
+      },
+    } as never).finish();
+    expect(() => decode(bytes)).toThrow(/unknown patch operation/);
+  });
+
   it("rejects a repeated envelope tag", () => {
     const first = encode({
       type: EventType.STEP_FINISHED,

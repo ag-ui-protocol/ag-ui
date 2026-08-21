@@ -65,6 +65,11 @@ const ENVELOPE_TYPE: Record<string, string | undefined> = {
   subagentFinished: "SUBAGENT_FINISHED",
   subagentError: "SUBAGENT_ERROR",
 };
+/** The envelope's known field numbers, for the repeated-tag scan. */
+const ENVELOPE_TAGS = new Set<number>([
+  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
+  28, 29, 30, 31,
+]);
 
 /**
  * Narrows metadata to the object the wire format declares, or nothing.
@@ -420,10 +425,11 @@ export function encode(event: BaseEvent): Uint8Array {
  * Decodes the protobuf wire format to an event.
  */
 /**
- * Rejects a wire envelope whose top level repeats a field tag. Canonical
- * protobuf merges repeated message occurrences where ts-proto overwrites, so
- * two runtimes would surface different events; neither silent behaviour is
- * acceptable for a malformed stream.
+ * Rejects a wire envelope that repeats a KNOWN event tag. Canonical protobuf
+ * merges repeated message occurrences where ts-proto overwrites, so two
+ * runtimes would surface different events; neither silent behaviour is
+ * acceptable. Unknown field numbers are protobuf's to ignore — repeated or
+ * not — so forward compatibility is untouched.
  */
 function assertNoRepeatedTopLevelTags(data: Uint8Array): void {
   const seen = new Set<number>();
@@ -443,10 +449,12 @@ function assertNoRepeatedTopLevelTags(data: Uint8Array): void {
     const tag = varint();
     const field = Math.floor(tag / 8);
     const wireType = tag % 8;
-    if (seen.has(field)) {
-      throw new Error("Invalid event");
+    if (ENVELOPE_TAGS.has(field)) {
+      if (seen.has(field)) {
+        throw new Error("Invalid event");
+      }
+      seen.add(field);
     }
-    seen.add(field);
     if (wireType === 0) {
       varint();
     } else if (wireType === 1) {
@@ -575,10 +583,13 @@ export function decode(data: Uint8Array): BaseEvent {
   }
   if (decoded.type === "STATE_DELTA" && Array.isArray(decoded.delta)) {
     for (const operation of decoded.delta as LooseRecord[]) {
-      operation.op =
-        protoPatch.JsonPatchOperationType[
-          operation.op as protoPatch.JsonPatchOperationType
-        ].toLowerCase();
+      const opName =
+        protoPatch.JsonPatchOperationType[operation.op as protoPatch.JsonPatchOperationType];
+      // A wire value outside the enum must not invent an operation.
+      if (typeof opName !== "string" || opName === "UNRECOGNIZED") {
+        throw new Error("Invalid event: unknown patch operation");
+      }
+      operation.op = opName.toLowerCase();
       Object.keys(operation).forEach((key) => {
         if (operation[key] === undefined) {
           delete operation[key];
@@ -588,10 +599,13 @@ export function decode(data: Uint8Array): BaseEvent {
   }
   if (decoded.type === "ACTIVITY_DELTA" && Array.isArray(decoded.patch)) {
     for (const operation of decoded.patch as LooseRecord[]) {
-      operation.op =
-        protoPatch.JsonPatchOperationType[
-          operation.op as protoPatch.JsonPatchOperationType
-        ].toLowerCase();
+      const opName =
+        protoPatch.JsonPatchOperationType[operation.op as protoPatch.JsonPatchOperationType];
+      // A wire value outside the enum must not invent an operation.
+      if (typeof opName !== "string" || opName === "UNRECOGNIZED") {
+        throw new Error("Invalid event: unknown patch operation");
+      }
+      operation.op = opName.toLowerCase();
       Object.keys(operation).forEach((key) => {
         if (operation[key] === undefined) {
           delete operation[key];
