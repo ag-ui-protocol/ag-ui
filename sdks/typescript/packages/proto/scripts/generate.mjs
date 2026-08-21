@@ -4,7 +4,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const packageDir = dirname(dirname(fileURLToPath(import.meta.url)));
-const generatedDir = "src/generated";
+// Overridable so the drift-gate test can regenerate into a temp directory
+// and compare against the committed output.
+const generatedDir = process.env.PROTO_GENERATED_DIR ?? "src/generated";
 const protoDir = "src/proto";
 const binDir = join(packageDir, "node_modules", ".bin");
 const plugin = join(

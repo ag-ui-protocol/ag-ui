@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { buildModel } from "../generator/ir";
 import {
   generateFiles,
+  PROTO_OUTPUT_DIR,
   PY_OUTPUT_DIR,
   SCHEMA_PATH,
   TS_OUTPUT_DIR,
@@ -22,7 +23,7 @@ describe("the generator", () => {
   it("matches the committed output, byte for byte", () => {
     // This is the CI gate: a schema or generator change without a matching
     // regeneration fails here, and so does a hand edit to a generated file.
-    for (const dir of [TS_OUTPUT_DIR, PY_OUTPUT_DIR]) {
+    for (const dir of [TS_OUTPUT_DIR, PY_OUTPUT_DIR, PROTO_OUTPUT_DIR]) {
       const committed = readdirSync(dir)
         .filter((name) => name !== "__pycache__")
         .sort();
@@ -75,7 +76,8 @@ describe("the generator", () => {
 
   it("marks every emitted file as generated", () => {
     for (const file of files) {
-      const comment = file.path.endsWith(".py") ? "#" : "//";
+      const comment =
+        file.path.endsWith(".py") || file.path.endsWith(".txt") ? "#" : "//";
       expect(
         file.content.startsWith(`${comment} @generated`),
         `${file.path} has no @generated banner`,
