@@ -34,6 +34,7 @@ node_modules
 .turbo
 **/.turbo
 
+sdks/build/
 # Build artifacts and binaries
 **/build/
 *.dSYM/
