@@ -12,11 +12,16 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { MockedFunction } from "vitest";
 import { Subject } from "rxjs";
 import { EventType } from "@ag-ui/core";
+import type { MessagesSnapshotEvent, StateSnapshotEvent } from "@ag-ui/core";
 import { LangGraphAgent } from "./agent";
 import type { LangGraphAgentConfig } from "./agent";
-import type { Message as LangGraphMessage } from "@langchain/langgraph-sdk";
+import type {
+  Message as LangGraphMessage,
+  ThreadState as LangGraphThreadState,
+} from "@langchain/langgraph-sdk";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -52,6 +57,58 @@ function makeAgent(config = makeConfig()) {
     return event as any;
   };
   return { agent, dispatched };
+}
+
+type SnapshotHarness = {
+  activeRun: unknown;
+  getStateSnapshot: ReturnType<typeof vi.fn>;
+  getStateAndMessagesSnapshots: (
+    threadId: string,
+    orderedStateValues?: LangGraphThreadState<unknown>["values"],
+    hasOrderedStateValues?: boolean,
+  ) => Promise<void>;
+};
+
+type LangGraphClient = NonNullable<LangGraphAgentConfig["client"]>;
+type GetState = LangGraphClient["threads"]["getState"];
+type GetStateMock = MockedFunction<GetState>;
+type MockThreadState = Pick<LangGraphThreadState<unknown>, "values"> &
+  Partial<Omit<LangGraphThreadState<unknown>, "values">>;
+
+function snapshotHarness(agent: LangGraphAgent): SnapshotHarness {
+  return agent as unknown as SnapshotHarness;
+}
+
+function setMockGetState(
+  config: LangGraphAgentConfig,
+  state: MockThreadState,
+): GetStateMock {
+  const threadState: LangGraphThreadState<unknown> = {
+    next: [],
+    checkpoint: {
+      thread_id: "thread-1",
+      checkpoint_ns: "",
+      checkpoint_id: null,
+      checkpoint_map: null,
+    },
+    metadata: {},
+    created_at: null,
+    parent_checkpoint: null,
+    tasks: [],
+    ...state,
+  };
+  const getState = vi.mocked(config.client!.threads.getState);
+  getState.mockResolvedValue(threadState);
+  return getState;
+}
+
+function setupSnapshotHarness(state: MockThreadState) {
+  const config = makeConfig();
+  const getState = setMockGetState(config, state);
+  const { agent, dispatched } = makeAgent(config);
+  const agentHarness = snapshotHarness(agent);
+  agentHarness.activeRun = { id: "run-1" };
+  return { agentHarness, dispatched, getState };
 }
 
 function eventTypes(dispatched: any[]): string[] {
@@ -165,6 +222,117 @@ describe("getStateAndMessagesSnapshots", () => {
     const ids = snap.messages.map((m: any) => m.id);
     expect(ids).toContain("h1");
     expect(ids.indexOf("f1")).toBeLessThan(ids.indexOf("h1"));
+  });
+
+  it("uses ordered values for boundary snapshots when getState is ahead", async () => {
+    const user = msg("u1", "human", "AMS to SF");
+    const hotels = msg("h1", "ai", "Booked Hotel Zoe");
+    const futureExperience = msg(
+      "e1",
+      "ai",
+      "Booked experience after boundary",
+    );
+    const orderedValues = {
+      messages: [user, hotels],
+      itinerary: {
+        hotel: "Hotel Zoe",
+        refundable: true,
+      },
+    };
+    const { agentHarness, dispatched, getState } = setupSnapshotHarness({
+      values: {
+        messages: [user, hotels, futureExperience],
+        itinerary: {
+          hotel: "Hotel Zoe",
+          experience: "Ferry Building tasting",
+        },
+        futureOnly: true,
+      },
+    });
+
+    await agentHarness.getStateAndMessagesSnapshots(
+      "thread-1",
+      orderedValues,
+      true,
+    );
+
+    expect(getState).not.toHaveBeenCalled();
+    const messagesSnap = dispatched.find(
+      (event): event is MessagesSnapshotEvent =>
+        event?.type === EventType.MESSAGES_SNAPSHOT,
+    );
+    expect(messagesSnap).toBeDefined();
+    const ids = messagesSnap?.messages.map((message) => message.id);
+    expect(ids).toEqual(["u1", "h1"]);
+    expect(ids).not.toContain("e1");
+
+    const stateSnap = dispatched.find(
+      (event): event is StateSnapshotEvent =>
+        event?.type === EventType.STATE_SNAPSHOT,
+    );
+    expect(stateSnap).toBeDefined();
+    expect(stateSnap?.snapshot).toEqual(orderedValues);
+    expect(stateSnap?.snapshot).not.toHaveProperty("futureOnly");
+    expect(stateSnap?.snapshot.itinerary).not.toHaveProperty("experience");
+  });
+
+  it("uses available empty ordered state instead of falling back to getState", async () => {
+    const checkpointOnly = msg("c1", "ai", "Checkpoint-only response");
+    const { agentHarness, dispatched, getState } = setupSnapshotHarness({
+      values: {
+        messages: [checkpointOnly],
+        futureOnly: true,
+      },
+    });
+
+    await agentHarness.getStateAndMessagesSnapshots("thread-1", {}, true);
+
+    expect(getState).not.toHaveBeenCalled();
+    const stateSnap = dispatched.find(
+      (event): event is StateSnapshotEvent =>
+        event?.type === EventType.STATE_SNAPSHOT,
+    );
+    expect(stateSnap?.snapshot).toEqual({});
+    const messagesSnap = dispatched.find(
+      (event): event is MessagesSnapshotEvent =>
+        event?.type === EventType.MESSAGES_SNAPSHOT,
+    );
+    expect(messagesSnap?.messages).toEqual([]);
+  });
+
+  it("falls back to getState for STATE_SNAPSHOT and MESSAGES_SNAPSHOT when no ordered values exist", async () => {
+    const user = msg("u1", "human", "AMS to SF");
+    const checkpointOnly = msg("c1", "ai", "Checkpoint-only response");
+    const { agentHarness, dispatched, getState } = setupSnapshotHarness({
+      values: {
+        messages: [user, checkpointOnly],
+        itinerary: {
+          hotels: ["Checkpoint Hotel"],
+        },
+      },
+    });
+
+    await agentHarness.getStateAndMessagesSnapshots("thread-1");
+
+    expect(getState).toHaveBeenCalledWith("thread-1");
+    const stateSnap = dispatched.find(
+      (event): event is StateSnapshotEvent =>
+        event?.type === EventType.STATE_SNAPSHOT,
+    );
+    expect(stateSnap).toBeDefined();
+    expect(stateSnap?.snapshot).toEqual({
+      messages: [user, checkpointOnly],
+      itinerary: {
+        hotels: ["Checkpoint Hotel"],
+      },
+    });
+    const messagesSnap = dispatched.find(
+      (event): event is MessagesSnapshotEvent =>
+        event?.type === EventType.MESSAGES_SNAPSHOT,
+    );
+    expect(messagesSnap).toBeDefined();
+    const ids = messagesSnap?.messages.map((message) => message.id);
+    expect(ids).toEqual(["u1", "c1"]);
   });
 });
 

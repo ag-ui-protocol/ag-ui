@@ -880,6 +880,7 @@ export class LangGraphAgent extends AbstractAgent {
 
     this.activeRun!.prevNodeName = null;
     let latestStateValues = {} as ThreadState<State>["values"];
+    let hasOrderedStateValues = false;
     let updatedState = state;
 
     try {
@@ -971,6 +972,7 @@ export class LangGraphAgent extends AbstractAgent {
             ...latestStateValues,
             ...chunk.data,
           };
+          hasOrderedStateValues = true;
           continue;
         } else if (
           subgraphsStreamEnabled &&
@@ -980,6 +982,7 @@ export class LangGraphAgent extends AbstractAgent {
             ...latestStateValues,
             ...chunk.data,
           };
+          hasOrderedStateValues = true;
           continue;
         }
 
@@ -1007,7 +1010,11 @@ export class LangGraphAgent extends AbstractAgent {
 
         if (currentSubgraph !== this.currentSubgraph) {
           this.currentSubgraph = currentSubgraph;
-          await this.getStateAndMessagesSnapshots(threadId);
+          await this.getStateAndMessagesSnapshots(
+            threadId,
+            latestStateValues,
+            hasOrderedStateValues,
+          );
         }
 
         // Set server-assigned run id as soon as available
@@ -1199,9 +1206,14 @@ export class LangGraphAgent extends AbstractAgent {
     }
   }
 
-  private async getStateAndMessagesSnapshots(threadId: string): Promise<void> {
-    const state: ThreadState<State> =
-      await this.client.threads.getState(threadId);
+  private async getStateAndMessagesSnapshots(
+    threadId: string,
+    orderedStateValues?: ThreadState<State>["values"],
+    hasOrderedStateValues = false,
+  ): Promise<void> {
+    const state: ThreadState<State> = hasOrderedStateValues
+      ? ({ values: orderedStateValues ?? {} } as ThreadState<State>)
+      : await this.client.threads.getState(threadId);
     this.dispatchEvent({
       type: EventType.STATE_SNAPSHOT,
       snapshot: this.getStateSnapshot(state),
