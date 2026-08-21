@@ -245,6 +245,44 @@ export const verifyEvents =
           }
         }
 
+        // The subagent surface has NO null tolerance (PNI-199 alignment): the zod
+        // schemas already reject these on the wire, but in-process producers hand
+        // plain objects straight to this verifier — the same bypass the lifecycle
+        // required-field checks below exist for. A null tag that slipped through
+        // here persisted into message state and was re-serialized onto the next
+        // run's input. Absent is the only spelling; the three grandfathered legacy
+        // tolerances (PNI-207) are elsewhere and untouched.
+        if ((event as { subagentRunId?: unknown }).subagentRunId === null) {
+          return throwError(
+            () =>
+              new AGUIError(
+                `Cannot send '${eventType}' with 'subagentRunId: null'. The field is optional — omit it entirely.`,
+              ),
+          );
+        }
+        if (
+          eventType === EventType.SUBAGENT_STARTED ||
+          eventType === EventType.SUBAGENT_FINISHED ||
+          eventType === EventType.SUBAGENT_ERROR
+        ) {
+          const lifecycleOptionals: ReadonlyArray<string> =
+            eventType === EventType.SUBAGENT_STARTED
+              ? ["description", "parentSubagentRunId", "parentToolCallId", "parentMessageId"]
+              : eventType === EventType.SUBAGENT_FINISHED
+                ? ["outcome"]
+                : ["code"];
+          for (const field of lifecycleOptionals) {
+            if ((event as Record<string, unknown>)[field] === null) {
+              return throwError(
+                () =>
+                  new AGUIError(
+                    `Cannot send '${eventType}' with '${field}: null'. The field is optional — omit it entirely.`,
+                  ),
+              );
+            }
+          }
+        }
+
         // Validate event based on type and current state
         switch (eventType) {
           // Text message flow

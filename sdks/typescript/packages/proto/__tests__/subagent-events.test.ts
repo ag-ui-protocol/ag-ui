@@ -285,3 +285,19 @@ describe("wire compatibility of the subagent additions", () => {
     }
   });
 });
+
+describe("SUBAGENT_FINISHED outcome null on the unvalidated encode path", () => {
+  // encode() falls back to the raw event when the schema parse fails. A null
+  // outcome must degrade to the legacy (omitted) encoding, not crash reading
+  // `.type` off null.
+  it("encodes outcome: null as the legacy omitted outcome instead of crashing", () => {
+    const encoded = encode({
+      type: EventType.SUBAGENT_FINISHED,
+      subagentRunId: "s1",
+      outcome: null,
+    } as never);
+    const decoded = decode(encoded) as { outcome?: unknown; subagentRunId?: string };
+    expect(decoded.subagentRunId).toBe("s1");
+    expect(decoded.outcome).toBeUndefined();
+  });
+});

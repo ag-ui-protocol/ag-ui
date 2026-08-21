@@ -93,7 +93,7 @@ export const transformChunks =
           const event = {
             type: EventType.TEXT_MESSAGE_END,
             messageId: pending.fields.messageId,
-            ...(pending.fields.subagentRunId !== undefined && {
+            ...(pending.fields.subagentRunId != null && {
               subagentRunId: pending.fields.subagentRunId,
             }),
           } as TextMessageEndEvent;
@@ -104,7 +104,7 @@ export const transformChunks =
           const event = {
             type: EventType.TOOL_CALL_END,
             toolCallId: pending.fields.toolCallId,
-            ...(pending.fields.subagentRunId !== undefined && {
+            ...(pending.fields.subagentRunId != null && {
               subagentRunId: pending.fields.subagentRunId,
             }),
           } as ToolCallEndEvent;
@@ -115,7 +115,7 @@ export const transformChunks =
           const event = {
             type: EventType.REASONING_MESSAGE_END,
             messageId: pending.fields.messageId,
-            ...(pending.fields.subagentRunId !== undefined && {
+            ...(pending.fields.subagentRunId != null && {
               subagentRunId: pending.fields.subagentRunId,
             }),
           } as ReasoningMessageEndEvent;
@@ -303,7 +303,7 @@ export const transformChunks =
                   messageId: messageChunkEvent.messageId,
                   role: messageChunkEvent.role || "assistant",
                   ...(messageChunkEvent.name !== undefined && { name: messageChunkEvent.name }),
-                  ...(messageChunkEvent.subagentRunId !== undefined && {
+                  ...(messageChunkEvent.subagentRunId != null && {
                     subagentRunId: messageChunkEvent.subagentRunId,
                   }),
                 } as TextMessageStartEvent,
@@ -327,7 +327,7 @@ export const transformChunks =
                   // Prefer the INCOMING chunk's tag over the opener's, so a producer that
                   // attributes every chunk sees its own attribution on the output rather
                   // than a value this transform remembered.
-                  ...(contentOwner !== undefined && { subagentRunId: contentOwner }),
+                  ...(contentOwner != null && { subagentRunId: contentOwner }),
                 } as TextMessageContentEvent,
                 messageChunkEvent,
               );
@@ -356,7 +356,7 @@ export const transformChunks =
                 messageId: textMessageFields!.messageId,
                 delta: "",
                 metadata: messageChunkEvent.metadata,
-                ...(metadataOwner !== undefined && { subagentRunId: metadataOwner }),
+                ...(metadataOwner != null && { subagentRunId: metadataOwner }),
               } as TextMessageContentEvent);
             }
             return textMessageResult;
@@ -403,7 +403,7 @@ export const transformChunks =
                   toolCallId: toolCallChunkEvent.toolCallId,
                   toolCallName: toolCallChunkEvent.toolCallName,
                   parentMessageId: toolCallChunkEvent.parentMessageId,
-                  ...(toolCallChunkEvent.subagentRunId !== undefined && {
+                  ...(toolCallChunkEvent.subagentRunId != null && {
                     subagentRunId: toolCallChunkEvent.subagentRunId,
                   }),
                 } as ToolCallStartEvent,
@@ -428,7 +428,7 @@ export const transformChunks =
                   // Prefer the INCOMING chunk's tag over the opener's, so a producer that
                   // attributes every chunk sees its own attribution on the output rather
                   // than a value this transform remembered.
-                  ...(argsOwner !== undefined && { subagentRunId: argsOwner }),
+                  ...(argsOwner != null && { subagentRunId: argsOwner }),
                 } as ToolCallArgsEvent,
                 toolCallChunkEvent,
               );
@@ -450,7 +450,7 @@ export const transformChunks =
                 toolCallId: toolCallFields!.toolCallId,
                 delta: "",
                 metadata: toolCallChunkEvent.metadata,
-                ...(metadataOwner !== undefined && { subagentRunId: metadataOwner }),
+                ...(metadataOwner != null && { subagentRunId: metadataOwner }),
               } as ToolCallArgsEvent);
             }
             return toolMessageResult;
@@ -496,7 +496,7 @@ export const transformChunks =
                   type: EventType.REASONING_MESSAGE_START,
                   messageId: reasoningChunkEvent.messageId,
                   role: "reasoning",
-                  ...(reasoningChunkEvent.subagentRunId !== undefined && {
+                  ...(reasoningChunkEvent.subagentRunId != null && {
                     subagentRunId: reasoningChunkEvent.subagentRunId,
                   }),
                 } as ReasoningMessageStartEvent,
@@ -520,7 +520,7 @@ export const transformChunks =
                   // Prefer the INCOMING chunk's tag over the opener's, so a producer that
                   // attributes every chunk sees its own attribution on the output rather
                   // than a value this transform remembered.
-                  ...(contentOwner !== undefined && { subagentRunId: contentOwner }),
+                  ...(contentOwner != null && { subagentRunId: contentOwner }),
                 } as ReasoningMessageContentEvent,
                 reasoningChunkEvent,
               );
@@ -542,7 +542,7 @@ export const transformChunks =
                 messageId: reasoningMessageFields!.messageId,
                 delta: "",
                 metadata: reasoningChunkEvent.metadata,
-                ...(metadataOwner !== undefined && { subagentRunId: metadataOwner }),
+                ...(metadataOwner != null && { subagentRunId: metadataOwner }),
               } as ReasoningMessageContentEvent);
             }
             return reasoningMessageResult;

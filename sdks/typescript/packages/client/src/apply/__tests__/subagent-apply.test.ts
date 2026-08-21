@@ -71,6 +71,48 @@ describe("defaultApplyEvents with subagentRunId attribution", () => {
     expect((message as any).subagentRunId).toBe("sub-1");
   });
 
+  it("treats a null attribution tag as absent — nothing persists it into state", async () => {
+    // The verifier is the rejection layer for null tags; this reducer also runs
+    // on unverified inputs, where persisting the null meant it was cloned into
+    // the next run's input and serialized back out — an egress path for a
+    // spelling the contract forbids (PNI-199 alignment).
+    const events$ = new Subject<BaseEvent>();
+    const initialState: RunAgentInput = {
+      messages: [],
+      state: {},
+      threadId: "test-thread",
+      runId: "test-run",
+      tools: [],
+      context: [],
+    };
+
+    const agent = createAgent(initialState.messages);
+    const result$ = defaultApplyEvents(initialState, events$, agent, []);
+    const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
+
+    events$.next({ type: EventType.RUN_STARTED } as RunStartedEvent);
+    events$.next({
+      type: EventType.TEXT_MESSAGE_START,
+      messageId: "msg1",
+      role: "assistant",
+      subagentRunId: null,
+    } as unknown as TextMessageStartEvent);
+    events$.next({
+      type: EventType.TEXT_MESSAGE_END,
+      messageId: "msg1",
+    } as TextMessageEndEvent);
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    events$.complete();
+
+    const stateUpdates = await stateUpdatesPromise;
+    const finalUpdate = stateUpdates[stateUpdates.length - 1];
+    const message = finalUpdate?.messages?.find((m) => m.id === "msg1");
+
+    expect(message).toBeDefined();
+    expect("subagentRunId" in (message as object)).toBe(false);
+  });
+
   it("should copy subagentRunId from TOOL_CALL_RESULT onto the newly created tool message", async () => {
     const events$ = new Subject<BaseEvent>();
     const initialState: RunAgentInput = {

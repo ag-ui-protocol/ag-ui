@@ -1322,6 +1322,79 @@ describe("verifyEvents tool result mints an owned message", () => {
   });
 });
 
+describe("verifyEvents rejects null anywhere on the subagent surface", () => {
+  const run = (inputEvents: BaseEvent[]) =>
+    firstValueFrom(verifyEvents(false)(from(inputEvents)).pipe(toArray()));
+
+  const expectRejectedWith = async (inputEvents: BaseEvent[], message: RegExp) => {
+    let caught: unknown;
+    try {
+      await run(inputEvents);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(AGUIError);
+    expect((caught as Error).message).toMatch(message);
+  };
+
+  const started = { type: EventType.RUN_STARTED, threadId: "t", runId: "r" } as RunStartedEvent;
+
+  // The zod schemas reject these on the wire; in-process producers bypass zod,
+  // and a null tag that slipped through persisted into message state and was
+  // re-serialized onto the next run's input. Same precedent as the lifecycle
+  // required-field checks.
+  it("rejects a null attribution tag on any event", async () => {
+    await expectRejectedWith(
+      [
+        started,
+        {
+          type: EventType.TEXT_MESSAGE_START,
+          messageId: "m",
+          role: "assistant",
+          subagentRunId: null,
+        } as unknown as BaseEvent,
+      ],
+      /'subagentRunId: null'.*omit it entirely/i,
+    );
+  });
+
+  it("rejects null on the lifecycle events' optional fields", async () => {
+    await expectRejectedWith(
+      [
+        started,
+        {
+          type: EventType.SUBAGENT_STARTED,
+          subagentRunId: "s1",
+          name: "researcher",
+          parentSubagentRunId: null,
+        } as unknown as BaseEvent,
+      ],
+      /'parentSubagentRunId: null'/i,
+    );
+    await expectRejectedWith(
+      [
+        started,
+        { type: EventType.SUBAGENT_STARTED, subagentRunId: "s1", name: "r" } as BaseEvent,
+        { type: EventType.SUBAGENT_FINISHED, subagentRunId: "s1", outcome: null } as unknown as BaseEvent,
+      ],
+      /'outcome: null'/i,
+    );
+    await expectRejectedWith(
+      [
+        started,
+        { type: EventType.SUBAGENT_STARTED, subagentRunId: "s1", name: "r" } as BaseEvent,
+        {
+          type: EventType.SUBAGENT_ERROR,
+          subagentRunId: "s1",
+          message: "boom",
+          code: null,
+        } as unknown as BaseEvent,
+      ],
+      /'code: null'/i,
+    );
+  });
+});
+
 describe("verifyEvents subagent lifecycle required fields", () => {
   const started = { type: EventType.RUN_STARTED, threadId: "t", runId: "r" } as RunStartedEvent;
 

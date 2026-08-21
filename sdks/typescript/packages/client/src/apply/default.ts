@@ -228,7 +228,7 @@ export const defaultApplyEvents = (
                 role: role,
                 content: "",
                 ...(name !== undefined && { name }),
-                ...(subagentRunId !== undefined && { subagentRunId }),
+                ...(subagentRunId != null && { subagentRunId }),
               };
 
               // Add the new message to the messages array
@@ -398,7 +398,7 @@ export const defaultApplyEvents = (
               toolCallId,
             );
             const wasCreated = !preexistingIds.has(targetMessage.id);
-            if (wasCreated && subagentRunId !== undefined && targetMessage.subagentRunId === undefined) {
+            if (wasCreated && subagentRunId != null && targetMessage.subagentRunId === undefined) {
               targetMessage.subagentRunId = subagentRunId;
             }
 
@@ -581,7 +581,7 @@ export const defaultApplyEvents = (
               toolCallId,
               role: role || "tool",
               content: content,
-              ...(subagentRunId !== undefined && { subagentRunId }),
+              ...(subagentRunId != null && { subagentRunId }),
             };
 
             applyEventMetadata(toolMessage, event);
@@ -799,7 +799,7 @@ export const defaultApplyEvents = (
               role: "activity",
               activityType: activityEvent.activityType,
               content: structuredClone_(activityEvent.content),
-              ...(activityEvent.subagentRunId !== undefined && {
+              ...(activityEvent.subagentRunId != null && {
                 subagentRunId: activityEvent.subagentRunId,
               }),
             };
@@ -827,7 +827,7 @@ export const defaultApplyEvents = (
                   content: structuredClone_(activityEvent.content),
                   subagentRunId: activityEvent.subagentRunId,
                 };
-                if (activityEvent.subagentRunId === undefined) {
+                if (activityEvent.subagentRunId == null) {
                   delete (messages[existingIndex] as { subagentRunId?: string }).subagentRunId;
                 }
               }
@@ -1174,7 +1174,7 @@ export const defaultApplyEvents = (
                 id: messageId,
                 role: "reasoning",
                 content: "",
-                ...(subagentRunId !== undefined && { subagentRunId }),
+                ...(subagentRunId != null && { subagentRunId }),
               };
               messages.push(newMessage);
               targetMessage = newMessage;

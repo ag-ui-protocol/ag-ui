@@ -303,8 +303,11 @@ export function encode(event: BaseEvent): Uint8Array {
   // SubagentFinishedEvent: same flattening as RunFinishedEvent's outcome, one
   // level down — `outcome` (string) plus `interrupt_ids` (repeated).
   if (type === EventType.SUBAGENT_FINISHED) {
-    const outcome = rest.outcome as SubagentFinishedOutcome | undefined;
-    if (outcome === undefined) {
+    // == null: schema-invalid events still reach this flatten (encode falls back
+    // to the raw event when the parse fails), and a null outcome must degrade to
+    // the legacy encoding rather than crash on `.type`.
+    const outcome = rest.outcome as SubagentFinishedOutcome | null | undefined;
+    if (outcome == null) {
       rest.outcome = "";
       rest.interruptIds = [];
     } else if (outcome.type === "suspended") {
