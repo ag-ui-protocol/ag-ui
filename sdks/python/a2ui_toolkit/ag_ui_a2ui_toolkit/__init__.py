@@ -21,6 +21,7 @@ __all__ = [
     "A2UI_SCHEMA_CONTEXT_DESCRIPTION",
     "split_a2ui_schema_context",
     "resolve_a2ui_catalog",
+    "resolve_external_data",
     "RENDER_A2UI_TOOL_DEF",
     "DEFAULT_SURFACE_ID",
     "GENERATE_A2UI_TOOL_NAME",
@@ -32,6 +33,7 @@ __all__ = [
     "build_context_prompt",
     "find_prior_surface",
     "build_subagent_prompt",
+    "summarize_external_data",
     "A2UIGuidelines",
     "DEFAULT_GENERATION_GUIDELINES",
     "DEFAULT_DESIGN_GUIDELINES",
@@ -318,6 +320,66 @@ def _message_role_and_content(msg: Any) -> tuple[Optional[str], Any]:
         getattr(msg, "type", None) or getattr(msg, "role", None),
         getattr(msg, "content", None),
     )
+
+
+def _message_tool_call_id(msg: Any) -> Optional[str]:
+    """Read a tool message's tool-call id from either a dict or an object,
+    tolerating the camelCase/snake_case spellings both shapes use."""
+    if isinstance(msg, dict):
+        return msg.get("toolCallId") or msg.get("tool_call_id") or msg.get("id")
+    return (
+        getattr(msg, "tool_call_id", None)
+        or getattr(msg, "toolCallId", None)
+        or getattr(msg, "id", None)
+    )
+
+
+def _find_tool_result_data(messages: list[Any], ref: str) -> Optional[dict[str, Any]]:
+    """Find the dataset held in the tool-result message whose tool-call id is
+    ``ref``. The content is a JSON string of the raw rows (NOT an a2ui
+    envelope). Returns the parsed object, or ``None`` when missing / not a
+    non-empty object."""
+    for msg in reversed(messages):
+        role, content = _message_role_and_content(msg)
+        if role not in ("tool", "ToolMessage"):
+            continue
+        if _message_tool_call_id(msg) != ref:
+            continue
+        if not isinstance(content, str):
+            return None
+        try:
+            parsed = json.loads(content)
+        except (ValueError, TypeError):
+            return None
+        return parsed if isinstance(parsed, dict) and parsed else None
+    return None
+
+
+def resolve_external_data(
+    *,
+    a2ui_data: Optional[dict[str, Any]] = None,
+    data_ref: Optional[str] = None,
+    messages: Optional[list[Any]] = None,
+) -> Optional[dict[str, Any]]:
+    """Resolve the host's by-reference data model (OSS-2005) from the two
+    universal channels so every adapter sources it identically:
+
+    - Channel A — ``a2ui_data`` (``forwardedProps.a2ui_data``): a caller-supplied
+      data blob. Wins on a collision.
+    - Channel B — ``data_ref``: the tool-call-id of a prior tool result whose
+      content IS the dataset (rows a backend tool already fetched). The id is
+      cheap to pass; the rows never re-enter the LLM.
+
+    Returns ``None`` when neither supplies data — the caller then renders
+    normally (the subagent's own ``data`` arg).
+    """
+    if isinstance(a2ui_data, dict) and a2ui_data:
+        return a2ui_data
+    if data_ref:
+        data = _find_tool_result_data(messages or [], data_ref)
+        if data:
+            return data
+    return None
 
 
 def find_prior_surface(
@@ -609,11 +671,30 @@ class A2UIGuidelines(TypedDict, total=False):
     composition_guide: Optional[str]
 
 
+def summarize_external_data(data: dict[str, Any]) -> str:
+    """Compact, token-cheap outline of a by-reference data model for the
+    subagent prompt (OSS-2005): top-level keys preserved, arrays truncated to a
+    single sample element plus a count note, scalars/objects kept as-is. The
+    full dataset is NEVER inlined."""
+    outline: dict[str, Any] = {}
+    for key, value in data.items():
+        if isinstance(value, list):
+            outline[key] = (
+                [value[0], f"…({len(value)} items total — supplied by host)"]
+                if value
+                else []
+            )
+        else:
+            outline[key] = value
+    return json.dumps(outline, indent=2)
+
+
 def build_subagent_prompt(
     *,
     context_prompt: str,
     guidelines: Optional[A2UIGuidelines] = None,
     edit_context: Optional[EditContext] = None,
+    external_data_outline: Optional[str] = None,
 ) -> str:
     """Compose the full subagent system prompt.
 
@@ -653,6 +734,17 @@ def build_subagent_prompt(
     if composition_guide:
         parts.append(composition_guide)
 
+    if external_data_outline:
+        parts.append(
+            "## Data provided externally\n"
+            "The surface's data model is supplied by the host, so you do NOT need "
+            "to produce it. Author components that BIND to these paths and OMIT "
+            "the `data` argument entirely. Do NOT copy or restate the rows (that "
+            "wastes output, and the host's data wins anyway). The available data "
+            "shape (arrays truncated to a single sample):\n"
+            f"{external_data_outline}"
+        )
+
     if edit_context:
         surface_id = edit_context.get("surfaceId")
         prior = edit_context.get("prior") or {}
@@ -680,6 +772,15 @@ def build_subagent_prompt(
 # ---------------------------------------------------------------------------
 
 
+def _merge_external_data(
+    data: Optional[dict[str, Any]],
+    external_data: Optional[dict[str, Any]],
+) -> dict[str, Any]:
+    """Shallow-merge a host-supplied by-reference data model over the subagent's
+    ``data`` at the root, ``external_data`` winning per top-level key."""
+    return {**(data or {}), **(external_data or {})}
+
+
 def assemble_ops(
     *,
     intent: str,
@@ -687,6 +788,7 @@ def assemble_ops(
     catalog_id: str,
     components: list[dict[str, Any]],
     data: Optional[dict[str, Any]] = None,
+    external_data: Optional[dict[str, Any]] = None,
 ) -> list[dict[str, Any]]:
     """Produce the final A2UI v0.9 operation list for a render result.
 
@@ -694,13 +796,18 @@ def assemble_ops(
     Any other intent (e.g. ``"update"``) skips ``createSurface`` so the
     frontend reconciles the existing surface in place rather than erroring
     (per v0.9 spec, ``createSurface`` on an existing id is invalid).
+
+    The data op is emitted from ``data`` merged with any host ``external_data``
+    (OSS-2005), so a by-reference render — where the subagent omits ``data`` —
+    still paints the host's dataset. ``external_data`` wins per top-level key.
     """
     ops: list[dict[str, Any]] = []
     if intent != "update":
         ops.append(create_surface(surface_id, catalog_id))
     ops.append(update_components(surface_id, components))
-    if data:
-        ops.append(update_data_model(surface_id, data))
+    merged = _merge_external_data(data, external_data)
+    if merged:
+        ops.append(update_data_model(surface_id, merged))
     return ops
 
 
@@ -748,6 +855,12 @@ GENERATE_A2UI_ARG_DESCRIPTIONS: dict[str, str] = {
     ),
     "changes": (
         "Optional natural-language description of the changes to apply when intent='update'."
+    ),
+    "data_ref": (
+        "Optional. The tool-call-id of a prior tool result whose content is the dataset to "
+        "render. Pass this id, NOT the rows, when a tool already fetched the data, so the UI "
+        "binds to that data without you re-typing it. Use the id of the most recent tool result "
+        "holding the data."
     ),
 }
 """Planner-facing descriptions for the outer tool's three arguments."""
@@ -845,6 +958,7 @@ def prepare_a2ui_request(
     messages: list[Any],
     state: dict,
     guidelines: Optional[A2UIGuidelines] = None,
+    external_data: Optional[dict[str, Any]] = None,
 ) -> PreparedA2UIRequest:
     """Resolve the create/update decision, locate any prior surface, and build
     the subagent system prompt.
@@ -880,9 +994,14 @@ def prepare_a2ui_request(
             ),
         }
 
+    external_data_outline = (
+        summarize_external_data(external_data) if external_data else None
+    )
+
     prompt = build_subagent_prompt(
         context_prompt=build_context_prompt(state),
         guidelines=guidelines,
+        external_data_outline=external_data_outline,
         edit_context=(
             {"surfaceId": target_surface_id, "prior": prior, "changes": changes}
             if prior is not None
@@ -903,12 +1022,18 @@ def build_a2ui_envelope(
     prior: Optional[PriorSurface],
     default_surface_id: str = DEFAULT_SURFACE_ID,
     default_catalog_id: str = BASIC_CATALOG_ID,
+    external_data: Optional[dict[str, Any]] = None,
 ) -> str:
     """Turn the subagent's structured output into the final operations envelope.
 
     Catalog ownership stays with the host: the subagent never picks a catalog,
     so the id comes from the prior surface (update) or the configured default
     (create) — never from the model's args.
+
+    ``external_data`` (OSS-2005) is the host's by-reference data model,
+    shallow-merged over ``args["data"]`` at the root with ``external_data``
+    winning per key, so an already-fetched dataset paints without the subagent
+    re-emitting it. Absent → behaves exactly as before.
     """
     # Treat empty-string defaults as unset (mirror the TS guard). Without this,
     # a misconfigured host passing ``""`` for default_surface_id /
@@ -946,6 +1071,7 @@ def build_a2ui_envelope(
         catalog_id=catalog_id,
         components=components,
         data=data,
+        external_data=external_data,
     )
 
     return wrap_as_operations_envelope(ops)

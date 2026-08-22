@@ -18,6 +18,7 @@ import {
   findPriorSurface,
   prepareA2UIRequest,
   resolveA2UICatalog,
+  resolveExternalData,
   splitA2UISchemaContext,
   updateComponents,
   updateDataModel,
@@ -427,6 +428,24 @@ describe("buildSubagentPrompt", () => {
     expect(prompt).toContain("ctx");
   });
 
+  it("by-reference (OSS-2005): directs the subagent to omit data and bind to the supplied shape", () => {
+    const prompt = buildSubagentPrompt({
+      contextPrompt: "ctx",
+      guidelines: SUPPRESS,
+      externalDataOutline: '{\n  "flights": ["sample"]\n}',
+    });
+    // Must tell the model not to re-emit the dataset (the token-saving point)…
+    expect(prompt.toLowerCase()).toContain("omit");
+    expect(prompt).toContain("data");
+    // …and surface the data shape so it can author correct path bindings.
+    expect(prompt).toContain("flights");
+  });
+
+  it("by-reference: no outline → no externally-supplied-data section (behavior-compat)", () => {
+    const prompt = buildSubagentPrompt({ contextPrompt: "ctx", guidelines: SUPPRESS });
+    expect(prompt.toLowerCase()).not.toContain("provided externally");
+  });
+
   it("orders generation → design → context → composition", () => {
     const prompt = buildSubagentPrompt({
       contextPrompt: "CTXMARK",
@@ -557,6 +576,163 @@ describe("assembleOps", () => {
   });
 });
 
+describe("assembleOps externalData merge (by-reference data, OSS-2005)", () => {
+  it("emits updateDataModel from externalData even when the subagent omits data", () => {
+    // By-reference: the subagent emits path-bound components and NO data; the
+    // host-supplied dataset arrives out-of-band. The data op must still be
+    // emitted (the empty-data gate must not swallow externalData).
+    const ops = assembleOps({
+      intent: "create",
+      surfaceId: "s1",
+      catalogId: "cat://x",
+      components: [{ id: "root", component: "List" }],
+      externalData: { items: [{ name: "A" }, { name: "B" }] },
+    });
+    expect(ops).toHaveLength(3);
+    const ud = (ops.find((o: any) => o.updateDataModel) as any).updateDataModel;
+    expect(ud.value).toEqual({ items: [{ name: "A" }, { name: "B" }] });
+    expect(ud.path).toBe("/");
+  });
+
+  it("shallow-merges externalData over args data at the root, externalData winning per key", () => {
+    // Mixed: the subagent supplies small scaffolding data (form defaults) while
+    // the big list rides externalData. Both survive; on a key collision the
+    // host's by-reference data is authoritative.
+    const ops = assembleOps({
+      intent: "create",
+      surfaceId: "s1",
+      catalogId: "cat://x",
+      components: [{ id: "root", component: "Column" }],
+      data: { form: { name: "" }, items: ["stale"] },
+      externalData: { items: [{ name: "fresh" }] },
+    });
+    const ud = (ops.find((o: any) => o.updateDataModel) as any).updateDataModel;
+    expect(ud.value).toEqual({ form: { name: "" }, items: [{ name: "fresh" }] });
+  });
+
+  it("emits no updateDataModel when both data and externalData are empty", () => {
+    const ops = assembleOps({
+      intent: "create",
+      surfaceId: "s1",
+      catalogId: "cat://x",
+      components: [{ id: "root", component: "Row" }],
+      data: {},
+      externalData: {},
+    });
+    expect(ops.some((o: any) => o.updateDataModel)).toBe(false);
+  });
+
+  it("absent externalData leaves the existing data path unchanged (behavior-compat)", () => {
+    const ops = assembleOps({
+      intent: "create",
+      surfaceId: "s1",
+      catalogId: "cat://x",
+      components: [{ id: "root", component: "Row" }],
+      data: { items: ["a"] },
+    });
+    const ud = (ops.find((o: any) => o.updateDataModel) as any).updateDataModel;
+    expect(ud.value).toEqual({ items: ["a"] });
+  });
+});
+
+describe("buildA2UIEnvelope externalData merge (by-reference data, OSS-2005)", () => {
+  it("merges host externalData into updateDataModel when the subagent emits no data arg", () => {
+    const env = JSON.parse(
+      buildA2UIEnvelope({
+        args: { surfaceId: "s1", components: [{ id: "root", component: "List" }] },
+        isUpdate: false,
+        defaultCatalogId: "cat://x",
+        externalData: { flights: [{ id: 1 }, { id: 2 }] },
+      }),
+    );
+    const ops = env[A2UI_OPERATIONS_KEY];
+    const ud = ops.find((o: any) => o.updateDataModel).updateDataModel;
+    expect(ud.value).toEqual({ flights: [{ id: 1 }, { id: 2 }] });
+  });
+
+  it("externalData wins over the subagent's regenerated data on a key collision", () => {
+    const env = JSON.parse(
+      buildA2UIEnvelope({
+        args: {
+          surfaceId: "s1",
+          components: [{ id: "root", component: "List" }],
+          data: { flights: ["model-regenerated"] },
+        },
+        isUpdate: false,
+        defaultCatalogId: "cat://x",
+        externalData: { flights: [{ id: 1 }] },
+      }),
+    );
+    const ud = env[A2UI_OPERATIONS_KEY].find((o: any) => o.updateDataModel).updateDataModel;
+    expect(ud.value).toEqual({ flights: [{ id: 1 }] });
+  });
+
+  it("no externalData behaves exactly as before (behavior-compat)", () => {
+    const env = JSON.parse(
+      buildA2UIEnvelope({
+        args: { surfaceId: "s1", components: [{ id: "root", component: "Row" }], data: { x: 1 } },
+        isUpdate: false,
+        defaultCatalogId: "cat://x",
+      }),
+    );
+    const ud = env[A2UI_OPERATIONS_KEY].find((o: any) => o.updateDataModel).updateDataModel;
+    expect(ud.value).toEqual({ x: 1 });
+  });
+});
+
+describe("resolveExternalData (by-reference channels, OSS-2005)", () => {
+  // A prior tool result holding a raw fetched dataset (NOT an a2ui envelope).
+  const dataToolMessage = (id: string, data: unknown) => ({
+    type: "tool",
+    toolCallId: id,
+    content: JSON.stringify(data),
+  });
+
+  it("returns the forwardedProps a2ui_data blob when present (Channel A)", () => {
+    const out = resolveExternalData({
+      a2uiData: { items: [{ id: 1 }] },
+      messages: [],
+    });
+    expect(out).toEqual({ items: [{ id: 1 }] });
+  });
+
+  it("falls back to the data_ref tool-result message (Channel B)", () => {
+    const out = resolveExternalData({
+      dataRef: "call-7",
+      messages: [dataToolMessage("call-7", { flights: [{ n: "AA" }] })],
+    });
+    expect(out).toEqual({ flights: [{ n: "AA" }] });
+  });
+
+  it("a2ui_data wins over data_ref on a collision (Channel A precedence)", () => {
+    const out = resolveExternalData({
+      a2uiData: { winner: true },
+      dataRef: "call-7",
+      messages: [dataToolMessage("call-7", { loser: true })],
+    });
+    expect(out).toEqual({ winner: true });
+  });
+
+  it("returns undefined when neither channel supplies data", () => {
+    expect(resolveExternalData({ messages: [] })).toBeUndefined();
+  });
+
+  it("returns undefined when data_ref matches no message", () => {
+    expect(
+      resolveExternalData({ dataRef: "missing", messages: [dataToolMessage("other", { x: 1 })] }),
+    ).toBeUndefined();
+  });
+
+  it("ignores an empty a2ui_data object and falls through", () => {
+    const out = resolveExternalData({
+      a2uiData: {},
+      dataRef: "call-7",
+      messages: [dataToolMessage("call-7", { fromRef: 1 })],
+    });
+    expect(out).toEqual({ fromRef: 1 });
+  });
+});
+
 describe("wrapAsOperationsEnvelope", () => {
   it("serializes ops under the A2UI_OPERATIONS_KEY", () => {
     const ops = [createSurface("s1", "c")];
@@ -623,6 +799,21 @@ describe("prepareA2UIRequest", () => {
     expect(prep.prior?.catalogId).toBe("cat://x");
     expect(prep.prompt).toContain("Editing an existing surface");
     expect(prep.prompt).toContain("make it red");
+  });
+
+  it("by-reference (OSS-2005): externalData surfaces a truncated shape + omit-data directive in the prompt", () => {
+    const prep = prepareA2UIRequest({
+      intent: "create",
+      messages: [],
+      state: {},
+      guidelines: { generationGuidelines: "", designGuidelines: "" },
+      externalData: { items: [{ name: "A" }, { name: "B" }, { name: "C" }] },
+    });
+    expect(prep.prompt).toContain("items");
+    expect(prep.prompt.toLowerCase()).toContain("omit");
+    // The full dataset must NOT be inlined — only a truncated sample (token win).
+    expect(prep.prompt).not.toContain('"B"');
+    expect(prep.prompt).not.toContain('"C"');
   });
 
   it("update with no matching prior: returns an error, no prompt", () => {

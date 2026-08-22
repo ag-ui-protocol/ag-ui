@@ -58,6 +58,7 @@ def run_a2ui_generation_with_recovery(
     invoke_subagent: Callable[[str, int], Optional[dict[str, Any]]],
     build_envelope: Callable[[dict[str, Any]], str],
     catalog: Optional[dict[str, Any]] = None,
+    external_data: Optional[dict[str, Any]] = None,
     config: Optional[dict[str, Any]] = None,
     on_attempt: Optional[Callable[[dict[str, Any]], None]] = None,
 ) -> dict[str, Any]:
@@ -66,6 +67,11 @@ def run_a2ui_generation_with_recovery(
     Returns ``{"envelope", "attempts", "ok"}``: the validated operations envelope
     on success, or a structured ``a2ui_recovery_exhausted`` envelope once the cap
     is hit. Never retries an attempt whose components validated.
+
+    ``external_data`` (OSS-2005) is the host's by-reference data model. Bindings
+    are resolved against the MERGED data (``external_data`` over ``args["data"]``)
+    so a by-reference render — components only, dataset out-of-band — does not
+    false-positive ``unresolved_binding`` and retry to exhaustion.
     """
     max_attempts = (config or {}).get("maxAttempts", MAX_A2UI_ATTEMPTS)
     attempts: list[dict[str, Any]] = []
@@ -86,7 +92,11 @@ def run_a2ui_generation_with_recovery(
         raw_components = args.get("components")
         components = raw_components if isinstance(raw_components, list) else []
         raw_data = args.get("data")
-        data = raw_data if isinstance(raw_data, dict) else {}
+        args_data = raw_data if isinstance(raw_data, dict) else {}
+        # Validate against the MERGED data (host external_data wins per key) so a
+        # by-reference render whose data rides out-of-band does not
+        # false-positive `unresolved_binding`. (OSS-2005)
+        data = {**args_data, **(external_data or {})}
         result = validate_a2ui_components(components=components, data=data, catalog=catalog)
         record = {"attempt": attempt, "ok": result["valid"], "errors": result["errors"]}
         attempts.append(record)
