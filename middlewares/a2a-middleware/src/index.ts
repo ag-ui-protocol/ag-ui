@@ -11,6 +11,7 @@ import {
   AgentSubscriber,
   RunFinishedEventSchema,
   RunFinishedEvent,
+  RunErrorEvent,
   TextMessageStartEvent,
   TextMessageEndEvent,
 } from "@ag-ui/client";
@@ -147,6 +148,20 @@ export class A2AMiddlewareAgent extends AbstractAgent {
               // Array to collect all new tool result messages
               const newToolMessages: Message[] = [];
 
+              // Any failure while resolving the pending A2A calls has to
+              // terminate the stream with an error. Otherwise the run hangs
+              // without ever emitting a terminal event.
+              const failRun = (error: unknown) => {
+                pendingA2ACalls.clear();
+                this.finishTextMessages(observer, pendingTextMessages);
+                observer.next({
+                  type: EventType.RUN_ERROR,
+                  message:
+                    error instanceof Error ? error.message : String(error),
+                } as RunErrorEvent);
+                observer.error(error);
+              };
+
               const callProms = [...pendingA2ACalls].map((toolCallId) => {
                 const toolCallsFromMessages = this.messages
                   .filter((message) => message.role === "assistant")
@@ -155,11 +170,23 @@ export class A2AMiddlewareAgent extends AbstractAgent {
 
                 const toolArgs = toolCallsFromMessages[0]?.function.arguments;
                 if (!toolArgs) {
-                  throw new Error(
-                    `Tool arguments not found for tool call id ${toolCallId}`,
+                  return Promise.reject(
+                    new Error(
+                      `Tool arguments not found for tool call id ${toolCallId}`,
+                    ),
                   );
                 }
-                const parsed = JSON.parse(toolArgs);
+                let parsed: any;
+                try {
+                  parsed = JSON.parse(toolArgs);
+                } catch (error) {
+                  return Promise.reject(
+                    new Error(
+                      `Failed to parse tool arguments for tool call id ${toolCallId}: ` +
+                        `${(error as Error).message}`,
+                    ),
+                  );
+                }
                 const agentName = parsed.agentName;
                 const task = parsed.task;
 
@@ -202,27 +229,29 @@ export class A2AMiddlewareAgent extends AbstractAgent {
                   });
               });
 
-              Promise.all(callProms).then(() => {
-                this.finishTextMessages(observer, pendingTextMessages);
-                observer.next({
-                  type: EventType.RUN_FINISHED,
-                  threadId: input.threadId,
-                  runId: input.runId,
-                } as RunFinishedEvent);
+              Promise.all(callProms)
+                .then(() => {
+                  this.finishTextMessages(observer, pendingTextMessages);
+                  observer.next({
+                    type: EventType.RUN_FINISHED,
+                    threadId: input.threadId,
+                    runId: input.runId,
+                  } as RunFinishedEvent);
 
-                // Add all tool result messages to input.messages BEFORE triggering new run
-                // This ensures the orchestrator sees the tool results in its context
-                newToolMessages.forEach((msg) => {
-                  input.messages.push(msg);
-                });
+                  // Add all tool result messages to input.messages BEFORE triggering new run
+                  // This ensures the orchestrator sees the tool results in its context
+                  newToolMessages.forEach((msg) => {
+                    input.messages.push(msg);
+                  });
 
-                this.triggerNewRun(
-                  observer,
-                  input,
-                  pendingA2ACalls,
-                  pendingTextMessages,
-                );
-              });
+                  this.triggerNewRun(
+                    observer,
+                    input,
+                    pendingA2ACalls,
+                    pendingTextMessages,
+                  );
+                })
+                .catch(failRun);
             } else {
               observer.next(event);
               observer.complete();
