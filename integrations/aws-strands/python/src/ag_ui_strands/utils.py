@@ -1,9 +1,12 @@
 """Utility functions for AWS Strands integration."""
 
 import base64
+import ipaddress
 import logging
 import re
+import socket
 import urllib.request
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set
 from urllib.parse import quote, urlsplit, urlunsplit
 
@@ -64,15 +67,137 @@ def _mime_to_format(mime_type: Optional[str], allowed: Set[str]) -> Optional[str
     return None
 
 
-def _fetch_url_bytes(url: str) -> Optional[bytes]:
+class UrlFetchPolicyError(Exception):
+    """Raised when a URL is rejected by the fetch policy (scheme or network range)."""
+
+
+@dataclass(frozen=True)
+class UrlFetchPolicy:
+    """Policy applied to every server-side URL fetch.
+
+    The defaults are deliberately restrictive: only ``http``/``https`` are
+    fetched, addresses outside the public internet (loopback, private,
+    link-local — notably the ``169.254.169.254`` cloud metadata endpoint —
+    multicast and reserved ranges) are refused, and the response body is
+    capped.  Relaxing address checks is opt-in by passing a custom policy, but
+    link-local ranges (including common cloud metadata endpoints) remain
+    blocked.
+    """
+
+    allowed_schemes: frozenset = field(default_factory=lambda: frozenset({"http", "https"}))
+    allow_private_networks: bool = False
+    max_bytes: int = 25 * 1024 * 1024
+    timeout: float = 30.0
+
+
+DEFAULT_URL_FETCH_POLICY = UrlFetchPolicy()
+
+
+def _is_blocked_address(
+    ip: "ipaddress._BaseAddress", allow_private_networks: bool = False
+) -> bool:
+    """Return ``True`` for any address that must not be reached server-side."""
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    # Cloud metadata and other link-local services are never legitimate URL
+    # content sources, even when an application opts into its private network.
+    if ip.is_link_local:
+        return True
+    if allow_private_networks:
+        return False
+    return (
+        ip.is_loopback
+        or ip.is_private
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+        or not ip.is_global
+    )
+
+
+def _resolved_addresses(host: str, port: Optional[int]) -> List["ipaddress._BaseAddress"]:
+    """Resolve *host* to IP addresses, accepting IP literals as-is."""
+    literal = host.strip("[]")
+    try:
+        return [ipaddress.ip_address(literal)]
+    except ValueError:
+        pass
+    try:
+        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+    except OSError as exc:
+        raise UrlFetchPolicyError(f"Cannot resolve host '{host}': {exc}") from exc
+    addresses = []
+    for info in infos:
+        try:
+            addresses.append(ipaddress.ip_address(info[4][0]))
+        except ValueError:
+            continue
+    if not addresses:
+        raise UrlFetchPolicyError(f"Cannot resolve host '{host}' to an IP address")
+    return addresses
+
+
+def _validate_fetch_url(url: str, policy: Optional[UrlFetchPolicy] = None) -> None:
+    """Validate *url* against *policy*; raise :class:`UrlFetchPolicyError` if refused."""
+    policy = policy or DEFAULT_URL_FETCH_POLICY
+    parts = urlsplit(url)
+    scheme = (parts.scheme or "").lower()
+    if scheme not in policy.allowed_schemes:
+        raise UrlFetchPolicyError(
+            f"URL scheme '{scheme}' is not allowed "
+            f"(allowed: {sorted(policy.allowed_schemes)})"
+        )
+    host = parts.hostname
+    if not host:
+        # Explicitly allowed non-network schemes (for example ``data``) have no
+        # host. Requiring both scheme and private-network opt-ins preserves that
+        # escape hatch without weakening the default policy.
+        if policy.allow_private_networks:
+            return
+        raise UrlFetchPolicyError(f"URL has no host: {url}")
+    for ip in _resolved_addresses(host, parts.port):
+        if _is_blocked_address(ip, policy.allow_private_networks):
+            raise UrlFetchPolicyError(
+                f"URL host '{host}' resolves to non-public address {ip}, "
+                "which is blocked by the URL fetch policy"
+            )
+
+
+class _PolicyRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Re-applies the fetch policy to every redirect target."""
+
+    def __init__(self, policy: UrlFetchPolicy):
+        self._policy = policy
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _validate_fetch_url(newurl, self._policy)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _open_url(url: str, timeout: float, policy: UrlFetchPolicy):
+    """Open *url* with a redirect handler that re-validates every hop."""
+    opener = urllib.request.build_opener(_PolicyRedirectHandler(policy))
+    return opener.open(url, timeout=timeout)
+
+
+def _fetch_url_bytes(url: str, policy: Optional[UrlFetchPolicy] = None) -> Optional[bytes]:
     """Fetch raw bytes from *url* using :mod:`urllib`.
+
+    The URL is validated against *policy* (default:
+    :data:`DEFAULT_URL_FETCH_POLICY`) before any request is made and again on
+    every redirect hop, so ``file://`` reads and requests to private,
+    loopback or cloud-metadata addresses are refused.  The response body is
+    capped at ``policy.max_bytes``.
 
     Non-ASCII characters in the URL path (e.g. CJK filenames) are
     percent-encoded before the request to avoid ``UnicodeEncodeError``.
 
-    Returns ``None`` on any failure (network error, timeout, etc.).
+    Returns ``None`` on any failure (policy violation, network error,
+    timeout, oversized body); the reason is logged.
     """
+    policy = policy or DEFAULT_URL_FETCH_POLICY
     try:
+        _validate_fetch_url(url, policy)
         parts = urlsplit(url)
         # Percent-encode non-ASCII chars in the path; preserve already-valid URL chars.
         # '%' is kept in safe= so that existing percent-encoded sequences (e.g. %20,
@@ -91,8 +216,20 @@ def _fetch_url_bytes(url: str) -> Optional[bytes]:
             parts.scheme, parts.netloc, encoded_path,
             encoded_query, parts.fragment,
         ))
-        with urllib.request.urlopen(safe_url, timeout=30) as resp:
-            return resp.read()
+        with _open_url(safe_url, policy.timeout, policy) as resp:
+            # Bounded read: one byte past the cap tells us the body was too big.
+            data = resp.read(policy.max_bytes + 1)
+        if len(data) > policy.max_bytes:
+            logger.error(
+                "Refusing to fetch URL %s: response exceeds the %d byte limit",
+                url,
+                policy.max_bytes,
+            )
+            return None
+        return data
+    except UrlFetchPolicyError as exc:
+        logger.error("Refusing to fetch URL %s: %s", url, exc)
+        return None
     except Exception as exc:
         logger.warning("Failed to fetch URL %s: %s", url, exc)
         return None
