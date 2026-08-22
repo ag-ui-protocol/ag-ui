@@ -1,6 +1,8 @@
 """FastAPI endpoint utilities for AWS Strands integration."""
 
-from fastapi import FastAPI, Request
+from typing import Any, Callable, Optional
+
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import StreamingResponse
 from ag_ui.core import RunAgentInput
 from ag_ui.encoder import EventEncoder
@@ -10,11 +12,23 @@ def add_strands_fastapi_endpoint(
     app: FastAPI,
     agent: StrandsAgent,
     path: str,
+    auth: Optional[Callable[..., Any]] = None,
     **kwargs
 ) -> None:
-    """Add a Strands agent endpoint to FastAPI app."""
-    
-    @app.post(path)
+    """Add a Strands agent endpoint to FastAPI app.
+
+    Args:
+        app: FastAPI application instance
+        agent: The StrandsAgent instance
+        path: Path for the agent endpoint
+        auth: Optional FastAPI dependency callable used to authenticate requests.
+            It should raise ``fastapi.HTTPException`` to reject a request. The
+            endpoint is unauthenticated when this is ``None``.
+    """
+
+    dependencies = [Depends(auth)] if auth is not None else []
+
+    @app.post(path, dependencies=dependencies)
     async def strands_endpoint(input_data: RunAgentInput, request: Request):
         """AWS Strands agent endpoint."""
         accept_header = request.headers.get("accept")

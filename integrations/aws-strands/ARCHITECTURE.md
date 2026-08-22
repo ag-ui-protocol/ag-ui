@@ -137,7 +137,7 @@ The transport layer is intentionally lightweight:
   - Instantiates `EventEncoder` using the requester's `Accept` header to choose between SSE (`text/event-stream`) and newline-delimited JSON.
   - Streams whatever `StrandsAgent.run` yields, automatically encoding every AG-UI event.
   - Sends a `RunErrorEvent` with `code="ENCODING_ERROR"` if serialization fails mid-stream.
-- `create_strands_app(agent, path="/")` bootstraps a FastAPI application, adds permissive CORS middleware (allowing any origin/method/header so AG-UI localhost builds can connect), and mounts the agent route.
+- `create_strands_app(agent, path="/")` bootstraps a FastAPI application and mounts the agent route. CORS middleware is only added when `origins` is passed — there is no default cross-origin access — and an optional `auth` dependency guards the agent route (the ping route stays open for health probes).
 
 ### Packaging Surface (`src/ag_ui_strands/__init__.py`)
 

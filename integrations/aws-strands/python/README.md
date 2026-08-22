@@ -69,6 +69,26 @@ You can also use the helper functions `add_strands_fastapi_endpoint` and `add_pi
     add_ping(app, "/ping")
 ```
 
+## Securing the endpoint
+
+`create_strands_app` serves an unauthenticated, same-origin-only app by default:
+
+- No CORS middleware is installed unless you pass `origins`. Pass the exact origins your frontend is served from, e.g. `create_strands_app(agui_agent, origins=["http://localhost:3000"])`. `origins=["*"]` remains available as an explicit opt-in for local development.
+- The agent route has no authentication unless you pass an `auth` dependency:
+
+```python
+import os
+from fastapi import Header, HTTPException
+
+def require_token(authorization: str | None = Header(default=None)) -> None:
+    if authorization != f"Bearer {os.environ['AGENT_TOKEN']}":
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+app = create_strands_app(agui_agent, auth=require_token)
+```
+
+The same `auth` argument is accepted by `add_strands_fastapi_endpoint`. The ping endpoint is left unauthenticated so load balancer and AgentCore health probes keep working.
+
 Requests to the AC endpoint must be authenticated. You can configure your agent runtime to accept JWT bearer tokens (via Amazon Cognito) or use SigV4. See [Set up authentication](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-agui.html) in the AgentCore documentation.
 
 For details on how AgentCore handles AG-UI requests, event streaming, and error formatting, see the [AG-UI protocol contract](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-agui-protocol-contract.html).
