@@ -10,7 +10,7 @@ import {
   ToolCallResultEvent,
 } from "@ag-ui/core";
 import { Observable } from "rxjs";
-import { filter } from "rxjs/operators";
+import { filter, finalize } from "rxjs/operators";
 
 type FilterToolCallsConfig =
   | { allowedToolCalls: string[]; disallowedToolCalls?: never }
@@ -41,6 +41,11 @@ export class FilterToolCallsMiddleware extends Middleware {
   }
 
   run(input: RunAgentInput, next: AbstractAgent): Observable<BaseEvent> {
+    // A run boundary invalidates any IDs left over from a previous run that
+    // was interrupted before its TOOL_CALL_RESULT arrived. Without this the
+    // set grows unbounded and stale IDs can shadow reused tool call IDs.
+    this.blockedToolCallIds.clear();
+
     // Use runNext which already includes transformChunks
     return this.runNext(input, next).pipe(
       filter((event) => {
@@ -86,6 +91,10 @@ export class FilterToolCallsMiddleware extends Middleware {
 
         // Allow all other events through
         return true;
+      }),
+      // Covers completion, errors and interrupts (unsubscribe) alike.
+      finalize(() => {
+        this.blockedToolCallIds.clear();
       }),
     );
   }
