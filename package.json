@@ -42,11 +42,29 @@
     "node": ">=18"
   },
   "version": "0.0.1",
+  "//ag-ui-workspace-overrides": [
+    "TEMPORARY, MUST BE REVERTED BEFORE RELEASE. Tracked in PNI-275 (same pin",
+    "as apps/dojo/package.json's //copilotkit-preview-pin -- remove both together).",
+    "The four \"@ag-ui/*\": \"workspace:*\" overrides at the top of pnpm.overrides",
+    "below exist only because of that pin: the pkg.pr.new CopilotKit preview",
+    "builds declare dependencies on the PUBLISHED @ag-ui/core (and friends), which",
+    "would install a second, older copy alongside the workspace packages this",
+    "branch is developing. Two copies means two Event/Message type identities and",
+    "subagent events that typecheck in one copy and not the other. Forcing every",
+    "resolution to the workspace copy keeps a single instance.",
+    "Remove these four entries together with the CopilotKit preview pin, once a",
+    "released @copilotkit/react-core depends on a published @ag-ui/core that",
+    "carries subagent support. The remaining overrides are unrelated and stay."
+  ],
   "pnpm": {
     "patchedDependencies": {
       "@copilotkit/aimock@1.37.4": "patches/@copilotkit__aimock@1.37.4.patch"
     },
     "overrides": {
+      "@ag-ui/client": "workspace:*",
+      "@ag-ui/core": "workspace:*",
+      "@ag-ui/encoder": "workspace:*",
+      "@ag-ui/proto": "workspace:*",
       "langium": "3.2.0",
       "@copilotkit/runtime>@ag-ui/a2ui-middleware": "0.0.8",
       "@copilotkit/runtime>@langchain/core": "0.3.80",
@@ -55,7 +73,13 @@
       "@strands-agents/sdk>zod": "^4.4.3",
       "@ag-ui/aws-strands>zod": "^4.4.3",
       "@ag-ui/aws-strands-examples>zod": "^4.4.3",
-      "hono": "4.12.27"
+      "hono": "4.12.27",
+      "@copilotkit/core": "https://pkg.pr.new/CopilotKit/CopilotKit/@copilotkit/core@40205f3",
+      "@copilotkit/a2ui-renderer": "https://pkg.pr.new/CopilotKit/CopilotKit/@copilotkit/a2ui-renderer@40205f3",
+      "@copilotkit/shared": "https://pkg.pr.new/CopilotKit/CopilotKit/@copilotkit/shared@40205f3",
+      "@copilotkit/runtime-client-gql": "https://pkg.pr.new/CopilotKit/CopilotKit/@copilotkit/runtime-client-gql@40205f3",
+      "@copilotkit/web-components": "https://pkg.pr.new/CopilotKit/CopilotKit/@copilotkit/web-components@40205f3",
+      "@copilotkit/web-inspector": "https://pkg.pr.new/CopilotKit/CopilotKit/@copilotkit/web-inspector@40205f3"
     }
   }
 }
