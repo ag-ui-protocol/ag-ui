@@ -68,14 +68,64 @@ def stringify_if_needed(item: Any) -> str:
         return item
     return json.dumps(item)
 
-def convert_langchain_multimodal_to_agui(content: List[Dict[str, Any]]) -> List[Union[TextInputContent, ImageInputContent]]:
+# Standard media block type -> the AG-UI content class that carries it back.
+#
+# The return leg of `_STANDARD_BLOCK_TYPES`, and it has to exist: this converter
+# builds the user message inside MESSAGES_SNAPSHOT, so a block kind missing here
+# is an attachment that vanishes from the thread on the next snapshot — the file
+# was sent, the model read it, and a reopened thread shows a bare line of text.
+_AGUI_MEDIA_CLASSES = {
+    "audio": AudioInputContent,
+    "video": VideoInputContent,
+    "file": DocumentInputContent,
+    "image": ImageInputContent,
+}
+
+
+def _agui_media_from_standard_block(item: Dict[str, Any]):
+    """Rebuild an AG-UI media content item from a LangChain standard block."""
+    agui_class = _AGUI_MEDIA_CLASSES[item["type"]]
+    metadata = {"filename": item["filename"]} if item.get("filename") else None
+
+    base64_value = item.get("base64")
+    if base64_value:
+        return agui_class(
+            source=InputContentDataSource(
+                type="data",
+                value=base64_value,
+                # A base64 block without a MIME type is malformed rather than
+                # merely terse, but AG-UI's data source REQUIRES one, so fall
+                # back to the least wrong thing instead of dropping the file.
+                mime_type=item.get("mime_type") or "application/octet-stream",
+            ),
+            metadata=metadata,
+        )
+
+    url = item.get("url")
+    if url:
+        return agui_class(
+            source=InputContentUrlSource(
+                type="url",
+                value=url,
+                mime_type=item.get("mime_type"),
+            ),
+            metadata=metadata,
+        )
+    # `file_id`-only blocks reference provider-side storage with no bytes and no
+    # URL, and AG-UI's typed classes have nowhere to put that.
+    return None
+
+
+def convert_langchain_multimodal_to_agui(content: List[Dict[str, Any]]) -> List[AGUIContentItem]:
     """Convert LangChain's multimodal content to AG-UI format.
 
-    LangChain only supports ``text`` and ``image_url`` content blocks.
     ``image_url`` blocks are converted to ``ImageInputContent`` with the
-    appropriate source type (data or URL).
+    appropriate source type (data or URL). LangChain's standard media blocks
+    (``image`` / ``audio`` / ``video`` / ``file``) are converted back to the
+    matching AG-UI content class, which is what keeps a non-image attachment in
+    the thread across a MESSAGES_SNAPSHOT.
     """
-    agui_content: List[Union[TextInputContent, ImageInputContent]] = []
+    agui_content: List[AGUIContentItem] = []
     for item in content:
         if isinstance(item, dict):
             if item.get("type") == "text":
@@ -83,6 +133,14 @@ def convert_langchain_multimodal_to_agui(content: List[Dict[str, Any]]) -> List[
                     type="text",
                     text=item.get("text", "")
                 ))
+            elif item.get("type") in _AGUI_MEDIA_CLASSES:
+                media = _agui_media_from_standard_block(item)
+                if media:
+                    agui_content.append(media)
+                else:
+                    logger.warning(
+                        "Dropping %s block: no base64 or url to carry back", item.get("type")
+                    )
             elif item.get("type") == "image_url":
                 image_url_data = item.get("image_url", {})
                 url = image_url_data.get("url", "") if isinstance(image_url_data, dict) else image_url_data
@@ -263,6 +321,20 @@ def langchain_messages_to_agui(messages: List[BaseMessage]) -> List[AGUIMessage]
 
 _MEDIA_CONTENT_TYPES = (ImageInputContent, AudioInputContent, VideoInputContent, DocumentInputContent)
 
+# Which LangChain standard content block each AG-UI media class becomes.
+#
+# `image` keeps the legacy `image_url` shape rather than the standard `image`
+# block: it is the one media path that already worked end to end, and changing a
+# working payload is not part of fixing the broken ones. Everything else maps to
+# the standard block for its modality (langchain-core >= 1.0), which is what
+# providers validate against — an audio clip announced as an image is rejected on
+# the block kind no matter what its data URL says.
+_STANDARD_BLOCK_TYPES = {
+    AudioInputContent: "audio",
+    VideoInputContent: "video",
+    DocumentInputContent: "file",
+}
+
 
 def _media_source_to_url(source: Union[InputContentDataSource, InputContentUrlSource]) -> str | None:
     """Convert an InputContentDataSource or InputContentUrlSource to a URL string.
@@ -277,20 +349,78 @@ def _media_source_to_url(source: Union[InputContentDataSource, InputContentUrlSo
     return None
 
 
+def _filename_from_metadata(metadata: Any) -> str | None:
+    """The attachment's original filename, if the client sent one.
+
+    `metadata: {filename}` is the established AG-UI carrier for it — the client's
+    own `backward-compatibility-0-0-47` middleware migrates the legacy
+    `BinaryInputContent.filename` into exactly that shape.
+
+    It is worth reading back because langchain-core's OpenAI translator warns and
+    substitutes a placeholder (`LC_AUTOGENERATED`) when a file block has no
+    filename. Note this reads ONE key out of metadata rather than copying the
+    object: a top-level `metadata` key on the block itself is what issue #2100
+    was about, and `filename` is a documented field of the block.
+    """
+    if isinstance(metadata, dict):
+        filename = metadata.get("filename")
+        if isinstance(filename, str) and filename:
+            return filename
+    return None
+
+
+def _standard_media_block(
+    block_type: str,
+    source: Union[InputContentDataSource, InputContentUrlSource],
+    filename: str | None = None,
+) -> Dict[str, Any] | None:
+    """Build a LangChain standard media block.
+
+    All four standard media blocks (`image` / `audio` / `video` / `file`) share
+    one field set — `url` OR `base64`, plus an optional `mime_type` — so the
+    modality only decides `type`.
+    """
+    block: Dict[str, Any] = {"type": block_type}
+    if isinstance(source, InputContentDataSource):
+        block["base64"] = source.value
+        block["mime_type"] = source.mime_type
+    elif isinstance(source, InputContentUrlSource):
+        block["url"] = source.value
+        if source.mime_type:
+            block["mime_type"] = source.mime_type
+    else:
+        return None
+    if filename:
+        block["filename"] = filename
+    return block
+
+
 def convert_agui_multimodal_to_langchain(content: List[AGUIContentItem]) -> List[Dict[str, Any]]:
     """Convert AG-UI multimodal content to LangChain's multimodal format.
 
     Handles the new typed content classes (ImageInputContent, AudioInputContent,
     VideoInputContent, DocumentInputContent) as well as legacy BinaryInputContent
-    for backwards compatibility. All media types are routed through LangChain's
-    ``image_url`` format since that is the only media block type LangChain supports.
+    for backwards compatibility.
 
-    AG-UI ``InputContent.metadata`` is intentionally NOT copied onto the content
-    blocks: these blocks are passed straight to the model, and a non-standard
-    top-level ``metadata`` key makes strict OpenAI-compatible providers reject the
-    request with a 400 ("Unexpected keys in a message content image dict"). The
-    metadata is never read back on the LangChain->AG-UI return path, so nothing is
-    lost by keeping the model payload spec-compliant. See issue #2100.
+    Images use LangChain's `image_url` block. Audio, video and documents use the
+    standard block for their modality (`audio`, `video`, `file`), because the
+    block KIND is what providers validate: a PDF sent as `image_url` carries its
+    real MIME type inside the data URL and is still rejected —
+
+        openai.BadRequestError: 400 - Invalid MIME type. Only image types are
+        supported. (code: invalid_image_format)
+
+    — which killed the run rather than degrading it. Routing every modality
+    through `image_url` was correct when this converter was written (#1457) and
+    stopped being correct once langchain-core grew standard multimodal blocks;
+    the effective floor here is langchain-core 1.2.10, via `langchain>=1.2.0`.
+
+    Apart from `metadata.filename`, which is a documented field of the file
+    block, AG-UI ``InputContent.metadata`` is intentionally NOT copied onto the
+    content blocks: these blocks are passed straight to the model, and a
+    non-standard top-level ``metadata`` key makes strict OpenAI-compatible
+    providers reject the request with a 400 ("Unexpected keys in a message
+    content image dict"). See issue #2100.
     """
     langchain_content: List[Dict[str, Any]] = []
     for item in content:
@@ -300,6 +430,18 @@ def convert_agui_multimodal_to_langchain(content: List[AGUIContentItem]) -> List
                 "text": item.text
             })
         elif isinstance(item, _MEDIA_CONTENT_TYPES):
+            block_type = _STANDARD_BLOCK_TYPES.get(type(item))
+            if block_type:
+                block = _standard_media_block(
+                    block_type,
+                    item.source,
+                    _filename_from_metadata(item.metadata),
+                )
+                if block:
+                    langchain_content.append(block)
+                else:
+                    logger.warning("Dropping %s content: unrecognized source type", type(item).__name__)
+                continue
             url = _media_source_to_url(item.source)
             if url:
                 langchain_content.append({
@@ -309,7 +451,36 @@ def convert_agui_multimodal_to_langchain(content: List[AGUIContentItem]) -> List
             else:
                 logger.warning("Dropping %s content: source could not be converted to URL", type(item).__name__)
         elif isinstance(item, BinaryInputContent):
-            # Legacy BinaryInputContent — backwards compatibility
+            # Legacy BinaryInputContent — backwards compatibility.
+            #
+            # Split on the MIME type, which is the only modality signal a legacy
+            # item carries (the typed classes above announce their own). An
+            # `id`-only item cannot be classified at all, so it keeps the
+            # historical `image_url` reference form.
+            mime_type = item.mime_type or ""
+            if not mime_type.startswith("image/") and (item.url or item.data):
+                if mime_type.startswith("audio/"):
+                    block_type = "audio"
+                elif mime_type.startswith("video/"):
+                    block_type = "video"
+                else:
+                    block_type = "file"
+
+                source: Union[InputContentDataSource, InputContentUrlSource]
+                if item.url:
+                    source = InputContentUrlSource(
+                        type="url", value=item.url, mime_type=item.mime_type
+                    )
+                else:
+                    source = InputContentDataSource(
+                        type="data", value=item.data or "", mime_type=item.mime_type
+                    )
+
+                block = _standard_media_block(block_type, source, item.filename)
+                if block:
+                    langchain_content.append(block)
+                continue
+
             content_dict: Dict[str, Any] = {"type": "image_url"}
 
             # Prioritize url, then data, then id
