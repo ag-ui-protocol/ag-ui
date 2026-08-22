@@ -109,24 +109,30 @@ public sealed class RunTelemetryTest
         Assert.Equal(_runId, second.GetTagItem("agui.parent_run_id"));
     }
 
-    [Fact]
-    public async Task FailingRun_SetsErrorStatusAndErrorType()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FailingRun_SetsErrorStatusAndErrorType(bool yieldThread)
     {
         using var capture = CaptureActivities(AGUIServerInstrumentation.ActivitySourceName);
 
         var context = new RunAgentInput { ThreadId = _threadId, RunId = _runId }
             .ToChatRequestContext(SerializerOptions);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        var events = new List<BaseEvent>();
+        await foreach (var evt in ThrowingUpdates(yieldThread).AsAGUIEventStreamAsync(context).ConfigureAwait(false))
         {
-            await foreach (var _ in ThrowingUpdates().AsAGUIEventStreamAsync(context).ConfigureAwait(false))
-            {
-            }
-        });
+            events.Add(evt);
+        }
 
         var run = SingleRun(capture);
+        var error = Assert.IsType<RunErrorEvent>(events[^1]);
+        Assert.Equal("StreamingError", error.Code);
+        Assert.Equal("An error occurred while streaming the agent response.", error.Message);
+        Assert.DoesNotContain(events, e => e is RunFinishedEvent);
         Assert.Equal("error", run.GetTagItem("agui.run.outcome"));
         Assert.Equal(typeof(InvalidOperationException).FullName, run.GetTagItem("error.type"));
+        Assert.Equal(events.Count, run.GetTagItem("agui.events.count"));
         Assert.Equal(ActivityStatusCode.Error, run.Status);
     }
 
@@ -180,10 +186,15 @@ public sealed class RunTelemetryTest
     }
 
     private static async IAsyncEnumerable<ChatResponseUpdate> ThrowingUpdates(
+        bool yieldThread,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         yield return new ChatResponseUpdate(ChatRole.Assistant, "partial");
-        await Task.Yield();
+        if (yieldThread)
+        {
+            await Task.Yield();
+        }
+
         throw new InvalidOperationException("boom");
     }
 

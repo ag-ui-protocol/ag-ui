@@ -11,6 +11,9 @@ namespace AGUI.Server;
 /// </summary>
 public static class ChatResponseUpdateAGUIExtensions
 {
+    private const string StreamingErrorCode = "StreamingError";
+    private const string StreamingErrorMessage = "An error occurred while streaming the agent response.";
+
     private static readonly JsonElement AGUIToolApprovalSchema =
         JsonDocument.Parse("""
             {
@@ -43,7 +46,7 @@ public static class ChatResponseUpdateAGUIExtensions
 
         return AGUIServerInstrumentation.ActivitySource.HasListeners()
             ? InstrumentedAsync(updates, context, cancellationToken)
-            : CoreAsync(updates, context, cancellationToken);
+            : HandleErrorsAsync(updates, context, cancellationToken);
     }
 
     private const string RunOutcomeSuccess = "success";
@@ -81,21 +84,36 @@ public static class ChatResponseUpdateAGUIExtensions
         {
             while (true)
             {
-                BaseEvent current;
+                bool hasNext = false;
+                Exception? error = null;
                 try
                 {
-                    if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
-                    {
-                        break;
-                    }
-
-                    current = enumerator.Current;
+                    hasNext = await enumerator.MoveNextAsync().ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
                 }
                 catch (Exception ex)
                 {
-                    RecordError(activity, ex, eventCount);
-                    throw;
+                    error = ex;
                 }
+
+                if (error is not null)
+                {
+                    outcome = RunOutcomeError;
+                    eventCount++;
+                    RecordError(activity, error, eventCount);
+                    yield return CreateStreamingError();
+                    yield break;
+                }
+
+                if (!hasNext)
+                {
+                    break;
+                }
+
+                var current = enumerator.Current;
 
                 eventCount++;
                 outcome = current switch
@@ -112,11 +130,11 @@ public static class ChatResponseUpdateAGUIExtensions
         {
             await enumerator.DisposeAsync().ConfigureAwait(false);
 
-            if (activity is not null && activity.Status != ActivityStatusCode.Error)
+            if (activity is not null)
             {
                 activity.SetTag("agui.run.outcome", outcome);
                 activity.SetTag("agui.events.count", eventCount);
-                if (outcome == RunOutcomeError)
+                if (outcome == RunOutcomeError && activity.Status != ActivityStatusCode.Error)
                 {
                     activity.SetStatus(ActivityStatusCode.Error);
                 }
@@ -136,6 +154,59 @@ public static class ChatResponseUpdateAGUIExtensions
         activity.SetTag("agui.events.count", eventCount);
         activity.SetStatus(ActivityStatusCode.Error, exception.Message);
     }
+
+    private static async IAsyncEnumerable<BaseEvent> HandleErrorsAsync(
+        IAsyncEnumerable<ChatResponseUpdate> updates,
+        ChatRequestContext context,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var enumerator = CoreAsync(updates, context, cancellationToken).GetAsyncEnumerator(cancellationToken);
+        try
+        {
+            while (true)
+            {
+                bool hasNext = false;
+                Exception? error = null;
+                try
+                {
+                    hasNext = await enumerator.MoveNextAsync().ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    error = ex;
+                }
+
+                if (error is not null)
+                {
+                    yield return CreateStreamingError();
+                    yield break;
+                }
+
+                if (!hasNext)
+                {
+                    yield break;
+                }
+
+                yield return enumerator.Current;
+            }
+        }
+        finally
+        {
+            await enumerator.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    private static RunErrorEvent CreateStreamingError() =>
+        // Keep exception details server-side; the wire error is stable and sanitized.
+        new()
+        {
+            Code = StreamingErrorCode,
+            Message = StreamingErrorMessage,
+        };
 
     private static async IAsyncEnumerable<BaseEvent> CoreAsync(
         IAsyncEnumerable<ChatResponseUpdate> updates,
@@ -201,6 +272,11 @@ public static class ChatResponseUpdateAGUIExtensions
                 }
 
                 yield return rawEvent;
+                if (rawEvent is RunErrorEvent)
+                {
+                    yield break;
+                }
+
                 continue;
             }
 
