@@ -62,6 +62,348 @@ const LOG_PREFIX = "[@ag-ui/aws-strands]";
 const uuid = (): string => randomUUID();
 
 /**
+ * Terminal error code and fallback message for a forced stop.
+ *
+ * Both are matched literally by clients and by mock harnesses against the
+ * Python adapter's `RUN_ERROR`, so the two bridges spell them identically.
+ * Changing either here is a wire-contract change.
+ */
+const FORCE_STOP_ERROR_CODE = "STRANDS_FORCE_STOP";
+const FORCE_STOP_FALLBACK_MESSAGE = "The Strands agent stopped unexpectedly.";
+
+/**
+ * Abnormal terminal stop reasons, keyed by what the SDK reports and valued with
+ * the provider spelling the Python adapter puts on the wire.
+ *
+ * The TS SDK canonicalises provider stop reasons to camelCase (see
+ * `dist/src/models/bedrock.js`, which maps Bedrock's `content_filtered` to
+ * `contentFiltered`); Python forwards the provider spelling untouched. The
+ * hint event carries Python's spelling from both bridges so a client matches
+ * one value, not one per language. `StopReason` widens to `string`, so a model
+ * that hands the provider value straight through is keyed here too.
+ *
+ * A `Map` and not an object literal, because the key arrives from the provider:
+ * an object literal answers `toString` / `constructor` / `valueOf` /
+ * `__proto__` off `Object.prototype`, and an inherited function passes a
+ * truthiness guard and puts a `stop_reason` that is not a stop reason on the
+ * wire.
+ *
+ * `maxTokens` stays keyed so this is a literal mirror of Python's tuple, which
+ * lists `max_tokens`. The entry is dead on both bridges for the same reason:
+ * the layer under the adapter raises before a token-limit truncation can reach
+ * a terminal result (`MaxTokensError` from `Model.streamAggregated` here,
+ * `MaxTokensReachedException` from `event_loop` there).
+ *
+ * Any reason absent from the table carries no hint. That covers the normal
+ * `endTurn` and `toolUse`, the other stops Python's tuple has no entry for
+ * (`cancelled`, `stopSequence`, `interrupt` and `modelContextWindowExceeded`,
+ * the last of which Python's own `StopReason` does not spell at all) and a
+ * provider value forwarded untranslated such as Anthropic's `refusal`.
+ * Mirroring runs one way: where Python has no counterpart value, this stays
+ * silent rather than inventing one.
+ */
+const ABNORMAL_STOP_REASONS = new Map<string, string>([
+  ["maxTokens", "max_tokens"],
+  ["max_tokens", "max_tokens"],
+  ["guardrailIntervened", "guardrail_intervened"],
+  ["guardrail_intervened", "guardrail_intervened"],
+  ["contentFiltered", "content_filtered"],
+  ["content_filtered", "content_filtered"],
+]);
+
+/**
+ * SDK error names that must not be reported as a forced stop, keyed by
+ * `Error.name`.
+ *
+ * Python does not split this by exception type but by WHERE the exception was
+ * raised. On `strands-agents` 1.52.0, the release this taxonomy was verified
+ * against, `_handle_model_execution` yields `ForceStopEvent` for anything that
+ * escapes the model call itself once no hook has asked for a retry, so a
+ * provider failure raised inside that call reports as a forced stop. The two
+ * raises that happen AFTER the model call returned normally,
+ * `MaxTokensReachedException` and `StructuredOutputException`, are re-raised by
+ * `event_loop_cycle` without a `ForceStopEvent` and reach the Python adapter's
+ * outer handler, which reports `STRANDS_ERROR`. These are those two TS
+ * analogues, rethrown so they reach this adapter's outer handler and keep the
+ * same code.
+ *
+ * That first sentence is a statement about 1.52.0 and not about every release
+ * the Python sibling supports. On 1.15.0, 1.18.0 (what its `uv.lock` pins) and
+ * 1.20.0 the same `except` is gated behind an exhausted
+ * `ModelThrottledException`, and every other exception is re-raised with no
+ * `ForceStopEvent` at all, so a provider 5xx reports `STRANDS_ERROR` there
+ * while it reports `STRANDS_FORCE_STOP` here. This adapter carries no version
+ * branching for that and is not going to: it mirrors current Python. See
+ * `ARCHITECTURE.md` for the releases that were driven to establish it.
+ *
+ * `ContextWindowOverflowError` is deliberately absent even though Python lists
+ * `ContextWindowOverflowException` in the same re-raise tuple: providers raise
+ * it from inside the model call, where the force-stop handler catches it first.
+ * The TS SDK raises its counterpart from the provider too (`bedrock.js`,
+ * `anthropic.js` and `google/model.js` all raise it while translating a
+ * model-call failure), so the forced-stop default is the matching report.
+ *
+ * Matched on `name`, which the SDK sets explicitly in every constructor
+ * (`dist/src/errors.js`), rather than by `instanceof`: name matching survives a
+ * duplicated SDK copy in the dependency tree and needs no value import of a
+ * peer dependency. Never on a version string.
+ */
+const STREAM_ERROR_BYPASS_NAMES = new Set<string>([
+  "MaxTokensError",
+  "StructuredOutputError",
+]);
+
+/**
+ * `Error.name` when the thrown value carries a string one, else `undefined`.
+ *
+ * Total for every thrown value, for the same reason `_forceStopMessage` is.
+ * Inside `ForcedStop.record` it runs after the two `instanceof` checks but
+ * before anything is latched, so a throw escaping here would leave the outer
+ * handler reporting a provider failure as `ADAPTER_BUG`; it also runs inside
+ * `_isFrontendHaltSentinel`, where a throw would do the same from the
+ * frontend-halt window. Reading `name` can itself throw, from a getter that
+ * raises or from a `Proxy` whose `get` trap does. A name that cannot be read
+ * is treated as an absent one, which is the reading a value carrying no name
+ * already gets.
+ */
+function _errorName(e: unknown): string | undefined {
+  try {
+    const name = (e as { name?: unknown } | null | undefined)?.name;
+    return typeof name === "string" ? name : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * True when the thrown value carries a `cause`.
+ *
+ * Total for every thrown value, for the same reason `_errorName` is: reading
+ * `cause` can throw from a getter or a `Proxy` trap, and it is read inside the
+ * frontend-halt window, where an escaping throw reports a provider failure as
+ * `ADAPTER_BUG` and skips the closeout.
+ *
+ * An unreadable `cause` counts as PRESENT rather than absent, which is the
+ * opposite of how `_errorName` treats an unreadable name, and deliberately so:
+ * an absent `cause` is what identifies the halt sentinel, and the sentinel is
+ * SWALLOWED. Reading "cannot tell" as "absent" would turn a provider failure
+ * into a finished run. Reading it as "present" only costs a run that really
+ * did halt an extra `RUN_ERROR` it would not otherwise have had.
+ */
+function _carriesCause(e: unknown): boolean {
+  try {
+    return (e as { cause?: unknown } | null | undefined)?.cause !== undefined;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * The wire message for a forced stop, derived from whatever was thrown.
+ *
+ * A throw carries no contract in JavaScript, so this is the one place that
+ * decides what a client reads. `null` and `undefined` are the two values whose
+ * `String()` form is a plausible-looking message that says nothing about the
+ * failure ("null", "undefined"), so they take the fallback the same way an
+ * empty message does. Every other value keeps its own text, including the
+ * string `"null"`, which is a message someone wrote.
+ *
+ * Python cannot reach this case at all: `raise None` is a TypeError there and
+ * its `force_stop_reason` is always `str(exception)`, so treating a thrown
+ * `null` as "no reason given" adds no cross-language wire difference.
+ *
+ * Total for every thrown value. Deriving the text can itself throw: `String()`
+ * on an object with a null prototype finds no `toString` to call, and an
+ * `Error` whose `message` is not a string has no `trim`. A throw escaping here
+ * would reach the outer handler and report a provider failure as `ADAPTER_BUG`,
+ * so a value whose text cannot be read takes the same fallback as an absent
+ * one.
+ */
+function _forceStopMessage(e: unknown): string {
+  if (e === null || e === undefined) return FORCE_STOP_FALLBACK_MESSAGE;
+  try {
+    return _errorMessage(e).trim() || FORCE_STOP_FALLBACK_MESSAGE;
+  } catch {
+    return FORCE_STOP_FALLBACK_MESSAGE;
+  }
+}
+
+/**
+ * True for the throw Strands uses to report a cycle that halted before the
+ * model produced a final assistant message.
+ *
+ * `Model.streamAggregated` raises a bare `ModelError` with no `cause` for that
+ * ("Stream ended without completing a message"), and it is the only throw the
+ * frontend-halt window may treat as expected flow. Everything else in that
+ * window is a real failure and has to stay visible:
+ *   - a dedicated SDK error carries its own `name` (`ModelThrottledError`,
+ *     `MaxTokensError`, `ContextWindowOverflowError`, ...);
+ *   - a provider failure re-raised by that same method arrives as `ModelError`
+ *     with the original error on `cause`, which the halt throw never carries.
+ *
+ * Deliberately not a check on the message text. `stop-reasons.test.ts` drives
+ * both directions a naive match gets wrong: a wrapped provider failure whose
+ * message happens to read like the sentinel is still reported, and a sentinel
+ * the SDK reworded is still swallowed. So a reworded SDK string cannot
+ * silently reopen the hole. A plain `Error` with no `cause` counts as the
+ * sentinel too, which keeps the lenient reading this window has always had for
+ * a throw that carries no taxonomy at all. A `ModelError` raised with neither a
+ * `cause` nor a distinguishing name (the Vercel provider has one such site) is
+ * indistinguishable from the sentinel by any means short of the message text,
+ * and is still swallowed here.
+ */
+function _isFrontendHaltSentinel(e: unknown): boolean {
+  const name = _errorName(e);
+  if (name !== "ModelError" && name !== "Error") return false;
+  return !_carriesCause(e);
+}
+
+/**
+ * The `stepName` for a node's STEP_STARTED / STEP_FINISHED pair.
+ *
+ * One function because the two events must spell it identically for a frontend
+ * to pair them (events.mdx §StepFinished), and both run paths emit both.
+ */
+function _stepName(ev: { nodeId?: string; nodeType?: string }): string {
+  return `${ev.nodeType ?? "agent"}:${ev.nodeId ?? "unknown"}`;
+}
+
+/** Hint event for a non-normal stop. Same name and payload shape as Python. */
+function _agentStopped(stopReason: string): BaseEvent {
+  return {
+    type: EventType.CUSTOM,
+    name: "AgentStopped",
+    value: { stop_reason: stopReason },
+  } as BaseEvent;
+}
+
+/**
+ * The one terminal-failure report both run paths share.
+ *
+ * `_runSingleAgent` and `_runOrchestrator` drive different SDK streams, but a
+ * failure they can both see has to reach the client identically: the same
+ * decision about which failures bypass the forced stop and reach the outer
+ * handler instead, the same message and the same fallback, the same log
+ * carrying the error object rather than its text, and the same terminal
+ * `RUN_ERROR`.
+ *
+ * Neither path reported a forced stop before this class existed. A throw out
+ * of either stream simply reached that path's outer handler and reported
+ * `STRANDS_ERROR`, so there is no drift here to point at; the four decisions
+ * above are new on both paths at once, and writing them twice is what would
+ * have created somewhere to drift to.
+ *
+ * Each path owns one of these for the length of a run and has no other way to
+ * report a terminal failure, so a change to the report is a change to both.
+ * Only `label` is parameterised, since only the name of the failing stream
+ * genuinely differs. The message closeout stays with each path because it
+ * genuinely differs too: the single-agent path closes reasoning before text,
+ * drains pending tool calls and appends to a messages snapshot, none of which
+ * the orchestrator has.
+ */
+class ForcedStop {
+  /** Reason to report, once a failure has been recorded. */
+  private _message: string | undefined;
+
+  constructor(
+    private readonly _log: Logger,
+    /** Which stream failed, for the log line. */
+    private readonly _label: string,
+    private readonly _threadId: string,
+  ) {}
+
+  /** True once a failure has been recorded, i.e. this reporter owns the run's report. */
+  get pending(): boolean {
+    return this._message !== undefined;
+  }
+
+  /**
+   * Record `failure` as this run's forced stop, or rethrow it.
+   *
+   * A rethrow leaves the run to the caller's outer handler, which reports
+   * `ADAPTER_BUG` for an adapter code defect and `STRANDS_ERROR` for
+   * everything else. On the single-agent path it also exits before that path's
+   * closeout, so a message left open stays open ahead of the terminal error.
+   * That is what the Python adapter does with the same failures: its bare
+   * `raise` leaves the loop before its own closeout block and lands on its
+   * outer handler, so the two bridges put the same events on the wire. The
+   * orchestrator path has no Python counterpart to match, and catches the
+   * rethrow so its own closeout runs before the failure reaches its handler.
+   *
+   * A classification rethrow is the ONLY throw this method may make, because
+   * that is the only throw its callers know how to read: the orchestrator
+   * catches it as "the caller's failure, not mine" and the single-agent path
+   * lets it skip the closeout. So the order below is load-bearing. Both
+   * classification checks run first, the reason is latched next, and the log
+   * runs last inside its own `try`. A caller-supplied `Logger` is arbitrary
+   * code and can throw, `JSON.stringify` meeting a circular `cause` being
+   * enough; a throw escaping it would be mistaken for a classification rethrow
+   * and would discard the recorded provider failure on one path and the
+   * terminal event altogether on the other. Latching before logging and
+   * swallowing a logger failure means neither can be lost.
+   *
+   * Nothing guards against a second `record` on the same run, deliberately:
+   * both call sites `break` out of their consume loop the moment one returns,
+   * so no later failure can reach this, and a guard nothing can drive is a
+   * guarantee nothing can check. Python does not guard either. It assigns
+   * `force_stop_reason` unconditionally on every `force_stop` event
+   * (`python/src/ag_ui_strands/agent.py`), so its last failure wins.
+   */
+  record(failure: unknown): void {
+    // A code defect in the adapter is neither a provider failure nor an SDK
+    // one, so it keeps its own classification. Reached only from the
+    // orchestrator path: the single-agent caller makes the same check itself,
+    // ahead of its frontend-halt swallow, so a defect never arrives here from
+    // there. It stays on the shared reporter anyway, so one object decides the
+    // classification for both paths.
+    if (failure instanceof TypeError || failure instanceof ReferenceError) {
+      throw failure;
+    }
+    // The raises Python makes after its model call returned reach its outer
+    // handler instead of a ForceStopEvent, so their TS analogues reach the
+    // outer handler here too and keep its STRANDS_ERROR code.
+    if (STREAM_ERROR_BYPASS_NAMES.has(_errorName(failure) ?? "")) {
+      throw failure;
+    }
+    this._message = _forceStopMessage(failure);
+    try {
+      // The error object, not just its text: the outer handler this diverts
+      // traffic away from logs `error(prefix, e)`, which is what gives an
+      // operator the stack, the name and the `cause`.
+      this._log.error(
+        `${LOG_PREFIX} ${this._label} force-stopped ` +
+          `(threadId=${this._threadId}, reason=${this._message})`,
+        failure,
+      );
+    } catch {
+      // A logger that cannot write the line is not a reason to lose the run's
+      // terminal event. Nothing is re-logged here: the sink that just threw is
+      // the only one this reporter has.
+    }
+  }
+
+  /**
+   * The terminal events for the recorded failure.
+   *
+   * Emitted after the caller's own message closeout, so every message envelope
+   * a client saw opened is closed before the run ends. Step envelopes are not
+   * tracked here and are left exactly as the SDK's own node events paired
+   * them: a `STEP_STARTED` the SDK never closed stays open, on a failed run
+   * and on a healthy one alike. Harmless on a failed run, which is the one
+   * this method ends, since the client verifier checks nothing on `RUN_ERROR`.
+   * On a healthy run the same open step is a pre-existing protocol gap rather
+   * than a decision this reporter makes; see `ARCHITECTURE.md`.
+   *
+   * A forced stop is a failed run, not a short success, so the caller returns
+   * on these rather than falling through to STATE_SNAPSHOT and RUN_FINISHED.
+   */
+  *emit(): Generator<BaseEvent, void, void> {
+    if (this._message === undefined) return;
+    yield _runError(this._message, FORCE_STOP_ERROR_CODE);
+  }
+}
+
+/**
  * Events the RAW fallback deliberately stays silent about.
  *
  * Two groups, both of which would be noise rather than new information:
@@ -709,7 +1051,10 @@ export class StrandsAgent {
   private readonly _activeRunsByThread = new Set<string>();
   /** Outstanding AG-UI interrupt objects per thread, used to validate
    * incoming `RunAgentInput.resume[]` (interrupts.mdx rules 3-7). */
-  private readonly _pendingInterruptsByThread = new Map<string, Map<string, AguiInterrupt>>();
+  private readonly _pendingInterruptsByThread = new Map<
+    string,
+    Map<string, AguiInterrupt>
+  >();
   /** Fingerprint of last successfully-processed resume per thread (idempotency). */
   private readonly _lastResumeFingerprint = new Map<string, string>();
   /**
@@ -724,7 +1069,14 @@ export class StrandsAgent {
   private readonly _log: Logger;
 
   constructor(options: StrandsAgentOptions) {
-    const { agent, name, description = "", config = {}, plugins, agentsByThread } = options;
+    const {
+      agent,
+      name,
+      description = "",
+      config = {},
+      plugins,
+      agentsByThread,
+    } = options;
 
     this._agentsByThread = agentsByThread ?? new Map();
 
@@ -815,7 +1167,12 @@ export class StrandsAgent {
           `${LOG_PREFIX} buildStrandsSeed failed for thread ${threadId}: ${_errorMessage(e)}`,
           e,
         );
-        return { error: _runError("Failed to build conversation seed: " + _errorMessage(e), "SEED_BUILD_ERROR") };
+        return {
+          error: _runError(
+            "Failed to build conversation seed: " + _errorMessage(e),
+            "SEED_BUILD_ERROR",
+          ),
+        };
       }
     }
 
@@ -832,17 +1189,35 @@ export class StrandsAgent {
           )) as SessionManager | null | undefined;
         } catch (e) {
           const msg = _errorMessage(e);
-          this._log.error(`${LOG_PREFIX} sessionManagerProvider failed: ${msg}`, e);
-          return { error: _runError(`Failed to initialize session manager: ${msg}`, "SESSION_MANAGER_ERROR") };
+          this._log.error(
+            `${LOG_PREFIX} sessionManagerProvider failed: ${msg}`,
+            e,
+          );
+          return {
+            error: _runError(
+              `Failed to initialize session manager: ${msg}`,
+              "SESSION_MANAGER_ERROR",
+            ),
+          };
         }
         if (
           sessionManager != null &&
           !(sessionManager instanceof SessionManager) &&
-          typeof (sessionManager as { initAgent?: unknown }).initAgent !== "function"
+          typeof (sessionManager as { initAgent?: unknown }).initAgent !==
+            "function"
         ) {
-          const actual = (sessionManager as object)?.constructor?.name ?? typeof sessionManager;
-          this._log.error(`${LOG_PREFIX} sessionManagerProvider returned ${actual}; expected a SessionManager instance.`);
-          return { error: _runError(`sessionManagerProvider returned ${actual}; expected a SessionManager instance`, "SESSION_MANAGER_INVALID_TYPE") };
+          const actual =
+            (sessionManager as object)?.constructor?.name ??
+            typeof sessionManager;
+          this._log.error(
+            `${LOG_PREFIX} sessionManagerProvider returned ${actual}; expected a SessionManager instance.`,
+          );
+          return {
+            error: _runError(
+              `sessionManagerProvider returned ${actual}; expected a SessionManager instance`,
+              "SESSION_MANAGER_INVALID_TYPE",
+            ),
+          };
         }
         if (!sessionManager) {
           this._log.warn(
@@ -852,7 +1227,10 @@ export class StrandsAgent {
       }
       const effectiveSeed = sessionManager ? undefined : seedMessages;
       strandsAgent = new StrandsAgentCore(
-        this._buildThreadAgentConfig(sessionManager ?? undefined, effectiveSeed),
+        this._buildThreadAgentConfig(
+          sessionManager ?? undefined,
+          effectiveSeed,
+        ),
       );
       // Register interruptOnCall hooks on the per-thread agent.
       const behaviors = this.config.toolBehaviors;
@@ -869,7 +1247,12 @@ export class StrandsAgent {
                 }
                 const response = event.interrupt({
                   name: `${TOOL_APPROVAL_NAME_PREFIX}${toolName}`,
-                  reason: { tool_call: true, tool_name: toolName, tool_input: event.toolUse!.input ?? {}, tool_use_id: event.toolUse!.toolUseId },
+                  reason: {
+                    tool_call: true,
+                    tool_name: toolName,
+                    tool_input: event.toolUse!.input ?? {},
+                    tool_use_id: event.toolUse!.toolUseId,
+                  },
                 });
                 if (
                   response == null ||
@@ -995,7 +1378,12 @@ export class StrandsAgent {
         this._lastResumeFingerprint.get(threadId) === fingerprint
       ) {
         yield _runStarted(inputData);
-        yield { type: EventType.RUN_FINISHED, threadId: inputData.threadId, runId: inputData.runId, outcome: { type: "success" } };
+        yield {
+          type: EventType.RUN_FINISHED,
+          threadId: inputData.threadId,
+          runId: inputData.runId,
+          outcome: { type: "success" },
+        };
         return;
       }
 
@@ -1125,7 +1513,8 @@ export class StrandsAgent {
     const source = this._runRaw(inputData);
     const tracked = (async function* () {
       for await (const ev of source) {
-        if ((ev as { type: string }).type === EventType.RUN_ERROR) hadError = true;
+        if ((ev as { type: string }).type === EventType.RUN_ERROR)
+          hadError = true;
         yield ev;
       }
     })();
@@ -1162,7 +1551,7 @@ export class StrandsAgent {
     this._activeRunsByThread.add(threadId);
     try {
       if (this._orchestrator !== null) {
-        yield* this._runOrchestrator(inputData);
+        yield* this._runOrchestrator(inputData, threadId);
       } else {
         yield* this._runSingleAgent(inputData, threadId);
       }
@@ -1576,6 +1965,14 @@ export class StrandsAgent {
       // Captured here so the interrupt-variant RUN_FINISHED below can pull
       // `stopReason` and `interrupts[]` off it.
       let finalAgentResult: StrandsAgentResult | undefined;
+      // The shared terminal-failure report. The TS SDK has no ForceStopEvent,
+      // so the throw that Python's generic `except Exception` would have
+      // reported through one is the signal here. Recorded rather than
+      // rethrown so the stream teardown and the message/tool-call closeout
+      // below still run, as they do in Python after its `force_stop` event.
+      // The failures `record` rethrows instead are the ones Python also leaves
+      // to its outer handler, and they skip that closeout on both bridges.
+      const forcedStop = new ForcedStop(this._log, "Agent stream", threadId);
 
       try {
         while (true) {
@@ -1583,21 +1980,31 @@ export class StrandsAgent {
           try {
             next = await agentStream.next();
           } catch (streamErr) {
+            // A code defect in the adapter is neither a provider failure nor
+            // the halt sentinel, so it keeps its own classification whether or
+            // not a halt is armed. Checked before the halt swallow rather than
+            // left to `record`, which the swallow would otherwise reach first.
+            if (
+              streamErr instanceof TypeError ||
+              streamErr instanceof ReferenceError
+            ) {
+              throw streamErr;
+            }
             // Strands throws "Stream ended without completing a message" when
             // a frontend tool call halts the agent before the model emits a
-            // final assistant message. If we've already decided to halt,
-            // swallow the error — it's expected flow.
-            if (pendingHalt || haltEventStream) {
-              if (
-                streamErr instanceof TypeError ||
-                streamErr instanceof ReferenceError
-              ) {
-                throw streamErr;
-              }
+            // final assistant message. Once we have decided to halt, that
+            // throw is expected flow and the run finishes. A genuine provider
+            // failure in the same window is not, and must not be swallowed
+            // into a success.
+            if (
+              (pendingHalt || haltEventStream) &&
+              _isFrontendHaltSentinel(streamErr)
+            ) {
               haltEventStream = true;
               break;
             }
-            throw streamErr;
+            forcedStop.record(streamErr);
+            break;
           }
           if (next.done) {
             finalAgentResult = next.value as StrandsAgentResult | undefined;
@@ -2308,7 +2715,9 @@ export class StrandsAgent {
             const data = stream.data;
             const tseToolName = currentToolUse?.name ?? "";
             const tseToolUseId = currentToolUse?.toolUseId;
-            const tseBehavior = tseToolName ? this.config.toolBehaviors?.[tseToolName] : undefined;
+            const tseBehavior = tseToolName
+              ? this.config.toolBehaviors?.[tseToolName]
+              : undefined;
 
             if (tseToolUseId && tseBehavior?.toolStreamEventHandler) {
               try {
@@ -2329,7 +2738,11 @@ export class StrandsAgent {
                 type: EventType.STATE_SNAPSHOT,
                 snapshot: (data as { state: Record<string, unknown> }).state,
               };
-            } else if (data && typeof data === "object" && A2UI_STREAM_KEY in data) {
+            } else if (
+              data &&
+              typeof data === "object" &&
+              A2UI_STREAM_KEY in data
+            ) {
               // A2UI sub-agent streaming: re-emit the generate_a2ui
               // tool's inner render_a2ui progress as synthetic TOOL_CALL events.
               // The a2ui middleware's streaming path keys its "building"
@@ -2358,7 +2771,10 @@ export class StrandsAgent {
                   delta: a2ui.delta,
                 };
               } else if (a2ui.kind === "end") {
-                yield { type: EventType.TOOL_CALL_END, toolCallId: a2ui.toolCallId };
+                yield {
+                  type: EventType.TOOL_CALL_END,
+                  toolCallId: a2ui.toolCallId,
+                };
               }
             }
             continue;
@@ -2376,17 +2792,13 @@ export class StrandsAgent {
           if (maEvent?.type === "beforeNodeCallEvent") {
             // stepName must match the paired afterNodeCallEvent below so
             // frontends can pair START/FINISH (events.mdx §StepFinished).
-            yield {
-              type: EventType.STEP_STARTED,
-              stepName: `${maEvent.nodeType ?? "agent"}:${maEvent.nodeId ?? "unknown"}`,
-            };
+            const stepName = _stepName(maEvent);
+            yield { type: EventType.STEP_STARTED, stepName };
             continue;
           }
           if (maEvent?.type === "afterNodeCallEvent") {
-            yield {
-              type: EventType.STEP_FINISHED,
-              stepName: `${maEvent.nodeType ?? "agent"}:${maEvent.nodeId ?? "unknown"}`,
-            };
+            const stepName = _stepName(maEvent);
+            yield { type: EventType.STEP_FINISHED, stepName };
             continue;
           }
           if (maEvent?.type === "multiAgentHandoffEvent") {
@@ -2404,6 +2816,38 @@ export class StrandsAgent {
               },
             };
             continue;
+          }
+
+          // Terminal `AgentResult`. Mirrors Python's `"result" in event`
+          // branch: a non-normal stop gets a hint event so a client can say
+          // why an answer is short or empty, instead of the run reading as an
+          // ordinary success. No `continue`: the RAW skip list below owns
+          // dropping the result itself, whose payload already streamed.
+          if (kind === "agentResultEvent") {
+            const stopReason = (event as { result?: { stopReason?: unknown } })
+              .result?.stopReason;
+            const hint =
+              typeof stopReason === "string"
+                ? ABNORMAL_STOP_REASONS.get(stopReason)
+                : undefined;
+            if (hint) {
+              // Python logs the terminal result at INFO. This `Logger` has no
+              // info level and `DEFAULT_LOGGER.debug` is a no-op, so logging an
+              // abnormal stop at debug would leave no server trace at all.
+              // `warn` is the lowest level the default logger actually emits,
+              // and a truncated or filtered answer is a warning. The normal
+              // stops keep the debug trace so an ordinary run stays quiet.
+              this._log.warn(
+                `${LOG_PREFIX} agent_result: threadId=${threadId}, ` +
+                  `stopReason=${String(stopReason)} (abnormal stop)`,
+              );
+              yield _agentStopped(hint);
+            } else {
+              this._log.debug(
+                `${LOG_PREFIX} agent_result: threadId=${threadId}, ` +
+                  `stopReason=${String(stopReason)}`,
+              );
+            }
           }
 
           // Terminal fallback: anything the dispatch above does not translate
@@ -2493,6 +2937,15 @@ export class StrandsAgent {
       // already emitted). Either way the verifier must see zero active calls.
       yield* _drainPendingToolCalls(toolCallsSeen);
 
+      // A forced stop is a failed run, not a short success, so it terminates
+      // here rather than falling through to STATE_SNAPSHOT and RUN_FINISHED.
+      // Same code and same message as Python, and in the same position
+      // relative to the closeout events above.
+      if (forcedStop.pending) {
+        yield* forcedStop.emit();
+        return;
+      }
+
       // Final state snapshot with `currentState` verbatim. Unlike the initial
       // snapshot this is not filtered — the initial filter exists only to
       // protect frontends that don't recognise the "tool" role.
@@ -2510,7 +2963,12 @@ export class StrandsAgent {
           for (const i of aguiInterrupts) interruptMap.set(i.id, i);
           this._pendingInterruptsByThread.set(threadId, interruptMap);
           this._lastResumeFingerprint.delete(threadId);
-          persistInterruptBookkeeping(strandsAgent, interruptMap, null, this._log);
+          persistInterruptBookkeeping(
+            strandsAgent,
+            interruptMap,
+            null,
+            this._log,
+          );
           // Strands' default SessionManager saves at the completed-invocation
           // boundary. An interrupt exits the native loop before that durable
           // snapshot is guaranteed, so explicitly checkpoint the restored
@@ -2788,6 +3246,7 @@ export class StrandsAgent {
    */
   private async *_runOrchestrator(
     inputData: RunAgentInput,
+    threadId: string,
   ): AsyncGenerator<BaseEvent, void, void> {
     yield _runStarted(inputData);
     try {
@@ -2827,19 +3286,67 @@ export class StrandsAgent {
       let reasoningMessageId: string | undefined;
 
       const orchestratorStream = this._orchestrator!.stream(prompt);
+      // A throw out of the orchestrator stream is this bridge's forced stop,
+      // the same signal `_runSingleAgent` reads off `agent.stream()`: the SDK
+      // has no ForceStopEvent to report one with, so the exception is the
+      // report. Recorded rather than rethrown so the teardown below and the
+      // message closeout after it still run before the terminal error, exactly
+      // as they do on the single-agent path and in Python after `force_stop`.
+      // The same object the single-agent path uses, so a failure both paths
+      // can see cannot be reported two different ways.
+      const forcedStop = new ForcedStop(
+        this._log,
+        "Orchestrator stream",
+        threadId,
+      );
+      // The failure `record` classified as the caller's rather than this
+      // path's. Boxed so the presence check below is a check on whether a
+      // failure was classified that way, and cannot quietly become a
+      // truthiness test on the failure itself. Rethrown after the closeout
+      // below so the outer handler's RUN_ERROR does not land on an open
+      // message envelope.
+      let bypassed: { error: unknown } | undefined;
       try {
-        for await (const rawEvent of orchestratorStream) {
-          const event = unwrapStrandsEvent(rawEvent);
+        while (true) {
+          let next: IteratorResult<unknown, unknown>;
+          try {
+            next = await orchestratorStream.next();
+          } catch (streamErr) {
+            try {
+              forcedStop.record(streamErr);
+            } catch (rethrown) {
+              bypassed = { error: rethrown };
+            }
+            break;
+          }
+          // Done returns the aggregate `MultiAgentResult`, which carries the
+          // run's terminal status but no stop reason of its own (see
+          // `multiagent/state.d.ts`). Neither is read. A Graph whose every
+          // node failed therefore still reports as a finished run, which is a
+          // real pre-existing bug that this change deliberately does not fix:
+          // what a failed Graph run should put on the wire is a design
+          // question of its own.
+          //
+          // The aggregate status is not the only signal this loop is handed.
+          // `AfterNodeCallEvent.error` and `NodeResultEvent.result.error`
+          // (`multiagent/events.d.ts`) both arrive per node and are discarded
+          // too. What is judged unusable is specifically the aggregate STATUS:
+          // `_resolveStatus` (`multiagent/state.js`) marks the aggregate FAILED
+          // when ANY node failed, so a Graph that lost one parallel branch and
+          // answered from another is FAILED as well, and acting on it would
+          // fail runs that succeeded. Whether a per-node error should reach the
+          // client, and as what, is the open design question; nothing here
+          // claims there is no signal to build it from.
+          if (next.done) break;
+          const event = unwrapStrandsEvent(next.value);
           const kind = getEventKind(event);
 
           if (kind === "beforeNodeCallEvent") {
             const ev = event as { nodeId?: string; nodeType?: string };
             // stepName must match the paired afterNodeCallEvent below so
             // frontends can pair START/FINISH (events.mdx §StepFinished).
-            yield {
-              type: EventType.STEP_STARTED,
-              stepName: `${ev.nodeType ?? "agent"}:${ev.nodeId ?? "unknown"}`,
-            };
+            const stepName = _stepName(ev);
+            yield { type: EventType.STEP_STARTED, stepName };
             continue;
           }
           if (kind === "afterNodeCallEvent") {
@@ -2861,10 +3368,8 @@ export class StrandsAgent {
               reasoningStarted = false;
               reasoningMessageId = undefined;
             }
-            yield {
-              type: EventType.STEP_FINISHED,
-              stepName: `${ev.nodeType ?? "agent"}:${ev.nodeId ?? "unknown"}`,
-            };
+            const stepName = _stepName(ev);
+            yield { type: EventType.STEP_FINISHED, stepName };
             continue;
           }
           if (kind === "multiAgentHandoffEvent") {
@@ -2887,12 +3392,49 @@ export class StrandsAgent {
           if (kind === "nodeStreamUpdateEvent") {
             // Inner event is the agent-level event emitted by the wrapped agent.
             const ev = event as {
+              nodeId?: string;
               inner?: { source?: string; event?: unknown };
             };
             const inner = ev.inner?.event
               ? unwrapStrandsEvent(ev.inner.event)
               : undefined;
-            if (getEventKind(inner) === "modelContentBlockDeltaEvent") {
+            const innerKind = getEventKind(inner);
+            // A node's terminal `AgentResult` is the only place a stop reason
+            // reaches this path: `Agent.stream()` yields an `agentResultEvent`,
+            // and `AgentNode.handle` wraps every event it yields in a
+            // `NodeStreamUpdateEvent` tagged `source: 'agent'`. A non-normal
+            // stop gets the same hint the single-agent path emits, so a client
+            // can say why an answer is short or empty instead of reading the
+            // node as an ordinary success.
+            if (innerKind === "agentResultEvent") {
+              const stopReason = (
+                inner as { result?: { stopReason?: unknown } }
+              ).result?.stopReason;
+              const hint =
+                typeof stopReason === "string"
+                  ? ABNORMAL_STOP_REASONS.get(stopReason)
+                  : undefined;
+              if (hint) {
+                // Same level as the single-agent path, and for the same
+                // reason: `DEFAULT_LOGGER.debug` is a no-op, so an abnormal
+                // stop logged at debug leaves no server trace at all, and a
+                // guardrailed or filtered answer is a warning. Normal stops
+                // keep the debug trace so an ordinary run stays quiet.
+                this._log.warn(
+                  `${LOG_PREFIX} node agent_result: threadId=${threadId}, ` +
+                    `nodeId=${ev.nodeId ?? "unknown"}, stopReason=${String(stopReason)} ` +
+                    `(abnormal stop)`,
+                );
+                yield _agentStopped(hint);
+              } else {
+                this._log.debug(
+                  `${LOG_PREFIX} node agent_result: threadId=${threadId}, ` +
+                    `nodeId=${ev.nodeId ?? "unknown"}, stopReason=${String(stopReason)}`,
+                );
+              }
+              continue;
+            }
+            if (innerKind === "modelContentBlockDeltaEvent") {
               const delta = (
                 inner as { delta?: { type?: string; text?: string } }
               ).delta;
@@ -2910,7 +3452,10 @@ export class StrandsAgent {
                   messageId,
                   delta: delta.text,
                 };
-              } else if (delta?.type === "reasoningContentDelta" && delta.text) {
+              } else if (
+                delta?.type === "reasoningContentDelta" &&
+                delta.text
+              ) {
                 if (!reasoningStarted) {
                   reasoningMessageId = uuid();
                   yield {
@@ -2952,6 +3497,25 @@ export class StrandsAgent {
         };
         yield { type: EventType.REASONING_END, messageId: reasoningMessageId! };
       }
+
+      // Rethrown here rather than out of the loop so the closeout above runs
+      // first: the outer handler's RUN_ERROR is still the report, but it no
+      // longer lands on a TEXT_MESSAGE_START nothing closed. The single-agent
+      // path deliberately keeps the bare rethrow, because Python's own bare
+      // `raise` leaves its closeout the same way and diverging on the one
+      // bridge that has a Python counterpart would create a cross-language
+      // difference. This path has no counterpart to diverge from.
+      if (bypassed) throw bypassed.error;
+
+      // A forced stop is a failed run, not a short success, so it terminates
+      // here rather than falling through to STATE_SNAPSHOT and RUN_FINISHED.
+      // Same code, same message and same position relative to the closeout
+      // above as the single-agent path and Python.
+      if (forcedStop.pending) {
+        yield* forcedStop.emit();
+        return;
+      }
+
       yield { type: EventType.STATE_SNAPSHOT, snapshot: {} };
       yield {
         type: EventType.RUN_FINISHED,
@@ -3130,9 +3694,10 @@ interface PersistedInterruptBookkeeping {
  * checked explicitly before trusting it. Anything that doesn't match is
  * treated as "nothing persisted" rather than thrown.
  */
-function loadPersistedInterruptBookkeeping(
-  strandsAgent: unknown,
-): { pending: Map<string, AguiInterrupt> | null; fingerprint: string | null } {
+function loadPersistedInterruptBookkeeping(strandsAgent: unknown): {
+  pending: Map<string, AguiInterrupt> | null;
+  fingerprint: string | null;
+} {
   try {
     const appState = (strandsAgent as { appState?: unknown })?.appState as
       | { get?: (key: string) => unknown }
@@ -3667,11 +4232,18 @@ function validateObjectPayloadPropertyTypes(
   for (const [field, fieldSchema] of Object.entries(
     properties as Record<string, unknown>,
   )) {
-    if (!(field in payload) || !fieldSchema || typeof fieldSchema !== "object") {
+    if (
+      !(field in payload) ||
+      !fieldSchema ||
+      typeof fieldSchema !== "object"
+    ) {
       continue;
     }
     const type = (fieldSchema as { type?: unknown }).type;
-    if (typeof type !== "string" || jsonSchemaTypeMatches(payload[field], type)) {
+    if (
+      typeof type !== "string" ||
+      jsonSchemaTypeMatches(payload[field], type)
+    ) {
       continue;
     }
     return `field '${field}' must be ${jsonSchemaTypeDescription(type)}.`;
@@ -3691,7 +4263,9 @@ function jsonSchemaTypeMatches(value: unknown, type: string): boolean {
     case "integer":
       return typeof value === "number" && Number.isInteger(value);
     case "object":
-      return value !== null && typeof value === "object" && !Array.isArray(value);
+      return (
+        value !== null && typeof value === "object" && !Array.isArray(value)
+      );
     case "array":
       return Array.isArray(value);
     case "null":
