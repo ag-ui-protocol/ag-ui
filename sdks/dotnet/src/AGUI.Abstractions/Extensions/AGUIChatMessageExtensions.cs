@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 
@@ -77,6 +78,9 @@ public static class AGUIChatMessageExtensions
                         case AGUITextInputContent textInput:
                             contents.Add(new TextContent(textInput.Text));
                             break;
+                        case AGUIMediaInputContent mediaInput:
+                            contents.Add(ConvertMediaInputContent(mediaInput));
+                            break;
                         case AGUIBinaryInputContent binaryInput:
                             if (binaryInput.Url is not null)
                             {
@@ -145,6 +149,43 @@ public static class AGUIChatMessageExtensions
         }
     }
 
+    private static AIContent ConvertMediaInputContent(AGUIMediaInputContent mediaInput)
+    {
+        AIContent content = mediaInput.Source switch
+        {
+            AGUIInputContentDataSource dataSource =>
+                new DataContent(Convert.FromBase64String(dataSource.Value), dataSource.MimeType),
+            AGUIInputContentUrlSource urlSource =>
+                new UriContent(new Uri(urlSource.Value, UriKind.RelativeOrAbsolute), urlSource.MimeType),
+            _ => throw new NotSupportedException(
+                $"Input content source type '{mediaInput.Source?.Type ?? "<null>"}' is not supported.")
+        };
+
+        ApplyMediaMetadata(content, mediaInput.Metadata);
+        return content;
+    }
+
+    private static void ApplyMediaMetadata(AIContent content, JsonElement? metadata)
+    {
+        if (metadata is not { } value)
+        {
+            return;
+        }
+
+        content.AdditionalProperties = new AdditionalPropertiesDictionary
+        {
+            ["metadata"] = value.Clone()
+        };
+
+        if (content is DataContent dataContent &&
+            value.ValueKind == JsonValueKind.Object &&
+            value.TryGetProperty("filename", out var filename) &&
+            filename.ValueKind == JsonValueKind.String)
+        {
+            dataContent.Name = filename.GetString();
+        }
+    }
+
     /// <summary>
     /// Converts a sequence of <see cref="ChatMessage"/> instances to <see cref="AGUIMessage"/> instances.
     /// </summary>
@@ -167,20 +208,25 @@ public static class AGUIChatMessageExtensions
                             parts.Add(new AGUITextInputContent { Text = textContent.Text ?? string.Empty });
                             break;
                         case DataContent dataContent:
-                            parts.Add(new AGUIBinaryInputContent
-                            {
-                                MimeType = dataContent.MediaType ?? string.Empty,
-                                Data = dataContent.Data is { Length: > 0 } ? Convert.ToBase64String(dataContent.Data.ToArray()) : null,
-                                Filename = dataContent.AdditionalProperties?.TryGetValue("filename", out string? fn) == true ? fn : null
-                            });
+                            parts.Add(ConvertMediaContent(
+                                dataContent.MediaType,
+                                new AGUIInputContentDataSource
+                                {
+                                    Value = Convert.ToBase64String(dataContent.Data.ToArray()),
+                                    MimeType = dataContent.MediaType ?? string.Empty
+                                },
+                                dataContent.AdditionalProperties,
+                                dataContent.Name));
                             break;
                         case UriContent uriContent:
-                            parts.Add(new AGUIBinaryInputContent
-                            {
-                                MimeType = uriContent.MediaType ?? string.Empty,
-                                Url = uriContent.Uri?.ToString(),
-                                Filename = uriContent.AdditionalProperties?.TryGetValue("filename", out string? fn2) == true ? fn2 : null
-                            });
+                            parts.Add(ConvertMediaContent(
+                                uriContent.MediaType,
+                                new AGUIInputContentUrlSource
+                                {
+                                    Value = uriContent.Uri?.ToString() ?? string.Empty,
+                                    MimeType = uriContent.MediaType
+                                },
+                                uriContent.AdditionalProperties));
                             break;
                         default:
                             parts.Add(new AGUITextInputContent { Text = content.ToString() ?? string.Empty });
@@ -261,6 +307,99 @@ public static class AGUIChatMessageExtensions
             aguiMessage.Id = message.MessageId;
             yield return aguiMessage;
         }
+    }
+
+    private static AGUIMediaInputContent ConvertMediaContent(
+        string? mediaType,
+        AGUIInputContentSource source,
+        AdditionalPropertiesDictionary? additionalProperties,
+        string? filename = null)
+    {
+        AGUIMediaInputContent content = GetMediaTypeKind(mediaType) switch
+        {
+            MediaTypeKind.Image => new AGUIImageInputContent(),
+            MediaTypeKind.Audio => new AGUIAudioInputContent(),
+            MediaTypeKind.Video => new AGUIVideoInputContent(),
+            _ => new AGUIDocumentInputContent()
+        };
+
+        content.Source = source;
+        content.Metadata = ConvertAdditionalProperties(additionalProperties, filename);
+        return content;
+    }
+
+    private static MediaTypeKind GetMediaTypeKind(string? mediaType)
+    {
+        if (!MediaTypeHeaderValue.TryParse(mediaType, out var parsed) ||
+            parsed.MediaType is not { } parsedMediaType)
+        {
+            return MediaTypeKind.Other;
+        }
+
+        var mediaTypeSpan = parsedMediaType.AsSpan();
+        var separator = mediaTypeSpan.IndexOf('/');
+        if (separator <= 0)
+        {
+            return MediaTypeKind.Other;
+        }
+
+        var topLevelType = mediaTypeSpan.Slice(0, separator);
+        if (topLevelType.Equals("image".AsSpan(), StringComparison.OrdinalIgnoreCase))
+        {
+            return MediaTypeKind.Image;
+        }
+
+        if (topLevelType.Equals("audio".AsSpan(), StringComparison.OrdinalIgnoreCase))
+        {
+            return MediaTypeKind.Audio;
+        }
+
+        return topLevelType.Equals("video".AsSpan(), StringComparison.OrdinalIgnoreCase)
+            ? MediaTypeKind.Video
+            : MediaTypeKind.Other;
+    }
+
+    private static JsonElement? ConvertAdditionalProperties(
+        AdditionalPropertiesDictionary? additionalProperties,
+        string? filename)
+    {
+        if ((additionalProperties is null || additionalProperties.Count == 0) &&
+            string.IsNullOrEmpty(filename))
+        {
+            return null;
+        }
+
+        if (additionalProperties?.Count == 1 &&
+            additionalProperties.TryGetValue("metadata", out JsonElement preservedMetadata))
+        {
+            return preservedMetadata.Clone();
+        }
+
+        IDictionary<string, object?> metadata = new Dictionary<string, object?>();
+        if (additionalProperties is not null)
+        {
+            foreach (var property in additionalProperties)
+            {
+                metadata[property.Key] = property.Value;
+            }
+        }
+
+        if (!string.IsNullOrEmpty(filename) && !metadata.ContainsKey("filename"))
+        {
+            metadata["filename"] = filename;
+        }
+
+        return JsonSerializer.SerializeToElement(
+            metadata,
+            AGUIJsonSerializerContext.Default.GetTypeInfo(typeof(IDictionary<string, object?>))!);
+    }
+
+    private enum MediaTypeKind
+    {
+        Other,
+        Image,
+        Audio,
+        Video
     }
 
     /// <summary>
