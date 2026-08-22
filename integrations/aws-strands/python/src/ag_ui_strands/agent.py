@@ -10,6 +10,8 @@ import inspect
 import json
 import logging
 import uuid
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from importlib.metadata import version as distribution_version
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
@@ -79,6 +81,22 @@ _TOOL_CALL_MAP_MAX = 512
 # cancels (``ResumeEntry.status == "cancelled"``) rather than resolving. The
 # tool receives this in place of a real answer and can treat it as a denial.
 INTERRUPT_CANCELLED = {"cancelled": True}
+
+# Message for a rejected overlapping run. Worded identically to the TypeScript
+# bridge so a client sees one contract across both, and kept next to the code
+# it pairs with rather than inlined at the one call site.
+_THREAD_BUSY_MESSAGE_TEMPLATE = (
+    'Another run is already in progress on thread "{thread_id}". Wait for '
+    "RUN_FINISHED before starting a new run on the same thread."
+)
+
+# Upper bound on how long a finishing run may hold its thread claim while its
+# cleanup drains. Cleanup delegates into Strands, which can block on a model
+# call or a session write, and an unbounded wait turns one hung call into a
+# thread that answers THREAD_BUSY for the life of the process. Generous, since
+# every ordinary cleanup finishes in milliseconds and the bound exists only to
+# convert "wedged forever" into "late".
+_RUN_CLEANUP_TIMEOUT_SECONDS = 30.0
 
 # Reserved native-interrupt name prefix for interrupts this adapter's approval
 # hook raises. Anything else is a generic native interrupt.
@@ -198,6 +216,48 @@ def _get_strands_session_manager(agent: Any) -> Any:
     )
 
 
+async def _sync_session_state(agent: Any) -> None:
+    """Flush agent state through the SessionManager without blocking the loop.
+
+    ``SessionManager.sync_agent`` is synchronous and writes to whatever backend
+    the deployment configured — a file, a database, S3. Calling it inline stalls
+    the event loop, and therefore every other request the process is serving,
+    for the duration of that write. It runs many times per request on this path,
+    so the stall compounds. A worker thread keeps the wait ordered against this
+    run — the write still completes before the event it guards is yielded — while
+    leaving the loop free.
+    """
+    session_manager = _get_strands_session_manager(agent)
+    if session_manager is None:
+        return
+    await asyncio.to_thread(session_manager.sync_agent, agent)
+
+
+async def _sync_frontend_wait_state(agent: Any) -> None:
+    """Persist an adapter-owned frontend-wait transition."""
+    await _sync_session_state(agent)
+
+
+async def _mark_frontend_wait_end_handed_off(
+    agent: Any,
+    batch: "FrontendToolWaitBatch",
+    wire_tool_call_id: str,
+) -> "FrontendToolWaitBatch":
+    """Persist one ToolCallEnd handoff before advancing the event stream.
+
+    Call this only after the ``yield`` that emitted the End has returned, which
+    is the consumer coming back for the next event. Wrapping the yield in
+    ``try``/``finally`` to "make sure" the handoff is recorded does the opposite
+    of what it looks like: ``finally`` also runs when the generator is closed at
+    that yield, so a dropped connection is recorded as a delivery and the End is
+    never exposed again. Delivery here is deliberately at least once.
+    """
+    marked = batch.mark_end_handed_off(wire_tool_call_id)
+    agent.state.set(FRONTEND_TOOL_WAIT_STATE_KEY, marked.to_dict())
+    await _sync_frontend_wait_state(agent)
+    return marked
+
+
 def _strands_interrupt_to_agui(strands_interrupt: Any) -> "Interrupt":
     """Map a native Strands ``Interrupt`` onto an AG-UI ``Interrupt``.
 
@@ -244,6 +304,20 @@ def _native_interrupt_is_answered(interrupt: Any) -> bool:
     if _STRANDS_USES_PRESENCE_BASED_INTERRUPT_RESPONSES:
         return response is not None
     return bool(response)
+
+
+def _is_native_interrupt_state(interrupt_state: Any) -> bool:
+    """True when this object is shaped like Strands' native checkpoint state.
+
+    Structural rather than an isinstance check against a private SDK class, and
+    structural rather than a check on where the object came from: the question
+    is whether ``activated`` and ``interrupts`` can be read as the audit below
+    reads them, and a stand-in that answers them faithfully is as good as the
+    real thing.
+    """
+    return isinstance(getattr(interrupt_state, "activated", None), bool) and isinstance(
+        getattr(interrupt_state, "interrupts", None), Mapping
+    )
 
 
 def _open_native_interrupts(interrupts: Any) -> dict:
@@ -295,8 +369,7 @@ def _interrupt_session_required_error() -> "RunErrorEvent":
     return RunErrorEvent(
         type=EventType.RUN_ERROR,
         message=(
-            "A SessionManager is required for a mixed frontend-proxy/native "
-            "interrupt checkpoint"
+            "A SessionManager is required for a mixed frontend-proxy/native interrupt checkpoint"
         ),
         code="INTERRUPT_SESSION_REQUIRED",
     )
@@ -334,8 +407,10 @@ def _preflight_resume_entries(
     agent: Any,
     resume_entries: Any,
     pending_ag_ui: dict[str, Any] | None = None,
+    *,
+    require_complete: bool = True,
 ) -> "RunErrorEvent | None":
-    """Validate the complete submitted resume batch without mutating state."""
+    """Validate submitted resume entries without mutating interrupt state."""
     interrupt_state = getattr(agent, "_interrupt_state", None)
     if interrupt_state is None or not getattr(interrupt_state, "activated", False):
         return _interrupt_resume_error(
@@ -375,12 +450,11 @@ def _preflight_resume_entries(
             )
 
     missing_ids = set(addressable) - seen_ids
-    if missing_ids:
+    if require_complete and missing_ids:
         return RunErrorEvent(
             type=EventType.RUN_ERROR,
             message=(
-                f"Partial resume: missing interrupt IDs {sorted(missing_ids)}. "
-                "All open interrupts must be addressed."
+                f"Partial resume: missing interrupt IDs {sorted(missing_ids)}. All open interrupts must be addressed."
             ),
             code="PARTIAL_RESUME",
         )
@@ -421,8 +495,7 @@ def _preflight_resume_entries(
             return RunErrorEvent(
                 type=EventType.RUN_ERROR,
                 message=(
-                    f"Invalid payload for interrupt '{entry.interrupt_id}': "
-                    "expected an object."
+                    f"Invalid payload for interrupt '{entry.interrupt_id}': expected an object."
                 ),
                 code="INVALID_PAYLOAD",
             )
@@ -432,8 +505,7 @@ def _preflight_resume_entries(
             return RunErrorEvent(
                 type=EventType.RUN_ERROR,
                 message=(
-                    f"Invalid payload for interrupt '{entry.interrupt_id}': "
-                    f"missing required keys {missing_keys}."
+                    f"Invalid payload for interrupt '{entry.interrupt_id}': missing required keys {missing_keys}."
                 ),
                 code="INVALID_PAYLOAD",
             )
@@ -442,8 +514,7 @@ def _preflight_resume_entries(
             return RunErrorEvent(
                 type=EventType.RUN_ERROR,
                 message=(
-                    f"Invalid payload for interrupt '{entry.interrupt_id}': "
-                    f"{type_error}"
+                    f"Invalid payload for interrupt '{entry.interrupt_id}': {type_error}"
                 ),
                 code="INVALID_PAYLOAD",
             )
@@ -516,7 +587,21 @@ from .a2ui_tool import (
     is_auto_injected_a2ui_tool,
     plan_a2ui_injection,
 )
-from .client_proxy_tool import _is_proxy, sync_proxy_tools
+from .client_proxy_tool import (
+    _install_frontend_wait_resume_proxy_overlay,
+    _is_proxy,
+    sync_proxy_tools,
+)
+from .frontend_tool_wait import (
+    FRONTEND_TOOL_WAIT_INTERRUPT_NAME,
+    FRONTEND_TOOL_WAIT_STATE_KEY,
+    MAX_CHECKPOINT_MESSAGE_IDS,
+    FrontendToolWaitBatch,
+    FrontendToolWaitCall,
+    is_frontend_wait_interrupt,
+    load_frontend_tool_wait,
+    parse_frontend_wait_interrupt,
+)
 from .session_reconcile import (
     AG_UI_TOOL_CALL_MAP_STATE_KEY,
     AG_UI_WIRE_MAP_STATE_KEY,
@@ -528,6 +613,7 @@ from .session_reconcile import (
 )
 from .config import (
     StrandsAgentConfig,
+    ToolBehavior,
     ToolCallContext,
     ToolResultContext,
     ToolStreamEventContext,
@@ -535,6 +621,1180 @@ from .config import (
     normalize_predict_state,
 )
 from .utils import convert_agui_content_to_strands, flatten_content_to_text
+
+
+_FRONTEND_TOOL_SERVER_RESPONSES_STATE_KEY = (
+    "ag_ui_frontend_tool_wait_server_responses"
+)
+
+
+def _successful_noop_events(input_data: RunAgentInput) -> tuple[Any, Any]:
+    return (
+        RunStartedEvent(
+            type=EventType.RUN_STARTED,
+            thread_id=input_data.thread_id,
+            run_id=input_data.run_id,
+        ),
+        RunFinishedEvent(
+            type=EventType.RUN_FINISHED,
+            thread_id=input_data.thread_id,
+            run_id=input_data.run_id,
+            outcome=RunFinishedSuccessOutcome(type="success"),
+        ),
+    )
+
+
+def _checkpoint_message_ids(messages: list[Any]) -> tuple[str, ...]:
+    """Return stable, de-duplicated AG-UI identities at a wait boundary."""
+    latest_unique: list[str] = []
+    seen: set[str] = set()
+    for message in reversed(messages):
+        message_id = getattr(message, "id", None)
+        if isinstance(message_id, str) and message_id and message_id not in seen:
+            seen.add(message_id)
+            latest_unique.append(message_id)
+            if len(latest_unique) == MAX_CHECKPOINT_MESSAGE_IDS:
+                break
+    return tuple(reversed(latest_unique))
+
+
+def _has_unrecoverable_frontend_wait_result(
+    input_data: RunAgentInput,
+    agent: Any,
+    batch: FrontendToolWaitBatch,
+    tool_behaviors: Mapping[str, Any],
+) -> bool:
+    """Detect a waiting result whose native checkpoint was not restored.
+
+    This guard runs only for a newly-created per-thread core. A result-only
+    delta is otherwise indistinguishable from a new turn when the caller used
+    no SessionManager, or when a shared store was opened with the wrong
+    ``agent_id``. Every trailing ToolMessage must have evidence tied to its
+    exact ID; current declarations or name-only placeholders are insufficient.
+    """
+    if not _is_native_interrupt_state(getattr(agent, "_interrupt_state", None)):
+        # A core that does not expose Strands' native checkpoint state cannot
+        # participate in this restoration audit.
+        return False
+
+    trailing_tool_messages: list[Any] = []
+    for message in reversed(list(input_data.messages or [])):
+        if getattr(message, "role", None) != "tool":
+            break
+        trailing_tool_messages.append(message)
+    if not trailing_tool_messages:
+        return False
+
+    registry = getattr(getattr(agent, "tool_registry", None), "registry", {})
+    if not isinstance(registry, Mapping):
+        registry = {}
+    input_tool_names: dict[str, str] = {}
+    for message in input_data.messages or []:
+        if getattr(message, "role", None) != "assistant":
+            continue
+        for tool_call in getattr(message, "tool_calls", None) or []:
+            function = getattr(tool_call, "function", None)
+            name = (
+                function.get("name")
+                if isinstance(function, Mapping)
+                else getattr(function, "name", None)
+            )
+            tool_call_id = getattr(tool_call, "id", None)
+            if isinstance(tool_call_id, str) and isinstance(name, str) and name:
+                input_tool_names[tool_call_id] = name
+
+    state = getattr(agent, "state", None)
+    get_state = getattr(state, "get", None)
+    wire_map: Mapping[str, Any] = {}
+    tool_meta: Mapping[str, Any] = {}
+    state_metadata_malformed = False
+    if callable(get_state):
+        try:
+            candidate_wire_map = get_state(AG_UI_WIRE_MAP_STATE_KEY)
+            candidate_tool_meta = get_state(AG_UI_TOOL_CALL_MAP_STATE_KEY)
+        except Exception:
+            state_metadata_malformed = True
+            candidate_wire_map = candidate_tool_meta = None
+        if candidate_wire_map is not None and not isinstance(
+            candidate_wire_map, Mapping
+        ):
+            state_metadata_malformed = True
+        elif isinstance(candidate_wire_map, Mapping):
+            wire_map = candidate_wire_map
+        if candidate_tool_meta is not None and not isinstance(
+            candidate_tool_meta, Mapping
+        ):
+            state_metadata_malformed = True
+        elif isinstance(candidate_tool_meta, Mapping):
+            tool_meta = candidate_tool_meta
+
+    restored_native_ids: set[str] = set()
+    for message in getattr(agent, "messages", None) or []:
+        if not isinstance(message, Mapping) or message.get("role") != "assistant":
+            continue
+        for block in message.get("content") or []:
+            tool_use = block.get("toolUse") if isinstance(block, Mapping) else None
+            native_id = tool_use.get("toolUseId") if isinstance(tool_use, Mapping) else None
+            if isinstance(native_id, str) and native_id:
+                restored_native_ids.add(native_id)
+
+    completed_ids = set(batch.last_completed_wire_ids)
+    missing = object()
+
+    def explicit_mode(meta: Any, expected_native_id: str) -> bool | None:
+        """Return true-mode proof, legacy absence, or invalid/false proof."""
+        if not isinstance(meta, Mapping):
+            return False
+        has_proxy_flag = "is_proxy" in meta
+        has_mode_flag = "continue_after_frontend_call" in meta
+        if not has_proxy_flag and not has_mode_flag:
+            stored_native_id = meta.get("strands_tool_id")
+            return (
+                None
+                if stored_native_id is None
+                or stored_native_id == expected_native_id
+                else False
+            )
+        return bool(
+            meta.get("strands_tool_id") == expected_native_id
+            and meta.get("is_proxy") is True
+            and meta.get("continue_after_frontend_call") is True
+        )
+
+    for message in trailing_tool_messages:
+        wire_id = getattr(message, "tool_call_id", None)
+        if not isinstance(wire_id, str) or not wire_id:
+            return True
+        if wire_id in completed_ids:
+            continue
+        if state_metadata_malformed:
+            return True
+
+        mapped_native_id = wire_map.get(wire_id, missing)
+        if mapped_native_id is not missing and (
+            not isinstance(mapped_native_id, str) or not mapped_native_id
+        ):
+            return True
+        if isinstance(mapped_native_id, str) and mapped_native_id:
+            meta = tool_meta.get(mapped_native_id, missing)
+            if meta is missing:
+                meta = tool_meta.get(wire_id, missing)
+            if meta is missing:
+                # Wire maps predate explicit proxy-mode metadata. Exact map
+                # ownership remains valid legacy continuation provenance.
+                continue
+            mode = explicit_mode(meta, mapped_native_id)
+            if mode is False:
+                return True
+            # Explicit true and genuinely legacy metadata (neither mode field)
+            # both retain the historical continuation path.
+            continue
+
+        direct_meta = tool_meta.get(wire_id, missing)
+        if direct_meta is not missing:
+            direct_mode = explicit_mode(direct_meta, wire_id)
+            if direct_mode is False:
+                return True
+            if direct_mode is True:
+                continue
+        if wire_id in restored_native_ids:
+            continue
+
+        tool_name = input_tool_names.get(wire_id)
+        if tool_name is None:
+            return True
+        if tool_name in registry and not _is_proxy(registry[tool_name]):
+            continue
+        behavior = tool_behaviors.get(tool_name)
+        if behavior is not None and behavior.continue_after_frontend_call is True:
+            continue
+        return True
+
+    return False
+
+
+def _partition_frontend_wait_interrupts(
+    agent: Any,
+    native_interrupts: list[Any],
+    *,
+    checkpoint_messages: list[Any],
+    deferred_end_ids: list[str],
+) -> tuple[FrontendToolWaitBatch, list[Any]]:
+    """Split adapter-owned frontend waits from client-visible interrupts.
+
+    The reserved reason tag is necessary but deliberately insufficient. Every
+    tagged interrupt must also agree with the emission-time proxy provenance,
+    native tool identity, current proxy registry entry, and wire/native map.
+    """
+    state = getattr(agent, "state", None)
+    tool_meta = state.get(AG_UI_TOOL_CALL_MAP_STATE_KEY) if state is not None else None
+    wire_map = state.get(AG_UI_WIRE_MAP_STATE_KEY) if state is not None else None
+    if tool_meta is None:
+        tool_meta = {}
+    if wire_map is None:
+        wire_map = {}
+    if not isinstance(tool_meta, dict) or not isinstance(wire_map, dict):
+        raise ValueError("malformed frontend wait provenance metadata")
+
+    registry = getattr(getattr(agent, "tool_registry", None), "registry", {})
+    hidden_calls: list[FrontendToolWaitCall] = []
+    visible: list[Any] = []
+    for interrupt in native_interrupts:
+        reason = getattr(interrupt, "reason", None)
+        if not is_frontend_wait_interrupt(reason):
+            visible.append(interrupt)
+            continue
+        if getattr(interrupt, "name", None) != FRONTEND_TOOL_WAIT_INTERRUPT_NAME:
+            raise ValueError("frontend wait interrupt name mismatch")
+
+        native_id = parse_frontend_wait_interrupt(reason)
+        meta = tool_meta.get(native_id)
+        if not isinstance(meta, dict):
+            raise ValueError(
+                f"Frontend wait provenance is missing for native tool use: {native_id}"
+            )
+        tool_name = meta.get("name")
+        if (
+            not isinstance(tool_name, str)
+            or not tool_name
+            or meta.get("strands_tool_id") != native_id
+            or meta.get("is_proxy") is not True
+            or meta.get("continue_after_frontend_call") is not False
+            or not _is_proxy(registry.get(tool_name))
+        ):
+            raise ValueError(
+                f"Frontend wait provenance mismatch for native tool use: {native_id}"
+            )
+
+        wire_ids = [
+            wire_id
+            for wire_id, mapped_native_id in wire_map.items()
+            if isinstance(wire_id, str) and mapped_native_id == native_id
+        ]
+        if len(wire_ids) != 1:
+            raise ValueError(
+                f"Frontend wait wire mapping mismatch for native tool use: {native_id}"
+            )
+        interrupt_id = getattr(interrupt, "id", None)
+        if not isinstance(interrupt_id, str) or not interrupt_id:
+            raise ValueError("frontend wait interrupt id must be a nonempty string")
+        hidden_calls.append(
+            FrontendToolWaitCall(
+                interrupt_id=interrupt_id,
+                native_tool_use_id=native_id,
+                wire_tool_call_id=wire_ids[0],
+            )
+        )
+
+    hidden_by_wire_id = {
+        call.wire_tool_call_id: call for call in hidden_calls
+    }
+    ordered_hidden_end_ids = [
+        wire_id for wire_id in deferred_end_ids if wire_id in hidden_by_wire_id
+    ]
+    if (
+        len(ordered_hidden_end_ids) != len(set(ordered_hidden_end_ids))
+        or set(ordered_hidden_end_ids) != set(hidden_by_wire_id)
+    ):
+        raise ValueError(
+            "frontend wait interrupts do not match deferred ToolCallEnd ids"
+        )
+    hidden_calls = [
+        hidden_by_wire_id[wire_id] for wire_id in ordered_hidden_end_ids
+    ]
+
+    return (
+        FrontendToolWaitBatch(
+            calls=hidden_calls,
+            checkpoint_message_ids=_checkpoint_message_ids(checkpoint_messages),
+        ),
+        visible,
+    )
+
+
+def _recover_disjoint_checkpoint_after_consumed_wait(
+    agent: Any,
+    native_interrupts: Mapping[str, Any],
+    old_batch: FrontendToolWaitBatch,
+    checkpoint_messages: Sequence[Any],
+) -> tuple[FrontendToolWaitBatch | None, list[Any]]:
+    """Rebuild a later checkpoint that superseded a stranded consumed wait."""
+    state = getattr(agent, "state", None)
+    tool_meta = state.get(AG_UI_TOOL_CALL_MAP_STATE_KEY) if state is not None else None
+    wire_map = state.get(AG_UI_WIRE_MAP_STATE_KEY) if state is not None else None
+    if not isinstance(tool_meta, Mapping) or not isinstance(wire_map, Mapping):
+        raise ValueError("malformed recovered frontend wait provenance metadata")
+    hidden_by_wire_id: dict[str, FrontendToolWaitCall] = {}
+    visible: list[Any] = []
+    for interrupt in native_interrupts.values():
+        reason = getattr(interrupt, "reason", None)
+        if not is_frontend_wait_interrupt(reason):
+            visible.append(interrupt)
+            continue
+        if getattr(interrupt, "name", None) != FRONTEND_TOOL_WAIT_INTERRUPT_NAME:
+            raise ValueError("recovered frontend wait interrupt name mismatch")
+        native_id = parse_frontend_wait_interrupt(reason)
+        meta = tool_meta.get(native_id)
+        if (
+            not isinstance(meta, Mapping)
+            or meta.get("strands_tool_id") != native_id
+            or meta.get("is_proxy") is not True
+            or meta.get("continue_after_frontend_call") is not False
+            or not isinstance(meta.get("name"), str)
+            or not meta.get("name")
+        ):
+            raise ValueError(
+                f"Recovered frontend wait provenance mismatch: {native_id}"
+            )
+        wire_ids = [
+            wire_id
+            for wire_id, mapped_native_id in wire_map.items()
+            if isinstance(wire_id, str) and mapped_native_id == native_id
+        ]
+        if len(wire_ids) != 1:
+            raise ValueError(
+                f"Recovered frontend wait wire mapping mismatch: {native_id}"
+            )
+        hidden_by_wire_id[wire_ids[0]] = FrontendToolWaitCall(
+            interrupt_id=interrupt.id,
+            native_tool_use_id=native_id,
+            wire_tool_call_id=wire_ids[0],
+        )
+    hidden_calls = [
+        hidden_by_wire_id[wire_id]
+        for wire_id in wire_map
+        if wire_id in hidden_by_wire_id
+    ]
+    if not hidden_calls:
+        return None, visible
+    recovered_message_ids = [
+        meta["message_id"]
+        for call in hidden_calls
+        if isinstance((meta := tool_meta.get(call.native_tool_use_id)), Mapping)
+        and isinstance(meta.get("message_id"), str)
+        and meta["message_id"]
+    ]
+    recovered_message_id_set = set(recovered_message_ids)
+    recovered_boundary_index: int | None = None
+    for index, message in enumerate(checkpoint_messages):
+        message_id = getattr(message, "id", None)
+        role = getattr(message, "role", None)
+        if message_id in recovered_message_id_set and role == "assistant":
+            recovered_boundary_index = index
+    old_checkpoint_ids = set(old_batch.checkpoint_message_ids)
+    if recovered_boundary_index is None and any(
+        getattr(message, "role", None) == "user"
+        and getattr(message, "id", None) not in old_checkpoint_ids
+        for message in checkpoint_messages
+    ):
+        raise ValueError(
+            "Recovered frontend wait checkpoint boundary is ambiguous"
+        )
+    recovered_checkpoint_messages = (
+        list(checkpoint_messages[: recovered_boundary_index + 1])
+        if recovered_boundary_index is not None
+        else []
+    )
+    checkpoint_ids = [
+        *old_batch.checkpoint_message_ids,
+        *_checkpoint_message_ids(recovered_checkpoint_messages),
+        *recovered_message_ids,
+    ]
+    latest_unique: list[str] = []
+    seen_checkpoint_ids: set[str] = set()
+    for message_id in reversed(checkpoint_ids):
+        if message_id in seen_checkpoint_ids:
+            continue
+        seen_checkpoint_ids.add(message_id)
+        latest_unique.append(message_id)
+        if len(latest_unique) == MAX_CHECKPOINT_MESSAGE_IDS:
+            break
+    return (
+        FrontendToolWaitBatch(
+            calls=hidden_calls,
+            last_completed_wire_ids=(
+                old_batch.mark_consumed().last_completed_wire_ids
+                if old_batch.calls
+                else old_batch.last_completed_wire_ids
+            ),
+            checkpoint_message_ids=tuple(reversed(latest_unique)),
+        ),
+        visible,
+    )
+
+
+def _decode_tool_result_data(tool_result: Any) -> Any:
+    """Decode the first text block exactly like the normal result stream."""
+    if not isinstance(tool_result, dict):
+        return None
+    result_content = tool_result.get("content", [])
+    if not result_content or not isinstance(result_content, list):
+        return None
+    for content_item in result_content:
+        if not isinstance(content_item, dict) or "text" not in content_item:
+            continue
+        text_content = content_item["text"]
+        try:
+            return json.loads(text_content)
+        except json.JSONDecodeError:
+            try:
+                return json.loads(text_content.replace("'", '"'))
+            except Exception:
+                return text_content
+    return None
+
+
+def _frontend_wait_calls_by_end_phase(
+    agent: Any,
+    batch: FrontendToolWaitBatch,
+    tool_behaviors: Mapping[str, Any],
+    declared_tool_names: set[str],
+) -> tuple[tuple[FrontendToolWaitCall, ...], tuple[FrontendToolWaitCall, ...]]:
+    """Partition unhanded wait calls by their original End ordering phase."""
+    unhanded_calls = batch.unhanded_calls
+    if not unhanded_calls:
+        return (), ()
+    raw_meta = agent.state.get(AG_UI_TOOL_CALL_MAP_STATE_KEY)
+    if not isinstance(raw_meta, Mapping):
+        raise ValueError("frontend wait End phase metadata is missing")
+    tool_meta = raw_meta
+    custom: list[FrontendToolWaitCall] = []
+    standard: list[FrontendToolWaitCall] = []
+    for call in unhanded_calls:
+        meta = tool_meta.get(call.native_tool_use_id)
+        if not isinstance(meta, Mapping):
+            raise ValueError(
+                "frontend wait End phase metadata is missing for native tool "
+                f"use: {call.native_tool_use_id}"
+            )
+        use_streaming = meta.get("use_streaming")
+        if isinstance(use_streaming, bool):
+            uses_custom_args = not use_streaming
+        else:
+            tool_name = meta.get("name")
+            if (
+                not isinstance(tool_name, str)
+                or not tool_name
+                or (
+                    tool_name not in declared_tool_names
+                    and tool_name not in tool_behaviors
+                )
+            ):
+                raise ValueError(
+                    "frontend wait End phase metadata is malformed for native "
+                    f"tool use: {call.native_tool_use_id}"
+                )
+            behavior = tool_behaviors.get(tool_name)
+            uses_custom_args = bool(behavior and behavior.args_streamer)
+        (custom if uses_custom_args else standard).append(call)
+    return tuple(custom), tuple(standard)
+
+
+@dataclass
+class _CheckpointResultDelivery:
+    metadata_changed: bool = False
+    stop_streaming_after_result: bool = False
+
+
+async def _checkpoint_result_events(
+    *,
+    agent: Any,
+    batch: FrontendToolWaitBatch,
+    persisted_tool_call_meta: dict[str, dict[str, Any]],
+    emitted_backend_result_ids: set[str],
+    input_data: RunAgentInput,
+    config: StrandsAgentConfig,
+    emit_snapshots: bool,
+    snapshot_messages: list[Any],
+    current_state: dict[str, Any],
+    message_id: str,
+    delivery: _CheckpointResultDelivery,
+) -> AsyncIterator[Any]:
+    """Stream checkpointed backend results without re-running Strands."""
+    if batch.stop_streaming_after_result:
+        return
+    interrupt_context = getattr(
+        getattr(agent, "_interrupt_state", None), "context", None
+    )
+    checkpoint_results = (
+        interrupt_context.get("tool_results", [])
+        if batch.calls and isinstance(interrupt_context, dict)
+        else []
+    )
+    for tool_result in checkpoint_results:
+        if not isinstance(tool_result, dict):
+            continue
+        result_tool_id = tool_result.get("toolUseId")
+        if (
+            not isinstance(result_tool_id, str)
+            or result_tool_id in emitted_backend_result_ids
+        ):
+            continue
+        call_info = persisted_tool_call_meta.get(result_tool_id)
+        if not isinstance(call_info, dict):
+            continue
+        if (
+            call_info.get("is_proxy") is True
+            or call_info.get("checkpoint_result_emitted") is True
+        ):
+            continue
+        tool_name = call_info.get("name")
+        if not isinstance(tool_name, str) or not tool_name:
+            continue
+
+        result_data = _decode_tool_result_data(tool_result)
+        if result_data is None:
+            continue
+
+        tool_result_message_id = str(uuid.uuid4())
+        tool_result_content = json.dumps(result_data)
+        yield ToolCallResultEvent(
+            type=EventType.TOOL_CALL_RESULT,
+            tool_call_id=result_tool_id,
+            message_id=tool_result_message_id,
+            content=tool_result_content,
+        )
+        emitted_backend_result_ids.add(result_tool_id)
+
+        behavior = config.tool_behaviors.get(tool_name)
+        if emit_snapshots and not (
+            behavior and behavior.skip_messages_snapshot
+        ):
+            snapshot_messages.append(
+                ToolMessage(
+                    id=tool_result_message_id,
+                    role="tool",
+                    content=tool_result_content,
+                    tool_call_id=result_tool_id,
+                )
+            )
+            yield MessagesSnapshotEvent(
+                type=EventType.MESSAGES_SNAPSHOT,
+                messages=list(snapshot_messages),
+            )
+
+        result_context = ToolResultContext(
+            input_data=input_data,
+            tool_name=tool_name,
+            tool_use_id=result_tool_id,
+            tool_input=call_info.get("input"),
+            args_str=call_info.get("args") or "{}",
+            result_data=result_data,
+            message_id=(
+                call_info["message_id"]
+                if isinstance(call_info.get("message_id"), str)
+                and call_info["message_id"]
+                else message_id
+            ),
+        )
+        # Preserve the adapter's established live-stream contract for these
+        # optional projection hooks: the tool result is already delivered and
+        # cannot be rolled back, so hook failures are logged with a traceback.
+        if behavior and behavior.state_from_result:
+            try:
+                snapshot = await maybe_await(
+                    behavior.state_from_result(result_context)
+                )
+                if snapshot:
+                    current_state.update(snapshot)
+                    yield StateSnapshotEvent(
+                        type=EventType.STATE_SNAPSHOT,
+                        snapshot=snapshot,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    f"state_from_result failed for {tool_name}: {exc}",
+                    exc_info=True,
+                )
+        if behavior and behavior.custom_result_handler:
+            try:
+                async for custom_event in behavior.custom_result_handler(
+                    result_context
+                ):
+                    if custom_event is not None:
+                        yield custom_event
+            except Exception as exc:
+                logger.warning(
+                    f"custom_result_handler failed for {tool_name}: {exc}",
+                    exc_info=True,
+                )
+
+        call_info["checkpoint_result_emitted"] = True
+        delivery.metadata_changed = True
+        if behavior and behavior.stop_streaming_after_result:
+            delivery.stop_streaming_after_result = True
+            break
+
+
+@dataclass(frozen=True)
+class _FrontendResumeRequest:
+    """Pure request classification against the restored native checkpoint."""
+
+    canonical_messages: tuple[Any, ...]
+    trailing_messages: tuple[Any, ...]
+    actionable_trailing_messages: tuple[Any, ...]
+    frontend_responses: tuple[dict[str, Any], ...]
+    recognized_frontend_response: bool
+    tombstone_replays: tuple[Any, ...]
+    has_genuine_new_user: bool
+    frontend_batch_candidate: FrontendToolWaitBatch
+    server_responses_candidate: dict[str, Any]
+    server_validation_error: RunErrorEvent | None
+
+
+def _frontend_tool_message_responses(
+    messages: list[Any], batch: FrontendToolWaitBatch
+) -> tuple[list[dict[str, Any]], bool]:
+    """Extract only ToolMessages owned by the active wait batch."""
+    incoming: list[dict[str, Any]] = []
+    recognized = False
+    for message in messages:
+        if getattr(message, "role", None) != "tool":
+            continue
+        wire_id = getattr(message, "tool_call_id", None)
+        call = batch.call_for_wire_id(wire_id) if isinstance(wire_id, str) else None
+        if call is None:
+            continue
+        recognized = True
+        content = getattr(message, "content", None)
+        if not call.has_response and isinstance(content, str):
+            incoming.append(
+                {
+                    "tool_call_id": wire_id,
+                    "content": content,
+                    "is_error": bool(getattr(message, "error", None)),
+                }
+            )
+    return incoming, recognized
+
+
+def _classify_frontend_resume_request(
+    messages: list[Any],
+    batch: FrontendToolWaitBatch,
+    *,
+    agent: Any,
+    resume_entries: list[Any],
+    staged_server_responses: dict[str, Any],
+    pending_ag_ui: dict[str, Any] | None,
+) -> _FrontendResumeRequest:
+    """Classify a request from stable AG-UI identities in one pass."""
+    checkpoint_message_ids = set(batch.checkpoint_message_ids)
+    boundary_id = (
+        batch.checkpoint_message_ids[-1]
+        if batch.checkpoint_message_ids
+        else None
+    )
+    boundary_index: int | None = None
+    if boundary_id is not None:
+        for index in range(len(messages) - 1, -1, -1):
+            if getattr(messages[index], "id", None) == boundary_id:
+                boundary_index = index
+                break
+
+    def is_after_checkpoint(index: int, message: Any) -> bool:
+        if boundary_index is not None:
+            return index > boundary_index
+        return getattr(message, "id", None) not in checkpoint_message_ids
+
+    tombstones = set(batch.last_completed_wire_ids)
+    tombstone_replays = tuple(
+        message
+        for message in messages
+        if (
+            getattr(message, "role", None) == "tool"
+            and getattr(message, "tool_call_id", None) in tombstones
+        )
+    )
+    actionable = tuple(
+        message
+        for index, message in enumerate(messages)
+        if (
+            (
+                getattr(message, "role", None) == "user"
+                and is_after_checkpoint(index, message)
+            )
+            or (
+                getattr(message, "role", None) == "tool"
+                and is_after_checkpoint(index, message)
+                and getattr(message, "tool_call_id", None) not in tombstones
+            )
+        )
+    )
+    frontend_responses, recognized = _frontend_tool_message_responses(
+        messages, batch
+    )
+    frontend_candidate = batch.stage_responses(frontend_responses)
+    server_candidate = dict(staged_server_responses)
+    server_validation_error = None
+    if resume_entries:
+        server_candidate, server_validation_error = _stage_server_resume_entries(
+            agent,
+            resume_entries,
+            {call.interrupt_id for call in frontend_candidate.calls},
+            staged_server_responses,
+            pending_ag_ui,
+        )
+    return _FrontendResumeRequest(
+        canonical_messages=tuple(messages),
+        trailing_messages=actionable,
+        actionable_trailing_messages=actionable,
+        frontend_responses=tuple(frontend_responses),
+        recognized_frontend_response=recognized,
+        tombstone_replays=tombstone_replays,
+        has_genuine_new_user=any(
+            getattr(message, "role", None) == "user"
+            and is_after_checkpoint(index, message)
+            for index, message in enumerate(messages)
+        ),
+        frontend_batch_candidate=frontend_candidate,
+        server_responses_candidate=server_candidate,
+        server_validation_error=server_validation_error,
+    )
+
+
+def _load_staged_server_responses(state: Any) -> dict[str, Any]:
+    get = getattr(state, "get", None)
+    if not callable(get):
+        return {}
+    raw = get(_FRONTEND_TOOL_SERVER_RESPONSES_STATE_KEY)
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError("malformed staged server interrupt responses")
+    if not all(
+        isinstance(interrupt_id, str) and interrupt_id for interrupt_id in raw
+    ):
+        raise ValueError("malformed staged server interrupt responses")
+    return dict(raw)
+
+
+def _validate_visible_wait_interrupt_bookkeeping(
+    agent: Any,
+    batch: FrontendToolWaitBatch,
+    pending_ag_ui: Mapping[str, Any] | None,
+) -> tuple[tuple[str, ...], RunErrorEvent | None]:
+    """Validate durable AG-UI metadata for visible siblings of a hidden wait."""
+    interrupt_state = getattr(agent, "_interrupt_state", None)
+    current = getattr(interrupt_state, "interrupts", {})
+    hidden_ids = {call.interrupt_id for call in batch.calls}
+    visible_ids = tuple(
+        interrupt_id
+        for interrupt_id in current
+        if interrupt_id not in hidden_ids
+    )
+    if not visible_ids:
+        if pending_ag_ui:
+            return (), _interrupt_resume_error(
+                "Visible interrupt bookkeeping does not match the native checkpoint"
+            )
+        return (), None
+    if not isinstance(pending_ag_ui, Mapping):
+        return (), _interrupt_resume_error(
+            "Visible interrupt bookkeeping is missing for the native checkpoint"
+        )
+    if set(pending_ag_ui) != set(visible_ids):
+        return (), _interrupt_resume_error(
+            "Visible interrupt bookkeeping does not match the native checkpoint"
+        )
+    if any(
+        not isinstance(interrupt, Interrupt)
+        or interrupt.id != interrupt_id
+        for interrupt_id, interrupt in pending_ag_ui.items()
+    ):
+        return (), _interrupt_resume_error(
+            "Visible interrupt bookkeeping is malformed"
+        )
+    return visible_ids, None
+
+
+def _staged_server_responses_match_retry(
+    resume_entries: list[Any],
+    staged: Mapping[str, Any],
+    pending_ag_ui: Mapping[str, Interrupt],
+) -> bool:
+    """Prove a retry repeats the server half of an accepted combined resume."""
+    if not resume_entries or set(staged) != set(pending_ag_ui):
+        return False
+    if {entry.interrupt_id for entry in resume_entries} != set(staged):
+        return False
+    for entry in resume_entries:
+        interrupt = pending_ag_ui.get(entry.interrupt_id)
+        if not isinstance(interrupt, Interrupt):
+            return False
+        if interrupt.reason == "tool_call":
+            expected = (
+                {"approved": False}
+                if entry.status == "cancelled"
+                else entry.payload
+            )
+        else:
+            expected = _wrap_resume_response(entry.status, entry.payload)
+        if staged.get(entry.interrupt_id) != expected:
+            return False
+    return True
+
+
+def _stage_server_resume_entries(
+    agent: Any,
+    resume_entries: list[Any],
+    frontend_interrupt_ids: set[str],
+    staged: dict[str, Any],
+    pending_ag_ui: dict[str, Any] | None,
+) -> tuple[dict[str, Any], RunErrorEvent | None]:
+    preflight_error = _preflight_resume_entries(
+        agent,
+        resume_entries,
+        pending_ag_ui,
+        require_complete=False,
+    )
+    if preflight_error is not None:
+        return staged, preflight_error
+
+    current = agent._interrupt_state.interrupts
+    result = dict(staged)
+    for entry in resume_entries:
+        interrupt_id = entry.interrupt_id
+        if interrupt_id in frontend_interrupt_ids:
+            return staged, _interrupt_resume_error(
+                "Frontend tool interrupts must be answered by ToolMessage"
+            )
+        native_interrupt = current.get(interrupt_id)
+        if interrupt_id not in result:
+            result[interrupt_id] = _native_resume_response(
+                entry, native_interrupt
+            )
+    return result, None
+
+
+def _build_frontend_wait_resume_prompt(
+    agent: Any,
+    batch: FrontendToolWaitBatch,
+    staged_server_responses: dict[str, Any],
+) -> tuple[list[dict[str, Any]] | None, RunErrorEvent | None]:
+    """Build a complete native resume after rechecking live interrupt metadata."""
+    metadata_error = _validate_frontend_wait_metadata(agent, batch)
+    if metadata_error is not None:
+        return None, metadata_error
+
+    interrupt_state = agent._interrupt_state
+    current = interrupt_state.interrupts
+    frontend_responses = batch.responses()
+    expected_server_ids = set(current) - set(frontend_responses)
+    unknown_server_ids = set(staged_server_responses) - expected_server_ids
+    if unknown_server_ids:
+        return None, _interrupt_resume_error(
+            f"Staged response references an unknown interrupt: {sorted(unknown_server_ids)}"
+        )
+    if expected_server_ids != set(staged_server_responses):
+        return None, None
+
+    combined = {**frontend_responses, **staged_server_responses}
+    prompt: list[dict[str, Any]] = []
+    for interrupt_id, interrupt in current.items():
+        if _native_interrupt_is_answered(interrupt):
+            return None, _interrupt_resume_error(
+                f"Resume references an interrupt that is not open: {interrupt_id}"
+            )
+        if interrupt_id not in combined:
+            return None, _interrupt_resume_error(
+                f"Missing response for native interrupt: {interrupt_id}"
+            )
+        prompt.append(
+            {
+                "interruptResponse": {
+                    "interruptId": interrupt_id,
+                    "response": combined[interrupt_id],
+                }
+            }
+        )
+    return prompt, None
+
+
+def _validate_frontend_wait_metadata(
+    agent: Any, batch: FrontendToolWaitBatch
+) -> RunErrorEvent | None:
+    """Validate the tracked frontend calls against the live checkpoint."""
+    interrupt_state = getattr(agent, "_interrupt_state", None)
+    if interrupt_state is None or not getattr(interrupt_state, "activated", False):
+        return _interrupt_resume_error(
+            "Cannot resume without an active native interrupt checkpoint"
+        )
+
+    state = getattr(agent, "state", None)
+    get_state = getattr(state, "get", None)
+    if not callable(get_state):
+        return _interrupt_resume_error(
+            "Frontend wait provenance state is unavailable"
+        )
+    try:
+        wire_map = get_state(AG_UI_WIRE_MAP_STATE_KEY)
+        tool_meta = get_state(AG_UI_TOOL_CALL_MAP_STATE_KEY)
+    except Exception as exc:
+        return _interrupt_resume_error(
+            f"Frontend wait provenance state could not be loaded: {exc}"
+        )
+    if not isinstance(wire_map, Mapping) or not isinstance(tool_meta, Mapping):
+        return _interrupt_resume_error(
+            "Frontend wait provenance state is missing or malformed"
+        )
+
+    current = getattr(interrupt_state, "interrupts", {})
+    tracked_frontend_ids = {call.interrupt_id for call in batch.calls}
+    for interrupt_id, native_interrupt in current.items():
+        reason = getattr(native_interrupt, "reason", None)
+        has_reserved_name = (
+            getattr(native_interrupt, "name", None)
+            == FRONTEND_TOOL_WAIT_INTERRUPT_NAME
+        )
+        try:
+            is_frontend_wait = is_frontend_wait_interrupt(reason)
+            if has_reserved_name and not is_frontend_wait:
+                parse_frontend_wait_interrupt(reason)
+        except ValueError as exc:
+            return _interrupt_resume_error(str(exc))
+        if is_frontend_wait and not has_reserved_name:
+            return _interrupt_resume_error(
+                f"Frontend wait interrupt name mismatch: {interrupt_id}"
+            )
+        if is_frontend_wait and interrupt_id not in tracked_frontend_ids:
+            return _interrupt_resume_error(
+                f"Frontend wait metadata is missing for interrupt: {interrupt_id}"
+            )
+    for call in batch.calls:
+        mapped_wire_ids = [
+            wire_id
+            for wire_id, native_id in wire_map.items()
+            if isinstance(wire_id, str)
+            and native_id == call.native_tool_use_id
+        ]
+        if (
+            wire_map.get(call.wire_tool_call_id) != call.native_tool_use_id
+            or mapped_wire_ids != [call.wire_tool_call_id]
+        ):
+            return _interrupt_resume_error(
+                f"Frontend wait wire mapping mismatch: {call.interrupt_id}"
+            )
+        meta = tool_meta.get(call.native_tool_use_id)
+        if not isinstance(meta, Mapping):
+            return _interrupt_resume_error(
+                f"Frontend wait provenance is missing: {call.interrupt_id}"
+            )
+        if (
+            not isinstance(meta.get("name"), str)
+            or not meta.get("name")
+            or meta.get("strands_tool_id") != call.native_tool_use_id
+            or meta.get("is_frontend") is not True
+            or meta.get("is_proxy") is not True
+            or meta.get("continue_after_frontend_call") is not False
+        ):
+            return _interrupt_resume_error(
+                f"Frontend wait provenance mismatch: {call.interrupt_id}"
+            )
+
+        native_interrupt = current.get(call.interrupt_id)
+        if native_interrupt is None or _native_interrupt_is_answered(native_interrupt):
+            return _interrupt_resume_error(
+                f"Frontend wait interrupt is not open: {call.interrupt_id}"
+            )
+        if getattr(native_interrupt, "name", None) != (
+            FRONTEND_TOOL_WAIT_INTERRUPT_NAME
+        ):
+            return _interrupt_resume_error(
+                f"Frontend wait interrupt name mismatch: {call.interrupt_id}"
+            )
+        try:
+            native_tool_use_id = parse_frontend_wait_interrupt(
+                getattr(native_interrupt, "reason", None)
+            )
+        except ValueError as exc:
+            return _interrupt_resume_error(str(exc))
+        if native_tool_use_id != call.native_tool_use_id:
+            return _interrupt_resume_error(
+                f"Frontend wait metadata mismatch: {call.interrupt_id}"
+            )
+    return None
+
+
+def _frontend_wait_native_ids_by_tool_name(
+    agent: Any,
+    batch: FrontendToolWaitBatch,
+) -> dict[str, set[str]]:
+    """Group parked native IDs using only persisted false-mode provenance."""
+    raw_meta = agent.state.get(AG_UI_TOOL_CALL_MAP_STATE_KEY)
+    if not isinstance(raw_meta, Mapping):
+        raise ValueError("frontend wait proxy provenance is missing or malformed")
+    native_ids_by_name: dict[str, set[str]] = {}
+    for call in batch.calls:
+        meta = raw_meta.get(call.native_tool_use_id)
+        if (
+            not isinstance(meta, Mapping)
+            or not isinstance(meta.get("name"), str)
+            or not meta["name"]
+            or meta.get("strands_tool_id") != call.native_tool_use_id
+            or meta.get("is_proxy") is not True
+            or meta.get("continue_after_frontend_call") is not False
+        ):
+            raise ValueError(
+                "frontend wait proxy provenance mismatch for native tool use: "
+                f"{call.native_tool_use_id}"
+            )
+        native_ids_by_name.setdefault(meta["name"], set()).add(
+            call.native_tool_use_id
+        )
+    return native_ids_by_name
+
+
+def _frontend_wait_resume_was_accepted(
+    agent: Any, batch: FrontendToolWaitBatch
+) -> bool:
+    interrupt_state = getattr(agent, "_interrupt_state", None)
+    if interrupt_state is None or not getattr(interrupt_state, "activated", False):
+        return True
+    current = getattr(interrupt_state, "interrupts", {})
+    return all(
+        call.interrupt_id not in current
+        or _native_interrupt_is_answered(current[call.interrupt_id])
+        for call in batch.calls
+    )
+
+
+def _frontend_wait_consumption_is_durable(
+    agent: Any, batch: FrontendToolWaitBatch
+) -> bool:
+    """Prove a complete batch was consumed before its final state sync failed."""
+    if not batch.calls or not batch.is_complete:
+        return False
+    interrupt_state = getattr(agent, "_interrupt_state", None)
+    if interrupt_state is None:
+        return False
+    if getattr(interrupt_state, "activated", False):
+        current_interrupts = getattr(interrupt_state, "interrupts", None)
+        if not isinstance(current_interrupts, Mapping) or any(
+            call.interrupt_id in current_interrupts for call in batch.calls
+        ):
+            return False
+
+    state = getattr(agent, "state", None)
+    get_state = getattr(state, "get", None)
+    if not callable(get_state):
+        return False
+    tool_meta = get_state(AG_UI_TOOL_CALL_MAP_STATE_KEY)
+    wire_map = get_state(AG_UI_WIRE_MAP_STATE_KEY)
+    if not isinstance(wire_map, Mapping) or (
+        tool_meta is not None and not isinstance(tool_meta, Mapping)
+    ):
+        return False
+
+    expected_results: dict[str, tuple[str, str]] = {}
+    for call in batch.calls:
+        meta = tool_meta.get(call.native_tool_use_id) if tool_meta else None
+        if wire_map.get(call.wire_tool_call_id) != call.native_tool_use_id:
+            return False
+        # Successful result processing prunes this metadata before Strands'
+        # own AfterInvocation sync. If an entry remains, it must still prove
+        # the original waiting-proxy mode.
+        if meta is not None and (
+            not isinstance(meta, Mapping)
+            or meta.get("strands_tool_id") != call.native_tool_use_id
+            or meta.get("is_proxy") is not True
+            or meta.get("continue_after_frontend_call") is not False
+        ):
+            return False
+        expected_results[call.native_tool_use_id] = (
+            "error" if call.is_error else "success",
+            call.content,
+        )
+
+    messages = getattr(agent, "messages", None) or []
+    latest_tool_use_index: dict[str, int] = {}
+    for index, message in enumerate(messages):
+        if not isinstance(message, Mapping) or message.get("role") != "assistant":
+            continue
+        for block in message.get("content") or []:
+            if not isinstance(block, Mapping):
+                continue
+            tool_use = block.get("toolUse")
+            if not isinstance(tool_use, Mapping):
+                continue
+            native_id = tool_use.get("toolUseId")
+            if native_id in expected_results:
+                latest_tool_use_index[native_id] = index
+
+    for native_id, (expected_status, expected_content) in expected_results.items():
+        tool_use_index = latest_tool_use_index.get(native_id)
+        if tool_use_index is None or tool_use_index + 1 >= len(messages):
+            return False
+        result_message = messages[tool_use_index + 1]
+        if (
+            not isinstance(result_message, Mapping)
+            or result_message.get("role") != "user"
+        ):
+            return False
+        matching_results = []
+        for block in result_message.get("content") or []:
+            if not isinstance(block, Mapping):
+                continue
+            result = block.get("toolResult")
+            if (
+                isinstance(result, Mapping)
+                and result.get("toolUseId") == native_id
+            ):
+                matching_results.append(result)
+        if len(matching_results) != 1:
+            return False
+        result = matching_results[0]
+        if (
+            result.get("status") != expected_status
+            or result.get("content") != [{"text": expected_content}]
+        ):
+            return False
+    return True
+
+
+async def _mark_frontend_wait_consumed(
+    agent: Any,
+    batch: FrontendToolWaitBatch,
+    fingerprint: str | None,
+) -> None:
+    agent.state.set(
+        FRONTEND_TOOL_WAIT_STATE_KEY,
+        batch.mark_consumed().to_dict(),
+    )
+    agent.state.set(_FRONTEND_TOOL_SERVER_RESPONSES_STATE_KEY, {})
+    await _persist_interrupt_bookkeeping(
+        agent,
+        None,
+        fingerprint,
+        strict=True,
+    )
+
+
+async def _commit_recovered_frontend_wait(
+    agent: Any,
+    batch: FrontendToolWaitBatch,
+    pending: Mapping[str, Interrupt] | None,
+    fingerprint: str | None,
+    *,
+    replacement_batch: FrontendToolWaitBatch | None = None,
+) -> None:
+    """Sync a recovered tombstone and its checkpoint bookkeeping together."""
+    agent.state.set(
+        FRONTEND_TOOL_WAIT_STATE_KEY,
+        (
+            replacement_batch
+            if replacement_batch is not None
+            else batch.mark_consumed()
+        ).to_dict(),
+    )
+    agent.state.set(_FRONTEND_TOOL_SERVER_RESPONSES_STATE_KEY, {})
+    await _persist_interrupt_bookkeeping(
+        agent,
+        pending,
+        fingerprint,
+        strict=True,
+        synchronize=False,
+    )
+    await _sync_frontend_wait_state(agent)
 
 
 def _resume_fingerprint(resume_entries: list[ResumeEntry]) -> str:
@@ -1150,10 +2410,13 @@ def _load_persisted_interrupt_bookkeeping(
     return pending, fingerprint
 
 
-def _persist_interrupt_bookkeeping(
+async def _persist_interrupt_bookkeeping(
     strands_agent: Any,
-    pending: Dict[str, Interrupt] | None,
+    pending: Mapping[str, Interrupt] | None,
     fingerprint: str | None,
+    *,
+    strict: bool = False,
+    synchronize: bool = True,
 ) -> None:
     """Write the (fingerprint, pending-interrupts) pair to
     ``strands_agent.state`` and flush it through the configured SessionManager.
@@ -1162,12 +2425,17 @@ def _persist_interrupt_bookkeeping(
     yields its terminal result, while this adapter can only derive bookkeeping
     from that result. Explicitly syncing after the state write makes the
     metadata durable before the AG-UI run returns. Persistence remains
-    best-effort so a broken state/session implementation cannot break the run.
+    best-effort for legacy pure-server checkpoints. Mixed checkpoints request
+    strict persistence because a hidden frontend handoff cannot be exposed
+    safely without its visible sibling bookkeeping. A validated resume may
+    defer the explicit sync to Strands' imminent ``AfterInvocation`` hook.
     """
     try:
         state = getattr(strands_agent, "state", None)
         set_fn = getattr(state, "set", None)
         if not callable(set_fn):
+            if strict:
+                raise RuntimeError("Interrupt bookkeeping state is not writable")
             return
         payload = {
             "last_resume_fingerprint": fingerprint,
@@ -1178,11 +2446,13 @@ def _persist_interrupt_bookkeeping(
             ),
         }
         set_fn(_INTERRUPT_BOOKKEEPING_STATE_KEY, payload)
-        session_manager = _get_strands_session_manager(strands_agent)
-        sync_agent = getattr(session_manager, "sync_agent", None)
-        if callable(sync_agent):
-            sync_agent(strands_agent)
-    except Exception as e:  # noqa: BLE001 — persistence is best-effort
+        if synchronize:
+            session_manager = _get_strands_session_manager(strands_agent)
+            if callable(getattr(session_manager, "sync_agent", None)):
+                await _sync_session_state(strands_agent)
+    except Exception as e:  # noqa: BLE001 — caller selects strictness
+        if strict:
+            raise
         logger.warning(f"Failed to persist interrupt bookkeeping: {e}")
 
 
@@ -1224,8 +2494,7 @@ class StrandsInterruptHook:
             return
         if _is_proxy(event.selected_tool):
             logger.warning(
-                "interrupt_on_call is ignored for client-provided tool '%s'; "
-                "gate execution in the client.",
+                "interrupt_on_call is ignored for client-provided tool '%s'; gate execution in the client.",
                 tool_name,
             )
             return
@@ -1256,6 +2525,225 @@ class StrandsInterruptHook:
         if not approved:
             event.cancel_tool = f"User denied approval for '{tool_name}'."
 
+
+
+class _ActiveThreadRuns:
+    """Track active wrapper-local runs without queueing contenders.
+
+    A claim is identified by a token rather than by its thread id alone. An
+    abandoned cleanup keeps running after its claim was released, and it will
+    still try to release on its way out; by then the thread may belong to a
+    later run, and releasing by id would hand that run's exclusivity away.
+    """
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._claims: dict[str, object] = {}
+        self._abandoned_cleanups: set[asyncio.Task] = set()
+
+    async def claim(self, thread_id: str) -> object | None:
+        """Return a token owning ``thread_id``, or ``None`` if it is taken."""
+        async with self._lock:
+            if thread_id in self._claims:
+                return None
+            token = object()
+            self._claims[thread_id] = token
+            return token
+
+    async def release(self, thread_id: str, token: object) -> None:
+        """Release ``thread_id`` only if ``token`` still owns it."""
+        async with self._lock:
+            if self._claims.get(thread_id) is token:
+                del self._claims[thread_id]
+
+    def abandon(
+        self, thread_id: str, token: object, cleanup_task: asyncio.Task
+    ) -> None:
+        """Release an overrunning claim without awaiting anything.
+
+        Deliberately synchronous. This runs on the path where the caller is
+        often already being cancelled, and ``await lock.acquire()`` would raise
+        there and skip the release, leaving the thread claimed for the life of
+        the process. Reading and deleting one dict entry cannot interleave with
+        ``claim``'s check-then-add, since neither awaits between them.
+
+        The task is retained until it settles because the event loop holds only
+        a weak reference to it, and a garbage-collected cleanup task would
+        cancel the very work this path is trying to let finish.
+        """
+        if self._claims.get(thread_id) is token:
+            del self._claims[thread_id]
+        self._abandoned_cleanups.add(cleanup_task)
+        cleanup_task.add_done_callback(self._abandoned_cleanups.discard)
+
+
+def _cancellation_from_exception_chain(
+    error: BaseException,
+) -> asyncio.CancelledError | None:
+    """Find a cancellation masked anywhere in an exception graph."""
+    pending = [error]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if isinstance(current, asyncio.CancelledError):
+            return current
+        # LIFO keeps the implicit caller-unwind branch ahead of any explicit
+        # cleanup-child cause while still visiting both branches.
+        if current.__cause__ is not None:
+            pending.append(current.__cause__)
+        if current.__context__ is not None:
+            pending.append(current.__context__)
+    return None
+
+
+async def _drain_cleanup(
+    cleanup: Callable[[], Awaitable[None]],
+    *,
+    cancellation_error_message: str,
+    log_context: Mapping[str, Any],
+    caller_cancellation: asyncio.CancelledError | None = None,
+    observed_cleanup_error: BaseException | None = None,
+    timeout: float | None = None,
+    on_abandoned: Callable[[asyncio.Task], None] | None = None,
+) -> None:
+    """Shield cleanup to completion before propagating caller cancellation.
+
+    ``timeout`` bounds that wait. Cleanup delegates to whatever the run was
+    doing — a model call, a session write — and any of those can hang, so
+    without a bound the wait is unbounded too and everything it gates stays
+    gated forever. On expiry ``on_abandoned`` is handed the still-running task
+    so its owner can release what it was holding, and the task is left to
+    finish on its own rather than cancelled, because cancelling a half-written
+    session is worse than a late one.
+    """
+
+    async def capture_cleanup_outcome() -> BaseException | None:
+        try:
+            await cleanup()
+        except BaseException as exc:
+            return exc
+        return None
+
+    cleanup_task = asyncio.create_task(capture_cleanup_outcome())
+    pending_cancellation = caller_cancellation
+    loop = asyncio.get_running_loop()
+    # A single deadline rather than a per-iteration timeout: a caller that is
+    # cancelled repeatedly re-enters this loop, and a fresh budget each time
+    # would make the bound unbounded again.
+    deadline = None if timeout is None else loop.time() + timeout
+
+    while not cleanup_task.done():
+        remaining = None if deadline is None else deadline - loop.time()
+        if remaining is not None and remaining <= 0:
+            break
+        try:
+            if remaining is None:
+                await asyncio.shield(cleanup_task)
+            else:
+                await asyncio.wait_for(asyncio.shield(cleanup_task), remaining)
+        except asyncio.TimeoutError:
+            break
+        except asyncio.CancelledError as exc:
+            if pending_cancellation is None:
+                pending_cancellation = exc
+
+    if not cleanup_task.done():
+        logger.error(
+            "Cleanup did not finish within %ss; abandoning it and releasing "
+            "what it was holding",
+            timeout,
+            extra=dict(log_context),
+        )
+        if on_abandoned is not None:
+            on_abandoned(cleanup_task)
+        if pending_cancellation is not None:
+            if observed_cleanup_error is not None:
+                logger.error(
+                    cancellation_error_message,
+                    exc_info=(
+                        type(observed_cleanup_error),
+                        observed_cleanup_error,
+                        observed_cleanup_error.__traceback__,
+                    ),
+                    extra=dict(log_context),
+                )
+                raise pending_cancellation from observed_cleanup_error
+            raise pending_cancellation
+        if observed_cleanup_error is not None:
+            raise observed_cleanup_error
+        return
+
+    cleanup_error = cleanup_task.result()
+
+    if pending_cancellation is not None:
+        cleanup_errors = [
+            error
+            for error in (observed_cleanup_error, cleanup_error)
+            if error is not None
+        ]
+        if (
+            len(cleanup_errors) == 2
+            and cleanup_errors[0] is cleanup_errors[1]
+        ):
+            cleanup_errors.pop()
+        for error in cleanup_errors:
+            logger.error(
+                cancellation_error_message,
+                exc_info=(
+                    type(error),
+                    error,
+                    error.__traceback__,
+                ),
+                extra=dict(log_context),
+            )
+        if cleanup_errors:
+            raise pending_cancellation from cleanup_errors[-1]
+        raise pending_cancellation
+    if cleanup_error is not None:
+        raise cleanup_error
+    if observed_cleanup_error is not None:
+        raise observed_cleanup_error
+
+
+async def _close_run_stream_and_release(
+    run_stream: Any,
+    active_threads: _ActiveThreadRuns,
+    thread_id: str,
+    claim_token: object,
+    *,
+    caller_cancellation: asyncio.CancelledError | None = None,
+    observed_cleanup_error: BaseException | None = None,
+    cleanup_timeout: float | None = None,
+) -> None:
+    """Drain delegated cleanup before releasing a thread claim."""
+    # Resolved here rather than as a default so the bound stays one module
+    # global, readable and overridable in one place.
+    timeout = (
+        _RUN_CLEANUP_TIMEOUT_SECONDS if cleanup_timeout is None else cleanup_timeout
+    )
+
+    async def cleanup() -> None:
+        try:
+            await run_stream.aclose()
+        finally:
+            await active_threads.release(thread_id, claim_token)
+
+    await _drain_cleanup(
+        cleanup,
+        cancellation_error_message=(
+            "Run cleanup failed during caller cancellation"
+        ),
+        log_context={"thread_id": thread_id},
+        caller_cancellation=caller_cancellation,
+        observed_cleanup_error=observed_cleanup_error,
+        timeout=timeout,
+        on_abandoned=lambda task: active_threads.abandon(
+            thread_id, claim_token, task
+        ),
+    )
 
 
 class StrandsAgent:
@@ -1333,6 +2821,10 @@ class StrandsAgent:
         self._pending_interrupts_by_thread: Dict[str, Dict[str, Interrupt]] = {}
         # Fingerprint of last successfully-processed resume per thread (idempotency)
         self._last_resume_fingerprint: Dict[str, str] = {}
+        # Reject overlapping runs for the same thread before any adapter or
+        # Strands state is touched. This registry is intentionally local to
+        # this wrapper and does not claim cross-process coordination.
+        self._active_threads = _ActiveThreadRuns()
         # Guards first-time thread initialization. The session_manager_provider
         # call introduces an async yield point between the "is this thread
         # new?" check and the dict assignment, so concurrent requests for the
@@ -1349,12 +2841,66 @@ class StrandsAgent:
         )
 
     async def run(self, input_data: RunAgentInput) -> AsyncIterator[Any]:
+        """Run once for a thread, rejecting overlapping wrapper-local runs."""
+        thread_id = input_data.thread_id or "default"
+        claim_token = await self._active_threads.claim(thread_id)
+        if claim_token is None:
+            # A rejected contender is a protocol outcome, not a crash. Raising
+            # here surfaces only after the transport has already answered 200
+            # and opened the event stream, so the client sees the stream die
+            # with nothing in it. Emit the same RUN_ERROR/THREAD_BUSY pair the
+            # TypeScript bridge emits instead.
+            ev_started, ev_error = _error_events(
+                input_data,
+                _THREAD_BUSY_MESSAGE_TEMPLATE.format(thread_id=thread_id),
+                "THREAD_BUSY",
+            )
+            yield ev_started
+            yield ev_error
+            return
+        run_stream = self._run_unlocked(input_data)
+        caller_cancellation: asyncio.CancelledError | None = None
+        observed_cleanup_error: BaseException | None = None
+        try:
+            async for event in run_stream:
+                yield event
+        except asyncio.CancelledError as exc:
+            caller_cancellation = exc
+            raise
+        except BaseException as exc:
+            caller_cancellation = _cancellation_from_exception_chain(exc)
+            if caller_cancellation is not None:
+                observed_cleanup_error = exc
+            raise
+        finally:
+            await _close_run_stream_and_release(
+                run_stream,
+                self._active_threads,
+                thread_id,
+                claim_token,
+                caller_cancellation=caller_cancellation,
+                observed_cleanup_error=observed_cleanup_error,
+            )
+
+    async def _run_unlocked(self, input_data: RunAgentInput) -> AsyncIterator[Any]:
         """Run the Strands agent and yield AG-UI events."""
 
-        # Get or create agent instance for this thread. When a
+        # Get or create the agent instance for this thread. When a
         # session_manager_provider is configured, the SessionManager handles
         # conversation persistence; otherwise state is held in-memory per thread.
         thread_id = input_data.thread_id or "default"
+        core_created_this_run = False
+        run_close_requested = False
+
+        # Only forward ``hooks`` when the caller actually supplied providers.
+        # Passing ``hooks=None`` or ``hooks=[]`` risks being interpreted
+        # differently by future StrandsAgentCore versions (e.g. as "disable
+        # default hooks"), so we omit the kwarg entirely when there's nothing
+        # to forward.
+        core_kwargs = dict(self._agent_kwargs)
+        if self._hooks:
+            core_kwargs["hooks"] = list(self._hooks)
+
         if thread_id not in self._agents_by_thread:
             async with self._thread_init_lock:
                 # Double-check inside the lock: another coroutine may have
@@ -1409,15 +2955,6 @@ class StrandsAgent:
                             f"session_manager_provider returned None for thread_id={thread_id}; "
                             "agent will run without session persistence"
                         )
-                    # Only forward ``hooks`` when the caller actually
-                    # supplied providers. Passing ``hooks=None`` or
-                    # ``hooks=[]`` risks being interpreted differently by
-                    # future StrandsAgentCore versions (e.g. as "disable
-                    # default hooks"), so we omit the kwarg entirely when
-                    # there's nothing to forward.
-                    core_kwargs = dict(self._agent_kwargs)
-                    if self._hooks:
-                        core_kwargs["hooks"] = list(self._hooks)
                     self._agents_by_thread[thread_id] = StrandsAgentCore(
                         model=self._model,
                         system_prompt=self._system_prompt,
@@ -1425,7 +2962,694 @@ class StrandsAgent:
                         session_manager=session_manager,
                         **core_kwargs,
                     )
+                    core_created_this_run = True
         strands_agent = self._agents_by_thread[thread_id]
+
+        # Consume the adapter-owned native frontend wait before any context,
+        # registry, history, or Strands conversation mutation. Task 5 extends
+        # this same-wrapper AgentState boundary across process restarts.
+        frontend_wait_resume_prompt: list[dict[str, Any]] | None = None
+        frontend_wait_batch_for_consumption: FrontendToolWaitBatch | None = None
+        suppressed_checkpoint_result_ids: set[str] = set()
+        combined_wait_resume_accepted = False
+        accepted_frontend_wait_resume_fingerprint: str | None = None
+        accepted_server_resume_fingerprint: str | None = None
+        frontend_wait_server_responses: dict[str, Any] = {}
+        try:
+            agent_state = getattr(strands_agent, "state", None)
+            frontend_wait_batch = load_frontend_tool_wait(agent_state)
+            frontend_wait_server_responses = _load_staged_server_responses(
+                agent_state
+            )
+        except (TypeError, ValueError) as exc:
+            ev_started, _ = _error_events(
+                input_data, str(exc), "INTERRUPT_RESUME_ERROR"
+            )
+            yield ev_started
+            yield _interrupt_resume_error(str(exc))
+            return
+
+        native_interrupt_state = getattr(strands_agent, "_interrupt_state", None)
+        native_interrupts = (
+            getattr(native_interrupt_state, "interrupts", {})
+            if getattr(native_interrupt_state, "activated", False)
+            else {}
+        )
+        has_tagged_frontend_interrupt = any(
+            getattr(interrupt, "name", None) == FRONTEND_TOOL_WAIT_INTERRUPT_NAME
+            or (
+                isinstance(getattr(interrupt, "reason", None), Mapping)
+                and getattr(interrupt, "reason", {}).get("name")
+                == FRONTEND_TOOL_WAIT_INTERRUPT_NAME
+            )
+            for interrupt in native_interrupts.values()
+        )
+        submitted_resume_entries = getattr(input_data, "resume", None)
+        resume_field_submitted = isinstance(submitted_resume_entries, list)
+        has_submitted_resume_entries = (
+            resume_field_submitted and bool(submitted_resume_entries)
+        )
+        pending_wait_ag_ui = self._pending_interrupts_by_thread.get(thread_id)
+        consumed_resume_fingerprint = self._last_resume_fingerprint.get(thread_id)
+        persisted_pending, persisted_fingerprint = (
+            _load_persisted_interrupt_bookkeeping(strands_agent)
+        )
+        if pending_wait_ag_ui is None and persisted_pending is not None:
+            pending_wait_ag_ui = persisted_pending
+            self._pending_interrupts_by_thread[thread_id] = persisted_pending
+        if consumed_resume_fingerprint is None and persisted_fingerprint is not None:
+            consumed_resume_fingerprint = persisted_fingerprint
+            self._last_resume_fingerprint[thread_id] = persisted_fingerprint
+
+        def cache_interrupt_bookkeeping(
+            pending: Mapping[str, Interrupt] | None,
+            fingerprint: str | None,
+        ) -> None:
+            if pending:
+                self._pending_interrupts_by_thread[thread_id] = dict(pending)
+            else:
+                self._pending_interrupts_by_thread.pop(thread_id, None)
+            if fingerprint is None:
+                self._last_resume_fingerprint.pop(thread_id, None)
+            else:
+                self._last_resume_fingerprint[thread_id] = fingerprint
+
+        exact_persisted_resume_replay = (
+            has_submitted_resume_entries
+            and consumed_resume_fingerprint is not None
+            and all(
+                isinstance(
+                    interrupt_id := getattr(entry, "interrupt_id", None), str
+                )
+                and interrupt_id not in native_interrupts
+                for entry in submitted_resume_entries
+            )
+            and consumed_resume_fingerprint
+            == _resume_fingerprint(list(submitted_resume_entries))
+        )
+        recovered_consumed_resume_replay = False
+        recovered_visible_interrupts: list[Interrupt] = []
+        recovered_combined_fingerprint: str | None = None
+        durable_frontend_wait_consumption = _frontend_wait_consumption_is_durable(
+            strands_agent, frontend_wait_batch
+        )
+        if durable_frontend_wait_consumption:
+            recovered_old_pending: Dict[str, Interrupt] | None = None
+            if frontend_wait_server_responses:
+                recovered_old_pending, _ = _load_persisted_interrupt_bookkeeping(
+                    strands_agent
+                )
+                if (
+                    recovered_old_pending is None
+                    or set(recovered_old_pending)
+                    != set(frontend_wait_server_responses)
+                ):
+                    ev_started, _ = _error_events(
+                        input_data, "", "INTERRUPT_RESUME_ERROR"
+                    )
+                    yield ev_started
+                    yield _interrupt_resume_error(
+                        "Visible interrupt bookkeeping does not match the "
+                        "consumed combined checkpoint"
+                    )
+                    return
+                retry_entries = (
+                    list(input_data.resume)
+                    if isinstance(input_data.resume, list)
+                    else []
+                )
+                if _staged_server_responses_match_retry(
+                    retry_entries,
+                    frontend_wait_server_responses,
+                    recovered_old_pending,
+                ):
+                    recovered_combined_fingerprint = _resume_fingerprint(
+                        retry_entries
+                    )
+            recovered_pending: Dict[str, Interrupt] | None = None
+            recovered_replacement_batch: FrontendToolWaitBatch | None = None
+            if native_interrupts:
+                try:
+                    (
+                        recovered_replacement_batch,
+                        recovered_visible_native,
+                    ) = _recover_disjoint_checkpoint_after_consumed_wait(
+                        strands_agent,
+                        native_interrupts,
+                        frontend_wait_batch,
+                        list(input_data.messages or []),
+                    )
+                except ValueError as exc:
+                    ev_started, _ = _error_events(
+                        input_data, str(exc), "INTERRUPT_RESUME_ERROR"
+                    )
+                    yield ev_started
+                    yield _interrupt_resume_error(str(exc))
+                    return
+                recovered_visible_interrupts = [
+                    _strands_interrupt_to_agui(interrupt)
+                    for interrupt in recovered_visible_native
+                ]
+                if recovered_visible_interrupts:
+                    recovered_pending = {
+                        interrupt.id: interrupt
+                        for interrupt in recovered_visible_interrupts
+                    }
+            try:
+                await _commit_recovered_frontend_wait(
+                    strands_agent,
+                    frontend_wait_batch,
+                    recovered_pending,
+                    recovered_combined_fingerprint,
+                    replacement_batch=recovered_replacement_batch,
+                )
+            except Exception as exc:
+                ev_started, ev_error = _error_events(
+                    input_data, str(exc), "STRANDS_ERROR"
+                )
+                yield ev_started
+                yield ev_error
+                return
+            frontend_wait_batch = (
+                recovered_replacement_batch
+                if recovered_replacement_batch is not None
+                else frontend_wait_batch.mark_consumed()
+            )
+            frontend_wait_server_responses = {}
+            cache_interrupt_bookkeeping(
+                recovered_pending, recovered_combined_fingerprint
+            )
+            if recovered_combined_fingerprint is not None:
+                recovered_consumed_resume_replay = True
+            pending_wait_ag_ui = recovered_pending or {}
+            consumed_resume_fingerprint = recovered_combined_fingerprint
+        elif (
+            not frontend_wait_batch.calls
+            and has_tagged_frontend_interrupt
+        ):
+            recovery_requires_exact_resume = (
+                consumed_resume_fingerprint is not None
+                and (
+                    bool(frontend_wait_batch.last_completed_wire_ids)
+                    or bool(pending_wait_ag_ui)
+                )
+            )
+            if (
+                recovery_requires_exact_resume
+                and not exact_persisted_resume_replay
+            ):
+                yield RunStartedEvent(
+                    type=EventType.RUN_STARTED,
+                    thread_id=input_data.thread_id,
+                    run_id=input_data.run_id,
+                )
+                yield _interrupt_resume_error(
+                    "Recovering the superseding frontend wait requires the "
+                    "exact consumed resume request"
+                )
+                return
+            recovered_consumed_resume_replay = recovery_requires_exact_resume
+            recovered_checkpoint_fingerprint = (
+                consumed_resume_fingerprint
+                if recovery_requires_exact_resume
+                else None
+            )
+            try:
+                (
+                    recovered_replacement_batch,
+                    recovered_visible_native,
+                ) = _recover_disjoint_checkpoint_after_consumed_wait(
+                    strands_agent,
+                    native_interrupts,
+                    frontend_wait_batch,
+                    list(input_data.messages or []),
+                )
+            except ValueError as exc:
+                ev_started, _ = _error_events(
+                    input_data, str(exc), "INTERRUPT_RESUME_ERROR"
+                )
+                yield ev_started
+                yield _interrupt_resume_error(str(exc))
+                return
+            if recovered_replacement_batch is None:
+                yield RunStartedEvent(
+                    type=EventType.RUN_STARTED,
+                    thread_id=input_data.thread_id,
+                    run_id=input_data.run_id,
+                )
+                yield _interrupt_resume_error(
+                    "Active frontend wait checkpoint could not be reconstructed"
+                )
+                return
+            recovered_visible_interrupts = [
+                _strands_interrupt_to_agui(interrupt)
+                for interrupt in recovered_visible_native
+            ]
+            recovered_pending = (
+                {
+                    interrupt.id: interrupt
+                    for interrupt in recovered_visible_interrupts
+                }
+                if recovered_visible_interrupts
+                else None
+            )
+            try:
+                await _commit_recovered_frontend_wait(
+                    strands_agent,
+                    frontend_wait_batch,
+                    recovered_pending,
+                    recovered_checkpoint_fingerprint,
+                    replacement_batch=recovered_replacement_batch,
+                )
+            except Exception as exc:
+                ev_started, ev_error = _error_events(
+                    input_data, str(exc), "STRANDS_ERROR"
+                )
+                yield ev_started
+                yield ev_error
+                return
+            frontend_wait_batch = recovered_replacement_batch
+            frontend_wait_server_responses = {}
+            cache_interrupt_bookkeeping(
+                recovered_pending, recovered_checkpoint_fingerprint
+            )
+            pending_wait_ag_ui = recovered_pending or {}
+            consumed_resume_fingerprint = recovered_checkpoint_fingerprint
+        elif (
+            frontend_wait_batch.calls
+            and frontend_wait_batch.is_complete
+            and native_interrupt_state is not None
+            and not getattr(native_interrupt_state, "activated", False)
+        ):
+            yield RunStartedEvent(
+                type=EventType.RUN_STARTED,
+                thread_id=input_data.thread_id,
+                run_id=input_data.run_id,
+            )
+            yield _interrupt_resume_error(
+                "Cannot prove that the completed frontend tool wait was durably "
+                "consumed: the native checkpoint is inactive but its exact "
+                "tool results were not restored."
+            )
+            return
+        if frontend_wait_batch.calls or has_tagged_frontend_interrupt:
+            wait_metadata_error = _validate_frontend_wait_metadata(
+                strands_agent, frontend_wait_batch
+            )
+            if wait_metadata_error is not None:
+                yield RunStartedEvent(
+                    type=EventType.RUN_STARTED,
+                    thread_id=input_data.thread_id,
+                    run_id=input_data.run_id,
+                )
+                yield wait_metadata_error
+                return
+
+        if (
+            core_created_this_run
+            and not frontend_wait_batch.calls
+            and not has_tagged_frontend_interrupt
+            and not getattr(native_interrupt_state, "activated", False)
+            and _has_unrecoverable_frontend_wait_result(
+                input_data,
+                strands_agent,
+                frontend_wait_batch,
+                self.config.tool_behaviors,
+            )
+        ):
+            yield RunStartedEvent(
+                type=EventType.RUN_STARTED,
+                thread_id=input_data.thread_id,
+                run_id=input_data.run_id,
+            )
+            yield _interrupt_resume_error(
+                "Cannot recover frontend tool wait because its native interrupt "
+                "checkpoint was not restored. Reuse the same wrapper or configure "
+                "a compatible shared SessionManager with a stable agent_id."
+            )
+            return
+
+        consumed_resume_replay = (
+            (
+                bool(
+                    frontend_wait_batch.calls
+                    or frontend_wait_batch.last_completed_wire_ids
+                )
+                and exact_persisted_resume_replay
+            )
+            or recovered_consumed_resume_replay
+        )
+
+        visible_wait_interrupt_ids: tuple[str, ...] = ()
+        if frontend_wait_batch.calls:
+            (
+                visible_wait_interrupt_ids,
+                visible_bookkeeping_error,
+            ) = _validate_visible_wait_interrupt_bookkeeping(
+                strands_agent,
+                frontend_wait_batch,
+                pending_wait_ag_ui,
+            )
+            if visible_bookkeeping_error is not None:
+                yield RunStartedEvent(
+                    type=EventType.RUN_STARTED,
+                    thread_id=input_data.thread_id,
+                    run_id=input_data.run_id,
+                )
+                yield visible_bookkeeping_error
+                return
+        resume_request = _classify_frontend_resume_request(
+            list(input_data.messages or []),
+            frontend_wait_batch,
+            agent=strands_agent,
+            resume_entries=(
+                list(submitted_resume_entries)
+                if has_submitted_resume_entries and not consumed_resume_replay
+                else []
+            ),
+            staged_server_responses=frontend_wait_server_responses,
+            pending_ag_ui=pending_wait_ag_ui,
+        )
+        # Tombstones are classification metadata, never a reason to rewrite
+        # the canonical full history supplied by the client. A replay with no
+        # trailing work remains an idempotent no-op.
+        if (
+            (resume_request.tombstone_replays or consumed_resume_replay)
+            and not resume_request.actionable_trailing_messages
+            and not frontend_wait_batch.calls
+            and (not resume_field_submitted or consumed_resume_replay)
+        ):
+            active_visible_interrupts: list[Interrupt] = []
+            if native_interrupts:
+                (
+                    active_visible_ids,
+                    active_visible_error,
+                ) = _validate_visible_wait_interrupt_bookkeeping(
+                    strands_agent,
+                    FrontendToolWaitBatch(),
+                    pending_wait_ag_ui,
+                )
+                if active_visible_error is not None:
+                    yield RunStartedEvent(
+                        type=EventType.RUN_STARTED,
+                        thread_id=input_data.thread_id,
+                        run_id=input_data.run_id,
+                    )
+                    yield active_visible_error
+                    return
+                active_visible_interrupts = [
+                    pending_wait_ag_ui[interrupt_id]
+                    for interrupt_id in active_visible_ids
+                ]
+            try:
+                await _sync_frontend_wait_state(strands_agent)
+            except Exception as exc:
+                ev_started, ev_error = _error_events(
+                    input_data, str(exc), "STRANDS_ERROR"
+                )
+                yield ev_started
+                yield ev_error
+                return
+            ev_started, ev_finished = _successful_noop_events(input_data)
+            visible_interrupts = (
+                active_visible_interrupts or recovered_visible_interrupts
+            )
+            if visible_interrupts:
+                ev_finished = RunFinishedEvent(
+                    type=EventType.RUN_FINISHED,
+                    thread_id=input_data.thread_id,
+                    run_id=input_data.run_id,
+                    outcome=RunFinishedInterruptOutcome(
+                        type="interrupt",
+                        interrupts=visible_interrupts,
+                    ),
+                )
+            yield ev_started
+            yield ev_finished
+            return
+
+        if frontend_wait_batch.calls:
+            if resume_request.has_genuine_new_user:
+                ev_started, ev_error = _error_events(
+                    input_data,
+                    "Thread has pending interrupts. Complete them before a new user turn.",
+                    "PENDING_INTERRUPTS",
+                )
+                yield ev_started
+                yield ev_error
+                return
+
+            staged_wait_batch = resume_request.frontend_batch_candidate
+            staged_server = resume_request.server_responses_candidate
+
+            if has_submitted_resume_entries:
+                if resume_request.server_validation_error is not None:
+                    yield RunStartedEvent(
+                        type=EventType.RUN_STARTED,
+                        thread_id=input_data.thread_id,
+                        run_id=input_data.run_id,
+                    )
+                    yield resume_request.server_validation_error
+                    return
+
+            has_wait_response_work = (
+                resume_request.recognized_frontend_response
+                or has_submitted_resume_entries
+            )
+            if has_wait_response_work:
+                wait_metadata_error = _validate_frontend_wait_metadata(
+                    strands_agent, staged_wait_batch
+                )
+                if wait_metadata_error is not None:
+                    yield RunStartedEvent(
+                        type=EventType.RUN_STARTED,
+                        thread_id=input_data.thread_id,
+                        run_id=input_data.run_id,
+                    )
+                    yield wait_metadata_error
+                    return
+
+            if staged_wait_batch.is_complete:
+                frontend_wait_resume_prompt, wait_resume_error = (
+                    _build_frontend_wait_resume_prompt(
+                        strands_agent,
+                        staged_wait_batch,
+                        staged_server,
+                    )
+                )
+                if wait_resume_error is not None:
+                    yield RunStartedEvent(
+                        type=EventType.RUN_STARTED,
+                        thread_id=input_data.thread_id,
+                        run_id=input_data.run_id,
+                    )
+                    yield wait_resume_error
+                    return
+                if frontend_wait_resume_prompt is not None:
+                    frontend_wait_batch_for_consumption = staged_wait_batch
+                    accepted_frontend_wait_resume_fingerprint = (
+                        _resume_fingerprint(list(submitted_resume_entries))
+                        if has_submitted_resume_entries
+                        else None
+                    )
+                    if staged_wait_batch.stop_streaming_after_result:
+                        interrupt_context = getattr(
+                            getattr(strands_agent, "_interrupt_state", None),
+                            "context",
+                            None,
+                        )
+                        checkpoint_results = (
+                            interrupt_context.get("tool_results", [])
+                            if isinstance(interrupt_context, Mapping)
+                            else []
+                        )
+                        suppressed_checkpoint_result_ids = {
+                            result_id
+                            for result in checkpoint_results
+                            if isinstance(result, Mapping)
+                            and isinstance(
+                                result_id := result.get("toolUseId"), str
+                            )
+                        }
+
+            # Commit both candidate channels only after every request-level
+            # validation has succeeded. A corrected retry can therefore
+            # replace content from a previously rejected request.
+            wait_state_changed = staged_wait_batch != frontend_wait_batch
+            server_state_changed = staged_server != frontend_wait_server_responses
+            try:
+                if wait_state_changed:
+                    strands_agent.state.set(
+                        FRONTEND_TOOL_WAIT_STATE_KEY, staged_wait_batch.to_dict()
+                    )
+                if server_state_changed:
+                    strands_agent.state.set(
+                        _FRONTEND_TOOL_SERVER_RESPONSES_STATE_KEY,
+                        staged_server,
+                    )
+                if frontend_wait_resume_prompt is not None:
+                    cache_interrupt_bookkeeping(
+                        pending_wait_ag_ui,
+                        accepted_frontend_wait_resume_fingerprint,
+                    )
+                    await _persist_interrupt_bookkeeping(
+                        strands_agent,
+                        pending_wait_ag_ui,
+                        accepted_frontend_wait_resume_fingerprint,
+                        strict=True,
+                    )
+                # Reflush recognized first-wins retries even when AgentState
+                # already contains the equal candidate from a prior failed
+                # sync. Equality proves no semantic change, not durability.
+                if (
+                    has_wait_response_work
+                    and frontend_wait_resume_prompt is None
+                ):
+                    await _sync_frontend_wait_state(strands_agent)
+            except Exception as exc:
+                ev_started, ev_error = _error_events(
+                    input_data, str(exc), "STRANDS_ERROR"
+                )
+                yield ev_started
+                yield ev_error
+                return
+            frontend_wait_server_responses = staged_server
+
+            if frontend_wait_resume_prompt is None:
+                # An incomplete native wait remains a barrier even when a
+                # reconnect carries no new ToolMessage. Re-expose only Ends
+                # whose handoff is not durable, preserving the original
+                # custom-End -> backend-result -> standard-End ordering,
+                # without invoking Strands or executing a backend tool.
+                # A previous End handoff may have updated AgentState before
+                # its SessionManager sync failed. Re-flush that in-memory
+                # transition before a no-response retry can report success;
+                # otherwise a later wrapper restores the older checkpoint and
+                # replays an End that this wrapper already handed off.
+                if not has_wait_response_work:
+                    try:
+                        await _sync_frontend_wait_state(strands_agent)
+                    except Exception as exc:
+                        ev_started, ev_error = _error_events(
+                            input_data, str(exc), "STRANDS_ERROR"
+                        )
+                        yield ev_started
+                        yield ev_error
+                        return
+                ev_started, ev_finished = _successful_noop_events(input_data)
+                unresolved_visible_interrupts = [
+                    pending_wait_ag_ui[interrupt_id]
+                    for interrupt_id in visible_wait_interrupt_ids
+                    if interrupt_id not in staged_server
+                ]
+                if unresolved_visible_interrupts:
+                    ev_finished = RunFinishedEvent(
+                        type=EventType.RUN_FINISHED,
+                        thread_id=input_data.thread_id,
+                        run_id=input_data.run_id,
+                        outcome=RunFinishedInterruptOutcome(
+                            type="interrupt",
+                            interrupts=unresolved_visible_interrupts,
+                        ),
+                    )
+                yield ev_started
+                declared_tool_names = {
+                    name
+                    for tool in input_data.tools or []
+                    if isinstance(
+                        name := (
+                            tool.get("name")
+                            if isinstance(tool, Mapping)
+                            else getattr(tool, "name", None)
+                        ),
+                        str,
+                    )
+                    and name
+                }
+                try:
+                    custom_calls, standard_calls = (
+                        _frontend_wait_calls_by_end_phase(
+                            strands_agent,
+                            staged_wait_batch,
+                            self.config.tool_behaviors,
+                            declared_tool_names,
+                        )
+                    )
+                except ValueError as exc:
+                    yield _interrupt_resume_error(str(exc))
+                    return
+                for call in custom_calls:
+                    yield ToolCallEndEvent(
+                        type=EventType.TOOL_CALL_END,
+                        tool_call_id=call.wire_tool_call_id,
+                    )
+                    staged_wait_batch = await _mark_frontend_wait_end_handed_off(
+                        strands_agent,
+                        staged_wait_batch,
+                        call.wire_tool_call_id,
+                    )
+
+                raw_tool_meta = strands_agent.state.get(
+                    AG_UI_TOOL_CALL_MAP_STATE_KEY
+                )
+                replay_tool_meta = (
+                    raw_tool_meta if isinstance(raw_tool_meta, dict) else {}
+                )
+                replay_delivery = _CheckpointResultDelivery()
+                session_messages = getattr(strands_agent, "messages", None) or []
+                replay_snapshots = self.config.emit_messages_snapshot and not (
+                    session_messages
+                    and len(session_messages) > len(input_data.messages or [])
+                )
+                replay_snapshot_messages = (
+                    _build_snapshot_messages(input_data.messages)
+                    if replay_snapshots
+                    else []
+                )
+                async for checkpoint_event in _checkpoint_result_events(
+                    agent=strands_agent,
+                    batch=staged_wait_batch,
+                    persisted_tool_call_meta=replay_tool_meta,
+                    emitted_backend_result_ids=set(),
+                    input_data=input_data,
+                    config=self.config,
+                    emit_snapshots=replay_snapshots,
+                    snapshot_messages=replay_snapshot_messages,
+                    current_state=dict(input_data.state or {}),
+                    message_id=str(uuid.uuid4()),
+                    delivery=replay_delivery,
+                ):
+                    yield checkpoint_event
+                if replay_delivery.stop_streaming_after_result:
+                    staged_wait_batch = (
+                        staged_wait_batch.mark_stop_streaming_after_result()
+                    )
+                    strands_agent.state.set(
+                        FRONTEND_TOOL_WAIT_STATE_KEY,
+                        staged_wait_batch.to_dict(),
+                    )
+                if (
+                    replay_delivery.metadata_changed
+                    or replay_delivery.stop_streaming_after_result
+                ):
+                    strands_agent.state.set(
+                        AG_UI_TOOL_CALL_MAP_STATE_KEY,
+                        replay_tool_meta,
+                    )
+                    await _sync_frontend_wait_state(strands_agent)
+
+                for call in standard_calls:
+                    yield ToolCallEndEvent(
+                        type=EventType.TOOL_CALL_END,
+                        tool_call_id=call.wire_tool_call_id,
+                    )
+                    staged_wait_batch = await _mark_frontend_wait_end_handed_off(
+                        strands_agent,
+                        staged_wait_batch,
+                        call.wire_tool_call_id,
+                    )
+                yield ev_finished
+                return
 
         # A submitted resume must be validated before any adapter mutation
         # (context writes, proxy synchronization, history reconciliation, or
@@ -1435,11 +3659,14 @@ class StrandsAgent:
         # ``RunAgentInput.resume`` is a list when the field was submitted.
         # Some legacy callers pass mock-like inputs whose undeclared
         # attributes auto-materialize; do not mistake those for a resume.
-        resume_submitted = isinstance(resume_entries, list)
+        resume_submitted = (
+            isinstance(resume_entries, list)
+            or frontend_wait_resume_prompt is not None
+        )
         interrupt_state = getattr(strands_agent, "_interrupt_state", None)
         pending_resume_interrupts = self._pending_interrupts_by_thread.get(thread_id)
         resume_fingerprint = self._last_resume_fingerprint.get(thread_id)
-        if resume_submitted and (
+        if frontend_wait_resume_prompt is None and resume_submitted and (
             pending_resume_interrupts is None or resume_fingerprint is None
         ):
             persisted_pending, persisted_fingerprint = (
@@ -1449,7 +3676,7 @@ class StrandsAgent:
                 pending_resume_interrupts = persisted_pending
             if resume_fingerprint is None:
                 resume_fingerprint = persisted_fingerprint
-        if resume_submitted and (
+        if frontend_wait_resume_prompt is None and resume_submitted and (
             not resume_entries
             or (
                 interrupt_state is not None
@@ -1469,6 +3696,10 @@ class StrandsAgent:
                 )
                 yield resume_error
                 return
+            if resume_entries:
+                accepted_server_resume_fingerprint = _resume_fingerprint(
+                    list(resume_entries)
+                )
 
         # Rule 4: reject new input against a parked checkpoint before context
         # or tool registries can be updated by a run that will not proceed. The
@@ -1490,7 +3721,7 @@ class StrandsAgent:
 
         # An inactive checkpoint may be an idempotent replay of a resume that
         # already completed. Resolve that before any per-run mutable setup.
-        if resume_submitted and resume_entries and not getattr(
+        if frontend_wait_resume_prompt is None and resume_submitted and resume_entries and not getattr(
             interrupt_state, "activated", False
         ):
             yield RunStartedEvent(
@@ -1500,12 +3731,21 @@ class StrandsAgent:
             )
             fingerprint = _resume_fingerprint(resume_entries)
             if resume_fingerprint == fingerprint:
-                yield RunFinishedEvent(
-                    type=EventType.RUN_FINISHED,
-                    thread_id=input_data.thread_id,
-                    run_id=input_data.run_id,
-                    outcome=RunFinishedSuccessOutcome(type="success"),
-                )
+                if (
+                    frontend_wait_batch.last_completed_wire_ids
+                    and resume_request.actionable_trailing_messages
+                ):
+                    yield _interrupt_resume_error(
+                        "A completed interrupt replay cannot be combined "
+                        "with new messages"
+                    )
+                else:
+                    yield RunFinishedEvent(
+                        type=EventType.RUN_FINISHED,
+                        thread_id=input_data.thread_id,
+                        run_id=input_data.run_id,
+                        outcome=RunFinishedSuccessOutcome(type="success"),
+                    )
             else:
                 yield RunErrorEvent(
                     type=EventType.RUN_ERROR,
@@ -1523,7 +3763,7 @@ class StrandsAgent:
             )
         )
         active_proxy_native_ids = active_proxy_placeholder_ids(strands_agent)
-        if active_proxy_native_ids:
+        if active_proxy_native_ids and not frontend_wait_batch.calls:
             if session_manager is None:
                 session_error = _interrupt_session_required_error()
             elif not _supports_repository_reconciliation(
@@ -1574,6 +3814,7 @@ class StrandsAgent:
                 strands_agent.tool_registry,
                 input_data.tools,
                 self._proxy_tool_names_by_thread.get(thread_id, set()),
+                tool_behaviors=self.config.tool_behaviors,
             )
             self._proxy_tool_names_by_thread[thread_id] = proxy_names
         elif self._proxy_tool_names_by_thread.get(thread_id):
@@ -1582,6 +3823,7 @@ class StrandsAgent:
                 strands_agent.tool_registry,
                 [],
                 self._proxy_tool_names_by_thread[thread_id],
+                tool_behaviors=self.config.tool_behaviors,
             )
             self._proxy_tool_names_by_thread[thread_id] = set()
 
@@ -1661,7 +3903,11 @@ class StrandsAgent:
         _resumed_tool_call_ids: set = set()
         resume_entries: list[ResumeEntry] = list(resume_entries or [])
 
-        if resume_entries:
+        if frontend_wait_resume_prompt is not None:
+            # This complete prompt was built from both authoritative sources
+            # and revalidated against the live native interrupt checkpoint.
+            _resume_prompt = frontend_wait_resume_prompt
+        elif resume_entries:
             interrupt_state = getattr(strands_agent, "_interrupt_state", None)
             pending_ag_ui = pending_resume_interrupts or {}
             interrupt_responses: list[dict] = []
@@ -1695,8 +3941,7 @@ class StrandsAgent:
             # Pass interruptResponse dicts as the prompt — Strands resumes from
             # its checkpoint without replaying the full conversation.
             logger.debug(
-                f"Resuming interrupted run: thread_id={input_data.thread_id}, "
-                f"interrupt_responses={interrupt_responses}"
+                f"Resuming interrupted run: thread_id={input_data.thread_id}, interrupt_responses={interrupt_responses}"
             )
             _resume_prompt: list | None = interrupt_responses
             # Bookkeeping is cleared only after successful processing below so
@@ -2019,17 +4264,17 @@ class StrandsAgent:
             current_state = dict(input_data.state or {})  # Track state for final snapshot
             stop_text_streaming = False
             halt_event_stream = False
-            pending_halt = False
-            # Frontend-tool ToolCallEnd ids are buffered here so the client's
-            # "execute this frontend tool" signal is delayed until AFTER this
-            # turn's backend tool results have been emitted. This prevents the
-            # client dispatching its follow-up run before the backend results
-            # reach it, narrowing the ConcurrencyException race window.
-            deferred_frontend_tool_ends = []
+            # Waiting frontend-tool ToolCallEnd ids are buffered until their
+            # native checkpoint is durable. Standard streaming calls retain
+            # backend-result-before-End ordering; custom args streamers retain
+            # their established End-before-backend-result ordering.
+            deferred_frontend_tool_ends: list[str] = []
+            deferred_custom_frontend_tool_ends: list[str] = []
             # Native ``toolUseId``s whose ``toolResult`` was processed this
             # run. Drained after each result batch to prune the persisted
             # tool-call meta map.
             processed_result_native_ids: set[str] = set()
+            emitted_backend_result_ids: set[str] = set()
             # Terminal ``AgentResult`` from Strands (carried on the final
             # ``{"result": ...}`` stream event). Used after the loop to detect a
             # native interrupt pause (``stop_reason == "interrupt"``).
@@ -2093,6 +4338,22 @@ class StrandsAgent:
                             exc_info=True,
                         )
 
+            continuation_proxy_native_ids = {
+                native_id
+                for native_id in active_proxy_native_ids
+                if isinstance(persisted_tool_call_meta.get(native_id), Mapping)
+                and persisted_tool_call_meta[native_id].get("strands_tool_id")
+                == native_id
+                and persisted_tool_call_meta[native_id].get("is_proxy") is True
+                and persisted_tool_call_meta[native_id].get(
+                    "continue_after_frontend_call"
+                )
+                is True
+            }
+            correction_required_proxy_native_ids = (
+                active_proxy_native_ids - continuation_proxy_native_ids
+            )
+
             # Scope to the TRAILING tool results (this continuation's just-
             # returned results). ``pending_tool_result_ids`` holds those ids;
             # without this, a multi-turn continuation re-sends already-reconciled
@@ -2104,6 +4365,15 @@ class StrandsAgent:
                     continue
                 wire_id = getattr(msg, "tool_call_id", None)
                 if not wire_id or wire_id not in pending_tool_result_ids:
+                    continue
+                if (
+                    frontend_wait_batch_for_consumption is not None
+                    and frontend_wait_batch_for_consumption.call_for_wire_id(wire_id)
+                    is None
+                ):
+                    # A legacy continue=true proxy in the same checkpoint is
+                    # not part of the hidden wait channel. Its placeholder must
+                    # remain parked for the existing continuation path.
                     continue
                 name = _tool_call_id_to_name.get(wire_id)
                 if name not in frontend_tool_names and wire_id not in wire_to_native:
@@ -2169,14 +4439,18 @@ class StrandsAgent:
             # Resuming clears the parked context. Every exact proxy placeholder
             # in that context therefore needs a mapped client result before
             # repository or live checkpoint mutation begins.
-            if resume_submitted and active_proxy_native_ids:
+            if (
+                frontend_wait_resume_prompt is None
+                and resume_submitted
+                and active_proxy_native_ids
+            ):
                 missing_active_results = (
-                    active_proxy_native_ids - resolved_native_results.keys()
+                    correction_required_proxy_native_ids
+                    - resolved_native_results.keys()
                 )
                 if missing_active_results:
                     logger.error(
-                        "Active interrupt is missing mapped frontend results for "
-                        "native ids %s",
+                        "Active interrupt is missing mapped frontend results for native ids %s",
                         sorted(missing_active_results),
                     )
                     yield _interrupt_reconciliation_error()
@@ -2210,7 +4484,11 @@ class StrandsAgent:
                             or bool(active_proxy_native_ids)
                         )
                     )
-                    or (resume_submitted and bool(active_proxy_native_ids))
+                    or (
+                        frontend_wait_resume_prompt is None
+                        and resume_submitted
+                        and bool(active_proxy_native_ids)
+                    )
                 )
             )
 
@@ -2249,7 +4527,8 @@ class StrandsAgent:
                                 )
                             break
                 preserve_live_interrupt_history = (
-                    resume_submitted and has_active_interrupt and is_delta_payload
+                    frontend_wait_resume_prompt is not None
+                    or (resume_submitted and has_active_interrupt and is_delta_payload)
                 )
                 if not preserve_live_interrupt_history:
                     strands_agent.messages = native_history
@@ -2276,11 +4555,12 @@ class StrandsAgent:
                         f"the legacy continuation path: {e}",
                         exc_info=True,
                     )
-                missing_corrections = active_proxy_native_ids - corrected_native_ids
+                missing_corrections = (
+                    correction_required_proxy_native_ids - corrected_native_ids
+                )
                 if missing_corrections:
                     logger.error(
-                        "Active interrupt frontend results were not corrected for "
-                        "native ids %s",
+                        "Active interrupt frontend results were not corrected for native ids %s",
                         sorted(missing_corrections),
                     )
                     yield _interrupt_reconciliation_error()
@@ -2336,7 +4616,42 @@ class StrandsAgent:
                 if len(remaining) != len(wire_to_native):
                     strands_agent.state.set(AG_UI_WIRE_MAP_STATE_KEY, remaining)
 
-            agent_stream = strands_agent.stream_async(resume_prompt)
+            resume_proxy_overlay = None
+            if frontend_wait_batch_for_consumption is not None:
+                try:
+                    native_ids_by_name = (
+                        _frontend_wait_native_ids_by_tool_name(
+                            strands_agent,
+                            frontend_wait_batch_for_consumption,
+                        )
+                    )
+                    resume_proxy_overlay = (
+                        _install_frontend_wait_resume_proxy_overlay(
+                            strands_agent.tool_registry,
+                            list(input_data.tools or []),
+                            native_ids_by_name,
+                        )
+                    )
+                except ValueError as exc:
+                    yield _interrupt_resume_error(str(exc))
+                    return
+            if accepted_server_resume_fingerprint is not None:
+                cache_interrupt_bookkeeping(
+                    pending_resume_interrupts,
+                    accepted_server_resume_fingerprint,
+                )
+                await _persist_interrupt_bookkeeping(
+                    strands_agent,
+                    pending_resume_interrupts,
+                    accepted_server_resume_fingerprint,
+                    synchronize=False,
+                )
+            try:
+                agent_stream = strands_agent.stream_async(resume_prompt)
+            except BaseException:
+                if resume_proxy_overlay is not None:
+                    resume_proxy_overlay.restore()
+                raise
             try:
                 async for event in agent_stream:
                     # Capture the terminal ``AgentResult`` (always emitted last
@@ -2346,24 +4661,10 @@ class StrandsAgent:
                     if "result" in event and event["result"] is not None:
                         terminal_result = event["result"]
 
-                    # Frontend-tool halt: STOP the loop rather than muting the
-                    # wire and draining it. The proxy tool returns a SUCCESSFUL
-                    # "Forwarded to client" placeholder, so Strands has every
-                    # reason to run another model cycle — and another. Draining
-                    # those cycles costs: frontend tool calls the client never
-                    # sees (so it can never answer them), real backend tool
-                    # side effects, phantom assistant turns persisted to the
-                    # session store, and RUN_FINISHED stuck behind work the
-                    # client is not watching. Single-agent Strands has no cycle
-                    # cap, so that tail is unbounded — a model that keeps
-                    # retrying the read never yields a terminal event at all.
-                    #
-                    # Safe here because the halt latches only AFTER Strands
-                    # appended the assistant toolUse + placeholder toolResult
-                    # and MessageAddedEvent synced agent state (see
-                    # SessionManager.register_hooks), so the next run's
-                    # reconcile still finds a placeholder to overwrite and the
-                    # wire->native map to key it by.
+                    # ``halt_event_stream`` is reserved for backend
+                    # stop_streaming_after_result. Frontend calls that wait use
+                    # Strands' native interrupt checkpoint and must be allowed
+                    # to reach its terminal result.
                     if halt_event_stream:
                         break
 
@@ -2640,26 +4941,6 @@ class StrandsAgent:
 
                     # Handle tool results from Strands for backend tool rendering
                     elif "message" in event and event["message"].get("role") == "user":
-                        # A deferred frontend-tool halt takes effect here — but
-                        # do NOT skip the message. In a parallel batch mixing a
-                        # frontend tool with backend tools, THIS message carries
-                        # the backend tools' real results, and dropping it loses
-                        # them permanently: the client's tool card never
-                        # resolves, the result never reaches MESSAGES_SNAPSHOT
-                        # (the only path into client-side history — the
-                        # TOOL_CALL_RESULT below is deliberately role-less and
-                        # is not history), and state_from_result /
-                        # custom_result_handler never fire. Consumers that
-                        # persist from the event stream then hold a transcript
-                        # whose toolUse has no toolResult, which the next run
-                        # replays straight to the model provider.
-                        #
-                        # Fall through instead: the per-item loop already skips
-                        # frontend placeholders (the client produces the real
-                        # result), so only genuine backend results go out. Stop
-                        # after the batch, before the next model cycle.
-                        if pending_halt:
-                            halt_event_stream = True
                         message_content = event["message"].get("content", [])
                         if not message_content or not isinstance(message_content, list):
                             continue
@@ -2670,26 +4951,7 @@ class StrandsAgent:
 
                             tool_result = item["toolResult"]
                             result_tool_id = tool_result.get("toolUseId")
-                            result_content = tool_result.get("content", [])
-
-                            result_data = None
-                            if result_content and isinstance(result_content, list):
-                                for content_item in result_content:
-                                    if (
-                                        isinstance(content_item, dict)
-                                        and "text" in content_item
-                                    ):
-                                        text_content = content_item["text"]
-                                        try:
-                                            result_data = json.loads(text_content)
-                                        except json.JSONDecodeError:
-                                            try:
-                                                json_text = text_content.replace(
-                                                    "'", '"'
-                                                )
-                                                result_data = json.loads(json_text)
-                                            except Exception:
-                                                result_data = text_content
+                            result_data = _decode_tool_result_data(tool_result)
 
                             if not result_tool_id or result_data is None:
                                 continue
@@ -2731,7 +4993,13 @@ class StrandsAgent:
                             # frontend-skip / behavior branches ensures a
                             # ``stop_streaming_after_result`` early break still
                             # flags this id for prune.
-                            processed_result_native_ids.add(result_tool_id)
+                            if not (
+                                frontend_wait_batch_for_consumption is not None
+                                and call_info.get("is_proxy") is True
+                                and call_info.get("continue_after_frontend_call")
+                                is True
+                            ):
+                                processed_result_native_ids.add(result_tool_id)
                             tool_name = call_info.get("name")
                             tool_args = call_info.get("args")
                             tool_input = call_info.get("input")
@@ -2741,13 +5009,31 @@ class StrandsAgent:
                                 else None
                             )
 
+                            if result_tool_id in suppressed_checkpoint_result_ids:
+                                continue
+
+                            # A backend result parked in a mixed native
+                            # checkpoint is emitted from checkpoint context at
+                            # the end of the original run. On resume Strands
+                            # includes it again beside the proxy's real result;
+                            # do not duplicate wire events or callbacks.
+                            if call_info.get("checkpoint_result_emitted") is True:
+                                continue
+
                             logger.debug(
                                 f"Processing tool result: tool_name={tool_name}, result_tool_id={result_tool_id}, pending_tool_result_ids={pending_tool_result_ids}, thread_id={input_data.thread_id}"
                             )
 
-                            # Skip emitting the placeholder result for forwarded/proxy tools
-                            # – the real execution happens on the client side.
-                            if tool_name and tool_name in frontend_tool_names:
+                            # Skip only results proven to belong to a forwarded/proxy
+                            # call. A registered backend tool may legitimately share
+                            # its name with a client declaration; name membership alone
+                            # must not hide that server result.
+                            is_frontend_result = (
+                                call_info.get("is_frontend") is True
+                                or call_info.get("is_proxy") is True
+                                or result_tool_id in wire_to_native.values()
+                            )
+                            if is_frontend_result:
                                 continue
 
                             # Emit ToolCallResultEvent WITHOUT role field to complete the tool in UI
@@ -2764,6 +5050,7 @@ class StrandsAgent:
                                 # role is intentionally omitted - without role="tool",
                                 # the frontend won't add this to conversation history
                             )
+                            emitted_backend_result_ids.add(result_tool_id)
 
                             # Splice point 3 of 4: append the ToolMessage
                             # carrying the backend tool result to the
@@ -2889,21 +5176,6 @@ class StrandsAgent:
                                 persisted_tool_call_meta = _remaining
                         processed_result_native_ids.clear()
 
-                        # Defer hand-off: now that this turn's backend
-                        # TOOL_CALL_RESULT(s) have been emitted above, flush the
-                        # buffered frontend-tool ToolCallEnd(s). Flushing here —
-                        # after the per-item loop and before the halt break below —
-                        # guarantees the wire order backend TOOL_CALL_RESULT ->
-                        # frontend TOOL_CALL_END, so the client only starts the
-                        # frontend tool once backend work has reached it.
-                        if deferred_frontend_tool_ends:
-                            for _fe_tool_use_id in deferred_frontend_tool_ends:
-                                yield ToolCallEndEvent(
-                                    type=EventType.TOOL_CALL_END,
-                                    tool_call_id=_fe_tool_use_id,
-                                )
-                            deferred_frontend_tool_ends = []
-
                         # The batch is fully emitted; stop before Strands runs
                         # another model cycle. Breaking HERE rather than relying
                         # on the check at the top of the loop means termination
@@ -2919,9 +5191,17 @@ class StrandsAgent:
                         strands_tool_id = tool_use.get("toolUseId")
                         _raw_in = tool_use.get("input", "")
 
-                        # Generate unique ID for frontend tools (to avoid ID conflicts across requests)
+                        # Generate unique ID for actual registered proxy tools
+                        # (not merely a native tool whose name also appeared in
+                        # the client tool list).
                         # Use Strands' ID for backend tools (so result lookup works)
-                        is_frontend_tool = tool_name in frontend_tool_names
+                        registered_tool = getattr(
+                            strands_agent.tool_registry, "registry", {}
+                        ).get(tool_name)
+                        is_registered_proxy = _is_proxy(registered_tool)
+                        is_frontend_tool = tool_name in frontend_tool_names and (
+                            registered_tool is None or is_registered_proxy
+                        )
 
                         # Check if we've already seen this tool (by Strands' internal ID)
                         existing_entry = None
@@ -2936,18 +5216,13 @@ class StrandsAgent:
                         elif is_frontend_tool:
                             # Generate new UUID for frontend tools
                             tool_use_id = str(uuid.uuid4())
-                            # Record wire id -> Strands native id on the agent's
-                            # SESSION STATE so a later continuation run — even on
-                            # a different process — can reconcile the persisted
-                            # placeholder (keyed by the native id) with the real
-                            # client result (which arrives keyed by the wire id).
-                            # Strands persists agent state durably at end of run.
-                            # Only maintained when a session manager is actually
-                            # active for this agent (matching the continuation
-                            # read/prune gate); otherwise it would never be read.
-                            if strands_tool_id and _get_strands_session_manager(
-                                strands_agent
-                            ):
+                            # Record wire id -> Strands native id in AgentState
+                            # for same-wrapper native frontend waits regardless
+                            # of SessionManager availability. A SessionManager
+                            # additionally makes this map durable across process
+                            # restarts; that shared persistence is handled by the
+                            # existing state synchronization path.
+                            if strands_tool_id:
                                 _wire_map = dict(
                                     strands_agent.state.get(AG_UI_WIRE_MAP_STATE_KEY)
                                     or {}
@@ -3029,6 +5304,7 @@ class StrandsAgent:
                                 "last_emitted_raw_len": 0,
                                 "is_pending": is_pending_now,
                                 "is_frontend": is_frontend_tool,
+                                "is_proxy": is_registered_proxy,
                                 "use_streaming": use_streaming,
                                 "strands_tool_id": strands_tool_id,
                             }
@@ -3047,12 +5323,24 @@ class StrandsAgent:
                             # ``tool_use_id`` is a fresh wire UUID while
                             # ``strands_tool_id`` is native.
                             _tc_key = strands_tool_id or tool_use_id
-                            _tc_meta[_tc_key] = {
+                            _tc_entry = {
                                 "name": tool_name,
                                 "args": args_str,
                                 "input": tool_input,
                                 "strands_tool_id": strands_tool_id,
+                                "use_streaming": use_streaming,
+                                "message_id": message_id,
                             }
+                            if is_frontend_tool:
+                                _tc_entry.update(
+                                    is_frontend=True,
+                                    is_proxy=is_registered_proxy,
+                                    continue_after_frontend_call=bool(
+                                        behavior_now
+                                        and behavior_now.continue_after_frontend_call
+                                    ),
+                                )
+                            _tc_meta[_tc_key] = _tc_entry
                             if len(_tc_meta) > _TOOL_CALL_MAP_MAX:
                                 for _stale in list(_tc_meta)[
                                     : len(_tc_meta) - _TOOL_CALL_MAP_MAX
@@ -3307,14 +5595,6 @@ class StrandsAgent:
                                         # CopilotKit v2 dedupes by id.
                                         message_id = str(uuid.uuid4())
 
-                                    if is_frontend_tool and not (
-                                        behavior
-                                        and behavior.continue_after_frontend_call
-                                    ):
-                                        logger.debug(
-                                            f"Deferring halt after frontend tool call: tool_name={tool_name}, tool_call_id={tool_use_id}, thread_id={input_data.thread_id}"
-                                        )
-                                        pending_halt = True
                                 elif is_pending:
                                     # Continuation turn — tool already resolved
                                     # in conversation history. Don't re-emit any
@@ -3430,10 +5710,18 @@ class StrandsAgent:
                                             delta=args_str,
                                         )
 
-                                    yield ToolCallEndEvent(
-                                        type=EventType.TOOL_CALL_END,
-                                        tool_call_id=tool_use_id,
-                                    )
+                                    if is_frontend_tool and not (
+                                        behavior
+                                        and behavior.continue_after_frontend_call
+                                    ):
+                                        deferred_custom_frontend_tool_ends.append(
+                                            tool_use_id
+                                        )
+                                    else:
+                                        yield ToolCallEndEvent(
+                                            type=EventType.TOOL_CALL_END,
+                                            tool_call_id=tool_use_id,
+                                        )
 
                                     if self._will_emit_tool_snapshot(behavior, emit_snapshots):
                                         snapshot_messages.append(
@@ -3458,15 +5746,6 @@ class StrandsAgent:
                                             messages=list(snapshot_messages),
                                         )
                                         message_id = str(uuid.uuid4())
-
-                                    if is_frontend_tool and not (
-                                        behavior
-                                        and behavior.continue_after_frontend_call
-                                    ):
-                                        logger.debug(
-                                            f"Deferring halt after frontend tool call: tool_name={tool_name}, tool_call_id={tool_use_id}, thread_id={input_data.thread_id}"
-                                        )
-                                        pending_halt = True
 
                     # Strands' ``ModelMessageEvent`` re-announces the assistant
                     # turn as a whole once the model finishes it. Every part of
@@ -3517,18 +5796,9 @@ class StrandsAgent:
                             source="strands",
                         )
 
-                # Defer hand-off (safety flush): if the stream ended without a
-                # backend tool-result message (e.g. a turn with ONLY frontend tool
-                # calls), the per-batch flush above never ran and the buffered
-                # frontend ToolCallEnd(s) would be lost — leaving TOOL_CALL_START
-                # events with no matching END. Flush any remainder here.
-                if deferred_frontend_tool_ends:
-                    for _fe_tool_use_id in deferred_frontend_tool_ends:
-                        yield ToolCallEndEvent(
-                            type=EventType.TOOL_CALL_END,
-                            tool_call_id=_fe_tool_use_id,
-                        )
-                    deferred_frontend_tool_ends = []
+            except GeneratorExit:
+                run_close_requested = True
+                raise
             except Exception:
                 if force_stop_error is None:
                     raise
@@ -3540,50 +5810,37 @@ class StrandsAgent:
                     input_data.thread_id,
                 )
             finally:
-                # Properly close the async generator to avoid context detachment errors
-                # The generator should complete naturally when we consume all events,
-                # but we still try to close it explicitly to be safe
                 try:
-                    # A frontend-tool halt breaks out of the loop with the
-                    # generator SUSPENDED at a yield, where ``ag_running`` is
-                    # False. The exhausted-generator check below would read
-                    # that as "already closed" and defer teardown to GC,
-                    # leaving the halted Strands cycle (and its model stream)
-                    # open. Close it explicitly instead.
-                    if halt_event_stream:
-                        await agent_stream.aclose()
-                    # Check if generator is already closed/exhausted
-                    elif not agent_stream.ag_running:
-                        # Generator is already closed, nothing to do
-                        pass
-                    else:
-                        # Try to close gracefully, but suppress context-related errors
-                        await agent_stream.aclose()
-                except (
-                    GeneratorExit,
-                    ValueError,
-                    RuntimeError,
-                    StopAsyncIteration,
-                ) as e:
-                    # Suppress context detachment errors - they occur when the generator
-                    # is closed in a different context, but don't affect functionality
-                    # These errors are logged by Strands internally, we just prevent them from propagating
-                    pass
-                except AttributeError:
-                    # Generator doesn't have ag_running attribute (older Python versions)
-                    # Just try to close it
-                    try:
-                        await agent_stream.aclose()
-                    except (
-                        GeneratorExit,
-                        ValueError,
-                        RuntimeError,
-                        StopAsyncIteration,
-                    ):
-                        pass
-                except Exception as e:
-                    # Log other errors but don't fail
-                    logger.warning(f"Error closing agent stream: {e}")
+                    # Always close the delegated Strands stream. ``ag_running`` is
+                    # false both when an async generator is exhausted and while it
+                    # is suspended at a yield, so it cannot distinguish a closed
+                    # stream from one whose model/tool cleanup still needs to run.
+                    await agent_stream.aclose()
+                finally:
+                    if resume_proxy_overlay is not None:
+                        resume_proxy_overlay.restore()
+
+            if frontend_wait_batch_for_consumption is not None:
+                if not _frontend_wait_resume_was_accepted(
+                    strands_agent, frontend_wait_batch_for_consumption
+                ):
+                    if force_stop_error is None:
+                        yield _interrupt_resume_error(
+                            "Strands did not consume the native frontend wait resume"
+                        )
+                        return
+                else:
+                    consumed_frontend_wait_batch = frontend_wait_batch_for_consumption
+                    frontend_wait_batch_for_consumption = None
+                    await _mark_frontend_wait_consumed(
+                        strands_agent,
+                        consumed_frontend_wait_batch,
+                        accepted_frontend_wait_resume_fingerprint,
+                    )
+                    combined_wait_resume_accepted = True
+                    cache_interrupt_bookkeeping(
+                        None, accepted_frontend_wait_resume_fingerprint
+                    )
 
             # Close reasoning if still open
             if reasoning_started:
@@ -3626,10 +5883,55 @@ class StrandsAgent:
                 )
                 return
 
+            native_interrupts = _extract_interrupts(strands_agent, terminal_result)
+            superseding_resume_fingerprint = (
+                accepted_frontend_wait_resume_fingerprint
+                if combined_wait_resume_accepted
+                else None
+            )
+
+            # Validate and record adapter-owned waits before touching any
+            # checkpointed results. Pure server-interrupt checkpoints retain
+            # their existing timing and rendering behavior.
+            hidden_batch = FrontendToolWaitBatch()
+            visible_native_interrupts = native_interrupts
+            if native_interrupts:
+                hidden_batch, visible_native_interrupts = (
+                    _partition_frontend_wait_interrupts(
+                        strands_agent,
+                        native_interrupts,
+                        checkpoint_messages=[
+                            *list(input_data.messages or []),
+                            *snapshot_messages,
+                        ],
+                        deferred_end_ids=[
+                            *deferred_custom_frontend_tool_ends,
+                            *deferred_frontend_tool_ends,
+                        ],
+                    )
+                )
+                if hidden_batch.calls:
+                    previous_wait = load_frontend_tool_wait(strands_agent.state)
+                    hidden_batch = FrontendToolWaitBatch(
+                        calls=hidden_batch.calls,
+                        last_completed_wire_ids=previous_wait.last_completed_wire_ids,
+                        checkpoint_message_ids=hidden_batch.checkpoint_message_ids,
+                    )
+                    strands_agent.state.set(
+                        FRONTEND_TOOL_WAIT_STATE_KEY,
+                        hidden_batch.to_dict(),
+                    )
+            if hidden_batch.calls and superseding_resume_fingerprint is None:
+                superseding_resume_fingerprint = accepted_server_resume_fingerprint
+
             # Streaming can create a mixed checkpoint that was not observable
             # during preflight. Do not advertise or finish it unless the same
             # repository boundary needed for a safe resume is available.
-            if active_proxy_placeholder_ids(strands_agent):
+            has_hidden_native_wait = bool(hidden_batch.calls)
+            if (
+                active_proxy_placeholder_ids(strands_agent)
+                and not has_hidden_native_wait
+            ):
                 if session_manager is None:
                     yield _interrupt_session_required_error()
                     return
@@ -3639,38 +5941,126 @@ class StrandsAgent:
                     yield _interrupt_session_capability_error()
                     return
 
+            # Persist visible interrupt bookkeeping before any waiting
+            # frontend ToolCallEnd can tell the client to start executing.
+            if native_interrupts:
+                ag_ui_interrupts = [
+                    _strands_interrupt_to_agui(interrupt)
+                    for interrupt in visible_native_interrupts
+                ]
+                if ag_ui_interrupts:
+                    pending_interrupt_outcome = RunFinishedInterruptOutcome(
+                        type="interrupt",
+                        interrupts=ag_ui_interrupts,
+                    )
+                    pending_interrupts = {
+                        interrupt.id: interrupt for interrupt in ag_ui_interrupts
+                    }
+                    cache_interrupt_bookkeeping(
+                        pending_interrupts, superseding_resume_fingerprint
+                    )
+                    await _persist_interrupt_bookkeeping(
+                        strands_agent,
+                        pending_interrupts,
+                        superseding_resume_fingerprint,
+                        strict=(
+                            has_hidden_native_wait
+                            or (
+                                combined_wait_resume_accepted
+                                and superseding_resume_fingerprint is not None
+                            )
+                        ),
+                    )
+                    logger.debug(
+                        f"Strands interrupt detected: thread_id={input_data.thread_id}, "
+                        f"interrupt_ids={[i.id for i in ag_ui_interrupts]}"
+                    )
+
+            # Make every hidden wait checkpoint durable before any externally
+            # visible handoff or checkpointed backend result. Custom args
+            # streamers still expose End before results; standard calls still
+            # expose End afterward.
+            if hidden_batch.calls:
+                if not ag_ui_interrupts:
+                    cache_interrupt_bookkeeping(
+                        None, superseding_resume_fingerprint
+                    )
+                    await _persist_interrupt_bookkeeping(
+                        strands_agent,
+                        None,
+                        superseding_resume_fingerprint,
+                        strict=True,
+                    )
+            if deferred_custom_frontend_tool_ends:
+                for _fe_tool_use_id in deferred_custom_frontend_tool_ends:
+                    yield ToolCallEndEvent(
+                        type=EventType.TOOL_CALL_END,
+                        tool_call_id=_fe_tool_use_id,
+                    )
+                    if hidden_batch.call_for_wire_id(_fe_tool_use_id):
+                        hidden_batch = await _mark_frontend_wait_end_handed_off(
+                            strands_agent,
+                            hidden_batch,
+                            _fe_tool_use_id,
+                        )
+                deferred_custom_frontend_tool_ends = []
+
+            # Strands parks completed backend results in checkpoint context when
+            # a sibling tool interrupts, rather than emitting the usual user
+            # message. Deliver those results now, exactly once, before exposing
+            # the checkpoint boundary. The same blocks reappear during resume,
+            # where ``checkpoint_result_emitted`` suppresses duplicates.
+            checkpoint_delivery = _CheckpointResultDelivery()
+            async for checkpoint_event in _checkpoint_result_events(
+                agent=strands_agent,
+                batch=hidden_batch,
+                persisted_tool_call_meta=persisted_tool_call_meta,
+                emitted_backend_result_ids=emitted_backend_result_ids,
+                input_data=input_data,
+                config=self.config,
+                emit_snapshots=emit_snapshots,
+                snapshot_messages=snapshot_messages,
+                current_state=current_state,
+                message_id=message_id,
+                delivery=checkpoint_delivery,
+            ):
+                yield checkpoint_event
+
+            if checkpoint_delivery.stop_streaming_after_result:
+                hidden_batch = hidden_batch.mark_stop_streaming_after_result()
+                strands_agent.state.set(
+                    FRONTEND_TOOL_WAIT_STATE_KEY,
+                    hidden_batch.to_dict(),
+                )
+            if checkpoint_delivery.metadata_changed:
+                strands_agent.state.set(
+                    AG_UI_TOOL_CALL_MAP_STATE_KEY,
+                    persisted_tool_call_meta,
+                )
+
+            # Keep the later sync: result delivery metadata and a checkpoint
+            # halt flag must be durable before a standard End is exposed.
+            if hidden_batch.calls and checkpoint_delivery.metadata_changed:
+                await _sync_frontend_wait_state(strands_agent)
+            if deferred_frontend_tool_ends:
+                for _fe_tool_use_id in deferred_frontend_tool_ends:
+                    yield ToolCallEndEvent(
+                        type=EventType.TOOL_CALL_END,
+                        tool_call_id=_fe_tool_use_id,
+                    )
+                    if hidden_batch.call_for_wire_id(_fe_tool_use_id):
+                        hidden_batch = await _mark_frontend_wait_end_handed_off(
+                            strands_agent,
+                            hidden_batch,
+                            _fe_tool_use_id,
+                        )
+            deferred_frontend_tool_ends = []
+
             # Final state snapshot before finishing
             yield StateSnapshotEvent(
                 type=EventType.STATE_SNAPSHOT,
                 snapshot=current_state,
             )
-
-            # If the run paused on a native Strands interrupt, surface it as an
-            # AG-UI interrupt outcome so the client can collect a response and
-            # resume via ``RunAgentInput.resume`` next turn.
-            native_interrupts = _extract_interrupts(strands_agent, terminal_result)
-            if native_interrupts:
-                ag_ui_interrupts = [
-                    _strands_interrupt_to_agui(interrupt)
-                    for interrupt in native_interrupts
-                ]
-                pending_interrupt_outcome = RunFinishedInterruptOutcome(
-                    type="interrupt",
-                    interrupts=ag_ui_interrupts,
-                )
-                self._pending_interrupts_by_thread[thread_id] = {
-                    interrupt.id: interrupt for interrupt in ag_ui_interrupts
-                }
-                self._last_resume_fingerprint.pop(thread_id, None)
-                _persist_interrupt_bookkeeping(
-                    strands_agent,
-                    self._pending_interrupts_by_thread[thread_id],
-                    None,
-                )
-                logger.debug(
-                    f"Strands interrupt detected: thread_id={input_data.thread_id}, "
-                    f"interrupt_ids={[i.id for i in ag_ui_interrupts]}"
-                )
 
             # Always finish the run - frontend handles keeping action executing
             if pending_interrupt_outcome is not None:
@@ -3684,9 +6074,15 @@ class StrandsAgent:
                 # Store fingerprint for idempotency only after successful processing
                 if resume_entries:
                     fp = _resume_fingerprint(resume_entries)
-                    self._pending_interrupts_by_thread.pop(thread_id, None)
-                    self._last_resume_fingerprint[thread_id] = fp
-                    _persist_interrupt_bookkeeping(strands_agent, None, fp)
+                    cache_interrupt_bookkeeping(None, fp)
+                    await _persist_interrupt_bookkeeping(strands_agent, None, fp)
+                elif combined_wait_resume_accepted:
+                    # The visible server response may have been staged on an
+                    # earlier request and the frontend ToolMessage arrived
+                    # last. The combined native resume still consumed both
+                    # channels, so clear stale visible bookkeeping now.
+                    cache_interrupt_bookkeeping(None, None)
+                    await _persist_interrupt_bookkeeping(strands_agent, None, None)
                 yield RunFinishedEvent(
                     type=EventType.RUN_FINISHED,
                     thread_id=input_data.thread_id,
@@ -3695,6 +6091,31 @@ class StrandsAgent:
                 )
 
         except Exception as e:
+            # ``aclose()`` injects GeneratorExit at the suspended yield. If
+            # delegated Strands cleanup then fails, emitting RUN_ERROR here
+            # would illegally yield while closing and replace the real error
+            # with ``async generator ignored GeneratorExit``.
+            if run_close_requested:
+                raise
+            if (
+                frontend_wait_batch_for_consumption is not None
+                and _frontend_wait_resume_was_accepted(
+                    strands_agent, frontend_wait_batch_for_consumption
+                )
+            ):
+                consumed_frontend_wait_batch = frontend_wait_batch_for_consumption
+                frontend_wait_batch_for_consumption = None
+                try:
+                    await _mark_frontend_wait_consumed(
+                        strands_agent,
+                        consumed_frontend_wait_batch,
+                        accepted_frontend_wait_resume_fingerprint,
+                    )
+                    cache_interrupt_bookkeeping(
+                        None, accepted_frontend_wait_resume_fingerprint
+                    )
+                except Exception as persistence_error:
+                    e = persistence_error
             import traceback
 
             traceback.print_exc()

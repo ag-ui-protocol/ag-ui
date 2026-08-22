@@ -38,6 +38,11 @@ from strands.models.model import Model as StrandsModel
 from strands.session import FileSessionManager
 from strands.types.session import SessionAgent, SessionMessage
 
+try:
+    from strands.interrupt import _InterruptState
+except ImportError:  # Strands 1.15 keeps the state class in agent.interrupt.
+    from strands.agent.interrupt import InterruptState as _InterruptState
+
 from ag_ui_strands.agent import (
     INTERRUPT_CANCELLED,
     _INTERRUPT_BOOKKEEPING_STATE_KEY,
@@ -155,6 +160,7 @@ class _PostStreamMixedCore(_MockStrandsCore):
 
     async def _stream_body(self, prompt):
         interrupt = StrandsInterrupt(id="native-interrupt", name="confirm")
+        self._interrupt_state.activate()
         self._interrupt_state.interrupts[interrupt.id] = interrupt
         self._interrupt_state.context["tool_results"] = [
             {
@@ -163,7 +169,6 @@ class _PostStreamMixedCore(_MockStrandsCore):
                 "content": [{"text": PROXY_RESULT_PLACEHOLDER}],
             }
         ]
-        self._interrupt_state.activate()
         yield {"result": _agent_result_with_interrupt([interrupt])}
 
 
@@ -1537,11 +1542,16 @@ async def test_native_interrupt_resumes_live_without_session_and_restores_callba
     ).outcome.interrupts[0]
     live_core = agent._agents_by_thread["thread-1"]
     saved_meta = live_core.state.get(AG_UI_TOOL_CALL_MAP_STATE_KEY)
-    assert saved_meta["native-confirm"] == {
+    saved_call_meta = saved_meta["native-confirm"]
+    assert isinstance(saved_call_meta["message_id"], str)
+    assert saved_call_meta["message_id"]
+    assert saved_call_meta == {
         "name": "confirm_action",
         "args": '{"key": "widget-1"}',
         "input": {"key": "widget-1"},
         "strands_tool_id": "native-confirm",
+        "use_streaming": True,
+        "message_id": saved_call_meta["message_id"],
     }
 
     resumed_events = await _collect_events(
@@ -1637,6 +1647,8 @@ async def test_mixed_resume_batch_with_falsy_payload_and_tool_behaviors(
     finished1 = next(e for e in events1 if e.type == EventType.RUN_FINISHED)
     assert finished1.outcome is not None
     assert finished1.outcome.type == "interrupt"
+    assert len(finished1.outcome.interrupts) == 1
+    assert finished1.outcome.interrupts[0].reason == "confirm_action"
     interrupt_id = finished1.outcome.interrupts[0].id
     fe_wire_id = next(
         e.tool_call_id

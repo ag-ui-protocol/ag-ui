@@ -244,7 +244,7 @@ class TestPersistenceHelpersAreDefensiveAgainstMocks:
         broken_agent = MagicMock()
         broken_agent.state = _BrokenState()
         # Must not raise.
-        _persist_interrupt_bookkeeping(broken_agent, None, "fp")
+        await _persist_interrupt_bookkeeping(broken_agent, None, "fp")
 
     async def test_missing_state_attribute_is_handled(self):
         from ag_ui_strands.agent import _load_persisted_interrupt_bookkeeping

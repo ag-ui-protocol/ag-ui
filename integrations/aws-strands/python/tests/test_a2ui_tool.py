@@ -33,6 +33,11 @@ import pytest
 from ag_ui.core import Context, EventType, RunAgentInput, Tool, UserMessage
 from strands.tools.registry import ToolRegistry
 
+try:
+    from strands.interrupt import _InterruptState
+except ImportError:  # Strands 1.15 keeps the state class in agent.interrupt.
+    from strands.agent.interrupt import InterruptState as _InterruptState
+
 from ag_ui_strands.a2ui_tool import (
     A2UI_STREAM_KEY,
     classify_a2ui_subagent_error,
@@ -464,6 +469,10 @@ def _build_agent(thread_id: str, stream_events: list, config=None) -> StrandsAge
         _template_agent(), name="test-agent", config=config or StrandsAgentConfig()
     )
     mock_inner = MagicMock()
+    # A real AgentState, not the mock's auto-vivified one: the adapter reads
+    # persisted wait state off it, and a mock answers every key with an object
+    # that is neither absent nor well-formed.
+    mock_inner.state = AgentState()
     mock_inner.model = MagicMock()
     mock_inner.tool_registry = ToolRegistry()
     mock_inner.session_manager = None
@@ -1258,6 +1267,7 @@ async def test_stream_update_intent_finds_same_run_surface(monkeypatch):
 
 from strands import Agent as StrandsAgentCore
 from strands.models.model import Model as StrandsModel
+from strands.agent.state import AgentState
 
 
 def _tool_use_chunks(name, tool_use_id, args_json):

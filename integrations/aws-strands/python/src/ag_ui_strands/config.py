@@ -16,9 +16,7 @@ from typing import (
 )
 
 from ag_ui.core import RunAgentInput
-
 from strands.session import SessionManager
-
 
 StatePayload = Dict[str, Any]
 
@@ -43,11 +41,17 @@ class ToolResultContext(ToolCallContext):
 
 
 ArgsStreamer = Callable[[ToolCallContext], AsyncIterator[str]]
-StateFromArgs = Callable[[ToolCallContext], Awaitable[Optional[StatePayload]] | Optional[StatePayload]]
-StateFromResult = Callable[[ToolResultContext], Awaitable[Optional[StatePayload]] | Optional[StatePayload]]
+StateFromArgs = Callable[
+    [ToolCallContext], Awaitable[Optional[StatePayload]] | Optional[StatePayload]
+]
+StateFromResult = Callable[
+    [ToolResultContext], Awaitable[Optional[StatePayload]] | Optional[StatePayload]
+]
 CustomResultHandler = Callable[[ToolResultContext], AsyncIterator[Any]]
 StateContextBuilder = Callable[[RunAgentInput, str], str]
-SessionManagerProvider = Callable[[RunAgentInput], Awaitable[Optional[SessionManager]] | Optional[SessionManager]]
+SessionManagerProvider = Callable[
+    [RunAgentInput], Awaitable[Optional[SessionManager]] | Optional[SessionManager]
+]
 
 
 @dataclass
@@ -200,7 +204,9 @@ async def maybe_await(value: Any) -> Any:
     return value
 
 
-def normalize_predict_state(value: Optional[Iterable[PredictStateMapping]]) -> List[PredictStateMapping]:
+def normalize_predict_state(
+    value: Optional[Iterable[PredictStateMapping]],
+) -> List[PredictStateMapping]:
     """Normalize predict state config into a concrete list."""
 
     if value is None:
@@ -208,4 +214,3 @@ def normalize_predict_state(value: Optional[Iterable[PredictStateMapping]]) -> L
     if isinstance(value, PredictStateMapping):
         return [value]
     return list(value)
-

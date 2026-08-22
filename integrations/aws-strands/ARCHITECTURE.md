@@ -226,9 +226,9 @@ The repository includes seven runnable FastAPI apps that showcase different feat
 
 The TypeScript package ships the same seven Python examples under the matching filenames (`agentic-chat.ts`, `agentic-chat-reasoning.ts`, `agentic-chat-multimodal.ts`, `backend-tool-rendering.ts`, `shared-state.ts`, `agentic-generative-ui.ts`, `human-in-the-loop.ts`) plus one TypeScript-only addition:
 
-| Module                          | Focus                                                              |
-| ------------------------------- | ------------------------------------------------------------------ |
-| `tool-based-generative-ui.ts`   | Frontend-rendered tool (haiku card) auto-registered as a proxy tool — exercises the `TOOL_CALL_*` stream the dojo's `tool_based_generative_ui` page consumes. No Python equivalent. |
+| Module                        | Focus                                                                                                                                                                               |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tool-based-generative-ui.ts` | Frontend-rendered tool (haiku card) auto-registered as a proxy tool — exercises the `TOOL_CALL_*` stream the dojo's `tool_based_generative_ui` page consumes. No Python equivalent. |
 
 Each file is self-contained and can be run standalone (`pnpm <name>` from `examples/`). `examples/server/server.ts` is a "dojo" that mounts all eight at the paths the Python reference server uses, so both implementations can be driven by the same curl payloads.
 

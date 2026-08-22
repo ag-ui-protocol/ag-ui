@@ -28,8 +28,11 @@ from strands.session.file_session_manager import FileSessionManager
 from strands.tools.tools import PythonAgentTool
 
 from ag_ui_strands.agent import StrandsAgent
-from ag_ui_strands.client_proxy_tool import PROXY_RESULT_PLACEHOLDER
 from ag_ui_strands.config import StrandsAgentConfig, ToolBehavior
+from ag_ui_strands.frontend_tool_wait import (
+    FRONTEND_TOOL_WAIT_STATE_KEY,
+    FrontendToolWaitBatch,
+)
 from ag_ui_strands.session_reconcile import AG_UI_WIRE_MAP_STATE_KEY
 
 # Ceiling on model invocations. The halt should stop the loop after ONE, so any
@@ -228,6 +231,103 @@ async def test_continue_after_frontend_call_still_runs_further_cycles():
     assert any(e.type == EventType.RUN_FINISHED for e in events)
 
 
+@pytest.mark.asyncio
+async def test_waiting_tool_custom_args_streamer_preserves_wire_order():
+    async def args_streamer(_context):
+        yield '{"cell":'
+        yield '"B4"}'
+
+    model = _ScriptedModel(follow_ups=0, first_turn_tools=("get_cell",))
+    config = StrandsAgentConfig(
+        tool_behaviors={"get_cell": ToolBehavior(args_streamer=args_streamer)}
+    )
+    events = await _collect(_build(model, config), "t-custom-args-wait")
+
+    lifecycle = [
+        (event.type, getattr(event, "delta", None))
+        for event in events
+        if event.type
+        in {
+            EventType.TOOL_CALL_START,
+            EventType.TOOL_CALL_ARGS,
+            EventType.TOOL_CALL_END,
+        }
+    ]
+    assert lifecycle == [
+        (EventType.TOOL_CALL_START, None),
+        (EventType.TOOL_CALL_ARGS, '{"cell":'),
+        (EventType.TOOL_CALL_ARGS, '"B4"}'),
+        (EventType.TOOL_CALL_END, None),
+    ]
+    finished = next(event for event in events if event.type == EventType.RUN_FINISHED)
+    assert finished.outcome.type == "success"
+    assert model.calls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "call_order",
+    [("get_cell", "update_cell"), ("update_cell", "get_cell")],
+)
+@pytest.mark.parametrize("false_result_first", [True, False])
+async def test_mixed_false_true_batch_keeps_true_placeholder_parked_on_resume(
+    call_order: tuple[str, str], false_result_first: bool
+):
+    """Only the false proxy belongs to the hidden native wait barrier."""
+    model = _ScriptedModel(
+        follow_ups=0,
+        first_turn_tools=call_order,
+    )
+    config = StrandsAgentConfig(
+        tool_behaviors={"update_cell": ToolBehavior(continue_after_frontend_call=True)}
+    )
+    adapter = _build(model, config)
+
+    first = await _collect(adapter, "t-false-true")
+    wire_by_name = {
+        event.tool_call_name: event.tool_call_id
+        for event in first
+        if event.type == EventType.TOOL_CALL_START
+    }
+    core = adapter._agents_by_thread["t-false-true"]
+    batch = FrontendToolWaitBatch.from_dict(
+        core.state.get(FRONTEND_TOOL_WAIT_STATE_KEY)
+    )
+    assert [call.native_tool_use_id for call in batch.calls] == ["native-get_cell-1"]
+    assert [call.end_handed_off for call in batch.calls] == [True]
+
+    false_result = ToolMessage(
+        id="false-result",
+        role="tool",
+        tool_call_id=wire_by_name["get_cell"],
+        content='{"value": 42}',
+    )
+    true_result = ToolMessage(
+        id="true-result",
+        role="tool",
+        tool_call_id=wire_by_name["update_cell"],
+        content="must-not-replace-placeholder",
+    )
+    returned_results = (
+        [false_result, true_result]
+        if false_result_first
+        else [true_result, false_result]
+    )
+    second_input = _run_input("t-false-true").model_copy(
+        update={
+            "run_id": "r-2",
+            "messages": returned_results,
+        }
+    )
+    second = [event async for event in adapter.run(second_input)]
+
+    assert any(event.type == EventType.RUN_FINISHED for event in second)
+    native_history = repr(core.messages)
+    assert "Forwarded to client" in native_history
+    assert "must-not-replace-placeholder" not in native_history
+    assert '{"value": 42}' in native_history
+
+
 class _MixedBatchModel(Model):
     """One assistant message calling a frontend tool AND a backend tool.
 
@@ -322,8 +422,73 @@ async def test_backend_result_in_a_halting_batch_still_reaches_the_client():
     # The backend result goes out; the frontend placeholder stays suppressed
     # (the client produces the real one) — so exactly one result, the backend's.
     assert results == ["native-be"]
+    frontend_end_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.type == EventType.TOOL_CALL_END
+        and event.tool_call_id != "native-be"
+    )
+    backend_result_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.type == EventType.TOOL_CALL_RESULT
+        and event.tool_call_id == "native-be"
+    )
+    assert backend_result_index < frontend_end_index
     assert model.calls == 1
     assert any(e.type == EventType.RUN_FINISHED for e in events)
+
+
+@pytest.mark.asyncio
+async def test_mixed_custom_args_frontend_end_precedes_backend_result():
+    """Custom argument streaming keeps its established immediate END order."""
+
+    async def args_streamer(_context):
+        yield '{"cell":'
+        yield '"B4"}'
+
+    model = _MixedBatchModel()
+    config = StrandsAgentConfig(
+        tool_behaviors={"get_cell": ToolBehavior(args_streamer=args_streamer)}
+    )
+    adapter = StrandsAgent(
+        Agent(model=model, tools=[_backend_tool()]),
+        name="halt-test-agent",
+        config=config,
+    )
+
+    events = await _collect(adapter, "t-mixed-custom-args")
+
+    frontend_lifecycle = [
+        (event.type, getattr(event, "delta", None))
+        for event in events
+        if getattr(event, "tool_call_id", None) != "native-be"
+        and event.type
+        in {
+            EventType.TOOL_CALL_START,
+            EventType.TOOL_CALL_ARGS,
+            EventType.TOOL_CALL_END,
+        }
+    ]
+    assert frontend_lifecycle == [
+        (EventType.TOOL_CALL_START, None),
+        (EventType.TOOL_CALL_ARGS, '{"cell":'),
+        (EventType.TOOL_CALL_ARGS, '"B4"}'),
+        (EventType.TOOL_CALL_END, None),
+    ]
+    frontend_end_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.type == EventType.TOOL_CALL_END
+        and event.tool_call_id != "native-be"
+    )
+    backend_result_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.type == EventType.TOOL_CALL_RESULT
+        and event.tool_call_id == "native-be"
+    )
+    assert frontend_end_index < backend_result_index
 
 
 @pytest.mark.asyncio
@@ -518,25 +683,20 @@ def _persisted_messages(sm: FileSessionManager, session_id: str) -> list[dict]:
 
 
 @pytest.mark.asyncio
-async def test_halted_turn_persists_tool_use_placeholder_and_wire_map(tmp_path):
-    """Stopping the loop must not cost the next run's reconcile inputs.
+async def test_waiting_turn_has_no_placeholder_and_records_live_wait_batch(tmp_path):
+    """A false proxy parks natively and records the three bridge identities.
 
-    The reconcile overwrites a persisted placeholder ``toolResult``, keyed via
-    the wire->native map on agent state. Both are written before the halt
-    latches (``MessageAddedEvent`` drives ``append_message`` AND ``sync_agent``
-    — see ``SessionManager.register_hooks``), so halting keeps them. If Strands
-    ever stops syncing state on message-added, this test is the tripwire.
-
-    Asserting EXACTLY one persisted ``toolUse`` also pins the other half: a
-    drained loop persists the invisible retry calls too, leaving the store with
-    several unresolved placeholders the client was never asked about.
+    Task 4 owns same-wrapper AgentState bookkeeping. Task 5 makes that state
+    durable across a freshly-created wrapper, so this test deliberately checks
+    the live core while separately proving persisted Strands history contains no
+    legacy placeholder.
     """
     session_id = "s-halt"
     sm = FileSessionManager(session_id=session_id, storage_dir=str(tmp_path))
     model = _ScriptedModel(follow_ups=2, first_turn_tools=("get_cell",))
     adapter = _build(model, StrandsAgentConfig(session_manager_provider=lambda _tid: sm))
 
-    await _collect(adapter, "t-persist")
+    events = await _collect(adapter, "t-persist")
 
     messages = _persisted_messages(sm, session_id)
     tool_uses = [
@@ -545,28 +705,30 @@ async def test_halted_turn_persists_tool_use_placeholder_and_wire_map(tmp_path):
         for block in message.get("content") or []
         if isinstance(block, dict) and "toolUse" in block
     ]
-    placeholders = [
+    tool_results = [
         block["toolResult"]
         for message in messages
         for block in message.get("content") or []
-        if isinstance(block, dict)
-        and "toolResult" in block
-        and any(
-            PROXY_RESULT_PLACEHOLDER in (part.get("text") or "")
-            for part in block["toolResult"].get("content") or []
-            if isinstance(part, dict)
-        )
+        if isinstance(block, dict) and "toolResult" in block
     ]
 
     assert [t["name"] for t in tool_uses] == ["get_cell"]
-    assert len(placeholders) == 1
-    assert placeholders[0]["toolUseId"] == tool_uses[0]["toolUseId"]
+    assert tool_results == []
 
-    persisted_agent = sm.read_agent(session_id, "default")
-    wire_map = persisted_agent.state.get(AG_UI_WIRE_MAP_STATE_KEY) or {}
-    assert tool_uses[0]["toolUseId"] in wire_map.values(), (
-        "reconcile cannot locate the placeholder without the wire->native map"
+    finished = next(e for e in events if e.type == EventType.RUN_FINISHED)
+    assert finished.outcome is None or finished.outcome.type == "success"
+
+    inner = adapter._agents_by_thread["t-persist"]
+    batch = FrontendToolWaitBatch.from_dict(
+        inner.state.get(FRONTEND_TOOL_WAIT_STATE_KEY)
     )
+    assert len(batch.calls) == 1
+    call = batch.calls[0]
+    assert call.native_tool_use_id == tool_uses[0]["toolUseId"]
+    wire_map = inner.state.get(AG_UI_WIRE_MAP_STATE_KEY) or {}
+    assert wire_map[call.wire_tool_call_id] == call.native_tool_use_id
+    assert call.interrupt_id
+    assert "u1" in batch.checkpoint_message_ids
 
 
 @pytest.mark.asyncio

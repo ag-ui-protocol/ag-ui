@@ -229,6 +229,10 @@ def _build_agent(
         _template_agent(), name="test-agent", config=config or StrandsAgentConfig()
     )
     mock_inner = MagicMock()
+    # A real AgentState, not the mock's auto-vivified one: the adapter reads
+    # persisted wait state off it, and a mock answers every key with an object
+    # that is neither absent nor well-formed.
+    mock_inner.state = AgentState()
     mock_inner.tool_registry = ToolRegistry()
 
     # Wire interrupt state

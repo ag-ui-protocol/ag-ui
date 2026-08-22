@@ -78,7 +78,13 @@ class ToolCallModel(StrandsModel):
         yield {"messageStop": {"stopReason": "end_turn"}}
 
 
-def make_agent(native_tools=None, agents_by_thread=None, model=None):
+def make_agent(
+    native_tools=None,
+    agents_by_thread=None,
+    model=None,
+    *,
+    continue_after_frontend_call=False,
+):
     model = model or ToolCallModel()
     agents_by_thread = {} if agents_by_thread is None else agents_by_thread
     core = StrandsAgentCore(
@@ -92,7 +98,10 @@ def make_agent(native_tools=None, agents_by_thread=None, model=None):
         agents_by_thread=agents_by_thread,
         config=StrandsAgentConfig(
             tool_behaviors={
-                TOOL_NAME: ToolBehavior(interrupt_on_call=True),
+                TOOL_NAME: ToolBehavior(
+                    continue_after_frontend_call=continue_after_frontend_call,
+                    interrupt_on_call=True,
+                ),
             }
         ),
     )
@@ -144,7 +153,7 @@ def assert_tool_call_lifecycle(events: list) -> None:
 
 
 @pytest.mark.asyncio
-async def test_warns_and_skips_interrupt_for_current_client_proxy(caplog):
+async def test_warns_and_skips_approval_interrupt_for_current_client_proxy(caplog):
     agent, _, model = make_agent(native_tools=[])
     model.begin_run()
 
@@ -155,7 +164,7 @@ async def test_warns_and_skips_interrupt_for_current_client_proxy(caplog):
     finished = events[-1]
     assert finished.type == EventType.RUN_FINISHED
     assert finished.outcome.type == "success"
-    assert agent._pending_interrupts_by_thread.get(THREAD_ID, {}) == {}
+    assert THREAD_ID not in agent._pending_interrupts_by_thread
     matching_warnings = [
         record
         for record in caplog.records
@@ -177,8 +186,63 @@ async def test_still_interrupts_backend_tool_with_same_configured_name():
 
 
 @pytest.mark.asyncio
+async def test_native_result_survives_same_named_client_tool_declaration():
+    callback_results = []
+
+    def state_from_result(context):
+        callback_results.append(context.result_data)
+        return {"result_callback_fired": True}
+
+    model = ToolCallModel()
+    model.begin_run()
+    core = StrandsAgentCore(
+        model=model,
+        tools=[confirm_action],
+        system_prompt="Call confirm_action.",
+    )
+    agent = StrandsAgent(
+        core,
+        name="same-name-result-test",
+        config=StrandsAgentConfig(
+            tool_behaviors={
+                TOOL_NAME: ToolBehavior(state_from_result=state_from_result),
+            }
+        ),
+    )
+
+    events = await collect(agent, run_input("run-collision", [CLIENT_TOOL]))
+
+    results = [
+        event
+        for event in events
+        if event.type == EventType.TOOL_CALL_RESULT
+    ]
+    assert [event.tool_call_id for event in results] == ["tool-1"]
+    final_snapshot = [
+        event
+        for event in events
+        if event.type == EventType.MESSAGES_SNAPSHOT
+    ][-1]
+    tool_messages = [
+        message
+        for message in final_snapshot.messages
+        if getattr(message, "role", None) == "tool"
+    ]
+    assert [message.tool_call_id for message in tool_messages] == ["tool-1"]
+    assert len(callback_results) == 1
+    assert "confirmed" in callback_results[0]
+    assert any(
+        event.type == EventType.STATE_SNAPSHOT
+        and event.snapshot == {"result_callback_fired": True}
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
 async def test_evaluates_proxy_membership_when_hook_fires_each_request():
-    agent, agents_by_thread, model = make_agent(native_tools=[])
+    agent, agents_by_thread, model = make_agent(
+        native_tools=[], continue_after_frontend_call=True
+    )
     model.begin_run()
 
     first_events = await collect(agent, run_input("run-1", [CLIENT_TOOL]))
@@ -189,7 +253,10 @@ async def test_evaluates_proxy_membership_when_hook_fires_each_request():
     live_agent.tool_registry.dynamic_tools.pop(TOOL_NAME, None)
     live_agent.tool_registry.register_tool(confirm_action)
     recreated_agent, _, _ = make_agent(
-        native_tools=[], agents_by_thread=agents_by_thread, model=model
+        native_tools=[],
+        agents_by_thread=agents_by_thread,
+        model=model,
+        continue_after_frontend_call=True,
     )
     model.begin_run()
 

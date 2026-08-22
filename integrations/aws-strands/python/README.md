@@ -37,7 +37,7 @@ The integration has three main layers:
 - **Configuration** – `StrandsAgentConfig` + `ToolBehavior` + `PredictStateMapping` let you describe tool-specific quirks declaratively (skip message snapshots, emit state, stream args, send confirm actions, etc.).
 - **Transport helpers** – `create_strands_app` and `add_strands_fastapi_endpoint` expose the agent via SSE. They are thin shells over the shared `ag_ui.encoder.EventEncoder`.
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for diagrams and a deeper dive.
+See [ARCHITECTURE.md](../ARCHITECTURE.md) for diagrams and a deeper dive.
 
 ## Key Files
 
@@ -73,7 +73,7 @@ Requests to the AC endpoint must be authenticated. You can configure your agent 
 
 For details on how AgentCore handles AG-UI requests, event streaming, and error formatting, see the [AG-UI protocol contract](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-agui-protocol-contract.html).
 
-To deploy, use the [AgentCore Starter Toolkit](https://github.com/awslabs/bedrock-agentcore-starter-toolkit):
+To deploy, use the [AgentCore Starter Toolkit](https://github.com/aws/bedrock-agentcore-starter-toolkit):
 
 ```bash
 pip install bedrock-agentcore-starter-toolkit
@@ -135,6 +135,57 @@ interrupt_.response:`), so a falsy `payload` (`None`, `False`, `""`, `0`,
       charge(amount)
       return "charged"
   ```
+
+### Frontend tool waits
+
+For a client-provided tool with
+`ToolBehavior(continue_after_frontend_call=False)`, the adapter uses a native
+Strands interrupt only inside the Strands execution. The AG-UI exchange does
+not become an interrupt exchange: it remains the existing
+`TOOL_CALL_START` / `TOOL_CALL_ARGS` / `TOOL_CALL_END` events, a normal
+`RUN_FINISHED`, and a later matching `ToolMessage` result. Send that result on
+the same `thread_id` as the paused run.
+
+`ToolBehavior(continue_after_frontend_call=True)` is unchanged. It keeps the
+existing placeholder-based behavior, allowing the current run to continue;
+its later client result follows the existing reconciliation path rather than
+becoming a native frontend-tool wait.
+
+The adapter forwards a waiting tool's `ToolMessage.content` as the exact
+string supplied by the client. Presence, not truthiness, resolves a wait, so
+an empty string is valid. Strings that look like JSON (for example,
+`"false"`, `"0"`, `"null"`, `"[]"`, or `"{}"`) are not JSON-decoded or
+reconstructed into another type.
+
+A waiting tool's `TOOL_CALL_END` is delivered at least once. It is recorded as
+handed off only once the consumer asks for the next event, so a stream that
+drops before that point replays the same `TOOL_CALL_END` on the next request for
+that thread. Clients should treat a repeated `TOOL_CALL_END` for a
+`toolCallId` they already hold as a no-op. The alternative — recording the
+handoff when the event is written — silently loses it on a dropped connection
+and leaves the tool call with no way to complete.
+
+Multiple waiting frontend-tool results can be returned in any order. A partial
+set is staged, and Strands does not resume until every waiting frontend result
+is present. If the same native checkpoint also has server-tool interrupts,
+frontend results still arrive as `ToolMessage`s while server-tool responses
+continue to arrive through `RunAgentInput.resume`; either response class may
+arrive first, and the adapter resumes only after all native interrupts in that
+checkpoint have responses.
+
+Without a `SessionManager`, a paused frontend-tool wait can resume on the same
+live `StrandsAgent` wrapper. To resume after the wrapper is recreated, use a
+compatible shared `SessionManager` backend with stable session and Strands
+agent identities. `session_manager_provider` keeps its existing lifecycle: it
+is called once per `thread_id`, and the resulting manager and core are reused
+for that thread. A live wrapper therefore serves a paused wait from its own
+cached core, and resuming on a different instance requires that instance to
+see the thread for the first time.
+
+The adapter rejects overlapping runs for one `thread_id` with a process-local
+guard. This is not distributed coordination: simultaneous requests for the
+same thread in different processes require atomic coordination from the
+deployment or session layer.
 
 ### Persistence and proxy-tool boundaries
 

@@ -78,8 +78,14 @@ def _make_base_agent(session_manager_provider=None) -> StrandsAgent:
 
 def _make_mock_instance():
     instance = MagicMock()
+    instance.session_manager = None
+    instance._session_manager = None
     instance.tool_registry = MagicMock()
     instance.tool_registry.registry = {}
+    # A real AgentState, not the mock's auto-vivified one: the adapter reads
+    # persisted wait state off it, and a mock answers every key with an object
+    # that is neither absent nor well-formed.
+    instance.state = AgentState()
     instance.stream_async = MagicMock(side_effect=lambda _: _empty_async_gen())
     return instance
 
