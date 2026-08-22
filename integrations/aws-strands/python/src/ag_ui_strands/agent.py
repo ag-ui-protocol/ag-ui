@@ -9,7 +9,11 @@ import hashlib
 import inspect
 import json
 import logging
+import collections.abc
+import types
+import typing
 import uuid
+import weakref
 from datetime import datetime, timezone
 from importlib.metadata import version as distribution_version
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
@@ -37,31 +41,280 @@ _AGUI_EXPLICIT_PARAMS = {
 }
 
 
-def _extract_agent_kwargs(agent: StrandsAgentCore) -> dict:
-    """Build kwargs for StrandsAgentCore by introspecting its constructor signature.
+_MISSING = object()
+_AGENT_BOUND = object()
 
-    Tries ``self.<name>`` first, falls back to ``self._<name>`` — Strands stores
-    some init params with an underscore prefix (e.g. ``retry_strategy`` lives at
-    ``self._retry_strategy``). This keeps the adapter forward-compatible with
-    any future param that follows either naming convention.
+
+def _candidate_attributes(name: str) -> tuple[str, ...]:
+    """Attribute names Strands might be keeping constructor param ``name`` under.
+
+    Strands does not guarantee that a constructor param is readable back under
+    its own name, and which convention it picks has changed release to release.
+    Rather than tracking each param by name, probe the conventions themselves:
+
+    * ``name``           kept verbatim (``conversation_manager``)
+    * ``_name``          private alias (``_retry_strategy``)
+    * ``_default_name``  renamed on the way in
+                         (``_default_structured_output_model``)
+    * ``_<singular>_registry`` / ``_name_registry``
+                         consumed into a registry (``_intervention_registry``
+                         from ``interventions``)
+
+    A param that follows one of these is carried across without this adapter
+    being taught about it individually.
+
+    Deliberately not probed: the same name on some other object the Agent
+    happens to hold. That matched on spelling rather than on storage, and what
+    it turned up was coincidence as often as the real value.
     """
-    kwargs = {}
-    for name in inspect.signature(StrandsAgentCore.__init__).parameters:
+    singular = name[:-1] if name.endswith("s") else name
+    candidates = (
+        name,
+        f"_{name}",
+        f"_default_{name}",
+        f"_{singular}_registry",
+        f"_{name}_registry",
+    )
+    # A non-plural name makes the two registry forms identical, and probing a
+    # candidate twice invokes the registry's accessors twice.
+    return tuple(dict.fromkeys(candidates))
+
+
+def _own_attributes(holder: Any) -> dict:
+    """``vars(holder)``, or an empty mapping when the object has no ``__dict__``.
+
+    A registry defined with ``__slots__`` has no instance dict, and probing one
+    must not take down the adapter's constructor.
+    """
+    try:
+        return vars(holder)
+    except TypeError:
+        return {}
+
+
+def _references_agent(holder: Any, agent: Any) -> bool:
+    """Whether ``holder`` keeps a reference back to ``agent`` itself.
+
+    Checked against the specific agent rather than "holds any weak reference",
+    so an unrelated cache does not read as ownership.
+    """
+    for value in _own_attributes(holder).values():
+        if value is agent:
+            return True
+        if isinstance(value, weakref.ReferenceType):
+            try:
+                if value() is agent:
+                    return True
+            except Exception:  # noqa: BLE001 - a dead or exotic ref is not ownership
+                continue
+        if isinstance(value, weakref.ProxyTypes):
+            try:
+                if value.__class__ is agent.__class__ and value == agent:
+                    return True
+            except Exception:  # noqa: BLE001 - proxies raise once the referent is gone
+                continue
+    return False
+
+
+def _registry_contents(holder: Any) -> Any:
+    """The values a registry was built from, or ``_MISSING``.
+
+    Prefers a public accessor, since that is the surface Strands supports, and
+    falls back to a private backing collection for registries that expose none.
+    Dict-backed registries are keyed by name, so hand back the values.
+
+    The returned container is a fresh object either way. Element identity is
+    preserved, which is what the constructor actually consumes.
+    """
+    accessors = [
+        v
+        for klass in type(holder).__mro__
+        for k, v in vars(klass).items()
+        if isinstance(v, property) and not k.startswith("_")
+    ]
+
+    def _read(prop: property) -> Any:
+        # A registry accessor is arbitrary code. It may raise or depend on
+        # state the template no longer has; that is a reason to try the next
+        # source, not to fail constructing the adapter.
+        try:
+            return prop.fget(holder) if prop.fget is not None else _MISSING
+        except Exception:  # noqa: BLE001 - any accessor failure means "try the next source"
+            return _MISSING
+
+    backing = [
+        v
+        for k, v in _own_attributes(holder).items()
+        if k.startswith("_") and isinstance(v, (list, tuple, dict))
+    ]
+
+    for source in ([_read(prop) for prop in accessors], backing):
+        for value in source:
+            if isinstance(value, dict):
+                return list(value.values())
+            if isinstance(value, (list, tuple)):
+                return list(value)
+    return _MISSING
+
+
+def _element_type(annotation: Any) -> Any:
+    """The element type of a ``list[X]``-shaped annotation, or ``None``.
+
+    Looks through an optional wrapper first: nearly every Strands param is
+    declared ``X | None``, and reading only the outer type made this return
+    ``None`` for all of them, which silently disabled the check below.
+    """
+    origin = typing.get_origin(annotation)
+    if origin is typing.Union or origin is types.UnionType:
+        for arg in typing.get_args(annotation):
+            if arg is type(None):
+                continue
+            element = _element_type(arg)
+            if element is not None:
+                return element
+        return None
+
+    if origin not in (list, tuple, collections.abc.Sequence):
+        return None
+    args = typing.get_args(annotation)
+    element = args[0] if args else None
+    return element if isinstance(element, type) else None
+
+
+def _looks_like(value: Any, annotation: Any) -> bool:
+    """Whether ``value`` could plausibly be what ``annotation`` declares.
+
+    Convention probing matches on where a value is stored, which is a guess. A
+    registry that happens to expose some other collection would otherwise be
+    forwarded as the parameter, and the constructor would either reject it or,
+    worse, accept nonsense. Checking the declared element type turns that into
+    "not found" instead.
+
+    Unknown or unresolvable annotations pass: the point is to reject a
+    confident wrong answer, not to require a type for everything.
+    """
+    element = _element_type(annotation)
+    if element is None or not isinstance(value, list):
+        return True
+    try:
+        return all(isinstance(item, element) for item in value)
+    except TypeError:
+        # Some annotations cannot be used with isinstance at all (a Protocol
+        # that is not runtime-checkable, a parameterized generic on older
+        # interpreters). Unable to judge is not the same as wrong.
+        return True
+
+
+def _resolve_template_param(agent: Any, name: str, annotation: Any = None) -> Any:
+    """Recover constructor param ``name`` from a built agent.
+
+    Returns the value, ``_AGENT_BOUND`` when it is wired to the template and
+    cannot be handed to another agent, or ``_MISSING`` when no storage
+    convention matches.
+
+    A candidate holding ``None`` does not end the search: Strands sometimes
+    exposes a param under its own name before it is populated, and stopping
+    there would mask the alias that actually holds the value.
+    """
+    fallback = _MISSING
+    for attr in _candidate_attributes(name):
+        try:
+            # One lookup, not hasattr followed by getattr: these can be
+            # properties, and probing twice runs the caller's code twice.
+            value = getattr(agent, attr, _MISSING)
+        except Exception:  # noqa: BLE001 - a raising property is not a reason to fail init
+            continue
+        if value is _MISSING:
+            continue
+
+        if attr.endswith("_registry") and not name.endswith("_registry"):
+            if _references_agent(value, agent):
+                return _AGENT_BOUND
+            contents = _registry_contents(value)
+            if contents is _MISSING:
+                continue
+            if not contents:
+                # An empty registry means the caller set nothing. Keep looking:
+                # another convention may hold the value that was set.
+                fallback = None
+                continue
+            if not _looks_like(contents, annotation):
+                continue
+            return contents
+
+        if value is None:
+            fallback = None
+            continue
+        return value
+    return fallback
+
+
+def _forwardable_parameters() -> List[Tuple[str, Any]]:
+    """Constructor params this adapter is responsible for carrying, with types.
+
+    ``*args`` / ``**kwargs`` are not params a caller sets on the template, so
+    they are not something that can be dropped.
+    """
+    try:
+        hints = typing.get_type_hints(StrandsAgentCore.__init__)
+    except Exception as e:  # noqa: BLE001 - the SDK's own namespace, not ours to fix
+        # Raw annotations still work for the checks below, but they resolve
+        # differently, so leave a trace rather than degrading in silence.
+        logger.debug(
+            "could not resolve Strands Agent.__init__ annotations (%s: %s); "
+            "falling back to raw annotations",
+            type(e).__name__,
+            e,
+        )
+        hints = {}
+    out: List[Tuple[str, Any]] = []
+    for name, param in inspect.signature(StrandsAgentCore.__init__).parameters.items():
         if name in _AGUI_EXPLICIT_PARAMS:
             continue
-        if hasattr(agent, name):
-            value = getattr(agent, name)
-        elif hasattr(agent, f"_{name}"):
-            value = getattr(agent, f"_{name}")
-        else:
+        if param.kind in (param.VAR_KEYWORD, param.VAR_POSITIONAL):
+            continue
+        out.append((name, hints.get(name, param.annotation)))
+    return out
+
+
+def _extract_agent_kwargs(
+    agent: StrandsAgentCore,
+) -> Tuple[dict, List[str], List[str]]:
+    """Build kwargs for StrandsAgentCore by introspecting its constructor signature.
+
+    Returns the recovered kwargs, the params that could not be read back at all,
+    and the params that were read but belong to the template.
+
+    The two failure lists are kept apart because they need different answers.
+    An unreadable param is a gap in this adapter: Strands keeps adding
+    constructor params it does not store under their own name, and every one of
+    those used to be dropped in silence, so the caller is warned. A param wired
+    to the template is a structural property of the SDK rather than a surprise,
+    so it is recorded without a warning.
+    """
+    kwargs: dict = {}
+    unreadable: List[str] = []
+    template_owned: List[str] = []
+    for name, annotation in _forwardable_parameters():
+        value = _resolve_template_param(agent, name, annotation)
+        if value is _MISSING:
+            unreadable.append(name)
+            continue
+        if value is _AGENT_BOUND:
+            template_owned.append(name)
             continue
         if value is None:
             continue
         # state is an AgentState container; extract the underlying plain dict
-        if name == "state" and hasattr(value, "get"):
-            value = value.get()
+        if name == "state":
+            get = getattr(value, "get", None)
+            if callable(get) and not isinstance(value, dict):
+                try:
+                    value = get()
+                except TypeError:
+                    pass
         kwargs[name] = value
-    return kwargs
+    return kwargs, unreadable, template_owned
 
 
 # Upper bound on the per-agent wire->native map held in session state. Bounds
@@ -1278,7 +1531,28 @@ class StrandsAgent:
             if hasattr(agent, "tool_registry")
             else []
         )
-        self._agent_kwargs = _extract_agent_kwargs(agent)
+        (
+            self._agent_kwargs,
+            self._unreadable_params,
+            self._template_owned_params,
+        ) = _extract_agent_kwargs(agent)
+        # Params wired to the template are a known structural limit, not a
+        # surprise, so they are recorded without a warning. Params this adapter
+        # could not read at all are the ones worth interrupting for.
+        self._unforwardable_params = [
+            *self._unreadable_params,
+            *self._template_owned_params,
+        ]
+        if self._unreadable_params:
+            # Phrased as a capability, not an accusation: an unreadable param is
+            # unreadable whether or not the caller set one, so this cannot say
+            # that anything was actually lost.
+            logger.warning(
+                "this Strands release stores these Agent constructor params where "
+                "the adapter cannot read them back, so a value set on the template "
+                "through them will not reach per-thread agents: %s.",
+                ", ".join(sorted(self._unreadable_params)),
+            )
 
         # Hook providers forwarded to each per-thread StrandsAgentCore.
         #

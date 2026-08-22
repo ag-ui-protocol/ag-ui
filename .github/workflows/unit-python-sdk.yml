@@ -540,6 +540,61 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         uses: ./.github/actions/assert-lockfiles-unchanged
 
+  # The two lanes above pin the bottom and the middle of the supported range.
+  # Nothing watches the top, and the manifest declares no upper bound, so every
+  # Strands release is advertised as supported the day it ships.
+  #
+  # That matters more here than it looks. This adapter rebuilds the caller's
+  # Agent per thread by reading its constructor settings back off the instance,
+  # so a release that adds a constructor param adds a setting this adapter can
+  # silently fail to carry. The parameterised propagation suite discovers those
+  # params off the live signature, which only helps if something actually runs
+  # it against the release that added them.
+  #
+  # This lane is that something. When it goes red on a new Strands release, the
+  # release added a param the adapter has not been taught, which is exactly the
+  # signal worth interrupting for.
+  aws-strands-python-latest:
+    name: aws-strands-python-latest
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        # id so the lockfile assertion below can gate on this step's outcome. See
+        # the locked lane for why !cancelled() alone is not enough.
+        id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d  # v10.0.1
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        working-directory: integrations/aws-strands/python
+        run: uv sync --locked
+
+      - name: Upgrade to the newest published strands-agents
+        working-directory: integrations/aws-strands/python
+        run: |
+          set -euo pipefail
+          uv pip install --upgrade strands-agents
+          uv run --no-sync python -c \
+            "import importlib.metadata as m; print('strands-agents', m.version('strands-agents'))"
+
+      - name: Run tests against the newest release
+        working-directory: integrations/aws-strands/python
+        run: uv run --no-sync python -m pytest tests/ -v
+
+      - name: Assert no lockfile was rewritten
+        # Same reasoning as the lanes above: a run that rewrote a lockfile and
+        # then went red would report only the test failure and lose this signal.
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        uses: ./.github/actions/assert-lockfiles-unchanged
+
 
   langroid-python:
     runs-on: ubuntu-latest
