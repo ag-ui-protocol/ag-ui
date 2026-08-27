@@ -25,3 +25,11 @@ Resume works for local agents (via the agent resume stream) and for remote
 agents (round-tripped over `@mastra/client-js`' `resumeStream`). Remote resume
 requires the remote Mastra instance to have storage configured, since the
 suspended run's snapshot is loaded from storage on resume.
+
+## Google ADK-JS notes
+
+The `Google ADK (JavaScript)` example gives the model ADK's native
+`requestInputTool`. Its `adk_request_input` long-running call is translated by
+`@ag-ui/adk-js` into the same AG-UI interrupt outcome. The selected slot is
+returned as the matching ADK function response, allowing the existing ADK
+session to continue.
