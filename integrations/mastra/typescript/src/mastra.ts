@@ -49,6 +49,11 @@ import {
   getNetwork,
 } from "./utils";
 import { planA2UIInjection, type A2UIInjectConfig } from "./a2ui-tool";
+import {
+  continuationBaseId,
+  continuationIndex,
+  continuationMessageId,
+} from "./message-ids";
 
 const { compare } = jsonpatch;
 
@@ -762,50 +767,12 @@ export class MastraAgent extends AbstractAgent {
   private readonly abortControllers = new Set<AbortController>();
 
   /**
-   * Suffix appended to a turn's base (Mastra-stored) messageId to key the
-   * SEPARATE AG-UI message that carries assistant text streamed AFTER a tool
-   * call in the same turn. See {@link continuationMessageId} and the ordering
-   * note in {@link makeStreamCallbacks}.
+   * The continuation-id scheme for assistant text streamed AFTER a tool call in
+   * the same turn lives in `./message-ids`, shared with the stored-history
+   * converter (`convertMastraMessagesToAGUI`) so both directions split a Mastra
+   * turn into the same AG-UI message ids. See the ordering note in
+   * {@link makeStreamCallbacks}.
    */
-  private static readonly ASSISTANT_TEXT_CONTINUATION_SUFFIX = "-agui-text";
-
-  /**
-   * Matches any id produced by {@link continuationMessageId}, capturing the base
-   * id it was derived from. Used by `selectNewMessages` to recognise the whole
-   * continuation family of a stored turn without knowing how many segments the
-   * turn had.
-   */
-  private static readonly CONTINUATION_ID_PATTERN = new RegExp(
-    `^(.+)${MastraAgent.ASSISTANT_TEXT_CONTINUATION_SUFFIX}(?:-\\d+)?$`,
-  );
-
-  /**
-   * Deterministic id for the `index`-th "trailing text" continuation message
-   * split off a turn whose tool call already rendered under `baseId`. A turn can
-   * alternate text -> tool -> text more than once, so each contiguous run of
-   * text after a tool call gets its own index and therefore its own AG-UI
-   * message (reusing one id makes the client append later segments onto the
-   * message at its original index — run-on text above the cards it followed).
-   *
-   * Index 1 is the bare suffix, so single-boundary turns keep the exact id they
-   * had before. Deterministic (a pure function of the stored turn id and the
-   * segment index) so re-sent history dedups: `selectNewMessages` recognises the
-   * whole family from each stored id and filters the continuation messages out,
-   * so split text is never re-forwarded (and duplicated) on later turns.
-   */
-  private static continuationMessageId(baseId: string, index = 1): string {
-    const suffix = MastraAgent.ASSISTANT_TEXT_CONTINUATION_SUFFIX;
-    return index <= 1 ? `${baseId}${suffix}` : `${baseId}${suffix}-${index}`;
-  }
-
-  /**
-   * The base id a continuation id was derived from, or null if `id` is not a
-   * continuation id at all. Callers must still check the result against the ids
-   * Mastra actually stored — the suffix shape alone does not make an id ours.
-   */
-  private static continuationBaseId(id: string): string | null {
-    return MastraAgent.CONTINUATION_ID_PATTERN.exec(id)?.[1] ?? null;
-  }
 
   constructor(private config: MastraAgentConfig) {
     const {
@@ -1759,12 +1726,9 @@ export class MastraAgent extends AbstractAgent {
     // continuation message an earlier run emitted.
     const historyContinuationIndex = new Map<string, number>();
     for (const { id } of historyMessages) {
-      const base = MastraAgent.continuationBaseId(id);
-      if (!base) continue;
-      const suffix = id.slice(
-        base.length + MastraAgent.ASSISTANT_TEXT_CONTINUATION_SUFFIX.length,
-      );
-      const index = suffix ? Number(suffix.slice(1)) : 1;
+      const base = continuationBaseId(id);
+      const index = continuationIndex(id);
+      if (!base || index === null) continue;
       historyContinuationIndex.set(
         base,
         Math.max(historyContinuationIndex.get(base) ?? 0, index),
@@ -1783,7 +1747,7 @@ export class MastraAgent extends AbstractAgent {
       const segmentIndex = continuationIndexByParentId.get(currentId) ?? 0;
       return segmentIndex === 0
         ? currentId
-        : MastraAgent.continuationMessageId(currentId, segmentIndex);
+        : continuationMessageId(currentId, segmentIndex);
     };
 
     // Open a text-continuation boundary on the id a tool call renders under;
@@ -3307,7 +3271,7 @@ export class MastraAgent extends AbstractAgent {
       // (and duplicated) each turn.
       const isStored = (id: string): boolean => {
         if (storedIds.has(id)) return true;
-        const base = MastraAgent.continuationBaseId(id);
+        const base = continuationBaseId(id);
         return base !== null && storedIds.has(base);
       };
       // Developer messages become system instructions and must be supplied on

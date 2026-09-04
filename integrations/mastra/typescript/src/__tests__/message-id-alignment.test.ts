@@ -2,6 +2,11 @@ import { EventType } from "@ag-ui/client";
 import type { AssistantMessage, BaseEvent, Message } from "@ag-ui/client";
 import { MastraAgent } from "../mastra";
 import {
+  continuationBaseId,
+  continuationIndex,
+  continuationMessageId,
+} from "../message-ids";
+import {
   makeLocalMastraAgent,
   makeRemoteMastraAgent,
   makeInput,
@@ -118,8 +123,7 @@ describe("assistant message id alignment", () => {
  */
 describe("assistant text ordering vs backend tool calls", () => {
   const TURN_ID = "mastra-turn-1";
-  // Keep in sync with MastraAgent.continuationMessageId (private).
-  const CONTINUATION_ID = `${TURN_ID}-agui-text`;
+  const CONTINUATION_ID = continuationMessageId(TURN_ID);
 
   it("splits trailing text onto a distinct continuation id when Mastra reuses the turn id across the tool call", async () => {
     // The exact real-world shape: one messageId re-announced on both step-starts.
@@ -134,7 +138,10 @@ describe("assistant text ordering vs backend tool calls", () => {
             args: { city: "SF" },
           },
         },
-        { type: "tool-result", payload: { toolCallId: "call-1", result: { t: 20 } } },
+        {
+          type: "tool-result",
+          payload: { toolCallId: "call-1", result: { t: 20 } },
+        },
         { type: "step-finish", payload: {} },
         // Mastra re-announces the SAME id for the trailing-text step.
         { type: "step-start", payload: { messageId: TURN_ID } },
@@ -244,9 +251,8 @@ describe("assistant text ordering vs backend tool calls", () => {
  */
 describe("assistant text segments across multiple tool calls", () => {
   const TURN_ID = "mastra-turn-multi";
-  // Keep in sync with MastraAgent.continuationMessageId (private).
-  const SEGMENT_2_ID = `${TURN_ID}-agui-text`;
-  const SEGMENT_3_ID = `${TURN_ID}-agui-text-2`;
+  const SEGMENT_2_ID = continuationMessageId(TURN_ID);
+  const SEGMENT_3_ID = continuationMessageId(TURN_ID, 2);
 
   const alternatingChunks = [
     { type: "step-start", payload: { messageId: TURN_ID } },
@@ -519,8 +525,7 @@ describe("assistant text segmentation with useProcessedFinalText", () => {
  */
 describe("resumed suspended tool call identity", () => {
   const TURN_ID = "mastra-turn-resume";
-  // Keep in sync with MastraAgent.continuationMessageId (private).
-  const CONTINUATION_ID = `${TURN_ID}-agui-text`;
+  const CONTINUATION_ID = continuationMessageId(TURN_ID);
   const CALL_ID = "call-schedule";
   const MEMORY_CALL_ID = "call-memory";
   const MASTRA_RUN_ID = "mastra-run-1";
@@ -1276,5 +1281,18 @@ describe("resumed suspended tool call identity", () => {
         ).toEqual([EARLIER_CALL_ID, CALL_ID]);
       },
     );
+  });
+});
+
+describe("continuation id parsing", () => {
+  it.each([1, 2, 3, 12])("round-trips segment index %i", (index) => {
+    const id = continuationMessageId("turn-a", index);
+    expect(continuationBaseId(id)).toBe("turn-a");
+    expect(continuationIndex(id)).toBe(index);
+  });
+
+  it("returns null for an id that is not a continuation id", () => {
+    expect(continuationIndex("turn-a")).toBeNull();
+    expect(continuationBaseId("turn-a")).toBeNull();
   });
 });
