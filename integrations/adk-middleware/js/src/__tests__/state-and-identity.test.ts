@@ -7,45 +7,17 @@ import {
 } from "@google/adk";
 import { describe, expect, it } from "vitest";
 
-import { AG_UI_STATE_KEYS_KEY } from "../constants";
+import { AG_UI_STATE_KEY, AG_UI_STATE_KEYS_KEY } from "../constants";
 import { ADKEventTranslator } from "../event-translator";
 import { convertMessage } from "../message-converter";
-import { MessageSnapshot } from "../message-snapshot";
 import { stateDeltaFromInput } from "../state-bridge";
+import { runInput } from "./helpers";
 
 function input(state: unknown): RunAgentInput {
-  return {
-    threadId: "thread-1",
-    runId: "run-2",
-    state,
-    messages: [{ id: "user-1", role: "user", content: "Hello" }],
-    tools: [],
-    context: [],
-    forwardedProps: {},
-  };
+  return runInput({ runId: "run-2", state });
 }
 
 describe("ADK state and identity bridges", () => {
-  it("tombstones keys removed from the authoritative AG-UI snapshot", async () => {
-    const service = new InMemorySessionService();
-    const session = await service.createSession({
-      appName: "test-app",
-      userId: "user-1",
-      sessionId: "thread-1",
-      state: {
-        keep: 1,
-        removed: "stale",
-        [AG_UI_STATE_KEYS_KEY]: ["keep", "removed"],
-      },
-    });
-
-    expect(stateDeltaFromInput(input({ keep: 2 }), session)).toMatchObject({
-      keep: 2,
-      removed: null,
-      [AG_UI_STATE_KEYS_KEY]: ["keep"],
-    });
-  });
-
   it("does not adopt backend state when an existing session has no manifest", async () => {
     const service = new InMemorySessionService();
     const session = await service.createSession({
@@ -69,36 +41,7 @@ describe("ADK state and identity bridges", () => {
     ).toBe(false);
   });
 
-  it("preserves ADK authors in streamed and restored assistant messages", () => {
-    const translator = new ADKEventTranslator({});
-    const events = translator.translate(
-      createEvent({
-        id: "specialist-message",
-        author: "specialist",
-        content: { role: "model", parts: [{ text: "Specialist answer" }] },
-      }),
-    );
-    expect(
-      events.find((event) => event.type === EventType.TEXT_MESSAGE_START),
-    ).toMatchObject({ name: "specialist" });
-
-    const message: Message = {
-      id: "specialist-message",
-      role: "assistant",
-      name: "specialist",
-      content: "Specialist answer",
-    };
-    expect(
-      convertMessage(
-        message,
-        [message],
-        "root_agent",
-        new Set(["root_agent", "specialist"]),
-      ),
-    ).toMatchObject({ author: "specialist" });
-  });
-
-  it("preserves tool-only agent identity and function-call thought signatures", () => {
+  it("round-trips tool-only agent identity and function-call thought signatures", () => {
     const event = createEvent({
       id: "specialist-tool-message",
       author: "specialist",
@@ -133,22 +76,35 @@ describe("ADK state and identity bridges", () => {
       ]),
     );
 
-    const snapshot = new MessageSnapshot([]);
-    for (const translated of events) {
-      snapshot.apply(translated);
-    }
-    expect(snapshot.getMessages()).toEqual([
-      expect.objectContaining({
-        id: "specialist-tool-message",
-        role: "assistant",
-        name: "specialist",
-        toolCalls: [
-          expect.objectContaining({
-            id: "lookup-1",
-            encryptedValue: "opaque-tool-signature",
-          }),
-        ],
-      }),
+    const restored: Message = {
+      id: "specialist-tool-message",
+      role: "assistant",
+      name: "specialist",
+      toolCalls: [
+        {
+          id: "lookup-1",
+          type: "function",
+          function: { name: "lookup", arguments: '{"query":"Vienna"}' },
+          encryptedValue: "opaque-tool-signature",
+        },
+      ],
+    };
+    expect(
+      convertMessage(
+        restored,
+        [restored],
+        "root_agent",
+        new Set(["root_agent", "specialist"]),
+      )?.content.parts,
+    ).toEqual([
+      {
+        functionCall: {
+          id: "lookup-1",
+          name: "lookup",
+          args: { query: "Vienna" },
+        },
+        thoughtSignature: "opaque-tool-signature",
+      },
     ]);
   });
 
@@ -255,7 +211,7 @@ describe("ADK state and identity bridges", () => {
         requestedToolConfirmations: {},
       },
     });
-    const translated = new ADKEventTranslator({}).translate(event);
+    const translated = new ADKEventTranslator({}, true).translate(event);
     const stateEvent = translated.find(
       (candidate) => candidate.type === EventType.STATE_DELTA,
     );
@@ -288,15 +244,27 @@ describe("ADK state and identity bridges", () => {
     expect(JSON.stringify(rawFallback)).not.toContain("RAW_SECRET");
   });
 
-  it("rejects restored history attributed to an unknown ADK agent", () => {
-    const message: Message = {
-      id: "unknown-message",
+  it("restores an assistant's ADK author only when it is in the agent tree", () => {
+    const authors = new Set(["root_agent", "specialist"]);
+    const known: Message = {
+      id: "specialist-message",
       role: "assistant",
+      name: "specialist",
+      content: "Specialist answer",
+    };
+    expect(convertMessage(known, [known], "root_agent", authors)).toMatchObject(
+      {
+        author: "specialist",
+      },
+    );
+
+    const unknown: Message = {
+      ...known,
+      id: "unknown-message",
       name: "not_in_tree",
-      content: "Hello",
     };
     expect(() =>
-      convertMessage(message, [message], "root_agent", new Set(["root_agent"])),
+      convertMessage(unknown, [unknown], "root_agent", authors),
     ).toThrowError(expect.objectContaining({ code: "UNKNOWN_AGENT_AUTHOR" }));
   });
 
@@ -422,5 +390,35 @@ describe("ADK state and identity bridges", () => {
         outputTokens: 3,
       },
     ]);
+  });
+
+  it("rejects client writes to the bridge's reserved state keys", () => {
+    // Writing the ownership manifest directly would let a client null out
+    // arbitrary backend keys on the next snapshot.
+    expect(() =>
+      stateDeltaFromInput(input({ [AG_UI_STATE_KEYS_KEY]: ["backend"] })),
+    ).toThrowError(expect.objectContaining({ code: "RESERVED_STATE_KEY" }));
+    expect(() =>
+      stateDeltaFromInput(input({ [AG_UI_STATE_KEY]: "x" })),
+    ).toThrowError(expect.objectContaining({ code: "RESERVED_STATE_KEY" }));
+  });
+
+  it("tombstones a stored scalar state when the client switches to object state", async () => {
+    const service = new InMemorySessionService();
+    const session = await service.createSession({
+      appName: "test-app",
+      userId: "user-1",
+      sessionId: "thread-1",
+      state: { [AG_UI_STATE_KEY]: "old scalar" },
+    });
+    expect(stateDeltaFromInput(input({ counter: 1 }), session)).toMatchObject({
+      counter: 1,
+      [AG_UI_STATE_KEY]: null,
+    });
+    // and a scalar snapshot is stored under the private key, not spread
+    expect(stateDeltaFromInput(input("new scalar"), session)).toMatchObject({
+      [AG_UI_STATE_KEY]: "new scalar",
+      [AG_UI_STATE_KEYS_KEY]: [],
+    });
   });
 });

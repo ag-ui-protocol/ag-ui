@@ -205,6 +205,7 @@ export const menuIntegrations = [
       "tool_based_generative_ui",
       "shared_state",
       "interrupt",
+      "multi_agent",
     ],
   },
   {
