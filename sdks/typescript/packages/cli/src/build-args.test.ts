@@ -41,3 +41,7 @@ test("maps each framework flag to its canonical -f value", () => {
     expect(args.slice(-2)).toEqual(["-f", expected]);
   }
 });
+
+test("maps the Python ADK flag to the CopilotKit scaffold", () => {
+  expect(buildCopilotKitCreateArgs({ adk: true }, "demo").slice(-2)).toEqual(["-f", "adk"]);
+});

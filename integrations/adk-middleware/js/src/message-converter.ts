@@ -1,25 +1,23 @@
-import type { Message, ToolMessage, UserMessage } from "@ag-ui/core";
+import type {
+  ContentPart,
+  Message,
+  PartSource,
+  ToolMessage,
+  UserMessage,
+} from "@ag-ui/core";
 import type { Runner } from "@google/adk";
 
-import { isRecord } from "./value-utils";
+import type { ADKJSLogger } from "./config";
+import { ADKJSProtocolError } from "./errors";
+import { errorMessage, isRecord } from "./value-utils";
 
 type RunnerRunParams = Parameters<Runner["runAsync"]>[0];
 export type AdkContent = RunnerRunParams["newMessage"];
 type AdkPart = NonNullable<AdkContent["parts"]>[number];
 
-export interface ConvertedMessage {
+interface ConvertedMessage {
   author: string;
   content: AdkContent;
-}
-
-export class ADKMessageConversionError extends Error {
-  constructor(
-    message: string,
-    readonly code: string,
-  ) {
-    super(message);
-    this.name = "ADKMessageConversionError";
-  }
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -42,13 +40,13 @@ function parseToolArguments(
   try {
     parsed = JSON.parse(value);
   } catch (error) {
-    throw new ADKMessageConversionError(
-      `Tool call ${toolCallId} has invalid JSON arguments: ${error instanceof Error ? error.message : String(error)}`,
+    throw new ADKJSProtocolError(
+      `Tool call ${toolCallId} has invalid JSON arguments: ${errorMessage(error)}`,
       "INVALID_TOOL_ARGUMENTS",
     );
   }
   if (!isRecord(parsed)) {
-    throw new ADKMessageConversionError(
+    throw new ADKJSProtocolError(
       `Tool call ${toolCallId} arguments must decode to a JSON object.`,
       "INVALID_TOOL_ARGUMENTS",
     );
@@ -75,50 +73,93 @@ function findToolName(
   return undefined;
 }
 
-function userParts(message: UserMessage): AdkPart[] {
-  if (typeof message.content === "string") {
-    return [{ text: message.content }];
+/**
+ * `PartSource` -> ADK part: `data` becomes `inlineData`, `url` and `file`
+ * become `fileData`. Returns `undefined` for a `file` handle whose `provider`
+ * is set to anything but `google` — ADK cannot resolve another provider's
+ * handle, and an unresolvable one is skipped rather than failing the run.
+ */
+function mediaSource(
+  source: PartSource,
+  context: string,
+  logger?: ADKJSLogger,
+): AdkPart | undefined {
+  if (source.type === "data") {
+    return { inlineData: { data: source.value, mimeType: source.mimeType } };
   }
 
-  return message.content.map((part): AdkPart => {
+  if (
+    source.type === "file" &&
+    source.provider &&
+    source.provider !== "google"
+  ) {
+    logger?.warn(
+      `Skipping a ${source.provider} file handle on ${context}: Google ADK cannot resolve another provider's handle.`,
+    );
+    return undefined;
+  }
+
+  return {
+    fileData: {
+      fileUri: source.value,
+      ...(source.mimeType ? { mimeType: source.mimeType } : {}),
+    },
+  };
+}
+
+/** `ContentPart[]` -> `AdkPart[]`; unusable media parts are dropped. */
+function contentParts(
+  parts: readonly ContentPart[],
+  context: string,
+  logger?: ADKJSLogger,
+): AdkPart[] {
+  return parts.flatMap((part): AdkPart[] => {
     if (part.type === "text") {
-      return { text: part.text };
+      return [{ text: part.text }];
     }
-
-    if (part.type === "binary") {
-      if (part.data) {
-        return { inlineData: { data: part.data, mimeType: part.mimeType } };
-      }
-      if (part.url) {
-        return { fileData: { fileUri: part.url, mimeType: part.mimeType } };
-      }
-      throw new ADKMessageConversionError(
-        `Binary attachment ${part.id ?? "unknown"} has no inline data or URL that Google ADK can consume.`,
-        "UNSUPPORTED_BINARY_REFERENCE",
-      );
-    }
-
-    if (part.source.type === "data") {
-      return {
-        inlineData: {
-          data: part.source.value,
-          mimeType: part.source.mimeType,
-        },
-      };
-    }
-
-    return {
-      fileData: {
-        fileUri: part.source.value,
-        ...(part.source.mimeType ? { mimeType: part.source.mimeType } : {}),
-      },
-    };
+    const converted = mediaSource(part.source, context, logger);
+    return converted ? [converted] : [];
   });
 }
 
-function toolResponse(message: ToolMessage): Record<string, unknown> {
-  const parsed = asRecord(parseJson(message.content));
-  return message.error ? { ...parsed, error: message.error } : parsed;
+function userParts(message: UserMessage, logger?: ADKJSLogger): AdkPart[] {
+  if (typeof message.content === "string") {
+    return [{ text: message.content }];
+  }
+  return contentParts(message.content, `message ${message.id}`, logger);
+}
+
+/**
+ * `ToolMessage` -> `FunctionResponse` fields. 1.0 widened `content` to
+ * `string | ContentPart[]`: text parts are joined and JSON-parsed into
+ * `response`, media parts go to `parts`. `message.error` is merged into
+ * `response` — `TOOL_CALL_RESULT` has no `error` field, `ToolMessage` does.
+ */
+function toolResponse(
+  message: ToolMessage,
+  logger?: ADKJSLogger,
+): { response: Record<string, unknown>; parts?: AdkPart[] } {
+  const context = `tool result ${message.toolCallId}`;
+  let parsed: unknown;
+  let media: AdkPart[] = [];
+
+  if (typeof message.content === "string") {
+    parsed = parseJson(message.content);
+  } else {
+    const converted = contentParts(message.content, context, logger);
+    const text = converted
+      .filter((part) => typeof part.text === "string")
+      .map((part) => part.text)
+      .join("");
+    media = converted.filter((part) => typeof part.text !== "string");
+    parsed = text ? parseJson(text) : {};
+  }
+
+  const record = asRecord(parsed);
+  return {
+    response: message.error ? { ...record, error: message.error } : record,
+    ...(media.length > 0 ? { parts: media } : {}),
+  };
 }
 
 function modelMessageAuthor(
@@ -129,7 +170,7 @@ function modelMessageAuthor(
   const name = "name" in message ? message.name : undefined;
   const author = name || fallback;
   if (name && allowedAuthors && !allowedAuthors.has(name)) {
-    throw new ADKMessageConversionError(
+    throw new ADKJSProtocolError(
       `AG-UI message ${message.id} names unknown Google ADK agent ${name}.`,
       "UNKNOWN_AGENT_AUTHOR",
     );
@@ -143,12 +184,13 @@ export function convertMessage(
   messages: readonly Message[],
   modelAuthor: string,
   allowedModelAuthors?: ReadonlySet<string>,
+  logger?: ADKJSLogger,
 ): ConvertedMessage | undefined {
   switch (message.role) {
     case "user":
       return {
         author: "user",
-        content: { role: "user", parts: userParts(message) },
+        content: { role: "user", parts: userParts(message, logger) },
       };
 
     case "assistant": {
@@ -177,8 +219,9 @@ export function convertMessage(
     case "tool": {
       const name = findToolName(messages, message.toolCallId);
       if (!name) {
-        throw new Error(
+        throw new ADKJSProtocolError(
           `Cannot resolve ADK tool name for tool call ${message.toolCallId}.`,
+          "UNKNOWN_TOOL_CALL",
         );
       }
       return {
@@ -190,7 +233,7 @@ export function convertMessage(
               functionResponse: {
                 id: message.toolCallId,
                 name,
-                response: toolResponse(message),
+                ...toolResponse(message, logger),
               },
             },
           ],
@@ -200,7 +243,7 @@ export function convertMessage(
 
     case "system":
     case "developer":
-      throw new ADKMessageConversionError(
+      throw new ADKJSProtocolError(
         `Dynamic ${message.role} messages cannot be represented faithfully by Google ADK. Configure instructions on the ADK Agent instead.`,
         "UNSUPPORTED_MESSAGE_ROLE",
       );
