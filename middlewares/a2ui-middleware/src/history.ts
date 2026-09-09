@@ -5,7 +5,6 @@ import type {
   ToolCall,
   ToolMessage,
 } from "@ag-ui/client";
-import { withAuthoritativeActivityTypes } from "@ag-ui/client";
 import {
   assembleOps,
   BASIC_CATALOG_ID,
@@ -17,6 +16,7 @@ import {
   A2UI_OPERATIONS_KEY,
 } from "./schema";
 import type { A2UIMiddlewareConfig } from "./types";
+import { resolveA2UIToolNames } from "./tools";
 
 import { A2UIActivityType, A2UI_HISTORY_METADATA } from "./activity";
 export { A2UI_HISTORY_METADATA } from "./activity";
@@ -66,7 +66,12 @@ function activity(
   };
 }
 
-/** Derive final presentation only from durable calls/results. Never settle or execute tools. */
+/**
+ * Derive presentation from durable direct calls and independent result envelopes.
+ * Never settle or execute tools. Legacy nested calls have no durable parent link.
+ * Clients supporting @ag-ui/client.authoritativeActivityTypes reconcile only this
+ * projector's activity type; older clients retain their all-or-nothing behavior.
+ */
 export function projectA2UIHistory(
   event: MessagesSnapshotEvent,
   config: A2UIMiddlewareConfig = {},
@@ -78,9 +83,7 @@ export function projectA2UIHistory(
       for (const call of message.toolCalls ?? []) calls.set(call.id, call);
     if (message.role === "tool") results.set(message.toolCallId, message);
   }
-  const names = new Set(config.a2uiToolNames ?? ["render_a2ui"]);
-  if (typeof config.injectA2UITool === "string")
-    names.add(config.injectA2UITool);
+  const names = resolveA2UIToolNames(config);
   const projected = new Map<string, ActivityMessage[]>();
   for (const [callId, call] of calls) {
     const result = results.get(callId);
@@ -188,7 +191,26 @@ export function projectA2UIHistory(
       for (const call of message.toolCalls ?? [])
         messages.push(...(projected.get(call.id) ?? []));
   }
-  return withAuthoritativeActivityTypes({ ...event, messages }, [
-    A2UIActivityType,
-  ]);
+  // Keep older client peers importable. Scoped reconciliation is supported by
+  // clients that understand this package-owned metadata convention.
+  const prior = event.metadata?.["@ag-ui/client"];
+  const priorRecord = record(prior) ? prior : {};
+  const priorTypes = Array.isArray(priorRecord.authoritativeActivityTypes)
+    ? priorRecord.authoritativeActivityTypes.filter(
+        (type): type is string => typeof type === "string",
+      )
+    : [];
+  return {
+    ...event,
+    messages,
+    metadata: {
+      ...event.metadata,
+      "@ag-ui/client": {
+        ...priorRecord,
+        authoritativeActivityTypes: [
+          ...new Set([...priorTypes, A2UIActivityType]),
+        ],
+      },
+    },
+  };
 }

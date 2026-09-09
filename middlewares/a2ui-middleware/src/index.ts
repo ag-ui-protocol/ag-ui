@@ -10,6 +10,7 @@ import {
   ToolMessage,
   ToolCall,
   ActivitySnapshotEvent,
+  ActivityMessage,
   ToolCallResultEvent,
   ToolCallStartEvent,
   ToolCallArgsEvent,
@@ -29,6 +30,7 @@ import {
   RENDER_A2UI_TOOL_NAME,
   RENDER_A2UI_TOOL_GUIDELINES,
   LOG_A2UI_EVENT_TOOL_NAME,
+  resolveA2UIToolNames,
 } from "./tools";
 import {
   getOperationSurfaceId,
@@ -232,7 +234,8 @@ export class A2UIMiddleware extends Middleware {
     if (this.config.readOnly) {
       return this.runNext(
         {
-          ...input,
+          threadId: input.threadId,
+          runId: input.runId,
           messages: [],
           tools: [],
           context: [],
@@ -478,29 +481,7 @@ export class A2UIMiddleware extends Middleware {
     source: Observable<EventWithState>,
     frontendCatalogId?: string,
   ): Observable<BaseEvent> {
-    // Tool names recognized as A2UI rendering tools. When the middleware also
-    // INJECTS the rendering tool (config.injectA2UITool truthy), the injected
-    // name MUST be part of the intercept set — otherwise TOOL_CALL_START for
-    // it wouldn't open a streaming entry and the progressive-render path
-    // would silently degrade to result-only.
-    //
-    // Two cases to cover:
-    //   - `injectA2UITool: true`       → injected under the default
-    //     RENDER_A2UI_TOOL_NAME (matches the default `a2uiToolNames`, but a
-    //     host that ALSO overrides `a2uiToolNames` to something like
-    //     `["foo"]` would lose the default — explicitly re-add).
-    //   - `injectA2UITool: "myName"`   → injected under that custom name.
-    const a2uiToolNames = new Set(
-      this.config.a2uiToolNames ?? [RENDER_A2UI_TOOL_NAME],
-    );
-    if (this.config.injectA2UITool) {
-      const injectedName =
-        typeof this.config.injectA2UITool === "string" &&
-        this.config.injectA2UITool.length > 0
-          ? this.config.injectA2UITool
-          : RENDER_A2UI_TOOL_NAME;
-      a2uiToolNames.add(injectedName);
-    }
+    const a2uiToolNames = resolveA2UIToolNames(this.config);
 
     return new Observable<BaseEvent>((subscriber) => {
       let heldRunFinished: EventWithState | null = null;
@@ -534,6 +515,11 @@ export class A2UIMiddleware extends Middleware {
             components: Array<Record<string, unknown>>;
           } | null;
           args: string;
+          owner: AssistantMessage;
+          call: ToolCall;
+          result?: ToolMessage;
+          acknowledged: boolean;
+          lastActivity?: ActivityMessage;
           outerCallId: string | null; // the outer tool call this streaming inner was started inside (null if direct)
           componentsEmitted: boolean; // updateComponents sent (atomic)
           componentsRejected: boolean; // components closed but failed semantic validation (OSS-162) — never paint
@@ -591,14 +577,97 @@ export class A2UIMiddleware extends Middleware {
       ]);
       let currentOuterCallId: string | null = null;
 
+      // Each streaming snapshot is cumulative. Keep its existing payload until
+      // a snapshot acknowledges the durable result, including snapshots that
+      // have not yet included the live call itself.
+      const pendingResultActivities = new Map<string, ActivityMessage[]>();
+      const toMessage = (event: ActivitySnapshotEvent): ActivityMessage => ({
+        id: event.messageId,
+        role: "activity",
+        activityType: event.activityType,
+        content: event.content,
+        metadata: event.metadata,
+      });
+      const emitActivity = (event: ActivitySnapshotEvent) => {
+        for (const [id, entry] of streamingToolCalls) {
+          if (`a2ui-surface-${entry.outerCallId ?? id}` === event.messageId) {
+            entry.lastActivity = toMessage(event);
+          }
+        }
+        subscriber.next(event);
+      };
+
+      const projectSnapshot = (snapshot: MessagesSnapshotEvent) => {
+        const results = new Set(
+          snapshot.messages
+            .filter((message) => message.role === "tool")
+            .map((message) => message.toolCallId),
+        );
+        const live = new Map<string, ActivityMessage>();
+        const sourceMessages = [...snapshot.messages];
+        for (const [id, entry] of streamingToolCalls) {
+          if (results.has(entry.outerCallId ?? id)) {
+            entry.lastActivity = undefined;
+            entry.acknowledged = true;
+          } else if (!entry.acknowledged) {
+            if (entry.lastActivity)
+              live.set(entry.lastActivity.id, entry.lastActivity);
+            const call = {
+              ...entry.call,
+              function: { ...entry.call.function, arguments: entry.args },
+            };
+            const index = sourceMessages.findIndex(
+              (message) =>
+                message.role === "assistant" &&
+                (message.id === entry.owner.id ||
+                  message.toolCalls?.some((call) => call.id === id)),
+            );
+            const owner = sourceMessages[index];
+            if (owner?.role === "assistant") {
+              const calls = owner.toolCalls ?? [];
+              sourceMessages[index] = {
+                ...owner,
+                toolCalls: calls.some((existing) => existing.id === id)
+                  ? calls.map((existing) =>
+                      existing.id === id ? call : existing,
+                    )
+                  : [...calls, call],
+              };
+            } else {
+              sourceMessages.push({ ...entry.owner, toolCalls: [call] });
+            }
+            if (entry.result && !results.has(id)) {
+              let resultIndex =
+                (index >= 0 ? index : sourceMessages.length - 1) + 1;
+              while (sourceMessages[resultIndex]?.role === "tool")
+                resultIndex++;
+              sourceMessages.splice(resultIndex, 0, entry.result);
+            }
+          }
+        }
+        for (const [id, activities] of pendingResultActivities) {
+          if (results.has(id)) pendingResultActivities.delete(id);
+          else
+            for (const activity of activities) live.set(activity.id, activity);
+        }
+        const projected = projectA2UIHistory(
+          { ...snapshot, messages: sourceMessages },
+          this.config,
+        );
+        const messages = projected.messages.map((message) => {
+          const current = live.get(message.id);
+          live.delete(message.id);
+          return current ?? message;
+        });
+        messages.push(...live.values());
+        return { ...projected, messages };
+      };
+
       const subscription = source.subscribe({
         next: (eventWithState) => {
           const event =
             eventWithState.event.type === EventType.MESSAGES_SNAPSHOT
-              ? projectA2UIHistory(
-                  eventWithState.event as MessagesSnapshotEvent,
-                  this.config,
-                )
+              ? projectSnapshot(eventWithState.event as MessagesSnapshotEvent)
               : eventWithState.event;
 
           if (event.type === EventType.TOOL_CALL_START) {
@@ -609,9 +678,34 @@ export class A2UIMiddleware extends Middleware {
             // If streaming extraction fails, auto-detect on the outer
             // tool's TOOL_CALL_RESULT still works as a fallback.
             if (a2uiToolNames.has(startEvent.toolCallName)) {
+              const owner = eventWithState.messages.find(
+                (message): message is AssistantMessage =>
+                  message.role === "assistant" &&
+                  !!message.toolCalls?.some(
+                    (call) => call.id === startEvent.toolCallId,
+                  ),
+              );
+              const call = owner?.toolCalls?.find(
+                (call) => call.id === startEvent.toolCallId,
+              ) ?? {
+                id: startEvent.toolCallId,
+                type: "function" as const,
+                function: { name: startEvent.toolCallName, arguments: "" },
+              };
               streamingToolCalls.set(startEvent.toolCallId, {
                 schema: null,
-                args: "",
+                args: call.function.arguments,
+                owner: {
+                  ...owner,
+                  id:
+                    owner?.id ??
+                    startEvent.parentMessageId ??
+                    startEvent.toolCallId,
+                  role: "assistant",
+                  toolCalls: [],
+                },
+                call: { ...call, function: { ...call.function } },
+                acknowledged: false,
                 outerCallId: currentOuterCallId,
                 componentsEmitted: false,
                 componentsRejected: false,
@@ -630,7 +724,7 @@ export class A2UIMiddleware extends Middleware {
               attemptCountByKey.set(key, attempt);
               lastTokenEmitByKey.set(key, 0);
               if (!retriedOuterKeys.has(key)) {
-                subscriber.next(
+                emitActivity(
                   this.buildLifecycleActivity(key, { status: "building" }),
                 );
               }
@@ -672,7 +766,7 @@ export class A2UIMiddleware extends Middleware {
                   TOKEN_EMIT_STEP
                 ) {
                   lastTokenEmitByKey.set(tokenKey, tokens);
-                  subscriber.next(
+                  emitActivity(
                     this.buildLifecycleActivity(tokenKey, {
                       status: "building",
                       progressTokens: tokens,
@@ -793,7 +887,7 @@ export class A2UIMiddleware extends Middleware {
                           maxAttempts,
                         );
                         lastTokenEmitByKey.set(recoveryKey, 0);
-                        subscriber.next(
+                        emitActivity(
                           this.buildLifecycleActivity(recoveryKey, {
                             status: "retrying",
                             attempt: nextAttempt,
@@ -889,7 +983,7 @@ export class A2UIMiddleware extends Middleware {
                       content,
                       replace: true,
                     };
-                    subscriber.next(snapshotEvent);
+                    emitActivity(snapshotEvent);
                     // A valid surface painted → it supersedes any building/retrying
                     // skeleton on this same messageId. No separate "resolved" needed.
                     retriedOuterKeys.delete(
@@ -945,7 +1039,7 @@ export class A2UIMiddleware extends Middleware {
                         content,
                         replace: true,
                       };
-                      subscriber.next(snapshotEvent);
+                      emitActivity(snapshotEvent);
                     }
                   }
                 }
@@ -968,6 +1062,15 @@ export class A2UIMiddleware extends Middleware {
             // Auto-detect A2UI JSON in tool call results from other tools
             if (event.type === EventType.TOOL_CALL_RESULT) {
               const resultEvent = event as ToolCallResultEvent;
+              const entry = streamingToolCalls.get(resultEvent.toolCallId);
+              if (entry)
+                entry.result = {
+                  id: resultEvent.messageId,
+                  role: "tool",
+                  toolCallId: resultEvent.toolCallId,
+                  content: resultEvent.content,
+                  metadata: resultEvent.metadata,
+                };
               const isStreaming = streamingToolCalls.has(
                 resultEvent.toolCallId,
               );
@@ -1034,12 +1137,16 @@ export class A2UIMiddleware extends Middleware {
                     // (render_a2ui), explicit a2ui_operations arrive complete —
                     // splitting schema and data would cause the renderer to
                     // crash on unresolved path bindings before data exists.
-                    for (const activityEvent of this.createA2UIActivityEvents(
+                    const activities = this.createA2UIActivityEvents(
                       operationsToEmit,
                       currentOuterCallId ?? resultEvent.toolCallId,
-                    )) {
-                      subscriber.next(activityEvent);
-                    }
+                    );
+                    pendingResultActivities.set(
+                      resultEvent.toolCallId,
+                      activities.map(toMessage),
+                    );
+                    for (const activityEvent of activities)
+                      emitActivity(activityEvent);
                   }
                 } else {
                   // Hard-failure path (OSS-162): an exhausted recovery loop
@@ -1053,16 +1160,18 @@ export class A2UIMiddleware extends Middleware {
                     // true cap reached; fall back to the configured cap.
                     const failKey =
                       currentOuterCallId ?? resultEvent.toolCallId;
-                    subscriber.next(
-                      this.buildLifecycleActivity(failKey, {
-                        status: "failed",
-                        error: failure.error,
-                        attempts: failure.attempts,
-                        maxAttempts: Array.isArray(failure.attempts)
-                          ? failure.attempts.length || maxAttempts
-                          : maxAttempts,
-                      }),
-                    );
+                    const activity = this.buildLifecycleActivity(failKey, {
+                      status: "failed",
+                      error: failure.error,
+                      attempts: failure.attempts,
+                      maxAttempts: Array.isArray(failure.attempts)
+                        ? failure.attempts.length || maxAttempts
+                        : maxAttempts,
+                    });
+                    pendingResultActivities.set(resultEvent.toolCallId, [
+                      toMessage(activity),
+                    ]);
+                    emitActivity(activity);
                     retriedOuterKeys.delete(failKey);
                   }
                 }
@@ -1089,7 +1198,10 @@ export class A2UIMiddleware extends Middleware {
             // The streaming handler already emitted activity events during
             // TOOL_CALL_ARGS, so we just need to close the tool call.
             const pendingToolCalls = this.findPendingToolCalls(
-              heldRunFinished.messages,
+              projectSnapshot({
+                type: EventType.MESSAGES_SNAPSHOT,
+                messages: heldRunFinished.messages,
+              }).messages,
             );
             const pendingRenderCalls = pendingToolCalls.filter((tc) =>
               a2uiToolNames.has(tc.function.name),
@@ -1110,7 +1222,11 @@ export class A2UIMiddleware extends Middleware {
         },
       });
 
-      return () => subscription.unsubscribe();
+      return () => {
+        subscription.unsubscribe();
+        streamingToolCalls.clear();
+        pendingResultActivities.clear();
+      };
     });
   }
 
@@ -1151,8 +1267,8 @@ export class A2UIMiddleware extends Middleware {
   private createA2UIActivityEvents(
     operations: Array<Record<string, unknown>>,
     toolCallId?: string,
-  ): BaseEvent[] {
-    const events: BaseEvent[] = [];
+  ): ActivitySnapshotEvent[] {
+    const events: ActivitySnapshotEvent[] = [];
 
     // Group operations by surfaceId
     const operationsBySurface = new Map<

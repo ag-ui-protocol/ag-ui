@@ -30,7 +30,13 @@ export interface A2UIComponentSchema {
  * Configuration for the A2UI Middleware
  */
 export interface A2UIMiddlewareConfig {
-  /** Project history without tool injection, user actions, recovery, or settlement. */
+  /**
+   * Project history without tool injection, user actions, recovery, or settlement.
+   * Only threadId/runId are forwarded with empty execution inputs. The backend
+   * must support history reads; this option cannot make an executing backend read-only.
+   * Cold history supports direct render calls and independent result envelopes.
+   * Legacy nested calls without durable ownership metadata cannot be deduplicated.
+   */
   readOnly?: boolean;
   /**
    * Component schema — declares which components are available to agents.
