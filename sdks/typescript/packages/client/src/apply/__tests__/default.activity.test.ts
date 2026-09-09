@@ -858,3 +858,39 @@ it("takes canonical tool-result order from an unmarked snapshot", async () => {
   expect(messages).toEqual(snapshot);
   expect(await applySnapshot(messages, snapshot)).toEqual(snapshot);
 });
+
+it.each([
+  { scope: null, expected: [] },
+  { scope: [], expected: ["file", "surface"] },
+  { scope: ["a2ui-surface"], expected: ["file"] },
+])(
+  "reconciles empty snapshots with explicit authority $scope",
+  async ({ scope, expected }) => {
+    const previous: Message[] = [
+      {
+        id: "file",
+        role: "activity",
+        activityType: "dsh-deliverables",
+        content: {},
+      },
+      {
+        id: "surface",
+        role: "activity",
+        activityType: "a2ui-surface",
+        content: {},
+      },
+    ];
+    const updates = await emitAndCollect(previous, (events) => {
+      events.next({
+        type: EventType.MESSAGES_SNAPSHOT,
+        messages: [],
+        metadata: {
+          "@ag-ui/client": { authoritativeActivityTypes: scope },
+        },
+      });
+    });
+    expect(updates.at(-1)?.messages?.map((message) => message.id)).toEqual(
+      expected,
+    );
+  },
+);

@@ -76,3 +76,14 @@ Bug reports and pull requests are welcome! Please read our [contributing guide](
 ## License
 
 MIT © 2025 AG-UI Protocol Contributors
+
+## Activity snapshots
+
+`MESSAGES_SNAPSHOT.metadata["@ag-ui/client"].authoritativeActivityTypes`
+controls which activity types the snapshot replaces. An array owns those types;
+`[]` owns none, and `null` owns all types, even for an empty snapshot. Without
+valid metadata, the existing rule applies: a snapshot containing any activity
+replaces all activities, while a transcript-only snapshot preserves them.
+History projectors must preserve full authority and extend explicit scopes with
+the types they reconstruct. `withAuthoritativeActivityTypes` implements this
+rule; call it on the incoming snapshot before replacing its messages.

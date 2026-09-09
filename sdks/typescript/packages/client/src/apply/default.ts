@@ -785,6 +785,8 @@ export const defaultApplyEvents = (
             // copy would render the same reasoning twice. So when the snapshot
             // itself carries reasoning, treat it as the source of truth for
             // reasoning messages too and apply the normal replace semantics.
+            // Explicit null replaces all types, including an empty activity set.
+            // Arrays replace only their types; absent metadata uses the rule above.
             const ownedActivityTypes = authoritativeActivityTypes(event as MessagesSnapshotEvent);
             const snapshotHasActivity = newMessages.some((m) => m.role === "activity");
             const snapshotHasReasoning = newMessages.some((m) => m.role === "reasoning");
@@ -792,7 +794,7 @@ export const defaultApplyEvents = (
               (m.role === "activity" &&
                 (ownedActivityTypes
                   ? !ownedActivityTypes.includes(m.activityType) && !snapshotMap.has(m.id)
-                  : !snapshotHasActivity)) ||
+                  : ownedActivityTypes !== null && !snapshotHasActivity)) ||
               (m.role === "reasoning" && !snapshotHasReasoning);
 
             // Every snapshot owns transcript order. Preserve client-only messages
