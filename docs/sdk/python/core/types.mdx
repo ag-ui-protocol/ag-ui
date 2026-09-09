@@ -56,10 +56,11 @@ interrupt from the previous run. See
 [Interrupts](/concepts/interrupts#resuming-a-run) for the full resume contract.
 
 ```python
-class ResumeEntry(MetadataMixin):
+class ResumeEntry(GeneratedBaseModel):
     interrupt_id: str
     status: ResumeStatus  # "resolved" | "cancelled"
     payload: Optional[Any] = None
+    metadata: Optional[Metadata] = None
 ```
 
 | Property       | Type                       | Description                                                                           |

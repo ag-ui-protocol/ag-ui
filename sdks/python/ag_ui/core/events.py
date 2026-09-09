@@ -65,10 +65,9 @@ ReasoningMessageRole = Literal["reasoning"]
 """Historic alias: the one role a reasoning message start may carry."""
 
 # The hand-written module had no __all__, so names it merely imported were
-# importable from it too; that accidental-but-public surface is kept.
+# importable from it too; these remaining compatibility exports are kept.
 from ag_ui._generated.models import (
     GeneratedBaseModel as ConfiguredBaseModel,
-    GeneratedBaseModel as MetadataMixin,
     Interrupt,
     Message,
     Role,
@@ -122,7 +121,6 @@ __all__ = [
     "TextMessageRole",
     "Event",
     "ConfiguredBaseModel",
-    "MetadataMixin",
     "Interrupt",
     "Message",
     "Role",

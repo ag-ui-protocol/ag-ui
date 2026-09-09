@@ -73,14 +73,6 @@ configuration itself now lives on the generated base (camelCase aliases,
 populate by name, unknown fields kept).
 """
 
-MetadataMixin = GeneratedBaseModel
-"""
-Historic name for the base that carried the ``metadata`` field. The generated
-hierarchy declares ``metadata`` on ``BaseEvent`` and ``BaseMessage`` (and each
-standalone message) directly; every model still passes an
-``isinstance(x, MetadataMixin)`` check through this alias.
-"""
-
 ResumeStatus = Literal["resolved", "cancelled"]
 """Whether the interrupt was answered or abandoned (ResumeEntry.status)."""
 
@@ -101,7 +93,6 @@ __all__ = [
     "SubagentRunId",
     "ConfiguredBaseModel",
     "GeneratedBaseModel",
-    "MetadataMixin",
     "Attributable",
     "FunctionCall",
     "ToolCall",
