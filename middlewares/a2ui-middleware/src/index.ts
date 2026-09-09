@@ -82,7 +82,12 @@ function tryParseRecoveryFailure(
 
 // Re-exports
 export * from "./types";
-export * from "./tools";
+export {
+  RENDER_A2UI_TOOL,
+  RENDER_A2UI_TOOL_NAME,
+  RENDER_A2UI_TOOL_GUIDELINES,
+  LOG_A2UI_EVENT_TOOL_NAME,
+} from "./tools";
 export * from "./schema";
 export * from "./history";
 
