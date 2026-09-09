@@ -5,6 +5,7 @@ import pytest
 import json
 import base64
 from unittest.mock import MagicMock, patch, PropertyMock
+from pydantic import BaseModel, Field
 
 from ag_ui.core import (
     UserMessage,
@@ -36,6 +37,17 @@ from ag_ui_adk.utils.converters import (
     extract_text_from_content,
     create_error_message
 )
+
+
+class LegacyBinaryInputContent(BaseModel):
+    """An older SDK object, distinct from the adapter's local fallback class."""
+
+    type: str = "binary"
+    mime_type: str = Field(alias="mimeType")
+    data: str | None = None
+    url: str | None = None
+    id: str | None = None
+    filename: str | None = None
 
 
 class TestConvertAGUIMessagesToADK:
@@ -83,6 +95,42 @@ class TestConvertAGUIMessagesToADK:
         assert event.content.parts[1].inline_data.mime_type == "image/png"
         assert event.content.parts[1].inline_data.data == raw
     
+    @pytest.mark.parametrize("as_dict", [False, True])
+    def test_convert_legacy_sdk_binary_content(self, as_dict):
+        raw = b"legacy-image-bytes"
+        item = LegacyBinaryInputContent(
+            mimeType="image/png",
+            data=base64.b64encode(raw).decode("ascii"),
+            filename="legacy.png",
+        )
+        message = UserMessage.model_construct(
+            id="legacy-binary",
+            role="user",
+            content=[item.model_dump(by_alias=True) if as_dict else item],
+        )
+
+        events = convert_ag_ui_messages_to_adk([message])
+
+        assert len(events) == 1
+        assert len(events[0].content.parts) == 1
+        blob = events[0].content.parts[0].inline_data
+        assert blob.data == raw
+        assert blob.mime_type == "image/png"
+        assert blob.display_name == "legacy.png"
+
+    @pytest.mark.parametrize("fields", [
+        {"data": "invalid base64"},
+        {"url": "https://example.com/image.png"},
+        {"id": "stored-image"},
+        {"data": "aW1hZ2U=", "url": "https://example.com/image.png"},
+        {"data": "aW1hZ2U=", "id": "stored-image"},
+    ])
+    def test_legacy_sdk_binary_content_preserves_unsupported_inputs(self, fields, caplog):
+        item = LegacyBinaryInputContent(mimeType="image/png", **fields)
+
+        assert convert_message_content_to_parts([item]) == []
+        assert caplog.records  # Existing validation still warns about invalid parts.
+
     def test_convert_user_message_multimodal_id_only_ignored(self):
         """Test that BinaryInputContent with id only is ignored."""
         # The 1.0 content union no longer admits binary parts, so a message

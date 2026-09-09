@@ -199,6 +199,14 @@ def convert_message_content_to_parts(content: Optional[Union[str, List[Any]]]) -
 
     parts: List[types.Part] = []
     for item in content:
+        # Older SDK models are a different class from our local fallback.
+        # Read their existing wire shape through the same legacy dict path.
+        if (
+            isinstance(item, _BaseModel)
+            and not isinstance(item, BinaryInputContent)
+            and getattr(item, "type", None) == "binary"
+        ):
+            item = item.model_dump(by_alias=True)
         if _is_text_content(item):
             text_value = _get_text_value(item)
             part = _to_text_part(text_value)

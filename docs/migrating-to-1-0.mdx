@@ -186,6 +186,11 @@ a newer or uninterpretable version. Pinning `maxProtocolVersion` below this
 client package's own version omits the field, for a peer whose parser would
 reject an unknown member.
 
+Protobuf decoding merges repeated occurrences of a singular message field,
+including nested messages, metadata, and run inputs. Later scalar values win,
+repeated list entries append in order, and an omitted field preserves its
+earlier value. TypeScript and .NET follow the same protobuf merging rules.
+
 ---
 
 ## Python
@@ -251,9 +256,17 @@ is a model.
 
 ### Retired
 
+- `MetadataMixin`, from `ag_ui.core`, `ag_ui.core.types`, and
+  `ag_ui.core.events`. Generated protocol models already carry their metadata
+  fields, so the separate helper is no longer exported. Remove the import;
+  for a custom model that inherited it, inherit `ConfiguredBaseModel` from
+  `ag_ui.core.types` and declare `metadata: Optional[Metadata] = None`, importing
+  `Optional` from `typing` and `Metadata` from `ag_ui.core`.
 - The `THINKING_*` events. Emit `REASONING_*`. There is no producer-side
   shim; the TypeScript client translates old streams on its side.
-- `BinaryInputContent`. Use the media parts.
+- `BinaryInputContent`. Use the media parts. The ADK converter still accepts
+  legacy binary dictionaries and objects from older SDK versions using local
+  compatibility handling. Its existing inline-data-only restrictions remain.
 
 ### Renamed
 
