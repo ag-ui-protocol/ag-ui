@@ -93,6 +93,19 @@ class ScriptedAgent extends AbstractAgent {
 }
 
 describe("projectA2UIHistory", () => {
+  it("recognizes the injected default tool when custom tool names are configured", () => {
+    const projected = projectA2UIHistory(snapshot([assistant]), {
+      a2uiToolNames: ["custom_renderer"],
+      injectA2UITool: true,
+    });
+    expect(activities(projected.messages)).toEqual([
+      expect.objectContaining({
+        id: "a2ui-surface-render",
+        content: { status: "building" },
+      }),
+    ]);
+  });
+
   it("rebuilds a surface from the durable catalog and stays idempotent", () => {
     const foreign: Message = {
       id: "foreign",
@@ -288,6 +301,259 @@ describe("projectA2UIHistory", () => {
   });
 });
 
+describe("A2UIMiddleware live snapshots", () => {
+  it("delivers a live tool callback with complete arguments after a lagging snapshot", async () => {
+    const complete = JSON.stringify(args);
+    const split = complete.indexOf("Saved") + 2;
+    const agent = new ScriptedAgent([
+      {
+        type: EventType.TOOL_CALL_START,
+        toolCallId: "render",
+        toolCallName: "render_a2ui",
+        parentMessageId: "assistant",
+      } as BaseEvent,
+      {
+        type: EventType.TOOL_CALL_ARGS,
+        toolCallId: "render",
+        delta: complete.slice(0, split),
+      } as BaseEvent,
+      snapshot([]),
+      {
+        type: EventType.TOOL_CALL_ARGS,
+        toolCallId: "render",
+        delta: complete.slice(split),
+      } as BaseEvent,
+      { type: EventType.TOOL_CALL_END, toolCallId: "render" } as BaseEvent,
+    ]);
+    agent.use(new A2UIMiddleware());
+    const calls: string[] = [];
+    await agent.runAgent(input, {
+      onNewToolCall: ({ toolCall }) => {
+        calls.push(toolCall.function.arguments);
+      },
+    });
+    expect(calls).toEqual([complete]);
+    expect(
+      agent.messages.filter(
+        (message) => message.role === "tool" && message.toolCallId === "render",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("preserves a standalone failure result across lagging snapshots", async () => {
+    const content = JSON.stringify({
+      code: "a2ui_recovery_exhausted",
+      error: "Invalid components",
+      attempts: [{ error: "Invalid components" }],
+    });
+    const report: Message = {
+      id: "report",
+      role: "assistant",
+      toolCalls: [
+        {
+          id: "report-call",
+          type: "function",
+          function: { name: "report", arguments: "{}" },
+        },
+      ],
+    };
+    const durable: Message = {
+      id: "report-result",
+      role: "tool",
+      toolCallId: "report-call",
+      content,
+    };
+    const stream = await firstValueFrom(
+      new A2UIMiddleware()
+        .run(
+          input,
+          new ScriptedAgent([
+            {
+              type: EventType.TOOL_CALL_START,
+              toolCallId: "report-call",
+              toolCallName: "report",
+              parentMessageId: "report",
+            } as BaseEvent,
+            {
+              type: EventType.TOOL_CALL_END,
+              toolCallId: "report-call",
+            } as BaseEvent,
+            {
+              type: EventType.TOOL_CALL_RESULT,
+              toolCallId: "report-call",
+              messageId: "report-result",
+              content,
+            } as BaseEvent,
+            snapshot([report]),
+            snapshot([report, durable]),
+          ]),
+        )
+        .pipe(toArray()),
+    );
+    for (const event of stream)
+      if (event.type === EventType.MESSAGES_SNAPSHOT) {
+        expect(activities((event as MessagesSnapshotEvent).messages)).toEqual(
+          activities(projectA2UIHistory(snapshot([report, durable])).messages),
+        );
+      }
+  });
+
+  it("preserves standalone result surfaces until their durable result is acknowledged", async () => {
+    const report: Message = {
+      id: "report",
+      role: "assistant",
+      toolCalls: [
+        {
+          id: "report-call",
+          type: "function",
+          function: { name: "report", arguments: "{}" },
+        },
+      ],
+    };
+    const content = JSON.stringify({
+      a2ui_operations: [
+        ...assembleOps({
+          intent: "create",
+          surfaceId: "one",
+          catalogId: "catalog:one",
+          components: args.components,
+        }),
+        ...assembleOps({
+          intent: "create",
+          surfaceId: "two",
+          catalogId: "catalog:two",
+          components: args.components,
+        }),
+      ],
+    });
+    const durable: Message = {
+      id: "report-result",
+      role: "tool",
+      toolCallId: "report-call",
+      content,
+    };
+    const stream = await firstValueFrom(
+      new A2UIMiddleware()
+        .run(
+          input,
+          new ScriptedAgent([
+            {
+              type: EventType.TOOL_CALL_START,
+              toolCallId: "report-call",
+              toolCallName: "report",
+              parentMessageId: "report",
+            } as BaseEvent,
+            {
+              type: EventType.TOOL_CALL_END,
+              toolCallId: "report-call",
+            } as BaseEvent,
+            {
+              type: EventType.TOOL_CALL_RESULT,
+              toolCallId: "report-call",
+              messageId: "report-result",
+              content,
+            } as BaseEvent,
+            snapshot([report]),
+            snapshot([]),
+            snapshot([report, durable]),
+          ]),
+        )
+        .pipe(toArray()),
+    );
+    const snapshots = stream.filter(
+      (event): event is MessagesSnapshotEvent =>
+        event.type === EventType.MESSAGES_SNAPSHOT,
+    );
+    const expected = activities(
+      projectA2UIHistory(snapshot([report, durable])).messages,
+    );
+    for (const current of snapshots)
+      expect(activities(current.messages)).toEqual(expected);
+  });
+
+  it("keeps painted data through lagging snapshots until the durable result arrives", async () => {
+    const foreign: Message = {
+      id: "foreign",
+      role: "activity",
+      activityType: "open-generative-ui",
+      content: { html: ["saved"] },
+    };
+    const later: Message = { id: "later", role: "assistant", content: "Done" };
+    const events: BaseEvent[] = [
+      {
+        type: EventType.TOOL_CALL_START,
+        toolCallId: "render",
+        toolCallName: "render_a2ui",
+        parentMessageId: "assistant",
+      } as BaseEvent,
+      {
+        type: EventType.TOOL_CALL_ARGS,
+        toolCallId: "render",
+        delta: JSON.stringify(args),
+      } as BaseEvent,
+      snapshot([assistant]),
+      snapshot([]),
+      { type: EventType.TOOL_CALL_END, toolCallId: "render" } as BaseEvent,
+      {
+        type: EventType.TOOL_CALL_RESULT,
+        toolCallId: "render",
+        messageId: "result",
+        content: result.content,
+      } as BaseEvent,
+      snapshot([assistant, later]),
+      snapshot([assistant, result]),
+    ];
+    const stream = await firstValueFrom(
+      new A2UIMiddleware({ defaultCatalogId: "catalog:live" })
+        .run(input, new ScriptedAgent(events))
+        .pipe(toArray()),
+    );
+    const snapshots = stream.filter(
+      (event): event is MessagesSnapshotEvent =>
+        event.type === EventType.MESSAGES_SNAPSHOT,
+    );
+    for (const current of snapshots.slice(0, 3)) {
+      expect(activities(current.messages)[0]).toMatchObject({
+        id: "a2ui-surface-render",
+        content: {
+          a2ui_operations: [
+            expect.objectContaining({
+              createSurface: { surfaceId: "custom", catalogId: "catalog:live" },
+            }),
+            expect.anything(),
+            expect.objectContaining({
+              updateDataModel: expect.objectContaining({ value: args.data }),
+            }),
+          ],
+        },
+      });
+    }
+    expect(
+      snapshots[2].messages
+        .filter((message) => message.role !== "activity")
+        .map((message) => message.id),
+    ).toEqual(["assistant", "result", "later"]);
+    expect(snapshots[3]).toEqual(
+      projectA2UIHistory(snapshot([assistant, result])),
+    );
+    const client = new ScriptedAgent(
+      stream.filter(
+        (event) =>
+          event.type !== EventType.RUN_STARTED &&
+          event.type !== EventType.RUN_FINISHED,
+      ),
+      [foreign],
+    );
+    await client.runAgent(input);
+    expect(client.messages).toContainEqual(foreign);
+    expect(
+      activities(client.messages).filter(
+        (message) => message.activityType === "a2ui-surface",
+      ),
+    ).toEqual(activities(snapshots[3].messages));
+  });
+});
+
 describe("A2UIMiddleware readOnly", () => {
   it("projects the snapshot and admits nothing from the caller", async () => {
     const original = snapshot([assistant, result]);
@@ -297,6 +563,10 @@ describe("A2UIMiddleware readOnly", () => {
         .run(
           {
             ...input,
+            resume: [
+              { interruptId: "unsafe", status: "resolved", payload: "execute" },
+            ],
+            parentRunId: "unsafe-parent",
             messages: [{ id: "unsafe", role: "user", content: "never admit" }],
             state: { unsafe: true },
             context: [{ description: "unsafe", value: "unsafe" }],
