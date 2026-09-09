@@ -757,9 +757,8 @@ export const defaultApplyEvents = (
               return copy as typeof m;
             });
 
-            // Edit-based merge: update existing messages with snapshot data while
-            // preserving client-only messages the backend leaves out of the
-            // snapshot.
+            // Replace transcript messages with the canonical snapshot while
+            // preserving client-only messages the backend leaves out.
             const snapshotMap = new Map(newMessages.map((m) => [m.id, m]));
 
             // `activity` messages are only sometimes client-only. They never
@@ -791,20 +790,35 @@ export const defaultApplyEvents = (
               (m.role === "activity" && !snapshotHasActivity) ||
               (m.role === "reasoning" && !snapshotHasReasoning);
 
-            // Step 1 + 2: Keep preserved client-only messages as-is, keep
-            // messages present in the snapshot (replaced with snapshot version),
-            // drop everything else.
-            messages = messages
-              .filter((m) => isPreservedClientOnly(m) || snapshotMap.has(m.id))
-              .map((m) => (isPreservedClientOnly(m) ? m : snapshotMap.get(m.id)!));
-
-            // Step 3: Append messages from the snapshot that we don't have yet.
-            const existingIds = new Set(messages.map((m) => m.id));
-            for (const snapshotMsg of newMessages) {
-              if (!existingIds.has(snapshotMsg.id)) {
-                messages.push(snapshotMsg);
+            // Every snapshot owns transcript order. Preserve client-only messages
+            // before their next surviving message; if none survives after them,
+            // keep them after the preceding survivor, before newly added messages.
+            const before = new Map<string, Message[]>();
+            const trailing: Message[] = [];
+            let anchor: string | undefined;
+            let lastSurvivor: string | undefined;
+            for (let index = messages.length - 1; index >= 0; index--) {
+              const previous = messages[index]!;
+              if (snapshotMap.has(previous.id)) {
+                anchor = previous.id;
+                lastSurvivor ??= previous.id;
+              } else if (isPreservedClientOnly(previous)) {
+                if (anchor === undefined) {
+                  trailing.push(previous);
+                } else {
+                  const group = before.get(anchor) ?? [];
+                  group.push(previous);
+                  before.set(anchor, group);
+                }
               }
             }
+            trailing.reverse();
+            messages = [...snapshotMap.values()].flatMap((message) => [
+              ...(before.get(message.id)?.reverse() ?? []),
+              message,
+              ...(message.id === lastSurvivor ? trailing : []),
+            ]);
+            if (lastSurvivor === undefined) messages.unshift(...trailing);
 
             applyMutation({ messages });
           }
