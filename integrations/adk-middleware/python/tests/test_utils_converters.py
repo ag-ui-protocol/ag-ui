@@ -5,6 +5,7 @@ import pytest
 import json
 import base64
 from unittest.mock import MagicMock, patch, PropertyMock
+from pydantic import BaseModel, Field
 
 from ag_ui.core import (
     UserMessage,
@@ -14,7 +15,6 @@ from ag_ui.core import (
     ToolCall,
     FunctionCall,
     TextInputContent,
-    BinaryInputContent,
     ImageInputContent,
     AudioInputContent,
     VideoInputContent,
@@ -22,6 +22,9 @@ from ag_ui.core import (
     InputContentDataSource,
     InputContentUrlSource,
 )
+# The legacy binary part left ag_ui.core in 1.0; the boundary-local type in
+# the converters module is what this middleware still reads.
+from ag_ui_adk.utils.converters import BinaryInputContent
 from google.adk.events import Event as ADKEvent
 from google.genai import types
 
@@ -34,6 +37,17 @@ from ag_ui_adk.utils.converters import (
     extract_text_from_content,
     create_error_message
 )
+
+
+class LegacyBinaryInputContent(BaseModel):
+    """An older SDK object, distinct from the adapter's local fallback class."""
+
+    type: str = "binary"
+    mime_type: str = Field(alias="mimeType")
+    data: str | None = None
+    url: str | None = None
+    id: str | None = None
+    filename: str | None = None
 
 
 class TestConvertAGUIMessagesToADK:
@@ -61,7 +75,10 @@ class TestConvertAGUIMessagesToADK:
         """Test converting a multimodal UserMessage with inline base64 binary data."""
         raw = b"fake-image-bytes"
         b64 = base64.b64encode(raw).decode("ascii")
-        user_msg = UserMessage(
+        # The 1.0 content union no longer admits binary parts, so a message
+        # carrying one cannot be built through validation; model_construct
+        # mirrors how legacy shapes reach this lenient boundary.
+        user_msg = UserMessage.model_construct(
             id="user_mm_1",
             role="user",
             content=[
@@ -78,9 +95,48 @@ class TestConvertAGUIMessagesToADK:
         assert event.content.parts[1].inline_data.mime_type == "image/png"
         assert event.content.parts[1].inline_data.data == raw
     
+    @pytest.mark.parametrize("as_dict", [False, True])
+    def test_convert_legacy_sdk_binary_content(self, as_dict):
+        raw = b"legacy-image-bytes"
+        item = LegacyBinaryInputContent(
+            mimeType="image/png",
+            data=base64.b64encode(raw).decode("ascii"),
+            filename="legacy.png",
+        )
+        message = UserMessage.model_construct(
+            id="legacy-binary",
+            role="user",
+            content=[item.model_dump(by_alias=True) if as_dict else item],
+        )
+
+        events = convert_ag_ui_messages_to_adk([message])
+
+        assert len(events) == 1
+        assert len(events[0].content.parts) == 1
+        blob = events[0].content.parts[0].inline_data
+        assert blob.data == raw
+        assert blob.mime_type == "image/png"
+        assert blob.display_name == "legacy.png"
+
+    @pytest.mark.parametrize("fields", [
+        {"data": "invalid base64"},
+        {"url": "https://example.com/image.png"},
+        {"id": "stored-image"},
+        {"data": "aW1hZ2U=", "url": "https://example.com/image.png"},
+        {"data": "aW1hZ2U=", "id": "stored-image"},
+    ])
+    def test_legacy_sdk_binary_content_preserves_unsupported_inputs(self, fields, caplog):
+        item = LegacyBinaryInputContent(mimeType="image/png", **fields)
+
+        assert convert_message_content_to_parts([item]) == []
+        assert caplog.records  # Existing validation still warns about invalid parts.
+
     def test_convert_user_message_multimodal_id_only_ignored(self):
         """Test that BinaryInputContent with id only is ignored."""
-        user_msg = UserMessage(
+        # The 1.0 content union no longer admits binary parts, so a message
+        # carrying one cannot be built through validation; model_construct
+        # mirrors how legacy shapes reach this lenient boundary.
+        user_msg = UserMessage.model_construct(
             id="user_id_only",
             role="user",
             content=[
@@ -97,7 +153,10 @@ class TestConvertAGUIMessagesToADK:
     
     def test_convert_user_message_multimodal_broken_base64_ignored(self):
         """Test that broken base64 data is ignored."""
-        user_msg = UserMessage(
+        # The 1.0 content union no longer admits binary parts, so a message
+        # carrying one cannot be built through validation; model_construct
+        # mirrors how legacy shapes reach this lenient boundary.
+        user_msg = UserMessage.model_construct(
             id="user_broken_b64_ignored",
             role="user",
             content=[
@@ -115,7 +174,10 @@ class TestConvertAGUIMessagesToADK:
     def test_convert_user_message_multimodal_file_data_url_ignored(self):
         """Test that BinaryInputContent with URL is currently ignored (data supported only)."""
 
-        user_msg = UserMessage(
+        # The 1.0 content union no longer admits binary parts, so a message
+        # carrying one cannot be built through validation; model_construct
+        # mirrors how legacy shapes reach this lenient boundary.
+        user_msg = UserMessage.model_construct(
             id="user_mm_2",
             role="user",
             content=[
