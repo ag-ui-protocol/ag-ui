@@ -803,6 +803,31 @@ describe("REASONING_MESSAGE_* against an activity message's id", () => {
   });
 });
 
+it("anchors foreign activities when an owner replaces its authoritative activity set", async () => {
+  const user: Message = { id: "u", role: "user", content: "prompt" };
+  const answer: Message = { id: "a", role: "assistant", content: "answer" };
+  const foreign: Message = { id: "foreign", role: "activity", activityType: "other", content: {} };
+  const owned: Message = {
+    id: "owned",
+    role: "activity",
+    activityType: "a2ui-surface",
+    content: {},
+  };
+  const updates = await emitAndCollect([user, foreign, answer], (events) => {
+    events.next({
+      type: EventType.MESSAGES_SNAPSHOT,
+      messages: [user, owned, answer],
+      metadata: { "@ag-ui/client": { authoritativeActivityTypes: ["a2ui-surface"] } },
+    });
+  });
+  expect(updates.at(-1)?.messages?.map((message) => message.id)).toEqual([
+    "u",
+    "owned",
+    "foreign",
+    "a",
+  ]);
+});
+
 it("takes canonical tool-result order from an unmarked snapshot", async () => {
   const user: Message = { id: "u", role: "user", content: "apply" };
   const toolCall: Message = {
