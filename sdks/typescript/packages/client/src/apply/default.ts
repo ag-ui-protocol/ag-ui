@@ -1091,19 +1091,32 @@ export const defaultApplyEvents = (
           // interrupt list so consumers that hold the original event payload
           // can't mutate the agent's tracked state through array aliasing.
           if (mutation.stopPropagation !== true) {
-            agent.pendingInterrupts =
-              finishedParams.outcome === "interrupt"
-                ? finishedParams.interrupts.map((interrupt) => {
-                    if ((interrupt as { subagentRunId?: string | null }).subagentRunId !== null) {
-                      return interrupt;
-                    }
-                    const copy = { ...interrupt } as typeof interrupt & {
-                      subagentRunId?: string | null;
-                    };
-                    delete copy.subagentRunId;
-                    return copy as typeof interrupt;
-                  })
-                : [];
+            if (finishedParams.outcome === "interrupt") {
+              agent.pendingInterrupts = finishedParams.interrupts.map((interrupt) => {
+                if ((interrupt as { subagentRunId?: string | null }).subagentRunId !== null) {
+                  return interrupt;
+                }
+                const copy = { ...interrupt } as typeof interrupt & {
+                  subagentRunId?: string | null;
+                };
+                delete copy.subagentRunId;
+                return copy as typeof interrupt;
+              });
+            } else {
+              // A plain finish only retires the interrupts this run was started
+              // to answer, and `input.resume` is the client's own record of
+              // which those are. Clearing the whole list instead would let a
+              // stream that emits an interrupt outcome and then opens a second
+              // run of its own release the gate onInitialize is holding, so the
+              // next client run would go out with the interrupt unanswered.
+              // `?? []` because the reducer also runs against agents whose
+              // list was never initialized — a partial stand-in, or a clone
+              // that came back without the field.
+              const answered = new Set((input.resume ?? []).map((entry) => entry.interruptId));
+              agent.pendingInterrupts = (agent.pendingInterrupts ?? []).filter(
+                (interrupt) => !answered.has(interrupt.id),
+              );
+            }
           }
 
           return emitUpdates();
