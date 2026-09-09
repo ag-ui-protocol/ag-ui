@@ -479,6 +479,16 @@ describe("A2UIMiddleware live snapshots", () => {
       content: { html: ["saved"] },
     };
     const later: Message = { id: "later", role: "assistant", content: "Done" };
+    const staleAssistant: Message = {
+      ...assistant,
+      toolCalls: assistant.toolCalls!.map((call) => ({
+        ...call,
+        function: {
+          ...call.function,
+          arguments: JSON.stringify(args).slice(0, -2),
+        },
+      })),
+    };
     const events: BaseEvent[] = [
       {
         type: EventType.TOOL_CALL_START,
@@ -501,6 +511,11 @@ describe("A2UIMiddleware live snapshots", () => {
         content: result.content,
       } as BaseEvent,
       snapshot([assistant, later]),
+      snapshot([staleAssistant, result, later]),
+      snapshot([staleAssistant, result, later]),
+      snapshot([result, later]),
+      snapshot([staleAssistant, { ...result, error: "Render failed" }, later]),
+      snapshot([staleAssistant, later]),
       snapshot([assistant, result]),
     ];
     const stream = await firstValueFrom(
@@ -533,7 +548,18 @@ describe("A2UIMiddleware live snapshots", () => {
         .filter((message) => message.role !== "activity")
         .map((message) => message.id),
     ).toEqual(["assistant", "result", "later"]);
-    expect(snapshots[3]).toEqual(
+    for (const current of snapshots.slice(3, 6)) {
+      expect(current).toEqual(
+        projectA2UIHistory(snapshot([assistant, result, later])),
+      );
+    }
+    expect(snapshots[6]).toEqual(
+      projectA2UIHistory(
+        snapshot([assistant, { ...result, error: "Render failed" }, later]),
+      ),
+    );
+    expect(snapshots[7]).toEqual(snapshots[6]);
+    expect(snapshots[8]).toEqual(
       projectA2UIHistory(snapshot([assistant, result])),
     );
     const client = new ScriptedAgent(

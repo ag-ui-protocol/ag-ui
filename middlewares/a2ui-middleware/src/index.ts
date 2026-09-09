@@ -603,31 +603,45 @@ export class A2UIMiddleware extends Middleware {
       };
 
       const projectSnapshot = (snapshot: MessagesSnapshotEvent) => {
-        const results = new Set(
+        const results = new Map(
           snapshot.messages
             .filter((message) => message.role === "tool")
-            .map((message) => message.toolCallId),
+            .map((message) => [message.toolCallId, message]),
         );
         const live = new Map<string, ActivityMessage>();
         const sourceMessages = [...snapshot.messages];
         for (const [id, entry] of streamingToolCalls) {
-          if (results.has(entry.outerCallId ?? id)) {
+          let index = sourceMessages.findIndex(
+            (message) =>
+              message.role === "assistant" &&
+              (message.id === entry.owner.id ||
+                message.toolCalls?.some((call) => call.id === id)),
+          );
+          const owner = sourceMessages[index];
+          const persistedCall =
+            owner?.role === "assistant"
+              ? owner.toolCalls?.find((call) => call.id === id)
+              : undefined;
+          const result = results.get(entry.outerCallId ?? id);
+          const pendingArguments =
+            entry.outerCallId === null &&
+            (!persistedCall ||
+              (persistedCall.function.arguments !== entry.args &&
+                entry.args.startsWith(persistedCall.function.arguments)));
+          if (result && !pendingArguments) {
             entry.lastActivity = undefined;
             entry.acknowledged = true;
           } else if (!entry.acknowledged) {
-            if (entry.lastActivity)
+            if (result) {
+              entry.result = result;
+              entry.lastActivity = undefined;
+            }
+            if (entry.lastActivity && !entry.result?.error)
               live.set(entry.lastActivity.id, entry.lastActivity);
             const call = {
               ...entry.call,
               function: { ...entry.call.function, arguments: entry.args },
             };
-            const index = sourceMessages.findIndex(
-              (message) =>
-                message.role === "assistant" &&
-                (message.id === entry.owner.id ||
-                  message.toolCalls?.some((call) => call.id === id)),
-            );
-            const owner = sourceMessages[index];
             if (owner?.role === "assistant") {
               const calls = owner.toolCalls ?? [];
               sourceMessages[index] = {
@@ -639,11 +653,18 @@ export class A2UIMiddleware extends Middleware {
                   : [...calls, call],
               };
             } else {
-              sourceMessages.push({ ...entry.owner, toolCalls: [call] });
+              const resultIndex = sourceMessages.findIndex(
+                (message) =>
+                  message.role === "tool" && message.toolCallId === id,
+              );
+              index = resultIndex >= 0 ? resultIndex : sourceMessages.length;
+              sourceMessages.splice(index, 0, {
+                ...entry.owner,
+                toolCalls: [call],
+              });
             }
             if (entry.result && !results.has(id)) {
-              let resultIndex =
-                (index >= 0 ? index : sourceMessages.length - 1) + 1;
+              let resultIndex = index + 1;
               while (sourceMessages[resultIndex]?.role === "tool")
                 resultIndex++;
               sourceMessages.splice(resultIndex, 0, entry.result);
