@@ -16,8 +16,10 @@ Two rules keep this suite honest, both learned the hard way:
 
 from __future__ import annotations
 
+import ast
 import enum
 import functools
+import importlib
 import inspect
 import logging
 import types
@@ -135,10 +137,107 @@ def _is_declared_dict_shape(annotation: typing.Any) -> bool:
     )
 
 
+def _type_checking_names(module: types.ModuleType) -> dict:
+    """Names *module* imports only under ``TYPE_CHECKING``.
+
+    A quoted annotation may reference a name that exists nowhere at runtime,
+    because the SDK imports it behind ``if TYPE_CHECKING:`` to avoid a cycle.
+    Rather than hardcode the ones we have met, read the module's own
+    ``TYPE_CHECKING`` block and import exactly what it declares, so a release
+    that quotes a different name resolves without editing this file.
+    """
+    try:
+        tree = ast.parse(inspect.getsource(module))
+    except (OSError, TypeError, SyntaxError):
+        return {}
+
+    names: dict = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.If):
+            continue
+        guard = node.test
+        guard_name = (
+            guard.id
+            if isinstance(guard, ast.Name)
+            else guard.attr if isinstance(guard, ast.Attribute) else None
+        )
+        if guard_name != "TYPE_CHECKING":
+            continue
+        for statement in node.body:
+            if isinstance(statement, ast.ImportFrom):
+                source = "." * statement.level + (statement.module or "")
+                try:
+                    imported = importlib.import_module(source, module.__package__)
+                except ImportError:
+                    continue
+                for alias in statement.names:
+                    if hasattr(imported, alias.name):
+                        names[alias.asname or alias.name] = getattr(
+                            imported, alias.name
+                        )
+            elif isinstance(statement, ast.Import):
+                for alias in statement.names:
+                    try:
+                        imported = importlib.import_module(alias.name)
+                    except ImportError:
+                        continue
+                    names[alias.asname or alias.name.split(".")[0]] = imported
+    return names
+
+
+@functools.lru_cache(maxsize=1)
+def _annotation_namespace() -> dict:
+    """The namespace a quoted ``Agent.__init__`` annotation is written against.
+
+    Module globals win, with ``typing`` and the module's ``TYPE_CHECKING``-only
+    imports filling the gaps those globals leave.
+    """
+    module = inspect.getmodule(Agent.__init__)
+    if module is None:
+        return dict(vars(typing))
+    return {
+        **vars(typing),
+        **_type_checking_names(module),
+        **vars(module),
+    }
+
+
+def _resolve_forward_reference(annotation: typing.Any, label: str) -> typing.Any:
+    """Evaluate a quoted annotation into the object it names.
+
+    Strands quotes an annotation whenever its names are ``TYPE_CHECKING``-only,
+    and ``_annotations`` hands those through unresolved because
+    ``get_type_hints`` refuses the whole signature over one unrelated name. A
+    string reaching ``_synthesize`` is therefore an ordinary annotation the
+    suite has to evaluate itself, not a param it may decline to cover.
+    """
+    expression = (
+        annotation.__forward_arg__
+        if isinstance(annotation, typing.ForwardRef)
+        else annotation
+    )
+    try:
+        # The expression is an annotation written in the installed SDK's own
+        # source, evaluated against that module's namespace. This is what
+        # ``typing.get_type_hints`` does with the same input; it is only done
+        # by hand here because that call refuses the whole signature over one
+        # unrelated unresolvable name.
+        return eval(expression, dict(_annotation_namespace()))  # noqa: S307
+    except Exception as e:  # noqa: BLE001 - any failure leaves the param uncovered
+        raise _Unsynthesizable(
+            f"could not resolve the quoted annotation {expression!r} for {label} "
+            f"({type(e).__name__}: {e}); it names something neither the declaring "
+            f"module's globals nor its TYPE_CHECKING imports provide"
+        ) from e
+
+
 def _synthesize(annotation: typing.Any, label: str) -> typing.Any:
     """Build a value satisfying ``annotation``, tagged with ``label``."""
     if annotation is inspect.Parameter.empty or annotation is typing.Any:
         return MagicMock(name=f"sentinel-{label}")
+
+    if isinstance(annotation, (str, typing.ForwardRef)):
+        return _synthesize(_resolve_forward_reference(annotation, label), label)
 
     origin = typing.get_origin(annotation)
     args = typing.get_args(annotation)
