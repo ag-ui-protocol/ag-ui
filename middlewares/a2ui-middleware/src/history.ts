@@ -70,8 +70,8 @@ function activity(
 /**
  * Derive presentation from durable direct calls and independent result envelopes.
  * Never settle or execute tools. Legacy nested calls have no durable parent link.
- * Clients supporting @ag-ui/client.authoritativeActivityTypes reconcile only this
- * projector's activity type; older clients retain their all-or-nothing behavior.
+ * Activity scope is extended for transcript-only or scoped snapshots. Full
+ * snapshots retain authority over all activities, including removals.
  */
 export function projectA2UIHistory(
   event: MessagesSnapshotEvent,
@@ -201,11 +201,14 @@ export function projectA2UIHistory(
   // clients that understand this package-owned metadata convention.
   const prior = event.metadata?.["@ag-ui/client"];
   const priorRecord = record(prior) ? prior : {};
-  const priorTypes = Array.isArray(priorRecord.authoritativeActivityTypes)
-    ? priorRecord.authoritativeActivityTypes.filter(
-        (type): type is string => typeof type === "string",
-      )
-    : [];
+  const scope = priorRecord.authoritativeActivityTypes;
+  const priorTypes = Array.isArray(scope) && scope.every((type) => typeof type === "string")
+    ? scope
+    : undefined;
+  // An unscoped snapshot containing activity already owns the complete set.
+  // Keep that authority even if projection removes its last activity message.
+  const ownsAll = scope === null ||
+    (priorTypes === undefined && event.messages.some((message) => message.role === "activity"));
   return {
     ...event,
     messages,
@@ -213,8 +216,8 @@ export function projectA2UIHistory(
       ...event.metadata,
       "@ag-ui/client": {
         ...priorRecord,
-        authoritativeActivityTypes: [
-          ...new Set([...priorTypes, A2UIActivityType]),
+        authoritativeActivityTypes: ownsAll ? null : [
+          ...new Set([...(priorTypes ?? []), A2UIActivityType]),
         ],
       },
     },
