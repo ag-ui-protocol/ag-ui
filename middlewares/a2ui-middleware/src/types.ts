@@ -30,6 +30,8 @@ export interface A2UIComponentSchema {
  * Configuration for the A2UI Middleware
  */
 export interface A2UIMiddlewareConfig {
+  /** Project history without tool injection, user actions, recovery, or settlement. */
+  readOnly?: boolean;
   /**
    * Component schema — declares which components are available to agents.
    * When provided, the schema is injected as context into RunAgentInput
@@ -103,7 +105,6 @@ export interface A2UIMiddlewareConfig {
    * streamed args, then to the v0.9 basic catalog.
    */
   defaultCatalogId?: string;
-
 }
 
 /**
@@ -138,7 +139,11 @@ export interface A2UIForwardedProps {
 /**
  * A2UI message types (v0.9)
  */
-export type A2UIMessageType = "createSurface" | "updateComponents" | "updateDataModel" | "deleteSurface";
+export type A2UIMessageType =
+  | "createSurface"
+  | "updateComponents"
+  | "updateDataModel"
+  | "deleteSurface";
 
 /**
  * A2UI message structure (v0.9)
@@ -163,4 +168,3 @@ export interface A2UIMessage {
     surfaceId: string;
   };
 }
-
