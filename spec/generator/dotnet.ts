@@ -1177,12 +1177,8 @@ ${decodeCases}
   /* Wire guards                                                          */
   /* ------------------------------------------------------------------ */
 
-  // The malformed-wire scan, generated from the shared scan graph: canonical
-  // protobuf parsers (this runtime's included) MERGE a repeated occurrence of
-  // a singular message-typed field where ts-proto REPLACES it, and a oneof
-  // carrying several distinct arms keeps only the last here while the
-  // TypeScript translation sees them all. Either way the same bytes would
-  // materialise differently across runtimes, so the scan rejects them first.
+  // The malformed-wire scan preserves the distinct-oneof-arm checks. Repeated
+  // occurrences of the same message field are left to protobuf's normal merge.
   // Closed sets for the bespoke message-mapper guards, read from the schema
   // so the values can never drift from it.
   const closedSet = (definitionName: string, fieldName: string): string => {
@@ -1208,26 +1204,6 @@ ${decodeCases}
                                 break;`,
         )
         .join("\n");
-      const singularCheck =
-        spec.singular.length === 0
-          ? ""
-          : `
-                        if (${spec.singular
-                          .map((n) => `field == ${n}`)
-                          .join(" || ")})
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
-`;
       const armCheck =
         armNumbers.length === 0
           ? ""
@@ -1246,7 +1222,6 @@ ${decodeCases}
                         }
 `;
       const locals = [
-        spec.singular.length > 0 ? "        ulong seenSingular = 0;\n" : "",
         armNumbers.length > 0 ? "        uint seenArm = 0;\n" : "",
       ].join("");
       return `    private static void Scan${spec.name}(ReadOnlySpan<byte> data)
@@ -1300,7 +1275,7 @@ ${locals}
 
                     if (groupDepth == 0)
                     {
-${singularCheck}${armCheck}                        switch (field)
+${armCheck}                        switch (field)
                         {
 ${nestedCases || "                            default:\n                                break;"}
                         }
@@ -1347,9 +1322,9 @@ using System.IO;
 namespace AGUI.Protobuf;
 
 // The envelope pre-scan, generated from the same wire model as the
-// TypeScript scan: a repeated KNOWN event tag decodes differently across
-// runtimes (canonical protobuf merges, others overwrite), so neither silent
-// behaviour is acceptable. Unknown field numbers are protobuf's to ignore,
+// TypeScript scan: different known event kinds in one envelope are rejected.
+// Repeated occurrences of one kind use protobuf's normal merge behavior.
+// Unknown field numbers are protobuf's to ignore,
 // repeated or not, so forward compatibility is untouched. Field zero is not a
 // legal tag. Legacy group fields nest and are skipped wholesale.
 internal static class WireGuards
@@ -1377,6 +1352,7 @@ ${envelopeTags.map((tag) => `        known[${tag}] = true;`).join("\n")}
     public static bool AssertWellFormedEnvelope(ReadOnlySpan<byte> data)
     {
         int knownTags = 0;
+        uint knownEventField = 0;
         int unknownEventArms = 0;
         int offset = 0;
         int groupDepth = 0;
@@ -1419,17 +1395,16 @@ ${envelopeTags.map((tag) => `        known[${tag}] = true;`).join("\n")}
 
             if (groupDepth == 0 && field < (uint)KnownEnvelopeTags.Length && KnownEnvelopeTags[(int)field])
             {
-                // Exactly one event per envelope: a second known tag — a
-                // repeat or a different event — decodes differently across
-                // runtimes (canonical protobuf merges or last-wins where
-                // others overwrite), so it rejects.
-                if (knownTags > 0)
+                // Repeated occurrences of the same event merge. A different
+                // known event kind still violates the envelope's contract.
+                if (knownEventField != 0 && knownEventField != field)
                 {
                     throw new InvalidDataException(
                         "Invalid event: the envelope carries more than one event.");
                 }
 
                 knownTags += 1;
+                knownEventField = field;
             }
 
             switch (wireType)
@@ -1495,12 +1470,9 @@ ${envelopeScanCases}
     }
 
     // The nested scans, one message level each, generated from the shared
-    // scan graph. Two malformed shapes reject: a duplicate occurrence of a
-    // singular message-typed field (canonical parsers merge, ts-proto
-    // replaces) and a oneof carrying more than one distinct arm (this
-    // runtime keeps the last, the TypeScript translation sees them all).
-    // google.protobuf.* payloads are counted but not entered: their insides
-    // belong to the runtime library, a recorded scan boundary.
+    // scan graph. A oneof carrying more than one distinct arm in an occurrence
+    // rejects. Repeated message fields merge through the standard parser.
+    // google.protobuf.* payloads remain outside the guard's traversal.
 ${scanMethods}
 
     // Mirrors the uint32 reader truncation exactly: the fifth byte contributes

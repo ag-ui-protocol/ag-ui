@@ -25,12 +25,13 @@ public sealed class WireGuardTest
     }
 
     [Fact]
-    public void RepeatedEnvelopeTag_Throws()
+    public void RepeatedEnvelopeTag_Merges()
     {
         var first = AGUIProtobuf.Encode(new StepFinishedEvent { StepName = "plan" });
         var second = AGUIProtobuf.Encode(new StepFinishedEvent());
         var concatenated = first.Concat(second).ToArray();
-        Assert.Throws<InvalidDataException>(() => AGUIProtobuf.Decode(concatenated));
+        var decoded = Assert.IsType<StepFinishedEvent>(AGUIProtobuf.Decode(concatenated));
+        Assert.Equal("plan", decoded.StepName);
     }
 
     [Fact]
@@ -70,7 +71,7 @@ public sealed class WireGuardTest
     }
 
     [Fact]
-    public void OverlongVarintDuplicate_Throws()
+    public void OverlongVarintDuplicate_Merges()
     {
         var valid = AGUIProtobuf.Encode(new StepFinishedEvent { StepName = "plan" });
         // Field 16 again with the same payload, its tag varint encoded
@@ -79,7 +80,8 @@ public sealed class WireGuardTest
         var payload = valid.Skip(2).ToArray();
         var overlong = new byte[] { 0x82, 0x81, 0x80, 0x80, 0x10 }.Concat(payload).ToArray();
         var extended = valid.Concat(overlong).ToArray();
-        Assert.Throws<InvalidDataException>(() => AGUIProtobuf.Decode(extended));
+        var decoded = Assert.IsType<StepFinishedEvent>(AGUIProtobuf.Decode(extended));
+        Assert.Equal("plan", decoded.StepName);
     }
 
     [Fact]
@@ -341,12 +343,12 @@ public sealed class WireGuardTest
         Assert.Contains("more than one arm", exception.Message);
     }
 
-    [Fact]
-    public void ContentPartRepeatingTheSameArm_Throws()
+    [Theory]
+    [InlineData("", "a")]
+    [InlineData("b", "b")]
+    public void ContentPartRepeatingTheSameArm_Merges(string laterText, string expectedText)
     {
-        // A repeated occurrence of the SAME singular field merges here but
-        // replaces in ts-proto — the same bytes would materialise different
-        // text across runtimes, so both reject.
+        // An omitted scalar preserves the earlier value; a supplied scalar wins.
         var repeated = Google.Protobuf.MessageExtensions
             .ToByteArray(new Proto.InputContent
             {
@@ -354,11 +356,14 @@ public sealed class WireGuardTest
             })
             .Concat(Google.Protobuf.MessageExtensions.ToByteArray(new Proto.InputContent
             {
-                Text = new Proto.TextInputPart { Text = "b" },
+                Text = new Proto.TextInputPart { Text = laterText },
             }))
             .ToArray();
-        Assert.Throws<InvalidDataException>(
-            () => AGUIProtobuf.Decode(EnvelopeWithRawContentPart(repeated)));
+        var snapshot = Assert.IsType<MessagesSnapshotEvent>(
+            AGUIProtobuf.Decode(EnvelopeWithRawContentPart(repeated)));
+        var user = Assert.IsType<AGUIUserMessage>(Assert.Single(snapshot.Messages));
+        var parts = Assert.IsType<List<AGUIInputContent>>(user.Content.Value);
+        Assert.Equal(expectedText, Assert.IsType<AGUITextInputContent>(Assert.Single(parts)).Text);
     }
 
     // The StepFinishedEvent envelope entry (field 16 in the freeze).
@@ -383,14 +388,15 @@ public sealed class WireGuardTest
     }
 
     [Fact]
-    public void DuplicatedBaseEvent_Throws()
+    public void DuplicatedBaseEvent_Merges()
     {
-        // Canonical parsers merge the two base events (this runtime included)
-        // while ts-proto keeps only the last; reject rather than diverge.
+        // The standard parser merges base-event fields across occurrences.
         var extraBaseEvent = Framed(1, Google.Protobuf.MessageExtensions.ToByteArray(
             new Proto.BaseEvent { Type = Proto.EventType.StepFinished, Timestamp = 9 }));
         var doctored = Framed(StepFinishedTag, StepFinishedBytes().Concat(extraBaseEvent).ToArray());
-        Assert.Throws<InvalidDataException>(() => AGUIProtobuf.Decode(doctored));
+        var decoded = Assert.IsType<StepFinishedEvent>(AGUIProtobuf.Decode(doctored));
+        Assert.Equal("plan", decoded.StepName);
+        Assert.Equal(9, decoded.Timestamp);
     }
 
     [Fact]

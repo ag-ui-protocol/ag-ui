@@ -264,11 +264,8 @@ describe("malformed wire input", () => {
   });
 });
 
-describe("nested duplicate-field guards", () => {
-  // Canonical protobuf parsers MERGE a repeated occurrence of a singular
-  // message-typed field where ts-proto REPLACES it, so the same malformed
-  // bytes would materialise differently across runtimes; the generated scan
-  // rejects them in both.
+describe("nested repeated message fields", () => {
+  // Singular message occurrences merge, including fields nested inside events.
   const framed = (fieldNumber: number, payload: Uint8Array): Uint8Array => {
     const bytes: number[] = [];
     for (const value of [fieldNumber * 8 + 2, payload.length]) {
@@ -294,7 +291,7 @@ describe("nested duplicate-field guards", () => {
     expect(decoded).toEqual({ type: EventType.STEP_FINISHED, stepName: "plan" });
   });
 
-  it("rejects a duplicated base_event inside an event", () => {
+  it("merges a duplicated base_event inside an event", () => {
     const stepBytes = protoEvents.StepFinishedEvent.encode({
       baseEvent: { type: protoEvents.EventType.STEP_FINISHED },
       stepName: "plan",
@@ -307,14 +304,18 @@ describe("nested duplicate-field guards", () => {
       } as never).finish(),
     );
     const doctored = framed(STEP_FINISHED_TAG, new Uint8Array([...stepBytes, ...extraBaseEvent]));
-    expect(() => decode(doctored)).toThrow(/Invalid event/);
+    expect(decode(doctored)).toEqual({
+      type: EventType.STEP_FINISHED,
+      stepName: "plan",
+      timestamp: 9,
+    });
   });
 
-  it("rejects a repeated occurrence of the same content-part arm", () => {
+  it("merges a repeated occurrence of the same content-part arm", () => {
     // text{text:"a"} followed by text{}: canonical parsers keep "a" (merge),
-    // ts-proto keeps "" (replace) — reject rather than diverge.
-    const arm = (text: Record<string, unknown>): Uint8Array =>
-      protoTypes.InputContent.encode({ text } as never).finish();
+    // The empty occurrence must not replace the earlier text.
+    const arm = (text: { text?: string }): Uint8Array =>
+      protoTypes.InputContent.encode(protoTypes.InputContent.create({ text })).finish();
     const twoOccurrences = new Uint8Array([...arm({ text: "a" }), ...arm({})]);
     const message = protoTypes.Message.encode({
       id: "u1",
@@ -328,7 +329,9 @@ describe("nested duplicate-field guards", () => {
       messages: [],
     } as never).finish();
     const doctored = framed(9, new Uint8Array([...snapshot, ...framed(2, messageWithParts)]));
-    expect(() => decode(doctored)).toThrow(/Invalid event/);
+    expect(decode(doctored)).toMatchObject({
+      messages: [{ content: [{ type: "text", text: "a" }] }],
+    });
   });
 });
 
@@ -678,19 +681,18 @@ describe("flattened outcome guards", () => {
     expect((decode(extended) as { stepName?: string }).stepName).toBe("plan");
   });
 
-  it("rejects a repeated envelope tag hidden by an overlong varint", () => {
+  it("merges a repeated envelope tag encoded with an overlong varint", () => {
     const valid = encode({
       type: EventType.STEP_FINISHED,
       stepName: "plan",
     } as never);
     // Field 16 (step_finished) again with the SAME valid payload, its tag
     // varint encoded overlong: the real reader masks the fifth byte to four
-    // bits and still sees field 16, so only canonical-equivalent duplicate
-    // detection catches it — a weaker duplicate would decode fine.
+    // bits and still sees field 16. It must merge like the short encoding.
     const payload = valid.slice(2); // length byte + message body
     const overlong = new Uint8Array([0x82, 0x81, 0x80, 0x80, 0x10, ...payload]);
     const extended = new Uint8Array([...valid, ...overlong]);
-    expect(() => decode(extended)).toThrow();
+    expect(decode(extended)).toEqual({ type: EventType.STEP_FINISHED, stepName: "plan" });
   });
 
   it("rejects a zero field tag", () => {
@@ -708,14 +710,18 @@ describe("flattened outcome guards", () => {
     expect(() => decode(extended)).toThrow();
   });
 
-  it("rejects a repeated envelope tag", () => {
+  it("merges a repeated envelope tag", () => {
     const first = encode({
       type: EventType.STEP_FINISHED,
       stepName: "plan",
     } as never);
-    const second = encode({ type: EventType.STEP_FINISHED } as never);
+    const second = protoEvents.Event.encode(
+      protoEvents.Event.create({
+        stepFinished: { baseEvent: { type: protoEvents.EventType.STEP_FINISHED } },
+      }),
+    ).finish();
     const concatenated = new Uint8Array([...first, ...second]);
-    expect(() => decode(concatenated)).toThrow();
+    expect(decode(concatenated)).toEqual({ type: EventType.STEP_FINISHED, stepName: "plan" });
   });
 
   it("carries a subagent success outcome's foreign payload through", () => {

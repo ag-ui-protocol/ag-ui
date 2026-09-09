@@ -6,6 +6,7 @@ import { BaseEvent, AGUIEvent, EventType, omitOptionalNulls } from "@ag-ui/core"
 import { EventSchemas } from "@ag-ui/core/schemas";
 import * as protoEvents from "./generated/events";
 import * as protoPatch from "./generated/patch";
+import { BinaryReader, BinaryWriter } from "@bufbuild/protobuf/wire";
 
 /**
  * These converters run against values that have crossed a wire boundary, so
@@ -571,32 +572,48 @@ export function encode(event: BaseEvent): Uint8Array {
  * Decodes the protobuf wire format to an event.
  */
 /**
- * One message level of the malformed-wire scan: which singular message-typed
- * fields may not repeat (canonical protobuf merges them, ts-proto — this
- * runtime — replaces), which fields to descend into, and which oneof arms
- * are mutually exclusive. google.protobuf.* payloads are counted but not
- * entered: their insides belong to the runtime library, a recorded boundary.
+ * One message level: singular fields merge, descents guide both the guard
+ * and merger, and oneof arms are mutually exclusive within an occurrence.
+ * Google payloads are traversed only by the merger, not by the wire guard.
  */
 interface ScanSpec {
   singular: Set<number>;
   descend: Record<number, string | undefined>;
+  google?: Record<number, string | undefined>;
   arms?: Set<number>;
+  armWireTypes?: Record<number, number>;
 }
 
 const SCAN_SPECS: Record<string, ScanSpec | undefined> = {
   TextMessageStartEvent: { singular: new Set([1]), descend: { 1: "BaseEvent" } },
-  BaseEvent: { singular: new Set([3, 4]), descend: {} },
+  BaseEvent: {
+    singular: new Set([3, 4]),
+    descend: {},
+    google: { 3: "google.protobuf.Value", 4: "google.protobuf.Struct" },
+  },
   TextMessageContentEvent: { singular: new Set([1]), descend: { 1: "BaseEvent" } },
   TextMessageEndEvent: { singular: new Set([1]), descend: { 1: "BaseEvent" } },
   ToolCallStartEvent: { singular: new Set([1]), descend: { 1: "BaseEvent" } },
   ToolCallArgsEvent: { singular: new Set([1]), descend: { 1: "BaseEvent" } },
   ToolCallEndEvent: { singular: new Set([1]), descend: { 1: "BaseEvent" } },
-  StateSnapshotEvent: { singular: new Set([1, 2]), descend: { 1: "BaseEvent" } },
+  StateSnapshotEvent: {
+    singular: new Set([1, 2]),
+    descend: { 1: "BaseEvent" },
+    google: { 2: "google.protobuf.Value" },
+  },
   StateDeltaEvent: { singular: new Set([1]), descend: { 1: "BaseEvent", 2: "JsonPatchOperation" } },
-  JsonPatchOperation: { singular: new Set([4]), descend: {} },
+  JsonPatchOperation: {
+    singular: new Set([4]),
+    descend: {},
+    google: { 4: "google.protobuf.Value" },
+  },
   MessagesSnapshotEvent: { singular: new Set([1]), descend: { 1: "BaseEvent", 2: "Message" } },
-  Message: { singular: new Set([9, 13]), descend: { 5: "ToolCall", 8: "InputContent" } },
-  ToolCall: { singular: new Set([3, 4]), descend: {} },
+  Message: {
+    singular: new Set([9, 13]),
+    descend: { 5: "ToolCall", 8: "InputContent" },
+    google: { 9: "google.protobuf.Struct", 13: "google.protobuf.Struct" },
+  },
+  ToolCall: { singular: new Set([3, 4]), descend: {}, google: { 4: "google.protobuf.Struct" } },
   InputContent: {
     singular: new Set([1, 2, 3, 4, 5]),
     descend: {
@@ -607,32 +624,81 @@ const SCAN_SPECS: Record<string, ScanSpec | undefined> = {
     },
     arms: new Set([1, 2, 3, 4, 5]),
   },
-  ImageInputPart: { singular: new Set([1, 2]), descend: { 1: "InputContentSource" } },
+  ImageInputPart: {
+    singular: new Set([1, 2]),
+    descend: { 1: "InputContentSource" },
+    google: { 2: "google.protobuf.Value" },
+  },
   InputContentSource: { singular: new Set([1, 2]), descend: {}, arms: new Set([1, 2]) },
-  AudioInputPart: { singular: new Set([1, 2]), descend: { 1: "InputContentSource" } },
-  VideoInputPart: { singular: new Set([1, 2]), descend: { 1: "InputContentSource" } },
-  DocumentInputPart: { singular: new Set([1, 2]), descend: { 1: "InputContentSource" } },
-  RawEvent: { singular: new Set([1, 2]), descend: { 1: "BaseEvent" } },
-  CustomEvent: { singular: new Set([1, 3]), descend: { 1: "BaseEvent" } },
+  AudioInputPart: {
+    singular: new Set([1, 2]),
+    descend: { 1: "InputContentSource" },
+    google: { 2: "google.protobuf.Value" },
+  },
+  VideoInputPart: {
+    singular: new Set([1, 2]),
+    descend: { 1: "InputContentSource" },
+    google: { 2: "google.protobuf.Value" },
+  },
+  DocumentInputPart: {
+    singular: new Set([1, 2]),
+    descend: { 1: "InputContentSource" },
+    google: { 2: "google.protobuf.Value" },
+  },
+  RawEvent: {
+    singular: new Set([1, 2]),
+    descend: { 1: "BaseEvent" },
+    google: { 2: "google.protobuf.Value" },
+  },
+  CustomEvent: {
+    singular: new Set([1, 3]),
+    descend: { 1: "BaseEvent" },
+    google: { 3: "google.protobuf.Value" },
+  },
   RunStartedEvent: { singular: new Set([1, 5]), descend: { 1: "BaseEvent", 5: "RunAgentInput" } },
   RunAgentInput: {
     singular: new Set([4, 8]),
     descend: { 5: "Message", 6: "Tool", 9: "ResumeEntry" },
+    google: { 4: "google.protobuf.Value", 8: "google.protobuf.Value" },
   },
-  Tool: { singular: new Set([3, 4]), descend: {} },
-  ResumeEntry: { singular: new Set([3, 4]), descend: {} },
-  RunFinishedEvent: { singular: new Set([1, 4]), descend: { 1: "BaseEvent", 6: "Interrupt" } },
-  Interrupt: { singular: new Set([5, 7]), descend: {} },
+  Tool: {
+    singular: new Set([3, 4]),
+    descend: {},
+    google: { 3: "google.protobuf.Value", 4: "google.protobuf.Struct" },
+  },
+  ResumeEntry: {
+    singular: new Set([3, 4]),
+    descend: {},
+    google: { 3: "google.protobuf.Value", 4: "google.protobuf.Struct" },
+  },
+  RunFinishedEvent: {
+    singular: new Set([1, 4]),
+    descend: { 1: "BaseEvent", 6: "Interrupt" },
+    google: { 4: "google.protobuf.Value" },
+  },
+  Interrupt: {
+    singular: new Set([5, 7]),
+    descend: {},
+    google: { 5: "google.protobuf.Value", 7: "google.protobuf.Value" },
+  },
   RunErrorEvent: { singular: new Set([1]), descend: { 1: "BaseEvent" } },
   StepStartedEvent: { singular: new Set([1]), descend: { 1: "BaseEvent" } },
   StepFinishedEvent: { singular: new Set([1]), descend: { 1: "BaseEvent" } },
   TextMessageChunkEvent: { singular: new Set([1]), descend: { 1: "BaseEvent" } },
   ToolCallChunkEvent: { singular: new Set([1]), descend: { 1: "BaseEvent" } },
   SubagentStartedEvent: { singular: new Set([1]), descend: { 1: "BaseEvent" } },
-  SubagentFinishedEvent: { singular: new Set([1, 3]), descend: { 1: "BaseEvent" } },
+  SubagentFinishedEvent: {
+    singular: new Set([1, 3]),
+    descend: { 1: "BaseEvent" },
+    google: { 3: "google.protobuf.Value" },
+  },
   SubagentErrorEvent: { singular: new Set([1]), descend: { 1: "BaseEvent" } },
   ToolCallResultEvent: { singular: new Set([1]), descend: { 1: "BaseEvent" } },
-  ActivitySnapshotEvent: { singular: new Set([1, 5]), descend: { 1: "BaseEvent" } },
+  ActivitySnapshotEvent: {
+    singular: new Set([1, 5]),
+    descend: { 1: "BaseEvent" },
+    google: { 5: "google.protobuf.Struct" },
+  },
   ActivityDeltaEvent: {
     singular: new Set([1]),
     descend: { 1: "BaseEvent", 5: "JsonPatchOperation" },
@@ -644,6 +710,26 @@ const SCAN_SPECS: Record<string, ScanSpec | undefined> = {
   ReasoningMessageChunkEvent: { singular: new Set([1]), descend: { 1: "BaseEvent" } },
   ReasoningEndEvent: { singular: new Set([1]), descend: { 1: "BaseEvent" } },
   ReasoningEncryptedValueEvent: { singular: new Set([1]), descend: { 1: "BaseEvent" } },
+  // Standard google/protobuf/struct.proto wire definitions. Map entries and
+  // list elements are repeated; Value's active kind follows protobuf oneof rules.
+  "google.protobuf.Struct": {
+    singular: new Set(),
+    descend: { 1: "google.protobuf.Struct.FieldsEntry" },
+  },
+  "google.protobuf.Struct.FieldsEntry": {
+    singular: new Set([2]),
+    descend: { 2: "google.protobuf.Value" },
+  },
+  "google.protobuf.Value": {
+    singular: new Set([5, 6]),
+    descend: { 5: "google.protobuf.Struct", 6: "google.protobuf.ListValue" },
+    arms: new Set([1, 2, 3, 4, 5, 6]),
+    armWireTypes: { 1: 0, 2: 1, 3: 2, 4: 0, 5: 2, 6: 2 },
+  },
+  "google.protobuf.ListValue": {
+    singular: new Set(),
+    descend: { 1: "google.protobuf.Value" },
+  },
 };
 
 /** Envelope entry number -> event message name, all descended into. */
@@ -702,7 +788,6 @@ function readVarint(data: Uint8Array, cursor: { offset: number }): number {
 function scanMessage(data: Uint8Array, spec: ScanSpec): void {
   const cursor = { offset: 0 };
   let groupDepth = 0;
-  const seenSingular = new Set<number>();
   let seenArm = 0;
   while (cursor.offset < data.length) {
     const tag = readVarint(data, cursor);
@@ -728,12 +813,6 @@ function scanMessage(data: Uint8Array, spec: ScanSpec): void {
       const length = readVarint(data, cursor);
       if (cursor.offset + length > data.length) throw new Error("Invalid event");
       if (groupDepth === 0) {
-        if (spec.singular.has(field)) {
-          // A duplicate of a singular message-typed field merges in
-          // canonical parsers and replaces here; reject.
-          if (seenSingular.has(field)) throw new Error("Invalid event");
-          seenSingular.add(field);
-        }
         if (spec.arms?.has(field)) {
           if (seenArm !== 0 && seenArm !== field) throw new Error("Invalid event");
           seenArm = field;
@@ -758,14 +837,11 @@ function scanMessage(data: Uint8Array, spec: ScanSpec): void {
 }
 
 /**
- * Rejects a wire envelope that repeats a KNOWN event tag, then walks each
- * event payload through the scan graph. Canonical protobuf merges repeated
- * message occurrences where ts-proto overwrites, so two runtimes would
- * surface different events; neither silent behaviour is acceptable. Unknown
- * field numbers are protobuf's to ignore — repeated or not — so forward
- * compatibility is untouched.
+ * Rejects an envelope naming different known event kinds, then checks each
+ * payload. Repeated occurrences of the same kind merge during decoding.
+ * Unknown fields are protobuf's to ignore, repeated or not.
  */
-function assertNoRepeatedTopLevelTags(data: Uint8Array): void {
+function assertWellFormedEnvelope(data: Uint8Array): void {
   const seen = new Set<number>();
   const cursor = { offset: 0 };
   // Legacy group wire types nest; everything inside a group is an unknown
@@ -791,7 +867,7 @@ function assertNoRepeatedTopLevelTags(data: Uint8Array): void {
       continue;
     }
     if (groupDepth === 0 && ENVELOPE_TAGS.has(field)) {
-      if (seen.has(field)) {
+      if (seen.size > 0 && !seen.has(field)) {
         throw new Error("Invalid event");
       }
       seen.add(field);
@@ -821,6 +897,100 @@ function assertNoRepeatedTopLevelTags(data: Uint8Array): void {
     if (cursor.offset > data.length) throw new Error("Invalid event");
   }
   if (groupDepth !== 0) throw new Error("Invalid event");
+}
+
+function concatenate(parts: Uint8Array[]): Uint8Array {
+  if (parts.length === 1) return parts[0];
+  const result = new Uint8Array(parts.reduce((length, part) => length + part.length, 0));
+  let offset = 0;
+  for (const part of parts) {
+    result.set(part, offset);
+    offset += part.length;
+  }
+  return result;
+}
+
+/**
+ * ts-proto replaces singular messages instead of merging them. Combine their
+ * wire payloads before decoding so explicit scalar defaults, repeated arrays,
+ * maps and nested message presence survive. Already canonical bytes are reused.
+ */
+function mergeMessageFields(data: Uint8Array, spec: ScanSpec): Uint8Array {
+  const reader = new BinaryReader(data);
+  const fields: Array<
+    | {
+        number: number;
+        raw: Uint8Array;
+        payloads?: Uint8Array[];
+        child?: ScanSpec;
+      }
+    | undefined
+  > = [];
+  const positions = new Map<number, number>();
+  let activeArm: number | undefined;
+  let changed = false;
+  while (reader.pos < reader.len) {
+    const start = reader.pos;
+    const [number, wireType] = reader.tag();
+    const payload = wireType === 2 ? reader.bytes() : undefined;
+    if (payload === undefined) reader.skip(wireType, number);
+    const isArm = spec.arms?.has(number) && wireType === (spec.armWireTypes?.[number] ?? 2);
+    if (isArm) {
+      if (activeArm !== undefined && activeArm !== number) {
+        const previous = positions.get(activeArm);
+        if (previous !== undefined) fields[previous] = undefined;
+        positions.delete(activeArm);
+        changed = true;
+      }
+      activeArm = number;
+      if (!spec.singular.has(number)) {
+        const previous = positions.get(number);
+        if (previous !== undefined) {
+          fields[previous] = undefined;
+          positions.delete(number);
+          changed = true;
+        }
+      }
+    }
+    const childName = spec.descend[number] ?? spec.google?.[number];
+    const isMessage =
+      payload !== undefined && (spec.singular.has(number) || childName !== undefined);
+    const previous = positions.get(number);
+    const previousPayloads = previous === undefined ? undefined : fields[previous]?.payloads;
+    if (isMessage && spec.singular.has(number) && previousPayloads !== undefined) {
+      previousPayloads.push(payload);
+      changed = true;
+      continue;
+    }
+    if (isMessage || isArm) positions.set(number, fields.length);
+    fields.push({
+      number,
+      raw: data.subarray(start, reader.pos),
+      ...(isMessage && { payloads: [payload] }),
+      child: childName === undefined ? undefined : SCAN_SPECS[childName],
+    });
+  }
+  const parts: Uint8Array[] = [];
+  for (const field of fields) {
+    if (field === undefined) continue;
+    if (field.payloads !== undefined) {
+      const combined = concatenate(field.payloads);
+      const merged =
+        field.child === undefined ? combined : mergeMessageFields(combined, field.child);
+      if (field.payloads.length > 1 || merged !== combined) {
+        parts.push(
+          new BinaryWriter()
+            .uint32(field.number * 8 + 2)
+            .bytes(merged)
+            .finish(),
+        );
+        changed = true;
+        continue;
+      }
+    }
+    parts.push(field.raw);
+  }
+  return changed ? concatenate(parts) : data;
 }
 
 /**
@@ -1010,8 +1180,13 @@ function namesOnlyFutureArms(data: Uint8Array): boolean {
 }
 
 export function decode(data: Uint8Array): BaseEvent {
-  assertNoRepeatedTopLevelTags(data);
-  const envelope = protoEvents.Event.decode(data);
+  assertWellFormedEnvelope(data);
+  const envelope = protoEvents.Event.decode(
+    mergeMessageFields(data, {
+      singular: ENVELOPE_TAGS,
+      descend: ENVELOPE_SCAN,
+    }),
+  );
   // Exactly one oneof entry. ts-proto's field-per-entry decoding cannot
   // reproduce protobuf's last-field-wins for a malformed envelope carrying
   // several, so the deterministic behaviour is to reject it loudly rather

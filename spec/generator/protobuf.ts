@@ -1207,18 +1207,16 @@ export function emitFreeze(wire: WireModel): string {
 
 /**
  * One message level of the malformed-wire scan both runtime translations
- * generate. Canonical protobuf parsers MERGE a repeated occurrence of a
- * singular message-typed field where ts-proto REPLACES it, so the same
- * malformed bytes would materialise differently across runtimes; the scan
- * rejects them instead. Distinct oneof arms are exclusive for the same
- * reason. google.protobuf.* payloads are counted (a duplicate Value or
- * Struct field rejects) but their insides are the runtime library's —
- * the scan does not descend into them.
+ * generate. Distinct oneof arms are exclusive. Singular message fields are
+ * also recorded so TypeScript can merge repeated occurrences before ts-proto
+ * decodes them. Google payloads are outside the guard's traversal, but their
+ * types are recorded for that merge to include their nested messages.
  */
 export interface ScanMessageSpec {
   name: string;
-  /** Singular message-typed field numbers: a duplicate occurrence rejects. */
+  /** Singular message-typed field numbers: repeated occurrences merge. */
   singular: number[];
+  google: Array<{ number: number; child: string }>;
   /** Field number -> child message name, descended into recursively. */
   descend: Array<{ number: number; child: string }>;
   /** Oneof arm field numbers: more than one distinct arm rejects. */
@@ -1269,14 +1267,17 @@ export function buildScanGraph(wire: WireModel): ScanGraph {
       ...singular,
       ...descend.map((entry) => entry.number),
     ]) {
-      // Both emitters track duplicates in a 64-bit mask.
+      // Retain the scan graph's existing field-number bound.
       if (number >= 64) {
         throw new WireError(
           `${message.name} field ${number} exceeds the scan's 64-bit mask`,
         );
       }
     }
-    return { name: message.name, singular, descend, arms };
+    const google = fields
+      .filter((field) => isGoogleType(field.type))
+      .map((field) => ({ number: field.number, child: field.type }));
+    return { name: message.name, singular, google, descend, arms };
   };
 
   // Walk from the envelope; keep only specs with something to check, and

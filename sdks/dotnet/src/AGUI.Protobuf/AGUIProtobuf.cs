@@ -55,8 +55,8 @@ internal static class AGUIProtobuf
     public static BaseEvent Decode(ReadOnlySpan<byte> message)
     {
         // The generated pre-scan rejects envelopes whose malformed shape would
-        // decode differently across runtimes (repeated or multiple event tags)
-        // before the parser's silent merge semantics can pick a winner. It also
+        // decode differently across runtimes (different event kinds or oneof arms).
+        // Repeated message fields retain the parser's normal merge semantics. It also
         // answers whether these bytes could be an event newer than this build.
         bool couldBeNewerEvent = WireGuards.AssertWellFormedEnvelope(message);
         var proto = Proto.Event.Parser.ParseFrom(message);

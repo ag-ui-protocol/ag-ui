@@ -10,9 +10,9 @@ using System.IO;
 namespace AGUI.Protobuf;
 
 // The envelope pre-scan, generated from the same wire model as the
-// TypeScript scan: a repeated KNOWN event tag decodes differently across
-// runtimes (canonical protobuf merges, others overwrite), so neither silent
-// behaviour is acceptable. Unknown field numbers are protobuf's to ignore,
+// TypeScript scan: different known event kinds in one envelope are rejected.
+// Repeated occurrences of one kind use protobuf's normal merge behavior.
+// Unknown field numbers are protobuf's to ignore,
 // repeated or not, so forward compatibility is untouched. Field zero is not a
 // legal tag. Legacy group fields nest and are skipped wholesale.
 internal static class WireGuards
@@ -70,6 +70,7 @@ internal static class WireGuards
     public static bool AssertWellFormedEnvelope(ReadOnlySpan<byte> data)
     {
         int knownTags = 0;
+        uint knownEventField = 0;
         int unknownEventArms = 0;
         int offset = 0;
         int groupDepth = 0;
@@ -112,17 +113,16 @@ internal static class WireGuards
 
             if (groupDepth == 0 && field < (uint)KnownEnvelopeTags.Length && KnownEnvelopeTags[(int)field])
             {
-                // Exactly one event per envelope: a second known tag — a
-                // repeat or a different event — decodes differently across
-                // runtimes (canonical protobuf merges or last-wins where
-                // others overwrite), so it rejects.
-                if (knownTags > 0)
+                // Repeated occurrences of the same event merge. A different
+                // known event kind still violates the envelope's contract.
+                if (knownEventField != 0 && knownEventField != field)
                 {
                     throw new InvalidDataException(
                         "Invalid event: the envelope carries more than one event.");
                 }
 
                 knownTags += 1;
+                knownEventField = field;
             }
 
             switch (wireType)
@@ -280,17 +280,13 @@ internal static class WireGuards
     }
 
     // The nested scans, one message level each, generated from the shared
-    // scan graph. Two malformed shapes reject: a duplicate occurrence of a
-    // singular message-typed field (canonical parsers merge, ts-proto
-    // replaces) and a oneof carrying more than one distinct arm (this
-    // runtime keeps the last, the TypeScript translation sees them all).
-    // google.protobuf.* payloads are counted but not entered: their insides
-    // belong to the runtime library, a recorded scan boundary.
+    // scan graph. A oneof carrying more than one distinct arm in an occurrence
+    // rejects. Repeated message fields merge through the standard parser.
+    // google.protobuf.* payloads remain outside the guard's traversal.
     private static void ScanTextMessageStartEvent(ReadOnlySpan<byte> data)
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -338,20 +334,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 1:
@@ -386,7 +368,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -434,20 +415,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 3 || field == 4)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             default:
@@ -481,7 +448,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -529,20 +495,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 1:
@@ -577,7 +529,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -625,20 +576,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 1:
@@ -673,7 +610,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -721,20 +657,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 1:
@@ -769,7 +691,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -817,20 +738,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 1:
@@ -865,7 +772,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -913,20 +819,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 1:
@@ -961,7 +853,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -1009,20 +900,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1 || field == 2)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 1:
@@ -1057,7 +934,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -1105,20 +981,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 1:
@@ -1156,7 +1018,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -1204,20 +1065,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 4)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             default:
@@ -1251,7 +1098,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -1299,20 +1145,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 1:
@@ -1350,7 +1182,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -1398,20 +1229,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 9 || field == 13)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 5:
@@ -1449,7 +1266,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -1497,20 +1313,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 3 || field == 4)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             default:
@@ -1544,7 +1346,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
         uint seenArm = 0;
 
         while (offset < data.Length)
@@ -1593,20 +1394,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1 || field == 2 || field == 3 || field == 4 || field == 5)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
 
                         if (field == 1 || field == 2 || field == 3 || field == 4 || field == 5)
                         {
@@ -1661,7 +1448,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -1709,20 +1495,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1 || field == 2)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 1:
@@ -1757,7 +1529,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
         uint seenArm = 0;
 
         while (offset < data.Length)
@@ -1809,20 +1580,6 @@ internal static class WireGuards
 
                         if (field == 1 || field == 2)
                         {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
-
-                        if (field == 1 || field == 2)
-                        {
                             if (seenArm != 0 && seenArm != field)
                             {
                                 throw new InvalidDataException(
@@ -1864,7 +1621,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -1912,20 +1668,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1 || field == 2)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 1:
@@ -1960,7 +1702,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -2008,20 +1749,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1 || field == 2)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 1:
@@ -2056,7 +1783,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -2104,20 +1830,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1 || field == 2)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 1:
@@ -2152,7 +1864,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -2200,20 +1911,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1 || field == 2)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 1:
@@ -2248,7 +1945,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -2296,20 +1992,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1 || field == 3)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 1:
@@ -2344,7 +2026,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -2392,20 +2073,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1 || field == 5)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 1:
@@ -2443,7 +2110,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -2491,20 +2157,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 4 || field == 8)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 5:
@@ -2545,7 +2197,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -2593,20 +2244,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 3 || field == 4)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             default:
@@ -2640,7 +2277,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -2688,20 +2324,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 3 || field == 4)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             default:
@@ -2735,7 +2357,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -2783,20 +2404,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1 || field == 4)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 1:
@@ -2834,7 +2441,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -2882,20 +2488,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 5 || field == 7)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             default:
@@ -2929,7 +2521,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -2977,20 +2568,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 1:
@@ -3025,7 +2602,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -3073,20 +2649,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 1:
@@ -3121,7 +2683,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -3169,20 +2730,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 1:
@@ -3217,7 +2764,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -3265,20 +2811,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 1:
@@ -3313,7 +2845,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -3361,20 +2892,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 1:
@@ -3409,7 +2926,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -3457,20 +2973,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 1:
@@ -3505,7 +3007,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -3553,20 +3054,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1 || field == 3)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 1:
@@ -3601,7 +3088,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -3649,20 +3135,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 1:
@@ -3697,7 +3169,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -3745,20 +3216,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 1:
@@ -3793,7 +3250,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -3841,20 +3297,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1 || field == 5)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 1:
@@ -3889,7 +3331,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -3937,20 +3378,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 1:
@@ -3988,7 +3415,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -4036,20 +3462,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 1:
@@ -4084,7 +3496,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -4132,20 +3543,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 1:
@@ -4180,7 +3577,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -4228,20 +3624,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 1:
@@ -4276,7 +3658,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -4324,20 +3705,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 1:
@@ -4372,7 +3739,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -4420,20 +3786,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 1:
@@ -4468,7 +3820,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -4516,20 +3867,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 1:
@@ -4564,7 +3901,6 @@ internal static class WireGuards
     {
         int offset = 0;
         int groupDepth = 0;
-        ulong seenSingular = 0;
 
         while (offset < data.Length)
         {
@@ -4612,20 +3948,6 @@ internal static class WireGuards
 
                     if (groupDepth == 0)
                     {
-
-                        if (field == 1)
-                        {
-                            // A duplicate of a singular message-typed field
-                            // merges here and replaces in ts-proto; reject.
-                            ulong bit = 1UL << (int)field;
-                            if ((seenSingular & bit) != 0)
-                            {
-                                throw new InvalidDataException(
-                                    "Invalid event: duplicate singular field.");
-                            }
-
-                            seenSingular |= bit;
-                        }
                         switch (field)
                         {
                             case 1:
