@@ -18,7 +18,6 @@ import {
   MessagesSnapshotEvent,
 } from "@ag-ui/client";
 import { Observable } from "rxjs";
-import { map } from "rxjs/operators";
 
 import {
   A2UIMiddlewareConfig,
@@ -236,26 +235,6 @@ export class A2UIMiddleware extends Middleware {
    * Main middleware run method
    */
   run(input: RunAgentInput, next: AbstractAgent): Observable<BaseEvent> {
-    if (this.config.readOnly) {
-      return this.runNext(
-        {
-          threadId: input.threadId,
-          runId: input.runId,
-          messages: [],
-          tools: [],
-          context: [],
-          state: {},
-          forwardedProps: {},
-        },
-        next,
-      ).pipe(
-        map((event) =>
-          event.type === EventType.MESSAGES_SNAPSHOT
-            ? projectA2UIHistory(event as MessagesSnapshotEvent, this.config)
-            : event,
-        ),
-      );
-    }
     // Capture the frontend-registered catalog id BEFORE injectSchemaContext may
     // replace the frontend schema entry with a server-side one — we want the id
     // of the catalog the renderer actually registered, used as the zero-config
