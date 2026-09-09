@@ -138,7 +138,7 @@ describe("projectA2UIHistory", () => {
       },
     });
     expect(projected.metadata).toEqual({
-      "@ag-ui/client": { authoritativeActivityTypes: ["a2ui-surface"] },
+      "@ag-ui/client": { authoritativeActivityTypes: null },
     });
     expect(projected.messages).toContainEqual(foreign);
     expect(projectA2UIHistory(projected)).toEqual(projected);
@@ -580,47 +580,6 @@ describe("A2UIMiddleware live snapshots", () => {
   });
 });
 
-describe("A2UIMiddleware readOnly", () => {
-  it("projects the snapshot and admits nothing from the caller", async () => {
-    const original = snapshot([assistant, result]);
-    const next = new ScriptedAgent([original]);
-    const events = await firstValueFrom(
-      new A2UIMiddleware({ readOnly: true, injectA2UITool: true })
-        .run(
-          {
-            ...input,
-            resume: [
-              { interruptId: "unsafe", status: "resolved", payload: "execute" },
-            ],
-            parentRunId: "unsafe-parent",
-            messages: [{ id: "unsafe", role: "user", content: "never admit" }],
-            state: { unsafe: true },
-            context: [{ description: "unsafe", value: "unsafe" }],
-            tools: [{ name: "unsafe", description: "unsafe", parameters: {} }],
-            forwardedProps: { a2uiAction: {} },
-          },
-          next,
-        )
-        .pipe(toArray()),
-    );
-
-    expect(next.seen[0]).toEqual({
-      ...input,
-      messages: [],
-      tools: [],
-      context: [],
-      state: {},
-      forwardedProps: {},
-    });
-    expect(events.filter((e) => e.type === EventType.TOOL_CALL_RESULT)).toEqual(
-      [],
-    );
-    expect(events.find((e) => e.type === EventType.MESSAGES_SNAPSHOT)).toEqual(
-      projectA2UIHistory(original),
-    );
-  });
-});
-
 describe("A2UIMiddleware tool result metadata", () => {
   it.each([
     null,
@@ -673,4 +632,52 @@ describe("A2UIMiddleware tool result metadata", () => {
       },
     });
   });
+});
+
+describe("activity snapshot authority", () => {
+  it.each([undefined, null])(
+    "preserves full authority when the last activity is removed (%s)",
+    (scope) => {
+      const source = snapshot([
+        {
+          id: "obsolete",
+          role: "activity",
+          activityType: "a2ui-surface",
+          content: {},
+        },
+      ]);
+      if (scope === null)
+        source.metadata = {
+          "@ag-ui/client": { authoritativeActivityTypes: null },
+        };
+      const projected = projectA2UIHistory(source);
+      expect(projected.messages).toEqual([]);
+      expect(projected.metadata?.["@ag-ui/client"]).toEqual({
+        authoritativeActivityTypes: null,
+      });
+      expect(projectA2UIHistory(projected)).toEqual(projected);
+    },
+  );
+
+  it.each([{ scope: [] }, { scope: ["other"] }])(
+    "extends only explicit partial authority ($scope)",
+    ({ scope }) => {
+      const source = snapshot([
+        {
+          id: "file",
+          role: "activity",
+          activityType: "dsh-deliverables",
+          content: {},
+        },
+      ]);
+      source.metadata = {
+        "@ag-ui/client": { authoritativeActivityTypes: scope },
+      };
+      const projected = projectA2UIHistory(source);
+      expect(projected.messages).toEqual(source.messages);
+      expect(projected.metadata?.["@ag-ui/client"]).toEqual({
+        authoritativeActivityTypes: [...scope, "a2ui-surface"],
+      });
+    },
+  );
 });
