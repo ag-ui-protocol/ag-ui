@@ -31,61 +31,9 @@ describe("buildAguiToolMessage", () => {
     expect(msg.id).toBe("tu-10-result");
   });
 
-  // ── Default behavior (concatenate = false): single-block ──
+  // ── Default behavior (concatenate = true): multi-block ──
 
-  describe("concatenate disabled (default)", () => {
-    it("reads only the first text block", () => {
-      const content = [
-        { type: "text", text: "First" },
-        { type: "text", text: "Second" },
-        { type: "text", text: "Third" },
-      ];
-
-      const msg = buildAguiToolMessage("tu-d1", content);
-
-      // Only block 0 is read; the rest are silently ignored.
-      expect(msg.content).toBe("First");
-    });
-
-    it("handles a single text block unchanged", () => {
-      const content = [{ type: "text", text: "Only block" }];
-
-      const msg = buildAguiToolMessage("tu-d2", content);
-
-      expect(msg.content).toBe("Only block");
-    });
-
-    it("passes non-JSON text through without modification", () => {
-      const content = [{ type: "text", text: "just plain text, not JSON" }];
-
-      const msg = buildAguiToolMessage("tu-d3", content);
-
-      expect(msg.content).toBe("just plain text, not JSON");
-    });
-
-    it("falls back to JSON.stringify when first block is non-text", () => {
-      const content = [
-        { type: "image", source: { type: "base64", data: "abc" } },
-      ];
-
-      const msg = buildAguiToolMessage("tu-d4", content);
-
-      expect(msg.content).toBe(JSON.stringify(content));
-    });
-
-    it("re-serializes JSON text (round-trip behavior)", () => {
-      const jsonText = '{"key": "value",  "extra_spaces":  true}';
-      const content = [{ type: "text", text: jsonText }];
-
-      const msg = buildAguiToolMessage("tu-d5", content);
-
-      expect(msg.content).toBe('{"key":"value","extra_spaces":true}');
-    });
-  });
-
-  // ── Opt-in behavior (concatenate = true): multi-block ──
-
-  describe("concatenate enabled", () => {
+  describe("default (concatenate enabled)", () => {
     it("concatenates all text blocks from a multi-block result", () => {
       const content = [
         { type: "text", text: "Line one" },
@@ -93,7 +41,7 @@ describe("buildAguiToolMessage", () => {
         { type: "text", text: "Line three" },
       ];
 
-      const msg = buildAguiToolMessage("tu-c1", content, true);
+      const msg = buildAguiToolMessage("tu-c1", content);
 
       expect(msg.content).toBe("Line one\nLine two\nLine three");
       expect(msg.role).toBe("tool");
@@ -103,7 +51,7 @@ describe("buildAguiToolMessage", () => {
     it("handles a single text block unchanged", () => {
       const content = [{ type: "text", text: "Only block" }];
 
-      const msg = buildAguiToolMessage("tu-c2", content, true);
+      const msg = buildAguiToolMessage("tu-c2", content);
 
       expect(msg.content).toBe("Only block");
     });
@@ -111,7 +59,7 @@ describe("buildAguiToolMessage", () => {
     it("passes non-JSON text through without modification", () => {
       const content = [{ type: "text", text: "just plain text, not JSON" }];
 
-      const msg = buildAguiToolMessage("tu-c3", content, true);
+      const msg = buildAguiToolMessage("tu-c3", content);
 
       expect(msg.content).toBe("just plain text, not JSON");
     });
@@ -121,7 +69,7 @@ describe("buildAguiToolMessage", () => {
         { type: "image", source: { type: "base64", data: "abc" } },
       ];
 
-      const msg = buildAguiToolMessage("tu-c4", content, true);
+      const msg = buildAguiToolMessage("tu-c4", content);
 
       expect(msg.content).toBe(JSON.stringify(content));
     });
@@ -133,7 +81,7 @@ describe("buildAguiToolMessage", () => {
         { type: "text", text: "Second" },
       ];
 
-      const msg = buildAguiToolMessage("tu-c5", content, true);
+      const msg = buildAguiToolMessage("tu-c5", content);
 
       // Mixed content is serialized losslessly so non-text blocks survive
       expect(msg.content).toBe(JSON.stringify(content));
@@ -145,7 +93,7 @@ describe("buildAguiToolMessage", () => {
         { type: "text", text: "Caption" },
       ];
 
-      const msg = buildAguiToolMessage("tu-c6", content, true);
+      const msg = buildAguiToolMessage("tu-c6", content);
 
       const parsed = JSON.parse(msg.content as string);
       expect(parsed).toHaveLength(2);
@@ -159,7 +107,59 @@ describe("buildAguiToolMessage", () => {
       const jsonText = '{"key": "value",  "extra_spaces":  true}';
       const content = [{ type: "text", text: jsonText }];
 
-      const msg = buildAguiToolMessage("tu-c7", content, true);
+      const msg = buildAguiToolMessage("tu-c7", content);
+
+      expect(msg.content).toBe('{"key":"value","extra_spaces":true}');
+    });
+  });
+
+  // ── Opt-out behavior (concatenate = false): legacy single-block ──
+
+  describe("concatenate disabled (opt-out)", () => {
+    it("reads only the first text block", () => {
+      const content = [
+        { type: "text", text: "First" },
+        { type: "text", text: "Second" },
+        { type: "text", text: "Third" },
+      ];
+
+      const msg = buildAguiToolMessage("tu-d1", content, false);
+
+      // Only block 0 is read; the rest are silently ignored.
+      expect(msg.content).toBe("First");
+    });
+
+    it("handles a single text block unchanged", () => {
+      const content = [{ type: "text", text: "Only block" }];
+
+      const msg = buildAguiToolMessage("tu-d2", content, false);
+
+      expect(msg.content).toBe("Only block");
+    });
+
+    it("passes non-JSON text through without modification", () => {
+      const content = [{ type: "text", text: "just plain text, not JSON" }];
+
+      const msg = buildAguiToolMessage("tu-d3", content, false);
+
+      expect(msg.content).toBe("just plain text, not JSON");
+    });
+
+    it("falls back to JSON.stringify when first block is non-text", () => {
+      const content = [
+        { type: "image", source: { type: "base64", data: "abc" } },
+      ];
+
+      const msg = buildAguiToolMessage("tu-d4", content, false);
+
+      expect(msg.content).toBe(JSON.stringify(content));
+    });
+
+    it("re-serializes JSON text (round-trip behavior)", () => {
+      const jsonText = '{"key": "value",  "extra_spaces":  true}';
+      const content = [{ type: "text", text: jsonText }];
+
+      const msg = buildAguiToolMessage("tu-d5", content, false);
 
       expect(msg.content).toBe('{"key":"value","extra_spaces":true}');
     });

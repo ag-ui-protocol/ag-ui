@@ -402,16 +402,16 @@ export function buildAguiAssistantMessage(
  * Extracts the text content from the SDK's content block format and
  * normalises it into a simple string for the AG-UI message.
  *
- * @param concatenate When true, iterate all content blocks: text blocks are
- *   joined with `\n`, and mixed content (text + non-text) falls back to
- *   `JSON.stringify(content)` so non-text blocks are not dropped. When false
- *   (the default), only the first block is read -- matching the original
- *   single-block behavior.
+ * @param concatenate When true (the default), iterate all content blocks:
+ *   text blocks are joined with `\n`, and mixed content (text + non-text)
+ *   falls back to `JSON.stringify(content)` so non-text blocks are not
+ *   dropped. When false, only the first block is read -- matching the
+ *   legacy single-block behavior.
  */
 export function buildAguiToolMessage(
   toolUseId: string,
   content: unknown,
-  concatenate = false,
+  concatenate = true,
 ): Message {
   let resultStr = "";
   try {

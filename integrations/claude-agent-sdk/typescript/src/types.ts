@@ -63,7 +63,8 @@ export type ClaudeAgentAdapterConfig = AgentConfig & Options & {
    * When true, tool-result content blocks are concatenated instead of
    * returning only the first block. Text blocks are joined with `\n`;
    * mixed content (text + non-text) is serialized as JSON to avoid
-   * silently dropping non-text blocks. Default: false (single-block).
+   * silently dropping non-text blocks. Default: true (concatenate).
+   * Set to false to restore the legacy single-block (`content[0]`) behavior.
    */
   concatenateToolResultBlocks?: boolean;
 };
