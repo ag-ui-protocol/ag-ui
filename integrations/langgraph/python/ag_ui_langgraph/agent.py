@@ -1894,6 +1894,23 @@ class LangGraphAgent:
                 ):
                     output = event["data"]["output"]
                     current_graph_state.update(output)
+                    # dict.update overwrites reducer channels
+                    # (Annotated[list, operator.add] fan-out). Refresh the
+                    # keys this node wrote from aget_state, which applies
+                    # checkpoint writes through the declared reducers (#2628).
+                    try:
+                        checkpoint = await self.graph.aget_state(config)
+                        values = getattr(checkpoint, "values", None)
+                        if isinstance(values, dict):
+                            for key in output:
+                                if key in values:
+                                    current_graph_state[key] = values[key]
+                    except Exception:
+                        logger.debug(
+                            "Reducer-aware state refresh via aget_state failed; "
+                            "keeping dict.update merge",
+                            exc_info=True,
+                        )
                     exiting_node = self.active_run["node_name"] == current_node_name
                     # If output contains any key outside the protocol-internal set
                     # ("messages", "tools", "ag-ui"), the local current_graph_state
