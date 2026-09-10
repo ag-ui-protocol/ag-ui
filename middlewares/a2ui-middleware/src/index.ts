@@ -257,10 +257,11 @@ export class A2UIMiddleware extends Middleware {
       return input;
     }
 
-    // Generate IDs for the synthetic messages
-    const assistantMessageId = randomUUID();
-    const toolCallId = randomUUID();
-    const toolMessageId = randomUUID();
+    // A retry of the same run must carry the same action message identities.
+    // A new click starts a new run, even when its payload is unchanged.
+    const assistantMessageId = `a2ui-action-assistant-${input.runId}`;
+    const toolCallId = `a2ui-action-call-${input.runId}`;
+    const toolMessageId = `a2ui-action-result-${input.runId}`;
 
     // Create synthetic assistant message with tool call
     const syntheticAssistantMessage: AssistantMessage = {

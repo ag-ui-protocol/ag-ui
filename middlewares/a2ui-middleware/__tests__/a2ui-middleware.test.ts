@@ -189,6 +189,42 @@ describe("A2UIMiddleware", () => {
       expect(toolMsg.content).toContain("restaurant-card");
     });
 
+    it("keeps action identities on retry and gives an identical new click new identities", async () => {
+      const agent = new MockAgent([
+        { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
+        { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
+      ]);
+      const input = createRunAgentInput({
+        runId: "click-1",
+        forwardedProps: {
+          a2uiAction: {
+            userAction: {
+              name: "approve",
+              surfaceId: "form",
+              sourceComponentId: "submit",
+              context: {},
+            },
+          },
+        },
+      });
+      await collectEvents(new A2UIMiddleware().run(input, agent));
+      await collectEvents(new A2UIMiddleware().run(input, agent));
+      await collectEvents(
+        new A2UIMiddleware().run({ ...input, runId: "click-2" }, agent),
+      );
+      expect(agent.runCalls[1].messages).toEqual(agent.runCalls[0].messages);
+      const firstIds = agent.runCalls[0].messages.map((message) => message.id);
+      expect(
+        agent.runCalls[2].messages.every(
+          (message) => !firstIds.includes(message.id),
+        ),
+      ).toBe(true);
+      const first = agent.runCalls[0].messages[0] as AssistantMessage;
+      const next = agent.runCalls[2].messages[0] as AssistantMessage;
+      expect(next.toolCalls![0].id).not.toBe(first.toolCalls![0].id);
+      expect(input.messages).toEqual([]);
+    });
+
     it("should not modify messages when no user action present", async () => {
       const middleware = new A2UIMiddleware();
       const mockAgent = new MockAgent([
