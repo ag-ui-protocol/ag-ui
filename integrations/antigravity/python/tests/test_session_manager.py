@@ -3,6 +3,7 @@
 import asyncio
 
 import pytest
+from ag_ui.core import Tool as AGUITool
 
 from ag_ui_antigravity.session_manager import (
     SessionLimitExceeded,
@@ -42,6 +43,18 @@ def reset_agents():
 
 def factory(bridge: UIBridge, previous_conversation_id):
     return FakeAgent(previous_conversation_id)
+
+
+def tools(*names, description="", parameters=None):
+    """AG-UI tool definitions for a signature; the default contract is name-only."""
+    return [
+        AGUITool(
+            name=name,
+            description=description,
+            parameters=parameters or {"type": "object", "properties": {}},
+        )
+        for name in names
+    ]
 
 
 class TestResetStream:
@@ -94,7 +107,7 @@ class TestResetStream:
 class TestReuse:
     async def test_same_thread_and_tools_reuses_the_live_session(self):
         manager = SessionManager()
-        sig = tool_signature(["a"])
+        sig = tool_signature(tools("a"))
         first = await manager.get_or_create("t1", signature=sig, factory=factory)
         second = await manager.get_or_create("t1", signature=sig, factory=factory)
         assert first is second
@@ -108,19 +121,39 @@ class TestReuse:
         assert a is not b
 
     async def test_tool_signature_is_order_insensitive(self):
-        assert tool_signature(["a", "b"]) == tool_signature(["b", "a"])
+        assert tool_signature(tools("a", "b")) == tool_signature(tools("b", "a"))
+
+    async def test_tool_signature_covers_the_schema_not_only_the_name(self):
+        """Antigravity fixes the tool configuration when it connects, so a
+        session is only reusable while the tools are identical -- a schema
+        change under an unchanged name must not reuse the old contract."""
+        loose = tools("a", parameters={"type": "object", "properties": {}})
+        strict = tools(
+            "a",
+            parameters={
+                "type": "object",
+                "properties": {"x": {"type": "string"}},
+                "required": ["x"],
+            },
+        )
+        assert tool_signature(loose) != tool_signature(strict)
+
+    async def test_tool_signature_covers_the_description(self):
+        assert tool_signature(tools("a", description="one")) != tool_signature(
+            tools("a", description="two")
+        )
 
 
 class TestColdResume:
     async def test_changed_tools_rebuild_and_carry_the_conversation_id(self):
         manager = SessionManager()
         first = await manager.get_or_create(
-            "t1", signature=tool_signature(["a"]), factory=factory
+            "t1", signature=tool_signature(tools("a")), factory=factory
         )
         original_id = first.conversation_id
 
         second = await manager.get_or_create(
-            "t1", signature=tool_signature(["a", "b"]), factory=factory
+            "t1", signature=tool_signature(tools("a", "b")), factory=factory
         )
         assert second is not first
         assert first.agent.exited is True
@@ -133,12 +166,12 @@ class TestHotResume:
         """A suspended coroutine cannot be serialized, so never rebuild it."""
         manager = SessionManager()
         session = await manager.get_or_create(
-            "t1", signature=tool_signature(["a"]), factory=factory
+            "t1", signature=tool_signature(tools("a")), factory=factory
         )
         parked = await _park(session.bridge)
 
         same = await manager.get_or_create(
-            "t1", signature=tool_signature(["different"]), factory=factory
+            "t1", signature=tool_signature(tools("different")), factory=factory
         )
         assert same is session
         assert session.agent.exited is False
@@ -249,10 +282,10 @@ class TestTeardown:
             return agent
 
         await manager.get_or_create(
-            "t1", signature=tool_signature(["a"]), factory=no_id_factory
+            "t1", signature=tool_signature(tools("a")), factory=no_id_factory
         )
         second = await manager.get_or_create(
-            "t1", signature=tool_signature(["b"]), factory=no_id_factory
+            "t1", signature=tool_signature(tools("b")), factory=no_id_factory
         )
         assert second.agent.resumed_from is None
 
@@ -442,19 +475,19 @@ class TestRebuildSafety:
     async def test_a_tool_change_defers_while_a_run_is_in_flight(self):
         manager = SessionManager()
         session = await manager.get_or_create(
-            "t1", signature=tool_signature(["a"]), factory=factory
+            "t1", signature=tool_signature(tools("a")), factory=factory
         )
 
         async with session.lock:
             same = await manager.get_or_create(
-                "t1", signature=tool_signature(["a", "b"]), factory=factory
+                "t1", signature=tool_signature(tools("a", "b")), factory=factory
             )
         assert same is session, "the in-flight run must not be torn down"
         assert session.agent.exited is False
 
         # Once the run finishes, the next one rebuilds as normal.
         rebuilt = await manager.get_or_create(
-            "t1", signature=tool_signature(["a", "b"]), factory=factory
+            "t1", signature=tool_signature(tools("a", "b")), factory=factory
         )
         assert rebuilt is not session
         assert session.agent.exited is True
@@ -464,12 +497,12 @@ class TestRebuildSafety:
         prompts are already in its history and must not be re-sent."""
         manager = SessionManager()
         first = await manager.get_or_create(
-            "t1", signature=tool_signature(["a"]), factory=factory
+            "t1", signature=tool_signature(tools("a")), factory=factory
         )
         first.forwarded_prompts.update({"m1", "m2"})
 
         second = await manager.get_or_create(
-            "t1", signature=tool_signature(["a", "b"]), factory=factory
+            "t1", signature=tool_signature(tools("a", "b")), factory=factory
         )
         assert second is not first
         assert second.forwarded_prompts == {"m1", "m2"}
@@ -527,7 +560,7 @@ class TestAThreadThatComesBackLater:
     async def test_a_swept_thread_resumes_its_conversation(self):
         manager = SessionManager(session_timeout_seconds=0)
         first = await manager.get_or_create(
-            "t1", signature=tool_signature(["a"]), factory=factory
+            "t1", signature=tool_signature(tools("a")), factory=factory
         )
         original_id = first.agent.conversation_id
         first.forwarded_prompts.update({"m1", "m2"})
@@ -537,7 +570,7 @@ class TestAThreadThatComesBackLater:
         assert manager.get("t1") is None
 
         revived = await manager.get_or_create(
-            "t1", signature=tool_signature(["a"]), factory=factory
+            "t1", signature=tool_signature(tools("a")), factory=factory
         )
         assert revived.agent.resumed_from == original_id, (
             "the returning thread started a new conversation instead of "
@@ -550,20 +583,20 @@ class TestAThreadThatComesBackLater:
     async def test_an_explicit_close_is_also_remembered(self):
         manager = SessionManager()
         first = await manager.get_or_create(
-            "t1", signature=tool_signature(["a"]), factory=factory
+            "t1", signature=tool_signature(tools("a")), factory=factory
         )
         original_id = first.agent.conversation_id
         await manager.close("t1")
 
         revived = await manager.get_or_create(
-            "t1", signature=tool_signature(["a"]), factory=factory
+            "t1", signature=tool_signature(tools("a")), factory=factory
         )
         assert revived.agent.resumed_from == original_id
 
     async def test_an_unknown_thread_starts_fresh(self):
         manager = SessionManager()
         session = await manager.get_or_create(
-            "never-seen", signature=tool_signature(["a"]), factory=factory
+            "never-seen", signature=tool_signature(tools("a")), factory=factory
         )
         assert session.agent.resumed_from is None
         assert session.forwarded_prompts == set()

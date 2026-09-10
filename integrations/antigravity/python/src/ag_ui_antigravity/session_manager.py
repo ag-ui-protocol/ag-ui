@@ -30,8 +30,9 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, Iterable, Optional
 
+from ag_ui.core import Tool as AGUITool
 from google.antigravity import Agent
 from google.antigravity import types as ag_types
 
@@ -101,6 +102,27 @@ class AntigravitySession:
                 "The Antigravity session was closed while the run was in progress."
             )
 
+    def stale_failure(self) -> Optional[BaseException]:
+        """Returns a harness failure that landed while the run was parked.
+
+        Reads the in-flight ``__anext__()`` without retiring it, so a run that
+        resumes a parked turn can check for a dead conversation *before* it
+        sends anything more onto it. Left unretrieved the failure becomes a
+        bare "Task exception was never retrieved" at GC, with the real error
+        lost; ``reset_stream`` is what actually retires it.
+        """
+        pending = self.pending_step
+        if pending is None or not pending.done() or pending.cancelled():
+            return None
+        raised = pending.exception()
+        # StopAsyncIteration is how the iterator reports a turn that simply
+        # ended -- routine when the harness backgrounds a slow tool and goes
+        # idle while we are parked. Treating it as a failure would abort the
+        # user's next message.
+        if isinstance(raised, StopAsyncIteration):
+            return None
+        return raised
+
     async def reset_stream(self) -> Optional[BaseException]:
         """Retires all per-turn state, returning any unobserved harness failure.
 
@@ -109,26 +131,14 @@ class AntigravitySession:
         turn ends normally, when it errors, and when a new user prompt abandons
         a parked one -- so it is not only an end-of-turn hook.
         """
+        failure = self.stale_failure()
         iterator, self.step_iter = self.step_iter, None
         pending, self.pending_step = self.pending_step, None
         self.translator = None
         self.bridge.reset_turn()
 
-        failure: Optional[BaseException] = None
         if pending is not None:
-            if pending.done():
-                # A harness failure that landed while the run was parked. Left
-                # unretrieved it becomes a bare "Task exception was never
-                # retrieved" at GC, with the real error lost.
-                if not pending.cancelled():
-                    raised = pending.exception()
-                    # StopAsyncIteration is how the iterator reports a turn
-                    # that simply ended -- routine when the harness backgrounds
-                    # a slow tool and goes idle while we are parked. Treating it
-                    # as a failure would abort the user's next message.
-                    if not isinstance(raised, StopAsyncIteration):
-                        failure = raised
-            else:
+            if not pending.done():
                 pending.cancel()
                 # Let the cancellation actually run: aclose() on a generator
                 # whose __anext__ is still suspended raises "already running",
@@ -156,9 +166,28 @@ class AntigravitySession:
         return self.bridge.has_pending
 
 
-def tool_signature(tool_names: List[str]) -> str:
-    """Stable fingerprint of the client's tool set."""
-    payload = json.dumps(sorted(tool_names))
+def tool_signature(tools: Iterable[AGUITool]) -> str:
+    """Stable fingerprint of the client's tool contract.
+
+    Covers each tool's name, description and parameter schema, not the name
+    alone. Antigravity fixes its tool configuration when the connection is
+    made, so a session is only reusable while the client's tools are
+    *identical*: hashing names let a tool whose schema or description changed
+    under the same name keep talking to a session built for the old contract.
+    """
+    entries = sorted(
+        json.dumps(
+            {
+                "name": tool.name,
+                "description": tool.description or "",
+                "parameters": tool.parameters,
+            },
+            sort_keys=True,
+            default=str,
+        )
+        for tool in tools
+    )
+    payload = json.dumps(entries)
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 

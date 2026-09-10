@@ -142,10 +142,14 @@ Two wire shapes are accepted, because clients disagree:
   id, because it tracks a single outstanding interrupt per thread.
 
 For the second shape the answer is matched to an explicit id in the payload if
-there is one, otherwise to the single parked request. With several parked and
-no id it is refused and logged: resolving the wrong request is unrecoverable,
-a warning is not. Supporting only `resume` left a channel-driven approval
-parked forever, which looks like a bot that has silently gone quiet.
+there is one, otherwise to the single parked *interrupt*. With several parked
+and no id it is refused and logged: resolving the wrong request is
+unrecoverable, a warning is not. A parked frontend tool never counts, and an
+interrupt answer can never resolve one: its result is the `ToolMessage` that
+carries its `tool_call_id`, and letting a bare command stand in for it would
+hand the model the user's reply as the tool's return value. Supporting only
+`resume` left a channel-driven approval parked forever, which looks like a bot
+that has silently gone quiet.
 
 ### One turn, several runs
 
@@ -216,8 +220,10 @@ chat demos in `examples/` enable nothing else.
 
   A session occupies memory for its whole life, not only while parked — from
   the first message on a `thread_id` until it times out, is evicted at
-  `max_sessions`, or is rebuilt because the client's tool set changed. Parking
-  does not allocate anything; it extends how long the allocation is held.
+  `max_sessions`, or is rebuilt because the client's tool contract changed —
+  a tool's name, description *or* parameter schema, since Antigravity fixes
+  the tool configuration when it connects. Parking does not allocate anything;
+  it extends how long the allocation is held.
 * **Cold resume** — a recycled session with nothing parked is rebuilt from
   `conversation_id` + `session_continuation_mode` + `save_dir`. This covers a
   thread that comes back **after** its session was swept, not only one rebuilt

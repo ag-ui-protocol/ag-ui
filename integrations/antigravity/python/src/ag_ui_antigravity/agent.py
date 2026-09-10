@@ -402,7 +402,7 @@ class AntigravityAgent:
         session: Optional[Any] = None
         try:
             self._sessions.start()
-            signature = tool_signature([t.name for t in (input_data.tools or [])])
+            signature = tool_signature(list(input_data.tools or []))
             session = await self._sessions.get_or_create(
                 thread_id,
                 signature=signature,
@@ -499,14 +499,7 @@ class AntigravityAgent:
             stale_failure = await session.reset_stream()
             session.raise_if_closed()
             if stale_failure is not None:
-                yield RunErrorEvent(
-                    type="RUN_ERROR",
-                    message=(
-                        f"The Antigravity session failed while awaiting your "
-                        f"reply: {type(stale_failure).__name__}: {stale_failure}"
-                    ),
-                    code="AGENT_ERROR",
-                )
+                yield _stale_failure_error(stale_failure)
                 return
             session.raise_if_closed()
             await session.conversation.send(prompt)
@@ -516,7 +509,20 @@ class AntigravityAgent:
             session.forwarded_prompts.add(prompt_id)
         elif prompt is not None:
             # Resumption that also carries new user text: the parked coroutine
-            # was already resolved above, so just add the message to the turn.
+            # was already resolved above, so the turn's stream is kept and the
+            # message is added to it. Kept, not reset -- but a harness failure
+            # that landed while parked still has to be checked for first. Sent
+            # blind, the text went onto a dead conversation and was recorded as
+            # forwarded, so the run errored *and* the client's retry found
+            # nothing left to send.
+            stale_failure = session.stale_failure()
+            if stale_failure is not None:
+                # The harness is gone, so anything still parked on it can never
+                # be answered; release it or `is_parked` pins the session.
+                bridge.abandon_pending()
+                await session.reset_stream()
+                yield _stale_failure_error(stale_failure)
+                return
             session.raise_if_closed()
             await session.conversation.send(prompt)
             session.forwarded_prompts.add(prompt_id)
@@ -765,7 +771,10 @@ class AntigravityAgent:
         Correlation, in order:
 
         * an explicit id in the payload, for a client that sends one;
-        * otherwise the single parked request, which is the channels case;
+        * otherwise the single parked *interrupt*, which is the channels case.
+          A parked frontend tool does not count: its answer is a ToolMessage,
+          and a command standing in for it would hand the model the user's
+          reply as the tool's return value;
         * otherwise nothing -- guessing between several would resolve the wrong
           one, and a warning is recoverable where a wrong answer is not.
         """
@@ -789,20 +798,20 @@ class AntigravityAgent:
             cancelled = command.get("status") == "cancelled"
 
         if interrupt_id is None:
-            pending = bridge.pending_ids()
+            pending = bridge.pending_interrupt_ids()
             if len(pending) == 1:
                 interrupt_id = next(iter(pending))
             elif not pending:
                 logger.warning(
-                    "forwardedProps.command arrived on thread %s with nothing "
-                    "parked; ignoring it.",
+                    "forwardedProps.command arrived on thread %s with no "
+                    "interrupt parked; ignoring it.",
                     input_data.thread_id,
                 )
                 return False
             else:
                 logger.warning(
                     "forwardedProps.command arrived on thread %s with %d parked "
-                    "requests and no interrupt id, so it cannot be matched to "
+                    "interrupts and no interrupt id, so it cannot be matched to "
                     "one; ignoring it.",
                     input_data.thread_id,
                     len(pending),
@@ -841,6 +850,18 @@ class AntigravityAgent:
             if text:
                 return (text, message_id)
         return (None, None)
+
+
+def _stale_failure_error(failure: BaseException) -> RunErrorEvent:
+    """The terminal event for a harness failure that landed while parked."""
+    return RunErrorEvent(
+        type="RUN_ERROR",
+        message=(
+            f"The Antigravity session failed while awaiting your reply: "
+            f"{type(failure).__name__}: {failure}"
+        ),
+        code="AGENT_ERROR",
+    )
 
 
 def _message_text(content: Any) -> str:

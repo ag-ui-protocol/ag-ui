@@ -66,6 +66,10 @@ logger = logging.getLogger(__name__)
 KIND_FRONTEND_TOOL = "frontend_tool"
 KIND_QUESTION = "question"
 KIND_APPROVAL = "approval"
+# The kinds surfaced to the client as an AG-UI interrupt, and so the only ones
+# an interrupt answer may resolve. A frontend tool shares the registry but is
+# answered by a ToolMessage carrying its tool_call_id.
+_INTERRUPT_KINDS = frozenset({KIND_QUESTION, KIND_APPROVAL})
 
 # Handed to a parked tool/hook when the user moves on instead of answering.
 # Distinct from _CANCELLED: the user did not decline, they changed direction,
@@ -172,9 +176,14 @@ class UIBridge:
         return self._resolve(pending_id, value)
 
     def resolve_interrupt(self, interrupt_id: str, payload: Any, cancelled: bool) -> bool:
-        """Resolves a parked question/approval from a ``ResumeEntry``."""
+        """Resolves a parked question/approval from a ``ResumeEntry``.
+
+        The kind is enforced, not only the id: a frontend tool's pending id is
+        its tool_call_id, and resolving it here would make an interrupt answer
+        the tool's return value. Its own channel is ``resolve_tool_call``.
+        """
         pending = self._pending.get(interrupt_id)
-        if pending is None:
+        if pending is None or pending.kind not in _INTERRUPT_KINDS:
             return False
         if cancelled:
             return self._resolve(pending.id, _CANCELLED)
@@ -190,6 +199,14 @@ class UIBridge:
     def pending_ids(self) -> set:
         """Ids of requests still awaiting a client answer."""
         return {p.id for p in self._pending.values() if not p.future.done()}
+
+    def pending_interrupt_ids(self) -> set:
+        """Ids of parked *interrupts* -- questions and approvals, not tools."""
+        return {
+            p.id
+            for p in self._pending.values()
+            if p.kind in _INTERRUPT_KINDS and not p.future.done()
+        }
 
     def abandon_pending(self) -> int:
         """Releases every parked request because the user moved on.
@@ -400,8 +417,6 @@ class UIBridge:
                 bridge._turn_results.pop(tool.name, None)
                 raise
             logger.debug("Frontend tool %s resumed", tool.name)
-            if result is _CANCELLED:
-                result = "The user cancelled this tool call."
             if claim_future is not None and not claim_future.done():
                 claim_future.set_result(result)
             return result

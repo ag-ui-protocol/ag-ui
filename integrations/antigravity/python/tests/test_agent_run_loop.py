@@ -1068,6 +1068,50 @@ class TestFailureWhileParked:
         events = await drain(agent._run_locked(session, run_input()))
         assert [e.type for e in events][-1] == "RUN_FINISHED"
 
+    async def test_a_stale_failure_does_not_swallow_a_prompt_sent_with_a_resume(self):
+        """One POST can carry both the answer to a parked question and new
+        user text. If the harness died while parked, the resumed path used to
+        send the text onto the dead conversation and record it as forwarded,
+        so the run errored *and* the client's retry found nothing left to send.
+        """
+        agent = AntigravityAgent()
+        bridge = UIBridge()
+        hook = bridge.build_interaction_hook()
+        spec = ag_types.AskQuestionInteractionSpec(
+            questions=[ag_types.AskQuestionEntry(question="Which?", options=[])]
+        )
+        question = asyncio.create_task(hook.run(None, spec))
+        await asyncio.sleep(0.05)
+        interrupt_id = bridge.pending_interrupts()[0].id
+
+        conversation = FakeConversation(
+            [[text_step("ignored", done=True)], [text_step("answer", done=True)]]
+        )
+        session = make_session(conversation, bridge, forwarded={"m1"})
+        failed: asyncio.Future = asyncio.get_running_loop().create_future()
+        failed.set_exception(ag_types.AntigravityExecutionError("harness died"))
+        session.pending_step = failed
+
+        payload = run_input(
+            messages=[
+                UserMessage(id="m1", role="user", content="hi"),
+                UserMessage(id="m2", role="user", content="next"),
+            ],
+            resume=[
+                ResumeEntry(interrupt_id=interrupt_id, payload="purple", status="resolved")
+            ],
+        )
+        first = await drain(agent._run_locked(session, payload))
+        assert first[-1].type == "RUN_ERROR"
+        assert "harness died" in first[-1].message
+        assert conversation.sent == [], "the prompt went onto a dead conversation"
+        assert "m2" not in session.forwarded_prompts, "the prompt was recorded as sent"
+        await asyncio.wait_for(question, 1)
+
+        second = await drain(agent._run_locked(session, payload))
+        assert conversation.sent == ["next"], "the retry was swallowed"
+        assert second[-1].type == "RUN_FINISHED"
+
 
 class TestEndOfTurnWhileParked:
     """The harness backgrounds a slow custom tool and goes idle, so the
@@ -1649,3 +1693,109 @@ class TestChannelsStyleResume:
         )
         assert not task.done(), "a prop that is not `command` must not resolve"
         task.cancel()
+
+    async def test_a_bare_command_does_not_resolve_a_parked_frontend_tool(self):
+        """A command answers an interrupt. A frontend tool is not one: its
+        result arrives as a ToolMessage, and letting the command stand in for
+        it would hand the model a user's reply as the tool's return value."""
+        agent = AntigravityAgent()
+        bridge, tool_def, tool = _frontend_tool_bridge()
+        task = asyncio.create_task(tool())
+        await asyncio.sleep(0.05)
+        bridge.drain()
+
+        conversation = FakeConversation([[text_step("ok", done=True)]])
+        session = make_session(conversation, bridge, forwarded={"m1"})
+        agent._sessions.get_or_create = _fixed_session(session)
+        events = await drain(
+            agent.run(
+                run_input(tools=[tool_def], forwarded_props={"command": "purple"}),
+            )
+        )
+        assert not task.done(), "the command was taken as the tool's result"
+        # Nothing to answer and nothing new to say: an ordinary, empty run.
+        assert [e.type for e in events] == ["RUN_STARTED", "RUN_FINISHED"]
+        task.cancel()
+
+    async def test_a_bare_command_picks_the_interrupt_beside_a_parked_frontend_tool(
+        self,
+    ):
+        """Only interrupts count toward "the single parked request"."""
+        agent = AntigravityAgent()
+        bridge, tool_def, tool = _frontend_tool_bridge()
+        tool_task = asyncio.create_task(tool())
+        question = await self._park_a_question(bridge)
+        bridge.drain()
+        assert len(bridge.pending_ids()) == 2
+
+        conversation = FakeConversation([[text_step("answered", done=True)]])
+        session = make_session(conversation, bridge, forwarded={"m1"})
+        await drain(
+            agent._run_locked(
+                session,
+                run_input(tools=[tool_def], forwarded_props={"command": "purple"}),
+            )
+        )
+        result = await asyncio.wait_for(question, 1)
+        assert result.responses[0].freeform_response == "purple"
+        assert not tool_task.done()
+        tool_task.cancel()
+
+
+class TestToolContractSignature:
+    """The session signature must cover the whole tool contract.
+
+    Antigravity fixes its tool configuration when the connection is made, so a
+    session is only reusable while the client's tools are *identical*. Hashing
+    names alone let a tool whose schema or description changed -- under the
+    same name -- keep talking to a session built for the old contract.
+    """
+
+    def _tool(self, **overrides):
+        spec = dict(
+            name="set_theme",
+            description="Sets the theme",
+            parameters={"type": "object", "properties": {"theme": {"type": "string"}}},
+        )
+        spec.update(overrides)
+        return AGUITool(**spec)
+
+    async def _signatures_for(self, *tool_lists):
+        agent = AntigravityAgent()
+        seen = []
+        session = make_session(FakeConversation([[text_step("ok", done=True)]] * 3))
+
+        async def capture(thread_id, *, signature, factory, bridge_factory=None):
+            seen.append(signature)
+            return session
+
+        agent._sessions.get_or_create = capture
+        for tools in tool_lists:
+            await drain(agent.run(run_input(tools=tools, messages=[])))
+        return seen
+
+    async def test_a_schema_change_under_the_same_name_changes_the_signature(self):
+        before, after = await self._signatures_for(
+            [self._tool()],
+            [
+                self._tool(
+                    parameters={
+                        "type": "object",
+                        "properties": {"theme": {"type": "string", "enum": ["dark"]}},
+                    }
+                )
+            ],
+        )
+        assert before != after
+
+    async def test_a_description_change_under_the_same_name_changes_the_signature(
+        self,
+    ):
+        before, after = await self._signatures_for(
+            [self._tool()], [self._tool(description="Sets the colour theme")]
+        )
+        assert before != after
+
+    async def test_an_identical_tool_set_keeps_the_signature(self):
+        before, after = await self._signatures_for([self._tool()], [self._tool()])
+        assert before == after

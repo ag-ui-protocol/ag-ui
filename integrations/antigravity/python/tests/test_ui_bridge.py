@@ -103,15 +103,20 @@ class TestFrontendTools:
         assert bridge.resolve_tool_call(call_id, "second") is False
         assert await asyncio.wait_for(task, 1) == "first"
 
-    async def test_a_cancelled_tool_call_returns_a_message_for_the_model(self):
+    async def test_an_interrupt_answer_cannot_resolve_a_frontend_tool(self):
+        """A frontend tool is answered by a ToolMessage, never by an interrupt
+        resolution: the pending id alone is not enough, the kind must match."""
         bridge = UIBridge()
         (tool,) = bridge.build_frontend_tools([make_tool()])
         task = asyncio.create_task(tool(theme="dark"))
         await asyncio.sleep(0.05)
         call_id = [e for e in bridge.drain() if e.type == "TOOL_CALL_START"][0].tool_call_id
 
-        bridge.resolve_interrupt(call_id, None, cancelled=True)
-        assert await asyncio.wait_for(task, 1) == "The user cancelled this tool call."
+        assert bridge.resolve_interrupt(call_id, "purple", cancelled=False) is False
+        assert bridge.resolve_interrupt(call_id, None, cancelled=True) is False
+        assert not task.done()
+        assert bridge.resolve_tool_call(call_id, "dark") is True
+        assert await asyncio.wait_for(task, 1) == "dark"
 
 
 class TestQuestions:
