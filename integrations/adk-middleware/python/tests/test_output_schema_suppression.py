@@ -292,6 +292,38 @@ class TestCollectOutputSchemaAgentNames:
         result = ADKAgent._collect_output_schema_agent_names(workflow)
         assert result == {"classifier"}
 
+    def test_node_tool_workflow_with_output_schema(self):
+        """A Workflow attached as a NodeTool is walked for output_schema (#2674)."""
+        from google.adk.agents import LlmAgent, BaseAgent
+        from ag_ui_adk.adk_agent import ADKAgent
+
+        classifier = MagicMock(spec=LlmAgent)
+        classifier.name = "hs_classifier"
+        classifier.output_schema = str
+        classifier.sub_agents = []
+        classifier.tools = []
+
+        class NodeTool:
+            def __init__(self, name, node):
+                self.name = name
+                self.node = node
+
+        workflow = MagicMock(spec=BaseAgent)
+        workflow.name = "hs_classifier_workflow"
+        workflow.sub_agents = [classifier]
+        workflow.graph = None
+        workflow.tools = []
+
+        root = MagicMock(spec=LlmAgent)
+        root.name = "coordinator"
+        root.output_schema = None
+        root.sub_agents = []
+        root.tools = [NodeTool("hs_classifier_workflow", workflow)]
+        root.graph = None
+
+        result = ADKAgent._collect_output_schema_agent_names(root)
+        assert result == {"hs_classifier"}
+
     def test_deeply_nested_agents(self):
         """output_schema agents are found at arbitrary depth."""
         from google.adk.agents import LlmAgent, BaseAgent

@@ -469,12 +469,15 @@ class ADKAgent:
         We detect the Workflow class by attribute lookup so this stays
         compatible with ADK 1.x (where the class doesn't exist) without
         importing it at module top level. The import is wrapped in
-        try/except so ADK 1.x continues to load.
+        try/except so ADK 1.x continues to load. The walk also follows
+        ``tools`` so a Workflow attached as a NodeTool on an LlmAgent
+        root is treated the same as a Workflow root (ag-ui#2674).
 
         Returns:
-            True iff the root agent (or App.root_agent) is an instance of
-            ``google.adk.workflow.Workflow``. False on ADK 1.x or any
-            non-Workflow root.
+            True iff a ``Workflow`` is reachable from the root: the root
+            itself, a ``sub_agents`` / ``graph.nodes`` descendant, or an
+            agent wrapped as a NodeTool on ``tools`` (ADK >= 2.8). False
+            on ADK 1.x or any tree with no Workflow.
         """
         try:
             from google.adk.workflow import Workflow  # type: ignore[import-not-found]
@@ -487,7 +490,108 @@ class ADKAgent:
             root = getattr(self._app, 'root_agent', None)
         if root is None:
             return False
-        return isinstance(root, Workflow)
+        return ADKAgent._agent_tree_contains_workflow(root)
+
+    @staticmethod
+    def _unwrap_tool_agent(tool: Any) -> Any:
+        """Return the agent/node a tool wraps, or None.
+
+        ADK >= 2.8 ``NodeTool`` stores the wrapped node on ``.node``.
+        Apps also pass a ``Workflow`` (or other ``BaseAgent``) directly
+        in ``LlmAgent.tools``; ADK auto-wraps that at runtime, but the
+        object we walk may still be the bare agent.
+        """
+        if tool is None:
+            return None
+        if type(tool).__name__ == "NodeTool":
+            return getattr(tool, "node", None) or getattr(tool, "agent", None)
+        try:
+            from google.adk.workflow import Workflow  # type: ignore[import-not-found]
+        except ImportError:
+            Workflow = None
+        if Workflow is not None and isinstance(tool, Workflow):
+            return tool
+        if isinstance(tool, BaseAgent):
+            return tool
+        return None
+
+    @staticmethod
+    def _is_node_tool(tool: Any) -> bool:
+        """True when *tool* is a NodeTool or a Workflow used as a tool."""
+        if tool is None:
+            return False
+        if type(tool).__name__ == "NodeTool":
+            return True
+        try:
+            from google.adk.workflow import Workflow  # type: ignore[import-not-found]
+        except ImportError:
+            return False
+        return isinstance(tool, Workflow)
+
+    @classmethod
+    def _agent_tree_contains_workflow(cls, agent: Any, seen: Optional[set] = None) -> bool:
+        """Walk sub_agents, graph.nodes, and tools for an ADK 2.0 Workflow."""
+        try:
+            from google.adk.workflow import Workflow  # type: ignore[import-not-found]
+        except ImportError:
+            return False
+        if agent is None:
+            return False
+        if seen is None:
+            seen = set()
+        ident = id(agent)
+        if ident in seen:
+            return False
+        seen.add(ident)
+        if isinstance(agent, Workflow):
+            return True
+        for sub in getattr(agent, "sub_agents", None) or []:
+            if cls._agent_tree_contains_workflow(sub, seen):
+                return True
+        graph = getattr(agent, "graph", None)
+        for node in getattr(graph, "nodes", None) or []:
+            if cls._agent_tree_contains_workflow(node, seen):
+                return True
+        tools = getattr(agent, "tools", None)
+        if isinstance(tools, (list, tuple)):
+            for tool in tools:
+                inner = cls._unwrap_tool_agent(tool)
+                if inner is not None and cls._agent_tree_contains_workflow(inner, seen):
+                    return True
+        return False
+
+    @classmethod
+    def _collect_node_tool_names(cls, agent: Any, seen: Optional[set] = None) -> set:
+        """Names of NodeTool (or Workflow-as-tool) invocations. Not client-answerable."""
+        names: set = set()
+        if agent is None:
+            return names
+        if seen is None:
+            seen = set()
+        ident = id(agent)
+        if ident in seen:
+            return names
+        seen.add(ident)
+        tools = getattr(agent, "tools", None)
+        if isinstance(tools, (list, tuple)):
+            for tool in tools:
+                if cls._is_node_tool(tool):
+                    tool_name = getattr(tool, "name", None)
+                    if tool_name:
+                        names.add(tool_name)
+                    inner = cls._unwrap_tool_agent(tool)
+                    inner_name = getattr(inner, "name", None) if inner is not None else None
+                    if inner_name:
+                        names.add(inner_name)
+                nested = cls._unwrap_tool_agent(tool)
+                if nested is not None:
+                    names |= cls._collect_node_tool_names(nested, seen)
+        for sub in getattr(agent, "sub_agents", None) or []:
+            names |= cls._collect_node_tool_names(sub, seen)
+        graph = getattr(agent, "graph", None)
+        for node in getattr(graph, "nodes", None) or []:
+            names |= cls._collect_node_tool_names(node, seen)
+        return names
 
     def _root_agent_needs_invocation_id(self) -> bool:
         """Check if the agent topology requires invocation_id for HITL resumption.
@@ -2357,6 +2461,12 @@ class ADKAgent:
         if isinstance(graph_nodes, (list, tuple)):
             for node in graph_nodes:
                 ADKAgent._collect_output_schema_agent_names(node, result)
+        tools = getattr(agent, 'tools', None)
+        if isinstance(tools, (list, tuple)):
+            for tool in tools:
+                nested = ADKAgent._unwrap_tool_agent(tool)
+                if nested is not None and nested is not agent:
+                    ADKAgent._collect_output_schema_agent_names(nested, result)
         return result
 
     @staticmethod
@@ -2701,6 +2811,7 @@ class ADKAgent:
         # never happens. See issue #1754 (same shape as #1732, different
         # writer that PR #1735's consumer-side fix can't reach).
         pending_lro_id_remap: Dict[str, str] = {}
+        node_tool_names = ADKAgent._collect_node_tool_names(adk_agent)
         logger.debug(f"[BG_EXEC] _run_adk_in_background called for thread={input.thread_id}")
         logger.debug(f"[BG_EXEC]   tool_results={len(tool_results) if tool_results else 0}, message_batch={len(message_batch) if message_batch else 0}")
         try:
@@ -3205,6 +3316,18 @@ class ADKAgent:
                 has_lro_function_call = False
                 try:
                     lro_ids = set(getattr(adk_event, 'long_running_tool_ids', []) or [])
+                    # NodeTool invocations are executed server-side by ADK.
+                    # The client never answers them, so they must not join
+                    # pending_tool_calls / the HITL deferral set (#2674).
+                    if lro_ids and node_tool_names and adk_event.content and getattr(adk_event.content, 'parts', None):
+                        skip_ids = set()
+                        for part in adk_event.content.parts:
+                            func = getattr(part, 'function_call', None)
+                            func_name = getattr(func, 'name', None) if func else None
+                            func_id = getattr(func, 'id', None) if func else None
+                            if func_id and func_name in node_tool_names:
+                                skip_ids.add(func_id)
+                        lro_ids -= skip_ids
                     # Mark every LRO id from the ADK event as HITL on the
                     # shared execution set. Synchronous mutation before any
                     # downstream `await event_queue.put(...)` of this event's
