@@ -914,3 +914,76 @@ class TestBuiltinFailures:
         content = [e for e in events if e.type == "TOOL_CALL_RESULT"][0].content
         assert "a.txt" in content
         assert "error" not in content.lower()
+
+
+class TestTrajectoryIdentity:
+    """A step's identity is ``trajectory_id:step_index``, not ``step_index``.
+
+    A subagent runs in its own trajectory and numbers its steps from scratch,
+    so its step 1 and the main trajectory's step 1 are different steps that
+    happen to share an index. Keying completion on the index alone made the
+    translator treat the second trajectory's steps as redeliveries of the
+    first's and drop their text and tool calls on the floor.
+    """
+
+    async def test_a_second_trajectory_reusing_a_step_index_is_not_dropped(self):
+        t = EventTranslator()
+        await collect_open(
+            t,
+            [
+                step(
+                    id="main:1",
+                    content_delta="main text",
+                    content="main text",
+                    status=ag_types.StepStatus.DONE,
+                )
+            ],
+        )
+
+        call = ag_types.ToolCall(name="my_tool", args={"q": "x"}, id="tc-sub")
+        events = await collect(
+            t,
+            [
+                step(id="sub:1", content_delta="sub text", content="sub text"),
+                step(
+                    id="sub:1",
+                    type=ag_types.StepType.TOOL_CALL,
+                    tool_calls=[call],
+                    status=ag_types.StepStatus.DONE,
+                ),
+            ],
+        )
+
+        deltas = [e.delta for e in events if e.type == "TEXT_MESSAGE_CONTENT"]
+        assert deltas == ["sub text"], types_of(events)
+        starts = [e for e in events if e.type == "TOOL_CALL_START"]
+        assert [s.tool_call_id for s in starts] == ["tc-sub"], types_of(events)
+
+    async def test_id_less_builtin_calls_in_different_trajectories_are_distinct(self):
+        """Built-in calls have no id, so their positional key needs the
+        trajectory too, or the subagent's call is mistaken for the main one."""
+        t = EventTranslator()
+        call = ag_types.ToolCall(name="list_directory", args={"path": "/"})
+        events = await collect(
+            t,
+            [
+                step(id="main:1", tool_calls=[call], status=ag_types.StepStatus.DONE),
+                step(id="sub:1", tool_calls=[call], status=ag_types.StepStatus.DONE),
+            ],
+        )
+        starts = [e for e in events if e.type == "TOOL_CALL_START"]
+        assert len(starts) == 2, types_of(events)
+        assert starts[0].tool_call_id != starts[1].tool_call_id
+
+    async def test_text_at_the_same_index_in_two_trajectories_is_two_messages(self):
+        t = EventTranslator()
+        events = await collect(
+            t,
+            [
+                step(id="main:1", content_delta="a", content="a"),
+                step(id="sub:1", content_delta="b", content="b"),
+            ],
+        )
+        ids = [e.message_id for e in events if e.type == "TEXT_MESSAGE_START"]
+        assert len(ids) == 2, types_of(events)
+        assert ids[0] != ids[1]

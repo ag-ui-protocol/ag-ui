@@ -94,11 +94,13 @@ class EventTranslator:
         self._structured_output_as = structured_output_as
         self._emit_builtin_tool_calls = emit_builtin_tool_calls
 
-        # step_index -> AG-UI message id, so a step re-emitted with new deltas
-        # keeps streaming into the same message.
-        self._message_ids: dict[int, str] = {}
+        # step key -> AG-UI message id, so a step re-emitted with new deltas
+        # keeps streaming into the same message. Keyed by `_step_key`, never by
+        # the bare step_index: a subagent runs in its own trajectory and numbers
+        # its steps from scratch, so two live steps can share an index.
+        self._message_ids: dict[str, str] = {}
         self._open_text: Optional[str] = None      # message_id of open text block
-        self._open_text_index: Optional[int] = None
+        self._open_text_key: Optional[str] = None
         self._open_thinking: bool = False
         # Antigravity tool-call identity -> AG-UI tool_call_id.
         self._tool_call_ids: dict[str, str] = {}
@@ -114,7 +116,7 @@ class EventTranslator:
         # a later run of the same turn -- so they must not be treated as
         # redeliveries, only prevented from re-opening.
         self._flushed_open: set[str] = set()
-        self._completed_steps: set[int] = set()
+        self._completed_steps: set[str] = set()
         self._emitted_args: dict[str, str] = {}
         # Argument keys present when a tool call was first seen. Built-in tools
         # report their outcome by *growing* the args dict at DONE, so the keys
@@ -133,10 +135,25 @@ class EventTranslator:
     # Block bookkeeping
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _step_key(step: ag_types.Step) -> str:
+        """Identity of a step across its re-emissions: ``trajectory_id:step_index``.
+
+        ``Step.id`` is ``trajectory_id:step_index``; the trajectory is the part
+        before the colon (as ``_subagent_name`` also reads it). ``step_index``
+        alone is not an identity -- a subagent's trajectory restarts at 0, so
+        its step 1 and the main trajectory's step 1 are different steps, and
+        keying completion on the index made the translator drop the later one
+        as a redelivery of the earlier. An id-less step has only its index.
+        """
+        trajectory_id = step.id.split(":")[0] if step.id else ""
+        return f"{trajectory_id}:{step.step_index}"
+
     def _message_id_for(self, step: ag_types.Step) -> str:
-        if step.step_index not in self._message_ids:
-            self._message_ids[step.step_index] = str(uuid.uuid4())
-        return self._message_ids[step.step_index]
+        key = self._step_key(step)
+        if key not in self._message_ids:
+            self._message_ids[key] = str(uuid.uuid4())
+        return self._message_ids[key]
 
     async def _close_open_thinking(self) -> AsyncGenerator[BaseEvent, None]:
         """Closes an open thinking block, leaving any text message open."""
@@ -155,9 +172,9 @@ class EventTranslator:
             )
             # A closed message can never be reopened, so if this step produces
             # more text later it must start a new one.
-            self._message_ids.pop(self._open_text_index, None)
+            self._message_ids.pop(self._open_text_key, None)
             self._open_text = None
-            self._open_text_index = None
+            self._open_text_key = None
 
     async def close(self) -> AsyncGenerator[BaseEvent, None]:
         """Flushes open blocks at end of run.
@@ -204,7 +221,7 @@ class EventTranslator:
 
         # A step that already reached DONE on an earlier run of this turn is a
         # redelivery, not new output.
-        already_done = step.step_index in self._completed_steps
+        already_done = self._step_key(step) in self._completed_steps
 
         if not already_done and (
             step.type == ag_types.StepType.THINKING or step.thinking_delta
@@ -235,7 +252,7 @@ class EventTranslator:
         if step.status == ag_types.StepStatus.DONE:
             async for event in self._close_open_blocks():
                 yield event
-            self._completed_steps.add(step.step_index)
+            self._completed_steps.add(self._step_key(step))
 
     # ------------------------------------------------------------------
     # Per-kind translation
@@ -250,9 +267,9 @@ class EventTranslator:
             yield TextMessageEndEvent(
                 type="TEXT_MESSAGE_END", message_id=self._open_text
             )
-            self._message_ids.pop(self._open_text_index, None)
+            self._message_ids.pop(self._open_text_key, None)
             self._open_text = None
-            self._open_text_index = None
+            self._open_text_key = None
         if not self._open_thinking:
             # THINKING_START must bracket the message events: the client's
             # verifyEvents rejects a THINKING_TEXT_MESSAGE_START with no
@@ -277,16 +294,16 @@ class EventTranslator:
             yield TextMessageEndEvent(
                 type="TEXT_MESSAGE_END", message_id=self._open_text
             )
-            self._message_ids.pop(self._open_text_index, None)
+            self._message_ids.pop(self._open_text_key, None)
             self._open_text = None
-            self._open_text_index = None
+            self._open_text_key = None
         if self._open_text is None:
             message_id = self._message_id_for(step)
             yield TextMessageStartEvent(
                 type="TEXT_MESSAGE_START", message_id=message_id, role="assistant"
             )
             self._open_text = message_id
-            self._open_text_index = step.step_index
+            self._open_text_key = self._step_key(step)
         yield TextMessageContentEvent(
             type="TEXT_MESSAGE_CONTENT",
             message_id=message_id,
@@ -297,11 +314,13 @@ class EventTranslator:
         """Stable identity for a tool call across the step re-emissions.
 
         Built-in tool calls arrive with ``id=None``, so identity
-        falls back to (step_index, position, name).
+        falls back to (step key, position, name) -- the step key, not the bare
+        index, or a subagent's call would be mistaken for the main
+        trajectory's call at the same position.
         """
         if call.id:
             return f"id:{call.id}"
-        return f"pos:{step.step_index}:{pos}:{call.name}"
+        return f"pos:{self._step_key(step)}:{pos}:{call.name}"
 
     async def _translate_tool_calls(
         self, step: ag_types.Step
