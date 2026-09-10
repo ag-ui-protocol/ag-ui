@@ -1,6 +1,7 @@
 package com.agui.community.spring.ai;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -476,6 +477,47 @@ class SpringAiAgentTest {
                 .findFirst()
                 .orElseThrow();
         assertEquals("call-1", toolResponse.getResponses().get(0).id());
+    }
+
+    @Test
+    void replaysPriorReasoningIntoThePromptAsThinkTags() {
+        // Reasoning from a prior turn arrives in history as a ReasoningMessage. It is
+        // replayed to the model wrapped in <think>...</think> - the same convention the
+        // agent emits reasoning with - so a reasoning turn round-trips symmetrically.
+        var reasoning = new com.agui.community.core.message.ReasoningMessage("re1", "weighing the options");
+
+        AtomicReference<Prompt> captured = new AtomicReference<>();
+        RunAgentInput input = new RunAgentInput("t1", "r1",
+                List.of(new UserMessage("u1", "pick one"), reasoning), List.of());
+        SpringAiAgent agent = new SpringAiAgent(ChatClient.create(capturingModel(captured)), () -> "msg-1");
+
+        collect(agent.run(input));
+
+        List<org.springframework.ai.chat.messages.Message> sent = captured.get().getInstructions();
+        boolean hasThinkTags = sent.stream()
+                .filter(m -> m instanceof AssistantMessage)
+                .map(org.springframework.ai.chat.messages.Message::getText)
+                .anyMatch(text -> "<think>weighing the options</think>".equals(text));
+        assertTrue(hasThinkTags, "prior reasoning must be replayed as a <think> assistant message");
+    }
+
+    @Test
+    void dropsBlankReasoningFromThePrompt() {
+        var reasoning = new com.agui.community.core.message.ReasoningMessage("re1", "   ");
+
+        AtomicReference<Prompt> captured = new AtomicReference<>();
+        RunAgentInput input = new RunAgentInput("t1", "r1",
+                List.of(new UserMessage("u1", "pick one"), reasoning), List.of());
+        SpringAiAgent agent = new SpringAiAgent(ChatClient.create(capturingModel(captured)), () -> "msg-1");
+
+        collect(agent.run(input));
+
+        List<org.springframework.ai.chat.messages.Message> sent = captured.get().getInstructions();
+        boolean hasReasoning = sent.stream()
+                .filter(m -> m instanceof AssistantMessage)
+                .map(org.springframework.ai.chat.messages.Message::getText)
+                .anyMatch(text -> text.contains("<think>"));
+        assertFalse(hasReasoning, "blank reasoning must not be replayed into the prompt");
     }
 
     private static Supplier<String> sequentialIds() {

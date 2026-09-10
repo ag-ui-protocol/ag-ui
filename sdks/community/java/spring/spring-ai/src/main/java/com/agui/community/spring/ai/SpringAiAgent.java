@@ -103,6 +103,12 @@ import reactor.core.publisher.Flux;
  * {@link SpringAiEventTranslator}. If the model errors, a terminal
  * {@link RunErrorEvent} is emitted instead of propagating the failure, matching
  * the protocol's in-band error handling.
+ *
+ * <p>Reasoning carried in the run's conversation history (a
+ * {@link com.agui.community.core.message.ReasoningMessage}, role {@code reasoning})
+ * is replayed to the model as an assistant message wrapped in the same
+ * {@code <think>...</think>} tags the agent emits reasoning with, so a reasoning
+ * turn round-trips symmetrically; a blank reasoning message is dropped.
  */
 public final class SpringAiAgent implements Agent {
 
@@ -642,6 +648,19 @@ public final class SpringAiAgent implements Agent {
             // Feed the result back as a proper tool response linked to the call id, so the
             // model treats that call as completed rather than requesting it again.
             return toToolResponse(toolMessage, content, toolCallNames);
+        }
+        if (message instanceof com.agui.community.core.message.ReasoningMessage reasoning) {
+            // Reasoning captured from a prior turn. Replay it to the model using the same
+            // <think>...</think> convention the agent emits reasoning with (see
+            // ReasoningSegmenter), so a reasoning turn round-trips symmetrically. A blank
+            // reasoning message (e.g. one carrying only a provider-specific encryptedValue)
+            // is dropped, since there is nothing to replay into the prompt.
+            String reasoningText = reasoning.content();
+            if (Objects.isNull(reasoningText) || reasoningText.isBlank()) {
+                return null;
+            }
+            return new org.springframework.ai.chat.messages.AssistantMessage(
+                    "<think>" + reasoningText + "</think>");
         }
         return switch (message.role()) {
             case USER -> new org.springframework.ai.chat.messages.UserMessage(content);

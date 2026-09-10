@@ -16,6 +16,7 @@ import com.agui.community.core.interrupt.Resume;
 import com.agui.community.core.interrupt.ResumeStatus;
 import com.agui.community.core.message.AssistantMessage;
 import com.agui.community.core.message.Message;
+import com.agui.community.core.message.ReasoningMessage;
 import com.agui.community.core.message.Role;
 import com.agui.community.core.message.UserMessage;
 import com.agui.community.core.serialization.SerializationException;
@@ -50,6 +51,28 @@ class JacksonSerializerTest {
         assertTrue(json.contains("\"role\":\"user\""), json);
         assertInstanceOf(UserMessage.class, back);
         assertEquals(original, back);
+    }
+
+    @Test
+    void roundTripsReasoningMessageViaRoleDiscriminator() {
+        Message original = new ReasoningMessage("m1", "let me think about this");
+
+        String json = serializer.serialize(original);
+        Message back = serializer.deserialize(json, Message.class);
+
+        assertTrue(json.contains("\"role\":\"reasoning\""), json);
+        assertInstanceOf(ReasoningMessage.class, back);
+        assertEquals(original, back);
+    }
+
+    @Test
+    void deserializesReasoningMessageFromConversationHistory() {
+        String json = "{\"role\":\"reasoning\",\"id\":\"m1\",\"content\":\"weighing the options\"}";
+
+        Message back = serializer.deserialize(json, Message.class);
+
+        assertInstanceOf(ReasoningMessage.class, back);
+        assertEquals("weighing the options", back.content());
     }
 
     @Test

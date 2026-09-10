@@ -5,6 +5,7 @@ import com.fasterxml.jackson.annotation.JsonSubTypes.Type;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.agui.community.core.message.AssistantMessage;
 import com.agui.community.core.message.DeveloperMessage;
+import com.agui.community.core.message.ReasoningMessage;
 import com.agui.community.core.message.SystemMessage;
 import com.agui.community.core.message.ToolMessage;
 import com.agui.community.core.message.UserMessage;
@@ -21,6 +22,7 @@ import com.agui.community.core.message.UserMessage;
         @Type(value = AssistantMessage.class, name = "assistant"),
         @Type(value = UserMessage.class, name = "user"),
         @Type(value = ToolMessage.class, name = "tool"),
+        @Type(value = ReasoningMessage.class, name = "reasoning"),
 })
 public interface MessageMixin {
 }

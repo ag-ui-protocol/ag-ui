@@ -49,8 +49,10 @@
         <maven.compiler.release>17</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
-        <!-- ag-ui is published to Maven Central, so resolve the release directly. -->
-        <ag-ui.version>0.1.0</ag-ui.version>
+        <!-- ag-ui is published to Maven Central, so resolve the release directly.
+             0.1.1 adds the reasoning message type (Role.REASONING /
+             ReasoningMessage) used for reasoning in conversation history. -->
+        <ag-ui.version>0.1.1</ag-ui.version>
         <junit.version>5.10.2</junit.version>
         <jacoco.version>0.8.13</jacoco.version>
         <!--
