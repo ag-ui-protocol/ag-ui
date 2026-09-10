@@ -174,7 +174,7 @@ public sealed class AGUIChatClient : DelegatingChatClient
         return new FunctionInvokingChatClient(handler);
     }
 
-    private static JsonSerializerOptions CombineJsonSerializerOptions(JsonSerializerOptions? jsonSerializerOptions)
+    internal static JsonSerializerOptions CombineJsonSerializerOptions(JsonSerializerOptions? jsonSerializerOptions)
     {
         if (jsonSerializerOptions == null)
         {
@@ -183,9 +183,20 @@ public sealed class AGUIChatClient : DelegatingChatClient
 
         var combinedOptions = new JsonSerializerOptions(jsonSerializerOptions);
 
-        if (!combinedOptions.TypeInfoResolverChain.Any(r => r == AGUIJsonSerializerContext.Default))
+        // AGUIJsonUtilities.DefaultTypeInfoResolver rather than the bare context: the
+        // context's DefaultIgnoreCondition belongs to its own options and would not follow it
+        // here, so AG-UI types resolved through the caller's options would start writing null
+        // for fields that have no value. The resolver carries the rule with the metadata.
+        //
+        // The condition is "is it already first", not "is it present anywhere". Anything ahead
+        // of it wins for AG-UI types, and two configurations a caller can plausibly arrive at
+        // would otherwise silently reintroduce the nulls: a chain that already holds the bare
+        // AGUIJsonSerializerContext, and a chain that holds this resolver behind a resolver
+        // that answers for any type. Inserting at the front is idempotent, so calling this
+        // twice does not stack duplicates.
+        if (combinedOptions.TypeInfoResolverChain.FirstOrDefault() != AGUIJsonUtilities.DefaultTypeInfoResolver)
         {
-            combinedOptions.TypeInfoResolverChain.Insert(0, AGUIJsonSerializerContext.Default);
+            combinedOptions.TypeInfoResolverChain.Insert(0, AGUIJsonUtilities.DefaultTypeInfoResolver);
         }
 
         return combinedOptions;
@@ -316,8 +327,12 @@ public sealed class AGUIChatClient : DelegatingChatClient
             {
                 ThreadId = threadId,
                 RunId = string.IsNullOrEmpty(providedInput?.RunId) ? AGUIIdGenerator.NewRunId() : providedInput!.RunId,
-                Messages = messagesList.AsAGUIMessages().ToList(),
+                Messages = messagesList.AsAGUIMessages(jsonSerializerOptions).ToList(),
             };
+
+            // Tracks whether the caller hand-supplied Resume via RawRepresentationFactory.
+            // When true, the approval/interrupt translations below yield to it entirely.
+            bool callerSuppliedResume = false;
 
             if (providedInput is not null)
             {
@@ -340,6 +355,25 @@ public sealed class AGUIChatClient : DelegatingChatClient
                 {
                     input.ParentRunId = providedInput.ParentRunId;
                 }
+
+                if (providedInput.Context is { Count: > 0 })
+                {
+                    input.Context = providedInput.Context;
+                }
+
+                if (providedInput.ForwardedProperties.ValueKind != JsonValueKind.Undefined)
+                {
+                    input.ForwardedProperties = providedInput.ForwardedProperties;
+                }
+
+                // A caller-supplied Resume is authoritative: both the approval- and
+                // interrupt-response translations below yield to it (see the
+                // callerSuppliedResume guards), so the two resume paths stay symmetric.
+                if (providedInput.Resume is { Count: > 0 })
+                {
+                    input.Resume = providedInput.Resume;
+                    callerSuppliedResume = true;
+                }
             }
 
             // Convert M.E.AI tools to AG-UI format
@@ -348,69 +382,95 @@ public sealed class AGUIChatClient : DelegatingChatClient
                 input.Tools = options.Tools.AsAGUITools().ToList();
             }
 
-            // Convert ToolApprovalResponseContent list (passed from AGUIChatClient) to resume payload
-            if (input.Resume is null &&
-                options?.AdditionalProperties?.TryGetValue(AGUIClientInternalKeys.ApprovalResponses, out List<ToolApprovalResponseContent>? approvalResponses) is true
-                && approvalResponses is { Count: > 0 })
+            List<ToolApprovalResponseContent>? approvalResponses = null;
+            List<InterruptResponseContent>? interruptResponses = null;
+            options?.AdditionalProperties?.TryGetValue(AGUIClientInternalKeys.ApprovalResponses, out approvalResponses);
+            options?.AdditionalProperties?.TryGetValue(AGUIClientInternalKeys.InterruptResponses, out interruptResponses);
+
+            if (callerSuppliedResume)
             {
-                var resumeList = new List<AGUIResume>(approvalResponses.Count);
-                foreach (var approvalResponse in approvalResponses)
+                // The caller's Resume wins, so approval/interrupt responses carried by the
+                // last message are not translated over it. Those responses were already
+                // stripped from the outgoing messages, so emit a diagnostic event to make
+                // the drop observable instead of silent.
+                int droppedApprovals = approvalResponses?.Count ?? 0;
+                int droppedInterrupts = interruptResponses?.Count ?? 0;
+                if (droppedApprovals > 0 || droppedInterrupts > 0)
                 {
-                    AGUIToolCallInfo? toolCallInfo = null;
-                    if (approvalResponse.ToolCall is FunctionCallContent tc)
-                    {
-                        toolCallInfo = new AGUIToolCallInfo
+                    Activity.Current?.AddEvent(new ActivityEvent(
+                        "agui.resume.caller_override_dropped_responses",
+                        tags: new ActivityTagsCollection
                         {
-                            CallId = tc.CallId,
-                            Name = tc.Name,
-                            Arguments = tc.Arguments
-                        };
-                    }
-
-                    // Check for a pre-computed result (from client-side tool execution)
-                    string? toolResult = null;
-                    if (approvalResponse.AdditionalProperties?.TryGetValue("result", out object? resultObj) is true)
-                    {
-                        toolResult = resultObj as string;
-                    }
-
-                    resumeList.Add(new AGUIResume
-                    {
-                        InterruptId = approvalResponse.RequestId,
-                        Status = ResumeStatus.Resolved,
-                        Payload = JsonSerializer.SerializeToElement(
-                            new AGUIToolApprovalResumePayload
-                            {
-                                Approved = approvalResponse.Approved,
-                                ToolCall = toolCallInfo,
-                                Result = toolResult
-                            },
-                            jsonSerializerOptions.GetTypeInfo(typeof(AGUIToolApprovalResumePayload)))
-                    });
+                            { "agui.resume.dropped_approval_responses", droppedApprovals },
+                            { "agui.resume.dropped_interrupt_responses", droppedInterrupts },
+                        }));
                 }
-
-                input.Resume = resumeList;
             }
-
-            // Convert InterruptResponseContent list to resume entries.
-            if (options?.AdditionalProperties?.TryGetValue(AGUIClientInternalKeys.InterruptResponses, out List<InterruptResponseContent>? interruptResponses) is true
-                && interruptResponses is { Count: > 0 })
+            else
             {
-                var resumeList = input.Resume is { Count: > 0 } existing
-                    ? new List<AGUIResume>(existing)
-                    : new List<AGUIResume>(interruptResponses.Count);
-
-                foreach (var ir in interruptResponses)
+                // Convert ToolApprovalResponseContent list (passed from AGUIChatClient) to resume payload
+                if (approvalResponses is { Count: > 0 })
                 {
-                    resumeList.Add(new AGUIResume
+                    var resumeList = new List<AGUIResume>(approvalResponses.Count);
+                    foreach (var approvalResponse in approvalResponses)
                     {
-                        InterruptId = ir.RequestId,
-                        Status = ResumeStatus.Resolved,
-                        Payload = ir.Payload,
-                    });
+                        AGUIToolCallInfo? toolCallInfo = null;
+                        if (approvalResponse.ToolCall is FunctionCallContent tc)
+                        {
+                            toolCallInfo = new AGUIToolCallInfo
+                            {
+                                CallId = tc.CallId,
+                                Name = tc.Name,
+                                Arguments = tc.Arguments
+                            };
+                        }
+
+                        // Check for a pre-computed result (from client-side tool execution)
+                        string? toolResult = null;
+                        if (approvalResponse.AdditionalProperties?.TryGetValue("result", out object? resultObj) is true)
+                        {
+                            toolResult = resultObj as string;
+                        }
+
+                        resumeList.Add(new AGUIResume
+                        {
+                            InterruptId = approvalResponse.RequestId,
+                            Status = ResumeStatus.Resolved,
+                            Payload = JsonSerializer.SerializeToElement(
+                                new AGUIToolApprovalResumePayload
+                                {
+                                    Approved = approvalResponse.Approved,
+                                    ToolCall = toolCallInfo,
+                                    Result = toolResult
+                                },
+                                jsonSerializerOptions.GetTypeInfo(typeof(AGUIToolApprovalResumePayload)))
+                        });
+                    }
+
+                    input.Resume = resumeList;
                 }
 
-                input.Resume = resumeList;
+                // Convert InterruptResponseContent list to resume entries, appending to any
+                // approval-derived entries produced above.
+                if (interruptResponses is { Count: > 0 })
+                {
+                    var resumeList = input.Resume is { Count: > 0 } existing
+                        ? new List<AGUIResume>(existing)
+                        : new List<AGUIResume>(interruptResponses.Count);
+
+                    foreach (var ir in interruptResponses)
+                    {
+                        resumeList.Add(new AGUIResume
+                        {
+                            InterruptId = ir.RequestId,
+                            Status = ResumeStatus.Resolved,
+                            Payload = ir.Payload,
+                            Metadata = ir.Metadata,
+                        });
+                    }
+
+                    input.Resume = resumeList;
+                }
             }
 
             return input;

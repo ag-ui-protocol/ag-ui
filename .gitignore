@@ -24,7 +24,11 @@ node_modules
 **/.poetry-cache
 *.egg-info
 
-**/python/**/__pycache__/
+# Not limited to **/python/**: Python also lives outside the SDKs and
+# integrations (scripts/release/), where a bare interpreter run would
+# otherwise leave a committable __pycache__.
+**/__pycache__/
+*.pyc
 **/python/**/.venv/
 
 **/typescript/**/node_modules/
@@ -49,3 +53,7 @@ node_modules
 
 # VS Code
 *.lscache
+
+# actionlint linter binary (dev tool, do not commit)
+/actionlint
+.idea/

@@ -1,12 +1,7 @@
 import { Subject } from "rxjs";
 import { toArray } from "rxjs/operators";
 import { firstValueFrom } from "rxjs";
-import {
-  BaseEvent,
-  EventType,
-  Message,
-  RunAgentInput,
-} from "@ag-ui/core";
+import { BaseEvent, EventType, Message, RunAgentInput } from "@ag-ui/core";
 import { defaultApplyEvents } from "../default";
 import { AbstractAgent } from "@/agent";
 import { AgentStateMutation } from "@/agent/subscriber";
@@ -40,6 +35,14 @@ async function emitAndCollect(
   return updatesPromise;
 }
 
+/** Narrow a message to the activity role, failing the test otherwise. */
+function expectActivityMessage(message: Message | undefined) {
+  if (message?.role !== "activity") {
+    throw new Error(`Expected activity message, got role ${message?.role}`);
+  }
+  return message;
+}
+
 /** Shorthand: apply a single MESSAGES_SNAPSHOT and return the resulting messages. */
 async function applySnapshot(initial: Message[], snapshotMessages: Message[]): Promise<Message[]> {
   const updates = await emitAndCollect(initial, (events$) => {
@@ -48,7 +51,9 @@ async function applySnapshot(initial: Message[], snapshotMessages: Message[]): P
       messages: snapshotMessages,
     });
   });
-  return updates[0]?.messages!;
+  // Cast, not a non-null assertion on the optional chain: `?.` must keep
+  // returning undefined when there is no update, exactly as before.
+  return updates[0]?.messages as Message[];
 }
 
 describe("defaultApplyEvents with activity events", () => {
@@ -71,10 +76,10 @@ describe("defaultApplyEvents with activity events", () => {
 
     expect(updates.length).toBe(2);
 
-    const snapshotUpdate = updates[0];
-    expect(snapshotUpdate?.messages?.[0]?.role).toBe("activity");
-    expect(snapshotUpdate?.messages?.[0]?.activityType).toBe("PLAN");
-    expect(snapshotUpdate?.messages?.[0]?.content).toEqual({ tasks: ["search"] });
+    const snapshotMessage = expectActivityMessage(updates[0]?.messages?.[0]);
+    expect(snapshotMessage.role).toBe("activity");
+    expect(snapshotMessage.activityType).toBe("PLAN");
+    expect(snapshotMessage.content).toEqual({ tasks: ["search"] });
 
     const deltaUpdate = updates[1];
     expect(deltaUpdate?.messages?.[0]?.content).toEqual({ tasks: ["✓ search"] });
@@ -109,8 +114,13 @@ describe("defaultApplyEvents with activity events", () => {
 
     expect(updates.length).toBe(3);
     expect(updates[0]?.messages?.[0]?.content).toEqual({ operations: [] });
-    expect(updates[1]?.messages?.[0]?.content?.operations).toEqual([firstOperation]);
-    expect(updates[2]?.messages?.[0]?.content?.operations).toEqual([firstOperation, secondOperation]);
+    expect(expectActivityMessage(updates[1]?.messages?.[0]).content.operations).toEqual([
+      firstOperation,
+    ]);
+    expect(expectActivityMessage(updates[2]?.messages?.[0]).content.operations).toEqual([
+      firstOperation,
+      secondOperation,
+    ]);
   });
 
   it("does not replace existing activity message when replace is false", async () => {
@@ -150,7 +160,12 @@ describe("defaultApplyEvents with activity events", () => {
 
   it("replaces existing activity message when replace is true", async () => {
     const initial = [
-      { id: "activity-1", role: "activity" as const, activityType: "PLAN", content: { tasks: ["initial"] } },
+      {
+        id: "activity-1",
+        role: "activity" as const,
+        activityType: "PLAN",
+        content: { tasks: ["initial"] },
+      },
     ] as Message[];
 
     const updates = await emitAndCollect(initial, (events$) => {
@@ -421,21 +436,24 @@ describe("MESSAGES_SNAPSHOT preserves client-only messages", () => {
       [
         { id: "m1", role: "user", content: "create a dashboard" },
         { id: "asst-1", role: "assistant", content: "I'll create that for you" },
-        { id: "tool-stream", role: "tool", content: '{"a2ui": true}' },
-        { id: "act-1", role: "activity", activityType: "A2UI_SURFACE", content: { surface: "dashboard" } },
+        { id: "tool-stream", role: "tool", content: '{"a2ui": true}', toolCallId: "tc-stream" },
+        {
+          id: "act-1",
+          role: "activity",
+          activityType: "A2UI_SURFACE",
+          content: { surface: "dashboard" },
+        },
         { id: "asst-2", role: "assistant", content: "Here's your dashboard" },
       ] as Message[],
       [
         { id: "m1", role: "user", content: "create a dashboard" },
         { id: "asst-1", role: "assistant", content: "I'll create that for you" },
-        { id: "tool-canon", role: "tool", content: '{"a2ui": true}' },
+        { id: "tool-canon", role: "tool", content: '{"a2ui": true}', toolCallId: "tc-canon" },
         { id: "asst-2", role: "assistant", content: "Here's your dashboard" },
       ],
     );
 
-    expect(msgs.map((m) => m.id)).toEqual([
-      "m1", "asst-1", "act-1", "asst-2", "tool-canon",
-    ]);
+    expect(msgs.map((m) => m.id)).toEqual(["m1", "asst-1", "act-1", "asst-2", "tool-canon"]);
   });
 });
 
@@ -544,5 +562,242 @@ describe("MESSAGES_SNAPSHOT with snapshot-supplied reasoning", () => {
     expect(msgs.filter((m) => m.role === "reasoning").length).toBe(1);
     const reasoning = msgs.find((m) => m.id === "r1")! as { encryptedValue?: string };
     expect(reasoning.encryptedValue).toBe("enc-1");
+  });
+});
+
+describe("MESSAGES_SNAPSHOT with snapshot-supplied activity", () => {
+  // A snapshot is a snapshot of every message, so once it carries any activity
+  // the backend is declaring the complete activity set: entries it repeats are
+  // replaced and ones it leaves out are dropped. A snapshot that carries no
+  // activity says nothing about it, and the client's activity is preserved —
+  // the same all-or-nothing rule `snapshotHasReasoning` applies to reasoning.
+
+  it("replaces an existing activity message with the snapshot version", async () => {
+    const msgs = await applySnapshot(
+      [
+        { id: "m1", role: "user", content: "hello" },
+        { id: "act-1", role: "activity", activityType: "PLAN", content: { tasks: ["stale"] } },
+        { id: "a1", role: "assistant", content: "hi" },
+      ] as Message[],
+      [
+        { id: "m1", role: "user", content: "hello" },
+        { id: "act-1", role: "activity", activityType: "PLAN", content: { tasks: ["fresh"] } },
+        { id: "a1", role: "assistant", content: "hi" },
+      ] as Message[],
+    );
+
+    expect(msgs.filter((m) => m.role === "activity").length).toBe(1);
+    expect(msgs.map((m) => m.id)).toEqual(["m1", "act-1", "a1"]);
+    const activity = msgs.find((m) => m.id === "act-1")! as { content?: { tasks?: string[] } };
+    expect(activity.content?.tasks).toEqual(["fresh"]);
+  });
+
+  it("appends an activity message the client does not have yet", async () => {
+    const msgs = await applySnapshot(
+      [{ id: "m1", role: "user", content: "hello" }] as Message[],
+      [
+        { id: "m1", role: "user", content: "hello" },
+        { id: "act-1", role: "activity", activityType: "PLAN", content: { tasks: ["fresh"] } },
+      ] as Message[],
+    );
+
+    expect(msgs.map((m) => m.id)).toEqual(["m1", "act-1"]);
+    const activity = msgs.find((m) => m.id === "act-1")! as { content?: { tasks?: string[] } };
+    expect(activity.content?.tasks).toEqual(["fresh"]);
+  });
+
+  it("drops a local activity the snapshot leaves out once the snapshot carries activity", async () => {
+    const msgs = await applySnapshot(
+      [
+        { id: "m1", role: "user", content: "hello" },
+        { id: "act-gone", role: "activity", activityType: "PLAN", content: { tasks: ["gone"] } },
+        { id: "act-1", role: "activity", activityType: "PLAN", content: { tasks: ["stale"] } },
+      ] as Message[],
+      [
+        { id: "m1", role: "user", content: "hello" },
+        { id: "act-1", role: "activity", activityType: "PLAN", content: { tasks: ["fresh"] } },
+      ] as Message[],
+    );
+
+    expect(msgs.map((m) => m.id)).toEqual(["m1", "act-1"]);
+    const activity = msgs.find((m) => m.id === "act-1")! as { content?: { tasks?: string[] } };
+    expect(activity.content?.tasks).toEqual(["fresh"]);
+  });
+
+  it("keeps client activity when the snapshot carries none", async () => {
+    const msgs = await applySnapshot(
+      [
+        { id: "m1", role: "user", content: "hello" },
+        { id: "act-1", role: "activity", activityType: "PLAN", content: { tasks: ["local"] } },
+        { id: "a1", role: "assistant", content: "hi" },
+      ] as Message[],
+      [
+        { id: "m1", role: "user", content: "hello" },
+        { id: "a1", role: "assistant", content: "hi" },
+      ] as Message[],
+    );
+
+    expect(msgs.map((m) => m.id)).toEqual(["m1", "act-1", "a1"]);
+    const activity = msgs.find((m) => m.id === "act-1")! as { content?: { tasks?: string[] } };
+    expect(activity.content?.tasks).toEqual(["local"]);
+  });
+});
+
+describe("TEXT_MESSAGE_* against an activity message's id", () => {
+  // Message ids are unique across a conversation, so a text message arriving under an id an
+  // activity message already holds means the producer reused the id. Streaming the text in
+  // would overwrite the activity's structured content with a string, leaving it no longer a
+  // valid ActivityMessage. The text handlers warn and leave the activity message alone,
+  // the same way ACTIVITY_DELTA does when it lands on a non-activity message.
+
+  const activityId = "shared-id";
+  const streamTextInto = (id: string) => (events$: Subject<BaseEvent>) => {
+    events$.next({
+      type: EventType.ACTIVITY_SNAPSHOT,
+      messageId: activityId,
+      activityType: "PLAN",
+      content: { tasks: ["plan"] },
+    });
+    events$.next({ type: EventType.TEXT_MESSAGE_START, messageId: id, role: "assistant" });
+    events$.next({ type: EventType.TEXT_MESSAGE_CONTENT, messageId: id, delta: "Hello" });
+    events$.next({ type: EventType.TEXT_MESSAGE_END, messageId: id });
+  };
+
+  it("leaves the activity message intact instead of streaming text into it", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const updates = await emitAndCollect([], streamTextInto(activityId));
+    warnSpy.mockRestore();
+
+    const messages = updates[updates.length - 1]!.messages!;
+    expect(messages.length).toBe(1);
+    const activity = expectActivityMessage(messages[0]);
+    expect(activity.content).toEqual({ tasks: ["plan"] });
+  });
+
+  it("keeps the activity message's own metadata off the text event's", async () => {
+    // The START handler ends in applyEventMetadata, so a guard that only skipped creating
+    // the message would still merge the text event's metadata into the activity message.
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const updates = await emitAndCollect([], (events$) => {
+      events$.next({
+        type: EventType.ACTIVITY_SNAPSHOT,
+        messageId: activityId,
+        activityType: "PLAN",
+        content: { tasks: ["plan"] },
+        metadata: { origin: "activity" },
+      });
+      events$.next({
+        type: EventType.TEXT_MESSAGE_START,
+        messageId: activityId,
+        role: "assistant",
+        metadata: { origin: "text" },
+      });
+    });
+    warnSpy.mockRestore();
+
+    const activity = expectActivityMessage(updates[updates.length - 1]!.messages![0]);
+    expect(activity.metadata).toEqual({ origin: "activity" });
+  });
+
+  it("warns on the id collision from each text handler", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await emitAndCollect([], streamTextInto(activityId));
+    const warnings = warnSpy.mock.calls.map((call) => String(call[0]));
+    warnSpy.mockRestore();
+
+    expect(warnings.some((w) => w.startsWith("TEXT_MESSAGE_START:"))).toBe(true);
+    expect(warnings.some((w) => w.startsWith("TEXT_MESSAGE_CONTENT:"))).toBe(true);
+    expect(warnings.some((w) => w.startsWith("TEXT_MESSAGE_END:"))).toBe(true);
+  });
+
+  it("still streams text normally when the id does not collide", async () => {
+    const updates = await emitAndCollect([], streamTextInto("free-id"));
+
+    const messages = updates[updates.length - 1]!.messages!;
+    expect(messages.map((m) => m.id)).toEqual([activityId, "free-id"]);
+    const text = messages.find((m) => m.id === "free-id")!;
+    expect(text.role).toBe("assistant");
+    expect(text.content).toBe("Hello");
+  });
+});
+
+describe("REASONING_MESSAGE_* against an activity message's id", () => {
+  // The reasoning handlers resolve their target by id with no role check, so a reasoning
+  // event arriving under an id an activity message already holds would append a string onto
+  // the activity's structured content and merge the event's metadata into it. Same collision
+  // as the text handlers above, and the same resolution: warn and leave the activity alone.
+
+  const activityId = "shared-id";
+  const streamReasoningInto = (id: string) => (events$: Subject<BaseEvent>) => {
+    events$.next({
+      type: EventType.ACTIVITY_SNAPSHOT,
+      messageId: activityId,
+      activityType: "PLAN",
+      content: { tasks: ["plan"] },
+    });
+    events$.next({ type: EventType.REASONING_MESSAGE_START, messageId: id });
+    events$.next({
+      type: EventType.REASONING_MESSAGE_CONTENT,
+      messageId: id,
+      delta: "thinking",
+    });
+    events$.next({ type: EventType.REASONING_MESSAGE_END, messageId: id });
+  };
+
+  it("leaves the activity message intact instead of streaming reasoning into it", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const updates = await emitAndCollect([], streamReasoningInto(activityId));
+    warnSpy.mockRestore();
+
+    const messages = updates[updates.length - 1]!.messages!;
+    expect(messages.length).toBe(1);
+    const activity = expectActivityMessage(messages[0]);
+    expect(activity.content).toEqual({ tasks: ["plan"] });
+  });
+
+  it("keeps the activity message's own metadata off the reasoning event's", async () => {
+    // REASONING_MESSAGE_START ends in applyEventMetadata, so a guard that only skipped
+    // creating the message would still merge the reasoning event's metadata into the
+    // activity message.
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const updates = await emitAndCollect([], (events$) => {
+      events$.next({
+        type: EventType.ACTIVITY_SNAPSHOT,
+        messageId: activityId,
+        activityType: "PLAN",
+        content: { tasks: ["plan"] },
+        metadata: { origin: "activity" },
+      });
+      events$.next({
+        type: EventType.REASONING_MESSAGE_START,
+        messageId: activityId,
+        metadata: { origin: "reasoning" },
+      });
+    });
+    warnSpy.mockRestore();
+
+    const activity = expectActivityMessage(updates[updates.length - 1]!.messages![0]);
+    expect(activity.metadata).toEqual({ origin: "activity" });
+  });
+
+  it("warns on the id collision from each reasoning handler", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await emitAndCollect([], streamReasoningInto(activityId));
+    const warnings = warnSpy.mock.calls.map((call) => String(call[0]));
+    warnSpy.mockRestore();
+
+    expect(warnings.some((w) => w.startsWith("REASONING_MESSAGE_START:"))).toBe(true);
+    expect(warnings.some((w) => w.startsWith("REASONING_MESSAGE_CONTENT:"))).toBe(true);
+    expect(warnings.some((w) => w.startsWith("REASONING_MESSAGE_END:"))).toBe(true);
+  });
+
+  it("still streams reasoning normally when the id does not collide", async () => {
+    const updates = await emitAndCollect([], streamReasoningInto("free-id"));
+
+    const messages = updates[updates.length - 1]!.messages!;
+    expect(messages.map((m) => m.id)).toEqual([activityId, "free-id"]);
+    const reasoning = messages.find((m) => m.id === "free-id")!;
+    expect(reasoning.role).toBe("reasoning");
+    expect(reasoning.content).toBe("thinking");
   });
 });
