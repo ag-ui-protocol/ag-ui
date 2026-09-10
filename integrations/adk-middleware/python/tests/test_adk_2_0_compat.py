@@ -250,6 +250,36 @@ class TestWorkflowRootDetection:
         adk_agent._adk_agent = wf
         assert adk_agent._root_agent_is_workflow() is True
 
+    def test_llm_root_with_workflow_node_tool_is_workflow(self) -> None:
+        """A Workflow attached via tools= (NodeTool) must skip the #1534
+        placeholder, same as a Workflow root (ag-ui#2674).
+        """
+        try:
+            from google.adk.workflow import Workflow  # type: ignore[import-not-found]
+        except ImportError:
+            pytest.skip("Workflow not available on this ADK version (1.x)")
+
+        class NodeTool:
+            def __init__(self, name, node):
+                self.name = name
+                self.node = node
+
+        wf = Workflow(name="hs_classifier")
+        root_agent = Agent(
+            name="coordinator",
+            instruction="coordinate",
+        )
+        adk_agent = ADKAgent(
+            adk_agent=root_agent,
+            app_name="t",
+            user_id="u",
+            use_in_memory_services=True,
+        )
+        # Attach after construct: Agent() may reject unknown tool types.
+        adk_agent._adk_agent.tools = [NodeTool("hs_classifier", wf)]
+        assert adk_agent._root_agent_is_workflow() is True
+        assert "hs_classifier" in ADKAgent._collect_node_tool_names(adk_agent._adk_agent)
+
 
 # ---------------------------------------------------------------------------
 # ag-ui#1669 — End-to-end: Workflow root HITL resume carries FunctionResponse
