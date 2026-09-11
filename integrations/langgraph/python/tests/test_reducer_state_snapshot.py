@@ -50,14 +50,6 @@ class TestReducerAwareStateSnapshot(unittest.IsolatedAsyncioTestCase):
             "plan_results": MagicMock(operator=operator.add),
         }
 
-        async def stale_aget_state(_config=None):
-            snap = MagicMock()
-            snap.values = {"plan_results": []}
-            snap.tasks = []
-            snap.next = []
-            snap.metadata = {"writes": {}}
-            return snap
-
         stream_events = [
             _chain_start("worker_a"),
             _chain_end("worker_a", {"plan_results": [{"id": 1}]}),
@@ -81,8 +73,19 @@ class TestReducerAwareStateSnapshot(unittest.IsolatedAsyncioTestCase):
                 return state
             return getattr(state, "values", {}) or {}
 
+        async def final_aget_state(_config=None):
+            # After the stream, the checkpoint is complete. Mid-stream
+            # on_chain_end must not read this, or worker A would jump to
+            # [1, 2] and skip the [1] snapshot.
+            snap = MagicMock()
+            snap.values = {"plan_results": [{"id": 1}, {"id": 2}]}
+            snap.tasks = []
+            snap.next = []
+            snap.metadata = {"writes": {}}
+            return snap
+
         with patch.object(agent, "prepare_stream", AsyncMock(side_effect=fake_prepare)), \
-             patch.object(agent.graph, "aget_state", side_effect=stale_aget_state), \
+             patch.object(agent.graph, "aget_state", side_effect=final_aget_state), \
              patch.object(agent, "get_state_snapshot", side_effect=fake_get_state_snapshot):
             input_data = RunAgentInput(
                 thread_id="thread-1",
@@ -93,28 +96,23 @@ class TestReducerAwareStateSnapshot(unittest.IsolatedAsyncioTestCase):
                 context=[],
                 forwarded_props={},
             )
-            emitted = [ev async for ev in agent._handle_stream_events(input_data)]
+            snapshots = []
+            async for ev in agent._handle_stream_events(input_data):
+                if ev is not None and getattr(ev, "type", None) == EventType.STATE_SNAPSHOT:
+                    snapshots.append(
+                        ev.model_copy(deep=True).snapshot
+                        if hasattr(ev, "model_copy")
+                        else dict(ev.snapshot)
+                    )
 
-        snapshots = [
-            ev.snapshot
-            for ev in emitted
-            if ev is not None and getattr(ev, "type", None) == EventType.STATE_SNAPSHOT
-        ]
-        self.assertTrue(snapshots, "expected at least one STATE_SNAPSHOT")
-        id_seqs = [seq for seq in (_ids(snap) for snap in snapshots) if seq]
-        self.assertIn(
-            [1],
-            id_seqs,
-            f"after worker A the snapshot must be [1], got {snapshots!r}",
+        self.assertEqual(
+            [snap.get("plan_results") for snap in snapshots],
+            [
+                [{"id": 1}],
+                [{"id": 1}, {"id": 2}],
+                [{"id": 1}, {"id": 2}],
+            ],
         )
-        self.assertIn(
-            [1, 2],
-            id_seqs,
-            f"after worker B the snapshot must be [1, 2], got {snapshots!r}",
-        )
-        first_one = next(i for i, seq in enumerate(id_seqs) if seq == [1])
-        first_both = next(i for i, seq in enumerate(id_seqs) if seq == [1, 2])
-        self.assertLess(first_one, first_both)
 
 
 class TestRealGraphReducerSnapshots(unittest.IsolatedAsyncioTestCase):
