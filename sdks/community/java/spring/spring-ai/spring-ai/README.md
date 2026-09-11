@@ -168,4 +168,4 @@ executes); **client** tool results are produced by the front end that runs the t
 ```
 
 > This module is versioned independently and tracks the **Spring AI 2.x** line
-> it targets. See the [root README](../README.md) for the project overview.
+> it targets. See the [root README](../../README.md) for the project overview.

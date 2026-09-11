@@ -6,35 +6,15 @@
 
     <parent>
         <groupId>com.ag-ui.community</groupId>
-        <artifactId>ag-ui-spring</artifactId>
-        <version>0.1.0</version>
+        <artifactId>ag-ui-spring-boot-parent</artifactId>
+        <version>4.1.0</version>
+        <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <artifactId>ag-ui-spring-webflux-server</artifactId>
-    <!--
-      Independent version: tracks the Spring Boot line this module targets
-      (3.4.x). Released separately from ag-ui-spring-ai.
-    -->
-    <version>4.1.0</version>
+    <artifactId>ag-ui-spring-webmvc-server</artifactId>
 
-    <name>ag-ui-spring-webflux-server</name>
-    <description>Spring WebFlux server integration for the AG-UI protocol</description>
-
-    <properties>
-        <spring-boot.version>4.1.0</spring-boot.version>
-    </properties>
-
-    <dependencyManagement>
-        <dependencies>
-            <dependency>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-dependencies</artifactId>
-                <version>${spring-boot.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-        </dependencies>
-    </dependencyManagement>
+    <name>ag-ui-spring-webmvc-server</name>
+    <description>Spring WebMVC (Servlet) server integration for the AG-UI protocol</description>
 
     <dependencies>
         <!-- Shared serializer, mix-ins and AgentNotFoundException; brings ag-ui server transitively. -->
@@ -43,10 +23,10 @@
             <artifactId>ag-ui-spring-server-core</artifactId>
         </dependency>
 
-        <!-- WebFlux brings spring-web, reactor-core and Jackson. -->
+        <!-- WebMVC (Servlet) brings spring-web, spring-webmvc and Jackson. -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-webflux</artifactId>
+            <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
 
         <!-- Auto-configuration support; optional for consumers that wire beans themselves. -->
@@ -55,7 +35,7 @@
             <artifactId>spring-boot-autoconfigure</artifactId>
         </dependency>
 
-        <!-- ApplicationContextRunner / AssertJ for the auto-configuration test. -->
+        <!-- MockMvc for the controller test. -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>

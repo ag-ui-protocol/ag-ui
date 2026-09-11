@@ -6,38 +6,18 @@
 
     <parent>
         <groupId>com.ag-ui.community</groupId>
-        <artifactId>ag-ui-spring</artifactId>
-        <version>0.1.0</version>
+        <artifactId>ag-ui-spring-boot-parent</artifactId>
+        <version>4.1.0</version>
+        <relativePath>../pom.xml</relativePath>
     </parent>
 
     <artifactId>ag-ui-spring-server-core</artifactId>
-    <!--
-      Independent version: tracks the Spring Boot line the server modules target
-      (3.4.x), since they share its Jackson version. Released alongside them.
-    -->
-    <version>4.1.0</version>
 
     <name>ag-ui-spring-server-core</name>
     <description>Shared serialization and routing support for the AG-UI Spring server modules</description>
 
-    <properties>
-        <spring-boot.version>4.1.0</spring-boot.version>
-    </properties>
-
-    <!-- Imports the Spring Boot BOM only to pin the Jackson version; this module
-         has no Spring dependency. -->
-    <dependencyManagement>
-        <dependencies>
-            <dependency>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-dependencies</artifactId>
-                <version>${spring-boot.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-        </dependencies>
-    </dependencyManagement>
-
+    <!-- The Spring Boot BOM (pinning the Jackson version this module uses) is
+         imported by the parent reactor. This module has no Spring dependency. -->
     <dependencies>
         <dependency>
             <groupId>com.ag-ui.community</groupId>

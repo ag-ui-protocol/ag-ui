@@ -33,4 +33,4 @@ Several `Agent` beans are each reachable at `/agent/{beanName}`; override the ba
 path with `ag-ui.server.path`.
 
 This starter is versioned on the **Spring Boot 3.4.x** line. See the
-[root README](../README.md) for the project overview.
+[root README](../../README.md) for the project overview.

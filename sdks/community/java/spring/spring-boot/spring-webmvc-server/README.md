@@ -70,4 +70,4 @@ AgUiController controller = new AgUiController(AgentRegistry.of(Map.of("chat", a
 ```
 
 > This module is versioned independently and tracks the **Spring Boot 3.4.x**
-> line it targets. See the [root README](../README.md) for the project overview.
+> line it targets. See the [root README](../../README.md) for the project overview.
