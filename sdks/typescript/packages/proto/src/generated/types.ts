@@ -10,52 +10,24 @@ import { Struct, Value } from "./google/protobuf/struct";
 
 export const protobufPackage = "ag_ui";
 
-/**
- * A call an assistant message made. Carries no subagent attribution of its own
- * and inherits its containing message's, since several calls can share one
- * parent.
- */
-export interface ToolCall {
-  /**
-   * Identifies the call. The answering tool message carries this as its
-   * toolCallId.
-   */
-  id: string;
-  /** The only kind of call the protocol models. */
-  type: string;
-  /** What is being called, and with what. */
-  function:
-    | ToolCall_Function
-    | undefined;
-  /**
-   * Extra information attached to this call. Carried here rather than folded
-   * into the containing message, because several calls can share one parent and
-   * merging them would make the result depend on their order.
-   */
-  metadata?:
-    | { [key: string]: any }
-    | undefined;
-  /** A provider's opaque artefact belonging to this call. */
-  encryptedValue?: string | undefined;
-}
-
-/** The name and arguments of a tool call. */
-export interface ToolCall_Function {
-  /** Which tool is being called. */
-  name: string;
-  /**
-   * The arguments as a JSON string, not as parsed JSON. Kept as written
-   * because a model can emit arguments that are not valid JSON, and losing
-   * them at the protocol boundary would hide the fault from the consumer that
-   * has to handle it.
-   */
-  arguments: string;
-}
-
 /** A text part. */
 export interface TextInputPart {
   /** The text. */
   text: string;
+  /**
+   * Identifies this part within its message. Optional, and nothing reads it yet:
+   * reserved so that a streamed part can be matched to its entry in history once
+   * assistant messages carry parts too.
+   */
+  id?:
+    | string
+    | undefined;
+  /**
+   * Extra information about this part. Unconstrained, as on the media parts.
+   * This is where a text search hit carries its source and title, rather than
+   * the protocol modelling a search-result part of its own.
+   */
+  metadata?: any | undefined;
 }
 
 /** An image part. */
@@ -69,7 +41,14 @@ export interface ImageInputPart {
    * inherited from the SDKs, which declare it unknown rather than a record;
    * listed under known divergences in the README rather than resolved here.
    */
-  metadata?: any | undefined;
+  metadata?:
+    | any
+    | undefined;
+  /**
+   * Identifies this part within its message. Optional, and nothing reads it yet:
+   * reserved as on the text part.
+   */
+  id?: string | undefined;
 }
 
 /** Bytes carried inline. */
@@ -117,7 +96,14 @@ export interface AudioInputPart {
    * Extra information about this part. Unconstrained, as on the other media
    * parts.
    */
-  metadata?: any | undefined;
+  metadata?:
+    | any
+    | undefined;
+  /**
+   * Identifies this part within its message. Optional, and nothing reads it yet:
+   * reserved as on the text part.
+   */
+  id?: string | undefined;
 }
 
 /** A video part. */
@@ -130,7 +116,14 @@ export interface VideoInputPart {
    * Extra information about this part. Unconstrained, as on the other media
    * parts.
    */
-  metadata?: any | undefined;
+  metadata?:
+    | any
+    | undefined;
+  /**
+   * Identifies this part within its message. Optional, and nothing reads it yet:
+   * reserved as on the text part.
+   */
+  id?: string | undefined;
 }
 
 /** A document part. */
@@ -143,16 +136,70 @@ export interface DocumentInputPart {
    * Extra information about this part. Unconstrained, as on the other media
    * parts.
    */
-  metadata?: any | undefined;
+  metadata?:
+    | any
+    | undefined;
+  /**
+   * Identifies this part within its message. Optional, and nothing reads it yet:
+   * reserved as on the text part.
+   */
+  id?: string | undefined;
 }
 
-/** One part of a multimodal user message. Discriminated by type. */
+/**
+ * One part of a message body: what a person sends in a user message, or what a
+ * tool returns in a tool message. Discriminated by type. Named by what the part
+ * is rather than by direction, because the same part travels into the model
+ * inside a user message and back out of the stream inside a tool result.
+ */
 export interface InputContent {
   text?: TextInputPart | undefined;
   image?: ImageInputPart | undefined;
   audio?: AudioInputPart | undefined;
   video?: VideoInputPart | undefined;
   document?: DocumentInputPart | undefined;
+}
+
+/**
+ * A call an assistant message made. Carries no subagent attribution of its own
+ * and inherits its containing message's, since several calls can share one
+ * parent.
+ */
+export interface ToolCall {
+  /**
+   * Identifies the call. The answering tool message carries this as its
+   * toolCallId.
+   */
+  id: string;
+  /** The only kind of call the protocol models. */
+  type: string;
+  /** What is being called, and with what. */
+  function:
+    | ToolCall_Function
+    | undefined;
+  /**
+   * Extra information attached to this call. Carried here rather than folded
+   * into the containing message, because several calls can share one parent and
+   * merging them would make the result depend on their order.
+   */
+  metadata?:
+    | { [key: string]: any }
+    | undefined;
+  /** A provider's opaque artefact belonging to this call. */
+  encryptedValue?: string | undefined;
+}
+
+/** The name and arguments of a tool call. */
+export interface ToolCall_Function {
+  /** Which tool is being called. */
+  name: string;
+  /**
+   * The arguments as a JSON string, not as parsed JSON. Kept as written
+   * because a model can emit arguments that are not valid JSON, and losing
+   * them at the protocol boundary would hide the fault from the consumer that
+   * has to handle it.
+   */
+  arguments: string;
 }
 
 /** Any message in a conversation. Discriminated by role. */
@@ -372,168 +419,20 @@ export interface Interrupt {
   subagentRunId?: string | undefined;
 }
 
-function createBaseToolCall(): ToolCall {
-  return { id: "", type: "", function: undefined, metadata: undefined, encryptedValue: undefined };
-}
-
-export const ToolCall: MessageFns<ToolCall> = {
-  encode(message: ToolCall, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
-    if (message.id !== "") {
-      writer.uint32(10).string(message.id);
-    }
-    if (message.type !== "") {
-      writer.uint32(18).string(message.type);
-    }
-    if (message.function !== undefined) {
-      ToolCall_Function.encode(message.function, writer.uint32(26).fork()).join();
-    }
-    if (message.metadata !== undefined) {
-      Struct.encode(Struct.wrap(message.metadata), writer.uint32(34).fork()).join();
-    }
-    if (message.encryptedValue !== undefined) {
-      writer.uint32(42).string(message.encryptedValue);
-    }
-    return writer;
-  },
-
-  decode(input: BinaryReader | Uint8Array, length?: number): ToolCall {
-    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
-    const end = length === undefined ? reader.len : reader.pos + length;
-    const message = createBaseToolCall();
-    while (reader.pos < end) {
-      const tag = reader.uint32();
-      switch (tag >>> 3) {
-        case 1: {
-          if (tag !== 10) {
-            break;
-          }
-
-          message.id = reader.string();
-          continue;
-        }
-        case 2: {
-          if (tag !== 18) {
-            break;
-          }
-
-          message.type = reader.string();
-          continue;
-        }
-        case 3: {
-          if (tag !== 26) {
-            break;
-          }
-
-          message.function = ToolCall_Function.decode(reader, reader.uint32());
-          continue;
-        }
-        case 4: {
-          if (tag !== 34) {
-            break;
-          }
-
-          message.metadata = Struct.unwrap(Struct.decode(reader, reader.uint32()));
-          continue;
-        }
-        case 5: {
-          if (tag !== 42) {
-            break;
-          }
-
-          message.encryptedValue = reader.string();
-          continue;
-        }
-      }
-      if ((tag & 7) === 4 || tag === 0) {
-        break;
-      }
-      reader.skip(tag & 7);
-    }
-    return message;
-  },
-
-  create<I extends Exact<DeepPartial<ToolCall>, I>>(base?: I): ToolCall {
-    return ToolCall.fromPartial(base ?? ({} as any));
-  },
-  fromPartial<I extends Exact<DeepPartial<ToolCall>, I>>(object: I): ToolCall {
-    const message = createBaseToolCall();
-    message.id = object.id ?? "";
-    message.type = object.type ?? "";
-    message.function = (object.function !== undefined && object.function !== null)
-      ? ToolCall_Function.fromPartial(object.function)
-      : undefined;
-    message.metadata = object.metadata ?? undefined;
-    message.encryptedValue = object.encryptedValue ?? undefined;
-    return message;
-  },
-};
-
-function createBaseToolCall_Function(): ToolCall_Function {
-  return { name: "", arguments: "" };
-}
-
-export const ToolCall_Function: MessageFns<ToolCall_Function> = {
-  encode(message: ToolCall_Function, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
-    if (message.name !== "") {
-      writer.uint32(10).string(message.name);
-    }
-    if (message.arguments !== "") {
-      writer.uint32(18).string(message.arguments);
-    }
-    return writer;
-  },
-
-  decode(input: BinaryReader | Uint8Array, length?: number): ToolCall_Function {
-    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
-    const end = length === undefined ? reader.len : reader.pos + length;
-    const message = createBaseToolCall_Function();
-    while (reader.pos < end) {
-      const tag = reader.uint32();
-      switch (tag >>> 3) {
-        case 1: {
-          if (tag !== 10) {
-            break;
-          }
-
-          message.name = reader.string();
-          continue;
-        }
-        case 2: {
-          if (tag !== 18) {
-            break;
-          }
-
-          message.arguments = reader.string();
-          continue;
-        }
-      }
-      if ((tag & 7) === 4 || tag === 0) {
-        break;
-      }
-      reader.skip(tag & 7);
-    }
-    return message;
-  },
-
-  create<I extends Exact<DeepPartial<ToolCall_Function>, I>>(base?: I): ToolCall_Function {
-    return ToolCall_Function.fromPartial(base ?? ({} as any));
-  },
-  fromPartial<I extends Exact<DeepPartial<ToolCall_Function>, I>>(object: I): ToolCall_Function {
-    const message = createBaseToolCall_Function();
-    message.name = object.name ?? "";
-    message.arguments = object.arguments ?? "";
-    return message;
-  },
-};
-
 function createBaseTextInputPart(): TextInputPart {
-  return { text: "" };
+  return { text: "", id: undefined, metadata: undefined };
 }
 
 export const TextInputPart: MessageFns<TextInputPart> = {
   encode(message: TextInputPart, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
     if (message.text !== "") {
       writer.uint32(10).string(message.text);
+    }
+    if (message.id !== undefined) {
+      writer.uint32(18).string(message.id);
+    }
+    if (message.metadata !== undefined) {
+      Value.encode(Value.wrap(message.metadata), writer.uint32(26).fork()).join();
     }
     return writer;
   },
@@ -553,6 +452,22 @@ export const TextInputPart: MessageFns<TextInputPart> = {
           message.text = reader.string();
           continue;
         }
+        case 2: {
+          if (tag !== 18) {
+            break;
+          }
+
+          message.id = reader.string();
+          continue;
+        }
+        case 3: {
+          if (tag !== 26) {
+            break;
+          }
+
+          message.metadata = Value.unwrap(Value.decode(reader, reader.uint32()));
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -568,12 +483,14 @@ export const TextInputPart: MessageFns<TextInputPart> = {
   fromPartial<I extends Exact<DeepPartial<TextInputPart>, I>>(object: I): TextInputPart {
     const message = createBaseTextInputPart();
     message.text = object.text ?? "";
+    message.id = object.id ?? undefined;
+    message.metadata = object.metadata ?? undefined;
     return message;
   },
 };
 
 function createBaseImageInputPart(): ImageInputPart {
-  return { source: undefined, metadata: undefined };
+  return { source: undefined, metadata: undefined, id: undefined };
 }
 
 export const ImageInputPart: MessageFns<ImageInputPart> = {
@@ -583,6 +500,9 @@ export const ImageInputPart: MessageFns<ImageInputPart> = {
     }
     if (message.metadata !== undefined) {
       Value.encode(Value.wrap(message.metadata), writer.uint32(18).fork()).join();
+    }
+    if (message.id !== undefined) {
+      writer.uint32(26).string(message.id);
     }
     return writer;
   },
@@ -610,6 +530,14 @@ export const ImageInputPart: MessageFns<ImageInputPart> = {
           message.metadata = Value.unwrap(Value.decode(reader, reader.uint32()));
           continue;
         }
+        case 3: {
+          if (tag !== 26) {
+            break;
+          }
+
+          message.id = reader.string();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -628,6 +556,7 @@ export const ImageInputPart: MessageFns<ImageInputPart> = {
       ? InputContentSource.fromPartial(object.source)
       : undefined;
     message.metadata = object.metadata ?? undefined;
+    message.id = object.id ?? undefined;
     return message;
   },
 };
@@ -811,7 +740,7 @@ export const InputContentSource: MessageFns<InputContentSource> = {
 };
 
 function createBaseAudioInputPart(): AudioInputPart {
-  return { source: undefined, metadata: undefined };
+  return { source: undefined, metadata: undefined, id: undefined };
 }
 
 export const AudioInputPart: MessageFns<AudioInputPart> = {
@@ -821,6 +750,9 @@ export const AudioInputPart: MessageFns<AudioInputPart> = {
     }
     if (message.metadata !== undefined) {
       Value.encode(Value.wrap(message.metadata), writer.uint32(18).fork()).join();
+    }
+    if (message.id !== undefined) {
+      writer.uint32(26).string(message.id);
     }
     return writer;
   },
@@ -848,6 +780,14 @@ export const AudioInputPart: MessageFns<AudioInputPart> = {
           message.metadata = Value.unwrap(Value.decode(reader, reader.uint32()));
           continue;
         }
+        case 3: {
+          if (tag !== 26) {
+            break;
+          }
+
+          message.id = reader.string();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -866,12 +806,13 @@ export const AudioInputPart: MessageFns<AudioInputPart> = {
       ? InputContentSource.fromPartial(object.source)
       : undefined;
     message.metadata = object.metadata ?? undefined;
+    message.id = object.id ?? undefined;
     return message;
   },
 };
 
 function createBaseVideoInputPart(): VideoInputPart {
-  return { source: undefined, metadata: undefined };
+  return { source: undefined, metadata: undefined, id: undefined };
 }
 
 export const VideoInputPart: MessageFns<VideoInputPart> = {
@@ -881,6 +822,9 @@ export const VideoInputPart: MessageFns<VideoInputPart> = {
     }
     if (message.metadata !== undefined) {
       Value.encode(Value.wrap(message.metadata), writer.uint32(18).fork()).join();
+    }
+    if (message.id !== undefined) {
+      writer.uint32(26).string(message.id);
     }
     return writer;
   },
@@ -908,6 +852,14 @@ export const VideoInputPart: MessageFns<VideoInputPart> = {
           message.metadata = Value.unwrap(Value.decode(reader, reader.uint32()));
           continue;
         }
+        case 3: {
+          if (tag !== 26) {
+            break;
+          }
+
+          message.id = reader.string();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -926,12 +878,13 @@ export const VideoInputPart: MessageFns<VideoInputPart> = {
       ? InputContentSource.fromPartial(object.source)
       : undefined;
     message.metadata = object.metadata ?? undefined;
+    message.id = object.id ?? undefined;
     return message;
   },
 };
 
 function createBaseDocumentInputPart(): DocumentInputPart {
-  return { source: undefined, metadata: undefined };
+  return { source: undefined, metadata: undefined, id: undefined };
 }
 
 export const DocumentInputPart: MessageFns<DocumentInputPart> = {
@@ -941,6 +894,9 @@ export const DocumentInputPart: MessageFns<DocumentInputPart> = {
     }
     if (message.metadata !== undefined) {
       Value.encode(Value.wrap(message.metadata), writer.uint32(18).fork()).join();
+    }
+    if (message.id !== undefined) {
+      writer.uint32(26).string(message.id);
     }
     return writer;
   },
@@ -968,6 +924,14 @@ export const DocumentInputPart: MessageFns<DocumentInputPart> = {
           message.metadata = Value.unwrap(Value.decode(reader, reader.uint32()));
           continue;
         }
+        case 3: {
+          if (tag !== 26) {
+            break;
+          }
+
+          message.id = reader.string();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -986,6 +950,7 @@ export const DocumentInputPart: MessageFns<DocumentInputPart> = {
       ? InputContentSource.fromPartial(object.source)
       : undefined;
     message.metadata = object.metadata ?? undefined;
+    message.id = object.id ?? undefined;
     return message;
   },
 };
@@ -1090,6 +1055,160 @@ export const InputContent: MessageFns<InputContent> = {
     message.document = (object.document !== undefined && object.document !== null)
       ? DocumentInputPart.fromPartial(object.document)
       : undefined;
+    return message;
+  },
+};
+
+function createBaseToolCall(): ToolCall {
+  return { id: "", type: "", function: undefined, metadata: undefined, encryptedValue: undefined };
+}
+
+export const ToolCall: MessageFns<ToolCall> = {
+  encode(message: ToolCall, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.id !== "") {
+      writer.uint32(10).string(message.id);
+    }
+    if (message.type !== "") {
+      writer.uint32(18).string(message.type);
+    }
+    if (message.function !== undefined) {
+      ToolCall_Function.encode(message.function, writer.uint32(26).fork()).join();
+    }
+    if (message.metadata !== undefined) {
+      Struct.encode(Struct.wrap(message.metadata), writer.uint32(34).fork()).join();
+    }
+    if (message.encryptedValue !== undefined) {
+      writer.uint32(42).string(message.encryptedValue);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): ToolCall {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseToolCall();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 10) {
+            break;
+          }
+
+          message.id = reader.string();
+          continue;
+        }
+        case 2: {
+          if (tag !== 18) {
+            break;
+          }
+
+          message.type = reader.string();
+          continue;
+        }
+        case 3: {
+          if (tag !== 26) {
+            break;
+          }
+
+          message.function = ToolCall_Function.decode(reader, reader.uint32());
+          continue;
+        }
+        case 4: {
+          if (tag !== 34) {
+            break;
+          }
+
+          message.metadata = Struct.unwrap(Struct.decode(reader, reader.uint32()));
+          continue;
+        }
+        case 5: {
+          if (tag !== 42) {
+            break;
+          }
+
+          message.encryptedValue = reader.string();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create<I extends Exact<DeepPartial<ToolCall>, I>>(base?: I): ToolCall {
+    return ToolCall.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<ToolCall>, I>>(object: I): ToolCall {
+    const message = createBaseToolCall();
+    message.id = object.id ?? "";
+    message.type = object.type ?? "";
+    message.function = (object.function !== undefined && object.function !== null)
+      ? ToolCall_Function.fromPartial(object.function)
+      : undefined;
+    message.metadata = object.metadata ?? undefined;
+    message.encryptedValue = object.encryptedValue ?? undefined;
+    return message;
+  },
+};
+
+function createBaseToolCall_Function(): ToolCall_Function {
+  return { name: "", arguments: "" };
+}
+
+export const ToolCall_Function: MessageFns<ToolCall_Function> = {
+  encode(message: ToolCall_Function, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.name !== "") {
+      writer.uint32(10).string(message.name);
+    }
+    if (message.arguments !== "") {
+      writer.uint32(18).string(message.arguments);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): ToolCall_Function {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseToolCall_Function();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 10) {
+            break;
+          }
+
+          message.name = reader.string();
+          continue;
+        }
+        case 2: {
+          if (tag !== 18) {
+            break;
+          }
+
+          message.arguments = reader.string();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create<I extends Exact<DeepPartial<ToolCall_Function>, I>>(base?: I): ToolCall_Function {
+    return ToolCall_Function.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<ToolCall_Function>, I>>(object: I): ToolCall_Function {
+    const message = createBaseToolCall_Function();
+    message.name = object.name ?? "";
+    message.arguments = object.arguments ?? "";
     return message;
   },
 };

@@ -1,0 +1,132 @@
+{
+  "name": "tool-result-parts-mint-tool-message",
+  "area": "tool-calls",
+  "description": "a TOOL_CALL_RESULT whose content is a list of parts mints a tool message carrying those parts unchanged, placed after the assistant message that made the call, with no warning; asserted on the assembled messages, because the two clients deliver a different event granularity to application code",
+  "specPage": "/spec/draft/events/tool-calls",
+  "kill": "make the TOOL_CALL_RESULT reducer flatten or stringify a parts array before storing it as the tool message's content",
+  "stream": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-toolparts",
+      "runId": "r-1",
+      "protocolVersion": "1.0"
+    },
+    {
+      "type": "TOOL_CALL_START",
+      "toolCallId": "toolparts-c1",
+      "toolCallName": "get_invoice",
+      "parentMessageId": "toolparts-a1"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "toolparts-c1",
+      "delta": "{\"id\":\"INV-2291\"}"
+    },
+    {
+      "type": "TOOL_CALL_END",
+      "toolCallId": "toolparts-c1"
+    },
+    {
+      "type": "TOOL_CALL_RESULT",
+      "messageId": "toolparts-t1",
+      "toolCallId": "toolparts-c1",
+      "content": [
+        {
+          "type": "text",
+          "text": "Invoice INV-2291 attached."
+        },
+        {
+          "type": "document",
+          "id": "toolparts-doc",
+          "source": {
+            "type": "url",
+            "value": "https://example.com/invoices/INV-2291.pdf",
+            "mimeType": "application/pdf"
+          },
+          "metadata": {
+            "title": "INV-2291"
+          }
+        }
+      ]
+    },
+    {
+      "type": "TEXT_MESSAGE_START",
+      "messageId": "toolparts-a2",
+      "role": "assistant"
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "toolparts-a2",
+      "delta": "Here is your invoice."
+    },
+    {
+      "type": "TEXT_MESSAGE_END",
+      "messageId": "toolparts-a2"
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "t-toolparts",
+      "runId": "r-1"
+    }
+  ],
+  "expect": {
+    "outcome": "completed",
+    "noWarnings": true,
+    "messageCount": 3,
+    "messages": [
+      {
+        "id": "toolparts-a1",
+        "role": "assistant"
+      },
+      {
+        "id": "toolparts-t1",
+        "role": "tool",
+        "toolCallId": "toolparts-c1",
+        "content": [
+          {
+            "type": "text",
+            "text": "Invoice INV-2291 attached."
+          },
+          {
+            "type": "document",
+            "id": "toolparts-doc",
+            "source": {
+              "type": "url",
+              "value": "https://example.com/invoices/INV-2291.pdf",
+              "mimeType": "application/pdf"
+            },
+            "metadata": {
+              "title": "INV-2291"
+            }
+          }
+        ]
+      },
+      {
+        "id": "toolparts-a2",
+        "role": "assistant",
+        "content": "Here is your invoice."
+      }
+    ]
+  },
+  "expectOverrides": {
+    "dotnet": {
+      "intentional": "the .NET client assembles history through Microsoft.Extensions.AI ChatMessages, and a FunctionResultContent holds one result object: the tool result's parts are flattened to their text (AGUIContent.ToString) and the tool message takes the tool call's id, so the document part does not survive into the assembled messages. The event itself carries the parts \u2014 AGUIToolMessage and ToolCallResultEvent hold AGUIContent \u2014 and a parts-preserving mapping onto MEAI DataContent/UriContent is tracked separately.",
+      "messages": [
+        {
+          "id": "toolparts-a1",
+          "role": "assistant"
+        },
+        {
+          "role": "tool",
+          "toolCallId": "toolparts-c1",
+          "content": "Invoice INV-2291 attached."
+        },
+        {
+          "id": "toolparts-a2",
+          "role": "assistant",
+          "content": "Here is your invoice."
+        }
+      ]
+    }
+  }
+}

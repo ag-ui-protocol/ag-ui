@@ -189,7 +189,7 @@ Carries what a tool returned. Mints a tool message rather than appending to an e
 - `subagentRunId` — [`SubagentRunId`](#subagentrunid), optional. The subagent invocation this belongs to. Absent means the parent agent produced it directly.
 - `messageId` — `string`, **required**. The tool message this result becomes.
 - `toolCallId` — `string`, **required**. The call being answered.
-- `content` — `string`, **required**. What the tool returned, as a string. A tool returning structured data serialises it.
+- `content` — `string` | array of [`ContentPart`](#contentpart), **required**. What the tool returned: either plain text, or an ordered list of parts, exactly as on the tool message this event mints. A tool returning structured data serialises it into text; media travel as parts of their own.
 - `role` — `"tool"`, optional. Present only for symmetry with the message it mints; the value is fixed, so a producer may leave it out.
 
 Closed object: the schema rejects members not listed here.
@@ -713,7 +713,7 @@ A message from the person using the application.
 - `name` — `string`, optional. An optional display name for the author.
 - `encryptedValue` — `string`, optional. A provider's opaque artefact belonging to this message, stored by a consumer and returned on a later turn.
 - `metadata` — [`Metadata`](#metadata), optional. Extra information attached to this message.
-- `content` — `string` | array of [`InputContent`](#inputcontent), **required**. What the person sent: either plain text, or an ordered list of parts for a multimodal message.
+- `content` — `string` | array of [`ContentPart`](#contentpart), **required**. What the person sent: either plain text, or an ordered list of parts for a multimodal message.
 
 Closed object: the schema rejects members not listed here.
 
@@ -728,7 +728,7 @@ What a tool returned, as a message in the conversation. Stands alone rather than
 - `subagentRunId` — [`SubagentRunId`](#subagentrunid), optional. The subagent invocation this belongs to. Absent means the parent agent produced it directly.
 - `id` — `string`, **required**. Identifies the message.
 - `role` — `"tool"`, **required**. Fixed. Declared here rather than inherited, because this message does not compose BaseMessage.
-- `content` — `string`, **required**. What the tool returned.
+- `content` — `string` | array of [`ContentPart`](#contentpart), **required**. What the tool returned: either plain text, or an ordered list of parts. A tool returning structured data serialises it into text; media travel as parts of their own.
 - `toolCallId` — `string`, **required**. The call this answers.
 - `error` — `string`, optional. Why the tool failed, when it did. Present alongside content rather than instead of it, so a partial result survives a failure.
 - `encryptedValue` — `string`, optional. A provider's opaque artefact belonging to this message.
@@ -800,18 +800,20 @@ Every role a materialised message may have.
 
 The request that starts a run, and the types only it carries. Behaviour: [Run Input](/spec/draft/basic/run-input).
 
-### `TextInputContent`
+### `TextPart`
 
 A text part.
 
 **Fields:**
 
 - `type` — `"text"`, **required**. Discriminator.
+- `id` — `string`, optional. Identifies this part within its message. Optional, and nothing reads it yet: reserved so that a streamed part can be matched to its entry in history once assistant messages carry parts too.
 - `text` — `string`, **required**. The text.
+- `metadata` — any JSON value except `null`, optional. Extra information about this part. Unconstrained, as on the media parts. This is where a text search hit carries its source and title, rather than the protocol modelling a search-result part of its own.
 
 Closed object: the schema rejects members not listed here.
 
-### `InputContentDataSource`
+### `DataSource`
 
 Bytes carried inline.
 
@@ -823,7 +825,7 @@ Bytes carried inline.
 
 Closed object: the schema rejects members not listed here.
 
-### `InputContentUrlSource`
+### `UrlSource`
 
 Bytes referenced by URL, fetched by whoever needs them.
 
@@ -835,76 +837,80 @@ Bytes referenced by URL, fetched by whoever needs them.
 
 Closed object: the schema rejects members not listed here.
 
-### `InputContentSource`
+### `PartSource`
 
 Where a media part's bytes come from: carried inline, or referenced by URL.
 
 **Members:**
 
-- [`InputContentDataSource`](#inputcontentdatasource)
-- [`InputContentUrlSource`](#inputcontenturlsource)
+- [`DataSource`](#datasource)
+- [`UrlSource`](#urlsource)
 
 Discriminated by `type`.
 
-### `ImageInputContent`
+### `ImagePart`
 
 An image part.
 
 **Fields:**
 
 - `type` — `"image"`, **required**. Discriminator.
-- `source` — [`InputContentSource`](#inputcontentsource), **required**. Where the image comes from.
+- `id` — `string`, optional. Identifies this part within its message. Optional, and nothing reads it yet: reserved as on the text part.
+- `source` — [`PartSource`](#partsource), **required**. Where the image comes from.
 - `metadata` — any JSON value except `null`, optional. Extra information about this part. Unconstrained rather than an object: inherited from the SDKs, which declare it unknown rather than a record; listed under known divergences in the README rather than resolved here.
 
 Closed object: the schema rejects members not listed here.
 
-### `AudioInputContent`
+### `AudioPart`
 
 An audio part.
 
 **Fields:**
 
 - `type` — `"audio"`, **required**. Discriminator.
-- `source` — [`InputContentSource`](#inputcontentsource), **required**. Where the audio comes from.
+- `id` — `string`, optional. Identifies this part within its message. Optional, and nothing reads it yet: reserved as on the text part.
+- `source` — [`PartSource`](#partsource), **required**. Where the audio comes from.
 - `metadata` — any JSON value except `null`, optional. Extra information about this part. Unconstrained, as on the other media parts.
 
 Closed object: the schema rejects members not listed here.
 
-### `VideoInputContent`
+### `VideoPart`
 
 A video part.
 
 **Fields:**
 
 - `type` — `"video"`, **required**. Discriminator.
-- `source` — [`InputContentSource`](#inputcontentsource), **required**. Where the video comes from.
+- `id` — `string`, optional. Identifies this part within its message. Optional, and nothing reads it yet: reserved as on the text part.
+- `source` — [`PartSource`](#partsource), **required**. Where the video comes from.
 - `metadata` — any JSON value except `null`, optional. Extra information about this part. Unconstrained, as on the other media parts.
 
 Closed object: the schema rejects members not listed here.
 
-### `DocumentInputContent`
+### `DocumentPart`
 
 A document part.
 
 **Fields:**
 
 - `type` — `"document"`, **required**. Discriminator.
-- `source` — [`InputContentSource`](#inputcontentsource), **required**. Where the document comes from.
+- `id` — `string`, optional. Identifies this part within its message. Optional, and nothing reads it yet: reserved as on the text part.
+- `source` — [`PartSource`](#partsource), **required**. Where the document comes from.
 - `metadata` — any JSON value except `null`, optional. Extra information about this part. Unconstrained, as on the other media parts.
 
 Closed object: the schema rejects members not listed here.
 
-### `InputContent`
+### `ContentPart`
 
-One part of a multimodal user message. Discriminated by type.
+One part of a message body: what a person sends in a user message, or what a tool returns in a tool message. Discriminated by type. Named by what the part is rather than by direction, because the same part travels into the model inside a user message and back out of the stream inside a tool result.
 
 **Members:**
 
-- [`TextInputContent`](#textinputcontent)
-- [`ImageInputContent`](#imageinputcontent)
-- [`AudioInputContent`](#audioinputcontent)
-- [`VideoInputContent`](#videoinputcontent)
-- [`DocumentInputContent`](#documentinputcontent)
+- [`TextPart`](#textpart)
+- [`ImagePart`](#imagepart)
+- [`AudioPart`](#audiopart)
+- [`VideoPart`](#videopart)
+- [`DocumentPart`](#documentpart)
 
 Discriminated by `type`.
 

@@ -574,60 +574,66 @@ as optional.
 | arguments | required   | required | optional | required |
 | name      | required   | required | optional | required |
 
-## TextInputContent
+## TextPart
 
-| field | TypeScript | Python   | .NET     | schema   |
-| ----- | ---------- | -------- | -------- | -------- |
-| text  | required   | required | optional | required |
-| type  | required   | required | required | required |
+| field    | TypeScript | Python             | .NET | schema   |
+| -------- | ---------- | ------------------ | ---- | -------- |
+| id       | optional   | optional, nullable | —    | optional |
+| metadata | optional   | optional, nullable | —    | optional |
+| text     | required   | required           | —    | required |
+| type     | required   | required           | —    | required |
 
-## ImageInputContent
+## ImagePart
 
-| field    | TypeScript | Python             | .NET               | schema   |
-| -------- | ---------- | ------------------ | ------------------ | -------- |
-| metadata | optional   | optional, nullable | optional, nullable | optional |
-| source   | required   | required           | optional           | required |
-| type     | required   | required           | required           | required |
+| field    | TypeScript | Python             | .NET | schema   |
+| -------- | ---------- | ------------------ | ---- | -------- |
+| id       | optional   | optional, nullable | —    | optional |
+| metadata | optional   | optional, nullable | —    | optional |
+| source   | required   | required           | —    | required |
+| type     | required   | required           | —    | required |
 
-## AudioInputContent
+## AudioPart
 
-| field    | TypeScript | Python             | .NET               | schema   |
-| -------- | ---------- | ------------------ | ------------------ | -------- |
-| metadata | optional   | optional, nullable | optional, nullable | optional |
-| source   | required   | required           | optional           | required |
-| type     | required   | required           | required           | required |
+| field    | TypeScript | Python             | .NET | schema   |
+| -------- | ---------- | ------------------ | ---- | -------- |
+| id       | optional   | optional, nullable | —    | optional |
+| metadata | optional   | optional, nullable | —    | optional |
+| source   | required   | required           | —    | required |
+| type     | required   | required           | —    | required |
 
-## VideoInputContent
+## VideoPart
 
-| field    | TypeScript | Python             | .NET               | schema   |
-| -------- | ---------- | ------------------ | ------------------ | -------- |
-| metadata | optional   | optional, nullable | optional, nullable | optional |
-| source   | required   | required           | optional           | required |
-| type     | required   | required           | required           | required |
+| field    | TypeScript | Python             | .NET | schema   |
+| -------- | ---------- | ------------------ | ---- | -------- |
+| id       | optional   | optional, nullable | —    | optional |
+| metadata | optional   | optional, nullable | —    | optional |
+| source   | required   | required           | —    | required |
+| type     | required   | required           | —    | required |
 
-## DocumentInputContent
+## DocumentPart
 
-| field    | TypeScript | Python             | .NET               | schema   |
-| -------- | ---------- | ------------------ | ------------------ | -------- |
-| metadata | optional   | optional, nullable | optional, nullable | optional |
-| source   | required   | required           | optional           | required |
-| type     | required   | required           | required           | required |
+| field    | TypeScript | Python             | .NET | schema   |
+| -------- | ---------- | ------------------ | ---- | -------- |
+| id       | optional   | optional, nullable | —    | optional |
+| metadata | optional   | optional, nullable | —    | optional |
+| source   | required   | required           | —    | required |
+| type     | required   | required           | —    | required |
 
-## InputContentDataSource
+## DataSource
 
-| field    | TypeScript | Python   | .NET     | schema   |
-| -------- | ---------- | -------- | -------- | -------- |
-| mimeType | required   | required | optional | required |
-| type     | required   | required | required | required |
-| value    | required   | required | optional | required |
+| field    | TypeScript | Python   | .NET | schema   |
+| -------- | ---------- | -------- | ---- | -------- |
+| mimeType | required   | required | —    | required |
+| type     | required   | required | —    | required |
+| value    | required   | required | —    | required |
 
-## InputContentUrlSource
+## UrlSource
 
-| field    | TypeScript | Python             | .NET               | schema   |
-| -------- | ---------- | ------------------ | ------------------ | -------- |
-| mimeType | optional   | optional, nullable | optional, nullable | optional |
-| type     | required   | required           | required           | required |
-| value    | required   | required           | optional           | required |
+| field    | TypeScript | Python             | .NET | schema   |
+| -------- | ---------- | ------------------ | ---- | -------- |
+| mimeType | optional   | optional, nullable | —    | optional |
+| type     | required   | required           | —    | required |
+| value    | required   | required           | —    | required |
 
 ## Context
 

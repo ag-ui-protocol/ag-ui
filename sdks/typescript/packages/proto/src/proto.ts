@@ -186,15 +186,17 @@ const toProtoContentPart = (part: unknown): unknown => {
 
   switch (rec.type) {
     case "text":
-      return { text: { text: rec.text } };
+      return { text: { id: rec.id, text: rec.text, metadata: rec.metadata } };
     case "image":
-      return { image: { source: toProtoSource(rec.source), metadata: rec.metadata } };
+      return { image: { id: rec.id, source: toProtoSource(rec.source), metadata: rec.metadata } };
     case "audio":
-      return { audio: { source: toProtoSource(rec.source), metadata: rec.metadata } };
+      return { audio: { id: rec.id, source: toProtoSource(rec.source), metadata: rec.metadata } };
     case "video":
-      return { video: { source: toProtoSource(rec.source), metadata: rec.metadata } };
+      return { video: { id: rec.id, source: toProtoSource(rec.source), metadata: rec.metadata } };
     case "document":
-      return { document: { source: toProtoSource(rec.source), metadata: rec.metadata } };
+      return {
+        document: { id: rec.id, source: toProtoSource(rec.source), metadata: rec.metadata },
+      };
     // Legacy compatibility, predating the schema: the retired "binary" part
     // rides as a document part with marker metadata. Behavioural rule of this
     // layer, not a schema fact.
@@ -228,35 +230,55 @@ const fromProtoContentPart = (part: unknown): unknown => {
   }
   if (rec.text) {
     const part = rec.text as LooseRecord;
-    return { type: "text", text: part.text };
+    return { type: "text", id: part.id, text: part.text, metadata: part.metadata };
   }
   if (rec.image) {
     const part = rec.image as LooseRecord;
     if (part.source !== undefined && fromProtoSource(part.source) === undefined) {
       return undefined;
     }
-    return { type: "image", source: fromProtoSource(part.source), metadata: part.metadata };
+    return {
+      type: "image",
+      id: part.id,
+      source: fromProtoSource(part.source),
+      metadata: part.metadata,
+    };
   }
   if (rec.audio) {
     const part = rec.audio as LooseRecord;
     if (part.source !== undefined && fromProtoSource(part.source) === undefined) {
       return undefined;
     }
-    return { type: "audio", source: fromProtoSource(part.source), metadata: part.metadata };
+    return {
+      type: "audio",
+      id: part.id,
+      source: fromProtoSource(part.source),
+      metadata: part.metadata,
+    };
   }
   if (rec.video) {
     const part = rec.video as LooseRecord;
     if (part.source !== undefined && fromProtoSource(part.source) === undefined) {
       return undefined;
     }
-    return { type: "video", source: fromProtoSource(part.source), metadata: part.metadata };
+    return {
+      type: "video",
+      id: part.id,
+      source: fromProtoSource(part.source),
+      metadata: part.metadata,
+    };
   }
   if (rec.document) {
     const part = rec.document as LooseRecord;
     if (part.source !== undefined && fromProtoSource(part.source) === undefined) {
       return undefined;
     }
-    return { type: "document", source: fromProtoSource(part.source), metadata: part.metadata };
+    return {
+      type: "document",
+      id: part.id,
+      source: fromProtoSource(part.source),
+      metadata: part.metadata,
+    };
   }
   return undefined;
 };
@@ -266,7 +288,7 @@ const fromProtoContentPart = (part: unknown): unknown => {
  * field feeds `content` depends on the role.
  */
 const MAP_CONTENT_ROLES = new Set<string>(["activity"]);
-const PARTS_CONTENT_ROLES = new Set<string>(["user"]);
+const PARTS_CONTENT_ROLES = new Set<string>(["user", "tool"]);
 /** Every role the Message union declares, for telling unknown from misused. */
 const KNOWN_ROLES = new Set<string>([
   "developer",
@@ -550,6 +572,24 @@ export function encode(event: BaseEvent): Uint8Array {
   if (type === "RUN_ERROR") {
     rest.usage = asArray(rest.usage);
   }
+  if (type === "TOOL_CALL_RESULT") {
+    // content is a string or a parts array: a string keeps the field,
+    // parts take contentParts — the same split as on the merged Message.
+    if (Array.isArray(rest.content)) {
+      rest.contentParts = rest.content
+        .map((part: unknown, index: number) => {
+          const mapped = toProtoContentPart(part);
+          if (mapped === undefined) {
+            warnUnencodableContentPart("TOOL_CALL_RESULT.content", index);
+          }
+          return mapped;
+        })
+        .filter((part: unknown) => part !== undefined);
+      rest.content = undefined;
+    } else {
+      rest.contentParts = [];
+    }
+  }
   if (type === "RUN_STARTED" && rest.input !== undefined) {
     rest.input = toWireRunAgentInput(rest.input);
   }
@@ -617,6 +657,7 @@ const SCAN_SPECS: Record<string, ScanSpec | undefined> = {
   InputContent: {
     singular: new Set([1, 2, 3, 4, 5]),
     descend: {
+      1: "TextInputPart",
       2: "ImageInputPart",
       3: "AudioInputPart",
       4: "VideoInputPart",
@@ -624,6 +665,7 @@ const SCAN_SPECS: Record<string, ScanSpec | undefined> = {
     },
     arms: new Set([1, 2, 3, 4, 5]),
   },
+  TextInputPart: { singular: new Set([3]), descend: {}, google: { 3: "google.protobuf.Value" } },
   ImageInputPart: {
     singular: new Set([1, 2]),
     descend: { 1: "InputContentSource" },
@@ -693,7 +735,7 @@ const SCAN_SPECS: Record<string, ScanSpec | undefined> = {
     google: { 3: "google.protobuf.Value" },
   },
   SubagentErrorEvent: { singular: new Set([1]), descend: { 1: "BaseEvent" } },
-  ToolCallResultEvent: { singular: new Set([1]), descend: { 1: "BaseEvent" } },
+  ToolCallResultEvent: { singular: new Set([1]), descend: { 1: "BaseEvent", 7: "InputContent" } },
   ActivitySnapshotEvent: {
     singular: new Set([1, 5]),
     descend: { 1: "BaseEvent" },
@@ -1384,6 +1426,29 @@ export function decode(data: Uint8Array): BaseEvent {
     if (Array.isArray(decoded.usage) && decoded.usage.length === 0) {
       delete decoded.usage;
     }
+  }
+  if (decoded.type === "TOOL_CALL_RESULT") {
+    const record = decoded as LooseRecord;
+    if (record.content !== undefined && asArray(record.contentParts).length > 0) {
+      // String content and parts together is a contradiction the encoder never
+      // writes; resolving it either way would silently discard the other half.
+      throw new Error("Invalid event: content carries both string content and content parts");
+    }
+    if (record.content === undefined) {
+      // String content rides the field; anything else is the parts array —
+      // including an empty one, which is valid content of its own. A part
+      // naming no arm this build knows is dropped with a warning, as on the
+      // merged Message and for the same reason: the JSON path strips an
+      // unrecognised union member rather than failing the event.
+      record.content = asArray(record.contentParts)
+        .map((part: unknown) => {
+          const mapped = fromProtoContentPart(part);
+          if (mapped === undefined) warnDroppedContentPart();
+          return mapped;
+        })
+        .filter((part: unknown) => part !== undefined);
+    }
+    delete record.contentParts;
   }
   if (decoded.type === "RUN_STARTED" && decoded.input !== undefined) {
     decoded.input = fromWireRunAgentInput(decoded.input);

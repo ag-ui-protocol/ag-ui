@@ -39,7 +39,10 @@ public static class SubagentFinishedOutcomeTypes
 }
 
 /// <summary>
-/// One part of a multimodal user message. Discriminated by type.
+/// One part of a message body: what a person sends in a user message, or what a
+/// tool returns in a tool message. Discriminated by type. Named by what the
+/// part is rather than by direction, because the same part travels into the
+/// model inside a user message and back out of the stream inside a tool result.
 /// </summary>
 public static class AGUIInputContentTypes
 {

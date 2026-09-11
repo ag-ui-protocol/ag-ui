@@ -62,6 +62,7 @@ subagent-terminal-closes-open-chunk-stream.json
 subagent-unannounced-attribution-accepted.json
 tool-call-metadata-lands-on-the-call.json
 tool-call-triad-assembles.json
+tool-result-parts-mint-tool-message.json
 triad-assembles-message.json
 two-sequential-runs-accumulate.json
 unknown-enum-value-role-fatal.json

@@ -1407,6 +1407,9 @@ internal static class WireGuards
                         }
                         switch (field)
                         {
+                            case 1:
+                                ScanTextInputPart(data.Slice(offset, (int)length));
+                                break;
                             case 2:
                                 ScanImageInputPart(data.Slice(offset, (int)length));
                                 break;
@@ -1418,6 +1421,86 @@ internal static class WireGuards
                                 break;
                             case 5:
                                 ScanDocumentInputPart(data.Slice(offset, (int)length));
+                                break;
+                        }
+                    }
+
+                    offset += (int)length;
+                    break;
+                }
+                case 5:
+                    offset += 4;
+                    break;
+                default:
+                    throw new InvalidDataException("Invalid event: unknown wire type.");
+            }
+
+            if (offset > data.Length)
+            {
+                throw new InvalidDataException("Invalid event: truncated payload.");
+            }
+        }
+
+        if (groupDepth != 0)
+        {
+            throw new InvalidDataException("Invalid event: unbalanced group.");
+        }
+    }
+
+    private static void ScanTextInputPart(ReadOnlySpan<byte> data)
+    {
+        int offset = 0;
+        int groupDepth = 0;
+
+        while (offset < data.Length)
+        {
+            uint tag = ReadVarint(data, ref offset);
+            uint field = tag / 8;
+            uint wireType = tag % 8;
+
+            if (field == 0)
+            {
+                throw new InvalidDataException("Invalid event: field zero is not a legal tag.");
+            }
+
+            if (wireType == 3)
+            {
+                groupDepth += 1;
+                continue;
+            }
+
+            if (wireType == 4)
+            {
+                groupDepth -= 1;
+                if (groupDepth < 0)
+                {
+                    throw new InvalidDataException("Invalid event: unbalanced group.");
+                }
+
+                continue;
+            }
+
+            switch (wireType)
+            {
+                case 0:
+                    ReadVarint(data, ref offset);
+                    break;
+                case 1:
+                    offset += 8;
+                    break;
+                case 2:
+                {
+                    uint length = ReadVarint(data, ref offset);
+                    if (offset + (long)length > data.Length)
+                    {
+                        throw new InvalidDataException("Invalid event: truncated payload.");
+                    }
+
+                    if (groupDepth == 0)
+                    {
+                        switch (field)
+                        {
+                            default:
                                 break;
                         }
                     }
@@ -3220,6 +3303,9 @@ internal static class WireGuards
                         {
                             case 1:
                                 ScanBaseEvent(data.Slice(offset, (int)length));
+                                break;
+                            case 7:
+                                ScanInputContent(data.Slice(offset, (int)length));
                                 break;
                         }
                     }

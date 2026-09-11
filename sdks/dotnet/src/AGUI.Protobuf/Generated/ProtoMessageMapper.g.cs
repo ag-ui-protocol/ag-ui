@@ -115,7 +115,18 @@ internal static class ProtoMessageMapper
 
                 break;
             case AGUIToolMessage tool:
-                proto.Content = tool.Content;
+                if (tool.Content.Value is IList<AGUIInputContent> toolParts)
+                {
+                    foreach (var part in toolParts)
+                    {
+                        proto.ContentParts.Add(ToProtoContentPart(part));
+                    }
+                }
+                else
+                {
+                    proto.Content = tool.Content.Value as string ?? string.Empty;
+                }
+
                 proto.ToolCallId = tool.ToolCallId;
                 if (tool.Error is not null)
                 {
@@ -162,7 +173,9 @@ internal static class ProtoMessageMapper
     private static void AssertRoleExclusiveCarriers(Proto.Message proto)
     {
         bool isActivity = proto.Role == AGUIRoles.Activity;
-        bool isUser = proto.Role == AGUIRoles.User;
+        // The roles whose content is a string or a parts array: the user's, and
+        // the tool's since tool results learned to carry parts.
+        bool carriesParts = proto.Role == AGUIRoles.User || proto.Role == AGUIRoles.Tool;
 
         if (proto.ActivityContent is not null && !isActivity)
         {
@@ -176,13 +189,13 @@ internal static class ProtoMessageMapper
                 "Invalid event: activity content cannot ride with other content forms.");
         }
 
-        if (!isUser && proto.ContentParts.Count > 0)
+        if (!carriesParts && proto.ContentParts.Count > 0)
         {
             throw new InvalidDataException(
                 "Invalid event: message carries content parts for a role that has none.");
         }
 
-        if (isUser && proto.HasContent && proto.ContentParts.Count > 0)
+        if (carriesParts && proto.HasContent && proto.ContentParts.Count > 0)
         {
             throw new InvalidDataException(
                 "Invalid event: message carries both string content and content parts.");
@@ -206,31 +219,7 @@ internal static class ProtoMessageMapper
                     EncryptedValue = proto.HasEncryptedValue ? proto.EncryptedValue : null,
                 };
 
-                if (proto.HasContent)
-                {
-                    user.Content = proto.Content;
-                }
-                else
-                {
-                    // String content rides the content field; anything else is
-                    // the parts array — including an empty one, which is valid
-                    // content of its own. A part with no recognisable arm is
-                    // rejected, not erased.
-                    var parts = new List<AGUIInputContent>();
-                    foreach (var protoPart in proto.ContentParts)
-                    {
-                        var part = FromProtoContentPart(protoPart);
-                        if (part is null)
-                        {
-                            throw new InvalidDataException(
-                                "Invalid event: unreadable content part.");
-                        }
-
-                        parts.Add(part);
-                    }
-
-                    user.Content = parts;
-                }
+                user.Content = FromProtoContent(proto.HasContent, proto.Content, proto.ContentParts);
 
                 return user;
             }
@@ -277,7 +266,7 @@ internal static class ProtoMessageMapper
                 return new AGUIToolMessage
                 {
                     Id = id,
-                    Content = proto.HasContent ? proto.Content : string.Empty,
+                    Content = FromProtoContent(proto.HasContent, proto.Content, proto.ContentParts),
                     ToolCallId = proto.HasToolCallId ? proto.ToolCallId : string.Empty,
                     Error = proto.HasError ? proto.Error : null,
                     EncryptedValue = proto.HasEncryptedValue ? proto.EncryptedValue : null,
@@ -609,51 +598,112 @@ internal static class ProtoMessageMapper
         writer.WriteEndObject();
     }
 
-    private static Proto.InputContent ToProtoContentPart(AGUIInputContent part)
+    /// <summary>
+    /// Reads string-or-parts content off its two wire fields. String content
+    /// rides the content field; anything else is the parts array — including
+    /// an empty one, which is valid content of its own. A part with no
+    /// recognisable arm is rejected, not erased.
+    /// </summary>
+    internal static AGUIContent FromProtoContent(
+        bool hasContent,
+        string content,
+        Google.Protobuf.Collections.RepeatedField<Proto.InputContent> protoParts)
+    {
+        if (hasContent)
+        {
+            return content;
+        }
+
+        var parts = new List<AGUIInputContent>();
+        foreach (var protoPart in protoParts)
+        {
+            var part = FromProtoContentPart(protoPart);
+            if (part is null)
+            {
+                throw new InvalidDataException(
+                    "Invalid event: unreadable content part.");
+            }
+
+            parts.Add(part);
+        }
+
+        return parts;
+    }
+
+    internal static Proto.InputContent ToProtoContentPart(AGUIInputContent part)
     {
         switch (part)
         {
             case AGUITextInputContent text:
-                return new Proto.InputContent
+            {
+                var wire = new Proto.TextInputPart
                 {
-                    Text = new Proto.TextInputPart { Text = text.Text },
+                    Text = text.Text,
+                    Metadata = ProtoValueConverter.ToValueOrNull(text.Metadata),
                 };
+                if (text.Id is not null)
+                {
+                    wire.Id = text.Id;
+                }
+
+                return new Proto.InputContent { Text = wire };
+            }
             case AGUIImageInputContent image:
-                return new Proto.InputContent
+            {
+                var wire = new Proto.ImageInputPart
                 {
-                    Image = new Proto.ImageInputPart
-                    {
-                        Source = ToProtoSource(image.Source),
-                        Metadata = ProtoValueConverter.ToValueOrNull(image.Metadata),
-                    },
+                    Source = ToProtoSource(image.Source),
+                    Metadata = ProtoValueConverter.ToValueOrNull(image.Metadata),
                 };
+                if (image.Id is not null)
+                {
+                    wire.Id = image.Id;
+                }
+
+                return new Proto.InputContent { Image = wire };
+            }
             case AGUIAudioInputContent audio:
-                return new Proto.InputContent
+            {
+                var wire = new Proto.AudioInputPart
                 {
-                    Audio = new Proto.AudioInputPart
-                    {
-                        Source = ToProtoSource(audio.Source),
-                        Metadata = ProtoValueConverter.ToValueOrNull(audio.Metadata),
-                    },
+                    Source = ToProtoSource(audio.Source),
+                    Metadata = ProtoValueConverter.ToValueOrNull(audio.Metadata),
                 };
+                if (audio.Id is not null)
+                {
+                    wire.Id = audio.Id;
+                }
+
+                return new Proto.InputContent { Audio = wire };
+            }
             case AGUIVideoInputContent video:
-                return new Proto.InputContent
+            {
+                var wire = new Proto.VideoInputPart
                 {
-                    Video = new Proto.VideoInputPart
-                    {
-                        Source = ToProtoSource(video.Source),
-                        Metadata = ProtoValueConverter.ToValueOrNull(video.Metadata),
-                    },
+                    Source = ToProtoSource(video.Source),
+                    Metadata = ProtoValueConverter.ToValueOrNull(video.Metadata),
                 };
+                if (video.Id is not null)
+                {
+                    wire.Id = video.Id;
+                }
+
+                return new Proto.InputContent { Video = wire };
+            }
             case AGUIDocumentInputContent document:
-                return new Proto.InputContent
+            {
+                var wire = new Proto.DocumentInputPart
                 {
-                    Document = new Proto.DocumentInputPart
-                    {
-                        Source = ToProtoSource(document.Source),
-                        Metadata = ProtoValueConverter.ToValueOrNull(document.Metadata),
-                    },
+                    Source = ToProtoSource(document.Source),
+                    Metadata = ProtoValueConverter.ToValueOrNull(document.Metadata),
                 };
+                if (document.Id is not null)
+                {
+                    wire.Id = document.Id;
+                }
+
+                return new Proto.InputContent { Document = wire };
+            }
             default:
                 // A part the wire has no arm for: dropping it would delete what
                 // the message says, which the TypeScript translation refuses too.
@@ -667,28 +717,37 @@ internal static class ProtoMessageMapper
         switch (proto.PartCase)
         {
             case Proto.InputContent.PartOneofCase.Text:
-                return new AGUITextInputContent { Text = proto.Text.Text };
+                return new AGUITextInputContent
+                {
+                    Id = proto.Text.HasId ? proto.Text.Id : null,
+                    Text = proto.Text.Text,
+                    Metadata = ProtoValueConverter.ToJsonElementOrNull(proto.Text.Metadata),
+                };
             case Proto.InputContent.PartOneofCase.Image:
                 return new AGUIImageInputContent
                 {
+                    Id = proto.Image.HasId ? proto.Image.Id : null,
                     Source = RequireSource(FromProtoSource(proto.Image.Source)),
                     Metadata = ProtoValueConverter.ToJsonElementOrNull(proto.Image.Metadata),
                 };
             case Proto.InputContent.PartOneofCase.Audio:
                 return new AGUIAudioInputContent
                 {
+                    Id = proto.Audio.HasId ? proto.Audio.Id : null,
                     Source = RequireSource(FromProtoSource(proto.Audio.Source)),
                     Metadata = ProtoValueConverter.ToJsonElementOrNull(proto.Audio.Metadata),
                 };
             case Proto.InputContent.PartOneofCase.Video:
                 return new AGUIVideoInputContent
                 {
+                    Id = proto.Video.HasId ? proto.Video.Id : null,
                     Source = RequireSource(FromProtoSource(proto.Video.Source)),
                     Metadata = ProtoValueConverter.ToJsonElementOrNull(proto.Video.Metadata),
                 };
             case Proto.InputContent.PartOneofCase.Document:
                 return new AGUIDocumentInputContent
                 {
+                    Id = proto.Document.HasId ? proto.Document.Id : null,
                     Source = RequireSource(FromProtoSource(proto.Document.Source)),
                     Metadata = ProtoValueConverter.ToJsonElementOrNull(proto.Document.Metadata),
                 };
