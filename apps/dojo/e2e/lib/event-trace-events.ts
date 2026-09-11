@@ -65,6 +65,8 @@ const APP_CONTEXT_PREFIX = "App Context:\n";
 
 const UUID_PATTERN =
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+const CANONICAL_ID_PATTERN = /\bid-\d+\b/g;
+const EXACT_CANONICAL_ID_PATTERN = /^id-\d+$/;
 
 export function isTraceEvent(value: unknown): value is TraceEvent {
   return (
@@ -234,76 +236,6 @@ function normalizeAppContextContent(
   return `${APP_CONTEXT_PREFIX}${JSON.stringify(context, null, 2)}`;
 }
 
-function mirroredModelChunk(event: TraceEvent | undefined) {
-  if (event?.type !== "STATE_SNAPSHOT") return undefined;
-  const rawEvent = Reflect.get(event, "rawEvent");
-  if (typeof rawEvent !== "object" || rawEvent === null) return undefined;
-
-  const streamMode = Reflect.get(rawEvent, "event");
-  const data = Reflect.get(rawEvent, "data");
-  let chunk: unknown;
-  if (streamMode === "messages" && Array.isArray(data)) {
-    chunk = data[0];
-  } else if (streamMode === "events" && typeof data === "object" && data) {
-    if (Reflect.get(data, "event") !== "on_chat_model_stream") {
-      return undefined;
-    }
-    const eventData = Reflect.get(data, "data");
-    if (typeof eventData === "object" && eventData) {
-      chunk = Reflect.get(eventData, "chunk");
-    }
-  }
-
-  if (typeof chunk !== "object" || chunk === null) return undefined;
-  const chunkId = Reflect.get(chunk, "id");
-  return typeof chunkId === "string"
-    ? { streamMode, chunkId, chunk }
-    : undefined;
-}
-
-function stabilizeMirroredModelChunks(events: TraceEvent[]) {
-  const mirrors = events.map(mirroredModelChunk);
-  const redundantMessageIndexes = new Set<number>();
-  const consumedEventIndexes = new Set<number>();
-
-  const stateChangedBetween = (leftIndex: number, rightIndex: number) => {
-    const start = Math.min(leftIndex, rightIndex) + 1;
-    const end = Math.max(leftIndex, rightIndex);
-    return events
-      .slice(start, end)
-      .some(
-        (event) =>
-          event.type === "STATE_SNAPSHOT" || event.type === "STATE_DELTA",
-      );
-  };
-
-  for (let index = 0; index < events.length; index += 1) {
-    const messageMirror = mirrors[index];
-    if (messageMirror?.streamMode !== "messages") continue;
-
-    const matchingEventIndex = mirrors.findIndex(
-      (eventMirror, candidateIndex) =>
-        candidateIndex !== index &&
-        !consumedEventIndexes.has(candidateIndex) &&
-        eventMirror?.streamMode === "events" &&
-        eventMirror.chunkId === messageMirror.chunkId &&
-        isDeepStrictEqual(eventMirror.chunk, messageMirror.chunk) &&
-        isDeepStrictEqual(
-          Reflect.get(events[candidateIndex], "snapshot"),
-          Reflect.get(events[index], "snapshot"),
-        ) &&
-        !stateChangedBetween(index, candidateIndex),
-    );
-
-    if (matchingEventIndex !== -1) {
-      redundantMessageIndexes.add(index);
-      consumedEventIndexes.add(matchingEventIndex);
-    }
-  }
-
-  return events.filter((_, index) => !redundantMessageIndexes.has(index));
-}
-
 function collapseStateSnapshotPulses(events: TraceEvent[]) {
   const collapsed: TraceEvent[] = [];
   let lastSnapshot: TraceEvent | undefined;
@@ -332,12 +264,45 @@ export function normalizeEventTrace(
   events: readonly TraceEvent[],
 ): TraceEvent[] {
   const identities = new Map<string, string>();
+  const reservedIdentityTokens = new Set<string>();
+  let nextIdentity = 1;
+
+  const reserveCanonicalIdentityTokens = (
+    value: unknown,
+    path: readonly string[],
+  ) => {
+    if (typeof value === "string") {
+      for (const token of value.matchAll(CANONICAL_ID_PATTERN)) {
+        reservedIdentityTokens.add(token[0]);
+      }
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const child of value) reserveCanonicalIdentityTokens(child, path);
+      return;
+    }
+    if (typeof value !== "object" || value === null) return;
+
+    for (const [key, child] of Object.entries(value)) {
+      if (key === "rawEvent" && path.length === 0) continue;
+      reserveCanonicalIdentityTokens(child, [...path, key]);
+    }
+  };
+
+  reserveCanonicalIdentityTokens(events, []);
 
   const normalizeIdentity = (value: string) => {
+    if (EXACT_CANONICAL_ID_PATTERN.test(value)) return value;
     const existing = identities.get(value);
     if (existing) return existing;
 
-    const token = `id-${identities.size + 1}`;
+    let token = `id-${nextIdentity}`;
+    while (reservedIdentityTokens.has(token)) {
+      nextIdentity += 1;
+      token = `id-${nextIdentity}`;
+    }
+    nextIdentity += 1;
+    reservedIdentityTokens.add(token);
     identities.set(value, token);
     return token;
   };
@@ -392,7 +357,7 @@ export function normalizeEventTrace(
     );
   };
 
-  const normalized = stabilizeMirroredModelChunks([...events]).map((event) => {
+  const normalized = events.map((event) => {
     const normalized = normalizeValue(event, []);
     if (!isTraceEvent(normalized)) {
       throw new Error("Normalized AG-UI event lost its type");

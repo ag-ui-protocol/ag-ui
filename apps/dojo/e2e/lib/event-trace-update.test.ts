@@ -100,6 +100,55 @@ test("compares the contractual trace instead of transport rawEvent payloads", ()
   );
 });
 
+test("rejects traces whose normalized identities have different relationships", () => {
+  const expected = defineEventTrace(
+    "file:///repo/apps/dojo/e2e/tests/langgraphTypescriptTests/subagentsPage.event-trace.ts",
+    {
+      delegatesWork: [
+        {
+          type: "TOOL_CALL_START",
+          toolCallId: "id-1",
+          toolCallName: "task",
+        },
+        {
+          type: "SUBAGENT_STARTED",
+          subagentRunId: "tools:id-2",
+          parentToolCallId: "id-1",
+        },
+        {
+          type: "SUBAGENT_FINISHED",
+          subagentRunId: "tools:id-2",
+          outcome: { interruptIds: ["id-3"] },
+        },
+      ],
+    },
+  );
+  const sharedRuntimeId = "fdecf438-f47b-2e18-3753-b24a141985c2";
+
+  assert.throws(() =>
+    assertEventTraceMatches(
+      [
+        {
+          type: "TOOL_CALL_START",
+          toolCallId: "call-generated-at-runtime",
+          toolCallName: "task",
+        },
+        {
+          type: "SUBAGENT_STARTED",
+          subagentRunId: `tools:${sharedRuntimeId}`,
+          parentToolCallId: "call-generated-at-runtime",
+        },
+        {
+          type: "SUBAGENT_FINISHED",
+          subagentRunId: `tools:${sharedRuntimeId}`,
+          outcome: { interruptIds: [sharedRuntimeId] },
+        },
+      ],
+      expected.delegatesWork,
+    ),
+  );
+});
+
 test("writes update candidates only to the requested staging directory", async () => {
   const stagingDirectory = await mkdtemp(
     join(tmpdir(), "event-trace-update-test-"),

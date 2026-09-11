@@ -198,41 +198,70 @@ test("normalizes subagent run identities while preserving their namespace and re
   const subagentRunId = "tools:fdecf438-f47b-2e18-3753-b24a141985c2";
   const parentToolCallId = "call_7ctR-vROo_NGnX-w";
 
+  const events = [
+    {
+      type: "TOOL_CALL_START",
+      toolCallId: parentToolCallId,
+      toolCallName: "task",
+    },
+    {
+      type: "SUBAGENT_STARTED",
+      subagentRunId,
+      subagentId: "research-agent",
+      parentToolCallId,
+    },
+    {
+      type: "SUBAGENT_FINISHED",
+      subagentRunId,
+      outcome: { interruptIds: ["generated-interrupt"] },
+    },
+  ];
+
+  assert.deepEqual(normalizeEventTrace(events), [
+    {
+      type: "TOOL_CALL_START",
+      toolCallId: "id-1",
+      toolCallName: "task",
+    },
+    {
+      type: "SUBAGENT_STARTED",
+      subagentRunId: "tools:id-2",
+      subagentId: "research-agent",
+      parentToolCallId: "id-1",
+    },
+    {
+      type: "SUBAGENT_FINISHED",
+      subagentRunId: "tools:id-2",
+      outcome: { interruptIds: ["id-3"] },
+    },
+  ]);
+
+  const normalized = normalizeEventTrace(events);
+  assert.deepEqual(normalizeEventTrace(normalized), normalized);
+});
+
+test("does not reuse canonical identity tokens when normalizing new identities", () => {
   assert.deepEqual(
     normalizeEventTrace([
       {
-        type: "TOOL_CALL_START",
-        toolCallId: parentToolCallId,
-        toolCallName: "task",
-      },
-      {
         type: "SUBAGENT_STARTED",
-        subagentRunId,
-        subagentId: "research-agent",
-        parentToolCallId,
+        subagentRunId: "tools:id-2",
+        parentToolCallId: "id-1",
       },
       {
-        type: "SUBAGENT_FINISHED",
-        subagentRunId,
-        outcome: { interruptIds: ["generated-interrupt"] },
+        type: "TEXT_MESSAGE_START",
+        messageId: "generated-message",
       },
     ]),
     [
       {
-        type: "TOOL_CALL_START",
-        toolCallId: "id-1",
-        toolCallName: "task",
-      },
-      {
         type: "SUBAGENT_STARTED",
         subagentRunId: "tools:id-2",
-        subagentId: "research-agent",
         parentToolCallId: "id-1",
       },
       {
-        type: "SUBAGENT_FINISHED",
-        subagentRunId: "tools:id-2",
-        outcome: { interruptIds: ["id-3"] },
+        type: "TEXT_MESSAGE_START",
+        messageId: "id-3",
       },
     ],
   );
@@ -291,7 +320,7 @@ test("normalizes application identities without retaining transport payloads", (
   ]);
 });
 
-test("orders adjacent LangGraph model-stream mirrors by their shared chunk identity", () => {
+test("ignores raw transport differences when collapsing adjacent snapshots", () => {
   const messageMirror = {
     type: "STATE_SNAPSHOT",
     rawEvent: {
@@ -319,7 +348,7 @@ test("orders adjacent LangGraph model-stream mirrors by their shared chunk ident
   );
 });
 
-test("collapses an exact LangGraph messages/events state mirror to the events representation", () => {
+test("collapses identical adjacent snapshots independently of raw transport metadata", () => {
   const snapshot = { messages: [{ id: "message-id", role: "assistant" }] };
   const chunk = {
     id: "chunk-id",
@@ -353,7 +382,7 @@ test("collapses an exact LangGraph messages/events state mirror to the events re
   );
 });
 
-test("collapses an exact LangGraph mirror when another event separates it", () => {
+test("collapses identical separated snapshots independently of raw transport metadata", () => {
   const snapshot = { messages: [{ id: "message-id", role: "assistant" }] };
   const chunk = { id: "chunk-id", content: "hello" };
   const messageMirror = {
@@ -380,11 +409,19 @@ test("collapses an exact LangGraph mirror when another event separates it", () =
 
   assert.deepEqual(
     normalizeEventTrace([messageMirror, separator, eventMirror]),
-    normalizeEventTrace([separator, eventMirror]),
+    normalizeEventTrace([messageMirror, separator]),
+  );
+  assert.deepEqual(
+    normalizeEventTrace([messageMirror, separator, eventMirror]),
+    normalizeEventTrace([
+      { type: "STATE_SNAPSHOT", snapshot },
+      separator,
+      { type: "STATE_SNAPSHOT", snapshot },
+    ]),
   );
 });
 
-test("collapses LangGraph messages/events mirrors one-to-one", () => {
+test("collapses repeated snapshots independently of how many raw mirrors arrive", () => {
   const snapshot = { messages: [{ id: "message-id", role: "assistant" }] };
   const chunk = { id: "chunk-id", content: "hello" };
   const messageMirror = {
