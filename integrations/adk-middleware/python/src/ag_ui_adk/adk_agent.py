@@ -2046,6 +2046,10 @@ class ADKAgent:
                 if content and content.strip():
                     try:
                         result = json.loads(content)
+                        # Gemini requires an object, but frontend handlers may
+                        # return any JSON value. Preserve objects as-is.
+                        if not isinstance(result, dict):
+                            result = {"result": result}
                     except json.JSONDecodeError:
                         # Not valid JSON - treat as plain string result.
                         result = {"success": True, "result": content, "status": "completed"}

@@ -304,9 +304,12 @@ def _resolve_template_param(agent: Any, name: str, annotation: Any = None) -> An
         if value is _MISSING:
             continue
 
+        # Managers may live directly under a parameter's name (for example,
+        # Strands background_tasks), not only under a registry alias.
+        if _references_agent(value, agent):
+            return _AGENT_BOUND
+
         if attr.endswith("_registry") and not name.endswith("_registry"):
-            if _references_agent(value, agent):
-                return _AGENT_BOUND
             contents = _registry_contents(value)
             if contents is _MISSING:
                 continue
@@ -3437,11 +3440,20 @@ class StrandsAgent:
         if self._orchestrator is None:
             self._model = agent.model
             self._system_prompt = agent.system_prompt
-            self._tools = (
-                list(agent.tool_registry.registry.values())
-                if hasattr(agent, "tool_registry")
-                else []
-            )
+            # A plugin's tool can retain a callback bound to the template's
+            # manager even when that manager is excluded from the kwargs.
+            self._tools = [
+                tool
+                for tool in (
+                    agent.tool_registry.registry.values()
+                    if hasattr(agent, "tool_registry")
+                    else []
+                )
+                if not _references_agent(
+                    getattr(getattr(tool, "_tool_func", None), "__self__", None),
+                    agent,
+                )
+            ]
             (
                 self._agent_kwargs,
                 self._unreadable_params,
