@@ -26,6 +26,7 @@ public static class RunFinishedOutcomeTypes
 {
     public const string Success = "success";
     public const string Interrupt = "interrupt";
+    public const string Cancelled = "cancelled";
 }
 
 /// <summary>

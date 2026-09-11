@@ -771,11 +771,25 @@ export const RunFinishedInterruptOutcomeSchema = z.looseObject({
 });
 
 /**
+ * The run was stopped before it completed, by whoever was running it, and did
+ * not fail. Neither success nor interrupt: nothing was produced as a result,
+ * and nothing is waited for, so the next run on the thread is an ordinary new
+ * run rather than a resume. Closed like its siblings: a cancelled run has no
+ * interrupts to carry. Named in the schema before 1.0 because an outcome a
+ * consumer does not recognise is stripped and read as success — a cancellation
+ * added later would reach every 1.0 consumer as a completed run.
+ */
+export const RunFinishedCancelledOutcomeSchema = z.looseObject({
+  type: z.literal("cancelled"),
+});
+
+/**
  * Why a run ended.
  */
 export const RunFinishedOutcomeSchema = z.discriminatedUnion("type", [
   RunFinishedSuccessOutcomeSchema,
   RunFinishedInterruptOutcomeSchema,
+  RunFinishedCancelledOutcomeSchema,
 ]);
 
 /**
