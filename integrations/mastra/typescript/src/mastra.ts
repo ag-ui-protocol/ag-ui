@@ -889,6 +889,18 @@ export class MastraAgent extends AbstractAgent {
             };
           }
 
+          const resumeReplay =
+            interruptEvent.toolCallId != null
+              ? {
+                  toolCallId: String(interruptEvent.toolCallId),
+                  toolName:
+                    typeof interruptEvent.toolName === "string"
+                      ? interruptEvent.toolName
+                      : undefined,
+                  args: interruptEvent.args,
+                }
+              : null;
+
           const callbacks = this.makeStreamCallbacks(
             subscriber,
             () => messageId,
@@ -949,6 +961,9 @@ export class MastraAgent extends AbstractAgent {
                   },
                 },
                 abortController.signal,
+                new Set(),
+                {},
+                resumeReplay,
               );
 
               // Cancelled resumes are settled by the abort listener in run();
@@ -996,12 +1011,18 @@ export class MastraAgent extends AbstractAgent {
               }
 
               let stopped = false;
-              const { handleChunk, flush } = this.createChunkProcessor({
-                ...callbacks,
-                onError: (error) => {
-                  subscriber.error(error);
-                },
-              });
+              const { handleChunk, flush, getUsage } =
+                this.createChunkProcessor(
+                  {
+                    ...callbacks,
+                    onError: (error) => {
+                      subscriber.error(error);
+                    },
+                  },
+                  new Set(),
+                  {},
+                  resumeReplay,
+                );
 
               await response.processDataStream({
                 onChunk: async (chunk: any) => {
@@ -1019,7 +1040,7 @@ export class MastraAgent extends AbstractAgent {
                 flush();
                 await finishResume(
                   await this.resolveTraceId(response),
-                  await this.resolveUsage(response),
+                  await this.resolveUsage(response, getUsage()),
                 );
               }
             }
@@ -1278,9 +1299,12 @@ export class MastraAgent extends AbstractAgent {
    * (no usage, remote agent, rejected promise) yields an empty array so the run
    * still finishes without usage.
    */
-  private async resolveUsage(response: any): Promise<TokenUsage[]> {
+  private async resolveUsage(
+    response: any,
+    streamedUsage?: unknown,
+  ): Promise<TokenUsage[]> {
     try {
-      const raw = await response?.usage;
+      const raw = streamedUsage ?? (await response?.usage);
       const identity = this.getModelIdentity();
       const entry = tokenUsageFromAiSdkUsage(raw, identity);
       return entry ? [entry] : [];
@@ -1623,15 +1647,27 @@ export class MastraAgent extends AbstractAgent {
    * path (processDataStream callback) — single source of truth for chunk
    * handling and buffering logic.
    *
-   * @returns An object with two methods:
+   * @returns An object with three methods:
    *   - `handleChunk`: processes a single chunk; returns `true` if processing should stop (error or malformed chunk).
    *   - `flush`: emits any buffered tool-call (call at end of stream).
+   *   - `getUsage`: returns usage reported by the terminal `finish` chunk.
    */
   private createChunkProcessor(
     callbacks: MastraAgentStreamOptions,
     clientToolNames: Set<string> = new Set(),
     initialState: Record<string, any> = {},
+    replaySuspendedToolCall?: {
+      toolCallId: string;
+      toolName?: string;
+      args?: any;
+    } | null,
   ) {
+    // Remote processDataStream responses report token usage on the terminal
+    // `finish` chunk rather than on the response object. Keep only that
+    // boundary's value: `step-finish` can repeat usage for each model step and
+    // would double-count the run if included.
+    let usage: unknown;
+
     // Running client-side working-memory state, mapped to AG-UI shared state.
     // Seeded from the run's input.state (the base the client already holds), so
     // the first STATE_DELTA patches from what the UI shows, not from empty.
@@ -1755,6 +1791,8 @@ export class MastraAgent extends AbstractAgent {
           argsTextDelta: JSON.stringify(args ?? {}),
         });
         callbacks.onToolCallEnd?.({ toolCallId });
+        streamedStarted.add(toolCallId);
+        streamedEnded.add(toolCallId);
       }
     };
 
@@ -2296,6 +2334,35 @@ export class MastraAgent extends AbstractAgent {
             break;
           }
           flush();
+          // Resume of a tool that suspended on the previous run: that run
+          // discarded TOOL_CALL_START/ARGS/END (by design), so CopilotKit
+          // never registered the id. Emit the triple now from the interrupt
+          // snapshot before TOOL_CALL_RESULT, otherwise the result is
+          // orphaned (#2668). Skip when START was already emitted (buffered
+          // flush or live deltas). Do not emit on the first-run suspend path
+          // (replay is unset). Standard input.resume does not round-trip
+          // args; Mastra puts them on tool-result instead.
+          if (
+            replaySuspendedToolCall &&
+            replaySuspendedToolCall.toolCallId === chunk.payload.toolCallId &&
+            !streamedStarted.has(chunk.payload.toolCallId)
+          ) {
+            const toolCallId = replaySuspendedToolCall.toolCallId;
+            const toolName =
+              replaySuspendedToolCall.toolName ||
+              chunk.payload.toolName ||
+              "tool";
+            callbacks.onToolCallStart?.({ toolCallId, toolName });
+            callbacks.onToolCallArgs?.({
+              toolCallId,
+              argsTextDelta: JSON.stringify(
+                replaySuspendedToolCall.args ?? chunk.payload.args ?? {},
+              ),
+            });
+            callbacks.onToolCallEnd?.({ toolCallId });
+            streamedStarted.add(toolCallId);
+            streamedEnded.add(toolCallId);
+          }
           callbacks.onToolResultPart?.({
             toolCallId: chunk.payload.toolCallId,
             result: chunk.payload.result,
@@ -2418,6 +2485,7 @@ export class MastraAgent extends AbstractAgent {
         case "finish": {
           flush();
           releaseBufferedText(chunk.payload, true);
+          usage = chunk.payload?.output?.usage ?? chunk.payload?.usage;
           callbacks.onFinishMessagePart?.();
           break;
         }
@@ -2587,7 +2655,7 @@ export class MastraAgent extends AbstractAgent {
       return false;
     };
 
-    return { handleChunk, flush };
+    return { handleChunk, flush, getUsage: () => usage };
   }
 
   /**
@@ -2604,11 +2672,17 @@ export class MastraAgent extends AbstractAgent {
     abortSignal: AbortSignal,
     clientToolNames: Set<string> = new Set(),
     initialState: Record<string, any> = {},
+    replaySuspendedToolCall?: {
+      toolCallId: string;
+      toolName?: string;
+      args?: any;
+    } | null,
   ): Promise<"completed" | "cancelled" | "error"> {
     const { handleChunk, flush } = this.createChunkProcessor(
       callbacks,
       clientToolNames,
       initialState,
+      replaySuspendedToolCall,
     );
     for await (const chunk of stream) {
       // Cancelled (unsubscribe or abortRun): stop pulling from the source
@@ -3129,7 +3203,7 @@ export class MastraAgent extends AbstractAgent {
         // Remote agents use processDataStream (callback-based) — share
         // chunk handling logic via createChunkProcessor.
         if (response && typeof response.processDataStream === "function") {
-          const { handleChunk, flush } = this.createChunkProcessor(
+          const { handleChunk, flush, getUsage } = this.createChunkProcessor(
             {
               onMessageId,
               onTextPart,
@@ -3169,7 +3243,7 @@ export class MastraAgent extends AbstractAgent {
           if (!stopped) {
             flush();
             const traceId = await this.resolveTraceId(response);
-            const usage = await this.resolveUsage(response);
+            const usage = await this.resolveUsage(response, getUsage());
             await onRunFinished?.(traceId, usage);
           }
         } else {

@@ -1,6 +1,6 @@
 [project]
 name = "ag-ui-protocol"
-version = "0.1.21"
+version = "0.1.22"
 description = ""
 license-files = ["LICENSE"]
 authors = [
@@ -12,6 +12,9 @@ requires-python = ">=3.9"
 dependencies = [
     "pydantic>=2.11.2",
 ]
+
+[project.urls]
+Changelog = "https://github.com/ag-ui-protocol/ag-ui/releases"
 
 [tool.ag-ui.scripts]
 test = "python -m unittest discover tests"

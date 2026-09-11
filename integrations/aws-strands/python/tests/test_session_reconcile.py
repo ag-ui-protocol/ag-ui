@@ -16,11 +16,16 @@ from strands.session.file_session_manager import FileSessionManager
 from strands.types.session import SessionAgent, SessionMessage
 
 from ag_ui_strands import session_reconcile
+from ag_ui_strands.interrupt_checkpoint import (
+    parked_tool_results,
+    publish_parked_tool_results,
+)
 from ag_ui_strands.session_reconcile import (
     AG_UI_FRONTEND_CALL_IDS_STATE_KEY,
     has_placeholder_results,
     reconcile_frontend_tool_results,
 )
+from tests.interrupt_state_stub import InterruptStateStub, PendingToolExecutionStub
 
 PLACEHOLDER = "Forwarded to client"
 
@@ -535,3 +540,222 @@ def test_recorded_call_ids_accepts_only_ids_this_adapter_wrote(stored):
     assert session_reconcile.recorded_frontend_call_ids(agent) == (
         ["native-1"] if isinstance(stored, list) else []
     )
+
+
+# ---------------------------------------------------------------------------
+# The parked tool batch, across the two shapes Strands has kept it in
+# ---------------------------------------------------------------------------
+#
+# A checkpoint parks the tool batch it stopped inside. Up to strands-agents
+# 1.54 it lived on ``_interrupt_state.context`` under ``"tool_results"``; from
+# 1.55 it lives on ``_interrupt_state.pending_tool_execution`` and the legacy
+# key is migrated out of ``context``. Reading only the older shape is how a
+# frontend tool's real answer silently stopped reaching the model on 1.55: the
+# parked placeholder was never corrected and the model was handed "Forwarded to
+# client" in place of the user's answer. Both shapes are driven here, on every
+# release, because only one of them exists on the installed SDK at a time.
+
+
+def _typed_checkpoint(*results):
+    """An activated checkpoint parking *results* the way 1.55 and later do."""
+    return InterruptStateStub(
+        activated=True,
+        pending_tool_execution=PendingToolExecutionStub(
+            assistant_message={"role": "assistant", "content": []},
+            completed_tool_results=list(results),
+        ),
+    )
+
+
+def _legacy_checkpoint(*results):
+    """An activated checkpoint parking *results* the way 1.54 and earlier did."""
+    return InterruptStateStub(
+        activated=True, context={"tool_results": list(results)}
+    )
+
+
+@pytest.mark.parametrize(
+    "build_checkpoint",
+    [
+        pytest.param(_typed_checkpoint, id="pending-tool-execution"),
+        pytest.param(_legacy_checkpoint, id="legacy-context"),
+    ],
+)
+def test_the_parked_results_reader_hands_back_the_list_the_sdk_will_replay(
+    build_checkpoint,
+):
+    """The reader must return the live list, not a copy of it.
+
+    Correcting a parked placeholder is done in place, so a reader that copied
+    would correct a list nobody replays. Identity is therefore the property
+    worth pinning, not equality.
+    """
+    parked = {
+        "toolUseId": "native-proxy",
+        "status": "success",
+        "content": [{"text": PLACEHOLDER}],
+    }
+    checkpoint = build_checkpoint(parked)
+
+    results = parked_tool_results(checkpoint)
+
+    assert results is not None
+    assert results[0] is parked
+    results[0]["content"] = [{"text": '{"approved": true}'}]
+    assert session_reconcile.active_proxy_placeholder_ids(
+        SimpleNamespace(_interrupt_state=checkpoint)
+    ) == set()
+
+
+@pytest.mark.parametrize(
+    "build_checkpoint",
+    [
+        pytest.param(_typed_checkpoint, id="pending-tool-execution"),
+        pytest.param(_legacy_checkpoint, id="legacy-context"),
+    ],
+)
+def test_a_parked_proxy_placeholder_is_seen_in_either_checkpoint_shape(
+    build_checkpoint,
+):
+    """The gate that stops an uncorrected resume has to see the placeholder.
+
+    ``active_proxy_placeholder_ids`` is what tells the adapter a checkpoint is
+    still carrying a placeholder the client's answer never replaced. Reading it
+    off one shape means that gate silently guards nothing on the other, and the
+    run continues into Strands with the stub result.
+    """
+    agent = SimpleNamespace(
+        _interrupt_state=build_checkpoint(
+            {
+                "toolUseId": "native-proxy",
+                "status": "success",
+                "content": [{"text": PLACEHOLDER}],
+            }
+        )
+    )
+
+    assert session_reconcile.active_proxy_placeholder_ids(agent) == {"native-proxy"}
+
+
+def test_a_checkpoint_parking_no_batch_at_all_reads_as_nothing_parked():
+    """A pause raised before any tool ran parks no batch, in either shape."""
+    assert parked_tool_results(InterruptStateStub(activated=True)) is None
+    assert (
+        session_reconcile.active_proxy_placeholder_ids(
+            SimpleNamespace(_interrupt_state=InterruptStateStub(activated=True))
+        )
+        == set()
+    )
+
+
+@pytest.mark.parametrize(
+    "build_checkpoint",
+    [
+        pytest.param(_typed_checkpoint, id="pending-tool-execution"),
+        pytest.param(_legacy_checkpoint, id="legacy-context"),
+    ],
+)
+def test_reconcile_corrects_the_parked_batch_in_either_checkpoint_shape(
+    tmp_path, build_checkpoint
+):
+    """The correction has to land where the resume will read it.
+
+    This is the user-visible defect the shape change caused: an approved
+    frontend tool whose parked result still says "Forwarded to client" is what
+    the model is handed on the resume, so the human's answer never reaches it.
+    """
+    sm = _make_session(tmp_path)
+    parked = _tool_result_block("native-proxy", PLACEHOLDER)["toolResult"]
+    checkpoint = build_checkpoint(parked)
+    agent = SimpleNamespace(
+        agent_id="default", messages=[], _interrupt_state=checkpoint
+    )
+
+    corrected = reconcile_frontend_tool_results(
+        sm, agent, {"native-proxy": ('{"approved": true}', False)}
+    )
+
+    assert corrected == {"native-proxy"}
+    assert parked_tool_results(checkpoint)[0]["content"] == [
+        {"text": '{"approved": true}'}
+    ]
+    assert parked["status"] == "success"
+
+
+def test_a_corrected_batch_is_republished_so_the_session_persists_it(tmp_path):
+    """An in-place edit alone does not survive the process.
+
+    ``RepositorySessionManager.sync_agent`` only writes interrupt state back
+    when the state's own version counter has moved, and mutating a parked
+    result moves nothing. Routing the corrected list through
+    ``set_pending_tool_results`` is what bumps that counter, so a rebuilt agent
+    reads the client's answer instead of the placeholder it replaced.
+    """
+    sm = _make_session(tmp_path)
+    checkpoint = _typed_checkpoint(
+        _tool_result_block("native-proxy", PLACEHOLDER)["toolResult"]
+    )
+    agent = SimpleNamespace(
+        agent_id="default", messages=[], _interrupt_state=checkpoint
+    )
+    version_before = checkpoint._version
+
+    reconcile_frontend_tool_results(
+        sm, agent, {"native-proxy": ('{"approved": true}', False)}
+    )
+
+    assert checkpoint._version > version_before
+    assert checkpoint.pending_tool_execution.completed_tool_results[0]["content"] == [
+        {"text": '{"approved": true}'}
+    ]
+
+
+def test_a_batch_that_needed_no_correction_is_not_republished(tmp_path):
+    """A version bump means "persist me", so it must not be spent on a no-op.
+
+    Every bump costs the session manager a write of the whole checkpoint. A
+    reconciliation pass that found every parked result already carrying its
+    real value changed nothing, and saying otherwise would make each turn
+    rewrite state that is already correct.
+    """
+    sm = _make_session(tmp_path)
+    checkpoint = _typed_checkpoint(
+        {
+            "toolUseId": "native-proxy",
+            "status": "success",
+            "content": [{"text": '{"approved": true}'}],
+        }
+    )
+    agent = SimpleNamespace(
+        agent_id="default", messages=[], _interrupt_state=checkpoint
+    )
+    version_before = checkpoint._version
+
+    corrected = reconcile_frontend_tool_results(
+        sm, agent, {"native-proxy": ('{"approved": true}', False)}
+    )
+
+    assert corrected == {"native-proxy"}
+    assert checkpoint._version == version_before
+
+
+def test_republishing_is_a_no_op_on_a_release_that_offers_no_setter():
+    """The declared floor has no ``set_pending_tool_results`` to call.
+
+    On those releases the in-place correction is the whole mechanism, and the
+    writer has to stay silent rather than fail the run trying to reach an API
+    that does not exist.
+    """
+    parked = {
+        "toolUseId": "native-proxy",
+        "status": "success",
+        "content": [{"text": '{"approved": true}'}],
+    }
+    older_sdk_state = SimpleNamespace(
+        activated=True, context={"tool_results": [parked]}
+    )
+    assert not hasattr(older_sdk_state, "set_pending_tool_results")
+
+    publish_parked_tool_results(older_sdk_state, parked_tool_results(older_sdk_state))
+
+    assert older_sdk_state.context["tool_results"] == [parked]

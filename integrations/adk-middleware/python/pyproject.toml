@@ -85,6 +85,7 @@ build-backend = "uv_build"
 [project.urls]
 Homepage = "https://github.com/ag-ui-protocol/ag-ui/tree/main/integrations/adk-middleware/python"
 Issues = "https://github.com/ag-ui-protocol/ag-ui/issues"
+Changelog = "https://github.com/ag-ui-protocol/ag-ui/blob/main/integrations/adk-middleware/python/CHANGELOG.md"
 
 
 [dependency-groups]

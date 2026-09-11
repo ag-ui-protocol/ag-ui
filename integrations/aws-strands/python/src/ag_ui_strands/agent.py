@@ -10,7 +10,9 @@ import functools
 import inspect
 import json
 import logging
+import math
 import collections.abc
+from copy import deepcopy
 import types
 import typing
 import uuid
@@ -43,6 +45,10 @@ from strands.types.interrupt import InterruptResponseContent
 # "session_manager" is excluded: it is supplied per-thread via
 # StrandsAgentConfig.session_manager_provider (see run()). Forwarding a
 # template-level session_manager would make every thread share one session_id.
+# "plugins" is excluded: Agent consumes the list during init, registering each
+# plugin's hooks and tools into its own registries and keeping only a registry
+# bound to that agent, so there is no list to read back. Callers supply them
+# per-thread through the explicit StrandsAgent(plugins=...) kwarg.
 _AGUI_EXPLICIT_PARAMS = {
     "self",
     "model",
@@ -51,6 +57,7 @@ _AGUI_EXPLICIT_PARAMS = {
     "messages",
     "hooks",
     "session_manager",
+    "plugins",
 }
 
 
@@ -170,6 +177,63 @@ def _registry_contents(holder: Any) -> Any:
     return _MISSING
 
 
+# Whether the installed Strands takes ``plugins`` on its Agent constructor.
+# The plugin system arrived after this package's declared strands-agents floor,
+# so the adapter's own ``plugins=`` kwarg can be handed a release with nowhere
+# to put it. Probed off the signature rather than compared against a version,
+# for the same reason the forwarding probe is: what matters is the parameter
+# being there, not which release put it there.
+_STRANDS_ACCEPTS_PLUGINS = (
+    "plugins" in inspect.signature(StrandsAgentCore.__init__).parameters
+)
+
+
+# Strands namespaces the plugins it registers on every Agent itself, and
+# registers them whether or not the caller passed any. Anything under this
+# prefix is therefore the SDK's, not a setting to report as dropped.
+_SDK_PLUGIN_NAME_PREFIX = "strands:"
+
+
+def _template_plugin_names(agent: Any) -> List[str]:
+    """Names of the plugins the caller put on the template.
+
+    ``plugins`` is handled through an explicit kwarg, so the generic probe
+    skips it and would never report it. Reading the registry here is what
+    lets a caller who set plugins on the template be told they do not carry,
+    instead of getting silence.
+
+    Strands' own plugins are filtered out by name. Every Agent is built with
+    at least one of them, so counting them would warn every caller about a
+    setting nobody made. A caller plugin that borrowed the SDK's prefix would
+    be missed by this, which is the harmless direction: the cost is one
+    warning not said, against a warning said to everyone.
+    """
+    for attr in _candidate_attributes("plugins"):
+        try:
+            holder = getattr(agent, attr, None)
+        except Exception:  # noqa: BLE001 - a raising property is not a plugin list
+            continue
+        if holder is None:
+            continue
+        if isinstance(holder, (list, tuple)):
+            contents: Any = holder
+        else:
+            contents = _registry_contents(holder)
+        if contents is _MISSING or not contents:
+            continue
+        names = []
+        for plugin in contents:
+            name = getattr(plugin, "name", None)
+            # An entry with no readable name cannot be attributed to the SDK,
+            # so it counts as the caller's rather than being dropped silently.
+            label = name if isinstance(name, str) else type(plugin).__name__
+            if not label.startswith(_SDK_PLUGIN_NAME_PREFIX):
+                names.append(label)
+        if names:
+            return names
+    return []
+
+
 def _element_type(annotation: Any) -> Any:
     """The element type of a ``list[X]``-shaped annotation, or ``None``.
 
@@ -240,9 +304,12 @@ def _resolve_template_param(agent: Any, name: str, annotation: Any = None) -> An
         if value is _MISSING:
             continue
 
+        # Managers may live directly under a parameter's name (for example,
+        # Strands background_tasks), not only under a registry alias.
+        if _references_agent(value, agent):
+            return _AGENT_BOUND
+
         if attr.endswith("_registry") and not name.endswith("_registry"):
-            if _references_agent(value, agent):
-                return _AGENT_BOUND
             contents = _registry_contents(value)
             if contents is _MISSING:
                 continue
@@ -351,6 +418,68 @@ _MODEL_CONTEXT_HOOK_MARKER = "_ag_ui_transient_model_context_hook"
 _MODEL_CONTEXT_MUTATION_MARKER = "_ag_ui_transient_model_context_mutation"
 
 
+def _exception_text(exc: BaseException) -> str:
+    """``str(exc)`` that cannot itself raise.
+
+    ``__str__`` is arbitrary code, so reading a failure's text is a call that
+    can fail. It is read only to build a ``_ForeignFault``, where a raise would
+    escape as the very ``TypeError`` that wrapper exists to keep out of
+    ``ADAPTER_BUG``. A text that cannot be read falls back to the type name,
+    which still tells the reader what failed.
+    """
+    try:
+        return str(exc)
+    except Exception:
+        return type(exc).__name__
+
+
+class _ForeignFault(Exception):
+    """A failure this adapter reports but did not cause.
+
+    ``TypeError``, ``AttributeError`` and ``NameError`` are what a defect in
+    this adapter's own code raises, which is why the terminal-error classifier
+    reads them as ``ADAPTER_BUG``. They are also what an integrator's tool
+    raises, and what this adapter raises when it meets a value from outside it
+    that cannot be used. Raising this instead at the places that know the fault
+    came from outside keeps ``ADAPTER_BUG`` pointing at code the maintainer of
+    this adapter can actually fix.
+
+    It carries the original failure's text so the wire message is unchanged,
+    and the original exception as ``__cause__`` so the traceback still names
+    the real origin.
+
+    Constructing one is total. A wrapper that can raise while wrapping hands
+    the classifier the type it was built to suppress, which is the
+    misattribution this class exists to remove, so the text is read through
+    ``_exception_text`` here rather than at each raise site.
+    """
+
+    def __init__(self, cause: BaseException, prefix: str | None = None) -> None:
+        text = _exception_text(cause)
+        super().__init__(f"{prefix}: {text}" if prefix else text)
+
+
+def _terminal_error_code(exc: BaseException) -> str:
+    """The RUN_ERROR code for an exception that escaped a run loop.
+
+    ``ADAPTER_BUG`` says the fault is in this adapter and sends the developer
+    reading it here rather than to the provider or the SDK, so it is claimed
+    only for the exception types a code defect raises AND only when nothing
+    upstream has established that the fault came from elsewhere. A
+    ``_ForeignFault`` is that establishment: the SDK-stream boundary and the
+    serializer raise it for failures this adapter merely reported.
+
+    The claim is still made on exception type alone, so it is a claim and not
+    a proof. Adapter code that runs inside the Strands call (a registered hook,
+    a proxy tool) raises past that boundary and so is reported as a fault from
+    outside, which is the direction that costs a developer a wrong-looking code
+    rather than a wrong place to look.
+    """
+    if isinstance(exc, (TypeError, AttributeError, NameError)):
+        return "ADAPTER_BUG"
+    return "STRANDS_ERROR"
+
+
 async def _stream_with_model_context(
     stream: AsyncIterator[Any], context_block: str
 ) -> AsyncIterator[Any]:
@@ -361,6 +490,14 @@ async def _stream_with_model_context(
     ContextVar token therefore cannot be held across an adapter yield: the
     later reset may run in a different task context. Set and restore around
     each pull instead, before yielding the resulting event to the endpoint.
+
+    This is also the one place both run loops pull the Strands stream through,
+    which makes it the boundary between this adapter's code and everything the
+    SDK runs for it: the model provider, the integrator's tools, the SDK
+    itself. A failure arriving from there is reported as a ``_ForeignFault`` so
+    an integrator's ``TypeError`` is not read as this adapter's defect.
+    ``BaseException`` is deliberately not caught: cancellation and generator
+    close are not faults and must keep their own types.
     """
     iterator = stream.__aiter__()
     while True:
@@ -369,18 +506,37 @@ async def _stream_with_model_context(
             event = await iterator.__anext__()
         except StopAsyncIteration:
             return
+        except Exception as exc:
+            raise _ForeignFault(exc) from exc
         finally:
             _MODEL_CONTEXT_BLOCK.reset(token)
         yield event
 
 
-# Sentinel handed back to a paused ``tool_context.interrupt()`` when the client
-# cancels (``ResumeEntry.status == "cancelled"``) rather than resolving. The
-# tool receives this in place of a real answer and can treat it as a denial.
-INTERRUPT_CANCELLED = {"cancelled": True}
+# The shape a paused ``tool_context.interrupt()`` is answered with when the
+# client cancels (``ResumeEntry.status == "cancelled"``) rather than resolving,
+# so a generic tool can treat the pause as a denial. Adapter-managed approvals
+# are answered ``{"approved": False}`` instead, and a frontend wait gets its own
+# envelope, so this is the generic-interrupt shape rather than every cancel.
+def _interrupt_cancelled() -> dict:
+    """A fresh cancellation sentinel.
+
+    Built here rather than copied off the exported constant, so a consumer
+    mutating that constant cannot change what a paused tool receives. Compare
+    what a tool receives by value, never by identity.
+
+    The export stays a plain dict rather than a read-only proxy so that consumers
+    can still ``json.dumps`` it; nothing inside this module reads it.
+    """
+    return {"cancelled": True}
+
+
+INTERRUPT_CANCELLED = _interrupt_cancelled()
 
 # Reserved native-interrupt name prefix for interrupts this adapter's approval
-# hook raises. Anything else is a generic native interrupt.
+# hook raises. Anything else is a generic native interrupt. Reserved means
+# reserved: an interrupt raised anywhere else under this prefix is classified,
+# schema-checked and answered as an approval.
 _TOOL_APPROVAL_NAME_PREFIX = "ag_ui:tool_call:"
 
 
@@ -420,13 +576,15 @@ def _tool_approval_response_schema() -> dict:
 
 
 def _is_tool_approval_interrupt(native_interrupt: Any) -> bool:
-    """True when a native Strands interrupt came from the approval hook."""
+    """True when a native Strands interrupt came from the approval hook.
+
+    The reserved name prefix is the whole test. It also decides whether a resume
+    is answered raw or wrapped, so it deliberately does not additionally require
+    the reason: an approval whose reason did not survive a restart still has to
+    be answered in the shape its own hook reads.
+    """
     name = getattr(native_interrupt, "name", None)
-    return (
-        isinstance(name, str)
-        and name.startswith(_TOOL_APPROVAL_NAME_PREFIX)
-        and isinstance(getattr(native_interrupt, "reason", None), dict)
-    )
+    return isinstance(name, str) and name.startswith(_TOOL_APPROVAL_NAME_PREFIX)
 
 
 def _wrap_resume_response(status: str, payload: Any) -> dict:
@@ -439,7 +597,7 @@ def _wrap_resume_response(status: str, payload: Any) -> dict:
     implementation unwraps it via ``.get("cancelled")`` / ``.get("response")``.
     """
     if status == "cancelled":
-        return dict(INTERRUPT_CANCELLED)
+        return _interrupt_cancelled()
     return {"response": payload}
 
 
@@ -472,11 +630,42 @@ def _native_resume_response(entry: Any, native_interrupt: Any) -> Any:
     comparison below, so the two cannot disagree about what was submitted.
     """
     if _is_tool_approval_interrupt(native_interrupt):
-        return {"approved": False} if entry.status == "cancelled" else entry.payload
+        # Only a resolved entry can grant, so a cancellation denies. Any other
+        # status would deny too, but cannot arrive: the wire type rejects it,
+        # since ``ResumeEntry.status`` admits only these two values. Stated as
+        # the reason rather than the forwarding site, which filters on only one
+        # of this function's three call paths. The TypeScript adapter reaches
+        # its equivalent guard the same way, and tests it, because its own types
+        # are structural rather than validated at the boundary.
+        return entry.payload if entry.status == "resolved" else {"approved": False}
     if is_frontend_tool_interrupt(native_interrupt):
         content, is_error = _frontend_tool_resume_content(entry)
         return wrap_frontend_tool_response(content, is_error=is_error)
     return _wrap_resume_response(entry.status, entry.payload)
+
+
+def _legacy_resume_response(entry: Any, native_interrupt: Any) -> Any:
+    """The answer the previous release recorded for this interrupt, or ``None``.
+
+    Only one interrupt changes shape across this release. A reserved-prefix
+    interrupt whose reason is not a mapping was classified generic before and is
+    classified as an approval now, so a checkpoint parked on it holds the generic
+    envelope while the replay comparison computes the raw approval answer. Left
+    unhandled, that thread never resumes: fresh input is refused because the
+    checkpoint is active, and the replay is refused because the shapes differ.
+
+    Deliberately narrow. ``None`` for every other interrupt, so nothing else
+    loosens: the envelope predates this release on this side, and a checkpoint
+    parked on anything else already holds the shape still computed for it.
+    """
+    if not _is_tool_approval_interrupt(native_interrupt):
+        return None
+    if isinstance(getattr(native_interrupt, "reason", None), Mapping):
+        # The old classifier agreed this was an approval, so no shape moved.
+        return None
+    return _wrap_resume_response(
+        getattr(entry, "status", None), getattr(entry, "payload", None)
+    )
 
 
 def _replays_recorded_answers(interrupt_state: Any, resume_entries: Any) -> bool:
@@ -490,7 +679,9 @@ def _replays_recorded_answers(interrupt_state: Any, resume_entries: Any) -> bool
     resume finds nothing open to address. Handing Strands the identical batch is
     the way out, because it lets the SDK finish the parked execution. The
     checkpoint itself must be left alone: clearing it would discard exactly that
-    parked execution. Anything short of an exact replay stays refused.
+    parked execution. Anything short of an exact replay stays refused, with one
+    exception for a checkpoint parked by the previous release: see
+    ``_legacy_resume_response``.
     """
     recorded = getattr(interrupt_state, "interrupts", {}) or {}
     if not recorded or len(resume_entries) != len(recorded):
@@ -504,9 +695,12 @@ def _replays_recorded_answers(interrupt_state: Any, resume_entries: Any) -> bool
         addressed.add(interrupt_id)
         if not _native_interrupt_is_answered(native_interrupt):
             return False
-        if native_interrupt.response != _native_resume_response(
+        if native_interrupt.response == _native_resume_response(
             entry, native_interrupt
         ):
+            continue
+        legacy = _legacy_resume_response(entry, native_interrupt)
+        if legacy is None or native_interrupt.response != legacy:
             return False
     return True
 
@@ -522,6 +716,113 @@ def _get_strands_session_manager(agent: Any) -> Any:
     )
 
 
+def _plain_mapping(value: Any) -> Mapping:
+    """Return ``value`` if it is a mapping, else an empty one."""
+    return value if isinstance(value, Mapping) else {}
+
+
+def _detached_value(value: Any) -> Any:
+    """A copy of any JSON-shaped value, detached at every depth.
+
+    The mapping form below is the common case; this one also takes a list, a
+    string or a number, which is what an unusable interrupt reason can be.
+    """
+    try:
+        return deepcopy(value)
+    except Exception as exc:
+        # Saying so matters: the caller published this expecting a copy, and
+        # what it actually got is a handle on the live interrupt reason.
+        logger.warning(
+            "Could not detach an interrupt reason for publication; it is "
+            "shared with the live checkpoint: %s",
+            exc,
+        )
+        return value
+
+
+def _detached_copy(value: Mapping) -> dict:
+    """A copy of JSON-shaped data detached at every depth.
+
+    A shallow copy is not enough for anything published to a client: the nested
+    values would still be handles on the live native interrupt's reason. Falls
+    back to a shallow copy for the rare reason carrying something uncopyable,
+    which is still better than aliasing the whole mapping.
+    """
+    try:
+        return deepcopy(dict(value))
+    except Exception as exc:
+        # A shallow copy still leaves the nested values shared, so this is a
+        # degraded result and not the guarantee the caller asked for.
+        logger.warning(
+            "Could not fully detach a tool input for publication; its nested "
+            "values are shared with the live checkpoint: %s",
+            exc,
+        )
+        return dict(value)
+
+
+def _approval_tool_use_id(raw_reason: Any) -> Optional[str]:
+    """The native tool use an approval is bound to, or ``None``.
+
+    Reported only when it is a usable string. ``Interrupt.tool_call_id`` is
+    typed ``Optional[str]``, so forwarding anything else would fail validation
+    and take down a run that could otherwise be approved.
+    """
+    tool_use_id = _plain_mapping(raw_reason).get("tool_use_id")
+    return tool_use_id if isinstance(tool_use_id, str) and tool_use_id else None
+
+
+def _approval_reason_fields(raw_reason: Any) -> tuple[str, dict]:
+    """The tool identity an approval publishes, read out of its native reason.
+
+    The reason can be missing or malformed, most plausibly because it did not
+    survive a restart, so both fields fall back. The same defaults and the same
+    "is it usable?" tests as the TypeScript adapter, so an approval published
+    from either language reads identically.
+    """
+    reason = _plain_mapping(raw_reason)
+    tool_name = reason.get("tool_name")
+    return (
+        tool_name if isinstance(tool_name, str) and tool_name else "unknown",
+        # Detached at every depth, not merely copied at the top: the published
+        # metadata must not be a handle on the live native interrupt's reason at
+        # ANY level. Same guarantee in TypeScript.
+        _detached_copy(_plain_mapping(reason.get("tool_input"))),
+    )
+
+
+def _approval_metadata(
+    name: str, tool_name: str, tool_input: dict, raw_reason: Any
+) -> dict:
+    """The metadata an approval publishes.
+
+    ``strandsName`` is camelCase among snake_case keys on purpose: ``metadata``
+    is a free-form dict, so no alias generator rewrites it, and the TypeScript
+    adapter publishes exactly this spelling. Renaming either side to look tidier
+    would reintroduce the divergence this contract exists to remove.
+    """
+    metadata: dict = {
+        "tool_name": tool_name,
+        "tool_input": tool_input,
+        "strandsName": name,
+    }
+    # An approval whose reason carried nothing the three keys above could hold
+    # still publishes that reason, rather than reaching the client as nothing but
+    # the defaults. The test is what was actually extracted, not whether the
+    # reason was empty: a mapping like ``{"question": "..."}`` has keys and is
+    # still entirely unrepresented by tool_name / tool_input / tool_call_id.
+    # Detached like everything else published, since a reason can be a list or a
+    # nested mapping.
+    carried_nothing = (
+        tool_name == "unknown"
+        and not tool_input
+        and _approval_tool_use_id(raw_reason) is None
+    )
+    if raw_reason is not None and carried_nothing:
+        metadata["reason"] = _detached_value(raw_reason)
+    return metadata
+
+
 def _strands_interrupt_to_agui(strands_interrupt: Any) -> "Interrupt":
     """Map a native Strands ``Interrupt`` onto an AG-UI ``Interrupt``.
 
@@ -534,17 +835,19 @@ def _strands_interrupt_to_agui(strands_interrupt: Any) -> "Interrupt":
     raw_reason = getattr(strands_interrupt, "reason", None)
 
     if _is_tool_approval_interrupt(strands_interrupt):
-        tool_name = raw_reason.get("tool_name", "unknown")
+        # An approval carries the same keys on both bridges, so a client renders
+        # one the same way whichever language served it. Two keys are
+        # conditional: ``tool_call_id``, which an approval raised without a
+        # native tool use has none of, and ``reason``, which is published only
+        # when nothing else carried it.
+        tool_name, tool_input = _approval_reason_fields(raw_reason)
         return Interrupt(
             id=s_id,
             reason="tool_call",
             message=f"Approve call to {tool_name}?",
-            tool_call_id=raw_reason.get("tool_use_id"),
+            tool_call_id=_approval_tool_use_id(raw_reason),
             response_schema=_tool_approval_response_schema(),
-            metadata={
-                "tool_name": tool_name,
-                "tool_input": raw_reason.get("tool_input", {}),
-            },
+            metadata=_approval_metadata(name, tool_name, tool_input, raw_reason),
         )
 
     return Interrupt(
@@ -585,19 +888,38 @@ def _open_native_interrupts(interrupts: Any) -> dict:
     }
 
 
-def _extract_interrupts(agent: Any, terminal_result: Any) -> list:
-    """Return the native Strands interrupts for a paused run, or ``[]``.
+def _extract_interrupts(agent: Any, terminal_result: Any) -> Tuple[list, bool]:
+    """Return the native Strands interrupts for a paused run, and whether the
+    run paused with nothing to report.
 
     Prefers the terminal ``AgentResult`` (``stop_reason == "interrupt"`` with a
     populated ``interrupts``); falls back to the live agent's
     ``_interrupt_state`` so a pause is still detected if the result event was
     consumed by the stream's early-break path.
+
+    The second element is true only when the agent is demonstrably still parked
+    and there is nothing to hand the client: the checkpoint is active, every
+    interrupt on it reads as answered, and the terminal result says the run
+    stopped for an interrupt. That finish is indistinguishable from an ordinary
+    success in the event stream, so the only honest signal is the branch that
+    took it saying so, and the caller needs it because remembering such a resume
+    as completed would let a retry be answered from the idempotency fingerprint
+    without ever reaching the parked agent.
+
+    A stop reason on its own is not enough. A run reporting an interrupt with no
+    checkpoint left behind has finished its work, and treating that as a pause
+    would withhold the fingerprint from a resume that really did complete, which
+    costs the client its idempotent retry and leaves the answered interrupt
+    recorded as pending.
     """
-    if terminal_result is not None:
-        if getattr(terminal_result, "stop_reason", None) == "interrupt":
-            interrupts = getattr(terminal_result, "interrupts", None) or []
-            if interrupts:
-                return list(interrupts)
+    stopped_for_interrupt = (
+        terminal_result is not None
+        and getattr(terminal_result, "stop_reason", None) == "interrupt"
+    )
+    if stopped_for_interrupt:
+        interrupts = getattr(terminal_result, "interrupts", None) or []
+        if interrupts:
+            return list(interrupts), False
     interrupt_state = getattr(agent, "_interrupt_state", None)
     if interrupt_state is not None and getattr(interrupt_state, "activated", False):
         open_interrupts = _open_native_interrupts(
@@ -611,11 +933,17 @@ def _extract_interrupts(agent: Any, terminal_result: Any) -> list:
                 "Native interrupt state is activated but every interrupt is "
                 "answered; reporting no pending interrupts"
             )
-        return list(open_interrupts.values())
-    return []
+            return [], stopped_for_interrupt
+        return list(open_interrupts.values()), False
+    return [], False
 
 
-def _interrupt_session_required_error() -> "RunErrorEvent":
+# ``usage`` is optional because both of these are raised from two places: a
+# preflight gate, which has no model call behind it, and the post-stream gate,
+# which does.
+def _interrupt_session_required_error(
+    usage: "List[TokenUsage] | None" = None,
+) -> "RunErrorEvent":
     return RunErrorEvent(
         type=EventType.RUN_ERROR,
         message=(
@@ -623,10 +951,13 @@ def _interrupt_session_required_error() -> "RunErrorEvent":
             "interrupt checkpoint"
         ),
         code="INTERRUPT_SESSION_REQUIRED",
+        usage=usage,
     )
 
 
-def _interrupt_session_capability_error() -> "RunErrorEvent":
+def _interrupt_session_capability_error(
+    usage: "List[TokenUsage] | None" = None,
+) -> "RunErrorEvent":
     return RunErrorEvent(
         type=EventType.RUN_ERROR,
         message=(
@@ -635,6 +966,7 @@ def _interrupt_session_capability_error() -> "RunErrorEvent":
             "list_messages() and update_message()"
         ),
         code="INTERRUPT_SESSION_CAPABILITY_ERROR",
+        usage=usage,
     )
 
 
@@ -799,6 +1131,80 @@ def _continuation_tool_name_error(tool_call_ids: list) -> "RunErrorEvent":
     )
 
 
+def _parse_interrupt_expiry(raw: Any) -> "datetime | None":
+    """Read an interrupt's ``expires_at`` as an aware UTC instant.
+
+    ``expiresAt`` is documented as ISO-8601 and holds whatever the producer
+    stored. Python 3.10, which this package supports, rejects the trailing
+    ``Z`` an ordinary RFC 3339 timestamp carries, and an offsetless timestamp
+    cannot be compared against an aware ``now`` on any version. An offsetless
+    value is read as UTC so one stored string means one instant whatever
+    timezone the host runs in. Returns ``None`` for a value that is not a
+    timestamp at all.
+    """
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    if text[-1:] in ("Z", "z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _required_key_text(key: Any) -> str:
+    """Render one ``required`` entry the way JavaScript's ``join`` renders it.
+
+    ``required`` is copied out of the integrator's ``response_schema``, so its
+    entries carry whatever JSON put there rather than strings only. The
+    rendered sentence is a wire contract the TypeScript bridge builds with
+    ``Array.prototype.join``, which coerces instead of failing, so this
+    coerces instead of failing too and never raises.
+
+    The two agree on the values a JSON schema normally carries: strings,
+    booleans, null, arrays, objects, and the numbers JavaScript prints in
+    full. They do not agree on every number. Python prints a large magnitude
+    in full where JavaScript switches to an exponent at 1e21, because an
+    integral float is rendered through ``int`` here. For a tiny magnitude the
+    direction reverses: Python switches to an exponent below 1e-4 and
+    JavaScript only below 1e-6, so 1e-6 renders as ``1e-06`` here and as
+    ``0.000001`` there. Python also pads to two exponent digits where
+    JavaScript writes one, and prints the non-finite floats Python's ``json``
+    accepts by default as ``nan`` and ``inf`` where JavaScript writes ``NaN``
+    and ``Infinity``.
+    """
+    if isinstance(key, str):
+        return key
+    if key is None:
+        return ""
+    if isinstance(key, bool):
+        return "true" if key else "false"
+    if isinstance(key, float) and key.is_integer():
+        return str(int(key))
+    if isinstance(key, (int, float)):
+        return str(key)
+    if isinstance(key, list):
+        return ",".join(_required_key_text(item) for item in key)
+    return "[object Object]"
+
+
+def _payload_key(key: Any) -> str:
+    """Render one ``required`` entry the way JavaScript keys an object with it.
+
+    ``k in payload`` coerces ``k`` with ``String``, which is not the ``join``
+    rendering of the same entry: ``null`` joins as empty text and keys as
+    ``"null"``. Looking the sentence's text up instead would refuse a payload
+    the TypeScript bridge accepts and accept one it refuses.
+    """
+    if key is None:
+        return "null"
+    return _required_key_text(key)
+
+
 def _preflight_resume_entries(
     agent: Any,
     resume_entries: Any,
@@ -823,7 +1229,10 @@ def _preflight_resume_entries(
     # An active checkpoint whose every interrupt is answered is a thread the SDK
     # parked mid-resume (see _replays_recorded_answers). The interrupts an exact
     # replay may address are the answered ones it is replaying.
-    if _replays_recorded_answers(interrupt_state, resume_entries):
+    replaying_recorded_answers = _replays_recorded_answers(
+        interrupt_state, resume_entries
+    )
+    if replaying_recorded_answers:
         addressable = dict(getattr(interrupt_state, "interrupts", {}) or {})
     else:
         addressable = open_interrupts
@@ -850,7 +1259,8 @@ def _preflight_resume_entries(
         return RunErrorEvent(
             type=EventType.RUN_ERROR,
             message=(
-                f"Partial resume: missing interrupt IDs {sorted(missing_ids)}. "
+                "Partial resume: missing interrupt IDs: "
+                f"{', '.join(sorted(missing_ids))}. "
                 "All open interrupts must be addressed."
             ),
             code="PARTIAL_RESUME",
@@ -859,15 +1269,39 @@ def _preflight_resume_entries(
     pending_ag_ui = pending_ag_ui or {}
     for entry in resume_entries:
         ag_ui_interrupt = pending_ag_ui.get(entry.interrupt_id)
+        native = addressable.get(entry.interrupt_id)
 
         if ag_ui_interrupt and getattr(ag_ui_interrupt, "expires_at", None):
-            expiry = datetime.fromisoformat(ag_ui_interrupt.expires_at)
+            expiry = _parse_interrupt_expiry(ag_ui_interrupt.expires_at)
+            if expiry is None:
+                return _interrupt_resume_error(
+                    f"Interrupt '{entry.interrupt_id}' carries an expiry that "
+                    f"is not a timestamp: {ag_ui_interrupt.expires_at!r}"
+                )
             if datetime.now(timezone.utc) > expiry:
                 return RunErrorEvent(
                     type=EventType.RUN_ERROR,
                     message=f"Interrupt '{entry.interrupt_id}' has expired.",
                     code="INTERRUPT_EXPIRED",
                 )
+
+        # An answer recorded before this release was accepted under the rules of
+        # that release, and for the one interrupt whose classification moved
+        # there were no rules at all: it was generic, so any payload was valid.
+        # Re-judging it against the schema this release attaches would reject an
+        # answer the framework already holds, which is not a validation but a
+        # dead end, since replaying it is the only way to finish the execution
+        # parked behind it. Scoped to exactly that: an entry whose recorded
+        # answer matches the pre-upgrade shape for it, in a batch that replays
+        # the checkpoint as a whole.
+        #
+        # Below the expiry check on purpose. Only the schema is waived; an
+        # expired checkpoint is still refused, because an answer nobody may act
+        # on any more is not made actionable by having been recorded early.
+        if replaying_recorded_answers and native is not None:
+            legacy = _legacy_resume_response(entry, native)
+            if legacy is not None and getattr(native, "response", None) == legacy:
+                continue
 
         schema = (
             getattr(ag_ui_interrupt, "response_schema", None)
@@ -879,7 +1313,6 @@ def _preflight_resume_entries(
             # interrupt is restored. Adapter-owned interrupts have a fixed
             # contract, so validate against it rather than waving the payload
             # through.
-            native = addressable.get(entry.interrupt_id)
             if _is_tool_approval_interrupt(native):
                 schema = _tool_approval_response_schema()
             elif is_frontend_tool_interrupt(native):
@@ -900,14 +1333,17 @@ def _preflight_resume_entries(
                 ),
                 code="INVALID_PAYLOAD",
             )
-        required = schema.get("required", [])
-        missing_keys = [key for key in required if key not in payload]
+        missing_keys = [
+            _required_key_text(key)
+            for key in schema.get("required", [])
+            if _payload_key(key) not in payload
+        ]
         if missing_keys:
             return RunErrorEvent(
                 type=EventType.RUN_ERROR,
                 message=(
                     f"Invalid payload for interrupt '{entry.interrupt_id}': "
-                    f"missing required keys {missing_keys}."
+                    f"missing required keys: {', '.join(missing_keys)}."
                 ),
                 code="INVALID_PAYLOAD",
             )
@@ -980,7 +1416,9 @@ from ag_ui.core import (
     ToolCallResultEvent,
     ToolCallStartEvent,
     ToolMessage,
+    TokenUsage,
     UserMessage,
+    aggregate_token_usage,
 )
 
 from ag_ui_a2ui_toolkit import split_a2ui_schema_context
@@ -990,11 +1428,26 @@ from .a2ui_tool import (
     is_auto_injected_a2ui_tool,
     plan_a2ui_injection,
 )
+from .citations import (
+    CitationAccumulator,
+    _json_round_trip,
+    citation_from_event,
+    copy_metadata,
+    discard_orphans,
+)
 from .client_proxy_tool import (
     _is_proxy,
     registered_proxy_names,
     sync_proxy_tools,
     waits_for_frontend_call,
+)
+from .template_tools import (
+    TemplateToolsNarrowingHook,
+    apply_template_tool_selection,
+    index_template_tools,
+    parked_batch_tool_names,
+    record_template_tool_selection,
+    resolve_template_tool_selection,
 )
 from .frontend_tool_interrupt import (
     frontend_tool_response_schema,
@@ -1024,8 +1477,161 @@ from .utils import (
     UrlFetchPolicy,
     _FetchBudget,
     convert_agui_content_to_strands,
+    dumps_wire,
     flatten_content_to_text,
 )
+
+
+# The largest token count every AG-UI binding can carry. Proto int64 reaches
+# further, but the TypeScript protobuf decoder stops at MAX_SAFE_INTEGER, so
+# that is the real ceiling. Mirrors the SDK's own limit.
+_MAX_TOKEN_COUNT = 2**53 - 1
+
+# Strands ``Usage`` (camelCase) -> AG-UI ``TokenUsage`` (snake_case).
+# ``cacheWriteInputTokens`` is absent on purpose: AG-UI has no slot for it and
+# folding it into a neighbouring count would overstate that count. Strands
+# reports no reasoning-token count at all, so ``reasoning_tokens`` is never set
+# from this channel.
+_STRANDS_USAGE_FIELDS: Tuple[Tuple[str, str], ...] = (
+    ("input_tokens", "inputTokens"),
+    ("output_tokens", "outputTokens"),
+    ("total_tokens", "totalTokens"),
+    ("cached_input_tokens", "cacheReadInputTokens"),
+)
+
+# Model class name -> canonical provider label, shared verbatim with the
+# TypeScript bridge so one vendor reports one label whichever bridge served the
+# run. A table rather than a derivation from the class name because the two
+# SDKs do not name these classes identically: Python's Google model is
+# ``GeminiModel`` while the TypeScript one lives under ``models/google``, and a
+# derived label would silently split that vendor in two. A class not listed
+# here omits the provider label rather than guessing.
+#
+# Two classes may legitimately share one label. Python ships both
+# ``OpenAIModel`` and ``OpenAIResponsesModel`` for OpenAI's two APIs, where the
+# TypeScript SDK reaches the Responses API through a config on its single
+# ``OpenAIModel``: one vendor either way, so both report ``openai``. Entries
+# with no TypeScript counterpart at all (``litellm``, ``writer``) are the two
+# SDKs shipping different provider classes, not the two bridges disagreeing on
+# a label.
+_STRANDS_PROVIDER_LABELS: Dict[str, str] = {
+    "AnthropicModel": "anthropic",
+    "BedrockModel": "bedrock",
+    "GeminiModel": "google",
+    "LiteLLMModel": "litellm",
+    "LlamaAPIModel": "llamaapi",
+    "LlamaCppModel": "llamacpp",
+    "MistralModel": "mistral",
+    "OllamaModel": "ollama",
+    "OpenAIModel": "openai",
+    "OpenAIResponsesModel": "openai",
+    "SageMakerAIModel": "sagemaker",
+    "WriterModel": "writer",
+}
+
+
+def _usage_count(value: Any) -> "int | None":
+    """Accept a provider count only if the wire can carry it, else drop it.
+
+    Providers do report strings, ``None``s and ``NaN``s next to their counts,
+    and ``TokenUsage`` validates ``ge=0`` in the producer's own constructor: an
+    unguarded value would raise while BUILDING the terminal event and cost the
+    caller a whole successful run over one token count. Dropping the count
+    keeps the rest of the entry.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        # ``bool`` subclasses ``int``, and ``True`` is not a token count.
+        return None
+    if isinstance(value, int):
+        # Settled before any float check: ``math.isfinite`` coerces to float
+        # and raises OverflowError on a large int, which would abort the run
+        # from inside the guard that exists to protect it.
+        return value if 0 <= value <= _MAX_TOKEN_COUNT else None
+    if not math.isfinite(value):
+        return None
+    if value < 0 or value > _MAX_TOKEN_COUNT or int(value) != value:
+        return None
+    return int(value)
+
+
+def _model_usage_labels(model: Any) -> "Tuple[str | None, str | None]":
+    """Provider and model labels for a Strands model instance.
+
+    Read defensively at every step. ``get_config`` belongs to the integrator on
+    a custom model, so it may be missing, may raise, and may return something
+    that is not a mapping. A label that cannot be read is omitted; it never
+    fails the run.
+    """
+    if model is None:
+        return None, None
+    provider = _STRANDS_PROVIDER_LABELS.get(type(model).__name__)
+    get_config = getattr(model, "get_config", None)
+    config: Any = None
+    if callable(get_config):
+        try:
+            config = get_config()
+        except Exception:
+            logger.debug("model get_config failed while labelling usage", exc_info=True)
+    model_id = _plain_mapping(config).get("model_id")
+    return provider, model_id if isinstance(model_id, str) and model_id else None
+
+
+def _record_metadata_usage(
+    entries: List[Any], metadata_holder: Any, model: Any
+) -> None:
+    """Append this metadata event's usage, when it reports a usable count.
+
+    Strands emits one metadata event per model invocation, so a multi-cycle run
+    accumulates one entry per call and they are folded into one entry per
+    (provider, model) at the terminal event. Read from this channel rather than
+    ``AgentResult.metrics.accumulated_usage``, which is pre-summed and seeded
+    with zeros and so cannot tell "the provider reported nothing" apart from
+    "the provider reported zero".
+
+    Only counts and the two labels are copied: ``TokenUsage`` feeds anonymous
+    telemetry, so no prompt, completion, trace or latency may ride along.
+    """
+    usage = _plain_mapping(_plain_mapping(metadata_holder).get("metadata")).get("usage")
+    counts = {
+        agui_key: _usage_count(_plain_mapping(usage).get(strands_key))
+        for agui_key, strands_key in _STRANDS_USAGE_FIELDS
+    }
+    if all(value is None for value in counts.values()):
+        # A labels-only entry is not usage. Adding nothing keeps an unreported
+        # run's field omitted rather than present as zeros.
+        return
+    provider, model_id = _model_usage_labels(model)
+    fields: Dict[str, Any] = {
+        key: value for key, value in counts.items() if value is not None
+    }
+    if provider is not None:
+        fields["provider"] = provider
+    if model_id is not None:
+        fields["model"] = model_id
+    entries.append(TokenUsage(**fields))
+
+
+def _collect_run_usage(entries: Sequence[Any]) -> "List[TokenUsage] | None":
+    """Fold a run's per-call entries into its terminal event's ``usage``.
+
+    ``None`` (an omitted field) when nothing was reported, so a consumer reads
+    a missing field as "not measured" rather than as zero. Aggregation is the
+    SDK's shared helper, so both bridges emit the same shape.
+    """
+    return aggregate_token_usage(list(entries)) or None
+
+
+def _orchestrator_node_model(orchestrator: Any, node_id: Any) -> Any:
+    """The model behind an orchestrator node, for usage labelling.
+
+    The metadata event carries no agent handle, but the node id it arrives
+    under does resolve: Graph and Swarm both key ``nodes`` by id and hold the
+    leaf on ``executor``. A nested orchestrator resolves to the inner Graph or
+    Swarm instead, which has no model, so those entries stay label-less and
+    still aggregate truthfully.
+    """
+    node = _plain_mapping(getattr(orchestrator, "nodes", None)).get(node_id)
+    return getattr(getattr(node, "executor", node), "model", None)
 
 
 def _resume_fingerprint(resume_entries: list[ResumeEntry]) -> str:
@@ -1053,6 +1659,16 @@ def _resume_fingerprint(resume_entries: list[ResumeEntry]) -> str:
     ).hexdigest()
 
 
+# JSON Schema type names that take "an". The TypeScript bridge keys off the same
+# set: the rendered message is a wire contract clients match literally.
+_VOWEL_INITIAL_JSON_SCHEMA_TYPES = frozenset({"array", "integer", "object"})
+
+
+def _json_schema_type_description(expected_type: str) -> str:
+    article = "an" if expected_type in _VOWEL_INITIAL_JSON_SCHEMA_TYPES else "a"
+    return f"{article} {expected_type}"
+
+
 def _validate_object_payload_property_types(
     schema: dict[str, Any], payload: dict[str, Any]
 ) -> str | None:
@@ -1074,8 +1690,8 @@ def _validate_object_payload_property_types(
             continue
         if _json_schema_type_matches(payload[field], expected_type):
             continue
-        article = "an" if expected_type in {"object", "array"} else "a"
-        return f"field '{field}' must be {article} {expected_type}."
+        description = _json_schema_type_description(expected_type)
+        return f"field '{field}' must be {description}."
 
     return None
 
@@ -1263,12 +1879,36 @@ def _extract_tool_result_data(result_content: Any) -> Any:
     return fallback_results or None
 
 
+def _state_snapshot_payload(state: Any) -> dict[str, Any] | None:
+    """The initial ``StateSnapshotEvent`` payload, or ``None`` for no snapshot.
+
+    AG-UI types ``state`` as ``Any``, so a client is free to send something
+    that is not a mapping. Reading one as a mapping raises ``AttributeError``
+    and reports a client's payload as this adapter's own defect. Forwarding it
+    verbatim instead would put a scalar or a list on a wire that has only ever
+    carried an object here, so a non-mapping gets the no-snapshot reading the
+    orchestrator path already gave it.
+
+    Only a mapping can carry the ``messages`` key the frontend manages
+    separately and does not want echoed back, which is what the filter is for.
+    """
+    if not isinstance(state, dict):
+        return None
+    return {k: v for k, v in state.items() if k != "messages"}
+
+
 def _serialize_tool_result_data(result_data: Any) -> str:
     """Serialize a tool result for the AG-UI string field.
 
     Strands represents inline media bytes as ``bytes``. TypeScript's SDK
     ``toJSON`` method base64-encodes them, so do the same here to keep both
     adapters wire-compatible. ``None`` represents a genuinely empty result.
+
+    The value comes from an integrator's tool, so a value JSON cannot carry is
+    that tool's contract to fix and not a defect here. Both ways ``json.dumps``
+    reports one raise ``TypeError`` (this fallback for an unsupported value, the
+    encoder itself for an unsupported dict key), which the terminal-error
+    classifier would otherwise read as this adapter's own bug.
     """
     if result_data is None:
         return ""
@@ -1280,7 +1920,10 @@ def _serialize_tool_result_data(result_data: Any) -> str:
             f"Object of type {type(value).__name__} is not JSON serializable"
         )
 
-    return json.dumps(result_data, default=encode_bytes)
+    try:
+        return dumps_wire(result_data, default=encode_bytes)
+    except (TypeError, ValueError) as exc:
+        raise _ForeignFault(exc, "Tool result is not JSON serializable") from exc
 
 
 async def _forward_inner_agent_events(
@@ -1317,7 +1960,7 @@ async def _forward_inner_agent_events(
         raw_str = (
             raw_input
             if isinstance(raw_input, str)
-            else json.dumps(raw_input, default=str)
+            else dumps_wire(raw_input, default=str)
         )
         entry = inner_tool_calls_seen.get(call_id)
         if entry is None:
@@ -1397,11 +2040,36 @@ async def _forward_inner_agent_events(
                 type=EventType.TOOL_CALL_RESULT,
                 tool_call_id=call_id,
                 message_id=str(uuid.uuid4()),
-                content=json.dumps(result_data, default=str),
+                content=dumps_wire(result_data, default=str),
                 # role intentionally omitted — same as the parent-level result
                 # path, so the frontend closes the spinner without writing the
                 # inner call into conversation history.
             )
+
+
+def _carried_metadata(msg: Any) -> "Dict[str, Any] | None":
+    """The message's own metadata, when it is something the wire can carry.
+
+    ``_build_snapshot_messages`` accepts ``Any`` and every other field it reads
+    goes through a coercion or an isinstance check, because callers hand it
+    unvalidated objects. Metadata gets the same treatment: anything that is not
+    a dict is dropped rather than handed to the model and raised on.
+    """
+    metadata = getattr(msg, "metadata", None)
+    if not isinstance(metadata, dict):
+        return None
+    # Copied, not referenced: the rebuilt message is retained and re-emitted in
+    # every later snapshot, so handing back the caller's object would alias the
+    # client's own input into all of them. A value that will not encode is
+    # dropped here rather than failing the stream at encode time, matching the
+    # citation path.
+    carried = _json_round_trip(metadata)
+    if carried is None:
+        logger.warning(
+            "Dropping message metadata that will not encode (message_id=%s)",
+            getattr(msg, "id", None),
+        )
+    return carried
 
 
 def _build_snapshot_messages(input_messages: List[Any]) -> List[Any]:
@@ -1421,7 +2089,14 @@ def _build_snapshot_messages(input_messages: List[Any]) -> List[Any]:
             raw = msg.content
             # Preserve list content (multimodal) as-is; only stringify unexpected types.
             content = raw if isinstance(raw, (str, list)) else _coerce_text(raw)
-            out.append(UserMessage(id=msg_id, role="user", content=content))
+            out.append(
+                UserMessage(
+                    id=msg_id,
+                    role="user",
+                    content=content,
+                    metadata=_carried_metadata(msg),
+                )
+            )
         elif role == "assistant":
             tool_calls_list = None
             raw_tool_calls = getattr(msg, "tool_calls", None)
@@ -1452,6 +2127,12 @@ def _build_snapshot_messages(input_messages: List[Any]) -> List[Any]:
                     role="assistant",
                     content=_coerce_text(msg.content),
                     tool_calls=tool_calls_list,
+                    # Same reason the tool branch below preserves error and
+                    # encrypted_value: this is an AG-UI -> AG-UI rebuild of the
+                    # client's own message, and a snapshot REPLACES what the
+                    # client assembled. Dropping metadata here erases the
+                    # previous turn's citations the moment turn two starts.
+                    metadata=_carried_metadata(msg),
                 )
             )
         elif role == "tool":
@@ -1469,14 +2150,44 @@ def _build_snapshot_messages(input_messages: List[Any]) -> List[Any]:
                     # silently dropping the client's own fields.
                     error=getattr(msg, "error", None),
                     encrypted_value=getattr(msg, "encrypted_value", None),
+                    metadata=_carried_metadata(msg),
                 )
             )
     return out
 
 
+def _continuation_result_line(
+    tool_name: str, result_text: Any, error_text: Any
+) -> str:
+    """One line of the continuation prompt: the tool, and what came back.
+
+    Forwards the ACTUAL result so the model can act on the human's decision
+    (e.g. an approval resolving to ``{"approved": false}``). Announcing a bare
+    success would silently break HITL: the model is told the tool returned
+    nothing and proceeds as though the human had approved. The synthetic
+    acknowledgement is only for a result that is genuinely empty, and a
+    client-reported failure carries its reason with an empty body alongside it,
+    so reading the body alone reports that failure as a success.
+
+    Shared by every place a client answer has to be SAID rather than persisted,
+    so the same answer reaches the model in the same words whichever prompt
+    carries it. The persisted wording of the same answer omits the name, because
+    there a ``toolResult`` block is already attached to the call it answers.
+    """
+    text = result_text if isinstance(result_text, str) else ""
+    if error_text:
+        if text.strip():
+            return f"{tool_name} failed: {error_text} (returned: {text})"
+        return f"{tool_name} failed: {error_text}"
+    if text.strip():
+        return f"{tool_name} returned: {text}"
+    return f"{tool_name} executed successfully with no return value."
+
+
 def _build_strands_history(
     input_messages: List[Any],
     url_fetch_policy: "UrlFetchPolicy | None" = None,
+    dropped_tool_result_ids: set[str] | None = None,
 ) -> List[Dict[str, Any]]:
     """Convert ``RunAgentInput.messages`` to Strands native ``Messages``.
 
@@ -1490,10 +2201,22 @@ def _build_strands_history(
     Every URL content source in *input_messages* is fetched under
     *url_fetch_policy* and shares one budget, so the ceilings bound the whole
     history rather than each attachment separately.
+
+    Orphan tool results are dropped, as the seed conversion drops them: a
+    ``toolResult`` no ``toolUse`` in the replayed history answers is a history
+    real providers reject, so replaying one turns a turn the continuation prompt
+    could still have carried into a generic provider failure.
+
+    A dropped result is also an answer this history no longer carries, so the
+    caller has to know: pass *dropped_tool_result_ids* and it is filled with the
+    ids left out, which is the signal to reach the model some other way rather
+    than to replay a history the client's answer is missing from.
     """
     out: List[Dict[str, Any]] = []
     fetch_budget = _FetchBudget(url_fetch_policy)
     pending_tool_results: List[Dict[str, Any]] = []
+    # Every ``toolUse`` id the history built so far offers a result a home.
+    offered_tool_use_ids: set[str] = set()
 
     def flush_tool_results() -> None:
         if not pending_tool_results:
@@ -1504,10 +2227,20 @@ def _build_strands_history(
     for msg in input_messages or []:
         role = getattr(msg, "role", None)
         if role == "tool":
+            tool_call_id = getattr(msg, "tool_call_id", "") or ""
+            if tool_call_id not in offered_tool_use_ids:
+                logger.warning(
+                    "History replay dropped a tool result no replayed tool call "
+                    "answers: tool_call_id=%s",
+                    tool_call_id,
+                )
+                if dropped_tool_result_ids is not None:
+                    dropped_tool_result_ids.add(tool_call_id)
+                continue
             pending_tool_results.append(
                 {
                     "toolResult": {
-                        "toolUseId": getattr(msg, "tool_call_id", "") or "",
+                        "toolUseId": tool_call_id,
                         "content": [{"text": _coerce_text(msg.content)}],
                         # Carry the AG-UI failure signal onto Bedrock's toolResult status,
                         # so a client-reported tool failure is not asserted to the model as
@@ -1566,6 +2299,8 @@ def _build_strands_history(
                         }
                     }
                 )
+                if tc.id:
+                    offered_tool_use_ids.add(tc.id)
             if not blocks:
                 blocks = [{"text": ""}]
             out.append({"role": "assistant", "content": blocks})
@@ -2072,6 +2807,10 @@ class _MultiAgentNodeStreams:
     def __init__(self) -> None:
         self._text: Dict[str, str] = {}
         self._reasoning: Dict[str, str] = {}
+        # Citations are per node for the same reason message ids are: two nodes
+        # run concurrently and neither one's sources belong on the other's
+        # answer. Each accumulator carries its own node's text offset.
+        self._citations: Dict[str, CitationAccumulator] = {}
 
     def text(self, node_id: str, delta: str) -> List[Any]:
         events: List[Any] = []
@@ -2089,14 +2828,27 @@ class _MultiAgentNodeStreams:
                     role="assistant",
                 )
             )
+        self._accumulator(node_id).advance(delta)
         events.append(
             TextMessageContentEvent(
                 type=EventType.TEXT_MESSAGE_CONTENT,
                 message_id=message_id,
                 delta=delta,
+                metadata=self._accumulator(node_id).pending(),
             )
         )
         return events
+
+    def _accumulator(self, node_id: str) -> CitationAccumulator:
+        accumulator = self._citations.get(node_id)
+        if accumulator is None:
+            accumulator = CitationAccumulator()
+            self._citations[node_id] = accumulator
+        return accumulator
+
+    def citation(self, node_id: str, citation: Dict[str, Any]) -> None:
+        """Hold a citation until this node's text envelope publishes it."""
+        self._accumulator(node_id).add(citation)
 
     def reasoning(self, node_id: str, delta: str) -> List[Any]:
         events: List[Any] = []
@@ -2132,10 +2884,19 @@ class _MultiAgentNodeStreams:
     def _close_text(self, node_id: str) -> List[Any]:
         message_id = self._text.pop(node_id, None)
         if message_id is None:
+            # No text envelope was open, so there is nothing to close and
+            # nothing to attach to. The accumulator is deliberately left alone:
+            # this is reached when a reasoning delta arrives before the node's
+            # first text delta, and a citation already held for that node still
+            # belongs to the text message about to open. `close` sweeps what is
+            # genuinely left over.
             return []
+        accumulator = self._citations.pop(node_id, None)
         return [
             TextMessageEndEvent(
-                type=EventType.TEXT_MESSAGE_END, message_id=message_id
+                type=EventType.TEXT_MESSAGE_END,
+                message_id=message_id,
+                metadata=None if accumulator is None else accumulator.take(),
             )
         ]
 
@@ -2155,13 +2916,21 @@ class _MultiAgentNodeStreams:
     def close(self, node_id: str) -> List[Any]:
         events = self._close_text(node_id)
         events.extend(self._close_reasoning(node_id))
+        # Whatever is still held once the node is done never found a message.
+        leftover = self._citations.pop(node_id, None)
+        if leftover is not None:
+            discard_orphans(leftover, f"node_id={node_id}")
         return events
 
     def close_all(self) -> List[Any]:
         events: List[Any] = []
-        for node_id in list(self._text) + [
-            n for n in self._reasoning if n not in self._text
-        ]:
+        # Citation-only nodes are swept too: they emit nothing, but leaving
+        # them unvisited would drop their sources with no trace at all.
+        seen: set[str] = set()
+        for node_id in list(self._text) + list(self._reasoning) + list(self._citations):
+            if node_id in seen:
+                continue
+            seen.add(node_id)
             events.extend(self.close(node_id))
         return events
 
@@ -2328,6 +3097,179 @@ def _without_a2ui_render_guides(context: list, tool_names: List[str]) -> list:
     ]
 
 
+def _is_tool_result_block(block: Any) -> bool:
+    """Whether a native content block answers a tool call."""
+    return isinstance(block, dict) and "toolResult" in block
+
+
+def _carries_tool_result(message: Any) -> bool:
+    """Whether a native message is a user turn that answers a tool call."""
+    content = message.get("content") if isinstance(message, dict) else None
+    return isinstance(content, list) and any(
+        _is_tool_result_block(block) for block in content
+    )
+
+
+def _latest_question_index(messages: List[Any]) -> int:
+    """Index of the latest user turn carrying no tool result, or ``-1``.
+
+    That turn is the question: the last thing the person typed that the model is
+    answering. It is the only place text can be added to a history whose tail
+    answers a tool call without breaking one of the two rules
+    ``describe_model_bound_history`` reports on."""
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if not isinstance(message, dict) or message.get("role") != "user":
+            continue
+        if _carries_tool_result(message):
+            continue
+        return index
+    return -1
+
+
+def describe_model_bound_history(messages: Any) -> str:
+    """Report the two provider-binding properties of a native Strands history.
+
+    Every provider formatter the Strands SDK ships reads a native history one of
+    two ways, and each way enforces its own rule:
+
+    - The splitting formatters (``openai``, ``litellm``, ``mistral``, ``writer``,
+      ``llamaapi``, ``llamacpp``) turn one user turn into several provider
+      messages: the turn's non-tool content becomes a message of its own, emitted
+      AHEAD of the tool messages the same turn's tool results become, whatever the
+      order of the blocks inside the turn. So a turn carrying both text and a tool
+      result binds as ``assistant(tool_calls) -> user(text) -> tool(result)``, and
+      OpenAI answers that with HTTP 400 "An assistant message with 'tool_calls'
+      must be followed by tool messages responding to each 'tool_call_id'".
+    - The one-to-one formatters (``anthropic``, ``bedrock``, ``gemini``) map each
+      native message to one provider message, so two consecutive user turns bind
+      as two consecutive user messages, which those providers reject for failing
+      role alternation.
+
+    ``adjacency`` is therefore about the first family and ``alternation`` about
+    the second, and a history has to satisfy both because the bridge does not know
+    which provider the host configured. Indices name the offending message's
+    position in the native history."""
+    if not isinstance(messages, list):
+        return "roles=[] (no history)"
+    roles = [
+        str(message.get("role")) if isinstance(message, dict) else "?"
+        for message in messages
+    ]
+
+    adjacency = "ok"
+    for index, message in enumerate(messages):
+        if not _carries_tool_result(message):
+            continue
+        if any(
+            not _is_tool_result_block(block) for block in message.get("content", [])
+        ):
+            adjacency = f"broken at [{index}]"
+            break
+        previous = messages[index - 1] if index > 0 else None
+        if not isinstance(previous, dict) or previous.get("role") != "assistant":
+            adjacency = f"broken at [{index}]"
+            break
+
+    alternation = "ok"
+    for index in range(1, len(roles)):
+        if roles[index] == roles[index - 1]:
+            alternation = f"broken at [{index}]"
+            break
+
+    return (
+        f"roles=[{', '.join(roles)}] tool-call adjacency={adjacency} "
+        f"role alternation={alternation}"
+    )
+
+
+def _merge_text_into(
+    message: Any, text: str, placement: str = "prepend"
+) -> Tuple[Any, ...]:
+    """Add ``text`` to one turn's own text block, rather than beside it as a
+    second one. A user turn carrying two text blocks is what the writer
+    formatter refuses outright ("doesn't support multiple contents"), and every
+    other formatter reads one joined block the same way it reads two. A turn
+    with no text block yet gets one."""
+    content = message.get("content")
+    if not isinstance(content, list):
+        content = []
+        message["content"] = content
+    text_indices = [
+        index
+        for index, block in enumerate(content)
+        if isinstance(block, dict) and isinstance(block.get("text"), str)
+    ]
+    if text_indices:
+        block_index = text_indices[0] if placement == "prepend" else text_indices[-1]
+        original = content[block_index]
+        existing = original["text"]
+        merged = (
+            f"{text}\n\n{existing}"
+            if placement == "prepend"
+            else f"{existing}\n\n{text}"
+        )
+        replacement = {**original, "text": merged}
+        content[block_index] = replacement
+        return ("replace", content, block_index, original, replacement)
+    block = {"text": text}
+    if placement == "prepend":
+        content.insert(0, block)
+    else:
+        content.append(block)
+    return ("splice", content, block)
+
+
+def _place_user_text(
+    messages: Any, text: str, placement: str = "prepend"
+) -> Optional[Tuple[Any, ...]]:
+    """Add ``text`` to ``messages`` as the model will read it, without breaking
+    either rule ``describe_model_bound_history`` reports on.
+
+    There is exactly one safe placement once the history's tail answers a tool
+    call, and it is not the obvious one. Folding the text into the tool-result
+    turn breaks adjacency for the splitting formatters; giving it a user turn of
+    its own after that turn breaks alternation for the one-to-one formatters.
+    Both remaining directions add a turn next to an existing user turn, which
+    breaks alternation again. So the text merges into the latest user turn that
+    carries no tool result: the question. That leaves the message count, and
+    therefore the bound role sequence, exactly as it was.
+
+    It merges into that turn's existing text block rather than sitting beside it
+    as a second one, because the writer formatter refuses a turn carrying more
+    than one text block outright, and every other formatter reads one joined
+    block the way it would have read two.
+
+    ``placement`` says which side of the existing text the new text goes.
+    Application context is a preamble to the question and prepends; a
+    synthesized note about what the tools returned is a postscript and appends.
+
+    When the history holds no question at all (a delta payload that replayed only
+    tool results, or a history with no user turn), the text becomes a user turn of
+    its own: appended when there is no user turn to sit beside, and otherwise
+    opening the history, which is where a provider expects a user turn that no
+    assistant turn has answered yet.
+
+    Returns the record needed to undo the placement, or ``None`` when ``messages``
+    is not a list to place into."""
+    if not isinstance(messages, list):
+        return None
+
+    question_index = _latest_question_index(messages)
+    if question_index >= 0:
+        return _merge_text_into(messages[question_index], text, placement)
+
+    block = {"text": text}
+    added = {"role": "user", "content": [block]}
+    has_user_turn = any(
+        isinstance(message, dict) and message.get("role") == "user"
+        for message in messages
+    )
+    index = 0 if has_user_turn else len(messages)
+    messages.insert(index, added)
+    return ("insert", messages, index, added)
+
+
 class _TransientModelContextHook:
     """Expose request context to the model without persisting it as history."""
 
@@ -2342,70 +3284,52 @@ class _TransientModelContextHook:
         if event.agent.__dict__.get(_MODEL_CONTEXT_MUTATION_MARKER) is not None:
             raise RuntimeError("Transient AG-UI model context was not restored")
 
-        messages = event.agent.messages
-        latest_user_index = next(
-            (
-                index
-                for index in range(len(messages) - 1, -1, -1)
-                if messages[index].get("role") == "user"
-            ),
-            None,
-        )
-        context_message = {
-            "role": "user",
-            "content": [{"text": context_block}],
-        }
-
-        if latest_user_index is None:
-            messages.append(context_message)
-            setattr(
-                event.agent,
-                _MODEL_CONTEXT_MUTATION_MARKER,
-                ("insert", messages, len(messages) - 1, context_message),
-            )
-            return
-
-        latest_user = messages[latest_user_index]
-        content = latest_user.get("content")
-        if isinstance(content, list) and any("toolResult" in block for block in content):
-            latest_user["content"] = [{"text": context_block}, *content]
-            setattr(
-                event.agent,
-                _MODEL_CONTEXT_MUTATION_MARKER,
-                ("replace", latest_user, content),
-            )
-            return
-
-        # Keep the actual latest user turn byte-identical for model routers and
-        # fixtures that key off it, while placing live UI context immediately
-        # before that turn rather than at the start of stale history.
-        messages.insert(latest_user_index, context_message)
-        setattr(
-            event.agent,
-            _MODEL_CONTEXT_MUTATION_MARKER,
-            ("insert", messages, latest_user_index, context_message),
-        )
+        # The placement is ``_place_user_text``, so the block lands where no
+        # provider formatter refuses it, and it is undone afterwards so the
+        # durable conversation is untouched.
+        mutation = _place_user_text(event.agent.messages, context_block, "prepend")
+        if mutation is not None:
+            setattr(event.agent, _MODEL_CONTEXT_MUTATION_MARKER, [mutation])
 
     def _after_model_call(self, event: Any) -> None:
         _restore_transient_model_context(event.agent)
 
 
 def _restore_transient_model_context(agent: Any) -> None:
-    """Undo an in-flight context mutation, including on stream cancellation."""
-    mutation = getattr(agent, "__dict__", {}).get(_MODEL_CONTEXT_MUTATION_MARKER)
-    if mutation is None:
+    """Undo the in-flight reshape, including on stream cancellation."""
+    applied = getattr(agent, "__dict__", {}).get(_MODEL_CONTEXT_MUTATION_MARKER)
+    if applied is None:
         return
+    # Back to front, so an earlier mutation's indices still mean what they meant
+    # when it was applied.
+    for mutation in reversed(applied):
+        _undo_one(mutation)
+    delattr(agent, _MODEL_CONTEXT_MUTATION_MARKER)
+
+
+def _undo_one(mutation: Tuple[Any, ...]) -> None:
     kind = mutation[0]
     if kind == "replace":
-        _, message, original_content = mutation
-        message["content"] = original_content
+        _, content, index, original, inserted = mutation
+        if index < len(content) and content[index] is inserted:
+            content[index] = original
+        else:
+            for position, block in enumerate(content):
+                if block is inserted:
+                    content[position] = original
+                    break
+    elif kind == "splice":
+        _, content, inserted = mutation
+        for index, block in enumerate(content):
+            if block is inserted:
+                content.pop(index)
+                break
     else:
         _, messages, index, inserted = mutation
         if index < len(messages) and messages[index] is inserted:
             messages.pop(index)
         else:
             messages.remove(inserted)
-    delattr(agent, _MODEL_CONTEXT_MUTATION_MARKER)
 
 
 def _ensure_transient_context_hook(agent: Any) -> bool:
@@ -2465,6 +3389,7 @@ class StrandsAgent:
         description: str = "",
         config: "StrandsAgentConfig | None" = None,
         hooks: "list | None" = None,
+        plugins: "list | None" = None,
         agents_by_thread: "Dict[str, Any] | None" = None,
     ):
         # Detect a multi-agent orchestrator structurally. A Graph or Swarm has
@@ -2515,11 +3440,20 @@ class StrandsAgent:
         if self._orchestrator is None:
             self._model = agent.model
             self._system_prompt = agent.system_prompt
-            self._tools = (
-                list(agent.tool_registry.registry.values())
-                if hasattr(agent, "tool_registry")
-                else []
-            )
+            # A plugin's tool can retain a callback bound to the template's
+            # manager even when that manager is excluded from the kwargs.
+            self._tools = [
+                tool
+                for tool in (
+                    agent.tool_registry.registry.values()
+                    if hasattr(agent, "tool_registry")
+                    else []
+                )
+                if not _references_agent(
+                    getattr(getattr(tool, "_tool_func", None), "__self__", None),
+                    agent,
+                )
+            ]
             (
                 self._agent_kwargs,
                 self._unreadable_params,
@@ -2533,9 +3467,18 @@ class StrandsAgent:
             self._unreadable_params = []
             self._template_owned_params = []
 
-        # Params wired to the template are a known structural limit, not a
-        # surprise, so they are recorded without a warning. Params this adapter
-        # could not read at all are the ones worth interrupting for.
+        # ``plugins`` is handled explicitly, so the generic probe above skips
+        # it and cannot report it. A template built with plugins is still a
+        # dropped setting, so record it here and let it be reported through the
+        # same route as every other param that will not carry.
+        if self._orchestrator is None and _template_plugin_names(agent):
+            self._template_owned_params.append("plugins")
+
+        # Both kinds of param will fail to reach per-thread agents, and both
+        # are reported when a thread is built. They are kept apart because they
+        # ask for different reading: an unreadable param is a gap in this
+        # adapter that a later release may close, while one the SDK wired to
+        # the agent that received it will never carry.
         self._unforwardable_params = [
             *self._unreadable_params,
             *self._template_owned_params,
@@ -2564,6 +3507,43 @@ class StrandsAgent:
         # observability / loop-cap / policy-enforcement hook actually fires.
         self._hooks = list(hooks) if hooks else []
 
+        # Plugins forwarded to each per-thread StrandsAgentCore.
+        #
+        # A dedicated kwarg for the same reason ``hooks`` has one, one step
+        # further along. Strands consumes the plugin list during init: it calls
+        # each plugin's ``init_agent`` and registers its hooks and tools into
+        # that agent's registries, keeping only a registry bound to that agent.
+        # There is no list left to read back, and the registry cannot be handed
+        # to a second agent. Since the template never serves a request, a
+        # plugin registered there never runs against the agents that do, and a
+        # plugin whose whole behaviour lives in ``init_agent`` silently does
+        # nothing. Taking them from the caller instead lets every per-thread
+        # agent build its own.
+        self._plugins = list(plugins) if plugins else []
+        # Refused at wrap time rather than on the first request. Without this
+        # the kwarg reaches a constructor with no parameter for it and Strands
+        # raises a bare TypeError from inside per-thread construction, which
+        # escapes the run generator: the caller sees a traceback pointing at
+        # the SDK rather than at the argument they passed, and only once a
+        # request arrives. This is a static misconfiguration, knowable the
+        # moment the wrapper is built, so it is answered there.
+        # Not raised for an orchestrator, which never builds a per-thread agent
+        # and so ignores plugins on every release. Refusing only the old ones
+        # there would report a version problem for something the new ones do
+        # not do either.
+        if (
+            self._plugins
+            and self._orchestrator is None
+            and not _STRANDS_ACCEPTS_PLUGINS
+        ):
+            raise TypeError(
+                "plugins= was supplied, but the installed strands-agents "
+                f"({distribution_version('strands-agents')}) has no `plugins` "
+                "parameter on Agent, so they cannot be forwarded to per-thread "
+                "agents. Upgrade strands-agents to a release that supports "
+                "plugins, or drop the argument."
+            )
+
         self.name = name
         self.description = description
         self.config = config or StrandsAgentConfig()
@@ -2577,6 +3557,14 @@ class StrandsAgent:
         }
         if interrupt_tools:
             self._hooks = [StrandsInterruptHook(interrupt_tools), *self._hooks]
+
+        # Re-narrow the per-request tool filter before each model call. The
+        # parked-batch exemption holds a denied tool registered so a resume can
+        # reach it, and Strands then continues the same run against the same
+        # registry; without this the run would keep advertising what the
+        # request denied until the next request narrowed again.
+        if self.config.template_tools_provider is not None:
+            self._hooks = [*self._hooks, TemplateToolsNarrowingHook(self._tools)]
 
         # Detect the common footgun: session_manager set on the template Agent
         # (stored as `_session_manager` by Strands) with no per-thread provider.
@@ -2615,6 +3603,8 @@ class StrandsAgent:
         # same new thread_id could otherwise both create an agent and one
         # would clobber the other.
         self._thread_init_lock = asyncio.Lock()
+        # Threads with an in-flight run, single-agent or orchestrator alike.
+        self._active_runs_by_thread: set[str] = set()
         # Threads with an in-flight orchestrator run. A Graph or Swarm holds
         # its node agents, which reject overlapping invocations, so a second
         # run on the same thread is rejected rather than allowed to collide.
@@ -2684,6 +3674,23 @@ class StrandsAgent:
         return RunFinishedInterruptOutcome(
             type="interrupt",
             interrupts=ag_ui_interrupts,
+        )
+
+    def _resume_answers_pending_interrupt(
+        self, input_data: RunAgentInput, thread_id: str
+    ) -> bool:
+        """Whether this run answers an interrupt this thread is parked at.
+
+        The same rule :meth:`_orchestrator_resume_prompt` applies, asked before
+        the run starts: a resume naming only stale or unknown ids answers
+        nothing, so it must not reach a parked orchestrator.
+        """
+        pending = self._pending_interrupts_by_thread.get(thread_id) or {}
+        if not pending:
+            return False
+        return any(
+            getattr(entry, "interrupt_id", None) in pending
+            for entry in (getattr(input_data, "resume", None) or [])
         )
 
     def _orchestrator_resume_prompt(
@@ -2760,6 +3767,10 @@ class StrandsAgent:
         # Native interrupts raised during this run, reported on RUN_FINISHED so
         # the client knows the run paused rather than completed.
         native_interrupts: List[Any] = []
+        # Provider-reported usage, one entry per model call in the order the
+        # nodes reported it. Local to this generator, so a second sequential
+        # run cannot inherit the first run's counts.
+        run_usage: List[Any] = []
         # Leaf conversation state to rewind to when this run does not pause.
         baseline: "List[Tuple[list, list]] | None" = None
         # Set only once an interrupt outcome has actually been committed. While
@@ -2778,13 +3789,11 @@ class StrandsAgent:
 
         try:
           try:
-              state = input_data.state
-              if isinstance(state, dict):
+              initial_snapshot = _state_snapshot_payload(input_data.state)
+              if initial_snapshot is not None:
                   yield StateSnapshotEvent(
                       type=EventType.STATE_SNAPSHOT,
-                      snapshot={
-                          k: v for k, v in state.items() if k != "messages"
-                      },
+                      snapshot=initial_snapshot,
                   )
 
               # A run that resumes an interrupt must hand Strands its response
@@ -2817,8 +3826,15 @@ class StrandsAgent:
                       baseline = parked.baseline
                   else:
                       # Otherwise fresh per run: nothing carries from a previous
-                      # run, and two runs never touch the same instance.
-                      orchestrator = self._orchestrator_factory()
+                      # run, and two runs never touch the same instance. The
+                      # factory is the integrator's, so a raise from it is
+                      # their fault and not this adapter's.
+                      try:
+                          orchestrator = self._orchestrator_factory()
+                      except Exception as exc:
+                          raise _ForeignFault(
+                              exc, "Orchestrator factory failed"
+                          ) from exc
                       baseline = None
               else:
                   orchestrator = self._orchestrator
@@ -2940,9 +3956,22 @@ class StrandsAgent:
                           node_id, inner = _unwrap_multiagent_node_stream(event)
                           if inner is None:
                               continue
+                          # A node's model reports usage on the same metadata
+                          # event the single-agent loop reads, one wrapper
+                          # deeper. Labelled from the node that raised it, so a
+                          # multi-model orchestrator keeps its models apart.
+                          _record_metadata_usage(
+                              run_usage,
+                              inner.get("event"),
+                              _orchestrator_node_model(orchestrator, node_id),
+                          )
                           if inner.get("data"):
                               for text_event in nodes.text(node_id, inner["data"]):
                                   yield text_event
+                          elif (
+                              inner_citation := citation_from_event(inner)
+                          ) is not None:
+                              nodes.citation(node_id, inner_citation)
                           elif inner.get("reasoningText") and inner.get("reasoning"):
                               for reasoning_event in nodes.reasoning(
                                   node_id, inner["reasoningText"]
@@ -2964,7 +3993,7 @@ class StrandsAgent:
               for closing in _close_open_multiagent(nodes, open_steps):
                   yield closing
 
-              outcome = None
+              outcome = RunFinishedSuccessOutcome(type="success")
               if native_interrupts:
                   ag_ui_interrupts = [
                       _strands_interrupt_to_agui(interrupt)
@@ -2990,13 +4019,12 @@ class StrandsAgent:
                   thread_id=input_data.thread_id,
                   run_id=input_data.run_id,
                   outcome=outcome,
+                  # An interrupted run is a finished run for usage purposes:
+                  # the model calls its nodes already made were real.
+                  usage=_collect_run_usage(run_usage),
               )
           except Exception as e:
-              code = (
-                  "ADAPTER_BUG"
-                  if isinstance(e, (TypeError, AttributeError, NameError))
-                  else "STRANDS_ERROR"
-              )
+              code = _terminal_error_code(e)
               logger.error(f"_run_orchestrator failed: {e}", exc_info=True)
               # A Graph fails fast: the first node exception cancels its siblings
               # and re-raises, so a raise landing mid-text is routine. Without
@@ -3005,7 +4033,12 @@ class StrandsAgent:
               for closing in _close_open_multiagent(nodes, open_steps, failed=True):
                   yield closing
               yield RunErrorEvent(
-                  type=EventType.RUN_ERROR, message=str(e), code=code
+                  type=EventType.RUN_ERROR,
+                  message=str(e),
+                  code=code,
+                  # Partial usage: a node that failed after earlier nodes
+                  # completed still spent their tokens.
+                  usage=_collect_run_usage(run_usage),
               )
         finally:
             # Runs for normal completion, exceptions, cancellation and
@@ -3024,25 +4057,57 @@ class StrandsAgent:
         Said once per param, and only about params this thread's kwargs did not
         supply, so acting on it makes it stop without the first thread becoming
         the policy for every later one.
+
+        The two kinds get their own message. An unreadable param is a gap in
+        this adapter, and a caller reading that can reasonably wait for a later
+        release to close it. A param the SDK wired to the agent that received
+        it is a structural limit rather than a gap: no adapter release will
+        carry it, so the per-thread route is the whole answer rather than a
+        stopgap. One sentence for both would send half the readers after a fix
+        that is not coming.
         """
-        still_missing = sorted(
-            name
-            for name in self._unreadable_params
-            if name not in core_kwargs and name not in self._reported_uncarried
-        )
-        if not still_missing:
-            return
-        self._reported_uncarried.update(still_missing)
-        # Phrased as a capability, not an accusation: an unreadable param is
-        # unreadable whether or not the caller set one, so this cannot say that
-        # anything was actually lost.
-        logger.warning(
-            "this Strands release stores these Agent constructor params where the "
-            "adapter cannot read them back, so a value set on the template through "
-            "them will not reach per-thread agents: %s. Supply them per thread "
-            "with StrandsAgentConfig.thread_agent_kwargs.",
-            ", ".join(still_missing),
-        )
+
+        def _unreported(names: List[str]) -> List[str]:
+            return sorted(
+                name
+                for name in names
+                if name not in core_kwargs and name not in self._reported_uncarried
+            )
+
+        unreadable = _unreported(self._unreadable_params)
+        template_owned = _unreported(self._template_owned_params)
+        self._reported_uncarried.update(unreadable)
+        self._reported_uncarried.update(template_owned)
+
+        if unreadable:
+            # Phrased as a capability, not an accusation: an unreadable param
+            # is unreadable whether or not the caller set one, so this cannot
+            # say that anything was actually lost.
+            logger.warning(
+                "this Strands release stores these Agent constructor params where the "
+                "adapter cannot read them back, so a value set on the template through "
+                "them will not reach per-thread agents: %s. Supply them per thread "
+                "with StrandsAgentConfig.thread_agent_kwargs.",
+                ", ".join(unreadable),
+            )
+        if template_owned:
+            # ``plugins`` is the one of these with a dedicated kwarg, so point
+            # at it rather than making every caller write a hook for the case
+            # the adapter already has an answer to.
+            route = (
+                "Pass them to StrandsAgent(plugins=[...])"
+                if template_owned == ["plugins"]
+                else "Supply them per thread with "
+                "StrandsAgentConfig.thread_agent_kwargs"
+            )
+            logger.warning(
+                "these Agent constructor params are consumed by the Strands Agent "
+                "that received them and cannot be handed to another agent, so a "
+                "value set on the template will not reach per-thread agents: %s. "
+                "%s.",
+                ", ".join(template_owned),
+                route,
+            )
 
     async def run(
         self,
@@ -3059,6 +4124,51 @@ class StrandsAgent:
                 available to hooks and tools but is not added to the model
                 context.
         """
+        # Neither a per-thread cached agent nor an orchestrator can be
+        # multiplexed across invocations, so overlapping runs on one thread
+        # would interleave their turns in shared state. Refuse the collision
+        # with the code and text the TypeScript adapter uses. A resume and a
+        # retry after a disconnect are not the same thing as an overlap: each
+        # starts once the earlier run's generator has been torn down, which is
+        # what frees the slot. Torn down, not merely finished.
+        thread_id = input_data.thread_id or "default"
+        if thread_id in self._active_runs_by_thread:
+            yield RunStartedEvent(
+                type=EventType.RUN_STARTED,
+                thread_id=input_data.thread_id,
+                run_id=input_data.run_id,
+            )
+            yield RunErrorEvent(
+                type=EventType.RUN_ERROR,
+                message=(
+                    f"Another run is already in progress on {_busy_scope(thread_id)}. "
+                    "Wait for RUN_FINISHED before starting another."
+                ),
+                code="THREAD_BUSY",
+            )
+            return
+
+        self._active_runs_by_thread.add(thread_id)
+        # Close the delegate explicitly: an abandoned consumer would otherwise
+        # leave the inner generator suspended until GC, so its teardown would
+        # not have run by the time the slot is released.
+        events = self._run_raw(input_data, invocation_state=invocation_state)
+        try:
+            async for event in events:
+                yield event
+        finally:
+            try:
+                await events.aclose()
+            finally:
+                self._active_runs_by_thread.discard(thread_id)
+
+    async def _run_raw(
+        self,
+        input_data: RunAgentInput,
+        *,
+        invocation_state: dict[str, Any] | None = None,
+    ) -> AsyncIterator[Any]:
+        """Body of :meth:`run`, without the same-thread concurrency guard."""
 
         run_invocation_state = (
             dict(invocation_state) if invocation_state is not None else None
@@ -3076,25 +4186,39 @@ class StrandsAgent:
             # half-drawn pipeline behind it. Reject the collision up front with
             # the protocol-shaped code the TypeScript adapter uses.
             # A factory builds a fresh orchestrator per run, so only the same
-            # thread can collide. A shared instance cannot be multiplexed at
-            # all, so ANY overlapping run is refused, whatever its thread.
+            # thread can collide, and `run` already refused that. A shared
+            # instance cannot be multiplexed at all, so ANY overlapping run is
+            # refused here, whatever its thread.
+            request_thread = input_data.thread_id or "default"
             orchestrator_thread = (
-                (input_data.thread_id or "default")
+                request_thread
                 if self._orchestrator_factory is not None
                 else _SHARED_ORCHESTRATOR_RUN_KEY
             )
-            # A shared instance parked mid-execution for one thread must not
-            # be handed to anybody else, nor re-entered by a fresh run on its
-            # own thread: it is still sitting at its interrupt.
-            parked_threads = (
-                set(self._parked_orchestrators_by_thread)
-                if self._orchestrator_factory is None
-                else set()
-            )
-            is_resume = bool(getattr(input_data, "resume", None))
-            blocked_by_park = bool(parked_threads) and not (
-                is_resume and (input_data.thread_id or "default") in parked_threads
-            )
+            if self._orchestrator_factory is None:
+                # A shared instance parked mid-execution for one thread must
+                # not be handed to anybody else, nor re-entered by a fresh run
+                # on its own thread: it is still sitting at its interrupt.
+                parked_threads = set(self._parked_orchestrators_by_thread)
+                may_proceed = (
+                    bool(getattr(input_data, "resume", None))
+                    and request_thread in parked_threads
+                )
+            else:
+                # A factory builds its own instance per run, so only this
+                # thread's parked one is at stake. Anything but a resume that
+                # actually answers its interrupt would run on a fresh instance
+                # whose teardown drops the checkpoint, losing the paused
+                # conversation for good.
+                parked_threads = (
+                    {request_thread}
+                    if request_thread in self._parked_orchestrators_by_thread
+                    else set()
+                )
+                may_proceed = self._resume_answers_pending_interrupt(
+                    input_data, request_thread
+                )
+            blocked_by_park = bool(parked_threads) and not may_proceed
 
             if orchestrator_thread in self._active_orchestrator_runs or blocked_by_park:
                 yield RunStartedEvent(
@@ -3104,15 +4228,19 @@ class StrandsAgent:
                 )
                 yield RunErrorEvent(
                     type=EventType.RUN_ERROR,
+                    # No run is in progress on the parked branch, so the busy
+                    # wording would be wrong there.
                     message=(
-                        "Another run is already in progress on "
-                        f"{_busy_scope(orchestrator_thread)}. Wait for "
-                        "RUN_FINISHED before starting another."
-                        if not blocked_by_park
+                        (
+                            "This orchestrator is paused at an interrupt on "
+                            f'thread "{sorted(parked_threads)[0]}". Answer that '
+                            "interrupt before starting another run."
+                        )
+                        if blocked_by_park
                         else (
-                            "this orchestrator, which is paused at an interrupt "
-                            f"on thread \"{sorted(parked_threads)[0]}\". Answer "
-                            "that interrupt before starting another run."
+                            "Another run is already in progress on "
+                            f"{_busy_scope(orchestrator_thread)}. Wait for "
+                            "RUN_FINISHED before starting another."
                         )
                     ),
                     code="THREAD_BUSY",
@@ -3206,6 +4334,12 @@ class StrandsAgent:
                     core_kwargs = dict(self._agent_kwargs)
                     if self._hooks:
                         core_kwargs["hooks"] = list(self._hooks)
+                    # Same falsy-omission rule as hooks, for the same reason:
+                    # ``plugins=[]`` is a value a future StrandsAgentCore could
+                    # read as "disable the defaults", which is not what an
+                    # absent setting means.
+                    if self._plugins:
+                        core_kwargs["plugins"] = list(self._plugins)
                     # The caller's per-thread kwargs go on last, so they can
                     # supply what the template cannot carry and override what
                     # it can. See StrandsAgentConfig.thread_agent_kwargs.
@@ -3235,8 +4369,6 @@ class StrandsAgent:
                             return
                         core_kwargs.update(dict(extra or {}))
                     self._report_uncarried_params(core_kwargs)
-                    if self.config.thread_agent_kwargs is None:
-                        self._report_uncarried_params(core_kwargs)
                     # Re-asserted after the caller: these keep threads apart
                     # and a run coherent, so they stay the adapter's to set.
                     for owned in ("model", "system_prompt", "tools", "session_manager"):
@@ -3492,7 +4624,7 @@ class StrandsAgent:
             else:
                 yield RunErrorEvent(
                     type=EventType.RUN_ERROR,
-                    message="No pending interrupt for this thread.",
+                    message="No pending interrupts for this thread.",
                     code="UNKNOWN_INTERRUPT_ID",
                 )
             return
@@ -3536,6 +4668,65 @@ class StrandsAgent:
             strands_agent.state.set("agui_context", agui_context)
         except Exception as e:
             logger.warning(f"Failed to set agui_context on strands_agent.state: {e}")
+
+        # Filter the tools the template contributed, per request. Applied to
+        # the registry this thread's live agent already owns: that instance
+        # carries the thread's session manager, its interrupt checkpoint and
+        # its history, so rebuilding it to change a tool list would discard a
+        # conversation and any approval waiting inside it.
+        if self.config.template_tools_provider is not None:
+            # Calling the provider and reading its answer are guarded
+            # together. Reading is where a mapping, a bare name or a generator
+            # that raises partway through is caught, and those are provider
+            # mistakes: leaving them outside this arm would let them bypass the
+            # documented code and, on the TypeScript side, end the stream with
+            # nothing terminal behind it.
+            try:
+                template_tool_allowed = resolve_template_tool_selection(
+                    await maybe_await(
+                        self.config.template_tools_provider(input_data)
+                    ),
+                    index_template_tools(self._tools),
+                )
+            except Exception as e:  # noqa: BLE001 - surfaced as RUN_ERROR
+                logger.error(
+                    "template_tools_provider failed: %s", e, exc_info=True
+                )
+                # Deliberately terminal rather than unfiltered: a filter that
+                # fails open hands the model tools the caller meant to withhold.
+                ev_started, ev_error = _error_events(
+                    input_data,
+                    "Failed to resolve the template tools for this request: "
+                    f"{e}",
+                    "TEMPLATE_TOOLS_PROVIDER_ERROR",
+                )
+                yield ev_started
+                yield ev_error
+                return
+            # Guarded separately, and not as a provider error: past this point
+            # a failure is this adapter's, and it still must not escape as a
+            # stream that stops with nothing terminal behind it.
+            try:
+                apply_template_tool_selection(
+                    strands_agent.tool_registry,
+                    self._tools,
+                    template_tool_allowed,
+                    exempt_names=parked_batch_tool_names(strands_agent),
+                )
+            except Exception as e:  # noqa: BLE001 - surfaced as RUN_ERROR
+                logger.error(
+                    "Applying the template tool filter failed: %s", e, exc_info=True
+                )
+                ev_started, ev_error = _error_events(
+                    input_data, str(e), _terminal_error_code(e)
+                )
+                yield ev_started
+                yield ev_error
+                return
+            # Published for the re-narrowing hook: the exemption above holds a
+            # denied tool registered so a resume can reach it, and Strands then
+            # continues the same run from this registry.
+            record_template_tool_selection(strands_agent, template_tool_allowed)
 
         # Sync proxy tools from client-defined tools. A proxy parked in a live
         # frontend-tool interrupt is exempt from removal: Strands is about to
@@ -3751,6 +4942,13 @@ class StrandsAgent:
             # Bookkeeping is cleared only after successful processing below so
             # reconciliation failures leave the checkpoint retryable.
 
+        # Provider-reported usage, one entry per model call in the order the
+        # stream reported it, folded into the terminal event below. Local to
+        # this generator, so a second sequential run starts from nothing.
+        # Declared out here rather than inside the guarded body because the
+        # error paths that report partial usage are its ``except`` clauses.
+        run_usage: List[Any] = []
+
         # ── Start run ─────────────────────────────────────────────────────
         # Start run
         yield RunStartedEvent(
@@ -3790,14 +4988,13 @@ class StrandsAgent:
             )
 
             # Emit state snapshot if provided
-            if hasattr(input_data, "state") and input_data.state is not None:
-                # Filter out messages from state to avoid "Unknown message role" errors
-                # The frontend manages messages separately and doesn't recognize "tool" role
-                state_snapshot = {
-                    k: v for k, v in input_data.state.items() if k != "messages"
-                }
+            initial_snapshot = _state_snapshot_payload(
+                getattr(input_data, "state", None)
+            )
+            if initial_snapshot is not None:
                 yield StateSnapshotEvent(
-                    type=EventType.STATE_SNAPSHOT, snapshot=state_snapshot
+                    type=EventType.STATE_SNAPSHOT,
+                    snapshot=initial_snapshot,
                 )
 
             # Splice point 1 of 4: emit the initial messages snapshot right
@@ -4041,22 +5238,11 @@ class StrandsAgent:
                             # prompt replaces whenever replay and
                             # reconciliation are both off.
                             error_text = getattr(msg, "error", None)
-                            if error_text:
-                                if result_text and result_text.strip():
-                                    _result_parts.append(
-                                        f"{tool_name} failed: {error_text} "
-                                        f"(returned: {result_text})"
-                                    )
-                                else:
-                                    _result_parts.append(
-                                        f"{tool_name} failed: {error_text}"
-                                    )
-                            elif result_text and result_text.strip():
-                                _result_parts.append(f"{tool_name} returned: {result_text}")
-                            else:
-                                _result_parts.append(
-                                    f"{tool_name} executed successfully with no return value."
+                            _result_parts.append(
+                                _continuation_result_line(
+                                    tool_name, result_text, error_text
                                 )
+                            )
                         elif tool_name:
                             # Named, but neither signal says frontend: not in
                             # the current declarations and no recorded id.
@@ -4109,9 +5295,20 @@ class StrandsAgent:
                                     message_id=getattr(msg, "id", None),
                                 )
                                 if not user_message:
-                                    # All content blocks failed conversion — fall back to text
-                                    user_message = flatten_content_to_text(msg.content) or ""
-                                    logger.warning("All media content blocks failed conversion, falling back to text")
+                                    text_fallback = flatten_content_to_text(msg.content)
+                                    if not text_fallback:
+                                        yield RunErrorEvent(
+                                            type=EventType.RUN_ERROR,
+                                            message=(
+                                                "All media content blocks failed "
+                                                "conversion and no text fallback is "
+                                                "available"
+                                            ),
+                                            code="MEDIA_RESOLUTION_FAILED",
+                                        )
+                                        return
+                                    user_message = text_fallback
+                                    logger.warning("All media content blocks failed conversion; falling back to text")
                             else:
                                 user_message = flatten_content_to_text(msg.content)
                         else:
@@ -4141,6 +5338,11 @@ class StrandsAgent:
             message_id = str(uuid.uuid4())
             message_started = False
             accumulated_text = ""
+            # Citations belong to the message that was open when they
+            # arrived, so this is drained at every message boundary. It counts
+            # its own text offset rather than reading ``accumulated_text``,
+            # which is reset only when snapshots are being emitted.
+            citations = CitationAccumulator()
             # Tracks the latest assistant text id that was actually emitted on
             # the wire. Tool calls use it only when no snapshot will expose the
             # tool-call AssistantMessage id.
@@ -4154,7 +5356,12 @@ class StrandsAgent:
             # Kept separate from ``tool_calls_seen`` so inner calls never take
             # part in parent-level result lookup, snapshotting or halt logic.
             inner_tool_calls_seen: Dict[str, Dict[str, Any]] = {}
-            current_state = dict(input_data.state or {})  # Track state for final snapshot
+            # Tracks state for the final snapshot. Seeded from a mapping only:
+            # the tool-driven updates below are key/value merges, and a client
+            # is free to send a state that is not a mapping at all.
+            current_state = (
+                dict(input_data.state) if isinstance(input_data.state, dict) else {}
+            )
             stop_text_streaming = False
             halt_event_stream = False
             pending_halt = False
@@ -4164,6 +5371,17 @@ class StrandsAgent:
             # client dispatching its follow-up run before the backend results
             # reach it, narrowing the ConcurrencyException race window.
             deferred_frontend_tool_ends = []
+            # Set when a deferred end's tool call was appended to
+            # ``snapshot_messages``, so the flush closes the batch with one
+            # MESSAGES_SNAPSHOT after the last end it emitted. One is enough:
+            # the append is eager, so that snapshot is the full state every
+            # deferred call in the batch would otherwise have re-sent
+            # byte-identically. The append stays eager on purpose (a run that
+            # dies before the flush must not lose the assistant message), which
+            # is also why the deferral cannot keep a frontend call out of
+            # earlier snapshots: in a mixed turn the backend result's snapshot
+            # already carries it before its end goes out.
+            deferred_frontend_snapshot_owed = False
             # Native ``toolUseId``s whose ``toolResult`` was processed this
             # run. Drained after each result batch to prune the persisted
             # tool-call meta map.
@@ -4273,8 +5491,11 @@ class StrandsAgent:
                         "text": text or "",
                         # Carry the client's failure signal alongside the text so
                         # reconciliation can stamp the persisted toolResult status
-                        # too, not just its content.
+                        # too, not just its content. The reason itself rides
+                        # along for the prompt carry below, which has to SAY the
+                        # failure rather than persist it.
                         "is_error": bool(getattr(msg, "error", None)),
+                        "error": getattr(msg, "error", None),
                     }
                 )
                 last_frontend_result_index = msg_index
@@ -4383,17 +5604,40 @@ class StrandsAgent:
             # below runs unconditionally after the other branches and layers
             # on top, rather than short-circuiting them.
             resume_prompt: str | List[Dict[str, Any]] | list[InterruptResponseContent] | None = user_message
+            # Client answers the native history does not carry, so the prompt
+            # has to. Filled in by whichever branch below settles it.
+            uncarried_result_ids: list[str] = []
             context_block = _format_agui_context(model_context)
             if context_block and not _ensure_transient_context_hook(strands_agent):
                 raise RuntimeError(
                     "Strands agent does not expose a hook registry for transient context"
                 )
+            dropped_replay_result_ids: set[str] = set()
             if replay_history:
                 native_history = await asyncio.to_thread(
                     _build_strands_history,
                     input_data.messages,
                     self.config.url_fetch_policy,
+                    dropped_replay_result_ids,
                 )
+            if replay_history and dropped_replay_result_ids:
+                # The rebuilt history has no home for those results, so replaying
+                # it would hand the model a turn the client's answer is missing
+                # from -- and on a delta-only payload, which carries the result
+                # without the assistant message that opened the call, it would
+                # replace the whole cached conversation with what little the
+                # payload rebuilt. The legacy continuation path says the answer
+                # instead, over a history this run leaves alone.
+                logger.warning(
+                    "History replay would drop the client's answer for tool_call_ids "
+                    "%s, so this turn carries it in the continuation prompt and "
+                    "leaves the existing history in place",
+                    sorted(dropped_replay_result_ids),
+                )
+                uncarried_result_ids = [
+                    result["tool_call_id"] for result in frontend_results
+                ]
+            elif replay_history:
                 # Apply ``state_context_builder`` to the last user-text
                 # message in the reconciled history rather than to the
                 # synthetic ``user_message`` string. This matches what the
@@ -4460,6 +5704,60 @@ class StrandsAgent:
                     )
                     yield _interrupt_reconciliation_error()
                     return
+                # Every admitted result the attempt left alone. An empty set
+                # answers "nothing was declined", not "the history is clean":
+                # nothing admitted means nothing could have been corrected.
+                declined_native_ids = sorted(
+                    native_id
+                    for native_id in resolved_native_results
+                    if native_id not in corrected_native_ids
+                )
+                if declined_native_ids:
+                    # Said out loud. A decline leaves the client's answer where
+                    # only the continuation prompt can reach the model with it,
+                    # and both of the ways that carry can fail are silent
+                    # otherwise.
+                    logger.warning(
+                        "Frontend tool result reconciliation corrected nothing for "
+                        "native ids %s; the client's answer has to reach the model "
+                        "through the continuation prompt instead",
+                        declined_native_ids,
+                    )
+                if resume_submitted:
+                    # A resume drives Strands with its interrupt responses, so it
+                    # has no continuation prompt to fall back on, and an
+                    # uncorrected placeholder is then what the model reads for the
+                    # client's answer. Refused, like the pre-write gates above,
+                    # rather than answered with a stub. Later than those gates by
+                    # necessity: only the attempt itself says a correction
+                    # declined.
+                    #
+                    # A decline alone does not mean a stub remains. It also
+                    # describes an id with nothing left to correct anywhere, which
+                    # a long-lived thread accumulates: a recorded id is kept until
+                    # its placeholder is corrected, so one whose placeholder is
+                    # already gone is re-admitted and re-declined on every later
+                    # turn. Refusing on the decline would wedge that thread for
+                    # good. The stub itself is the condition, so that is what is
+                    # read.
+                    stubbed_declined_ids = [
+                        native_id
+                        for native_id in declined_native_ids
+                        if has_placeholder_results(
+                            getattr(strands_agent, "messages", None) or [],
+                            only_ids={native_id},
+                        )
+                    ]
+                    if stubbed_declined_ids:
+                        logger.error(
+                            "Active interrupt tool result reconciliation failed: "
+                            "no correction landed for native ids %s",
+                            stubbed_declined_ids,
+                        )
+                        yield _interrupt_reconciliation_error()
+                        return
+                else:
+                    uncarried_result_ids = declined_native_ids
                 # Continue from the corrected native history only when every
                 # NON-EMPTY frontend result this turn was admitted (i.e. its
                 # call id was recorded at emission) AND none of those
@@ -4492,6 +5790,53 @@ class StrandsAgent:
                     if reconciled and not has_newer_user_message
                     else user_message
                 )
+            else:
+                # Neither branch ran, so nothing repaired a history and no answer
+                # is in one. Everything this turn admitted is the prompt's to say.
+                uncarried_result_ids = [
+                    result["tool_call_id"] for result in frontend_results
+                ]
+
+            # A user message after the results is this run's prompt, which means
+            # the trailing derivation above produced nothing and the answers
+            # reach the model through neither the history nor the prompt. Carried
+            # ahead of the user's own text rather than dropped: dropping is what
+            # leaves the model to re-fire the call it is already being answered
+            # about. Every result named here is one no correction landed for, so
+            # nothing is told twice.
+            if not resume_submitted and has_newer_user_message and uncarried_result_ids:
+                _carried = set(uncarried_result_ids)
+                _carry_lines: list[str] = []
+                for result in frontend_results:
+                    if result["tool_call_id"] not in _carried:
+                        continue
+                    carried_name = _tool_call_id_to_name.get(result["tool_call_id"])
+                    if not carried_name:
+                        # Nothing names the call, and an answer that has to be
+                        # SAID cannot be phrased without the name. Left out
+                        # rather than guessed at: guessing feeds the model false
+                        # context.
+                        logger.warning(
+                            "Could not resolve tool name for tool_call_id=%s; the "
+                            "client's answer is not carried into the continuation "
+                            "prompt",
+                            result["tool_call_id"],
+                        )
+                        continue
+                    _carry_lines.append(
+                        _continuation_result_line(
+                            carried_name, result["text"], result["error"]
+                        )
+                    )
+                if _carry_lines:
+                    _preamble = "\n".join(_carry_lines)
+                    if isinstance(resume_prompt, str):
+                        resume_prompt = f"{_preamble}\n{resume_prompt}"
+                    else:
+                        resume_prompt = [
+                            {"text": _preamble},
+                            *(resume_prompt or []),
+                        ]
 
             # A client answering to an interrupt sends its responses
             # in ``RunAgentInput.resume`` (as per the AG-UI interrupt round-trip),
@@ -4520,6 +5865,17 @@ class StrandsAgent:
                     strands_agent.state.set(
                         AG_UI_FRONTEND_CALL_IDS_STATE_KEY, remaining
                     )
+
+            # Nothing reshapes the history here. The prompt goes to
+            # ``stream_async`` and Strands appends it as its own user turn,
+            # which is what the session store records and what the client sent.
+            # When the history it lands on already ends on the turn that
+            # answers the tool call, that is two consecutive user messages,
+            # which is what every other path through this adapter has always
+            # produced and is left alone here. What is NOT left alone is text
+            # inside the turn that answers the tool call: that binds as
+            # assistant(tool_calls) -> user(text) -> tool(result) and OpenAI
+            # refuses it outright. See ``_place_user_text``.
 
             prior_tool_call_ids = _native_assistant_tool_call_ids(
                 getattr(strands_agent, "messages", None) or []
@@ -4574,7 +5930,11 @@ class StrandsAgent:
                     # successful finish. Continue once more so Strands can raise
                     # the underlying exception and unwind the generator cleanly.
                     if event.get("force_stop"):
-                        raw_reason = str(event.get("force_stop_reason", "")).strip()
+                        # A reason key set to ``None`` is as reasonless as an
+                        # absent one; ``str()`` on it would send the client the
+                        # word "None" in place of the fallback.
+                        reason = event.get("force_stop_reason")
+                        raw_reason = "" if reason is None else str(reason).strip()
                         force_stop_error = (
                             raw_reason or "The Strands agent stopped unexpectedly."
                         )
@@ -4635,10 +5995,16 @@ class StrandsAgent:
 
                         text_chunk = str(event["data"])
                         accumulated_text += text_chunk
+                        citations.advance(text_chunk)
                         yield TextMessageContentEvent(
                             type=EventType.TEXT_MESSAGE_CONTENT,
                             message_id=message_id,
                             delta=text_chunk,
+                            # Citations reach the client on the next text delta
+                            # after they arrive, so a reader sees its sources
+                            # while the answer is still streaming rather than
+                            # only once the message closes.
+                            metadata=citations.pending(),
                         )
 
                     # Handle reasoning/thinking text streaming
@@ -4709,6 +6075,31 @@ class StrandsAgent:
                     elif "reasoning_signature" in event and event.get("reasoning"):
                         sig = event.get("reasoning_signature", "")
                         logger.debug(f"Received reasoning signature: {str(sig)[:20]}...")
+
+                    # A citation, held until the message it annotates publishes
+                    # it. It is recorded against the text emitted so far, which
+                    # is the only positional information available: the citation
+                    # itself locates a span in the SOURCE document and says
+                    # nothing about where in the answer it belongs.
+                    #
+                    # Reaching this branch is also what stops citations being
+                    # forwarded as RAW. That fallback is for events this adapter
+                    # does not map, and this one is now mapped.
+                    elif (citation := citation_from_event(event)) is not None:
+                        # Skipped for the same reason the text branch skips:
+                        # once streaming is stopped the message is closed, so a
+                        # citation recorded here would carry a stale offset and
+                        # then be reported as an orphan. Logged rather than
+                        # dropped in silence, because every other citation-loss
+                        # path in this adapter says so.
+                        if stop_text_streaming:
+                            logger.debug(
+                                "Dropping a citation that arrived after text "
+                                "streaming stopped (thread_id=%s)",
+                                input_data.thread_id,
+                            )
+                        else:
+                            citations.add(citation)
 
                     # Handle multi-agent node start (maps to STEP_STARTED)
                     elif isinstance(event, dict) and event.get("type") == MULTIAGENT_NODE_START:
@@ -5043,10 +6434,14 @@ class StrandsAgent:
 
                             if behavior and behavior.stop_streaming_after_result:
                                 stop_text_streaming = True
+                                if not message_started:
+                                    discard_orphans(citations, f"thread_id={input_data.thread_id}")
                                 if message_started:
+                                    citation_metadata = citations.take()
                                     yield TextMessageEndEvent(
                                         type=EventType.TEXT_MESSAGE_END,
                                         message_id=message_id,
+                                        metadata=citation_metadata,
                                     )
                                     message_started = False
                                     # Splice point 4 of 4 (early-exit
@@ -5061,6 +6456,7 @@ class StrandsAgent:
                                                 id=message_id,
                                                 role="assistant",
                                                 content=accumulated_text,
+                                                metadata=copy_metadata(citation_metadata),
                                             )
                                         )
                                         accumulated_text = ""
@@ -5114,6 +6510,12 @@ class StrandsAgent:
                                     tool_call_id=_fe_tool_use_id,
                                 )
                             deferred_frontend_tool_ends = []
+                            if deferred_frontend_snapshot_owed:
+                                deferred_frontend_snapshot_owed = False
+                                yield MessagesSnapshotEvent(
+                                    type=EventType.MESSAGES_SNAPSHOT,
+                                    messages=list(snapshot_messages),
+                                )
 
                         # The batch is fully emitted; stop before Strands runs
                         # another model cycle. Breaking HERE rather than relying
@@ -5223,7 +6625,7 @@ class StrandsAgent:
                         raw_str = (
                             tool_input_raw
                             if isinstance(tool_input_raw, str)
-                            else json.dumps(tool_input_raw, default=str)
+                            else dumps_wire(tool_input_raw, default=str)
                         )
 
                         # Try to parse as JSON if it looks complete
@@ -5238,7 +6640,7 @@ class StrandsAgent:
                             tool_input = tool_input_raw
 
                         args_str = (
-                            json.dumps(tool_input)
+                            dumps_wire(tool_input)
                             if isinstance(tool_input, dict)
                             else str(tool_input)
                         )
@@ -5306,10 +6708,14 @@ class StrandsAgent:
                                 # Close any open assistant text turn so the
                                 # snapshot order matches the wire-event order
                                 # and so message_id can rotate cleanly.
+                                if not message_started:
+                                    discard_orphans(citations, f"thread_id={input_data.thread_id}")
                                 if message_started:
+                                    citation_metadata = citations.take()
                                     yield TextMessageEndEvent(
                                         type=EventType.TEXT_MESSAGE_END,
                                         message_id=message_id,
+                                        metadata=citation_metadata,
                                     )
                                     if (
                                         emit_snapshots
@@ -5320,6 +6726,7 @@ class StrandsAgent:
                                                 id=message_id,
                                                 role="assistant",
                                                 content=accumulated_text,
+                                                metadata=copy_metadata(citation_metadata),
                                             )
                                         )
                                         accumulated_text = ""
@@ -5509,9 +6916,10 @@ class StrandsAgent:
                                     # flushed after this turn's backend results (see
                                     # the pending_halt handler). Backend tools and
                                     # continue_after_frontend_call tools emit now.
-                                    if is_frontend_tool and not (
+                                    defer_end = is_frontend_tool and not (
                                         behavior and behavior.continue_after_frontend_call
-                                    ):
+                                    )
+                                    if defer_end:
                                         deferred_frontend_tool_ends.append(tool_use_id)
                                     else:
                                         yield ToolCallEndEvent(
@@ -5537,10 +6945,15 @@ class StrandsAgent:
                                                 ],
                                             )
                                         )
-                                        yield MessagesSnapshotEvent(
-                                            type=EventType.MESSAGES_SNAPSHOT,
-                                            messages=list(snapshot_messages),
-                                        )
+                                        # Eager append, deferred event: see the
+                                        # deferral bookkeeping declared above.
+                                        if defer_end:
+                                            deferred_frontend_snapshot_owed = True
+                                        else:
+                                            yield MessagesSnapshotEvent(
+                                                type=EventType.MESSAGES_SNAPSHOT,
+                                                messages=list(snapshot_messages),
+                                            )
                                         # Rotate so the next assistant message
                                         # in the snapshot (text or another
                                         # tool call) carries a distinct id —
@@ -5617,9 +7030,17 @@ class StrandsAgent:
                                                 value=predict_state_payload,
                                             )
 
+                                    if not message_started:
+                                        discard_orphans(
+                                            citations,
+                                            f"thread_id={input_data.thread_id}",
+                                        )
                                     if message_started:
+                                        citation_metadata = citations.take()
                                         yield TextMessageEndEvent(
-                                            type=EventType.TEXT_MESSAGE_END, message_id=message_id
+                                            type=EventType.TEXT_MESSAGE_END,
+                                            message_id=message_id,
+                                            metadata=citation_metadata,
                                         )
                                         if (
                                             emit_snapshots
@@ -5630,6 +7051,7 @@ class StrandsAgent:
                                                     id=message_id,
                                                     role="assistant",
                                                     content=accumulated_text,
+                                                    metadata=copy_metadata(citation_metadata),
                                                 )
                                             )
                                             accumulated_text = ""
@@ -5711,6 +7133,15 @@ class StrandsAgent:
                                         pending_halt = True
 
                         elif "metadata" in inner_event:
+                            # One event per model invocation, so a run that
+                            # loops through several tool cycles accumulates one
+                            # entry per call. Still forwarded as RAW below: the
+                            # metrics and trace this carries are not usage.
+                            _record_metadata_usage(
+                                run_usage,
+                                inner_event,
+                                getattr(strands_agent, "model", None),
+                            )
                             raw_payload = _sanitize_raw_event(
                                 event, run_invocation_state
                             )
@@ -5747,8 +7178,9 @@ class StrandsAgent:
 
                     # Anything the chain above does not map gets forwarded as a
                     # RAW event rather than being dropped without a trace
-                    # (issue #2291). Bedrock citation deltas arrive here, as do
-                    # provider extensions this adapter predates. The deliberate
+                    # (issue #2291). Provider extensions this adapter predates
+                    # arrive here; citations no longer do, because the branch
+                    # above now maps them. The deliberate
                     # lifecycle skips at the top of the loop short-circuit
                     # before reaching this branch and stay silent.
                     #
@@ -5782,6 +7214,12 @@ class StrandsAgent:
                             tool_call_id=_fe_tool_use_id,
                         )
                     deferred_frontend_tool_ends = []
+                    if deferred_frontend_snapshot_owed:
+                        deferred_frontend_snapshot_owed = False
+                        yield MessagesSnapshotEvent(
+                            type=EventType.MESSAGES_SNAPSHOT,
+                            messages=list(snapshot_messages),
+                        )
             except Exception:
                 if force_stop_error is None:
                     raise
@@ -5793,25 +7231,19 @@ class StrandsAgent:
                     input_data.thread_id,
                 )
             finally:
-                # Properly close the async generator to avoid context detachment errors
-                # The generator should complete naturally when we consume all events,
-                # but we still try to close it explicitly to be safe
+                # Close the Strands generator explicitly rather than leaving
+                # it to GC. Whenever this runs from outside a ``__anext__``, the
+                # generator is SUSPENDED at a yield and ``ag_running`` reads
+                # False, so the old check took it for exhausted on nearly every
+                # path and skipped the close. The frontend-tool halt was the one
+                # case carved out by hand; a consumer that abandoned the run was
+                # not. Treating either as "already closed" left the cycle and
+                # its model stream open until collection, and from
+                # strands-agents 1.22.0 it also left that invocation holding the
+                # SDK's concurrency lock, so the thread's next run could not
+                # start at all.
                 try:
-                    # A frontend-tool halt breaks out of the loop with the
-                    # generator SUSPENDED at a yield, where ``ag_running`` is
-                    # False. The exhausted-generator check below would read
-                    # that as "already closed" and defer teardown to GC,
-                    # leaving the halted Strands cycle (and its model stream)
-                    # open. Close it explicitly instead.
-                    if halt_event_stream:
-                        await agent_stream.aclose()
-                    # Check if generator is already closed/exhausted
-                    elif not agent_stream.ag_running:
-                        # Generator is already closed, nothing to do
-                        pass
-                    else:
-                        # Try to close gracefully, but suppress context-related errors
-                        await agent_stream.aclose()
+                    await agent_stream.aclose()
                 except (
                     GeneratorExit,
                     ValueError,
@@ -5822,18 +7254,6 @@ class StrandsAgent:
                     # is closed in a different context, but don't affect functionality
                     # These errors are logged by Strands internally, we just prevent them from propagating
                     pass
-                except AttributeError:
-                    # Generator doesn't have ag_running attribute (older Python versions)
-                    # Just try to close it
-                    try:
-                        await agent_stream.aclose()
-                    except (
-                        GeneratorExit,
-                        ValueError,
-                        RuntimeError,
-                        StopAsyncIteration,
-                    ):
-                        pass
                 except Exception as e:
                     # Log other errors but don't fail
                     logger.warning(f"Error closing agent stream: {e}")
@@ -5851,10 +7271,17 @@ class StrandsAgent:
                     message_id=reasoning_message_id
                 )
 
-            # End message if started
+            # End message if started. A turn that cited without producing any
+            # text has nothing to attach them to, so they are dropped loudly
+            # rather than carried into whatever message comes next.
+            if not message_started:
+                discard_orphans(citations, f"thread_id={input_data.thread_id}")
             if message_started:
+                citation_metadata = citations.take()
                 yield TextMessageEndEvent(
-                    type=EventType.TEXT_MESSAGE_END, message_id=message_id
+                    type=EventType.TEXT_MESSAGE_END,
+                    message_id=message_id,
+                    metadata=citation_metadata,
                 )
                 # Splice point 4 of 4 (terminal): commit the final
                 # assistant text turn into the snapshot so the frontend
@@ -5865,6 +7292,7 @@ class StrandsAgent:
                             id=message_id,
                             role="assistant",
                             content=accumulated_text,
+                            metadata=copy_metadata(citation_metadata),
                         )
                     )
                     accumulated_text = ""
@@ -5878,6 +7306,9 @@ class StrandsAgent:
                     type=EventType.RUN_ERROR,
                     message=force_stop_error,
                     code="STRANDS_FORCE_STOP",
+                    # Partial usage: a forced stop lands after the cycles that
+                    # got that far had already been paid for.
+                    usage=_collect_run_usage(run_usage),
                 )
                 return
 
@@ -5886,12 +7317,16 @@ class StrandsAgent:
             # repository boundary needed for a safe resume is available.
             if active_proxy_placeholder_ids(strands_agent):
                 if session_manager is None:
-                    yield _interrupt_session_required_error()
+                    yield _interrupt_session_required_error(
+                        _collect_run_usage(run_usage)
+                    )
                     return
                 if not _supports_repository_reconciliation(
                     session_manager, strands_agent
                 ):
-                    yield _interrupt_session_capability_error()
+                    yield _interrupt_session_capability_error(
+                        _collect_run_usage(run_usage)
+                    )
                     return
 
             # Final state snapshot before finishing
@@ -5912,7 +7347,9 @@ class StrandsAgent:
             # so a generic interrupt handler would fire on a tool card it does
             # not own. Native waiting is how the adapter parks the call; it is
             # not a change to what the client sees.
-            native_interrupts = _extract_interrupts(strands_agent, terminal_result)
+            native_interrupts, paused_silently = _extract_interrupts(
+                strands_agent, terminal_result
+            )
             self._record_frontend_wait_bridge(
                 strands_agent, thread_id, native_interrupts
             )
@@ -5938,10 +7375,23 @@ class StrandsAgent:
                     thread_id=input_data.thread_id,
                     run_id=input_data.run_id,
                     outcome=pending_interrupt_outcome,
+                    # An interrupted run is a finished run for usage purposes:
+                    # the model calls it already made were real.
+                    usage=_collect_run_usage(run_usage),
                 )
             else:
-                # Store fingerprint for idempotency only after successful processing
-                if resume_entries:
+                # Store fingerprint for idempotency only after successful
+                # processing, and not at all when the run left the agent parked
+                # with nothing to report: a retry answered from the fingerprint
+                # would never reach it. A local flag because the detection just
+                # above returned it; the TypeScript sibling carries its own such
+                # flag on the finish event it yields, because there the
+                # detection and this store sit in sibling methods. Not quite the
+                # same condition: that side reads only whether the checkpoint is
+                # active, where this one also requires every interrupt on it to
+                # be answered, because it falls back to the live checkpoint and
+                # would otherwise have republished the open one instead.
+                if resume_entries and not paused_silently:
                     fp = _resume_fingerprint(
                         resume_entries + fingerprint_only_entries
                     )
@@ -5953,6 +7403,7 @@ class StrandsAgent:
                     thread_id=input_data.thread_id,
                     run_id=input_data.run_id,
                     outcome=RunFinishedSuccessOutcome(type="success"),
+                    usage=_collect_run_usage(run_usage),
                 )
 
         except _FrontendToolIdentityError as e:
@@ -5960,11 +7411,19 @@ class StrandsAgent:
                 type=EventType.RUN_ERROR,
                 message=str(e),
                 code="FRONTEND_TOOL_IDENTITY_ERROR",
+                usage=_collect_run_usage(run_usage),
             )
         except Exception as e:
             import traceback
 
+            code = _terminal_error_code(e)
             traceback.print_exc()
             yield RunErrorEvent(
-                type=EventType.RUN_ERROR, message=str(e), code="STRANDS_ERROR"
+                type=EventType.RUN_ERROR,
+                message=str(e),
+                code=code,
+                # Partial usage: a run that failed after one or more model
+                # calls still spent those tokens. Omitted when it died before
+                # any call reported usage.
+                usage=_collect_run_usage(run_usage),
             )

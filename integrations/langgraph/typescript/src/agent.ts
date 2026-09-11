@@ -69,7 +69,10 @@ import {
   buildLgCommandResumeFromAgui,
   reconcileLegacyResumeInterrupts,
 } from "./interrupts";
-import { RunsStreamPayload } from "@langchain/langgraph-sdk/dist/types";
+import type {
+  Durability,
+  RunsStreamPayload,
+} from "@langchain/langgraph-sdk/dist/types";
 import {
   aguiMessagesToLangChain,
   DEFAULT_SCHEMA_KEYS,
@@ -193,6 +196,8 @@ export interface LangGraphAgentConfig extends AgentConfig {
 }
 
 const ROOT_SUBGRAPH_NAME = "root";
+const ASYNC_BOUNDARY_CHECKPOINT_ATTEMPTS = 3;
+const ASYNC_BOUNDARY_CHECKPOINT_RETRY_DELAY_MS = 25;
 
 export class LangGraphAgent extends AbstractAgent {
   client: LangGraphClient;
@@ -890,6 +895,13 @@ export class LangGraphAgent extends AbstractAgent {
 
     this.activeRun!.prevNodeName = null;
     let latestStateValues = {} as ThreadState<State>["values"];
+    // prepareStream's state is the ordered root boundary before any streamed
+    // chunk, including a first subgraph event that arrives before values mode.
+    let latestRootStateValues = state.values;
+    let hasOrderedRootStateValues = true;
+    let rootValuesCanAdvanceBoundary = false;
+    let hasReturnedFromSubgraph = false;
+    const pendingSubgraphBoundarySteps = new Map<string, number>();
     let updatedState = state;
 
     try {
@@ -981,6 +993,26 @@ export class LangGraphAgent extends AbstractAgent {
             ...latestStateValues,
             ...chunk.data,
           };
+          const preservesRootBoundaryShape = Object.keys(
+            latestRootStateValues ?? {},
+          ).every((key) =>
+            Object.prototype.hasOwnProperty.call(chunk.data, key),
+          );
+          // Before events-mode model streaming begins, `values` is the only
+          // ordered root boundary available. Once events-mode is active,
+          // multiplexed `values` can race ahead of the event currently being
+          // processed. A chain completion makes the next root `values` pulse a
+          // candidate, but subgraph multiplexing can still surface an empty or
+          // partial pulse. Only let a candidate replace the ordered boundary
+          // when it preserves every state channel already present there.
+          if (
+            !this.eventsStreamActive ||
+            (rootValuesCanAdvanceBoundary && preservesRootBoundaryShape)
+          ) {
+            latestRootStateValues = chunk.data;
+            hasOrderedRootStateValues = true;
+          }
+          rootValuesCanAdvanceBoundary = false;
           continue;
         } else if (
           subgraphsStreamEnabled &&
@@ -994,6 +1026,12 @@ export class LangGraphAgent extends AbstractAgent {
         }
 
         const chunkData = chunk.data;
+        // Once events-mode streaming is active, messages-tuple is a legacy
+        // fallback only. Skip it before the shared state-snapshot logic so an
+        // ignored late tuple cannot become a snapshot timing pulse.
+        if (isMessagesTupleEvent && this.eventsStreamActive) {
+          continue;
+        }
         // messages-tuple chunks arrive as [AIMessageChunk, metadata] arrays;
         // events-mode chunks are objects with metadata/event properties. Read
         // metadata from the right slot so langgraph_node is extracted in both
@@ -1011,13 +1049,58 @@ export class LangGraphAgent extends AbstractAgent {
         // ns format: "" | "node:uuid" | "node:uuid|inner:uuid"
         const ns: string = metadata.langgraph_checkpoint_ns ?? "";
         const nsRoot = ns.split("|")[0].split(":")[0];
+        if (
+          nsRoot &&
+          !ns.includes("|") &&
+          typeof metadata.langgraph_step === "number"
+        ) {
+          pendingSubgraphBoundarySteps.set(nsRoot, metadata.langgraph_step - 1);
+        }
         if (ns.includes("|") && nsRoot) this.subgraphs.add(nsRoot);
         const currentSubgraph =
           nsRoot && this.subgraphs.has(nsRoot) ? nsRoot : ROOT_SUBGRAPH_NAME;
 
         if (currentSubgraph !== this.currentSubgraph) {
           this.currentSubgraph = currentSubgraph;
-          await this.getStateAndMessagesSnapshots(threadId);
+          const enteringSubgraph = currentSubgraph !== ROOT_SUBGRAPH_NAME;
+          const boundaryCheckpointStep = enteringSubgraph
+            ? pendingSubgraphBoundarySteps.get(currentSubgraph)
+            : typeof metadata.langgraph_step === "number"
+              ? metadata.langgraph_step - 1
+              : undefined;
+          const durability = input.forwardedProps?.durability ?? "async";
+          // Root values and event callbacks are multiplexed independently. A
+          // future values pulse can therefore arrive before the first nested
+          // callback reveals that an outer node is a subgraph. When the outer
+          // root step is known, its checkpoint is the causal pre-entry state;
+          // prefer it over an arrival-ordered values cache. Exit durability has
+          // no mid-run checkpoint, so it keeps using the ordered cache.
+          const shouldReadEntryCheckpoint =
+            enteringSubgraph &&
+            boundaryCheckpointStep !== undefined &&
+            durability !== "exit";
+          latestStateValues = await this.getStateAndMessagesSnapshots(
+            threadId,
+            latestRootStateValues,
+            shouldReadEntryCheckpoint ? false : hasOrderedRootStateValues,
+            boundaryCheckpointStep,
+            durability,
+          );
+          if (enteringSubgraph) {
+            pendingSubgraphBoundarySteps.delete(currentSubgraph);
+          }
+          if (currentSubgraph === ROOT_SUBGRAPH_NAME) {
+            // A checkpoint-selected root boundary is ordered by construction
+            // and can seed the next subgraph even when no root node runs in
+            // between.
+            latestRootStateValues = latestStateValues;
+            hasOrderedRootStateValues = true;
+            hasReturnedFromSubgraph = true;
+          } else {
+            // Do not reuse a root boundary after entering a subgraph. The next
+            // root boundary or root on_chain_end output will advance it.
+            hasOrderedRootStateValues = false;
+          }
         }
 
         // Set server-assigned run id as soon as available
@@ -1058,13 +1141,18 @@ export class LangGraphAgent extends AbstractAgent {
         // LangGraph JS doesn't emit `values` chunks with the latest state between
         // tool execution and run end, so without this update, intermediate
         // STATE_SNAPSHOTs go stale after a tool Command updates state.
+        // Preserve legacy first-entry seeding before model streaming begins.
+        // After a subgraph returns, only reduced values or a checkpoint may
+        // advance its root boundary; callback outputs remain provisional even
+        // when the graph never emits a model-stream callback.
         if (
           eventType === LangGraphEventTypes.OnChainEnd &&
           chunkData.data?.output != null
         ) {
           const output: any = chunkData.data.output;
+          let outputUpdate: Record<string, any> | undefined;
           if (typeof output === "object" && !Array.isArray(output)) {
-            latestStateValues = { ...latestStateValues, ...output };
+            outputUpdate = output;
           } else if (Array.isArray(output)) {
             for (const item of output) {
               if (
@@ -1074,13 +1162,41 @@ export class LangGraphAgent extends AbstractAgent {
                 (item as any).update &&
                 typeof (item as any).update === "object"
               ) {
-                latestStateValues = {
-                  ...latestStateValues,
-                  ...(item as any).update,
-                };
+                outputUpdate = { ...outputUpdate, ...(item as any).update };
               }
             }
           }
+          if (outputUpdate) {
+            latestStateValues = { ...latestStateValues, ...outputUpdate };
+            if (
+              currentSubgraph === ROOT_SUBGRAPH_NAME &&
+              !this.eventsStreamActive &&
+              !hasReturnedFromSubgraph
+            ) {
+              latestRootStateValues = {
+                ...latestRootStateValues,
+                ...outputUpdate,
+              };
+              hasOrderedRootStateValues = true;
+            }
+          }
+        }
+        if (eventType === LangGraphEventTypes.OnChainEnd) {
+          if (
+            currentSubgraph === ROOT_SUBGRAPH_NAME &&
+            (this.eventsStreamActive || hasReturnedFromSubgraph)
+          ) {
+            // The root step has advanced, but after model streaming or a prior
+            // subgraph return its callback output is only an update. Until
+            // reduced values arrive, force the next subgraph boundary to read
+            // committed state instead of treating that update as a snapshot.
+            hasOrderedRootStateValues = false;
+          }
+          // `values` carries the fully reduced root state for a completed graph
+          // step. Before a chain completes it may race ahead of events-mode,
+          // but after completion it is the authoritative boundary and must
+          // replace provisional node-output updates.
+          rootValuesCanAdvanceBoundary = true;
         }
 
         if (
@@ -1209,9 +1325,47 @@ export class LangGraphAgent extends AbstractAgent {
     }
   }
 
-  private async getStateAndMessagesSnapshots(threadId: string): Promise<void> {
-    const state: ThreadState<State> =
-      await this.client.threads.getState(threadId);
+  private async getStateAndMessagesSnapshots(
+    threadId: string,
+    orderedStateValues?: ThreadState<State>["values"],
+    hasOrderedStateValues = false,
+    boundaryCheckpointStep?: number,
+    durability: Durability = "async",
+  ): Promise<ThreadState<State>["values"]> {
+    let state: ThreadState<State>;
+    if (hasOrderedStateValues) {
+      state = { values: orderedStateValues ?? {} } as ThreadState<State>;
+    } else if (boundaryCheckpointStep !== undefined) {
+      if (durability === "exit") {
+        throw new Error(
+          `Cannot snapshot LangGraph boundary step ${boundaryCheckpointStep} with durability "exit": the checkpoint is not persisted until the run exits`,
+        );
+      }
+
+      const attempts =
+        durability === "async" ? ASYNC_BOUNDARY_CHECKPOINT_ATTEMPTS : 1;
+      let boundaryState: ThreadState<State> | undefined;
+      for (let attempt = 0; attempt < attempts; attempt++) {
+        [boundaryState] = await this.client.threads.getHistory(threadId, {
+          limit: 1,
+          metadata: { step: boundaryCheckpointStep },
+        });
+        if (boundaryState) break;
+        if (attempt < attempts - 1) {
+          await new Promise<void>((resolve) =>
+            setTimeout(resolve, ASYNC_BOUNDARY_CHECKPOINT_RETRY_DELAY_MS),
+          );
+        }
+      }
+      if (!boundaryState) {
+        throw new Error(
+          `No LangGraph checkpoint found for boundary step ${boundaryCheckpointStep}`,
+        );
+      }
+      state = boundaryState;
+    } else {
+      state = await this.client.threads.getState(threadId);
+    }
     this.dispatchEvent({
       type: EventType.STATE_SNAPSHOT,
       snapshot: this.getStateSnapshot(state),
@@ -1222,6 +1376,7 @@ export class LangGraphAgent extends AbstractAgent {
       type: EventType.MESSAGES_SNAPSHOT,
       messages: langchainMessagesToAgui(checkpointMessages),
     });
+    return state.values;
   }
 
   /**
@@ -1666,8 +1821,25 @@ export class LangGraphAgent extends AbstractAgent {
   private handleMessagesTupleEvent(data: any[]) {
     const chunk = data[0];
 
-    // Skip non-AI chunks (e.g., tool result messages, human messages)
-    if (chunk.type && chunk.type !== "AIMessageChunk") return;
+    // Skip non-AI chunks (e.g., tool result messages, human messages).
+    //
+    // The two runtimes spell an assistant chunk differently and a graph served
+    // by either one reaches this handler, so both spellings have to pass.
+    // Python declares `type: Literal["AIMessageChunk"]` on AIMessageChunk while
+    // its parent AIMessage declares "ai"; JavaScript keeps "ai" on the chunk
+    // class too and exposes "AIMessageChunk" only through lc_name(). Matching
+    // one spelling alone drops every tuple produced by the other runtime.
+    // "generic" passes for the same reason langchainMessagesToAgui folds it
+    // into the assistant branch: LangGraph emits it for non-chat models that
+    // set no more specific type.
+    if (
+      chunk.type &&
+      chunk.type !== "ai" &&
+      chunk.type !== "AIMessageChunk" &&
+      chunk.type !== "generic"
+    ) {
+      return;
+    }
 
     const content =
       typeof chunk.content === "string"
@@ -1676,7 +1848,25 @@ export class LangGraphAgent extends AbstractAgent {
           ? chunk.content.find((c: any) => c.type === "text")?.text
           : null;
     const toolCallChunks = chunk.tool_call_chunks;
-    const isFinished = chunk.response_metadata?.finish_reason === "stop";
+    // A turn is over when the provider says so, and the providers disagree on
+    // both the name and the place. OpenAI reports finish_reason in
+    // response_metadata. Anthropic reports stop_reason instead, and puts it in
+    // response_metadata through the Python integration but in
+    // additional_kwargs through the JavaScript one, whose message_delta branch
+    // spreads the whole delta there and builds response_metadata by hand
+    // without it.
+    //
+    // The value is not examined: "stop", "tool_calls" and "tool_use" all end
+    // the turn. Reading one field alone left a tool-call turn sitting in
+    // messagesInProcess, so its TOOL_CALL_END was never emitted and the text
+    // of the following turn streamed against a message that had never been
+    // started. The events-mode path reads its own field the same way, on
+    // presence rather than value.
+    const isFinished = Boolean(
+      chunk.response_metadata?.finish_reason ??
+        chunk.response_metadata?.stop_reason ??
+        chunk.additional_kwargs?.stop_reason,
+    );
     const currentStream = this.getMessageInProgress(this.activeRun!.id);
 
     // Handle tool call chunks

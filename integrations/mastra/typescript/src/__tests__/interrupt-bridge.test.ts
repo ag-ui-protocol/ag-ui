@@ -1076,6 +1076,133 @@ describe("interrupt bridge: resume path", () => {
     expect(events[events.length - 1].type).toBe(EventType.RUN_FINISHED);
   });
 
+  it("emits TOOL_CALL_START/ARGS/END before RESULT on resume of a suspended tool", async () => {
+    // First run discarded the triple on tool-call-suspended. Resume streams
+    // only tool-result, so the adapter must introduce the id before RESULT
+    // or CopilotKit drops the orphan tool message (#2668).
+    const { agent } = makeFakeLocalAgentWithResumeStream([
+      {
+        type: "tool-result",
+        payload: { toolCallId: "tc-1", result: { approved: true } },
+      },
+    ]);
+
+    const events = await collectEvents(
+      agent,
+      makeResumeInput({
+        type: "mastra_suspend",
+        toolCallId: "tc-1",
+        toolName: "process-expense",
+        args: { amount: 250, description: "team dinner" },
+        runId: "original-run-id",
+      }),
+    );
+
+    const types = events.map((e) => e.type);
+    const startAt = types.indexOf(EventType.TOOL_CALL_START);
+    const argsAt = types.indexOf(EventType.TOOL_CALL_ARGS);
+    const endAt = types.indexOf(EventType.TOOL_CALL_END);
+    const resultAt = types.indexOf(EventType.TOOL_CALL_RESULT);
+    expect(startAt).toBeGreaterThan(-1);
+    expect(argsAt).toBeGreaterThan(startAt);
+    expect(endAt).toBeGreaterThan(argsAt);
+    expect(resultAt).toBeGreaterThan(endAt);
+
+    const start = events[startAt] as import("@ag-ui/client").ToolCallStartEvent;
+    expect(start.toolCallId).toBe("tc-1");
+    expect(start.toolCallName).toBe("process-expense");
+    const args = events[argsAt] as import("@ag-ui/client").ToolCallArgsEvent;
+    expect(args.toolCallId).toBe("tc-1");
+    expect(JSON.parse(args.delta)).toEqual({
+      amount: 250,
+      description: "team dinner",
+    });
+    const result = events[resultAt] as import("@ag-ui/client").ToolCallResultEvent;
+    expect(result.toolCallId).toBe("tc-1");
+  });
+
+  it("uses tool-result args on standard resume when the interrupt has none", async () => {
+    const resumeChunks = [
+      {
+        type: "tool-result",
+        payload: {
+          toolCallId: "tc-1",
+          toolName: "process-expense",
+          args: { amount: 250, description: "team dinner" },
+          result: { approved: true },
+        },
+      },
+    ];
+    const { agent: localAgent } = makeFakeLocalAgentWithResumeStream(resumeChunks);
+    const { agent: remoteAgent } =
+      makeFakeRemoteAgentWithResumeStream(resumeChunks);
+
+    const resumeInput = makeInput({
+      resume: [
+        {
+          interruptId: "original-run-id::tc-1",
+          status: "resolved",
+          payload: { approved: true },
+        },
+      ],
+    } as any);
+
+    for (const agent of [localAgent, remoteAgent]) {
+      const events = await collectEvents(agent, resumeInput);
+      const argsEvent = events.find((e) => e.type === EventType.TOOL_CALL_ARGS);
+      expect(argsEvent).toBeDefined();
+      expect(
+        JSON.parse((argsEvent as import("@ag-ui/client").ToolCallArgsEvent).delta),
+      ).toEqual({ amount: 250, description: "team dinner" });
+      expect(
+        events.filter((e) => e.type === EventType.TOOL_CALL_START),
+      ).toHaveLength(1);
+    }
+  });
+
+  it("does not replay START after text-delta already flushed the buffered call", async () => {
+    const resumeChunks = [
+      {
+        type: "tool-call",
+        payload: {
+          toolCallId: "tc-1",
+          toolName: "process-expense",
+          args: { amount: 250 },
+        },
+      },
+      { type: "text-delta", payload: { text: "working" } },
+      {
+        type: "tool-result",
+        payload: {
+          toolCallId: "tc-1",
+          toolName: "process-expense",
+          args: { amount: 250 },
+          result: { approved: true },
+        },
+      },
+    ];
+    const { agent: localAgent } = makeFakeLocalAgentWithResumeStream(resumeChunks);
+    const { agent: remoteAgent } =
+      makeFakeRemoteAgentWithResumeStream(resumeChunks);
+
+    const resumeInput = makeInput({
+      resume: [
+        {
+          interruptId: "original-run-id::tc-1",
+          status: "resolved",
+          payload: { approved: true },
+        },
+      ],
+    } as any);
+
+    for (const agent of [localAgent, remoteAgent]) {
+      const events = await collectEvents(agent, resumeInput);
+      expect(
+        events.filter((e) => e.type === EventType.TOOL_CALL_START),
+      ).toHaveLength(1);
+    }
+  });
+
   it("handles interruptEvent passed as an object (not just JSON string)", async () => {
     const { agent, calls } = makeFakeLocalAgentWithResumeStream([]);
 

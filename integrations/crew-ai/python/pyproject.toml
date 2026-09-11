@@ -80,6 +80,9 @@ dependencies = [
     "ag-ui-a2ui-toolkit>=0.0.4",
 ]
 
+[project.urls]
+Changelog = "https://github.com/ag-ui-protocol/ag-ui/releases"
+
 [project.optional-dependencies]
 # Opt-in: the crewai-tools package and its heavy transitive tree. The bridge
 # never imports it (see the note above, CPK-7721 review #6).
