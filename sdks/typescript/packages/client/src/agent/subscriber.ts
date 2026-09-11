@@ -79,7 +79,18 @@ export interface AgentSubscriber {
   ): MaybePromise<AgentStateMutation | void>;
   onRunFinishedEvent?(
     params: (
-      | { event: RunFinishedEvent; outcome: "success"; result?: unknown }
+      | {
+          event: RunFinishedEvent;
+          outcome: "success";
+          result?: unknown;
+          /**
+           * Tool calls the run left for the application to answer, in order.
+           * The producer's `outcome.pendingToolCallIds` when it named them;
+           * otherwise derived from the stream: every tool call this run
+           * started that received no TOOL_CALL_RESULT.
+           */
+          pendingToolCallIds: string[];
+        }
       | { event: RunFinishedEvent; outcome: "interrupt"; interrupts: Interrupt[] }
     ) &
       AgentSubscriberParams,

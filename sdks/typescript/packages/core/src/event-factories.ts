@@ -256,14 +256,23 @@ export const createRunFinishedEvent = (props: RunFinishedEventProps): RunFinishe
 
 /**
  * Creates a RUN_FINISHED event with `outcome: { type: "success" }`.
+ *
+ * `pendingToolCallIds` names the tool calls the run left for the application
+ * to answer — frontend tool calls with no TOOL_CALL_RESULT in the run. Omit it
+ * when the run left none, or when the consumer should derive the list itself.
  */
 export const createRunFinishedSuccessEvent = (
-  props: Omit<RunFinishedEventProps, "outcome">,
-): RunFinishedEvent =>
-  buildEvent(EventType.RUN_FINISHED, RunFinishedEventSchema, {
-    ...props,
-    outcome: { type: "success" },
+  props: Omit<RunFinishedEventProps, "outcome"> & { pendingToolCallIds?: string[] },
+): RunFinishedEvent => {
+  const { pendingToolCallIds, ...rest } = props;
+  return buildEvent(EventType.RUN_FINISHED, RunFinishedEventSchema, {
+    ...rest,
+    outcome: {
+      type: "success",
+      ...(pendingToolCallIds !== undefined ? { pendingToolCallIds } : {}),
+    },
   });
+};
 
 /**
  * Creates a RUN_FINISHED event with `outcome: { type: "interrupt", interrupts }`.

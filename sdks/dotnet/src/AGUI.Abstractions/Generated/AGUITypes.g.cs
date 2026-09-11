@@ -944,7 +944,9 @@ public abstract class RunFinishedOutcome
 /// The run completed. Equivalent to an absent outcome. Closed like every other
 /// object, which is also what keeps it from carrying the suspended sibling's
 /// interrupts — a success with an interrupt still pending would be a
-/// contradiction, not an extension.
+/// contradiction, not an extension. A completed run may still have left
+/// frontend tool calls for the application to answer; pendingToolCallIds names
+/// them.
 /// </summary>
 public sealed class RunFinishedSuccessOutcome : RunFinishedOutcome
 {
@@ -953,6 +955,20 @@ public sealed class RunFinishedSuccessOutcome : RunFinishedOutcome
     /// </summary>
     [JsonPropertyName("type")]
     public override string Type => RunFinishedOutcomeTypes.Success;
+
+    /// <summary>
+    /// The tool calls this run started and left unanswered — no
+    /// TOOL_CALL_RESULT in the run — for the application to answer in the next
+    /// input's messages, in the order they were made. Absent or empty means the
+    /// producer named none, and a consumer derives the list from the stream;
+    /// otherwise it is the list, and it agrees with the stream. On the success
+    /// outcome rather than the event because a run that stopped on a frontend
+    /// tool call is a completed run: whether the application continues the
+    /// thread is its own decision, so the producer reports what it knows and no
+    /// more.
+    /// </summary>
+    [JsonPropertyName("pendingToolCallIds")]
+    public IList<string>? PendingToolCallIds { get; set; }
 }
 
 /// <summary>

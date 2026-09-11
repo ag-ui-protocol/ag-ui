@@ -430,6 +430,7 @@ describe("flattened outcome guards", () => {
           outcome: "cancelled",
           interrupts: [],
           usage: [],
+          pendingToolCallIds: [],
         },
       }),
     ) as unknown as { outcome?: unknown };
@@ -449,6 +450,7 @@ describe("flattened outcome guards", () => {
           outcome: "cancelled",
           interrupts: [{ id: "i1", reason: "r" }],
           usage: [],
+          pendingToolCallIds: [],
         },
       }),
     ) as unknown as { outcome?: { type?: string; interrupts?: unknown[] } };
@@ -471,6 +473,7 @@ describe("flattened outcome guards", () => {
           outcome: "success",
           interrupts: [{ id: "i1", reason: "r" }],
           usage: [],
+          pendingToolCallIds: [],
         },
       }),
     ) as unknown as { outcome?: { type?: string; interrupts?: unknown[] } };
@@ -492,6 +495,7 @@ describe("flattened outcome guards", () => {
           outcome: "",
           interrupts: [{ id: "i1", reason: "r" }],
           usage: [],
+          pendingToolCallIds: [],
         },
       }),
     ) as unknown as { outcome?: unknown; interrupts?: unknown[] };

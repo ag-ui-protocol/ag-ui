@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { EventType } from "../index";
-import {
-  EventSchemas,
-  RunFinishedEventSchema,
-  RunFinishedOutcomeSchema,
-} from "../schemas";
+import { EventSchemas, RunFinishedEventSchema, RunFinishedOutcomeSchema } from "../schemas";
 
 describe("RunFinishedEventSchema — outcome is optional and back-compat", () => {
   it("parses a legacy event with no outcome", () => {
@@ -52,6 +48,16 @@ describe("RunFinishedEventSchema — outcome is optional and back-compat", () =>
     expect(parsed.result).toEqual({ answer: 42 });
   });
 
+  it("parses outcome={ type: 'success', pendingToolCallIds: [...] }", () => {
+    const parsed = RunFinishedEventSchema.parse({
+      type: EventType.RUN_FINISHED,
+      threadId: "t-1",
+      runId: "r-1",
+      outcome: { type: "success", pendingToolCallIds: ["tc-1", "tc-2"] },
+    });
+    expect(parsed.outcome).toEqual({ type: "success", pendingToolCallIds: ["tc-1", "tc-2"] });
+  });
+
   it("parses outcome={ type: 'interrupt', interrupts: [...] }", () => {
     const parsed = RunFinishedEventSchema.parse({
       type: EventType.RUN_FINISHED,
@@ -71,8 +77,12 @@ describe("RunFinishedEventSchema — outcome is optional and back-compat", () =>
 
 describe("RunFinishedOutcomeSchema — discriminated union", () => {
   it("rejects outcome with empty interrupts", () => {
+    expect(() => RunFinishedOutcomeSchema.parse({ type: "interrupt", interrupts: [] })).toThrow();
+  });
+
+  it("rejects success pendingToolCallIds that are not strings", () => {
     expect(() =>
-      RunFinishedOutcomeSchema.parse({ type: "interrupt", interrupts: [] }),
+      RunFinishedOutcomeSchema.parse({ type: "success", pendingToolCallIds: [42] }),
     ).toThrow();
   });
 

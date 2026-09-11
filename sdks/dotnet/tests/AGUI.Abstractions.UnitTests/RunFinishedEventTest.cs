@@ -60,6 +60,52 @@ public sealed class RunFinishedEventTest
     }
 
     [Fact]
+    public void Serialization_WithPendingToolCallIds()
+    {
+        var evt = new RunFinishedEvent
+        {
+            ThreadId = "t1",
+            RunId = "r1",
+            Outcome = new RunFinishedSuccessOutcome { PendingToolCallIds = ["tc-1", "tc-2"] }
+        };
+
+        var json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.RunFinishedEvent);
+        using var doc = JsonDocument.Parse(json);
+
+        var outcome = doc.RootElement.GetProperty("outcome");
+        Assert.Equal("success", outcome.GetProperty("type").GetString());
+        var pending = outcome.GetProperty("pendingToolCallIds");
+        Assert.Equal(2, pending.GetArrayLength());
+        Assert.Equal("tc-1", pending[0].GetString());
+        Assert.Equal("tc-2", pending[1].GetString());
+    }
+
+    [Fact]
+    public void Serialization_SuccessOmitsPendingToolCallIdsWhenUnset()
+    {
+        var evt = new RunFinishedEvent { ThreadId = "t1", RunId = "r1", Outcome = new RunFinishedSuccessOutcome() };
+
+        var json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.RunFinishedEvent);
+        using var doc = JsonDocument.Parse(json);
+
+        Assert.False(doc.RootElement.GetProperty("outcome").TryGetProperty("pendingToolCallIds", out _));
+    }
+
+    [Fact]
+    public void Deserialization_WithPendingToolCallIds()
+    {
+        const string json = """
+            {"type":"RUN_FINISHED","threadId":"t1","runId":"r1","outcome":{"type":"success","pendingToolCallIds":["tc-1"]}}
+            """;
+
+        var evt = JsonSerializer.Deserialize(json, AGUIJsonSerializerContext.Default.RunFinishedEvent);
+
+        Assert.NotNull(evt);
+        var outcome = Assert.IsType<RunFinishedSuccessOutcome>(evt.Outcome);
+        Assert.Equal(new[] { "tc-1" }, outcome.PendingToolCallIds);
+    }
+
+    [Fact]
     public void Serialization_OmitsNullProperties()
     {
         var evt = new RunFinishedEvent();

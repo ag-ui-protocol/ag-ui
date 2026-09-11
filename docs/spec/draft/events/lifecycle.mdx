@@ -50,7 +50,13 @@ Closes a run that did not fail, and reports how it ended:
 - Its `outcome` distinguishes a run that completed from one interrupted
   awaiting outside input; an absent outcome means success. The interrupt
   outcome and what follows it are specified in
-  [Interrupts and Resume](/spec/draft/basic/patterns/interrupt-resume).
+  [Interrupts and Resume](/spec/draft/basic/patterns/interrupt-resume). The
+  outcome reports what the producer knows about why the run ended: a run
+  that stopped on a [frontend tool call](/spec/draft/events/tool-calls#frontend-tools)
+  is a completed run whose success outcome MAY name the calls it left
+  unanswered in `pendingToolCallIds`, because whether the application
+  continues the thread after such a call is the application's decision, not
+  the producer's.
 - A producer MUST NOT send an outcome value the schema does not describe.
 - `result` is OPTIONAL and carries the run's return value, if it has one.
 - `usage` is OPTIONAL and reports token usage, one entry per provider and

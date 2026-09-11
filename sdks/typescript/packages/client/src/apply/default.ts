@@ -143,6 +143,19 @@ export const defaultApplyEvents = (
   let state = structuredClone_(input.state);
   let currentMutation: AgentStateMutation = {};
 
+  // The tool calls this run has started and answered so far. RUN_FINISHED
+  // reads them when the success outcome names no `pendingToolCallIds`: the
+  // specification lets a consumer derive the pending list from the stream —
+  // every call the run started that got no TOOL_CALL_RESULT — and a producer
+  // that names the list is trusted over the tally.
+  let runToolCallIds: string[] = [];
+  let answeredToolCallIds = new Set<string>();
+  const pendingToolCallIdsOf = (e: RunFinishedEvent): string[] => {
+    const named = e.outcome?.type === "success" ? e.outcome.pendingToolCallIds : undefined;
+    if (named !== undefined && named.length > 0) return [...named];
+    return runToolCallIds.filter((id) => !answeredToolCallIds.has(id));
+  };
+
   const applyMutation = (mutation: AgentStateMutation) => {
     if (mutation.messages !== undefined) {
       messages = mutation.messages;
@@ -386,6 +399,7 @@ export const defaultApplyEvents = (
           if (mutation.stopPropagation !== true) {
             const { toolCallId, toolCallName, parentMessageId, subagentRunId } =
               event as ToolCallStartEvent;
+            if (!runToolCallIds.includes(toolCallId)) runToolCallIds.push(toolCallId);
 
             // Applying a start event must be idempotent. The same start can
             // reach this reducer twice — a tool call already carried in
@@ -608,6 +622,7 @@ export const defaultApplyEvents = (
           if (mutation.stopPropagation !== true) {
             const { messageId, toolCallId, content, role, subagentRunId } =
               event as ToolCallResultEvent;
+            answeredToolCallIds.add(toolCallId);
 
             const toolMessage: ToolMessage = {
               id: messageId,
@@ -1028,6 +1043,9 @@ export const defaultApplyEvents = (
               }),
           );
           applyMutation(mutation);
+          // A new run starts a new tally: pending calls are run-scoped.
+          runToolCallIds = [];
+          answeredToolCallIds = new Set<string>();
 
           // Handle input.messages if present and stopPropagation is not set
           if (mutation.stopPropagation !== true) {
@@ -1069,7 +1087,12 @@ export const defaultApplyEvents = (
                   outcome: "interrupt" as const,
                   interrupts: e.outcome.interrupts,
                 } as const)
-              : ({ event: e, outcome: "success" as const, result: e.result } as const);
+              : ({
+                  event: e,
+                  outcome: "success" as const,
+                  result: e.result,
+                  pendingToolCallIds: pendingToolCallIdsOf(e),
+                } as const);
           const mutation = await runSubscribersWithMutation(
             subscribers,
             messages,

@@ -550,6 +550,17 @@ export interface RunFinishedEvent {
    * totals sums across the entries.
    */
   usage: Usage[];
+  /**
+   * The tool calls this run started and left unanswered — no TOOL_CALL_RESULT in
+   * the run — for the application to answer in the next input's messages, in the
+   * order they were made. Absent or empty means the producer named none, and a
+   * consumer derives the list from the stream; otherwise it is the list, and it
+   * agrees with the stream. On the success outcome rather than the event because
+   * a run that stopped on a frontend tool call is a completed run: whether the
+   * application continues the thread is its own decision, so the producer
+   * reports what it knows and no more.
+   */
+  pendingToolCallIds: string[];
 }
 
 /**
@@ -2568,7 +2579,16 @@ export const RunStartedEvent: MessageFns<RunStartedEvent> = {
 };
 
 function createBaseRunFinishedEvent(): RunFinishedEvent {
-  return { baseEvent: undefined, threadId: "", runId: "", result: undefined, outcome: "", interrupts: [], usage: [] };
+  return {
+    baseEvent: undefined,
+    threadId: "",
+    runId: "",
+    result: undefined,
+    outcome: "",
+    interrupts: [],
+    usage: [],
+    pendingToolCallIds: [],
+  };
 }
 
 export const RunFinishedEvent: MessageFns<RunFinishedEvent> = {
@@ -2593,6 +2613,9 @@ export const RunFinishedEvent: MessageFns<RunFinishedEvent> = {
     }
     for (const v of message.usage) {
       Usage.encode(v!, writer.uint32(58).fork()).join();
+    }
+    for (const v of message.pendingToolCallIds) {
+      writer.uint32(66).string(v!);
     }
     return writer;
   },
@@ -2660,6 +2683,14 @@ export const RunFinishedEvent: MessageFns<RunFinishedEvent> = {
           message.usage.push(Usage.decode(reader, reader.uint32()));
           continue;
         }
+        case 8: {
+          if (tag !== 66) {
+            break;
+          }
+
+          message.pendingToolCallIds.push(reader.string());
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -2683,6 +2714,7 @@ export const RunFinishedEvent: MessageFns<RunFinishedEvent> = {
     message.outcome = object.outcome ?? "";
     message.interrupts = object.interrupts?.map((e) => Interrupt.fromPartial(e)) || [];
     message.usage = object.usage?.map((e) => Usage.fromPartial(e)) || [];
+    message.pendingToolCallIds = object.pendingToolCallIds?.map((e) => e) || [];
     return message;
   },
 };

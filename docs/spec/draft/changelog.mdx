@@ -83,19 +83,23 @@ specification.
 3. Absent means absent: optional fields are omitted, never `null`
    ([The event model](/spec/draft/basic#absent-means-absent)).
 4. `RUN_FINISHED` and `RUN_ERROR` MAY carry per-provider token usage.
-5. Input messages MAY carry multimodal content parts (text, image, audio,
+5. A run that stops on a frontend tool call finishes as success, never as an
+   interrupt, and the success outcome MAY name the calls it left unanswered
+   in `pendingToolCallIds`
+   ([Tool calls](/spec/draft/events/tool-calls#frontend-tools)).
+6. Input messages MAY carry multimodal content parts (text, image, audio,
    video, document), by URL or inline data
    ([Run input](/spec/draft/basic/run-input)).
-6. `TOOL_CALL_RESULT` is a message in its own right and does not reopen the
+7. `TOOL_CALL_RESULT` is a message in its own right and does not reopen the
    call it answers ([Tool calls](/spec/draft/events/tool-calls)).
-7. A late `RUN_ERROR` after `RUN_FINISHED` is admitted, reporting a failure
+8. A late `RUN_ERROR` after `RUN_FINISHED` is admitted, reporting a failure
    that surfaced after success was already reported
    ([Runs and steps](/spec/draft/events/lifecycle)).
-8. A consumer keeps a stream it rejects apart from a run that reports its own
+9. A consumer keeps a stream it rejects apart from a run that reports its own
    failure, and "treat the run as failed" is defined: surface it, never report
    success, with the API shape left to the implementation
    ([Runs and steps](/spec/draft/events/lifecycle#error-handling)).
-9. The protocol version travels in-band: consumers declare theirs on
+10. The protocol version travels in-band: consumers declare theirs on
    `RunAgentInput.protocolVersion`, producers answer with their own on
    `RUN_STARTED.protocolVersion`, and absence identifies a pre-versioning
    peer ([Versioning](/spec/draft/basic/versioning#version-negotiation)).
