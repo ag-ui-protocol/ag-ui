@@ -1893,24 +1893,25 @@ class LangGraphAgent:
                         event.get("data", {}).get("output"), dict
                 ):
                     output = event["data"]["output"]
-                    current_graph_state.update(output)
                     # dict.update overwrites reducer channels
-                    # (Annotated[list, operator.add] fan-out). Refresh the
-                    # keys this node wrote from aget_state, which applies
-                    # checkpoint writes through the declared reducers (#2628).
-                    try:
-                        checkpoint = await self.graph.aget_state(config)
-                        values = getattr(checkpoint, "values", None)
-                        if isinstance(values, dict):
-                            for key in output:
-                                if key in values:
-                                    current_graph_state[key] = values[key]
-                    except Exception:
-                        logger.debug(
-                            "Reducer-aware state refresh via aget_state failed; "
-                            "keeping dict.update merge",
-                            exc_info=True,
-                        )
+                    # (Annotated[list, operator.add] fan-out). Merge through
+                    # the compiled graph's channel operators instead of
+                    # aget_state: the checkpoint can still hold the previous
+                    # value when on_chain_end fires, which would undo this
+                    # node's write (#2628).
+                    channels = getattr(self.graph, "channels", None) or {}
+                    for key, value in output.items():
+                        channel = channels.get(key) if isinstance(channels, dict) else None
+                        operator = getattr(channel, "operator", None) if channel is not None else None
+                        if operator is not None and key in current_graph_state:
+                            try:
+                                current_graph_state[key] = operator(
+                                    current_graph_state[key], value
+                                )
+                                continue
+                            except Exception:
+                                pass
+                        current_graph_state[key] = value
                     exiting_node = self.active_run["node_name"] == current_node_name
                     # If output contains any key outside the protocol-internal set
                     # ("messages", "tools", "ag-ui"), the local current_graph_state
@@ -2042,7 +2043,7 @@ class LangGraphAgent:
                         yield self._dispatch_event(
                             StateSnapshotEvent(
                                 type=EventType.STATE_SNAPSHOT,
-                                snapshot=self.get_state_snapshot(state),
+                                snapshot=deepcopy(self.get_state_snapshot(state)),
                                 raw_event=event,
                             )
                         )
