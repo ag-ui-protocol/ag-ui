@@ -427,14 +427,14 @@ describe("flattened outcome guards", () => {
           baseEvent: base,
           threadId: "t1",
           runId: "r1",
-          outcome: "cancelled",
+          outcome: "expired",
           interrupts: [],
           usage: [],
         },
       }),
     ) as unknown as { outcome?: unknown };
 
-    expect(decoded.outcome).toEqual({ type: "cancelled" });
+    expect(decoded.outcome).toEqual({ type: "expired" });
   });
 
   // Which payload an unknown case owns is unknowable here, so whatever arrived
@@ -446,14 +446,14 @@ describe("flattened outcome guards", () => {
           baseEvent: base,
           threadId: "t1",
           runId: "r1",
-          outcome: "cancelled",
+          outcome: "expired",
           interrupts: [{ id: "i1", reason: "r" }],
           usage: [],
         },
       }),
     ) as unknown as { outcome?: { type?: string; interrupts?: unknown[] } };
 
-    expect(decoded.outcome?.type).toBe("cancelled");
+    expect(decoded.outcome?.type).toBe("expired");
     expect(decoded.outcome?.interrupts).toHaveLength(1);
   });
 
@@ -506,13 +506,13 @@ describe("flattened outcome guards", () => {
         subagentFinished: {
           baseEvent: { type: protoEvents.EventType.SUBAGENT_FINISHED },
           subagentRunId: "s1",
-          outcome: "cancelled",
+          outcome: "expired",
           interruptIds: [],
         },
       }),
     ) as unknown as { outcome?: unknown };
 
-    expect(decoded.outcome).toEqual({ type: "cancelled" });
+    expect(decoded.outcome).toEqual({ type: "expired" });
   });
 
   it("carries an absent subagent outcome's foreign payload through", () => {

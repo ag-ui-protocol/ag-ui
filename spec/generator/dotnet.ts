@@ -501,6 +501,9 @@ const MAPPED_FIELDS: Record<string, Record<string, string>> = {
     type: "required literal(interrupt)",
     interrupts: "required Interrupt[]",
   },
+  RunFinishedCancelledOutcome: {
+    type: "required literal(cancelled)",
+  },
   SubagentFinishedSuccessOutcome: {
     type: "required literal(success)",
   },
@@ -771,6 +774,10 @@ export function emitDotnet(
                 {
                     proto.Outcome = "success";
                 }
+                else if (e.Outcome is RunFinishedCancelledOutcome)
+                {
+                    proto.Outcome = "cancelled";
+                }
                 else
                 {
                     proto.Outcome = string.Empty;
@@ -1000,6 +1007,19 @@ ${decodeCases}
             }
 
             return new RunFinishedSuccessOutcome();
+        }
+
+        if (proto.Outcome == "cancelled")
+        {
+            // A cancelled run waits for nothing, so interrupts beside it are
+            // the same contradiction as beside success.
+            if (proto.Interrupts.Count > 0)
+            {
+                throw new System.IO.InvalidDataException(
+                    "Invalid event: outcome cancelled cannot carry interrupts.");
+            }
+
+            return new RunFinishedCancelledOutcome();
         }
 
         if (proto.Outcome.Length == 0)

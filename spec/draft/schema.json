@@ -880,7 +880,8 @@
       "description": "Why a run ended.",
       "oneOf": [
         { "$ref": "#/$defs/RunFinishedSuccessOutcome" },
-        { "$ref": "#/$defs/RunFinishedInterruptOutcome" }
+        { "$ref": "#/$defs/RunFinishedInterruptOutcome" },
+        { "$ref": "#/$defs/RunFinishedCancelledOutcome" }
       ]
     },
     "RunFinishedSuccessOutcome": {
@@ -907,6 +908,16 @@
         }
       },
       "required": ["type", "interrupts"],
+      "unevaluatedProperties": false
+    },
+    "RunFinishedCancelledOutcome": {
+      "$anchor": "RunFinishedCancelledOutcome",
+      "type": "object",
+      "description": "The run was stopped before it completed, by whoever was running it, and did not fail. Neither success nor interrupt: nothing was produced as a result, and nothing is waited for, so the next run on the thread is an ordinary new run rather than a resume. Closed like its siblings: a cancelled run has no interrupts to carry. Named in the schema before 1.0 because an outcome a consumer does not recognise is stripped and read as success — a cancellation added later would reach every 1.0 consumer as a completed run.",
+      "properties": {
+        "type": { "const": "cancelled", "description": "Discriminator." }
+      },
+      "required": ["type"],
       "unevaluatedProperties": false
     },
     "SubagentFinishedOutcome": {

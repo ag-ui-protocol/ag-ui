@@ -1008,6 +1008,16 @@ The run is paused, waiting for something outside it. Resuming means starting a n
 
 Closed object: the schema rejects members not listed here.
 
+### `RunFinishedCancelledOutcome`
+
+The run was stopped before it completed, by whoever was running it, and did not fail. Neither success nor interrupt: nothing was produced as a result, and nothing is waited for, so the next run on the thread is an ordinary new run rather than a resume. Closed like its siblings: a cancelled run has no interrupts to carry. Named in the schema before 1.0 because an outcome a consumer does not recognise is stripped and read as success — a cancellation added later would reach every 1.0 consumer as a completed run.
+
+**Fields:**
+
+- `type` — `"cancelled"`, **required**. Discriminator.
+
+Closed object: the schema rejects members not listed here.
+
 ### `RunFinishedOutcome`
 
 Why a run ended.
@@ -1016,6 +1026,7 @@ Why a run ended.
 
 - [`RunFinishedSuccessOutcome`](#runfinishedsuccessoutcome)
 - [`RunFinishedInterruptOutcome`](#runfinishedinterruptoutcome)
+- [`RunFinishedCancelledOutcome`](#runfinishedcancelledoutcome)
 
 Discriminated by `type`.
 

@@ -506,6 +506,8 @@ export function encode(event: BaseEvent): Uint8Array {
     } else if (outcomeRecord?.type === "interrupt") {
       rest.outcome = "interrupt";
       rest.interrupts = asArray(outcomeRecord?.interrupts);
+    } else if (outcomeRecord?.type === "cancelled") {
+      rest.outcome = "cancelled";
     } else {
       rest.outcome = typeof outcomeRecord?.type === "string" ? outcomeRecord.type : "";
     }
@@ -1264,6 +1266,12 @@ export function decode(data: Uint8Array): BaseEvent {
     if (wireOutcome === "interrupt") {
       record.outcome = { type: "interrupt", interrupts: asArray(payload.interrupts) };
     }
+    if (wireOutcome === "cancelled") {
+      record.outcome = {
+        type: "cancelled",
+        ...(asArray(payload.interrupts).length > 0 ? { interrupts: payload.interrupts } : {}),
+      };
+    }
     // An unrecognised outcome is still representable as JSON, so it
     // is rebuilt as it was sent rather than judged here. Decoding bytes into
     // events is transport work; deciding what an unrecognised value MEANS
@@ -1271,7 +1279,7 @@ export function decode(data: Uint8Array): BaseEvent {
     // stream cannot survive over SSE and fail over binary. Which payload an
     // unknown case owns is unknowable, so whatever arrived rides along for
     // enforcement to strip with the rest.
-    if (wireOutcome !== undefined && !["success", "interrupt"].includes(wireOutcome)) {
+    if (wireOutcome !== undefined && !["success", "interrupt", "cancelled"].includes(wireOutcome)) {
       record.outcome = {
         type: wireOutcome,
         ...(asArray(payload.interrupts).length > 0 ? { interrupts: payload.interrupts } : {}),

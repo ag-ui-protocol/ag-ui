@@ -496,6 +496,8 @@ AGUI.Abstractions.RunFinishedEvent.ThreadId.get -> string!
 AGUI.Abstractions.RunFinishedEvent.ThreadId.set -> void
 AGUI.Abstractions.RunFinishedEvent.Usage.get -> System.Collections.Generic.IList<AGUI.Abstractions.TokenUsage!>?
 AGUI.Abstractions.RunFinishedEvent.Usage.set -> void
+AGUI.Abstractions.RunFinishedCancelledOutcome
+AGUI.Abstractions.RunFinishedCancelledOutcome.RunFinishedCancelledOutcome() -> void
 AGUI.Abstractions.RunFinishedInterruptOutcome
 AGUI.Abstractions.RunFinishedInterruptOutcome.Interrupts.get -> System.Collections.Generic.IList<AGUI.Abstractions.AGUIInterrupt!>!
 AGUI.Abstractions.RunFinishedInterruptOutcome.Interrupts.set -> void
@@ -771,6 +773,7 @@ const AGUI.Abstractions.InterruptReasons.InputRequired = "input_required" -> str
 const AGUI.Abstractions.InterruptReasons.ToolCall = "tool_call" -> string!
 const AGUI.Abstractions.ResumeStatus.Cancelled = "cancelled" -> string!
 const AGUI.Abstractions.ResumeStatus.Resolved = "resolved" -> string!
+const AGUI.Abstractions.RunFinishedOutcomeTypes.Cancelled = "cancelled" -> string!
 const AGUI.Abstractions.RunFinishedOutcomeTypes.Interrupt = "interrupt" -> string!
 const AGUI.Abstractions.RunFinishedOutcomeTypes.Success = "success" -> string!
 const AGUI.Abstractions.SubagentFinishedOutcomeTypes.Success = "success" -> string!
@@ -816,6 +819,7 @@ override AGUI.Abstractions.ReasoningMessageEndEvent.Type.get -> string!
 override AGUI.Abstractions.ReasoningMessageStartEvent.Type.get -> string!
 override AGUI.Abstractions.ReasoningStartEvent.Type.get -> string!
 override AGUI.Abstractions.RunErrorEvent.Type.get -> string!
+override AGUI.Abstractions.RunFinishedCancelledOutcome.Type.get -> string!
 override AGUI.Abstractions.RunFinishedEvent.Type.get -> string!
 override AGUI.Abstractions.RunFinishedInterruptOutcome.Type.get -> string!
 override AGUI.Abstractions.RunFinishedOutcomeJsonConverter.CanConvert(System.Type! typeToConvert) -> bool
@@ -927,6 +931,7 @@ static AGUI.Abstractions.AGUIUserContent.implicit operator AGUI.Abstractions.AGU
 ~AGUI.Abstractions.AGUIJsonSerializerContext.ReasoningStartEvent.get -> System.Text.Json.Serialization.Metadata.JsonTypeInfo<AGUI.Abstractions.ReasoningStartEvent>
 ~AGUI.Abstractions.AGUIJsonSerializerContext.RunAgentInput.get -> System.Text.Json.Serialization.Metadata.JsonTypeInfo<AGUI.Abstractions.RunAgentInput>
 ~AGUI.Abstractions.AGUIJsonSerializerContext.RunErrorEvent.get -> System.Text.Json.Serialization.Metadata.JsonTypeInfo<AGUI.Abstractions.RunErrorEvent>
+~AGUI.Abstractions.AGUIJsonSerializerContext.RunFinishedCancelledOutcome.get -> System.Text.Json.Serialization.Metadata.JsonTypeInfo<AGUI.Abstractions.RunFinishedCancelledOutcome>
 ~AGUI.Abstractions.AGUIJsonSerializerContext.RunFinishedEvent.get -> System.Text.Json.Serialization.Metadata.JsonTypeInfo<AGUI.Abstractions.RunFinishedEvent>
 ~AGUI.Abstractions.AGUIJsonSerializerContext.RunFinishedInterruptOutcome.get -> System.Text.Json.Serialization.Metadata.JsonTypeInfo<AGUI.Abstractions.RunFinishedInterruptOutcome>
 ~AGUI.Abstractions.AGUIJsonSerializerContext.RunFinishedOutcome.get -> System.Text.Json.Serialization.Metadata.JsonTypeInfo<AGUI.Abstractions.RunFinishedOutcome>

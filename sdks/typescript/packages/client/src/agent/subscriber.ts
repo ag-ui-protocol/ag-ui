@@ -81,6 +81,7 @@ export interface AgentSubscriber {
     params: (
       | { event: RunFinishedEvent; outcome: "success"; result?: unknown }
       | { event: RunFinishedEvent; outcome: "interrupt"; interrupts: Interrupt[] }
+      | { event: RunFinishedEvent; outcome: "cancelled" }
     ) &
       AgentSubscriberParams,
   ): MaybePromise<AgentStateMutation | void>;

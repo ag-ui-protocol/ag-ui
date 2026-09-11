@@ -159,6 +159,70 @@ describe("Agent Result", () => {
       expect(result.result).toBe(expectedResult);
     });
 
+    it("reports a cancelled run to subscribers and adopts no result from it", async () => {
+      const onRunFinishedEvent = vi.fn();
+      agent.subscribe({ onRunFinishedEvent });
+      agent.setEventsToEmit([
+        {
+          type: EventType.RUN_STARTED,
+          threadId: "test-thread",
+          runId: "test-run",
+        } as RunStartedEvent,
+        {
+          type: EventType.RUN_FINISHED,
+          threadId: "test-thread",
+          runId: "test-run",
+          outcome: { type: "cancelled" },
+        } as RunFinishedEvent,
+      ]);
+
+      const result = await agent.runAgent();
+
+      expect(result.result).toBeUndefined();
+      expect(onRunFinishedEvent).toHaveBeenCalledTimes(1);
+      const params = onRunFinishedEvent.mock.calls[0][0];
+      expect(params.outcome).toBe("cancelled");
+      expect(params).not.toHaveProperty("result");
+      expect(params).not.toHaveProperty("interrupts");
+    });
+
+    it("leaves nothing pending when the run that answers an interrupt is cancelled", async () => {
+      agent.setEventsToEmit([
+        {
+          type: EventType.RUN_STARTED,
+          threadId: "test-thread",
+          runId: "run-1",
+        } as RunStartedEvent,
+        {
+          type: EventType.RUN_FINISHED,
+          threadId: "test-thread",
+          runId: "run-1",
+          outcome: { type: "interrupt", interrupts: [{ id: "int-1", reason: "approval" }] },
+        } as RunFinishedEvent,
+      ]);
+      await agent.runAgent();
+      expect(agent.pendingInterrupts).toHaveLength(1);
+
+      agent.setEventsToEmit([
+        {
+          type: EventType.RUN_STARTED,
+          threadId: "test-thread",
+          runId: "run-2",
+        } as RunStartedEvent,
+        {
+          type: EventType.RUN_FINISHED,
+          threadId: "test-thread",
+          runId: "run-2",
+          outcome: { type: "cancelled" },
+        } as RunFinishedEvent,
+      ]);
+      // The interrupt must be covered before a new run may start; the run
+      // that abandons it is then stopped, and a cancelled run waits for nothing.
+      await agent.runAgent({ resume: [{ interruptId: "int-1", status: "cancelled" }] });
+
+      expect(agent.pendingInterrupts).toEqual([]);
+    });
+
     it("normalizes a legacy null result from an in-memory producer to absence", async () => {
       agent.setEventsToEmit([
         {

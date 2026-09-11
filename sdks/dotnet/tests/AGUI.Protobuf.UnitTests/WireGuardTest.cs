@@ -102,7 +102,7 @@ public sealed class WireGuardTest
                 BaseEvent = new Proto.BaseEvent { Type = Proto.EventType.RunFinished },
                 ThreadId = "t1",
                 RunId = "r1",
-                Outcome = "cancelled",
+                Outcome = "expired",
             },
         });
         Assert.Throws<InvalidDataException>(() => AGUIProtobuf.Decode(bytes));
