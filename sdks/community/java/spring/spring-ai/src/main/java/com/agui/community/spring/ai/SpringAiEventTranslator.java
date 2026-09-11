@@ -70,6 +70,9 @@ final class SpringAiEventTranslator {
     private boolean textOpen;
     private boolean reasoningPhaseOpen;
     private boolean reasoningMessageOpen;
+    // The plain (non-reasoning) assistant text accumulated across this turn, so the agent
+    // can reconstruct the assistant message for an optional MESSAGES_SNAPSHOT.
+    private final StringBuilder textContent = new StringBuilder();
 
     private final Set<String> startedToolCalls = new LinkedHashSet<>();
     private final Set<String> openToolCalls = new LinkedHashSet<>();
@@ -168,6 +171,7 @@ final class SpringAiEventTranslator {
             events.add(new ReasoningMessageContentEvent(messageId, segment.text()));
         } else {
             enterText(events);
+            textContent.append(segment.text());
             events.add(new TextMessageContentEvent(messageId, segment.text()));
         }
     }
@@ -287,6 +291,11 @@ final class SpringAiEventTranslator {
     /** @return the message id used for this turn's assistant message. */
     String messageId() {
         return messageId;
+    }
+
+    /** @return the plain (non-reasoning) assistant text surfaced this turn, in order. */
+    String collectedText() {
+        return textContent.toString();
     }
 
     /**

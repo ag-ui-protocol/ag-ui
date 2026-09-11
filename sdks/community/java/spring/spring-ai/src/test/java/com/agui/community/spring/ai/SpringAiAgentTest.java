@@ -13,6 +13,7 @@ import com.agui.community.core.event.Event;
 import com.agui.community.core.event.EventType;
 import com.agui.community.core.event.JsonPatchOperation;
 import com.agui.community.core.event.RunErrorEvent;
+import com.agui.community.core.event.MessagesSnapshotEvent;
 import com.agui.community.core.event.ReasoningMessageContentEvent;
 import com.agui.community.core.event.ReasoningMessageStartEvent;
 import com.agui.community.core.event.RunFinishedEvent;
@@ -25,12 +26,14 @@ import com.agui.community.core.interrupt.Interrupt;
 import com.agui.community.core.interrupt.InterruptOutcome;
 import com.agui.community.core.interrupt.Resume;
 import com.agui.community.core.interrupt.ResumeStatus;
+import com.agui.community.core.message.Message;
 import com.agui.community.core.message.Role;
 import com.agui.community.core.message.UserMessage;
 import com.agui.community.core.tool.Tool;
 import com.agui.community.core.tool.ToolParameters;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Collectors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -656,6 +659,98 @@ class SpringAiAgentTest {
                 .orElseThrow();
         assertEquals("call-1", result.toolCallId());
         assertTrue(result.content().contains("21"), result.content());
+    }
+
+    @Test
+    void doesNotEmitMessagesSnapshotByDefault() {
+        SpringAiAgent agent = new SpringAiAgent(ChatClient.create(streaming(chunk("hi"))), () -> "m1");
+
+        List<Event> events = collect(agent.run(INPUT));
+
+        assertTrue(events.stream().noneMatch(e -> e.type() == EventType.MESSAGES_SNAPSHOT));
+    }
+
+    @Test
+    void emitsMessagesSnapshotOfTheProducedConversationWhenEnabled() {
+        SpringAiAgent agent = SpringAiAgent.builder(
+                        ChatClient.create(streaming(chunk("Hello "), chunk("world"))))
+                .messageIdGenerator(() -> "assist-1")
+                .emitMessagesSnapshot(true)
+                .build();
+        RunAgentInput input = new RunAgentInput("t1", "r1",
+                List.of(new UserMessage("u1", "hi")), List.of());
+
+        List<Event> events = collect(agent.run(input));
+
+        // The snapshot is emitted once, just before RUN_FINISHED.
+        List<EventType> types = events.stream().map(Event::type).toList();
+        assertEquals(1, types.stream().filter(t -> t == EventType.MESSAGES_SNAPSHOT).count());
+        assertTrue(types.indexOf(EventType.MESSAGES_SNAPSHOT) < types.indexOf(EventType.RUN_FINISHED),
+                types.toString());
+
+        MessagesSnapshotEvent snapshot = (MessagesSnapshotEvent) events.stream()
+                .filter(e -> e.type() == EventType.MESSAGES_SNAPSHOT)
+                .findFirst()
+                .orElseThrow();
+        List<Message> messages = snapshot.messages();
+        // The run input's user message, then the assistant message produced this run.
+        assertEquals(2, messages.size());
+        assertInstanceOf(UserMessage.class, messages.get(0));
+        com.agui.community.core.message.AssistantMessage assistant =
+                (com.agui.community.core.message.AssistantMessage) messages.get(1);
+        assertEquals("assist-1", assistant.id());
+        assertEquals("Hello world", assistant.content());
+    }
+
+    @Test
+    void messagesSnapshotIncludesToolCallsAndResults() {
+        ToolCallback weather = backendTool("getWeather", "{\"temperature\":21}");
+        ChatModel model = new ChatModel() {
+            @Override
+            public ChatResponse call(Prompt prompt) {
+                return new ChatResponse(List.of());
+            }
+
+            @Override
+            public Flux<ChatResponse> stream(Prompt prompt) {
+                boolean afterToolResult = prompt.getInstructions().stream()
+                        .anyMatch(m -> m instanceof ToolResponseMessage);
+                if (afterToolResult) {
+                    return Flux.just(chunk("It is 21 degrees in Paris."));
+                }
+                return Flux.just(toolChunk("call-1", "getWeather", "{\"location\":\"Paris\"}"));
+            }
+        };
+        SpringAiAgent agent = SpringAiAgent.builder(ChatClient.create(model))
+                .messageIdGenerator(sequentialIds())
+                .tools(List.of(weather))
+                .emitMessagesSnapshot(true)
+                .build();
+
+        List<Event> events = collect(agent.run(INPUT));
+
+        MessagesSnapshotEvent snapshot = (MessagesSnapshotEvent) events.stream()
+                .filter(e -> e.type() == EventType.MESSAGES_SNAPSHOT)
+                .findFirst()
+                .orElseThrow();
+        List<Message> messages = snapshot.messages();
+
+        // An assistant message carrying the getWeather tool call...
+        boolean hasToolCall = messages.stream()
+                .filter(m -> m instanceof com.agui.community.core.message.AssistantMessage)
+                .map(m -> (com.agui.community.core.message.AssistantMessage) m)
+                .anyMatch(a -> Objects.nonNull(a.toolCalls()) && a.toolCalls().stream()
+                        .anyMatch(tc -> "getWeather".equals(tc.function().name())));
+        assertTrue(hasToolCall, messages.toString());
+        // ...the backend tool result as a tool message...
+        assertTrue(messages.stream().anyMatch(m -> m instanceof com.agui.community.core.message.ToolMessage),
+                messages.toString());
+        // ...and the model's final answer as an assistant text message.
+        boolean hasFinalText = messages.stream()
+                .filter(m -> m instanceof com.agui.community.core.message.AssistantMessage)
+                .map(m -> ((com.agui.community.core.message.AssistantMessage) m).content())
+                .anyMatch(c -> Objects.nonNull(c) && c.contains("21 degrees"));
+        assertTrue(hasFinalText, messages.toString());
     }
 
     private static Supplier<String> sequentialIds() {

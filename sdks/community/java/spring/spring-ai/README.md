@@ -148,9 +148,14 @@ Advertises the **input tools** to the model and maps streamed **text**,
 **reasoning** (`<think>` tags), **tool calls** and — when state sharing is
 enabled — **shared state** (`STATE_SNAPSHOT` or `STATE_DELTA`) to AG-UI events.
 
-`MESSAGES_SNAPSHOT` is not yet emitted. `TOOL_CALL_RESULT` is emitted for
-**backend** tools (which the agent executes); **client** tool results are produced
-by the front end that runs the tool.
+`MESSAGES_SNAPSHOT` is opt-in via `SpringAiAgent.builder(client).emitMessagesSnapshot(true)`:
+when enabled the agent emits, just before `RUN_FINISHED`, a snapshot of the run's
+durable conversation — the run input's messages plus the assistant messages (text
+and tool calls) and backend `tool` result messages produced this run. It is additive
+(the same messages are already conveyed by the streamed events), so a front end that
+reconstructs history from the stream is unaffected; streamed reasoning is not included
+in the snapshot. `TOOL_CALL_RESULT` is emitted for **backend** tools (which the agent
+executes); **client** tool results are produced by the front end that runs the tool.
 
 ## Dependency
 

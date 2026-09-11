@@ -3,6 +3,7 @@ package com.agui.community.spring.ai;
 import com.agui.community.core.agent.Agent;
 import com.agui.community.core.agent.RunAgentInput;
 import com.agui.community.core.event.Event;
+import com.agui.community.core.event.MessagesSnapshotEvent;
 import com.agui.community.core.event.RunErrorEvent;
 import com.agui.community.core.event.RunFinishedEvent;
 import com.agui.community.core.event.RunStartedEvent;
@@ -19,6 +20,7 @@ import com.agui.community.core.message.Role;
 import com.agui.community.core.tool.Tool;
 import com.agui.community.core.tool.ToolParameters;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -152,6 +154,11 @@ public final class SpringAiAgent implements Agent {
     private final List<Tool> interruptTools;
     private final Set<String> interruptToolNames;
     private final Map<String, Object> interruptToolSchemas;
+    // When true, a MESSAGES_SNAPSHOT of the run's durable conversation (the input
+    // history plus the assistant and backend tool-result messages produced this run)
+    // is emitted just before RUN_FINISHED. Off by default: the same messages are
+    // already conveyed by the streamed TEXT_MESSAGE_*/TOOL_CALL_* events.
+    private final boolean emitMessagesSnapshot;
     private final ToolCallingManager toolCallingManager = ToolCallingManager.builder().build();
 
     // A tool advisor that injects the tool definitions into the request but never
@@ -170,7 +177,7 @@ public final class SpringAiAgent implements Agent {
      */
     public SpringAiAgent(ChatClient chatClient) {
         this(chatClient, defaultMessageIds(), false, SpringAiAgent::defaultStatePrompt, StateUpdates.SNAPSHOT,
-                List.of(), false, List.of());
+                List.of(), false, List.of(), false);
     }
 
     /**
@@ -183,13 +190,13 @@ public final class SpringAiAgent implements Agent {
      */
     public SpringAiAgent(ChatClient chatClient, Supplier<String> messageIdGenerator) {
         this(chatClient, messageIdGenerator, false, SpringAiAgent::defaultStatePrompt, StateUpdates.SNAPSHOT,
-                List.of(), false, List.of());
+                List.of(), false, List.of(), false);
     }
 
     private SpringAiAgent(ChatClient chatClient, Supplier<String> messageIdGenerator, boolean shareState,
                           Function<Object, String> statePrompt, StateUpdates stateUpdates,
                           List<ToolCallback> backendTools, boolean emitInterruptOutcome,
-                          List<Tool> interruptTools) {
+                          List<Tool> interruptTools, boolean emitMessagesSnapshot) {
         this.chatClient = Objects.requireNonNull(chatClient, "chatClient must not be null");
         this.messageIdGenerator =
                 Objects.requireNonNull(messageIdGenerator, "messageIdGenerator must not be null");
@@ -208,6 +215,7 @@ public final class SpringAiAgent implements Agent {
         }
         this.interruptToolNames = Set.copyOf(names);
         this.interruptToolSchemas = Map.copyOf(schemas);
+        this.emitMessagesSnapshot = emitMessagesSnapshot;
     }
 
     /**
@@ -247,6 +255,7 @@ public final class SpringAiAgent implements Agent {
         private List<ToolCallback> backendTools = List.of();
         private boolean emitInterruptOutcome;
         private List<Tool> interruptTools = List.of();
+        private boolean emitMessagesSnapshot;
 
         private Builder(ChatClient chatClient) {
             this.chatClient = chatClient;
@@ -362,11 +371,30 @@ public final class SpringAiAgent implements Agent {
         }
 
         /**
+         * When enabled, the agent emits a {@code MESSAGES_SNAPSHOT} of the run's durable
+         * conversation — the run input's messages plus the assistant messages (text and
+         * tool calls) and backend {@code tool} result messages produced this run — just
+         * before {@code RUN_FINISHED}. This is additive: the same messages are already
+         * conveyed by the streamed {@code TEXT_MESSAGE_*}/{@code TOOL_CALL_*} events, so a
+         * front end that reconstructs history from those is unaffected; the snapshot gives
+         * clients that prefer an authoritative message list one to reconcile against.
+         * Streamed reasoning is not included (it is delivered transiently via the
+         * {@code REASONING_*} events). Disabled by default.
+         *
+         * @param emitMessagesSnapshot whether to emit the messages snapshot
+         * @return this builder
+         */
+        public Builder emitMessagesSnapshot(boolean emitMessagesSnapshot) {
+            this.emitMessagesSnapshot = emitMessagesSnapshot;
+            return this;
+        }
+
+        /**
          * @return the configured agent
          */
         public SpringAiAgent build() {
             return new SpringAiAgent(chatClient, messageIdGenerator, shareState, statePrompt, stateUpdates,
-                    backendTools, emitInterruptOutcome, interruptTools);
+                    backendTools, emitInterruptOutcome, interruptTools, emitMessagesSnapshot);
         }
     }
 
@@ -420,6 +448,13 @@ public final class SpringAiAgent implements Agent {
         // terminal RUN_FINISHED, deferred so it runs after the loop, reads it.
         AtomicReference<RunOutcome> outcome = new AtomicReference<>();
 
+        // The durable conversation messages produced this run, accumulated as the tool
+        // loop runs so a MESSAGES_SNAPSHOT can be emitted before RUN_FINISHED. Null (and
+        // never populated) unless the snapshot is enabled. Thread-safe for visibility
+        // across the reactive pipeline's sequential steps.
+        List<Message> produced =
+                emitMessagesSnapshot ? Collections.synchronizedList(new ArrayList<>()) : null;
+
         // Deferred so each subscription runs its own tool loop.
         Flux<Event> events = Flux.<Event>defer(() -> Flux.concat(
                         Flux.<Event>just(new RunStartedEvent(input.threadId(), input.runId())),
@@ -427,7 +462,11 @@ public final class SpringAiAgent implements Agent {
                                 ? Flux.<Event>just(new StateSnapshotEvent(input.state()))
                                 : Flux.<Event>empty(),
                         runTurn(baseMessages, advertised, backendToolNames, effectiveBackendTools,
-                                stateToolName, emitDeltas, input.state(), 0, outcome),
+                                stateToolName, emitDeltas, input.state(), 0, outcome, produced),
+                        Flux.<Event>defer(() -> Objects.nonNull(produced)
+                                ? Flux.<Event>just(new MessagesSnapshotEvent(
+                                        snapshotMessages(input.messages(), produced)))
+                                : Flux.<Event>empty()),
                         Flux.<Event>defer(() -> Flux.<Event>just(new RunFinishedEvent(
                                 input.threadId(), input.runId(), outcome.get(), null, null, null)))))
                 .onErrorResume(throwable -> Flux.just(new RunErrorEvent(describe(throwable))));
@@ -439,7 +478,8 @@ public final class SpringAiAgent implements Agent {
     private Flux<Event> runTurn(List<org.springframework.ai.chat.messages.Message> messages,
                                 List<ToolCallback> advertised, Set<String> backendToolNames,
                                 List<ToolCallback> backendCallbacks, String stateToolName, boolean emitDeltas,
-                                Object inputState, int depth, AtomicReference<RunOutcome> outcome) {
+                                Object inputState, int depth, AtomicReference<RunOutcome> outcome,
+                                List<Message> produced) {
         String messageId = messageIdGenerator.get();
         SpringAiEventTranslator translator = new SpringAiEventTranslator(messageId, stateToolName);
 
@@ -452,15 +492,18 @@ public final class SpringAiAgent implements Agent {
 
         return turnEvents.concatWith(Flux.defer(() ->
                 continueAfterTurn(messages, translator, advertised, backendToolNames, backendCallbacks,
-                        stateToolName, emitDeltas, inputState, depth, outcome)));
+                        stateToolName, emitDeltas, inputState, depth, outcome, produced)));
     }
 
     private Flux<Event> continueAfterTurn(List<org.springframework.ai.chat.messages.Message> messages,
                                           SpringAiEventTranslator translator, List<ToolCallback> advertised,
                                           Set<String> backendToolNames, List<ToolCallback> backendCallbacks,
                                           String stateToolName, boolean emitDeltas, Object inputState, int depth,
-                                          AtomicReference<RunOutcome> outcome) {
+                                          AtomicReference<RunOutcome> outcome, List<Message> produced) {
         List<AssistantMessage.ToolCall> calls = translator.collectedToolCalls();
+        // Record the assistant message this turn produced (text + the tool calls it made)
+        // for the optional MESSAGES_SNAPSHOT.
+        accumulateAssistantMessage(produced, translator, calls);
         List<AssistantMessage.ToolCall> backendCalls = calls.stream()
                 .filter(call -> backendToolNames.contains(call.name()))
                 .toList();
@@ -479,6 +522,8 @@ public final class SpringAiAgent implements Agent {
         ToolExecutionResult execution = toolCallingManager.executeToolCalls(executionPrompt, toolCallResponse);
 
         List<Event> resultEvents = toToolResultEvents(execution);
+        // Record the backend tool-result messages for the optional MESSAGES_SNAPSHOT.
+        accumulateToolResults(produced, resultEvents);
 
         if (calls.size() > backendCalls.size()) {
             // Option A: a client tool was also called this turn — surface the backend
@@ -492,7 +537,58 @@ public final class SpringAiAgent implements Agent {
         return Flux.concat(
                 Flux.fromIterable(resultEvents),
                 runTurn(nextMessages, advertised, backendToolNames, backendCallbacks, stateToolName,
-                        emitDeltas, inputState, depth + 1, outcome));
+                        emitDeltas, inputState, depth + 1, outcome, produced));
+    }
+
+    /**
+     * Records the assistant message a turn produced — its text and the tool calls the
+     * model made (client, backend and interrupt calls; the intercepted state tool is
+     * excluded) — for the MESSAGES_SNAPSHOT. No-op when snapshots are disabled, or when
+     * the turn produced neither text nor tool calls.
+     */
+    private void accumulateAssistantMessage(List<Message> produced, SpringAiEventTranslator translator,
+            List<AssistantMessage.ToolCall> calls) {
+        if (Objects.isNull(produced)) {
+            return;
+        }
+        String text = translator.collectedText();
+        if (text.isEmpty() && calls.isEmpty()) {
+            return;
+        }
+        if (calls.isEmpty()) {
+            produced.add(new com.agui.community.core.message.AssistantMessage(translator.messageId(), text));
+            return;
+        }
+        List<com.agui.community.core.message.ToolCall> toolCalls = new ArrayList<>();
+        for (AssistantMessage.ToolCall call : calls) {
+            toolCalls.add(new com.agui.community.core.message.ToolCall(
+                    call.id(), new com.agui.community.core.message.FunctionCall(call.name(), call.arguments())));
+        }
+        produced.add(new com.agui.community.core.message.AssistantMessage(
+                translator.messageId(), text, null, toolCalls));
+    }
+
+    /**
+     * Records the backend {@code tool} result messages a turn produced for the
+     * MESSAGES_SNAPSHOT. No-op when snapshots are disabled.
+     */
+    private void accumulateToolResults(List<Message> produced, List<Event> resultEvents) {
+        if (Objects.isNull(produced)) {
+            return;
+        }
+        for (Event event : resultEvents) {
+            if (event instanceof ToolCallResultEvent result) {
+                produced.add(new com.agui.community.core.message.ToolMessage(
+                        result.messageId(), result.content(), result.toolCallId()));
+            }
+        }
+    }
+
+    /** The full conversation for a MESSAGES_SNAPSHOT: the run input's messages then those produced. */
+    private static List<Message> snapshotMessages(List<Message> inputMessages, List<Message> produced) {
+        List<Message> all = new ArrayList<>(Objects.requireNonNullElse(inputMessages, List.of()));
+        all.addAll(produced);
+        return all;
     }
 
     /**
