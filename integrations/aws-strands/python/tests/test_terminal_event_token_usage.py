@@ -44,11 +44,14 @@ from strands.hooks.registry import HookRegistry
 from strands.interrupt import Interrupt as StrandsInterrupt
 from strands.models.model import Model
 
+import ag_ui_strands.agent as agent_module
 from ag_ui_strands.agent import (
     _MAX_TOKEN_COUNT,
+    _SDK_CARRIES_CACHE_WRITE,
     _STRANDS_PROVIDER_LABELS,
     StrandsAgent,
     _model_usage_labels,
+    _record_metadata_usage,
 )
 from ag_ui_strands.config import StrandsAgentConfig
 
@@ -64,7 +67,21 @@ ALLOWED_USAGE_FIELDS = {
     "total_tokens",
     "reasoning_tokens",
     "cached_input_tokens",
+    "cache_write_input_tokens",
 }
+
+
+
+def _expect_cache_write(reported: dict, value: int) -> None:
+    """The cache-write count is carried only when the installed SDK declares it.
+
+    On an SDK that does not, the count is dropped rather than emitted as an
+    extra under its Python name, which is not the wire key.
+    """
+    if _SDK_CARRIES_CACHE_WRITE:
+        assert reported["cache_write_input_tokens"] == value
+    else:
+        assert "cache_write_input_tokens" not in reported
 
 
 # ---------------------------------------------------------------------------
@@ -355,8 +372,12 @@ class TestRunFinishedUsage:
         assert _usage(events)[0].cached_input_tokens == 6
 
     @pytest.mark.asyncio
-    async def test_a_cache_write_count_is_dropped_not_folded_in(self):
-        """AG-UI has no slot for it, and folding it in would overstate a count."""
+    async def test_both_cache_counts_are_mapped(self):
+        """Reads and writes each have their own AG-UI field.
+
+        ``ScriptedModel`` carries no provider label, so the input count is
+        taken as already inclusive and passes through untouched.
+        """
         events = await _run_scripted(
             [
                 _turn(
@@ -374,7 +395,7 @@ class TestRunFinishedUsage:
         entry = _usage(events)[0]
         assert entry.input_tokens == 5
         assert entry.cached_input_tokens == 1
-        assert 99 not in _reported(entry).values()
+        _expect_cache_write(_reported(entry), 99)
 
     @pytest.mark.asyncio
     async def test_strands_reports_no_reasoning_tokens_so_the_field_stays_unset(self):
@@ -632,6 +653,138 @@ class TestUsageCarriesNoContent:
         assert set(reported) <= ALLOWED_USAGE_FIELDS
         assert "secret" not in repr(reported)
         assert "req-abc" not in repr(reported)
+
+
+# ---------------------------------------------------------------------------
+# Accounting: AG-UI counts input inclusive of the cache breakdown
+# ---------------------------------------------------------------------------
+
+
+def _stand_in(class_name: str):
+    """A model instance whose class name selects the provider label."""
+    return type(class_name, (), {"get_config": lambda self: {"model_id": "m"}})()
+
+
+def _record(usage: dict, model: Any) -> dict:
+    entries: list = []
+    _record_metadata_usage(entries, {"metadata": {"usage": usage}}, model)
+    assert len(entries) == 1
+    return _reported(entries[0])
+
+
+class TestUsageAccounting:
+    BESIDE_INPUT = {
+        "inputTokens": 5,
+        "outputTokens": 7,
+        "totalTokens": 12,
+        "cacheReadInputTokens": 100,
+        "cacheWriteInputTokens": 20,
+    }
+
+    @pytest.mark.parametrize("class_name", ["AnthropicModel", "BedrockModel"])
+    def test_cache_counts_are_added_into_input_for_providers_that_report_them_beside_it(
+        self, class_name
+    ):
+        reported = _record(self.BESIDE_INPUT, _stand_in(class_name))
+
+        assert reported["input_tokens"] == 125
+        # Recomputed from the adjusted input rather than copied: the provider's
+        # total was the sum of the counts it reported, not of the ones AG-UI does.
+        assert reported["total_tokens"] == 132
+        assert reported["output_tokens"] == 7
+        assert reported["cached_input_tokens"] == 100
+        _expect_cache_write(reported, 20)
+
+    @pytest.mark.parametrize("class_name", ["OpenAIModel", "GeminiModel"])
+    def test_providers_whose_input_already_includes_the_cache_pass_through(
+        self, class_name
+    ):
+        inclusive = {
+            "inputTokens": 105,
+            "outputTokens": 7,
+            "totalTokens": 112,
+            "cacheReadInputTokens": 100,
+        }
+
+        reported = _record(inclusive, _stand_in(class_name))
+
+        assert reported["input_tokens"] == 105
+        assert reported["total_tokens"] == 112
+        assert reported["cached_input_tokens"] == 100
+
+    def test_an_unlabelled_entry_is_left_alone(self):
+        """Nothing says which way an unknown class counts, so nothing is changed."""
+        reported = _record(self.BESIDE_INPUT, _stand_in("SomebodysModel"))
+
+        assert reported["input_tokens"] == 5
+        assert reported["total_tokens"] == 12
+        _expect_cache_write(reported, 20)
+
+    def test_an_sdk_that_cannot_spell_the_cache_write_field_gets_it_dropped(
+        self, monkeypatch
+    ):
+        """Not emitted as an extra: the Python name is not the wire key.
+
+        The fold into ``input_tokens`` still happens, since it reads the raw
+        Strands count and the inclusive input is right either way.
+        """
+        monkeypatch.setattr(agent_module, "_SDK_CARRIES_CACHE_WRITE", False)
+
+        reported = _record(self.BESIDE_INPUT, _stand_in("AnthropicModel"))
+
+        assert "cache_write_input_tokens" not in reported
+        assert reported["input_tokens"] == 125
+        assert reported["total_tokens"] == 132
+        assert reported["cached_input_tokens"] == 100
+
+    def test_a_write_only_cache_report_on_such_an_sdk_is_still_usage_when_anything_else_survives(
+        self, monkeypatch
+    ):
+        monkeypatch.setattr(agent_module, "_SDK_CARRIES_CACHE_WRITE", False)
+        entries: list = []
+
+        _record_metadata_usage(
+            entries,
+            {"metadata": {"usage": {"cacheWriteInputTokens": 20}}},
+            _stand_in("OpenAIModel"),
+        )
+
+        # The one count reported cannot be carried, so there is no usage.
+        assert entries == []
+
+    def test_a_beside_input_provider_without_cache_counts_is_unchanged(self):
+        reported = _record(
+            {"inputTokens": 5, "outputTokens": 7, "totalTokens": 12},
+            _stand_in("AnthropicModel"),
+        )
+
+        assert reported == {
+            "provider": "anthropic",
+            "model": "m",
+            "input_tokens": 5,
+            "output_tokens": 7,
+            "total_tokens": 12,
+        }
+
+    def test_an_adjusted_input_that_leaves_the_wire_range_is_dropped_with_its_total(
+        self,
+    ):
+        reported = _record(
+            {
+                "inputTokens": _MAX_TOKEN_COUNT,
+                "outputTokens": 1,
+                "totalTokens": 1,
+                "cacheReadInputTokens": 1,
+            },
+            _stand_in("AnthropicModel"),
+        )
+
+        assert reported == {
+            "provider": "anthropic",
+            "model": "m",
+            "output_tokens": 1,
+            "cached_input_tokens": 1,
+        }
 
 
 # ---------------------------------------------------------------------------
