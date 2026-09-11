@@ -760,7 +760,7 @@ export const aguiTransformer = (): StreamTransformer<{
           // copilotkitMiddleware "intercept then restore" dip where the
           // assistant message briefly loses its tool calls.
           if (!isRootNamespace(event.params.namespace)) break;
-          cacheState(event.params.data);
+          cacheState(event.params.data as State);
           break;
         }
 

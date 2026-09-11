@@ -45,13 +45,16 @@ async function getHandler(integrationId: string) {
   // injectA2UITool) in agents.ts via STRANDS_A2UI_INJECT_AGENTS, while
   // `a2ui_fixed_schema` wires its OWN backend tools and must NOT get
   // `generate_a2ui` injected alongside them.
-  // LangGraph + Mastra rely on the runtime forwarding `injectA2UITool`: their
-  // demos wire NO A2UI tool and the adapter/bridge auto-injects `generate_a2ui`
-  // when it sees the flag (Mastra via @ag-ui/mastra planA2UIInjection in the
-  // bridge). Strands/ADK apply their OWN per-agent middleware instead.
+  // LangGraph + Mastra + MAF-python rely on the runtime forwarding
+  // `injectA2UITool`: their demos wire NO A2UI tool and the adapter/bridge
+  // auto-injects `generate_a2ui` when it sees the flag (Mastra via
+  // @ag-ui/mastra planA2UIInjection in the bridge; MAF-python via the adapter's
+  // plan_a2ui_injection, server-side). Strands/ADK apply their OWN per-agent
+  // middleware instead.
   const injectsA2UITool =
     integrationId.includes("langgraph") ||
-    integrationId === "mastra-agent-local";
+    integrationId === "mastra-agent-local" ||
+    integrationId === "microsoft-agent-framework-python";
 
   // Agents whose A2UI rendering the runtime auto-applies A2UIMiddleware for.
   // Inject-whitelisted agents (ADK_A2UI_INJECT_AGENTS / STRANDS_A2UI_INJECT_AGENTS)
@@ -70,7 +73,8 @@ async function getHandler(integrationId: string) {
       : integrationId === "aws-strands" ||
           integrationId === "aws-strands-typescript"
         ? STRANDS_A2UI_INJECT_AGENTS
-        : integrationId === "crewai"
+        : integrationId === "crewai" ||
+            integrationId === "crewai-conversational-flows"
           ? CREWAI_A2UI_INJECT_AGENTS
           : [];
   const a2uiAgents = allA2UIAgents.filter(
@@ -107,7 +111,8 @@ export async function POST(request: NextRequest, context: RouteParams) {
   if (!handler) {
     return new Response("Integration not found", { status: 404 });
   }
-  const distinctId = request.headers.get("x-posthog-distinct-id") || "anonymous";
+  const distinctId =
+    request.headers.get("x-posthog-distinct-id") || "anonymous";
   const posthog = getPostHogClient();
   posthog?.capture({
     distinctId,

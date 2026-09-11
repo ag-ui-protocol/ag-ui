@@ -1,10 +1,6 @@
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using AGUI.Abstractions;
 using Microsoft.Extensions.AI;
 
@@ -15,6 +11,9 @@ namespace AGUI.Server;
 /// </summary>
 public static class ChatResponseUpdateAGUIExtensions
 {
+    private const string StreamingErrorCode = "StreamingError";
+    private const string StreamingErrorMessage = "An error occurred while streaming the agent response.";
+
     private static readonly JsonElement AGUIToolApprovalSchema =
         JsonDocument.Parse("""
             {
@@ -47,12 +46,13 @@ public static class ChatResponseUpdateAGUIExtensions
 
         return AGUIServerInstrumentation.ActivitySource.HasListeners()
             ? InstrumentedAsync(updates, context, cancellationToken)
-            : CoreAsync(updates, context, cancellationToken);
+            : HandleErrorsAsync(updates, context, cancellationToken);
     }
 
     private const string RunOutcomeSuccess = "success";
     private const string RunOutcomeInterrupt = "interrupt";
     private const string RunOutcomeError = "error";
+    private const string RunOutcomeCanceled = "canceled";
 
     private static async IAsyncEnumerable<BaseEvent> InstrumentedAsync(
         IAsyncEnumerable<ChatResponseUpdate> updates,
@@ -79,29 +79,62 @@ public static class ChatResponseUpdateAGUIExtensions
 
         var eventCount = 0;
         var outcome = RunOutcomeSuccess;
+        var terminalEventEmitted = false;
+        var usageTracker = new TokenUsageTracker();
 
-        var enumerator = CoreAsync(updates, context, cancellationToken).GetAsyncEnumerator(cancellationToken);
+        var enumerator = CoreAsync(updates, context, usageTracker, cancellationToken).GetAsyncEnumerator(cancellationToken);
         try
         {
             while (true)
             {
-                BaseEvent current;
+                bool hasNext = false;
+                Exception? error = null;
                 try
                 {
-                    if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
+                    if (!terminalEventEmitted)
                     {
-                        break;
+                        cancellationToken.ThrowIfCancellationRequested();
                     }
 
-                    current = enumerator.Current;
+                    hasNext = await enumerator.MoveNextAsync().ConfigureAwait(false);
+                    if (!terminalEventEmitted)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                    }
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    if (!terminalEventEmitted)
+                    {
+                        outcome = RunOutcomeCanceled;
+                    }
+
+                    throw;
                 }
                 catch (Exception ex)
                 {
-                    RecordError(activity, ex, eventCount);
-                    throw;
+                    error = ex;
                 }
 
+                if (error is not null)
+                {
+                    outcome = RunOutcomeError;
+                    eventCount++;
+                    terminalEventEmitted = true;
+                    RecordError(activity, error, eventCount);
+                    yield return CreateStreamingError(usageTracker.Build());
+                    yield break;
+                }
+
+                if (!hasNext)
+                {
+                    break;
+                }
+
+                var current = enumerator.Current;
+
                 eventCount++;
+                terminalEventEmitted = current is RunFinishedEvent or RunErrorEvent;
                 outcome = current switch
                 {
                     RunFinishedEvent { Outcome: RunFinishedInterruptOutcome } => RunOutcomeInterrupt,
@@ -116,11 +149,16 @@ public static class ChatResponseUpdateAGUIExtensions
         {
             await enumerator.DisposeAsync().ConfigureAwait(false);
 
-            if (activity is not null && activity.Status != ActivityStatusCode.Error)
+            if (activity is not null)
             {
+                if (!terminalEventEmitted && cancellationToken.IsCancellationRequested)
+                {
+                    outcome = RunOutcomeCanceled;
+                }
+
                 activity.SetTag("agui.run.outcome", outcome);
                 activity.SetTag("agui.events.count", eventCount);
-                if (outcome == RunOutcomeError)
+                if (outcome == RunOutcomeError && activity.Status != ActivityStatusCode.Error)
                 {
                     activity.SetStatus(ActivityStatusCode.Error);
                 }
@@ -141,9 +179,67 @@ public static class ChatResponseUpdateAGUIExtensions
         activity.SetStatus(ActivityStatusCode.Error, exception.Message);
     }
 
+    private static async IAsyncEnumerable<BaseEvent> HandleErrorsAsync(
+        IAsyncEnumerable<ChatResponseUpdate> updates,
+        ChatRequestContext context,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var usageTracker = new TokenUsageTracker();
+        var enumerator = CoreAsync(updates, context, usageTracker, cancellationToken).GetAsyncEnumerator(cancellationToken);
+        try
+        {
+            while (true)
+            {
+                bool hasNext = false;
+                Exception? error = null;
+                try
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    hasNext = await enumerator.MoveNextAsync().ConfigureAwait(false);
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    error = ex;
+                }
+
+                if (error is not null)
+                {
+                    yield return CreateStreamingError(usageTracker.Build());
+                    yield break;
+                }
+
+                if (!hasNext)
+                {
+                    yield break;
+                }
+
+                yield return enumerator.Current;
+            }
+        }
+        finally
+        {
+            await enumerator.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    private static RunErrorEvent CreateStreamingError(IList<TokenUsage>? usage) =>
+        // Keep exception details server-side; the wire error is stable and sanitized.
+        new()
+        {
+            Code = StreamingErrorCode,
+            Message = StreamingErrorMessage,
+            Usage = usage,
+        };
+
     private static async IAsyncEnumerable<BaseEvent> CoreAsync(
         IAsyncEnumerable<ChatResponseUpdate> updates,
         ChatRequestContext context,
+        TokenUsageTracker usageTracker,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var threadId = context.Input.ThreadId;
@@ -152,6 +248,9 @@ public static class ChatResponseUpdateAGUIExtensions
         var jsonSerializerOptions = context.JsonSerializerOptions;
         var isContinuation = context.IsContinuation;
         var clientToolNames = context.ClientToolNames;
+        var preExistingToolCalls = isContinuation
+            ? GetMostRecentToolCalls(context.Messages)
+            : null;
 
         bool runStartedEmitted = false;
         bool runFinishedEmitted = false;
@@ -166,6 +265,17 @@ public static class ChatResponseUpdateAGUIExtensions
         // generic input interrupts (from InterruptRequestContent).
         List<AGUIInterrupt>? pendingInterrupts = null;
 
+        // Progressive tool-call argument streaming. MEAI coalesces tool-call arguments and
+        // only attaches the typed FunctionCallContent once a call is complete, so without a
+        // registered fragment extractor the wire carries one atomic TOOL_CALL_ARGS per call.
+        // When an extractor is registered, surface the per-chunk fragments as incremental
+        // TOOL_CALL_ARGS events and suppress the duplicate atomic emission. Two views of the
+        // open calls: by provider index (for later fragments + the end-of-stream sweep) and
+        // by call id (for an O(1) close when the coalesced FunctionCallContent arrives).
+        bool streamToolArgs = options.TryGetToolCallArgumentExtractor(out var extractToolArgFragments);
+        Dictionary<int, string> rawToolCallIdsByIndex = streamToolArgs ? new() : null!;
+        Dictionary<string, int> rawToolCallIndexById = streamToolArgs ? new(StringComparer.Ordinal) : null!;
+
         await foreach (var chatResponse in updates.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             // Check if RawRepresentation contains an AG-UI event - emit it directly.
@@ -177,6 +287,10 @@ public static class ChatResponseUpdateAGUIExtensions
                 }
                 else if (rawEvent is RunFinishedEvent)
                 {
+                    // The caller supplied the terminal event, so it passes through
+                    // verbatim — including its Usage, which we do not overwrite.
+                    // Any usage accumulated from UsageContent is therefore theirs to
+                    // set; we never mutate a caller-owned event.
                     runFinishedEmitted = true;
                 }
                 else if (!runStartedEmitted)
@@ -186,6 +300,11 @@ public static class ChatResponseUpdateAGUIExtensions
                 }
 
                 yield return rawEvent;
+                if (rawEvent is RunErrorEvent)
+                {
+                    yield break;
+                }
+
                 continue;
             }
 
@@ -198,6 +317,68 @@ public static class ChatResponseUpdateAGUIExtensions
 
             // Serialize the raw ChatResponseUpdate once for attaching to emitted events
             var raw = JsonSerializer.SerializeToElement(chatResponse, jsonSerializerOptions.GetTypeInfo(typeof(ChatResponseUpdate)));
+
+            // Surface provider-native streamed tool-call argument fragments incrementally.
+            if (streamToolArgs && extractToolArgFragments(chatResponse) is { } fragments)
+            {
+                foreach (var fragment in fragments)
+                {
+                    var haveIndex = rawToolCallIdsByIndex.TryGetValue(fragment.Index, out var rawToolCallId);
+
+                    // A new first fragment (only first fragments carry the function name) that
+                    // reuses an index still held by a prior, never-coalesced call means the prior
+                    // call at that index ended without its typed FunctionCallContent — e.g. a
+                    // mid-stream provider error on a retried sub-agent turn, where providers
+                    // restart tool-call indexes at 0 (and may even reuse the same id). Close the
+                    // stale call so the next call's fragments are not misattributed to it (and its
+                    // later coalesced FunctionCallContent no longer double-emits).
+                    if (haveIndex && !string.IsNullOrEmpty(fragment.FunctionName))
+                    {
+                        yield return ToolCallEndEvent.Create(rawToolCallId!, raw);
+                        rawToolCallIndexById.Remove(rawToolCallId!);
+                        rawToolCallIdsByIndex.Remove(fragment.Index);
+                        haveIndex = false;
+                    }
+
+                    if (!haveIndex)
+                    {
+                        // The first fragment of a call carries its id and function name;
+                        // later fragments only carry the index plus an arguments delta.
+                        if (string.IsNullOrEmpty(fragment.ToolCallId) || string.IsNullOrEmpty(fragment.FunctionName))
+                        {
+                            continue;
+                        }
+
+                        rawToolCallId = fragment.ToolCallId;
+
+                        if (preExistingToolCalls?.ContainsKey(rawToolCallId) is true)
+                        {
+                            continue;
+                        }
+
+                        rawToolCallIdsByIndex[fragment.Index] = rawToolCallId;
+                        rawToolCallIndexById[rawToolCallId] = fragment.Index;
+
+                        // Close any open text/reasoning block before emitting tool events.
+                        if (messageTracker.Close(raw) is { } fragTextEndEvt)
+                        {
+                            yield return fragTextEndEvt;
+                        }
+
+                        foreach (var reasonCloseEvt in reasoningTracker.Close())
+                        {
+                            yield return reasonCloseEvt;
+                        }
+
+                        yield return ToolCallStartEvent.Create(rawToolCallId, fragment.FunctionName!, chatResponse.MessageId, raw);
+                    }
+
+                    if (fragment.ArgumentsDelta.Length > 0)
+                    {
+                        yield return ToolCallArgsEvent.Create(rawToolCallId!, fragment.ArgumentsDelta, raw);
+                    }
+                }
+            }
 
             string? effectiveMessageId = null;
             foreach (var content in chatResponse.Contents)
@@ -256,8 +437,55 @@ public static class ChatResponseUpdateAGUIExtensions
 
                     case FunctionCallContent fcc:
 
-                        // On continuation, suppress re-emitted FCCs (client already has them from turn 1)
-                        if (isContinuation)
+                        // This call's arguments already streamed incrementally from the raw
+                        // fragments above — only the closing event remains. Release the
+                        // per-call state: providers restart tool-call indexes at 0 each turn,
+                        // so a stale entry would absorb a later round's fragments into this
+                        // finished call.
+                        if (streamToolArgs && rawToolCallIndexById.Remove(fcc.CallId, out var closedIndex))
+                        {
+                            rawToolCallIdsByIndex.Remove(closedIndex);
+
+                            if (messageTracker.Close(raw) is { } rawFccEndEvt)
+                            {
+                                yield return rawFccEndEvt;
+                            }
+
+                            foreach (var reasonRawCloseEvt in reasoningTracker.Close())
+                            {
+                                yield return reasonRawCloseEvt;
+                            }
+
+                            yield return ToolCallEndEvent.Create(fcc.CallId, raw);
+
+                            // Emit the mapped call events the atomic path emits, so a registered
+                            // MapCall mapper is not silently skipped for a tool whose arguments
+                            // streamed as fragments.
+                            if (options.TryGetCallMapping(fcc.Name, out var rawCallMapper))
+                            {
+                                foreach (var mappedEvt in rawCallMapper(fcc))
+                                {
+                                    yield return mappedEvt;
+                                    if (mappedEvt is RunErrorEvent)
+                                    {
+                                        yield break;
+                                    }
+                                }
+                            }
+
+                            // Preserve result-mapping correlation the atomic path performs.
+                            if (options.TryGetResultMapping(fcc.Name, out _))
+                            {
+                                callIdToToolName ??= new Dictionary<string, string>(StringComparer.Ordinal);
+                                callIdToToolName[fcc.CallId] = fcc.Name;
+                            }
+
+                            break;
+                        }
+
+                        // On continuation, suppress only calls already present in the request
+                        // history. New calls produced by the resumed model must still stream.
+                        if (preExistingToolCalls?.ContainsKey(fcc.CallId) is true)
                         {
                             // Still track for correlating FRCs later
                             callIdToToolName ??= new Dictionary<string, string>(StringComparer.Ordinal);
@@ -289,6 +517,10 @@ public static class ChatResponseUpdateAGUIExtensions
                             foreach (var mappedEvt in callMapper(fcc))
                             {
                                 yield return mappedEvt;
+                                if (mappedEvt is RunErrorEvent)
+                                {
+                                    yield break;
+                                }
                             }
                         }
 
@@ -301,10 +533,15 @@ public static class ChatResponseUpdateAGUIExtensions
                         break;
 
                     case FunctionResultContent frc:
+                        string? frcToolName = null;
+                        if (callIdToToolName?.TryGetValue(frc.CallId, out frcToolName) is not true)
+                        {
+                            preExistingToolCalls?.TryGetValue(frc.CallId, out frcToolName);
+                        }
+
                         // On continuation, suppress client tool results (client already has them)
                         if (isContinuation
-                            && callIdToToolName is not null
-                            && callIdToToolName.TryGetValue(frc.CallId, out var frcToolName)
+                            && frcToolName is not null
                             && clientToolNames.Contains(frcToolName))
                         {
                             break;
@@ -326,6 +563,10 @@ public static class ChatResponseUpdateAGUIExtensions
                             foreach (var mappedEvt in resultMapper(frc))
                             {
                                 yield return mappedEvt;
+                                if (mappedEvt is RunErrorEvent)
+                                {
+                                    yield break;
+                                }
                             }
                         }
                         break;
@@ -405,6 +646,12 @@ public static class ChatResponseUpdateAGUIExtensions
                         });
                         break;
 
+                    case UsageContent usageContent:
+                        // Usage is metadata, not stream content — accumulate it for the
+                        // terminal run event rather than emitting an event of its own.
+                        usageTracker.Add(usageContent.Details, options.UsageProvider, chatResponse.ModelId);
+                        break;
+
                     default:
                         // Check registered interrupt mappers for custom interrupt-producing content types
                         var interrupt = options.InvokeInterruptMappers(content);
@@ -440,11 +687,29 @@ public static class ChatResponseUpdateAGUIExtensions
                                     }
 
                                     yield return evt;
+                                    if (evt is RunErrorEvent)
+                                    {
+                                        yield break;
+                                    }
                                 }
                             }
                         }
                         break;
                 }
+            }
+        }
+
+        // Close any raw-streamed tool call whose coalesced FunctionCallContent never arrived
+        // (stream cut short, or a pipeline that does not re-emit the typed content). Without
+        // this sweep the wire carries Start/Args with no End and consumers stay "in progress".
+        // Sweep in provider index order so the close events are deterministic.
+        if (streamToolArgs && rawToolCallIdsByIndex.Count > 0)
+        {
+            var openIndexes = new List<int>(rawToolCallIdsByIndex.Keys);
+            openIndexes.Sort();
+            foreach (var openIndex in openIndexes)
+            {
+                yield return ToolCallEndEvent.Create(rawToolCallIdsByIndex[openIndex]);
             }
         }
 
@@ -469,15 +734,55 @@ public static class ChatResponseUpdateAGUIExtensions
         if (pendingInterrupts is { Count: > 0 })
         {
             yield return RunFinishedEvent.Create(threadId, runId,
-                new RunFinishedInterruptOutcome { Interrupts = pendingInterrupts });
+                new RunFinishedInterruptOutcome { Interrupts = pendingInterrupts },
+                usageTracker.Build());
             runFinishedEmitted = true;
         }
 
         // Emit RunFinishedEvent automatically if not explicitly provided
         if (!runFinishedEmitted)
         {
-            yield return RunFinishedEvent.Create(threadId, runId, new RunFinishedSuccessOutcome());
+            yield return RunFinishedEvent.Create(threadId, runId, new RunFinishedSuccessOutcome(),
+                usageTracker.Build());
         }
+    }
+
+    private static Dictionary<string, string> GetMostRecentToolCalls(List<ChatMessage> messages)
+    {
+        // Continuation reconstruction may append user approval responses after the source
+        // assistant batch. Only that most recent assistant tool-call batch can be replayed.
+        for (var i = messages.Count - 1; i >= 0; i--)
+        {
+            var message = messages[i];
+            if (message.Role != ChatRole.Assistant)
+            {
+                continue;
+            }
+
+            Dictionary<string, string>? toolCalls = null;
+            foreach (var content in message.Contents)
+            {
+                FunctionCallContent? call = content switch
+                {
+                    FunctionCallContent functionCall => functionCall,
+                    ToolApprovalRequestContent { ToolCall: FunctionCallContent functionCall } => functionCall,
+                    _ => null,
+                };
+
+                if (call is not null)
+                {
+                    toolCalls ??= new Dictionary<string, string>(StringComparer.Ordinal);
+                    toolCalls[call.CallId] = call.Name;
+                }
+            }
+
+            if (toolCalls is not null)
+            {
+                return toolCalls;
+            }
+        }
+
+        return new Dictionary<string, string>(StringComparer.Ordinal);
     }
 
     private static string? SerializeResultContent(FunctionResultContent frc, JsonSerializerOptions options)

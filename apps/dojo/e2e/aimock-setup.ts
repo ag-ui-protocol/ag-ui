@@ -2,8 +2,20 @@ import { LLMock, type ChatMessage } from "@copilotkit/aimock";
 import * as path from "node:path";
 import { registerA2UIRecoveryFixtures } from "./a2ui-recovery-fixtures";
 import { registerA2UIADKFixtures } from "./a2ui-adk-fixtures";
-import { registerA2UICrewAIFixtures } from "./a2ui-crewai-fixtures";
+import {
+  crewAIA2UIAnswersToolResultTurn,
+  registerA2UICrewAIFixtures,
+} from "./a2ui-crewai-fixtures";
 import { registerInterruptCrewAIFixtures } from "./interrupt-crewai-fixtures";
+import { registerMultiAgentStrandsFixtures } from "./multi-agent-strands-fixtures";
+import {
+  registerStrandsFixtures,
+  strandsAnswersToolResultTurn,
+} from "./strands-fixtures";
+import {
+  deepagentsSubagentsAnswersToolResultTurn,
+  registerDeepagentsSubagentsFixtures,
+} from "./deepagents-subagents-fixtures";
 
 // Configurable so parallel worktrees / runs don't collide on one aimock port.
 const MOCK_PORT = Number(process.env.AIMOCK_PORT) || 5555;
@@ -34,7 +46,7 @@ export async function setupLLMock(): Promise<void> {
   // the generic loadFixtureFile below).
   registerA2UIRecoveryFixtures(mockServer);
 
-  // CrewAI A2UI fixtures (gpt-4o, scoped to CrewAI-unique prompts so
+  // CrewAI A2UI fixtures (openai/gpt-5.4, scoped to CrewAI-unique prompts so
   // they never intercept the LangGraph/ADK demos). Predicate fixtures, before
   // the generic loader.
   registerA2UICrewAIFixtures(mockServer);
@@ -43,6 +55,15 @@ export async function setupLLMock(): Promise<void> {
   // pause and the confirm call after the resume. Scoped to this flow's own
   // system prompts, before the generic loader.
   registerInterruptCrewAIFixtures(mockServer);
+
+  // AWS Strands multi-agent graph: one fixture per node, each scoped to that
+  // node's own system prompt. Predicate fixtures, before the generic loader.
+  registerMultiAgentStrandsFixtures(mockServer);
+  registerDeepagentsSubagentsFixtures(mockServer);
+
+  // AWS Strands interrupt + predictive-state fixtures. Scoped to those demos'
+  // own system prompts, before the generic loader.
+  registerStrandsFixtures(mockServer);
 
   // Extract text from message content — handles both string and array-of-parts
   // (Strands SDK sends content as [{type: "text", text: "..."}])
@@ -609,6 +630,74 @@ export async function setupLLMock(): Promise<void> {
           arguments: JSON.stringify({ user_message: "Plan a team offsite" }),
         },
       ],
+    },
+  });
+
+  // Backend tool rendering (backend_tool_rendering flow): a "Weather Assistant"
+  // crew agent calls the backend get_weather tool, then produces a final text
+  // summary. Both the tool-call turn and the final-answer turn hit aimock.
+  // Matched on the unique "Weather Assistant" role so they beat the crew_chat
+  // "Your personal goal is" catch-all below (first registered wins). The
+  // final-answer turn is also excluded from the generic tool-result catch-all
+  // further down so this dedicated summary wins over it.
+  // Require the CrewAI agent's backstory phrase alongside the role. sysIncludes is
+  // case-insensitive and other frameworks (e.g. Mastra) also ship a "weather
+  // assistant" backend-tool demo, so matching the role alone would hijack their
+  // requests; this phrase is unique to the CrewAI agent's backstory.
+  const isWeatherAgentCall = (req: { messages: ChatMessage[] }) =>
+    sysIncludes(req.messages, "Weather Assistant") &&
+    sysIncludes(req.messages, "look up the weather before you answer");
+  const isWeatherAgentToolResultTurn = (req: { messages: ChatMessage[] }) =>
+    isWeatherAgentCall(req) && hasToolResult(req);
+  const weatherToolCall = (location: string, id: string) => ({
+    toolCalls: [
+      { name: "get_weather", arguments: JSON.stringify({ location }), id },
+    ],
+  });
+
+  // Tool-call turn, San Francisco.
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => {
+        const lastUser = req.messages.filter((m) => m.role === "user").pop();
+        return (
+          isWeatherAgentCall(req) &&
+          !hasToolResult(req) &&
+          textOf(lastUser?.content).includes("San Francisco")
+        );
+      },
+    },
+    response: weatherToolCall("San Francisco", "call_get_weather_sf"),
+  });
+
+  // Tool-call turn, New York.
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => {
+        const lastUser = req.messages.filter((m) => m.role === "user").pop();
+        return (
+          isWeatherAgentCall(req) &&
+          !hasToolResult(req) &&
+          textOf(lastUser?.content).includes("New York")
+        );
+      },
+    },
+    response: weatherToolCall("New York", "call_get_weather_ny"),
+  });
+
+  // Final-answer turn: after get_weather returns, the crew agent completes with a
+  // short weather summary. One fixture serves both cities (the card data rides
+  // the tool result); the city is echoed from the user request for a natural reply.
+  mockServer.addFixture({
+    match: { predicate: (req) => isWeatherAgentToolResultTurn(req) },
+    response: (req) => {
+      const lastUser = req.messages.filter((m) => m.role === "user").pop();
+      const city = textOf(lastUser?.content).includes("New York")
+        ? "New York"
+        : "San Francisco";
+      return {
+        content: `${city}: sunny and 20°C, 50% humidity, wind around 10, feels like 25°C.`,
+      };
     },
   });
 
@@ -1415,6 +1504,44 @@ export async function setupLLMock(): Promise<void> {
 
   // Load all fixture JSON files from the fixtures directory.
   // HITL fixtures loaded above take priority (first-match-wins).
+  // Multimodal image verification: only answer with the marker the LlamaIndex
+  // multimodal spec asserts on when the LLM request actually carries an
+  // image_url content part. The generic agentic-chat-multimodal.json fixture
+  // below matches on prompt text alone, so a client that silently flattens
+  // parts lists to text (e.g. a maxVersion<=0.0.39 compat pin) would still
+  // get an image-themed reply and the e2e would pass vacuously. With this
+  // predicate, a stripped image falls through to the JSON fixture, whose
+  // response lacks the marker, and the spec fails — making the test
+  // meaningful. Registered before loadFixtureDir (first match wins).
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => {
+        const lastUser = req.messages.filter((m) => m.role === "user").pop();
+        const hasImagePart = req.messages.some(
+          (m) =>
+            Array.isArray(m.content) &&
+            m.content.some(
+              (p) =>
+                (p as { type?: string }).type === "image_url" &&
+                !!(p as { image_url?: { url?: string } }).image_url?.url,
+            ),
+        );
+        // "llamaindex-mm-check" scopes this fixture to the LlamaIndex suite:
+        // other integrations' multimodal specs send similar prompts with
+        // image_url parts, and without a unique token this fixture would
+        // intercept them (first match wins).
+        return (
+          hasImagePart &&
+          textOf(lastUser?.content).toLowerCase().includes("llamaindex-mm-check")
+        );
+      },
+    },
+    response: {
+      content:
+        "multimodal-image-verified: I received the uploaded image and can see its visual content. Happy to describe specific details.",
+    },
+  });
+
   mockServer.loadFixtureDir(FIXTURES_DIR);
 
   // Programmatic catch-all: when the last message is a tool result,
@@ -1440,6 +1567,26 @@ export async function setupLLMock(): Promise<void> {
         // dedicated fixture keyed on the crew output string.
         if (hasCrewRunTool(req) && textOf(last.content) === CREW_RUN_OUTPUT)
           return false;
+        // Don't match the backend weather tool-result turn; a dedicated
+        // Weather-Assistant summary fixture answers it.
+        if (isWeatherAgentToolResultTurn(req)) return false;
+        // Don't match a CrewAI A2UI turn that a2ui-crewai-fixtures.ts answers
+        // itself (a surface-action click, or the closing turn over a render
+        // result): a generic acknowledgment would mask the reply under test.
+        // The predicate is scoped to that file's own prompts, so every other
+        // integration's A2UI demo keeps this fallback.
+        if (crewAIA2UIAnswersToolResultTurn(req)) return false;
+        // Don't match the AWS Strands interrupt / predictive-state tool-result
+        // turns: a generic acknowledgment would mask whether the booking was
+        // confirmed or refused, and whether the document edit was re-proposed.
+        // Scoped to those demos' own system prompts.
+        if (strandsAnswersToolResultTurn(req)) return false;
+        // Don't match the deepagents_subagents demo's own tool-result turns:
+        // the subagent's post-approval answer and the supervisor's relay. A
+        // generic acknowledgment here would make the approve and reject
+        // branches read identically, which is exactly what that spec asserts
+        // differs. Scoped to this demo's system prompts.
+        if (deepagentsSubagentsAnswersToolResultTurn(req)) return false;
         return true;
       },
     },

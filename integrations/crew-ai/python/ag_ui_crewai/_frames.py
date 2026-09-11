@@ -68,6 +68,7 @@ the streaming LLM text / tool-call channel); see the wire-shape note in
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import uuid
@@ -107,7 +108,10 @@ from ag_ui.core.events import (
     ReasoningEncryptedValueEvent,
 )
 
-from .sdk import litellm_messages_to_ag_ui_messages
+from .sdk import (
+    litellm_messages_to_ag_ui_messages,
+    consume_node_exit_snapshot_suppression,
+)
 from .mcp import is_mcp_event, translate_mcp_event
 from ._hitl import HITLOptions, build_agui_interrupt, build_interrupt_tail
 from ._reasoning import is_thinking_event, thinking_event_text
@@ -410,6 +414,114 @@ class EmissionShaper:
         return [*self.flush(), event]
 
 
+def _snapshot_state(state: Any) -> dict:
+    """Deep-copied point-in-time snapshot dict from a flow's state.
+
+    Mirrors ``endpoint._flow_state_snapshot``: a later method mutating the live
+    ``flow.state`` must not corrupt an already-emitted STATE_SNAPSHOT. A plain
+    dict is deep-copied (crewai returns the LIVE ``state`` dict, not a copy);
+    ``model_dump`` already yields a fresh dict for a Pydantic ``FlowState``.
+    """
+    if isinstance(state, dict):
+        return copy.deepcopy(state)
+    if hasattr(state, "model_dump"):
+        return state.model_dump()
+    return {}
+
+
+# Attributes the driver's scoped sink stamps on a parked method event to carry
+# EMIT-TIME context: the state snapshot and the snapshot-suppression decision.
+# Underscore-prefixed to avoid clashing with crewai event fields.
+_EMIT_STATE_ATTR = "_ag_ui_emit_state_snapshot"
+_EMIT_SUPPRESS_ATTR = "_ag_ui_emit_suppress"
+# Sentinels distinguishing "not stamped" from a stamped ``{}`` / ``False``.
+_NO_EMIT_STATE = object()
+_NO_EMIT_SUPPRESS = object()
+
+
+# Warn-once latch for the emit-time state-capture failure (see
+# ``_warn_capture_state_loss``): the first loss is a WARNING because it silently
+# reverts to the stale live-state read, then DEBUG so a sustained failure does
+# not spam.
+_CAPTURE_STATE_WARNED = False
+
+
+def _warn_capture_state_loss(event_type: Any, exc_name: str) -> None:
+    """Warn (once) that emit-time state capture failed and staleness may return."""
+    global _CAPTURE_STATE_WARNED  # pylint: disable=global-statement
+    message = (
+        "ag-ui-crewai could not capture emit-time state for a %r event (%s); the "
+        "per-method STATE/MESSAGES snapshot falls back to the live flow state at "
+        "translate time, which a later method may have already mutated"
+    )
+    if _CAPTURE_STATE_WARNED:
+        _LOGGER.debug(message, event_type, exc_name)
+        return
+    _CAPTURE_STATE_WARNED = True
+    _LOGGER.warning(message, event_type, exc_name)
+
+
+def capture_method_emit_context(event: Any, flow: Any) -> None:
+    """Stamp EMIT-TIME state + suppression context onto a parked method event.
+
+    Called by the frame driver's scoped sink, which runs synchronously at emit
+    time on the flow's OWN timeline (the point the legacy bus listener did its
+    work). The frame driver, by contrast, translates parked events on a LATER
+    loop turn, by which time the flow has run ahead, so reading either the state
+    OR the suppression flags at translate time sees a LATER method's mutations.
+    Capturing both here, at emit time, is what matches legacy:
+
+    * method_execution_finished: stamp a deep-copied state snapshot (for the
+      MESSAGES/STATE snapshots) AND consume the per-node suppression flags,
+      stamping whether THIS method withheld its node-exit snapshot.
+    * method_execution_failed: stamp only the consumed suppression decision (a
+      failed method emits no state snapshot).
+
+    Consuming here (rather than at translate time) resets the shared flow flags
+    on the flow timeline, so two consecutive emit_state/predict_state methods
+    each capture their OWN decision instead of racing over one shared flag.
+    Every other event type no-ops. Best-effort per stamp; the state-capture
+    failure warns once (it silently reintroduces the very staleness the capture
+    prevents), the rest log at DEBUG.
+    """
+    event_type = getattr(event, "type", None)
+    if event_type not in (_METHOD_FINISHED, _METHOD_FAILED):
+        return
+    if event_type == _METHOD_FINISHED:
+        try:
+            object.__setattr__(
+                event, _EMIT_STATE_ATTR, _snapshot_state(getattr(flow, "state", {}))
+            )
+        except Exception as exc:  # noqa: BLE001 - best-effort; live fallback
+            _warn_capture_state_loss(event_type, type(exc).__name__)
+    # Consume the flags into a local FIRST (its reset is the side effect that
+    # makes consecutive methods independent), THEN stamp. object.__setattr__ on
+    # these crewai events does not realistically fail; if it ever did, the
+    # decision is already consumed, so the live fallback would re-read the reset
+    # flags as False (one transient node-exit snapshot). Hence the failure is
+    # logged rather than silently swallowed.
+    try:
+        decision = consume_node_exit_snapshot_suppression(flow)
+    except Exception as exc:  # noqa: BLE001 - best-effort; live fallback
+        _LOGGER.debug(
+            "ag-ui-crewai could not consume emit-time suppression for a %r event "
+            "(%s); falling back to consuming at translate time",
+            event_type,
+            type(exc).__name__,
+        )
+        return
+    try:
+        object.__setattr__(event, _EMIT_SUPPRESS_ATTR, decision)
+    except Exception as exc:  # noqa: BLE001 - best-effort
+        _LOGGER.debug(
+            "ag-ui-crewai could not stamp emit-time suppression for a %r event "
+            "(%s); the consumed decision is lost and the live fallback re-reads "
+            "the (now reset) flags",
+            event_type,
+            type(exc).__name__,
+        )
+
+
 class StreamFrameTranslator:
     """Stateless-ish mapper from a RAW crewai/bridge event to AG-UI events.
 
@@ -431,6 +543,7 @@ class StreamFrameTranslator:
         thread_id: str,
         run_id: str,
         state_provider: Callable[[], Any],
+        flow_provider: Callable[[], Any] | None = None,
         emission_shape: str = "triples",
         hitl_options: HITLOptions | None = None,
         resumed: bool = False,
@@ -443,6 +556,13 @@ class StreamFrameTranslator:
         self._thread_id = thread_id
         self._run_id = run_id
         self._state_provider = state_provider
+        # Reads/resets the sdk snapshot-suppression flags stashed on the flow.
+        # Absent -> suppression inert (node-exit snapshot always emits), the
+        # translator's pre-suppression behavior.
+        self._flow_provider = flow_provider
+        # Set when the last method withheld its node-exit snapshot; the terminal
+        # flow_finished/finalize snapshot is owed only then.
+        self._last_node_suppressed = False
         self.emission_shape = emission_shape
         # The streamed text / tool-call triple lifecycle, shared with the legacy
         # driver via ``reshape`` so the shape never depends on the transport.
@@ -612,6 +732,9 @@ class StreamFrameTranslator:
             events: list[Any] = [
                 step_finished_event(b) for b in self._tracker.drain_all()
             ]
+            # Terminal STATE_SNAPSHOT (before RUN_FINISHED) delivers the
+            # authoritative flow.state a suppressed last method withheld.
+            events.extend(self._terminal_state_snapshot_events())
             events.append(
                 RunFinishedEvent(
                     type=EventType.RUN_FINISHED,
@@ -626,7 +749,18 @@ class StreamFrameTranslator:
             return self._method_finished_events(event)
         if event_type == _METHOD_FAILED:
             # Close the method boundary so a failed flow method (the flow may
-            # continue) does not leave a dangling STEP_STARTED. No snapshots.
+            # continue) does not leave a dangling STEP_STARTED. Emits no
+            # MESSAGES/STATE snapshot (a failed method has no clean state).
+            #
+            # Record the emit-time suppression decision so a node that
+            # emit_state'd then failed while the flow continues still gets its
+            # authoritative flow.state redelivered by the terminal snapshot. OR
+            # (not overwrite) so a failed node, which emits NO snapshot of its
+            # own, can only ADD an owed terminal, never clear one a prior
+            # suppressed node already owed.
+            self._last_node_suppressed = (
+                self._consume_suppress(event) or self._last_node_suppressed
+            )
             method_name = _coerce_name(getattr(event, "method_name", None), "method")
             return self._close_boundaries(
                 self._tracker.exit(FLOW_METHOD, method_name), _METHOD_FAILED
@@ -768,13 +902,17 @@ class StreamFrameTranslator:
         return []
 
     def close_pending(self) -> list[Any]:
-        """Close open streamed message / tool sequences before a terminal RUN_ERROR.
+        """Flush what is owed before a terminal RUN_ERROR.
 
-        Open STEPS / reasoning are left to the error path\'s own handling; this only
-        balances the streamed triples the shaper owns so a RUN_ERROR mid-message does
-        not leave an unterminated START on the wire.
+        Balances the streamed triples the shaper owns (so a RUN_ERROR mid-message
+        does not leave an unterminated START on the wire) AND redelivers the
+        terminal STATE_SNAPSHOT a suppressed method withheld. An errored run must
+        still hand the client the authoritative flow.state, not strand it on an
+        ephemeral emit_state payload; the pre-suppression path emitted the
+        node-exit snapshot from live state here, so dropping it is a regression.
+        Open STEPS / reasoning are left to the error path's own handling.
         """
-        return self._shaper.flush()
+        return [*self._shaper.flush(), *self._terminal_state_snapshot_events()]
 
     def finalize(self) -> list[Any]:
         """Belt-and-braces terminal.
@@ -801,6 +939,11 @@ class StreamFrameTranslator:
         events: list[Any] = list(self._shaper.flush())
         events.extend(self.flush_open_reasoning())
         events.extend(step_finished_event(b) for b in self._tracker.drain_all())
+        # Terminal STATE_SNAPSHOT before the terminator (interrupt tail or
+        # RUN_FINISHED): redelivers the authoritative flow.state a suppressed
+        # last method withheld, including a method that emit_state'd then paused
+        # for async HITL without a method_execution_finished.
+        events.extend(self._terminal_state_snapshot_events())
         interrupt = self._build_interrupt()
         if interrupt is not None:
             return events + build_interrupt_tail(
@@ -1030,23 +1173,67 @@ class StreamFrameTranslator:
             events.append(step_finished_event(boundary, source_event_type=tag))
         return events
 
-    def _method_finished_events(self, event: Any) -> list[Any]:
-        """MESSAGES_SNAPSHOT + STATE_SNAPSHOT + balanced STEP_FINISHED(s).
+    def _flow(self) -> Any:
+        """The live flow copy, or ``None`` when no ``flow_provider`` was given."""
+        return self._flow_provider() if self._flow_provider is not None else None
 
-        Reads the LIVE flow state via ``state_provider`` — exactly what the
-        legacy listener did with ``source.state`` — rather than the serialized
-        ``event`` payload, so message / state shapes round-trip through the same
-        ``litellm_messages_to_ag_ui_messages`` path as before. The two snapshots
-        are emitted VERBATIM (unchanged behaviour).
+    def _consume_suppress(self, event: Any) -> bool:
+        """The emit-time node-exit snapshot-suppression decision for ``event``.
+
+        Prefers the decision the sink consumed + stamped at emit time (so it is
+        THIS method's, not a later method's, flag). Falls back to consuming the
+        live flow flags when nothing was stamped (the direct-``translate`` unit
+        tests, which set the flags synchronously right before the method event,
+        or a partial sink install).
+        """
+        stamped = getattr(event, _EMIT_SUPPRESS_ATTR, _NO_EMIT_SUPPRESS)
+        if stamped is _NO_EMIT_SUPPRESS:
+            return consume_node_exit_snapshot_suppression(self._flow())
+        return bool(stamped)
+
+    def _terminal_state_snapshot_events(self) -> list[Any]:
+        """Terminal STATE_SNAPSHOT of live ``flow.state`` when a suppressed node
+        withheld its own, else ``[]``.
+
+        Consults BOTH the per-method flag (set at method finish or fail) AND the
+        live flow flags. The latter catches the ``finalize`` path where a method
+        emitted state then paused (async HITL) and never emitted
+        ``method_execution_finished``, so its suppression is otherwise invisible.
+        Clears both so it cannot double-emit.
+        """
+        owed = consume_node_exit_snapshot_suppression(self._flow()) or self._last_node_suppressed
+        self._last_node_suppressed = False
+        if not owed:
+            return []
+        return [
+            StateSnapshotEvent(
+                type=EventType.STATE_SNAPSHOT,
+                snapshot=_snapshot_state(self._state_provider()),
+            )
+        ]
+
+    def _method_finished_events(self, event: Any) -> list[Any]:
+        """MESSAGES_SNAPSHOT + (suppressible) STATE_SNAPSHOT + STEP_FINISHED(s).
+
+        State AND the suppression decision come from the EMIT-TIME context the
+        driver's sink stamped (``capture_method_emit_context``): the frame driver
+        translates on a LATER loop turn, after the flow has run ahead, so reading
+        either from the live flow here would let a later method's mutations / flag
+        flips rewrite this method's snapshot or steal its suppression. Both fall
+        back to the live flow when nothing was stamped (direct-``translate`` unit
+        tests or a partial sink). When suppressed (a manual or predicted
+        ``copilotkit_emit_state`` already gave the client authoritative state),
+        the node-exit STATE_SNAPSHOT is withheld and the terminal one is owed.
 
         The final close is balanced: ``exit(FLOW_METHOD, method_name)`` returns
         the matched method boundary plus any Crew / Agent boundaries left
         dangling by a lost completion frame (deepest-first). If no boundary
-        matches (the tracker never saw this method's start), fall back to a flat
-        ``StepFinishedEvent(step_name=method_name)`` rather than dropping the
-        close entirely.
+        matches, fall back to a flat close (or, on a RESUMED run, open the step
+        first so the client is not sent a STEP_FINISHED it never saw started).
         """
-        state = self._state_provider()
+        stamped_state = getattr(event, _EMIT_STATE_ATTR, _NO_EMIT_STATE)
+        stamped = stamped_state is not _NO_EMIT_STATE
+        state = stamped_state if stamped else self._state_provider()
         raw_messages = (
             getattr(state, "messages", None)
             or (state.get("messages") if isinstance(state, dict) else None)
@@ -1056,13 +1243,6 @@ class StreamFrameTranslator:
         # Backend tool calls live only on the wire; merge them in so they
         # survive this authoritative snapshot (see ``_backend_tool_messages``).
         messages = self._merge_backend_tool_messages(messages)
-        snapshot = (
-            state
-            if isinstance(state, dict)
-            else state.model_dump()
-            if hasattr(state, "model_dump")
-            else {}
-        )
         method_name = _coerce_name(getattr(event, "method_name", None), "method")
         closed = self._tracker.exit(FLOW_METHOD, method_name)
         events: list[Any] = []
@@ -1073,16 +1253,25 @@ class StreamFrameTranslator:
             events.append(
                 StepStartedEvent(type=EventType.STEP_STARTED, step_name=method_name)
             )
-        events += [
+        events.append(
             MessagesSnapshotEvent(
                 type=EventType.MESSAGES_SNAPSHOT,
                 messages=messages,
-            ),
-            StateSnapshotEvent(
-                type=EventType.STATE_SNAPSHOT,
-                snapshot=snapshot,
-            ),
-        ]
+            )
+        )
+        # Emit-time suppression decision: when suppressed, withhold the node-exit
+        # STATE_SNAPSHOT and record the terminal one is owed; else emit the state.
+        # A stamped state is already a private deep copy (isolated from later
+        # mutation); only the live-fallback read needs a fresh copy.
+        suppress = self._consume_suppress(event)
+        self._last_node_suppressed = suppress
+        if not suppress:
+            events.append(
+                StateSnapshotEvent(
+                    type=EventType.STATE_SNAPSHOT,
+                    snapshot=state if stamped else _snapshot_state(state),
+                )
+            )
         if closed:
             events.extend(self._close_boundaries(closed, _METHOD_FINISHED))
         else:

@@ -2,9 +2,8 @@ name: Test Release Scripts
 
 # Runs node:test unit tests under scripts/release/. Lives outside Nx because
 # scripts/release/ is not an Nx project (pnpm test = nx run-many -t test skips
-# it), which is why the existing generate-ai-release-notes.test.ts has been
-# local-only since it landed. Sibling lint-release-workflows.yml covers
-# actionlint + shellcheck; this file covers the TypeScript tests.
+# it). Sibling lint-release-workflows.yml covers actionlint + shellcheck; this
+# file covers the TypeScript tests.
 
 on:
   push:
@@ -20,6 +19,13 @@ on:
 permissions:
   contents: read
 
+# Pinned Python build toolchain — see .github/python-toolchain.env. Kept in step
+# across workflows by the python-toolchain-pins job in lint-release-workflows.yml,
+# which fails if either literal here disagrees with that file.
+env:
+  UV_VERSION: "0.12.1"
+  PYTHON_VERSION: "3.12"
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -30,14 +36,22 @@ jobs:
           persist-credentials: false
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           version: "10.33.4"
 
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version-file: ".node-version"
+
+      # The uv.lock re-lock test skips itself when uv is absent, so without this
+      # it would pass vacuously here and give false confidence.
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
         # --ignore-scripts: we only need tsx + node; skip postinstall builds.

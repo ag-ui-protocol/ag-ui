@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from crewai.flow.flow import Flow, start
+from crewai.flow.flow import Flow, start, listen, FlowState
 
 from ag_ui.core import EventType
 from ag_ui_crewai import endpoint as ep
@@ -1287,6 +1287,231 @@ async def test_frame_path_progressive_state_snapshot_is_verbatim():
     assert snap["timestamp"] == "user-ts", snap
 
 
+# -- method-finished state emission: emit-time snapshot + snapshot-suppression --
+
+
+class _MultiMethodMutatingState(FlowState):
+    messages: list = []
+    steps: list = []
+
+
+class _MultiMethodFlow(Flow[_MultiMethodMutatingState]):
+    """Two methods mutating shared state: m1 appends 'one', m2 (listening on m1)
+    appends 'two'. Single-method and crew_chat flows never exercise this, which
+    is why the retroactive-rewrite defect shipped with a green e2e."""
+
+    @start()
+    async def m1(self):
+        self.state.steps.append("one")
+        return "go"
+
+    @listen(m1)
+    async def m2(self, _):
+        self.state.steps.append("two")
+
+
+@requires_stream_frames
+async def test_frame_path_per_method_snapshot_is_emit_time_not_retroactive():
+    """A per-method STATE_SNAPSHOT must reflect state as of THAT
+    method's finish (emit time), not a LATER method's mutation read from the live
+    flow at translate time. The frame driver runs behind the flow, so pre-fix m1's
+    snapshot was retroactively rewritten to ['one','two'] once m2 had appended."""
+    from ag_ui.encoder import EventEncoder
+
+    encoded = await _collect(ep._run_flow_frame_stream(
+        flow_copy=_MultiMethodFlow(),
+        encoder=EventEncoder(),
+        input_data=_make_run_input(),
+        inputs={},
+        timeout=30.0,
+    ))
+    payloads = _decode_sse(encoded)
+    steps_snaps = [
+        p["snapshot"].get("steps")
+        for p in payloads
+        if p["type"] == "STATE_SNAPSHOT" and isinstance(p.get("snapshot"), dict)
+    ]
+    assert steps_snaps == [["one"], ["one", "two"]], steps_snaps
+
+
+class _SingleEmitStateFlow(FlowState):
+    messages: list = []
+    v: str = ""
+
+
+class _EmitThenMutateFlow(Flow[_SingleEmitStateFlow]):
+    """One method that emit_states an ephemeral progressive value, then writes a
+    different authoritative value to flow.state before returning."""
+
+    @start()
+    async def chat(self):
+        self.state.v = "real"
+        await copilotkit_emit_state({"v": "emit"})
+
+
+@requires_stream_frames
+async def test_frame_path_emit_state_suppresses_node_exit_snapshot():
+    """A manual copilotkit_emit_state must survive method-finish
+    on the StreamFrame path: the node-exit STATE_SNAPSHOT is suppressed (else it
+    clobbers the progressive emit with the rebuilt flow.state), and the
+    authoritative state is redelivered as a terminal snapshot before RUN_FINISHED."""
+    from ag_ui.encoder import EventEncoder
+
+    encoded = await _collect(ep._run_flow_frame_stream(
+        flow_copy=_EmitThenMutateFlow(),
+        encoder=EventEncoder(),
+        input_data=_make_run_input(),
+        inputs={},
+        timeout=30.0,
+    ))
+    payloads = _decode_sse(encoded)
+    types = [p["type"] for p in payloads]
+    # Node-exit STATE_SNAPSHOT suppressed: none between MESSAGES and STEP_FINISHED.
+    mi = types.index("MESSAGES_SNAPSHOT")
+    sf = types.index("STEP_FINISHED", mi)
+    assert "STATE_SNAPSHOT" not in types[mi:sf], types
+    # Terminal snapshot after the step close, before RUN_FINISHED.
+    assert types[-2:] == ["STATE_SNAPSHOT", "RUN_FINISHED"], types
+    vs = [p["snapshot"].get("v") for p in payloads if p["type"] == "STATE_SNAPSHOT"]
+    # The progressive emit survives; the terminal carries the authoritative state.
+    assert vs == ["emit", "real"], vs
+
+
+class _TwoEmitStateFlow(Flow[_MultiMethodMutatingState]):
+    """Two sequential methods that each emit_state: the case that exercises the
+    per-method suppression DECISION (not just state content) captured at emit time."""
+
+    @start()
+    async def m1(self):
+        self.state.steps.append("a")
+        await copilotkit_emit_state({"steps": ["a-emit"]})
+        return "go"
+
+    @listen(m1)
+    async def m2(self, _):
+        self.state.steps.append("b")
+        await copilotkit_emit_state({"steps": ["b-emit"]})
+
+
+@requires_stream_frames
+async def test_frame_path_two_emit_state_methods_each_suppress_node_exit():
+    """Suppression half: with two consecutive emit_state
+    methods, EACH method's node-exit STATE_SNAPSHOT must be suppressed so neither
+    progressive emit is clobbered. Pre-fix the suppression flag was consumed at
+    translate time from one shared flow flag, so m1's finish stole m2's flag and
+    m2's node-exit rebuild clobbered 'b-emit'."""
+    from ag_ui.encoder import EventEncoder
+
+    encoded = await _collect(ep._run_flow_frame_stream(
+        flow_copy=_TwoEmitStateFlow(),
+        encoder=EventEncoder(),
+        input_data=_make_run_input(),
+        inputs={},
+        timeout=30.0,
+    ))
+    payloads = _decode_sse(encoded)
+    types = [p["type"] for p in payloads]
+    assert types == [
+        "RUN_STARTED",
+        "STEP_STARTED", "STATE_SNAPSHOT", "MESSAGES_SNAPSHOT", "STEP_FINISHED",
+        "STEP_STARTED", "STATE_SNAPSHOT", "MESSAGES_SNAPSHOT", "STEP_FINISHED",
+        "STATE_SNAPSHOT",
+        "RUN_FINISHED",
+    ], types
+    steps = [p["snapshot"].get("steps") for p in payloads if p["type"] == "STATE_SNAPSHOT"]
+    assert steps == [["a-emit"], ["b-emit"], ["a", "b"]], steps
+
+
+class _PredictStateFlow(Flow[_SingleEmitStateFlow]):
+    """Declares copilotkit_predict_state then streams the predicted tool, so the
+    node-exit snapshot is suppressed via the PREDICTED-tool limb (not emit_state)."""
+
+    @start()
+    async def chat(self):
+        from ag_ui_crewai.sdk import copilotkit_predict_state, _mark_predicted_tool_streamed
+        self.state.v = "real"
+        await copilotkit_predict_state(
+            {"v": {"tool_name": "set_v", "tool_argument": "v"}}
+        )
+        # The predicted tool actually streams (as copilotkit_stream would flag it).
+        f = flow_context.get(None)
+        _mark_predicted_tool_streamed(f, "set_v")
+
+
+@requires_stream_frames
+async def test_frame_path_predicted_tool_suppresses_node_exit_snapshot():
+    """Predicted-tool limb: a streamed predicted
+    copilotkit_predict_state tool must suppress the node-exit STATE_SNAPSHOT on
+    the StreamFrame path, exactly like copilotkit_emit_state; the authoritative
+    state is redelivered as the terminal snapshot."""
+    from ag_ui.encoder import EventEncoder
+
+    encoded = await _collect(ep._run_flow_frame_stream(
+        flow_copy=_PredictStateFlow(),
+        encoder=EventEncoder(),
+        input_data=_make_run_input(),
+        inputs={},
+        timeout=30.0,
+    ))
+    payloads = _decode_sse(encoded)
+    types = [p["type"] for p in payloads]
+    # Node-exit STATE_SNAPSHOT suppressed: none between MESSAGES and STEP_FINISHED.
+    mi = types.index("MESSAGES_SNAPSHOT")
+    sf = types.index("STEP_FINISHED", mi)
+    assert "STATE_SNAPSHOT" not in types[mi:sf], types
+    # Terminal snapshot carries the authoritative state before RUN_FINISHED.
+    assert types[-2:] == ["STATE_SNAPSHOT", "RUN_FINISHED"], types
+    terminal = payloads[-2]["snapshot"]
+    assert terminal.get("v") == "real", terminal
+
+
+class _EmitThenRaiseFlow(Flow[_SingleEmitStateFlow]):
+    """A method that emit_states an ephemeral value, writes the authoritative
+    value to flow.state, then raises, so the run terminates with RUN_ERROR."""
+
+    @start()
+    async def chat(self):
+        self.state.v = "authoritative"
+        await copilotkit_emit_state({"v": "emit"})
+        raise RuntimeError("boom")
+
+
+@requires_stream_frames
+async def test_frame_path_run_error_still_flushes_owed_terminal_snapshot():
+    """An errored run whose method suppressed its node-exit snapshot (via
+    emit_state) must STILL redeliver the authoritative flow.state as a terminal
+    snapshot before RUN_ERROR, not strand the client on the ephemeral emit.
+    Also exercises the method_execution_failed sink capture end-to-end."""
+    from ag_ui.encoder import EventEncoder
+
+    encoded = await _collect(ep._run_flow_frame_stream(
+        flow_copy=_EmitThenRaiseFlow(),
+        encoder=EventEncoder(),
+        input_data=_make_run_input(),
+        inputs={},
+        timeout=30.0,
+    ))
+    payloads = _decode_sse(encoded)
+    types = [p["type"] for p in payloads]
+    assert types[-1] == "RUN_ERROR", types
+    assert types[-2] == "STATE_SNAPSHOT", types
+    vs = [p["snapshot"].get("v") for p in payloads if p["type"] == "STATE_SNAPSHOT"]
+    # Progressive emit survives; the terminal (pre-RUN_ERROR) carries flow.state.
+    assert vs == ["emit", "authoritative"], vs
+
+
+def test_snapshot_state_deep_copies_plain_dict():
+    """_snapshot_state must deep-copy a plain-dict state (crewai returns the LIVE
+    dict): mutating the source after snapshotting must not change the snapshot."""
+    from ag_ui_crewai._frames import _snapshot_state
+
+    src = {"a": [1, 2], "b": {"c": 3}}
+    snap = _snapshot_state(src)
+    src["a"].append(99)
+    src["b"]["c"] = "CHANGED"
+    assert snap == {"a": [1, 2], "b": {"c": 3}}
+
+
 class _NestedNoLeakFlow(Flow):
     """One outer method that performs a nested (crew-shaped) kickoff off the
     loop. The nested flow emits its OWN method_execution_* / flow_* frames onto
@@ -1614,6 +1839,54 @@ async def test_frame_path_aclose_called_on_early_generator_close():
     assert "RUN_STARTED" in first
     await gen.aclose()
     assert session.aclosed is True
+
+
+# -- a stream that carries nothing translatable still terminates the run --
+
+async def test_frame_path_stream_with_no_translatable_frame_still_terminates():
+    """A run the driver never opened off a frame still owes the client a terminal.
+
+    The belt-and-braces terminal only emits once the run is open, so a stream that
+    exhausts without a single translatable frame used to leave the response a 200
+    with an empty body: no RUN_STARTED, no RUN_FINISHED, no RUN_ERROR, and a client
+    whose run therefore never ends. Nothing here failed, which is what made it
+    survive: the flow ran, the request succeeded, and only the client was left
+    waiting.
+    """
+    from ag_ui.encoder import EventEncoder
+
+    class _UntranslatableSession:
+        """One frame, shaped enough for the driver's ``frame.id`` lookup.
+
+        No raw event was ever published under that id, so the driver drops it the
+        way it drops a nested-flow or crewai-internal frame, and the stream
+        exhausts having produced nothing.
+        """
+
+        async def __aiter__(self):
+            yield SimpleNamespace(id="frame-0")
+
+        async def aclose(self):
+            pass
+
+    class _UntranslatableFlow:
+        state = {}
+
+        def astream(self, inputs=None):
+            return _UntranslatableSession()
+
+    payloads = _decode_sse(await _collect(ep._run_flow_frame_stream(
+        flow_copy=_UntranslatableFlow(),
+        encoder=EventEncoder(),
+        input_data=_make_run_input(),
+        inputs={},
+        timeout=30.0,
+    )))
+
+    assert [p["type"] for p in payloads] == ["RUN_STARTED", "RUN_FINISHED"]
+    # Correlated, like every other event the driver emits: an uncorrelated
+    # terminal ends no run on the client either.
+    assert {(p["threadId"], p["runId"]) for p in payloads} == {("t-1", "r-1")}
 
 
 # -- raising astream is mapped to RUN_ERROR + no contextvar leak --

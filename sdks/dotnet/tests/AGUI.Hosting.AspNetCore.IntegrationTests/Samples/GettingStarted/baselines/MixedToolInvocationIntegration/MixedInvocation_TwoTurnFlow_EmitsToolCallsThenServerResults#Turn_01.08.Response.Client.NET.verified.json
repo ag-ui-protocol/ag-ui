@@ -25,6 +25,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "call_Id_1",
     "rawRepresentation": {
       "type": "TOOL_CALL_END",
       "toolCallId": "call_Id_1",
@@ -77,6 +78,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "call_Id_2",
     "rawRepresentation": {
       "type": "TOOL_CALL_END",
       "toolCallId": "call_Id_2",
@@ -126,7 +128,48 @@
       "runId": "run_Id_1",
       "outcome": {
         "type": "success"
+      },
+      "usage": [
+        {
+          "inputTokens": 184,
+          "outputTokens": 116,
+          "totalTokens": 300,
+          "reasoningTokens": 64,
+          "cachedInputTokens": 0
+        }
+      ]
+    }
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "usage",
+        "details": {
+          "inputTokenCount": 184,
+          "outputTokenCount": 116,
+          "cachedInputTokenCount": 0,
+          "reasoningTokenCount": 64
+        }
       }
+    ],
+    "responseId": "run_Id_1",
+    "rawRepresentation": {
+      "type": "RUN_FINISHED",
+      "threadId": "thread_Id_1",
+      "runId": "run_Id_1",
+      "outcome": {
+        "type": "success"
+      },
+      "usage": [
+        {
+          "inputTokens": 184,
+          "outputTokens": 116,
+          "totalTokens": 300,
+          "reasoningTokens": 64,
+          "cachedInputTokens": 0
+        }
+      ]
     }
   },
   {
@@ -164,6 +207,7 @@
       }
     ],
     "responseId": "run_Id_2",
+    "messageId": "call_Id_2",
     "rawRepresentation": {
       "type": "TOOL_CALL_RESULT",
       "messageId": "call_Id_2",
@@ -1392,7 +1436,48 @@
       "runId": "run_Id_2",
       "outcome": {
         "type": "success"
+      },
+      "usage": [
+        {
+          "inputTokens": 243,
+          "outputTokens": 172,
+          "totalTokens": 415,
+          "reasoningTokens": 128,
+          "cachedInputTokens": 0
+        }
+      ]
+    }
+  },
+  {
+    "role": "assistant",
+    "contents": [
+      {
+        "$type": "usage",
+        "details": {
+          "inputTokenCount": 243,
+          "outputTokenCount": 172,
+          "cachedInputTokenCount": 0,
+          "reasoningTokenCount": 128
+        }
       }
+    ],
+    "responseId": "run_Id_2",
+    "rawRepresentation": {
+      "type": "RUN_FINISHED",
+      "threadId": "thread_Id_1",
+      "runId": "run_Id_2",
+      "outcome": {
+        "type": "success"
+      },
+      "usage": [
+        {
+          "inputTokens": 243,
+          "outputTokens": 172,
+          "totalTokens": 415,
+          "reasoningTokens": 128,
+          "cachedInputTokens": 0
+        }
+      ]
     }
   }
 ]

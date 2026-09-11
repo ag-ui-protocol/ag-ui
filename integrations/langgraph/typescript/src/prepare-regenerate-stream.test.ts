@@ -4,8 +4,8 @@
  *
  *  - v3 server (probe non-404): regen acquires the cached per-thread
  *    ThreadStream and calls
- *    `streamingThread.submitRun({ ..., forkFrom: { checkpointId } })`
- *    against the shared raw-channel subscription. `forkFrom.checkpointId`
+ *    `streamingThread.submitRun({ ..., forkFrom: checkpointId })`
+ *    against the shared raw-channel subscription. `forkFrom`
  *    points at the forked checkpoint produced by `threads.updateState`.
  *
  *  - legacy server (probe 404): regen uses
@@ -172,7 +172,7 @@ const regenInput = {
 // ---------------------------------------------------------------------------
 
 describe("prepareRegenerateStream — transformer parity", () => {
-  it("v3 server → routes regen through cached ThreadStream's submitRun with forkFrom.checkpointId", async () => {
+  it("v3 server → routes regen through cached ThreadStream's submitRun with forkFrom", async () => {
     const { config, client, threadStreams } = makeConfig({ v3: true });
     const agent = makeAgent(config);
 
@@ -188,9 +188,34 @@ describe("prepareRegenerateStream — transformer parity", () => {
     const payload = entry!.thread.submitRun.mock.calls[0][0];
     expect(payload).toEqual(
       expect.objectContaining({
-        forkFrom: expect.objectContaining({ checkpointId: "ck-fork" }),
+        forkFrom: "ck-fork",
       }),
     );
+  });
+
+  it.each([true, false])("preserves context and forwarded headers when regenerating (v3=%s)", async (v3) => {
+    const { config, client, threadStreams } = makeConfig({ v3 });
+    client.assistants.getSchemas.mockResolvedValue({
+      input_schema: { properties: { messages: {} } },
+      output_schema: { properties: { messages: {} } },
+      config_schema: { properties: {} },
+      context_schema: { properties: { user_id: {} } },
+    });
+    const agent = makeAgent(config);
+    agent.assistant = await agent.getAssistant();
+    (agent as any).activeRun.schemaKeys = await agent.getSchemaKeys();
+    agent.headers = { "x-request-id": "regen-request" };
+    await agent.prepareRegenerateStream({
+      ...regenInput,
+      forwardedProps: { config: { configurable: { user_id: "user-1" } } },
+    } as any, ["events", "values"]);
+    const payload = v3
+      ? threadStreams.get("thread-1")!.thread.submitRun.mock.calls[0][0]
+      : client.runs.stream.mock.calls[0][2];
+    expect(payload.context).toEqual({ user_id: "user-1" });
+    expect(payload.config.configurable).toEqual({
+      copilotkit_forwarded_headers: { "x-request-id": "regen-request" },
+    });
   });
 
   it("v3 server → opens / reuses the same raw-channel subscription as prepareStream", async () => {
@@ -204,7 +229,7 @@ describe("prepareRegenerateStream — transformer parity", () => {
     // prepareStream uses. The v3 path subscribes to the raw protocol
     // channels (DEFAULT_STREAM_MODES), not the compile-time custom:agui.
     expect(entry!.thread.subscribe).toHaveBeenCalledTimes(1);
-    const subArg = entry!.thread.subscribe.mock.calls[0][0];
+    const subArg = entry!.thread.subscribe.mock.calls[0][0].channels;
     expect(Array.isArray(subArg)).toBe(true);
     expect(subArg).toContain("messages");
     expect(subArg).toContain("custom");

@@ -231,6 +231,22 @@ class TestLangchainMessagesToAgui(unittest.TestCase):
         assert result[0].role == "tool"
         assert result[0].content == "result"
         assert result[0].tool_call_id == "tc1"
+        # No error status carries no failure signal, so error stays unset.
+        assert result[0].error is None
+
+    def test_tool_message_error_status_maps_to_error(self):
+        # The reverse of #2263: a LangChain tool result with status "error" must set
+        # AG-UI's error so the failure survives the round trip. The value is a fixed
+        # sentinel -- the original text is not recoverable from the flag alone (#2305).
+        msg = ToolMessage(
+            id="t1",
+            content="Tool failed: invalid id",
+            tool_call_id="tc1",
+            status="error",
+        )
+        result = langchain_messages_to_agui([msg])
+        assert result[0].role == "tool"
+        assert result[0].error == "error"
 
     def test_multimodal_human_message(self):
         msg = HumanMessage(
@@ -263,6 +279,20 @@ class TestLangchainMessagesToAgui(unittest.TestCase):
         assert content[0].source.type == "data"
         assert content[0].source.mime_type == "image/jpeg"
         assert content[0].source.value == "abc123"
+
+    def test_multimodal_plain_string_entry_preserved(self):
+        msg = HumanMessage(
+            id="m3",
+            content=["hello", {"type": "text", "text": " world"}],
+        )
+        result = langchain_messages_to_agui([msg])
+        content = result[0].content
+        assert isinstance(content, list)
+        assert len(content) == 2
+        assert content[0].type == "text"
+        assert content[0].text == "hello"
+        assert content[1].type == "text"
+        assert content[1].text == " world"
 
 
 class TestRoundTrip(unittest.TestCase):

@@ -17,7 +17,7 @@ import type { LangGraphAgentConfig } from "./agent";
 
 function makeConfig(): LangGraphAgentConfig {
   return {
-    // Legacy `handleStreamEvents` path — see subgraph-streaming.test.ts
+    // Legacy `handleStreamEventsV2` path — see subgraph-streaming.test.ts
     // for the same opt-out rationale.
     deploymentUrl: "http://localhost:2024",
     graphId: "test-graph",
@@ -46,7 +46,7 @@ async function* makeStream(chunks: any[]) {
   }
 }
 
-/** Wrap a stream generator in the shape handleStreamEvents expects. */
+/** Wrap a stream generator in the shape handleStreamEventsV2 expects. */
 function makeStreamArg(chunks: any[], initialState: any = {}) {
   return {
     streamResponse: makeStream(chunks),

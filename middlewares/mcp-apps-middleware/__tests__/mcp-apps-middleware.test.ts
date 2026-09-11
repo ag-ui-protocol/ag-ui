@@ -485,7 +485,8 @@ describe("MCPAppsMiddleware", () => {
 
       expect(events.length).toBeGreaterThanOrEqual(2);
       expect(consoleErrorSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Failed to fetch tools from MCP server"),
+        "MCP tool discovery failed",
+        expect.objectContaining({ serverHash: expect.any(String) }),
         expect.any(Error),
       );
 
@@ -561,7 +562,10 @@ describe("MCPAppsMiddleware", () => {
       await collectEvents(middleware.run(createRunAgentInput(), agent));
 
       expect(mockHTTPTransportCalls).toHaveLength(1);
-      expect(mockHTTPTransportOpts[0]).toEqual({ requestInit: { headers } });
+      expect(mockHTTPTransportOpts[0]).toEqual({
+        requestInit: { headers, redirect: "error" },
+        fetch: expect.any(Function),
+      });
     });
 
     it("forwards configured headers to the SSE transport (#1862)", async () => {
@@ -581,10 +585,13 @@ describe("MCPAppsMiddleware", () => {
       await collectEvents(middleware.run(createRunAgentInput(), agent));
 
       expect(mockSSETransportCalls).toHaveLength(1);
-      expect(mockSSETransportOpts[0]).toEqual({ requestInit: { headers } });
+      expect(mockSSETransportOpts[0]).toEqual({
+        requestInit: { headers, redirect: "error" },
+        fetch: expect.any(Function),
+      });
     });
 
-    it("passes no transport options when no headers are configured", async () => {
+    it("retains redirect protection when no headers are configured", async () => {
       mockListTools.mockResolvedValue({ tools: [] });
 
       const middleware = new MCPAppsMiddleware({
@@ -598,16 +605,19 @@ describe("MCPAppsMiddleware", () => {
       await collectEvents(middleware.run(createRunAgentInput(), agent));
 
       expect(mockHTTPTransportCalls).toHaveLength(1);
-      expect(mockHTTPTransportOpts[0]).toBeUndefined();
+      expect(mockHTTPTransportOpts[0]).toEqual({
+        requestInit: { headers: undefined, redirect: "error" },
+        fetch: expect.any(Function),
+      });
     });
 
-    it("getServerHash distinguishes HTTP servers that differ only by headers (#1862)", () => {
+    it("getServerHash excludes HTTP credentials from the browser-visible reference", () => {
       const base = { type: "http" as const, url: "http://localhost:3000" };
       const withAuth = { ...base, headers: { Authorization: "Bearer a" } };
       const withOtherAuth = { ...base, headers: { Authorization: "Bearer b" } };
 
-      expect(getServerHash(base)).not.toBe(getServerHash(withAuth));
-      expect(getServerHash(withAuth)).not.toBe(getServerHash(withOtherAuth));
+      expect(getServerHash(base)).toBe(getServerHash(withAuth));
+      expect(getServerHash(withAuth)).toBe(getServerHash(withOtherAuth));
     });
 
     it("aggregates tools from multiple servers", async () => {
@@ -1554,8 +1564,8 @@ describe("MCPAppsMiddleware", () => {
       const finishedEvent = events.find(
         (e) => e.type === EventType.RUN_FINISHED,
       );
-      expect((finishedEvent as any).result.error).toContain(
-        "Connection refused",
+      expect((finishedEvent as any).result.error).toBe(
+        "Error: MCP request failed",
       );
     });
 
@@ -1650,7 +1660,7 @@ describe("MCPAppsMiddleware", () => {
       expect(getServerHash(config1)).not.toBe(getServerHash(config2));
     });
 
-    it("generates different serverHashes for SSE configs with different headers", () => {
+    it("excludes SSE headers from public serverHashes", () => {
       const config1: MCPClientConfig = {
         type: "sse",
         url: "http://localhost:3000",
@@ -1661,7 +1671,7 @@ describe("MCPAppsMiddleware", () => {
         url: "http://localhost:3000",
         headers: { Authorization: "token2" },
       };
-      expect(getServerHash(config1)).not.toBe(getServerHash(config2));
+      expect(getServerHash(config1)).toBe(getServerHash(config2));
     });
 
     it("includes serverHash in ACTIVITY_SNAPSHOT content", async () => {

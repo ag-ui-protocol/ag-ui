@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 import copy
+from typing import List
 from unittest.mock import MagicMock, patch
 
 import pytest
 from strands.agent.state import AgentState
+from strands.hooks.registry import HookRegistry
+from strands.models.model import Model
 from strands.session import SessionManager
 
-from ag_ui_strands.session_reconcile import AG_UI_WIRE_MAP_STATE_KEY
+from ag_ui_strands.session_reconcile import AG_UI_FRONTEND_CALL_IDS_STATE_KEY
 
 from ag_ui.core import (
     AssistantMessage,
+    Context,
     EventType,
     FunctionCall,
     RunAgentInput,
@@ -23,6 +27,12 @@ from ag_ui.core import (
 )
 from ag_ui_strands.agent import StrandsAgent
 from ag_ui_strands.config import StrandsAgentConfig
+from tests.hook_helpers import invoke_after_model_call, invoke_before_model_call
+from tests.provider_binding import (
+    SPLITTING_FORMATTERS,
+    assert_binds_cleanly,
+    bound_roles,
+)
 
 
 def _mock_session_manager() -> MagicMock:
@@ -63,7 +73,7 @@ async def _empty_async_gen():
     yield  # pragma: no cover — makes this an async generator
 
 
-def _make_base_agent(session_manager_provider=None) -> StrandsAgent:
+def _make_base_agent(session_manager_provider=None, **config_kwargs) -> StrandsAgent:
     """Create a StrandsAgent with a mocked underlying Strands agent."""
     mock_core = MagicMock()
     mock_core.model = MagicMock()
@@ -72,7 +82,9 @@ def _make_base_agent(session_manager_provider=None) -> StrandsAgent:
     mock_core.tool_registry.registry = {}
     mock_core.record_direct_tool_call = True
 
-    config = StrandsAgentConfig(session_manager_provider=session_manager_provider)
+    config = StrandsAgentConfig(
+        session_manager_provider=session_manager_provider, **config_kwargs
+    )
     return StrandsAgent(agent=mock_core, name="test_agent", config=config)
 
 
@@ -331,6 +343,17 @@ def _frontend_tool(name: str) -> Tool:
     return Tool(name=name, description=f"{name} tool", parameters={})
 
 
+def _assert_continuation_name_error(events: list, tool_call_ids: list) -> None:
+    """An unnameable continuation result ends the run on a structured error
+    naming the offending ids, and never on a success outcome."""
+    errors = [event for event in events if event.type == EventType.RUN_ERROR]
+    assert len(errors) == 1
+    assert errors[0].code == "CONTINUATION_TOOL_NAME_UNRESOLVED"
+    for tool_call_id in tool_call_ids:
+        assert tool_call_id in errors[0].message
+    assert not any(event.type == EventType.RUN_FINISHED for event in events)
+
+
 class TestFrontendToolContinuation:
     """Regression tests for the 'Hello' injection on delta-only frontend-tool
     continuation runs (PR #1761)."""
@@ -339,7 +362,11 @@ class TestFrontendToolContinuation:
     async def test_delta_only_continuation_does_not_inject_hello(self):
         """Session-manager path + delta-only trailing tool message + missing
         assistant tool_calls: ``stream_async`` must NOT receive ``"Hello"``,
-        and must not guess an arbitrary frontend tool when several exist."""
+        and must not guess an arbitrary frontend tool when several exist.
+
+        Both guarantees now hold in their strongest form: with no name
+        recoverable from anywhere, the run fails closed and the model is
+        never invoked at all, instead of being prompted with ``""``."""
         mock_session_manager = _mock_session_manager()
         provider = MagicMock(return_value=mock_session_manager)
         agent = _make_base_agent(session_manager_provider=provider)
@@ -352,14 +379,17 @@ class TestFrontendToolContinuation:
         instance = _MockSessionAgentWithHistory(mock_session_manager, messages=[])
         with patch("ag_ui_strands.agent.StrandsAgentCore") as MockCore:
             MockCore.return_value = instance
-            await _collect_events(agent, input_data)
+            events = await _collect_events(agent, input_data)
 
-        assert instance.stream_prompts == [""]
+        # The model is not prompted at all, which subsumes #1761's two
+        # guards; they are kept so the original regression stays visible.
+        assert instance.stream_prompts == []
         assert "Hello" not in instance.stream_prompts
         # No arbitrary frontend tool name leaked into the prompt.
         assert not any(
             "executed successfully" in (p or "") for p in instance.stream_prompts
         )
+        _assert_continuation_name_error(events, ["call-xyz"])
 
     @pytest.mark.asyncio
     async def test_delta_only_continuation_resolves_name_from_session_history(self):
@@ -402,6 +432,100 @@ class TestFrontendToolContinuation:
         assert "Hello" not in instance.stream_prompts
 
 
+    @pytest.mark.asyncio
+    async def test_delta_only_continuation_carries_the_client_result_text(self):
+        """A delta-only continuation omits the assistant message, so the tool
+        name comes from native session history alone. Missing it hands the
+        model an empty prompt and it re-fires the same tool (issue #2376), so
+        the client's answer must reach the prompt verbatim."""
+        mock_session_manager = _mock_session_manager()
+        provider = MagicMock(return_value=mock_session_manager)
+        agent = _make_base_agent(session_manager_provider=provider)
+
+        tools = [_frontend_tool("setBackground"), _frontend_tool("setForeground")]
+        input_data = RunAgentInput(
+            thread_id="thread-delta",
+            run_id="run-2",
+            state={},
+            messages=[
+                ToolMessage(
+                    id="t1",
+                    role="tool",
+                    content='{"approved": true}',
+                    tool_call_id="native-1",
+                ),
+            ],
+            tools=tools,
+            context=[],
+            forwarded_props={},
+        )
+
+        # Native history knows the call under the native id only.
+        session_history = [
+            {"role": "user", "content": [{"text": "make it blue"}]},
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "toolUse": {
+                            "toolUseId": "native-1",
+                            "name": "setBackground",
+                            "input": {"color": "blue"},
+                        }
+                    }
+                ],
+            },
+        ]
+        instance = _MockSessionAgentWithHistory(
+            mock_session_manager, messages=session_history
+        )
+        with patch("ag_ui_strands.agent.StrandsAgentCore") as MockCore:
+            MockCore.return_value = instance
+            await _collect_events(agent, input_data)
+
+        assert instance.stream_prompts == [
+            'setBackground returned: {"approved": true}'
+        ]
+
+    @pytest.mark.asyncio
+    async def test_delta_only_continuation_fails_closed_on_an_unknown_id(self):
+        """Naming is never a guess: an id the history does not hold is never
+        matched to some other recorded call. With no name there is no result
+        context to carry, so the run fails closed rather than calling the model
+        with ``""``; that empty prompt is the original trigger for re-firing
+        the same frontend tool every run (#2376)."""
+        mock_session_manager = _mock_session_manager()
+        provider = MagicMock(return_value=mock_session_manager)
+        agent = _make_base_agent(session_manager_provider=provider)
+
+        tools = [_frontend_tool("setBackground"), _frontend_tool("setForeground")]
+        input_data = _delta_continuation_input(tools)
+
+        session_history = [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "toolUse": {
+                            "toolUseId": "native-1",
+                            "name": "setBackground",
+                            "input": {},
+                        }
+                    }
+                ],
+            },
+        ]
+        instance = _MockSessionAgentWithHistory(
+            mock_session_manager, messages=session_history
+        )
+        with patch("ag_ui_strands.agent.StrandsAgentCore") as MockCore:
+            MockCore.return_value = instance
+            events = await _collect_events(agent, input_data)
+
+        assert instance.stream_prompts == []
+        _assert_continuation_name_error(events, ["call-xyz"])
+
+
 class _MockSessionAgentReal:
     """Session-manager-backed mock exposing a real ``session_manager`` (public
     attribute, like ``StrandsAgentCore``) plus an ``agent_id`` and native
@@ -416,9 +540,14 @@ class _MockSessionAgentReal:
         self.tool_registry.registry = {}
         self.state = AgentState()
         self.stream_prompts = []
+        self.model_messages = []
+        self.hooks = HookRegistry()
 
     async def stream_async(self, prompt):
         self.stream_prompts.append(prompt)
+        invoke_before_model_call(self.hooks, self)
+        self.model_messages.append(copy.deepcopy(self.messages))
+        invoke_after_model_call(self.hooks, self)
         return
         yield  # pragma: no cover
 
@@ -460,14 +589,14 @@ def _store_placeholder(native_id, text="Forwarded to client"):
     }
 
 
-def _payload_assistant(wire_id, name, args="{}"):
+def _payload_assistant(tool_call_id, name, args="{}"):
     return AssistantMessage(
-        id="a-" + wire_id,
+        id="a-" + tool_call_id,
         role="assistant",
         content="",
         tool_calls=[
             ToolCall(
-                id=wire_id,
+                id=tool_call_id,
                 type="function",
                 function=FunctionCall(name=name, arguments=args),
             )
@@ -475,8 +604,14 @@ def _payload_assistant(wire_id, name, args="{}"):
     )
 
 
-def _payload_tool(wire_id, content):
-    return ToolMessage(id="t-" + wire_id, role="tool", content=content, tool_call_id=wire_id)
+def _payload_tool(tool_call_id, content, error=None):
+    return ToolMessage(
+        id="t-" + tool_call_id,
+        role="tool",
+        content=content,
+        tool_call_id=tool_call_id,
+        error=error,
+    )
 
 
 def _result_content(sm, agent_id, index):
@@ -484,36 +619,53 @@ def _result_content(sm, agent_id, index):
     return persisted[index].message["content"]
 
 
-async def _run_session_continuation(sm, agent_id, messages, tools, wire_map, store):
+async def _run_session_continuation(
+    sm,
+    agent_id,
+    messages,
+    tools,
+    client_call_ids,
+    store,
+    config_kwargs=None,
+    context=None,
+):
     """Drive run() for a continuation and return the mock agent instance."""
     _seed_session(sm, agent_id, store)
     provider = MagicMock(return_value=sm)
-    agent = _make_base_agent(session_manager_provider=provider)
+    agent = _make_base_agent(
+        session_manager_provider=provider, **(config_kwargs or {})
+    )
     input_data = RunAgentInput(
         thread_id=sm.session_id,
         run_id="run-2",
         state={},
         messages=messages,
         tools=tools,
-        context=[],
+        context=context or [],
         forwarded_props={},
     )
     instance = _MockSessionAgentReal(
         sm, agent_id=agent_id, messages=copy.deepcopy(store)
     )
-    # The wire->native map lives on the agent's session state (durable), set on
-    # the prior emission run. Seed it directly to simulate that.
-    if wire_map:
-        instance.state.set(AG_UI_WIRE_MAP_STATE_KEY, dict(wire_map))
+    # The frontend-call id store lives on the agent's session state (durable),
+    # written on the prior emission run. Seed it directly to simulate that.
+    if client_call_ids:
+        # A dict is the shape releases before the identifier unification wrote.
+        instance.state.set(
+            AG_UI_FRONTEND_CALL_IDS_STATE_KEY,
+            dict(client_call_ids)
+            if isinstance(client_call_ids, dict)
+            else list(client_call_ids),
+        )
     with patch("ag_ui_strands.agent.StrandsAgentCore") as MockCore:
         MockCore.return_value = instance
-        await _collect_events(agent, input_data)
+        instance.collected_events = await _collect_events(agent, input_data)
     return instance
 
 
 class _MockStreamingAgent:
     """Mock whose ``stream_async`` replays canned Strands events, exercising the
-    real tool-call handling in ``run()`` (including wire->native map capture)."""
+    real tool-call handling in ``run()`` (including frontend-call id capture)."""
 
     def __init__(self, events, session_manager=None):
         self._events = events
@@ -528,13 +680,12 @@ class _MockStreamingAgent:
             yield event
 
 
-class TestWireToNativeMapCapture:
+class TestFrontendCallIdCapture:
     @pytest.mark.asyncio
-    async def test_emission_populates_wire_to_native_map(self):
-        # Driving a frontend tool-call event through run() must record the fresh
-        # wire id -> Strands native toolUseId, which reconciliation later relies
-        # on. (Primary resolution path's data source.) Capture is gated on a
-        # session manager being configured.
+    async def test_emission_records_the_frontend_call_id(self):
+        # Driving a frontend tool-call event through run() must record the call
+        # id, which is what later proves a returning result was executed by the
+        # client. Capture is gated on a session manager being configured.
         agent = _make_base_agent(
             session_manager_provider=MagicMock(return_value=_mock_session_manager())
         )
@@ -555,16 +706,129 @@ class TestWireToNativeMapCapture:
             MockCore.return_value = instance
             await _collect_events(agent, input_data)
 
-        wire_map = instance.state.get(AG_UI_WIRE_MAP_STATE_KEY) or {}
-        assert list(wire_map.values()) == ["native-1"]
+        assert instance.state.get(AG_UI_FRONTEND_CALL_IDS_STATE_KEY) == ["native-1"]
 
     @pytest.mark.asyncio
-    async def test_wire_map_is_size_capped(self, monkeypatch):
-        # Abandoned frontend calls are never consumed/pruned, so the map is
-        # bounded at emission: an emission over the cap drops the oldest entries.
+    async def test_re_emitting_a_recorded_call_id_does_not_duplicate_it(self):
+        # A model that reuses a tool-use id, or a turn replayed against a store
+        # that already holds the id, must not append it twice: duplicates count
+        # against the size cap and evict the outstanding ids it exists to
+        # protect, and the prune drops every copy at once anyway.
+        agent = _make_base_agent(
+            session_manager_provider=MagicMock(return_value=_mock_session_manager())
+        )
+        input_data = RunAgentInput(
+            thread_id="t-repeat",
+            run_id="r1",
+            state={},
+            messages=[UserMessage(id="u1", content="please approve")],
+            tools=[_frontend_tool("approve")],
+            context=[],
+            forwarded_props={},
+        )
+        instance = _MockStreamingAgent(
+            [
+                {
+                    "current_tool_use": {
+                        "name": "approve",
+                        "toolUseId": "native-1",
+                        "input": {},
+                    }
+                }
+            ],
+            session_manager=_mock_session_manager(),
+        )
+        instance.state.set(
+            AG_UI_FRONTEND_CALL_IDS_STATE_KEY, ["native-older", "native-1"]
+        )
+        with patch("ag_ui_strands.agent.StrandsAgentCore") as MockCore:
+            MockCore.return_value = instance
+            await _collect_events(agent, input_data)
+
+        assert instance.state.get(AG_UI_FRONTEND_CALL_IDS_STATE_KEY) == [
+            "native-older",
+            "native-1",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_a_new_emission_does_not_promote_legacy_keys(self):
+        # The write path reads the store back before appending. Coercing the old
+        # mapping here turns its keys into the new list, and every later read
+        # then sees a well-formed list of ids that name nothing, so the discard
+        # on read never fires again and the bogus ids are trusted forever.
+        agent = _make_base_agent(
+            session_manager_provider=MagicMock(return_value=_mock_session_manager())
+        )
+        input_data = RunAgentInput(
+            thread_id="t-legacy-emit",
+            run_id="r1",
+            state={},
+            messages=[UserMessage(id="u1", content="please approve")],
+            tools=[_frontend_tool("approve")],
+            context=[],
+            forwarded_props={},
+        )
+        instance = _MockStreamingAgent(
+            [
+                {
+                    "current_tool_use": {
+                        "name": "approve",
+                        "toolUseId": "native-1",
+                        "input": {},
+                    }
+                }
+            ],
+            session_manager=_mock_session_manager(),
+        )
+        instance.state.set(
+            AG_UI_FRONTEND_CALL_IDS_STATE_KEY, {"minted-old": "native-old"}
+        )
+        with patch("ag_ui_strands.agent.StrandsAgentCore") as MockCore:
+            MockCore.return_value = instance
+            await _collect_events(agent, input_data)
+
+        assert instance.state.get(AG_UI_FRONTEND_CALL_IDS_STATE_KEY) == ["native-1"]
+
+    @pytest.mark.asyncio
+    async def test_nothing_is_recorded_without_a_session_manager(self):
+        # The continuation read and the prune are both gated on a session
+        # manager, so recording without one writes ids that are never read and
+        # never pruned: they sit in memory until the cap evicts the real ones.
+        agent = _make_base_agent()
+        input_data = RunAgentInput(
+            thread_id="t-no-session",
+            run_id="r1",
+            state={},
+            messages=[UserMessage(id="u1", content="please approve")],
+            tools=[_frontend_tool("approve")],
+            context=[],
+            forwarded_props={},
+        )
+        instance = _MockStreamingAgent(
+            [
+                {
+                    "current_tool_use": {
+                        "name": "approve",
+                        "toolUseId": "native-1",
+                        "input": {},
+                    }
+                }
+            ],
+            session_manager=None,
+        )
+        with patch("ag_ui_strands.agent.StrandsAgentCore") as MockCore:
+            MockCore.return_value = instance
+            await _collect_events(agent, input_data)
+
+        assert not instance.state.get(AG_UI_FRONTEND_CALL_IDS_STATE_KEY)
+
+    @pytest.mark.asyncio
+    async def test_recorded_call_ids_are_size_capped(self, monkeypatch):
+        # Abandoned frontend calls are never consumed/pruned, so the store is
+        # bounded at emission: an emission over the cap drops the oldest ids.
         import ag_ui_strands.agent as agent_mod
 
-        monkeypatch.setattr(agent_mod, "_WIRE_MAP_MAX", 2)
+        monkeypatch.setattr(agent_mod, "_FRONTEND_CALL_IDS_MAX", 2)
         agent = _make_base_agent(
             session_manager_provider=MagicMock(return_value=_mock_session_manager())
         )
@@ -581,40 +845,38 @@ class TestWireToNativeMapCapture:
             [{"current_tool_use": {"name": "approve", "toolUseId": "native-new", "input": {}}}],
             session_manager=_mock_session_manager(),
         )
-        # Pre-seed a full map (oldest first).
-        instance.state.set(AG_UI_WIRE_MAP_STATE_KEY, {"w-a": "n-a", "w-b": "n-b"})
+        # Pre-seed a full store (oldest first).
+        instance.state.set(AG_UI_FRONTEND_CALL_IDS_STATE_KEY, ["n-a", "n-b"])
         with patch("ag_ui_strands.agent.StrandsAgentCore") as MockCore:
             MockCore.return_value = instance
             await _collect_events(agent, input_data)
 
-        wire_map = instance.state.get(AG_UI_WIRE_MAP_STATE_KEY) or {}
-        assert len(wire_map) == 2
-        assert "w-a" not in wire_map  # oldest evicted
-        assert "native-new" in wire_map.values()
+        recorded = instance.state.get(AG_UI_FRONTEND_CALL_IDS_STATE_KEY) or []
+        assert recorded == ["n-b", "native-new"]  # oldest evicted
 
 
 class TestSessionFrontendToolReconciliation:
     """Approach (B): on a session-manager continuation carrying a real frontend
     tool result, the persisted ``"Forwarded to client"`` placeholder is
-    overwritten with the real result (found via the wire->native id map, since
-    the client's wire id differs from Strands' native toolUseId) and the model
-    continues from the corrected native history (``stream_async(None)``)."""
+    overwritten with the real result and the model continues from the corrected
+    native history (``stream_async(None)``). Which results may be corrected is
+    decided by the recorded frontend-call ids, the only proof on a continuation
+    that a result came from the client."""
 
     @pytest.mark.asyncio
-    async def test_reconciles_via_wire_to_native_map_delta_only(self, tmp_path):
-        # Native id in the store differs from the client's wire id, and the
-        # payload is delta-only (no assistant message) — only the wire->native
-        # map can bridge them. This is the E1 regression: keying on the wire id
-        # would match nothing and stream the uncorrected placeholder.
+    async def test_reconciles_a_delta_only_continuation(self, tmp_path):
+        # The payload is delta-only (no assistant message), so the recorded call
+        # id is the only signal that this result is the client's. Without it the
+        # adapter would stream the uncorrected placeholder.
         from strands.session.file_session_manager import FileSessionManager
 
         sm = FileSessionManager(session_id="thread-map", storage_dir=str(tmp_path))
         instance = await _run_session_continuation(
             sm,
             "default",
-            messages=[_payload_tool("wire-1", '{"approved": false}')],
+            messages=[_payload_tool("native-1", '{"approved": false}')],
             tools=[_frontend_tool("approve")],
-            wire_map={"wire-1": "native-1"},
+            client_call_ids=["native-1"],
             store=[_store_tool_use("native-1", "approve"), _store_placeholder("native-1")],
         )
         assert instance.stream_prompts == [None]
@@ -623,10 +885,203 @@ class TestSessionFrontendToolReconciliation:
         ]
 
     @pytest.mark.asyncio
-    async def test_no_wire_map_degrades_to_legacy(self, tmp_path):
-        # No durable wire->native map for this result's wire id (e.g. a session
-        # created before this feature): the wire id can't be resolved, so the
-        # adapter degrades to the legacy synthetic-message path and leaves the
+    async def test_context_preserves_reconciled_history_continuation(self, tmp_path):
+        """Application context must not replace the ``None`` prompt sentinel.
+
+        After repository reconciliation, Strands continues from its corrected
+        native history. Sending a context-only prompt here would create a new
+        user turn and can make the model re-run the frontend tool.
+        """
+        from strands.session.file_session_manager import FileSessionManager
+
+        sm = FileSessionManager(session_id="thread-map-context", storage_dir=str(tmp_path))
+        instance = await _run_session_continuation(
+            sm,
+            "default",
+            messages=[_payload_tool("native-1", '{"approved": false}')],
+            tools=[_frontend_tool("approve")],
+            client_call_ids=["native-1"],
+            store=[_store_tool_use("native-1", "approve"), _store_placeholder("native-1")],
+            context=[Context(description="account", value="premium")],
+        )
+
+        assert instance.stream_prompts == [None]
+        # A delta-only store holds no question for the block to ride in, so it
+        # opens the history as a user turn of its own. That keeps the tool call
+        # answered by the turn right after it, which is what the splitting
+        # provider formatters need, and leaves the roles alternating.
+        assert instance.model_messages[-1][0]["content"][0] == {
+            "text": "Context provided by the application:\n- account: premium"
+        }
+        assert instance.model_messages[-1][-1]["content"][0].get("toolResult") is not None
+        assert instance.messages[-1]["content"][0].get("toolResult") is not None
+        persisted = sm.session_repository.list_messages(sm.session_id, "default")
+        assert "Context provided by the application" not in repr(persisted)
+
+    @pytest.mark.asyncio
+    async def test_legacy_continuation_names_the_tool_when_replay_is_disabled(
+        self, tmp_path
+    ):
+        """The configuration from issue #2376: the same delta-only continuation
+        with ``replay_history_into_strands=False``. The reconcile branch is
+        gated on that flag and the replay branch is off whenever a session
+        manager exists, so ``stream_async(user_message)`` is the only channel
+        left. Naming the tool there requires the native session history;
+        without it the model is prompted with ``""`` and re-fires the same
+        call."""
+        from strands.session.file_session_manager import FileSessionManager
+
+        sm = FileSessionManager(session_id="thread-noreplay", storage_dir=str(tmp_path))
+        instance = await _run_session_continuation(
+            sm,
+            "default",
+            messages=[_payload_tool("native-1", '{"approved": false}')],
+            tools=[_frontend_tool("approve")],
+            client_call_ids=["native-1"],
+            store=[_store_tool_use("native-1", "approve"), _store_placeholder("native-1")],
+            config_kwargs={"replay_history_into_strands": False},
+        )
+        assert instance.stream_prompts == ['approve returned: {"approved": false}']
+
+    @pytest.mark.parametrize(
+        ("content", "expected"),
+        [
+            pytest.param(
+                "denied by policy",
+                "approve failed: invalid id (returned: denied by policy)",
+                id="with-text",
+            ),
+            pytest.param("", "approve failed: invalid id", id="empty"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_client_failure_is_not_prompted_as_success_when_replay_is_disabled(
+        self, tmp_path, content, expected
+    ):
+        """With replay and reconciliation both off, the synthetic prompt is
+        the only channel to the model, and a failure whose body is empty is
+        the common shape. Deriving the prompt from ``content`` alone reports
+        it as "executed successfully with no return value" — the same
+        inversion the toolResult ``status`` mapping already prevents on the
+        native path."""
+        from strands.session.file_session_manager import FileSessionManager
+
+        sm = FileSessionManager(
+            session_id="thread-noreplay-err", storage_dir=str(tmp_path)
+        )
+        instance = await _run_session_continuation(
+            sm,
+            "default",
+            messages=[_payload_tool("native-1", content, error="invalid id")],
+            tools=[_frontend_tool("approve")],
+            client_call_ids=["native-1"],
+            store=[
+                _store_tool_use("native-1", "approve"),
+                _store_placeholder("native-1"),
+            ],
+            config_kwargs={"replay_history_into_strands": False},
+        )
+        assert instance.stream_prompts == [expected]
+        assert "executed successfully" not in instance.stream_prompts[0]
+
+    @pytest.mark.parametrize(
+        ("content", "error", "expected"),
+        [
+            pytest.param(
+                '{"approved": false}',
+                None,
+                'approve returned: {"approved": false}',
+                id="normal-result",
+            ),
+            pytest.param(
+                "",
+                "invalid id",
+                "approve failed: invalid id",
+                id="empty-content-error",
+            ),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_recorded_call_id_is_frontend_provenance_without_declarations(
+        self, tmp_path, content, error, expected
+    ):
+        """A continuation that declares no tools still carries a real
+        frontend result. Membership in ``input_data.tools`` is not the only
+        proof of provenance: the call id is recorded when the call is
+        emitted, so it establishes the same thing by itself.
+        Reading membership alone files the result as a backend one and hands
+        the model ``""`` — the re-fire loop this derivation exists to stop."""
+        from strands.session.file_session_manager import FileSessionManager
+
+        sm = FileSessionManager(
+            session_id="thread-no-declarations", storage_dir=str(tmp_path)
+        )
+        instance = await _run_session_continuation(
+            sm,
+            "default",
+            messages=[_payload_tool("native-1", content, error=error)],
+            tools=[],
+            client_call_ids=["native-1"],
+            store=[
+                _store_tool_use("native-1", "approve"),
+                _store_placeholder("native-1"),
+            ],
+            config_kwargs={"replay_history_into_strands": False},
+        )
+        assert instance.stream_prompts == [expected]
+
+    @pytest.mark.parametrize(
+        "content", ["tool failed: invalid id", ""], ids=["with-text", "empty"]
+    )
+    @pytest.mark.asyncio
+    async def test_client_reported_failure_lands_as_an_error_status(
+        self, tmp_path, content
+    ):
+        # The placeholder was written by the proxy tool with a hardcoded
+        # "success" status. Reconciliation must overwrite the status as well as
+        # the text, or the model is told a failed frontend tool succeeded.
+        from strands.session.file_session_manager import FileSessionManager
+
+        sm = FileSessionManager(session_id="thread-errstatus", storage_dir=str(tmp_path))
+        instance = await _run_session_continuation(
+            sm,
+            "default",
+            messages=[
+                _payload_assistant("native-1", "approve"),
+                _payload_tool("native-1", content, error="invalid id"),
+            ],
+            tools=[_frontend_tool("approve")],
+            client_call_ids=["native-1"],
+            store=[_store_tool_use("native-1", "approve"), _store_placeholder("native-1")],
+        )
+        assert instance.stream_prompts == [None]
+        block = _result_content(sm, "default", 1)[0]["toolResult"]
+        assert block["content"] == [{"text": content}]
+        assert block["status"] == "error"
+
+    @pytest.mark.asyncio
+    async def test_successful_result_keeps_a_success_status(self, tmp_path):
+        from strands.session.file_session_manager import FileSessionManager
+
+        sm = FileSessionManager(session_id="thread-okstatus", storage_dir=str(tmp_path))
+        await _run_session_continuation(
+            sm,
+            "default",
+            messages=[
+                _payload_assistant("native-1", "approve"),
+                _payload_tool("native-1", '{"approved": true}'),
+            ],
+            tools=[_frontend_tool("approve")],
+            client_call_ids=["native-1"],
+            store=[_store_tool_use("native-1", "approve"), _store_placeholder("native-1")],
+        )
+        assert _result_content(sm, "default", 1)[0]["toolResult"]["status"] == "success"
+
+    @pytest.mark.asyncio
+    async def test_unrecorded_call_id_degrades_to_legacy(self, tmp_path):
+        # No recorded id for this result (e.g. a session created before this
+        # feature): its provenance cannot be established, so the adapter
+        # degrades to the legacy synthetic-message path and leaves the
         # placeholder rather than streaming a stub.
         from strands.session.file_session_manager import FileSessionManager
 
@@ -635,11 +1090,11 @@ class TestSessionFrontendToolReconciliation:
             sm,
             "default",
             messages=[
-                _payload_assistant("wire-2", "setColor", '{"color": "blue"}'),
-                _payload_tool("wire-2", "ok"),
+                _payload_assistant("native-2", "setColor", '{"color": "blue"}'),
+                _payload_tool("native-2", "ok"),
             ],
             tools=[_frontend_tool("setColor")],
-            wire_map={},  # nothing recorded -> unresolvable
+            client_call_ids=[],  # nothing recorded -> unresolvable
             store=[
                 _store_tool_use("native-2", "setColor", {"color": "blue"}),
                 _store_placeholder("native-2"),
@@ -678,13 +1133,13 @@ class TestSessionFrontendToolReconciliation:
             sm,
             "default",
             messages=[
-                _payload_assistant("wire-A", "doThing"),
-                _payload_assistant("wire-B", "approve"),
-                _payload_tool("wire-A", ""),  # void
-                _payload_tool("wire-B", '{"approved": true}'),  # real
+                _payload_assistant("native-A", "doThing"),
+                _payload_assistant("native-B", "approve"),
+                _payload_tool("native-A", ""),  # void
+                _payload_tool("native-B", '{"approved": true}'),  # real
             ],
             tools=[_frontend_tool("doThing"), _frontend_tool("approve")],
-            wire_map={"wire-A": "native-A", "wire-B": "native-B"},
+            client_call_ids=["native-A", "native-B"],
             store=store,
         )
         assert instance.stream_prompts == [None]
@@ -695,11 +1150,11 @@ class TestSessionFrontendToolReconciliation:
     @pytest.mark.asyncio
     async def test_multi_turn_reconciles_only_the_trailing_result(self, tmp_path):
         # The client re-sends full history: two earlier identical approve() calls
-        # (already reconciled, and whose wire->native entries were pruned) plus
-        # the just-returned one. Only the trailing result may gate
-        # reconciliation. This PINS trailing-scoping: without it, the historical
-        # calls would be re-collected, fail to resolve (their entries are gone
-        # from the durable map), and force the legacy fallback every turn.
+        # (already reconciled, and whose recorded ids were pruned) plus the
+        # just-returned one. Only the trailing result may gate reconciliation.
+        # This PINS trailing-scoping: without it, the historical calls would be
+        # re-collected, fail to resolve (their ids are gone from the durable
+        # store), and force the legacy fallback every turn.
         from strands.session.file_session_manager import FileSessionManager
 
         sm = FileSessionManager(session_id="thread-multi", storage_dir=str(tmp_path))
@@ -715,15 +1170,15 @@ class TestSessionFrontendToolReconciliation:
             sm,
             "default",
             messages=[
-                _payload_assistant("wire-o1", "approve", "{}"),
-                _payload_tool("wire-o1", "OLD1"),
-                _payload_assistant("wire-o2", "approve", "{}"),
-                _payload_tool("wire-o2", "OLD2"),
-                _payload_assistant("wire-new", "approve", "{}"),
-                _payload_tool("wire-new", '{"approved": true}'),
+                _payload_assistant("native-o1", "approve", "{}"),
+                _payload_tool("native-o1", "OLD1"),
+                _payload_assistant("native-o2", "approve", "{}"),
+                _payload_tool("native-o2", "OLD2"),
+                _payload_assistant("native-new", "approve", "{}"),
+                _payload_tool("native-new", '{"approved": true}'),
             ],
             tools=[_frontend_tool("approve")],
-            wire_map={"wire-new": "native-new"},  # historical entries already pruned
+            client_call_ids=["native-new"],  # historical entries already pruned
             store=store,
         )
         assert instance.stream_prompts == [None]
@@ -735,10 +1190,80 @@ class TestSessionFrontendToolReconciliation:
         ]
 
     @pytest.mark.asyncio
+    async def test_non_trailing_frontend_result_is_still_reconciled(self, tmp_path):
+        # The client delivers the frontend result on a LATER turn: it sits in
+        # history with a user message after it, so nothing is trailing and
+        # ``pending_tool_result_ids`` is empty. Scoping collection to the
+        # trailing ids alone drops the result entirely and the persisted
+        # toolResult keeps the proxy placeholder for the rest of the thread's
+        # life. Admission rests on the durable store instead: this call's id
+        # is still there precisely because it was never corrected.
+        from strands.session.file_session_manager import FileSessionManager
+
+        sm = FileSessionManager(session_id="thread-late", storage_dir=str(tmp_path))
+        instance = await _run_session_continuation(
+            sm,
+            "default",
+            messages=[
+                _payload_assistant("native-1", "approve"),
+                _payload_tool("native-1", '{"approved": true}'),
+                UserMessage(id="u2", content="do the next thing"),
+            ],
+            tools=[_frontend_tool("approve")],
+            client_call_ids=["native-1"],
+            store=[
+                _store_tool_use("native-1", "approve"),
+                _store_placeholder("native-1"),
+            ],
+        )
+
+        block = _result_content(sm, "default", 1)[0]["toolResult"]
+        assert block["content"] == [{"text": '{"approved": true}'}]
+        assert block["status"] == "success"
+        assert instance.stream_prompts == ["do the next thing"]
+        # Corrected, so the id is pruned and cannot be re-collected later.
+        assert (instance.state.get(AG_UI_FRONTEND_CALL_IDS_STATE_KEY) or []) == []
+
+    @pytest.mark.asyncio
+    async def test_non_trailing_result_without_a_live_map_entry_is_left_alone(
+        self, tmp_path
+    ):
+        # The counterpart. An earlier call that was already reconciled had its
+        # recorded id pruned, so re-sending it in history, with no trailing
+        # result at all, must not pull it back into reconciliation.
+        # That is the property the trailing-only scope protected, and it now
+        # rests on the store directly: the same assumption
+        # ``test_multi_turn_reconciles_only_the_trailing_result`` already
+        # encodes when it prunes its historical entries.
+        from strands.session.file_session_manager import FileSessionManager
+
+        sm = FileSessionManager(session_id="thread-done", storage_dir=str(tmp_path))
+        instance = await _run_session_continuation(
+            sm,
+            "default",
+            messages=[
+                _payload_assistant("native-1", "approve"),
+                _payload_tool("native-1", "OLD"),
+                UserMessage(id="u2", content="do the next thing"),
+            ],
+            tools=[_frontend_tool("approve")],
+            client_call_ids=[],  # already corrected on an earlier turn -> pruned
+            store=[
+                _store_tool_use("native-1", "approve"),
+                _store_placeholder("native-1", text="OLD"),
+            ],
+        )
+
+        assert _result_content(sm, "default", 1)[0]["toolResult"]["content"] == [
+            {"text": "OLD"}
+        ]
+        assert instance.stream_prompts == ["do the next thing"]
+
+    @pytest.mark.asyncio
     async def test_partially_resolvable_turn_falls_back_to_legacy(self, tmp_path):
         # Two frontend results in one turn, both recognized as frontend, but only
-        # one resolves to a native id (wire-2 is not in the map and its
-        # name+args match no stored toolUse). Streaming None would feed wire-2's
+        # one has a recorded id (native-2 was never recorded and its name+args
+        # match no stored toolUse). Streaming None would feed native-2's
         # uncorrected placeholder to the model, so the adapter falls back.
         from strands.session.file_session_manager import FileSessionManager
 
@@ -751,22 +1276,57 @@ class TestSessionFrontendToolReconciliation:
             sm,
             "default",
             messages=[
-                _payload_assistant("wire-1", "approve", "{}"),
-                _payload_assistant("wire-2", "approve", '{"x": 1}'),  # no store match
-                _payload_tool("wire-1", "R1"),
-                _payload_tool("wire-2", "R2"),
+                _payload_assistant("native-1", "approve", "{}"),
+                _payload_assistant("native-2", "approve", '{"x": 1}'),  # no store match
+                _payload_tool("native-1", "R1"),
+                _payload_tool("native-2", "R2"),
             ],
             tools=[_frontend_tool("approve")],
-            wire_map={"wire-1": "native-1"},  # wire-2 missing -> unresolvable
+            client_call_ids=["native-1"],  # native-2 unrecorded -> unresolvable
             store=store,
         )
-        # Not all non-void results resolved -> legacy fallback: a single
-        # synthetic user message (not None/empty). The resolvable result's store
-        # placeholder is still corrected (partial correction is safe — the value
-        # is real); only the model-facing continuation falls back.
-        assert instance.stream_prompts == ["approve returned: R2"]
+        # Not all non-void results resolved -> legacy fallback: a synthetic user
+        # message (not None/empty). The fallback forwards EVERY frontend result in
+        # the turn, not just the last — the model must see both answers. The
+        # resolvable result's store placeholder is still corrected (partial
+        # correction is safe — the value is real); only the model-facing
+        # continuation falls back.
+        assert instance.stream_prompts == ["approve returned: R1\napprove returned: R2"]
         assert _result_content(sm, "default", 1)[0]["toolResult"]["content"] == [
             {"text": "R1"}
+        ]
+
+    @pytest.mark.asyncio
+    async def test_legacy_fallback_forwards_every_frontend_result(self, tmp_path):
+        # A parallel frontend-tool turn returns N results in one continuation. On
+        # the legacy path (here: no recorded ids, so nothing reconciles) the
+        # synthetic user message must carry EVERY result, in call order — not just
+        # the last one. Guards against re-introducing a ``break`` after the first
+        # result, which would silently drop the model's view of the other answers.
+        from strands.session.file_session_manager import FileSessionManager
+
+        sm = FileSessionManager(session_id="thread-multi-legacy", storage_dir=str(tmp_path))
+        instance = await _run_session_continuation(
+            sm,
+            "default",
+            messages=[
+                _payload_assistant("native-1", "approve", "{}"),
+                _payload_assistant("native-2", "setColor", '{"color": "blue"}'),
+                _payload_tool("native-1", "R1"),
+                _payload_tool("native-2", "R2"),
+            ],
+            tools=[_frontend_tool("approve"), _frontend_tool("setColor")],
+            client_call_ids=[],  # nothing resolves -> legacy fallback for the whole turn
+            store=[
+                _store_tool_use("native-1", "approve", {}),
+                _store_placeholder("native-1"),
+                _store_tool_use("native-2", "setColor", {"color": "blue"}),
+                _store_placeholder("native-2"),
+            ],
+        )
+        # Both results reach the model, in the order the tools were called.
+        assert instance.stream_prompts == [
+            "approve returned: R1\nsetColor returned: R2"
         ]
 
     @pytest.mark.asyncio
@@ -787,11 +1347,11 @@ class TestSessionFrontendToolReconciliation:
             sm,
             "default",
             messages=[
-                _payload_assistant("wire-new", "approve"),
-                _payload_tool("wire-new", '{"approved": true}'),
+                _payload_assistant("native-new", "approve"),
+                _payload_tool("native-new", '{"approved": true}'),
             ],
             tools=[_frontend_tool("approve")],
-            wire_map={"wire-new": "native-new"},
+            client_call_ids=["native-new"],
             store=store,
         )
         assert instance.stream_prompts == [None]
@@ -801,7 +1361,7 @@ class TestSessionFrontendToolReconciliation:
         ]
 
     @pytest.mark.asyncio
-    async def test_wire_to_native_map_pruned_after_reconcile(self, tmp_path):
+    async def test_recorded_call_ids_pruned_after_reconcile(self, tmp_path):
         from strands.session.file_session_manager import FileSessionManager
 
         sm = FileSessionManager(session_id="thread-prune", storage_dir=str(tmp_path))
@@ -809,25 +1369,34 @@ class TestSessionFrontendToolReconciliation:
             sm,
             "default",
             messages=[
-                _payload_assistant("wire-1", "approve"),
-                _payload_tool("wire-1", '{"approved": true}'),
+                _payload_assistant("native-1", "approve"),
+                _payload_tool("native-1", '{"approved": true}'),
             ],
             tools=[_frontend_tool("approve")],
-            wire_map={"wire-1": "native-1", "wire-other": "native-other"},
+            client_call_ids=[
+                "native-zulu",
+                "native-1",
+                "native-alpha",
+                "native-mike",
+            ],
             store=[_store_tool_use("native-1", "approve"), _store_placeholder("native-1")],
         )
 
-        # The corrected wire id is pruned from the durable state map; unrelated
-        # outstanding entries are kept.
-        remaining = instance.state.get(AG_UI_WIRE_MAP_STATE_KEY) or {}
-        assert "wire-1" not in remaining
-        assert remaining == {"wire-other": "native-other"}
+        # The corrected id is pruned from the durable store; unrelated
+        # outstanding ids are kept, in the order they were recorded. The
+        # emission-time cap evicts from the front, so an unordered rewrite
+        # would start discarding the newest ids instead of the oldest.
+        assert instance.state.get(AG_UI_FRONTEND_CALL_IDS_STATE_KEY) == [
+            "native-zulu",
+            "native-alpha",
+            "native-mike",
+        ]
 
     @pytest.mark.asyncio
-    async def test_reconcile_failure_keeps_map_and_falls_back(self, tmp_path):
-        # If reconciliation raises, the wire->native entry must NOT be pruned
-        # (so a later turn can retry) and the run must degrade to the legacy
-        # path rather than streaming an uncorrected stub.
+    async def test_reconcile_failure_keeps_recorded_ids_and_falls_back(self, tmp_path):
+        # If reconciliation raises, the recorded id must NOT be pruned (so a
+        # later turn can retry) and the run must degrade to the legacy path
+        # rather than streaming an uncorrected stub.
         from strands.session.file_session_manager import FileSessionManager
 
         sm = FileSessionManager(session_id="thread-reconfail", storage_dir=str(tmp_path))
@@ -839,11 +1408,11 @@ class TestSessionFrontendToolReconciliation:
                 sm,
                 "default",
                 messages=[
-                    _payload_assistant("wire-1", "approve"),
-                    _payload_tool("wire-1", '{"approved": true}'),
+                    _payload_assistant("native-1", "approve"),
+                    _payload_tool("native-1", '{"approved": true}'),
                 ],
                 tools=[_frontend_tool("approve")],
-                wire_map={"wire-1": "native-1"},
+                client_call_ids=["native-1"],
                 store=[
                     _store_tool_use("native-1", "approve"),
                     _store_placeholder("native-1"),
@@ -851,14 +1420,14 @@ class TestSessionFrontendToolReconciliation:
             )
 
         assert instance.stream_prompts != [None]  # legacy fallback on error
-        remaining = instance.state.get(AG_UI_WIRE_MAP_STATE_KEY) or {}
-        assert remaining == {"wire-1": "native-1"}  # entry kept for retry
+        assert instance.state.get(AG_UI_FRONTEND_CALL_IDS_STATE_KEY) == [
+            "native-1"
+        ]  # kept for retry
 
     @pytest.mark.asyncio
-    async def test_unmapped_results_do_not_corrupt_store_and_fall_back(self, tmp_path):
-        # Two same-turn calls with no durable wire->native entries: neither
-        # resolves, so nothing is written (no corruption) and the turn degrades
-        # to the legacy path.
+    async def test_unrecorded_results_do_not_corrupt_store_and_fall_back(self, tmp_path):
+        # Two same-turn calls with no recorded ids: neither resolves, so nothing
+        # is written (no corruption) and the turn degrades to the legacy path.
         from strands.session.file_session_manager import FileSessionManager
 
         sm = FileSessionManager(session_id="thread-collide", storage_dir=str(tmp_path))
@@ -882,13 +1451,13 @@ class TestSessionFrontendToolReconciliation:
             sm,
             "default",
             messages=[
-                _payload_assistant("wire-1", "approve"),
-                _payload_assistant("wire-2", "approve"),
-                _payload_tool("wire-1", "R1"),
-                _payload_tool("wire-2", "R2"),
+                _payload_assistant("native-1", "approve"),
+                _payload_assistant("native-2", "approve"),
+                _payload_tool("native-1", "R1"),
+                _payload_tool("native-2", "R2"),
             ],
             tools=[_frontend_tool("approve")],
-            wire_map={},  # nothing recorded -> unresolvable
+            client_call_ids=[],  # nothing recorded -> unresolvable
             store=store,
         )
         assert instance.stream_prompts != [None]  # unresolvable -> legacy
@@ -912,11 +1481,11 @@ class TestSessionFrontendToolReconciliation:
             sm,
             "default",
             messages=[
-                _payload_assistant("wire-Z", "approve"),
-                _payload_tool("wire-Z", '{"approved": false}'),
+                _payload_assistant("native-Z", "approve"),
+                _payload_tool("native-Z", '{"approved": false}'),
             ],
             tools=[_frontend_tool("approve")],
-            wire_map={"wire-Z": "native-Z"},
+            client_call_ids=["native-Z"],
             store=[
                 _store_tool_use("native-Z", "approve"),
                 _store_placeholder("native-Z", text="already real"),
@@ -925,4 +1494,312 @@ class TestSessionFrontendToolReconciliation:
         assert instance.stream_prompts == [None]
         assert _result_content(sm, "default", 1)[0]["toolResult"]["content"] == [
             {"text": "already real"}
+        ]
+
+
+class TestPreUnificationSessionState:
+    """Sessions written before the identifier unification hold the old shape.
+
+    Those releases minted an id per frontend call and stored
+    ``{minted_id: toolUseId}``. The minted ids name nothing in the persisted
+    history, so the adapter discards that shape instead of reading its keys as
+    provenance.
+    """
+
+    @pytest.mark.asyncio
+    async def test_full_history_forwards_the_answer_instead_of_the_placeholder(
+        self, tmp_path
+    ):
+        # Trusting the old keys makes the adapter believe the result was already
+        # reconciled, so it replays the native history with the proxy stub still
+        # in it and the model reads "Forwarded to client" as the tool's answer.
+        from strands.session.file_session_manager import FileSessionManager
+
+        sm = FileSessionManager(session_id="thread-legacy", storage_dir=str(tmp_path))
+        instance = await _run_session_continuation(
+            sm,
+            "default",
+            messages=[
+                _payload_assistant("minted-1", "approve"),
+                _payload_tool("minted-1", '{"approved": true}'),
+            ],
+            tools=[_frontend_tool("approve")],
+            client_call_ids={"minted-1": "native-1"},
+            store=[
+                _store_tool_use("native-1", "approve"),
+                _store_placeholder("native-1"),
+            ],
+        )
+
+        assert instance.stream_prompts == ['approve returned: {"approved": true}']
+
+    @pytest.mark.asyncio
+    async def test_delta_only_fails_closed_rather_than_guessing(self, tmp_path):
+        # Without the assistant message the tool cannot be named at all: the old
+        # keys are the only thing that ever bridged them, and bridging is what
+        # the unification removed. Failing closed beats prompting the model with
+        # an empty string, which is what makes it re-fire the same call.
+        from strands.session.file_session_manager import FileSessionManager
+
+        sm = FileSessionManager(
+            session_id="thread-legacy-delta", storage_dir=str(tmp_path)
+        )
+        instance = await _run_session_continuation(
+            sm,
+            "default",
+            messages=[_payload_tool("minted-1", '{"approved": true}')],
+            tools=[_frontend_tool("approve")],
+            client_call_ids={"minted-1": "native-1"},
+            store=[
+                _store_tool_use("native-1", "approve"),
+                _store_placeholder("native-1"),
+            ],
+        )
+
+        assert instance.stream_prompts == []
+        _assert_continuation_name_error(instance.collected_events, ["minted-1"])
+
+
+# ---------------------------------------------------------------------------
+# What the store keeps when a turn carries both an answer and a question
+# ---------------------------------------------------------------------------
+
+
+class _ToolThenTextModel(Model):
+    """Calls a tool while nothing has answered one, then answers in words.
+
+    Records the history it was handed on each call, which is the only place the
+    request the provider would receive is observable.
+    """
+
+    def __init__(self):
+        self.calls: List[List[dict]] = []
+
+    async def stream(self, messages, tool_specs=None, system_prompt=None, **kwargs):
+        self.calls.append(copy.deepcopy(messages))
+        answered = any(
+            "toolResult" in block
+            for message in messages
+            for block in message.get("content", [])
+        )
+        yield {"messageStart": {"role": "assistant"}}
+        if not answered:
+            yield {
+                "contentBlockStart": {
+                    "start": {"toolUse": {"toolUseId": "native-1", "name": "get_weather"}}
+                }
+            }
+            yield {"contentBlockDelta": {"delta": {"toolUse": {"input": "{}"}}}}
+            yield {"contentBlockStop": {}}
+            yield {"messageStop": {"stopReason": "tool_use"}}
+            return
+        yield {"contentBlockDelta": {"delta": {"text": "done"}}}
+        yield {"contentBlockStop": {}}
+        yield {"messageStop": {"stopReason": "end_turn"}}
+
+    def get_config(self):
+        return {}
+
+    def update_config(self, **kwargs):
+        pass
+
+    async def structured_output(self, *args, **kwargs):
+        raise NotImplementedError
+
+
+_WEATHER = Tool(
+    name="get_weather",
+    description="w",
+    parameters={"type": "object", "properties": {}},
+)
+
+_FIRST_QUESTION = "what is the weather"
+_SECOND_QUESTION = "and in Paris?"
+_THIRD_QUESTION = "and in Berlin?"
+
+
+def _adapter_over(session, model=None):
+    """A fresh adapter and its model, as a restarted process would build them."""
+    from strands import Agent
+
+    model = model or _ToolThenTextModel()
+    adapter = StrandsAgent(
+        Agent(model=model, callback_handler=None),
+        name="test",
+        config=StrandsAgentConfig(session_manager_provider=lambda _i: session),
+    )
+    return adapter, model
+
+
+def _run_input(thread, run_id, messages):
+    return RunAgentInput(
+        thread_id=thread,
+        run_id=run_id,
+        state={},
+        messages=messages,
+        tools=[_WEATHER],
+        context=[],
+        forwarded_props={},
+    )
+
+
+def _answer_and_question(question):
+    """The payload that carries a tool result and the user's next turn."""
+    return [
+        UserMessage(id="u1", content=_FIRST_QUESTION),
+        AssistantMessage(
+            id="a1",
+            tool_calls=[
+                ToolCall(
+                    id="native-1",
+                    function=FunctionCall(name="get_weather", arguments="{}"),
+                )
+            ],
+        ),
+        ToolMessage(id="t1", tool_call_id="native-1", content="sunny, 22C"),
+        UserMessage(id="u2", content=question),
+    ]
+
+
+def _stored_turns(session, agent_id):
+    """The persisted conversation as ``(role, joined text)`` pairs, in order."""
+    return [
+        (
+            record.message["role"],
+            "".join(
+                block["text"]
+                for block in record.message.get("content", [])
+                if "text" in block
+            ),
+        )
+        for record in session.session_repository.list_messages(
+            session.session_id, agent_id
+        )
+    ]
+
+
+async def _drive(adapter, run_input):
+    events = [event async for event in adapter.run(run_input)]
+    assert [e for e in events if e.type == EventType.RUN_ERROR] == [], (
+        f"run {run_input.run_id} errored: {events}"
+    )
+    return events
+
+
+class TestATurnCarryingBothAnAnswerAndAQuestion:
+    """A continuation whose payload holds a tool result and the user's next
+    question has to reach the provider with both intact and in order, and leave
+    the store holding what the client actually sent.
+
+    The tempting repair is to fold the new question into the earlier one so the
+    conversation stops ending on two user turns. That costs both halves. The
+    provider is then answering the question it already answered, which is what
+    the dojo's two-prompt haiku demo catches. And on this session manager the
+    fold never reaches disk at all: it writes a message when it is added and
+    only ever rewrites the latest one, so an edit to an older message is an edit
+    the store never sees and the question is gone on reload.
+
+    So nothing is folded. These cases pin both halves: the request the provider
+    would receive, through the real formatters, and the store, read back after a
+    restart and then written to again.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("provider", SPLITTING_FORMATTERS, ids=str)
+    async def test_the_provider_request_keeps_the_question_after_the_answer(
+        self, provider, tmp_path
+    ):
+        from strands.session.file_session_manager import FileSessionManager
+
+        thread = f"thread-request-{provider}"
+        session = FileSessionManager(session_id=thread, storage_dir=str(tmp_path))
+        adapter, model = _adapter_over(session)
+
+        await _drive(
+            adapter,
+            _run_input(thread, "run-1", [UserMessage(id="u1", content=_FIRST_QUESTION)]),
+        )
+        await _drive(
+            adapter, _run_input(thread, "run-2", _answer_and_question(_SECOND_QUESTION))
+        )
+
+        # The turn that carried both, as the provider's own formatter binds it.
+        bound = bound_roles(provider, model.calls[-1])
+        assert_binds_cleanly(provider, model.calls[-1])
+
+        # Chronological: the tool's answer, and only then the new question.
+        assert bound[-2:] == ["tool", "user"], bound
+        last = model.calls[-1][-1]
+        assert last["role"] == "user"
+        assert [block.get("text") for block in last["content"]] == [_SECOND_QUESTION]
+
+    @pytest.mark.asyncio
+    async def test_both_survive_a_session_reload_and_a_later_turn(self, tmp_path):
+        from strands.session.file_session_manager import FileSessionManager
+
+        thread = "thread-answer-and-question"
+        session = FileSessionManager(session_id=thread, storage_dir=str(tmp_path))
+        adapter, _ = _adapter_over(session)
+
+        await _drive(
+            adapter,
+            _run_input(thread, "run-1", [UserMessage(id="u1", content=_FIRST_QUESTION)]),
+        )
+        await _drive(
+            adapter, _run_input(thread, "run-2", _answer_and_question(_SECOND_QUESTION))
+        )
+        agent_id = adapter._agents_by_thread[thread].agent_id
+
+        # A restarted process, reading the thread back off disk.
+        reloaded = FileSessionManager(session_id=thread, storage_dir=str(tmp_path))
+        assert _stored_turns(reloaded, agent_id) == [
+            ("user", _FIRST_QUESTION),
+            ("assistant", ""),
+            ("user", ""),
+            ("user", _SECOND_QUESTION),
+            ("assistant", "done"),
+        ]
+
+        # And it can keep going. The earlier question stays where it was rather
+        # than being rewritten or reordered by the turn that follows it.
+        restarted, later_model = _adapter_over(reloaded)
+        await _drive(
+            restarted,
+            _run_input(
+                thread,
+                "run-3",
+                _answer_and_question(_SECOND_QUESTION)
+                + [UserMessage(id="u3", content=_THIRD_QUESTION)],
+            ),
+        )
+
+        assert _stored_turns(reloaded, agent_id) == [
+            ("user", _FIRST_QUESTION),
+            ("assistant", ""),
+            ("user", ""),
+            ("user", _SECOND_QUESTION),
+            ("assistant", "done"),
+            ("user", _THIRD_QUESTION),
+            ("assistant", "done"),
+        ]
+
+        # The later model call reads the same order the store holds.
+        seen = [
+            (
+                message["role"],
+                "".join(
+                    block["text"]
+                    for block in message.get("content", [])
+                    if "text" in block
+                ),
+            )
+            for message in later_model.calls[-1]
+        ]
+        assert seen == [
+            ("user", _FIRST_QUESTION),
+            ("assistant", ""),
+            ("user", ""),
+            ("user", _SECOND_QUESTION),
+            ("assistant", "done"),
+            ("user", _THIRD_QUESTION),
         ]

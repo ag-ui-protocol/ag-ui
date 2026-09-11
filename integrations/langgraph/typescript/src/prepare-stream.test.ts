@@ -313,7 +313,7 @@ describe("transformerThreads cache (acquireThreadStream)", () => {
     // compile-time `custom:agui` channel.
     const entry = threadStreams.get("thread-1")!;
     expect(entry.thread.subscribe).toHaveBeenCalledTimes(1);
-    const subArg = entry.thread.subscribe.mock.calls[0][0];
+    const subArg = entry.thread.subscribe.mock.calls[0][0].channels;
     expect(Array.isArray(subArg)).toBe(true);
     expect(subArg).toContain("messages");
     expect(subArg).toContain("custom");
