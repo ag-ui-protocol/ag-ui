@@ -31,6 +31,7 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 import org.springframework.ai.chat.client.AdvisorParams;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.client.DefaultChatClient;
 import org.springframework.ai.chat.client.advisor.ToolCallingAdvisor;
 import org.springframework.ai.chat.client.advisor.api.Advisor;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -42,6 +43,7 @@ import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.ai.model.tool.ToolExecutionResult;
 import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.ToolCallbackProvider;
 import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.ai.util.JsonHelper;
 import reactor.adapter.JdkFlowAdapter;
@@ -78,9 +80,13 @@ import reactor.core.publisher.Flux;
  * {@link Builder#tools(java.util.List)} are <strong>backend</strong> tools: when
  * the model calls one, the agent emits {@code TOOL_CALL_START/ARGS/END}, executes
  * it, emits a {@code TOOL_CALL_RESULT}, and re-prompts the model with the result
- * (looping until the model stops calling backend tools). If a turn mixes backend
- * and client tool calls, the backend results are emitted and the run then stops so
- * the front end can handle the client calls.
+ * (looping until the model stops calling backend tools). Backend tools already
+ * registered on the supplied {@link ChatClient} via {@code defaultTools(...)} are
+ * treated the same way — the agent suppresses the ChatClient's own tool execution
+ * while it drives the loop, so it executes those callbacks itself rather than
+ * leaking them to the front end. If a turn mixes backend and client tool calls, the
+ * backend results are emitted and the run then stops so the front end can handle the
+ * client calls.
  *
  * <p>With {@link Builder#emitInterruptOutcome(boolean)} enabled, a run that pauses
  * with pending client tool calls finishes with an
@@ -390,7 +396,23 @@ public final class SpringAiAgent implements Agent {
         }
         advertised.addAll(backendTools);
         advertised.addAll(toToolCallbacks(interruptTools));
-        Set<String> backendToolNames = toolNames(backendTools);
+
+        // Whenever any tool is advertised at request time, stream() suppresses the
+        // ChatClient's automatic tool execution so the agent can drive its own loop
+        // (forwarding client tools, intercepting the state tool, running backend tools).
+        // That suppression also stops the ChatClient from executing the backend tools
+        // already registered on it via defaultTools(...); so when the agent takes over,
+        // it must execute those callbacks itself. Fold them into the backend set.
+        List<ToolCallback> effectiveBackendTools = new ArrayList<>(backendTools);
+        if (!advertised.isEmpty()) {
+            Set<String> known = toolNames(effectiveBackendTools);
+            for (ToolCallback callback : chatClientDefaultTools()) {
+                if (known.add(callback.getToolDefinition().name())) {
+                    effectiveBackendTools.add(callback);
+                }
+            }
+        }
+        Set<String> backendToolNames = toolNames(effectiveBackendTools);
         String stateToolName = shareState ? STATE_TOOL_NAME : null;
         boolean emitDeltas = shareState && stateUpdates == StateUpdates.DELTA;
 
@@ -404,8 +426,8 @@ public final class SpringAiAgent implements Agent {
                         stateAvailable
                                 ? Flux.<Event>just(new StateSnapshotEvent(input.state()))
                                 : Flux.<Event>empty(),
-                        runTurn(baseMessages, advertised, backendToolNames, stateToolName, emitDeltas,
-                                input.state(), 0, outcome),
+                        runTurn(baseMessages, advertised, backendToolNames, effectiveBackendTools,
+                                stateToolName, emitDeltas, input.state(), 0, outcome),
                         Flux.<Event>defer(() -> Flux.<Event>just(new RunFinishedEvent(
                                 input.threadId(), input.runId(), outcome.get(), null, null, null)))))
                 .onErrorResume(throwable -> Flux.just(new RunErrorEvent(describe(throwable))));
@@ -416,8 +438,8 @@ public final class SpringAiAgent implements Agent {
     /** Streams one model turn, then continues the tool loop if backend tools were called. */
     private Flux<Event> runTurn(List<org.springframework.ai.chat.messages.Message> messages,
                                 List<ToolCallback> advertised, Set<String> backendToolNames,
-                                String stateToolName, boolean emitDeltas, Object inputState, int depth,
-                                AtomicReference<RunOutcome> outcome) {
+                                List<ToolCallback> backendCallbacks, String stateToolName, boolean emitDeltas,
+                                Object inputState, int depth, AtomicReference<RunOutcome> outcome) {
         String messageId = messageIdGenerator.get();
         SpringAiEventTranslator translator = new SpringAiEventTranslator(messageId, stateToolName);
 
@@ -429,14 +451,14 @@ public final class SpringAiAgent implements Agent {
         }
 
         return turnEvents.concatWith(Flux.defer(() ->
-                continueAfterTurn(messages, translator, advertised, backendToolNames, stateToolName,
-                        emitDeltas, inputState, depth, outcome)));
+                continueAfterTurn(messages, translator, advertised, backendToolNames, backendCallbacks,
+                        stateToolName, emitDeltas, inputState, depth, outcome)));
     }
 
     private Flux<Event> continueAfterTurn(List<org.springframework.ai.chat.messages.Message> messages,
                                           SpringAiEventTranslator translator, List<ToolCallback> advertised,
-                                          Set<String> backendToolNames, String stateToolName,
-                                          boolean emitDeltas, Object inputState, int depth,
+                                          Set<String> backendToolNames, List<ToolCallback> backendCallbacks,
+                                          String stateToolName, boolean emitDeltas, Object inputState, int depth,
                                           AtomicReference<RunOutcome> outcome) {
         List<AssistantMessage.ToolCall> calls = translator.collectedToolCalls();
         List<AssistantMessage.ToolCall> backendCalls = calls.stream()
@@ -453,7 +475,7 @@ public final class SpringAiAgent implements Agent {
         AssistantMessage assistantMessage = AssistantMessage.builder().toolCalls(backendCalls).build();
         ChatResponse toolCallResponse = new ChatResponse(List.of(new Generation(assistantMessage)));
         Prompt executionPrompt = new Prompt(messages,
-                ToolCallingChatOptions.builder().toolCallbacks(backendTools).build());
+                ToolCallingChatOptions.builder().toolCallbacks(backendCallbacks).build());
         ToolExecutionResult execution = toolCallingManager.executeToolCalls(executionPrompt, toolCallResponse);
 
         List<Event> resultEvents = toToolResultEvents(execution);
@@ -469,8 +491,8 @@ public final class SpringAiAgent implements Agent {
         List<org.springframework.ai.chat.messages.Message> nextMessages = execution.conversationHistory();
         return Flux.concat(
                 Flux.fromIterable(resultEvents),
-                runTurn(nextMessages, advertised, backendToolNames, stateToolName, emitDeltas,
-                        inputState, depth + 1, outcome));
+                runTurn(nextMessages, advertised, backendToolNames, backendCallbacks, stateToolName,
+                        emitDeltas, inputState, depth + 1, outcome));
     }
 
     /**
@@ -550,6 +572,35 @@ public final class SpringAiAgent implements Agent {
                     .advisors(noExecuteToolAdvisor);
         }
         return spec.stream().chatResponse();
+    }
+
+    /**
+     * The executable (backend) tool callbacks already registered on the supplied
+     * {@link ChatClient} via {@code defaultTools(...)}. These stay advertised to the model
+     * through the ChatClient's own defaults, but the agent suppresses the ChatClient's
+     * automatic tool execution while it drives its own loop, so it must run them itself.
+     * AG-UI placeholders (client/state/interrupt tools) are skipped — only real callbacks
+     * are returned. Returns an empty list if the ChatClient exposes no discoverable
+     * defaults (a non-default {@code ChatClient} implementation).
+     */
+    private List<ToolCallback> chatClientDefaultTools() {
+        if (!(chatClient.prompt() instanceof DefaultChatClient.DefaultChatClientRequestSpec spec)) {
+            return List.of();
+        }
+        List<ToolCallback> discovered = new ArrayList<>();
+        for (ToolCallback callback : spec.getToolCallbacks()) {
+            if (!(callback instanceof AgUiToolCallback)) {
+                discovered.add(callback);
+            }
+        }
+        for (ToolCallbackProvider provider : spec.getToolCallbackProviders()) {
+            for (ToolCallback callback : provider.getToolCallbacks()) {
+                if (!(callback instanceof AgUiToolCallback)) {
+                    discovered.add(callback);
+                }
+            }
+        }
+        return discovered;
     }
 
     private List<Event> toToolResultEvents(ToolExecutionResult execution) {
