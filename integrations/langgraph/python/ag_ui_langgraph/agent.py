@@ -605,6 +605,23 @@ def error_open_subagents(active_run, message: str) -> list:
     return events
 
 
+def is_graph_node_chain_end(event: dict, node_name: Optional[str]) -> bool:
+    """True when this on_chain_end is the graph node's own write.
+
+    Nested runnables inside a node (RunnableLambda, tools, etc.) also emit
+    on_chain_end with the parent langgraph_node. Merging those through a
+    reducer counts the same write twice. Graph-level aggregate events have
+    no node name. Real node events use tags like graph:step:N; nested ones
+    use seq:step:N. Events without tags (unit tests) still match on name.
+    """
+    if not node_name or event.get("name") != node_name:
+        return False
+    tags = event.get("tags")
+    if tags:
+        return any(isinstance(t, str) and t.startswith("graph:step:") for t in tags)
+    return True
+
+
 class PreparedStream(TypedDict):
     """Payload returned by prepare_stream / prepare_regenerate_stream.
 
@@ -1889,8 +1906,10 @@ class LangGraphAgent:
                     )
                 exiting_node = False
 
-                if event_type == "on_chain_end" and isinstance(
-                        event.get("data", {}).get("output"), dict
+                if (
+                    event_type == "on_chain_end"
+                    and isinstance(event.get("data", {}).get("output"), dict)
+                    and is_graph_node_chain_end(event, current_node_name)
                 ):
                     output = event["data"]["output"]
                     # dict.update overwrites reducer channels
@@ -1898,7 +1917,9 @@ class LangGraphAgent:
                     # the compiled graph's channel operators instead of
                     # aget_state: the checkpoint can still hold the previous
                     # value when on_chain_end fires, which would undo this
-                    # node's write (#2628).
+                    # node's write (#2628). Nested on_chain_end callbacks and
+                    # the graph aggregate are skipped so the same write is
+                    # not counted twice.
                     channels = getattr(self.graph, "channels", None) or {}
                     for key, value in output.items():
                         channel = channels.get(key) if isinstance(channels, dict) else None
