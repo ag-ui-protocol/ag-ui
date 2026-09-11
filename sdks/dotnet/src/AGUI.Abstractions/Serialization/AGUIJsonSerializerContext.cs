@@ -53,6 +53,7 @@ namespace AGUI.Abstractions;
 [JsonSerializable(typeof(RunFinishedOutcome))]
 [JsonSerializable(typeof(RunFinishedSuccessOutcome))]
 [JsonSerializable(typeof(RunFinishedInterruptOutcome))]
+[JsonSerializable(typeof(RunFinishedCancelledOutcome))]
 [JsonSerializable(typeof(SubagentStartedEvent))]
 [JsonSerializable(typeof(SubagentFinishedEvent))]
 [JsonSerializable(typeof(SubagentErrorEvent))]

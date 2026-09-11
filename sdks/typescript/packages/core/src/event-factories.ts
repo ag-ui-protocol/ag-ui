@@ -247,9 +247,10 @@ export const createRunStartedEvent = (props: RunStartedEventProps): RunStartedEv
  * Creates a RUN_FINISHED event.
  *
  * `outcome` is optional. Omit it for legacy/back-compat behavior, or set it
- * explicitly to `{ type: "success" }` or `{ type: "interrupt", interrupts }`
- * — see `createRunFinishedSuccessEvent` and `createRunFinishedInterruptEvent`
- * for convenience helpers.
+ * explicitly to `{ type: "success" }`, `{ type: "interrupt", interrupts }` or
+ * `{ type: "cancelled" }` — see `createRunFinishedSuccessEvent`,
+ * `createRunFinishedInterruptEvent` and `createRunFinishedCancelledEvent` for
+ * convenience helpers.
  */
 export const createRunFinishedEvent = (props: RunFinishedEventProps): RunFinishedEvent =>
   buildEvent(EventType.RUN_FINISHED, RunFinishedEventSchema, props);
@@ -277,6 +278,20 @@ export const createRunFinishedInterruptEvent = (
     outcome: { type: "interrupt", interrupts },
   });
 };
+
+/**
+ * Creates a RUN_FINISHED event with `outcome: { type: "cancelled" }`: the run
+ * was stopped before it completed and did not fail. A cancelled run has no
+ * return value, so `result` is not accepted; `usage` accrued before the stop
+ * may still be reported.
+ */
+export const createRunFinishedCancelledEvent = (
+  props: Omit<RunFinishedEventProps, "outcome" | "result">,
+): RunFinishedEvent =>
+  buildEvent(EventType.RUN_FINISHED, RunFinishedEventSchema, {
+    ...props,
+    outcome: { type: "cancelled" },
+  });
 
 /**
  * Creates a RUN_ERROR event.

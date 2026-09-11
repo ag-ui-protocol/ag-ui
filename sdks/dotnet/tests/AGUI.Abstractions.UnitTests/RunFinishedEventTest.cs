@@ -60,6 +60,36 @@ public sealed class RunFinishedEventTest
     }
 
     [Fact]
+    public void Serialization_WithCancelled()
+    {
+        var evt = new RunFinishedEvent
+        {
+            ThreadId = "t1",
+            RunId = "r1",
+            Outcome = new RunFinishedCancelledOutcome()
+        };
+
+        var json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.RunFinishedEvent);
+        using var doc = JsonDocument.Parse(json);
+
+        Assert.Equal("RUN_FINISHED", doc.RootElement.GetProperty("type").GetString());
+        var outcome = doc.RootElement.GetProperty("outcome");
+        Assert.Equal("cancelled", outcome.GetProperty("type").GetString());
+        Assert.False(outcome.TryGetProperty("interrupts", out _));
+    }
+
+    [Fact]
+    public void Deserialization_WithCancelled()
+    {
+        const string json = """{"type":"RUN_FINISHED","threadId":"t1","runId":"r1","outcome":{"type":"cancelled"}}""";
+
+        var evt = JsonSerializer.Deserialize(json, AGUIJsonSerializerContext.Default.RunFinishedEvent);
+
+        Assert.NotNull(evt);
+        Assert.IsType<RunFinishedCancelledOutcome>(evt.Outcome);
+    }
+
+    [Fact]
     public void Serialization_OmitsNullProperties()
     {
         var evt = new RunFinishedEvent();

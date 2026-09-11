@@ -6,6 +6,7 @@ from ag_ui.core.events import (
     RunFinishedEvent,
     RunFinishedSuccessOutcome,
     RunFinishedInterruptOutcome,
+    RunFinishedCancelledOutcome,
 )
 from ag_ui.core.types import Interrupt
 
@@ -43,6 +44,33 @@ class RunFinishedEventTest(unittest.TestCase):
         assert isinstance(e.outcome, RunFinishedInterruptOutcome)
         self.assertEqual(e.outcome.type, "interrupt")
         self.assertEqual(len(e.outcome.interrupts), 1)
+
+    def test_explicit_cancelled_outcome(self):
+        e = RunFinishedEvent(
+            thread_id="t-1",
+            run_id="r-1",
+            outcome=RunFinishedCancelledOutcome(),
+        )
+        assert isinstance(e.outcome, RunFinishedCancelledOutcome)
+        self.assertEqual(e.outcome.type, "cancelled")
+        self.assertIsNone(e.result)
+
+    def test_cancelled_outcome_via_dict_discriminator(self):
+        e = RunFinishedEvent.model_validate(
+            {
+                "type": EventType.RUN_FINISHED,
+                "threadId": "t-1",
+                "runId": "r-1",
+                "outcome": {"type": "cancelled"},
+            }
+        )
+        assert isinstance(e.outcome, RunFinishedCancelledOutcome)
+
+    def test_cancelled_outcome_is_exported_from_core(self):
+        import ag_ui.core
+
+        self.assertIs(ag_ui.core.RunFinishedCancelledOutcome, RunFinishedCancelledOutcome)
+        self.assertIn("RunFinishedCancelledOutcome", ag_ui.core.__all__)
 
     def test_outcome_via_dict_discriminator(self):
         e = RunFinishedEvent.model_validate(
