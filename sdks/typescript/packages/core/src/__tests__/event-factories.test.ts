@@ -193,7 +193,15 @@ describe("event factories", () => {
     const started = createRunStartedEvent({
       threadId: "t1",
       runId: "r1",
-      input: { threadId: "t1", runId: "r1", state: {}, messages: [], tools: [], context: [], forwardedProps: {} },
+      input: {
+        threadId: "t1",
+        runId: "r1",
+        state: {},
+        messages: [],
+        tools: [],
+        context: [],
+        forwardedProps: {},
+      },
     });
     const finished = createRunFinishedEvent({ threadId: "t1", runId: "r1", result: { ok: true } });
     const error = createRunErrorEvent({ message: "boom", code: "E_FAIL" });
@@ -224,6 +232,22 @@ describe("createRunFinishedSuccessEvent", () => {
     expect(e.type).toBe(EventType.RUN_FINISHED);
     expect(e.outcome).toEqual({ type: "success" });
     expect(e.result).toEqual({ ok: true });
+  });
+});
+
+describe("createRunFinishedSuccessEvent — pendingToolCallIds", () => {
+  it("names the tool calls the run left unanswered on the success outcome", () => {
+    const e = createRunFinishedSuccessEvent({
+      threadId: "t-1",
+      runId: "r-1",
+      pendingToolCallIds: ["tc-1", "tc-2"],
+    });
+    expect(e.outcome).toEqual({ type: "success", pendingToolCallIds: ["tc-1", "tc-2"] });
+  });
+
+  it("omits pendingToolCallIds when none are given", () => {
+    const e = createRunFinishedSuccessEvent({ threadId: "t-1", runId: "r-1" });
+    expect(e.outcome).toEqual({ type: "success" });
   });
 });
 

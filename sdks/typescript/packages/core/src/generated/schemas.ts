@@ -736,10 +736,13 @@ export const RunStartedEventSchema = z.looseObject({
  * The run completed. Equivalent to an absent outcome. Closed like every other
  * object, which is also what keeps it from carrying the suspended sibling's
  * interrupts — a success with an interrupt still pending would be a
- * contradiction, not an extension.
+ * contradiction, not an extension. A completed run may still have left
+ * frontend tool calls for the application to answer; pendingToolCallIds names
+ * them.
  */
 export const RunFinishedSuccessOutcomeSchema = z.looseObject({
   type: z.literal("success"),
+  pendingToolCallIds: z.array(z.string()).optional(),
 });
 
 /**

@@ -24,8 +24,9 @@ with nothing to do.
   where the producer names what it is waiting for and resume entries answer
   it. A run that stopped by calling a
   [frontend tool](/spec/draft/events/tool-calls#frontend-tools) is the other,
-  ordinary path: it finishes as success and the answer rides the next input's
-  messages.
+  ordinary path: it finishes as success, naming the unanswered calls in the
+  success outcome's `pendingToolCallIds`, and the answer rides the next
+  input's messages.
 - Each interrupt's `id` MUST be unique within the run; a resume entry answers
   it by this id.
 - An interrupt's `reason` is an open string — the protocol does not attempt to

@@ -86,6 +86,34 @@ public sealed class EventRoundTripTest
     }
 
     [Fact]
+    public void RunFinished_SuccessWithPendingToolCallIds_RoundTrips()
+    {
+        var result = RoundTrip(new RunFinishedEvent
+        {
+            ThreadId = "thread-1",
+            RunId = "run-1",
+            Outcome = new RunFinishedSuccessOutcome { PendingToolCallIds = ["tc-1", "tc-2"] },
+        });
+
+        var outcome = Assert.IsType<RunFinishedSuccessOutcome>(result.Outcome);
+        Assert.Equal(new[] { "tc-1", "tc-2" }, outcome.PendingToolCallIds);
+    }
+
+    [Fact]
+    public void RunFinished_SuccessWithoutPendingToolCallIds_RoundTripsToNull()
+    {
+        var result = RoundTrip(new RunFinishedEvent
+        {
+            ThreadId = "thread-1",
+            RunId = "run-1",
+            Outcome = new RunFinishedSuccessOutcome(),
+        });
+
+        var outcome = Assert.IsType<RunFinishedSuccessOutcome>(result.Outcome);
+        Assert.Null(outcome.PendingToolCallIds);
+    }
+
+    [Fact]
     public void RunFinished_NoOutcome_RoundTripsToNull()
     {
         var result = RoundTrip(new RunFinishedEvent { ThreadId = "t", RunId = "r" });

@@ -496,6 +496,7 @@ const MAPPED_FIELDS: Record<string, Record<string, string>> = {
   },
   RunFinishedSuccessOutcome: {
     type: "required literal(success)",
+    pendingToolCallIds: "optional string[]",
   },
   RunFinishedInterruptOutcome: {
     type: "required literal(interrupt)",
@@ -767,9 +768,16 @@ export function emitDotnet(
                         proto.Interrupts.Add(ProtoMessageMapper.ToProtoInterrupt(interrupt));
                     }
                 }
-                else if (e.Outcome is RunFinishedSuccessOutcome)
+                else if (e.Outcome is RunFinishedSuccessOutcome successOutcome)
                 {
                     proto.Outcome = "success";
+                    if (successOutcome.PendingToolCallIds is not null)
+                    {
+                        foreach (var pendingToolCallId in successOutcome.PendingToolCallIds)
+                        {
+                            proto.PendingToolCallIds.Add(pendingToolCallId);
+                        }
+                    }
                 }
                 else
                 {
@@ -979,6 +987,14 @@ ${decodeCases}
                     "Invalid event: interrupt outcome carries no interrupts.");
             }
 
+            // Pending tool call ids belong to the success outcome: an
+            // interrupted run names what it waits for through its interrupts.
+            if (proto.PendingToolCallIds.Count > 0)
+            {
+                throw new System.IO.InvalidDataException(
+                    "Invalid event: outcome interrupt cannot carry pendingToolCallIds.");
+            }
+
             var outcome = new RunFinishedInterruptOutcome();
             foreach (var interrupt in proto.Interrupts)
             {
@@ -999,7 +1015,13 @@ ${decodeCases}
                     "Invalid event: outcome success cannot carry interrupts.");
             }
 
-            return new RunFinishedSuccessOutcome();
+            var outcome = new RunFinishedSuccessOutcome();
+            if (proto.PendingToolCallIds.Count > 0)
+            {
+                outcome.PendingToolCallIds = new List<string>(proto.PendingToolCallIds);
+            }
+
+            return outcome;
         }
 
         if (proto.Outcome.Length == 0)
@@ -1008,6 +1030,12 @@ ${decodeCases}
             {
                 throw new System.IO.InvalidDataException(
                     "Invalid event: absent outcome cannot carry interrupts.");
+            }
+
+            if (proto.PendingToolCallIds.Count > 0)
+            {
+                throw new System.IO.InvalidDataException(
+                    "Invalid event: absent outcome cannot carry pendingToolCallIds.");
             }
 
             return null;

@@ -190,6 +190,7 @@ RunErrorEvent.usage = 4
 RunFinishedEvent.base_event = 1
 RunFinishedEvent.interrupts = 6
 RunFinishedEvent.outcome = 5
+RunFinishedEvent.pending_tool_call_ids = 8
 RunFinishedEvent.result = 4
 RunFinishedEvent.run_id = 3
 RunFinishedEvent.thread_id = 2

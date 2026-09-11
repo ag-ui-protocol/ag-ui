@@ -107,10 +107,21 @@ cross a run boundary — which gives the round-trip its shape:
 - A producer that calls a frontend tool MUST NOT answer it: no
   `TOOL_CALL_RESULT`, no fabricated tool message. The result is the
   application's to produce.
-- The producer finishes the run with the call unanswered — `RUN_FINISHED`,
-  ordinary success outcome — and SHOULD do so promptly once nothing remains
-  that does not depend on the result. Several frontend calls MAY be left
-  unanswered by one run; the application answers them all at once.
+- The producer finishes the run with the call unanswered. It MUST use the
+  success outcome, or none, and MUST NOT report the run as interrupted — and
+  it SHOULD finish promptly once nothing remains that does not depend on the
+  result. Several frontend calls MAY be left unanswered by one run; the
+  application answers them all at once.
+- The success outcome's `pendingToolCallIds` names the calls left unanswered,
+  in the order they were made. A producer SHOULD send it when a run leaves
+  calls pending; when it does, the list MUST contain exactly the tool calls
+  the run started and did not answer with `TOOL_CALL_RESULT`. `RUN_FINISHED`
+  alone does not say whether a run left work for the application: when the
+  list is absent or empty, a consumer that needs to know derives it from the
+  stream — every tool call the run started that received no result — and
+  MUST NOT read absence as "nothing pending". On an interrupted run the
+  pending calls are derived the same way; the interrupt outcome does not
+  carry them.
 - After the run finishes, the application disposes of each unanswered
   frontend call — executing it, or declining it, with whatever consent its
   own rules require. A thread that continues MUST answer every one of them
@@ -126,6 +137,19 @@ This is a different round-trip from
 [interrupts](/spec/draft/basic/patterns/interrupt-resume): an interrupt is the
 producer explicitly stopping to ask, answered by resume entries; a frontend
 tool call rides the ordinary message loop, answered by conversation history.
+
+<Note>
+  A run that stops on a frontend tool call is a completed run, not an
+  interrupted one, and it is not a third kind of ending either. The outcome
+  reports what the producer knows about why the run ended, and here the
+  producer does not know whether it is waiting: a frontend tool is often a
+  terminal effect — render a chart, navigate, highlight — and whether its
+  result starts another run is the application's decision, made by the
+  application's rules for that tool. So the producer says what it does know —
+  the run is complete, and these calls are unanswered — as detail on the
+  success outcome, where an older consumer that strips the field still reads a
+  successful run and derives the pending calls as it always has.
+</Note>
 
 A producer SHOULD call frontend tools only from the advertised list; a call
 naming a tool the input did not advertise is not by itself a protocol

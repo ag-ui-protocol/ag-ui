@@ -506,6 +506,8 @@ AGUI.Abstractions.RunFinishedOutcomeJsonConverter.RunFinishedOutcomeJsonConverte
 AGUI.Abstractions.RunFinishedOutcomeTypes
 AGUI.Abstractions.RunFinishedSuccessOutcome
 AGUI.Abstractions.RunFinishedSuccessOutcome.RunFinishedSuccessOutcome() -> void
+AGUI.Abstractions.RunFinishedSuccessOutcome.PendingToolCallIds.get -> System.Collections.Generic.IList<string!>?
+AGUI.Abstractions.RunFinishedSuccessOutcome.PendingToolCallIds.set -> void
 AGUI.Abstractions.RunStartedEvent
 AGUI.Abstractions.RunStartedEvent.Input.get -> AGUI.Abstractions.RunAgentInput?
 AGUI.Abstractions.RunStartedEvent.Input.set -> void

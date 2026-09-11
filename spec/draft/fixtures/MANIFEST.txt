@@ -117,6 +117,8 @@ RunAgentInput/valid/without-tools-or-context.json
 RunErrorEvent/invalid/usage-item-not-a-token-usage.expect.json
 RunErrorEvent/invalid/usage-item-not-a-token-usage.json
 RunErrorEvent/valid/minimal.json
+RunFinishedEvent/invalid/outcome-interrupt-carrying-pending-tool-call-ids.expect.json
+RunFinishedEvent/invalid/outcome-interrupt-carrying-pending-tool-call-ids.json
 RunFinishedEvent/invalid/outcome-interrupt-item-not-an-interrupt.expect.json
 RunFinishedEvent/invalid/outcome-interrupt-item-not-an-interrupt.json
 RunFinishedEvent/invalid/outcome-interrupt-with-no-interrupts.expect.json
@@ -125,6 +127,8 @@ RunFinishedEvent/invalid/outcome-null.expect.json
 RunFinishedEvent/invalid/outcome-null.json
 RunFinishedEvent/invalid/outcome-success-carrying-interrupts.expect.json
 RunFinishedEvent/invalid/outcome-success-carrying-interrupts.json
+RunFinishedEvent/invalid/outcome-success-pending-tool-call-id-not-a-string.expect.json
+RunFinishedEvent/invalid/outcome-success-pending-tool-call-id-not-a-string.json
 RunFinishedEvent/invalid/usage-item-not-a-token-usage.expect.json
 RunFinishedEvent/invalid/usage-item-not-a-token-usage.json
 RunFinishedEvent/invalid/usage-negative-token-count.expect.json
@@ -133,6 +137,7 @@ RunFinishedEvent/valid/minimal.json
 RunFinishedEvent/valid/outcome-absent.json
 RunFinishedEvent/valid/outcome-interrupt-full.json
 RunFinishedEvent/valid/outcome-interrupt.json
+RunFinishedEvent/valid/outcome-success-pending-tool-call-ids.json
 RunFinishedEvent/valid/outcome-success.json
 RunFinishedEvent/valid/result-array.json
 RunFinishedEvent/valid/result-number.json
