@@ -44,6 +44,12 @@ the reasoning sub-stream; content outside is emitted as text. Tags split across
 streaming chunks are reassembled. Models that don't use think tags are
 unaffected — all content is emitted as text.
 
+Reasoning that comes back in the run's conversation history — an AG-UI
+`ReasoningMessage` (role `reasoning`, added in ag-ui `0.1.1`) — is replayed to
+the model as an assistant message wrapped in the same `<think>...</think>` tags,
+so a reasoning turn round-trips symmetrically. A blank reasoning message (for
+example one that carried only a provider-specific `encryptedValue`) is dropped.
+
 The agent owns the **tool-execution loop**, distinguishing two kinds of tools:
 
 - **Client-side tools** — those on the `RunAgentInput`. Advertised to the model
