@@ -503,7 +503,11 @@ class ADKAgent:
         """
         if tool is None:
             return None
-        if type(tool).__name__ == "NodeTool":
+        try:
+            from google.adk.tools._node_tool import NodeTool
+        except ImportError:
+            NodeTool = None
+        if NodeTool is not None and isinstance(tool, NodeTool):
             return getattr(tool, "node", None) or getattr(tool, "agent", None)
         try:
             from google.adk.workflow import Workflow  # type: ignore[import-not-found]
@@ -520,7 +524,11 @@ class ADKAgent:
         """True when *tool* is a NodeTool or a Workflow used as a tool."""
         if tool is None:
             return False
-        if type(tool).__name__ == "NodeTool":
+        try:
+            from google.adk.tools._node_tool import NodeTool
+        except ImportError:
+            NodeTool = None
+        if NodeTool is not None and isinstance(tool, NodeTool):
             return True
         try:
             from google.adk.workflow import Workflow  # type: ignore[import-not-found]
@@ -579,10 +587,6 @@ class ADKAgent:
                     tool_name = getattr(tool, "name", None)
                     if tool_name:
                         names.add(tool_name)
-                    inner = cls._unwrap_tool_agent(tool)
-                    inner_name = getattr(inner, "name", None) if inner is not None else None
-                    if inner_name:
-                        names.add(inner_name)
                 nested = cls._unwrap_tool_agent(tool)
                 if nested is not None:
                     names |= cls._collect_node_tool_names(nested, seen)
@@ -3319,8 +3323,8 @@ class ADKAgent:
                     # NodeTool invocations are executed server-side by ADK.
                     # The client never answers them, so they must not join
                     # pending_tool_calls / the HITL deferral set (#2674).
+                    skip_ids = set()
                     if lro_ids and node_tool_names and adk_event.content and getattr(adk_event.content, 'parts', None):
-                        skip_ids = set()
                         for part in adk_event.content.parts:
                             func = getattr(part, 'function_call', None)
                             func_name = getattr(func, 'name', None) if func else None
@@ -3328,6 +3332,8 @@ class ADKAgent:
                             if func_id and func_name in node_tool_names:
                                 skip_ids.add(func_id)
                         lro_ids -= skip_ids
+                    if skip_ids:
+                        event_translator.backend_tool_ids.update(skip_ids)
                     # Mark every LRO id from the ADK event as HITL on the
                     # shared execution set. Synchronous mutation before any
                     # downstream `await event_queue.put(...)` of this event's

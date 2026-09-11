@@ -250,19 +250,15 @@ class TestWorkflowRootDetection:
         adk_agent._adk_agent = wf
         assert adk_agent._root_agent_is_workflow() is True
 
-    def test_llm_root_with_workflow_node_tool_is_workflow(self) -> None:
-        """A Workflow attached via tools= (NodeTool) must skip the #1534
-        placeholder, same as a Workflow root (ag-ui#2674).
+    @pytest.mark.parametrize("wrap_as_node_tool", [False, True])
+    def test_llm_root_with_workflow_node_tool_is_workflow(self, wrap_as_node_tool: bool) -> None:
+        """A Workflow attached via tools= (auto-wrap or NodeTool subclass)
+        must skip the #1534 placeholder, same as a Workflow root (ag-ui#2674).
         """
         try:
             from google.adk.workflow import Workflow  # type: ignore[import-not-found]
         except ImportError:
             pytest.skip("Workflow not available on this ADK version (1.x)")
-
-        class NodeTool:
-            def __init__(self, name, node):
-                self.name = name
-                self.node = node
 
         wf = Workflow(name="hs_classifier")
         root_agent = Agent(
@@ -275,10 +271,49 @@ class TestWorkflowRootDetection:
             user_id="u",
             use_in_memory_services=True,
         )
-        # Attach after construct: Agent() may reject unknown tool types.
-        adk_agent._adk_agent.tools = [NodeTool("hs_classifier", wf)]
+        if wrap_as_node_tool:
+            try:
+                from google.adk.tools._node_tool import NodeTool
+            except ImportError:
+                pytest.skip("NodeTool not available on this ADK version")
+
+            class SubNodeTool(NodeTool):
+                def __init__(self, name, node):
+                    # Real NodeTool rejects BaseAgent wraps. Subclass still
+                    # hits the isinstance(NodeTool) path.
+                    self.name = name
+                    self.node = node
+
+            tools = [SubNodeTool("hs_classifier", wf)]
+        else:
+            tools = [wf]
+        adk_agent._adk_agent.tools = tools
         assert adk_agent._root_agent_is_workflow() is True
         assert "hs_classifier" in ADKAgent._collect_node_tool_names(adk_agent._adk_agent)
+
+    def test_collect_node_tool_names_uses_exposed_name_only(self) -> None:
+        """NodeTool(name=classify) wrapping Workflow(check_status) must not
+        also filter a sibling LongRunningFunctionTool named check_status.
+        """
+        try:
+            from google.adk.workflow import Workflow  # type: ignore[import-not-found]
+            from google.adk.tools._node_tool import NodeTool
+        except ImportError:
+            pytest.skip("Workflow/NodeTool not available on this ADK version (1.x)")
+
+        class SubNodeTool(NodeTool):
+            def __init__(self, name, node):
+                self.name = name
+                self.node = node
+
+        wf = Workflow(name="check_status")
+        root = MagicMock()
+        root.tools = [SubNodeTool("classify", wf)]
+        root.sub_agents = []
+        root.graph = None
+        names = ADKAgent._collect_node_tool_names(root)
+        assert "classify" in names
+        assert "check_status" not in names
 
 
 # ---------------------------------------------------------------------------

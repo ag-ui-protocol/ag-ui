@@ -297,16 +297,16 @@ class TestCollectOutputSchemaAgentNames:
         from google.adk.agents import LlmAgent, BaseAgent
         from ag_ui_adk.adk_agent import ADKAgent
 
+        try:
+            from google.adk.tools._node_tool import NodeTool
+        except ImportError:
+            pytest.skip("NodeTool not available on this ADK version (1.x)")
+
         classifier = MagicMock(spec=LlmAgent)
         classifier.name = "hs_classifier"
         classifier.output_schema = str
         classifier.sub_agents = []
         classifier.tools = []
-
-        class NodeTool:
-            def __init__(self, name, node):
-                self.name = name
-                self.node = node
 
         workflow = MagicMock(spec=BaseAgent)
         workflow.name = "hs_classifier_workflow"
@@ -314,11 +314,16 @@ class TestCollectOutputSchemaAgentNames:
         workflow.graph = None
         workflow.tools = []
 
+        class SubNodeTool(NodeTool):
+            def __init__(self, name, node):
+                self.name = name
+                self.node = node
+
         root = MagicMock(spec=LlmAgent)
         root.name = "coordinator"
         root.output_schema = None
         root.sub_agents = []
-        root.tools = [NodeTool("hs_classifier_workflow", workflow)]
+        root.tools = [SubNodeTool("classify", workflow)]
         root.graph = None
 
         result = ADKAgent._collect_output_schema_agent_names(root)

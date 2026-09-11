@@ -245,6 +245,10 @@ class EventTranslator:
         self._last_streamed_text: Optional[str] = None  # Snapshot of most recently streamed text
         self._last_streamed_run_id: Optional[str] = None  # Run identifier for the last streamed text
         self.long_running_tool_ids: List[str] = []  # Track the long running tool IDs
+        # NodeTool / Workflow-as-tool IDs ADK still tags as LRO. The agent
+        # subtracts them from HITL pending; the translator must also treat
+        # them as backend calls so START/ARGS/END emit before RESULT (#2674).
+        self.backend_tool_ids: set[str] = set()
         # Maps LRO function call name → list of IDs we emitted to the client.
         # Used to build a remap when the final (non-partial) event arrives
         # with a different ID for the same logical function call.
@@ -336,6 +340,15 @@ class EventTranslator:
         """
         return len(self._deferred_confirm_events) > 0
 
+    def _event_lro_ids(self, adk_event: ADKEvent) -> set:
+        """LRO ids on this event, minus backend NodeTool ids (#2674)."""
+        try:
+            lro_ids = set(getattr(adk_event, "long_running_tool_ids", []) or [])
+        except Exception:
+            lro_ids = set()
+        lro_ids -= self.backend_tool_ids
+        return lro_ids
+
     async def translate(
         self, 
         adk_event: ADKEvent,
@@ -384,10 +397,7 @@ class EventTranslator:
             if self._streaming_fc_args_enabled and is_partial and hasattr(adk_event, 'get_function_calls'):
                 function_calls = adk_event.get_function_calls()
                 if function_calls:
-                    try:
-                        lro_ids = set(getattr(adk_event, 'long_running_tool_ids', []) or [])
-                    except Exception:
-                        lro_ids = set()
+                    lro_ids = self._event_lro_ids(adk_event)
                     for func_call in function_calls:
                         fc_id = getattr(func_call, 'id', None)
                         if fc_id in lro_ids or fc_id in self._client_emitted_tool_call_ids:
@@ -400,10 +410,7 @@ class EventTranslator:
                 function_calls = adk_event.get_function_calls()
                 if function_calls:
                     # Filter out long-running tool calls; those are handled by translate_lro_function_calls
-                    try:
-                        lro_ids = set(getattr(adk_event, 'long_running_tool_ids', []) or [])
-                    except Exception:
-                        lro_ids = set()
+                    lro_ids = self._event_lro_ids(adk_event)
 
                     # Also exclude tool calls already emitted via translate_lro_function_calls
                     # (self.long_running_tool_ids tracks IDs across events, while lro_ids
@@ -849,7 +856,7 @@ class EventTranslator:
         """
 
         if adk_event.content and adk_event.content.parts:
-            lro_ids = set(adk_event.long_running_tool_ids or [])
+            lro_ids = self._event_lro_ids(adk_event)
             # High-water-mark dedupe across REPLAYED events. Under SSE streaming
             # ADK can deliver the same logical LRO call several times — a
             # streaming chunk (partial=True), an aggregated partial, and the
@@ -1357,6 +1364,7 @@ class EventTranslator:
         self._last_streamed_text = None
         self._last_streamed_run_id = None
         self.long_running_tool_ids.clear()
+        self.backend_tool_ids.clear()
         self.lro_emitted_ids_by_name.clear()
         self._emitted_predict_state_for_tools.clear()
         self._emitted_confirm_for_tools.clear()
