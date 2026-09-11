@@ -750,26 +750,62 @@ def test_reads_a_dict_backed_registry_from_its_backing_field():
     assert recovered[0] is plugin
 
 
-def test_registry_holding_the_agent_is_not_forwarded():
-    """A registry that keeps a reference to its own agent must not be shared.
-
-    Registration hands the owning agent to whatever the registry holds, so its
-    contents are wired to that agent and cannot serve a second one.
-    """
-    import weakref
-
-    param = _first_forwardable_param()
-    singular = param[:-1] if param.endswith("s") else param
-
-    class OwnedRegistry:
-        def __init__(self, owner, contents):
-            self._agent_ref = weakref.ref(owner)
-            self._contents = contents
-
+@pytest.mark.parametrize(
+    "attribute", ["setting", "_setting", "_default_setting", "_setting_registry"]
+)
+@pytest.mark.parametrize("weak", [False, True])
+def test_value_holding_the_agent_is_not_forwarded(attribute, weak):
+    """Agent-owned managers are unsafe to forward regardless of storage name."""
     fake = type("FakeAgent", (), {})()
-    setattr(fake, f"_{singular}_registry", OwnedRegistry(fake, [object()]))
+    holder = types.SimpleNamespace(
+        _agent=weakref.ref(fake) if weak else fake,
+        _contents=[object()],
+    )
+    setattr(fake, attribute, holder)
+    assert _resolve_template_param(fake, "setting") is _AGENT_BOUND
 
-    assert _resolve_template_param(fake, param) is _AGENT_BOUND
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    "background_tasks" not in inspect.signature(Agent.__init__).parameters,
+    reason="this Strands release has no background tasks",
+)
+@pytest.mark.parametrize(
+    "thread_kwargs",
+    [{}, {"background_tasks": False}, {"background_tasks": True}],
+    ids=["omitted", "disabled", "enabled"],
+)
+async def test_background_task_tools_belong_to_the_thread(thread_kwargs):
+    from strands import tool
+    from ag_ui_strands.config import StrandsAgentConfig
+
+    @tool
+    def echo(value: str) -> str:
+        """Return the supplied value."""
+        return value
+
+    template = Agent(model=_mock_model(), tools=[echo], background_tasks=True)
+    config = StrandsAgentConfig(thread_agent_kwargs=lambda _: thread_kwargs)
+    adapter = StrandsAgent(template, name="test", config=config)
+    threads = [
+        await _trigger_thread_creation(adapter, thread_id)
+        for thread_id in ("a", "b")
+    ]
+
+    for thread in threads:
+        registry = thread.tool_registry.registry
+        assert registry["echo"] is template.tool_registry.registry["echo"]
+        manager_tool = registry.get("strands_manage_background_task")
+        if thread_kwargs.get("background_tasks"):
+            assert thread._background_tasks is not template._background_tasks
+            assert manager_tool is not None
+            assert manager_tool._tool_func.__self__ is thread._background_tasks
+        else:
+            assert thread._background_tasks is None
+            assert manager_tool is None
+
+    if thread_kwargs.get("background_tasks"):
+        assert threads[0]._background_tasks is not threads[1]._background_tasks
 
 
 def test_registry_holding_an_unrelated_agent_is_still_forwarded():
