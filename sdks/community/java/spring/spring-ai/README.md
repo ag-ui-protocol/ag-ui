@@ -55,12 +55,17 @@ The agent owns the **tool-execution loop**, distinguishing two kinds of tools:
 - **Client-side tools** — those on the `RunAgentInput`. Advertised to the model
   and surfaced as `TOOL_CALL_START/ARGS/END` events for the front end to execute;
   the agent does not run them.
-- **Backend tools** — registered with `SpringAiAgent.builder(client).tools(...)`.
+- **Backend tools** — registered with `SpringAiAgent.builder(client).tools(...)`,
+  **or directly on the `ChatClient`** via `ChatClient.builder(model).defaultTools(...)`.
   When the model calls one, the agent emits `TOOL_CALL_START/ARGS/END`, **executes
   it** (via Spring AI's `ToolCallingManager`), emits a **`TOOL_CALL_RESULT`**, then
   re-prompts the model with the result — looping until the model stops calling
   backend tools. If a turn mixes backend and client calls, the backend results are
-  emitted and the run stops so the front end handles the client calls.
+  emitted and the run stops so the front end handles the client calls. While the
+  agent drives this loop (whenever any client tool, backend tool, the state tool, or
+  an interrupt tool is advertised) it suppresses the `ChatClient`'s own automatic
+  tool execution, so it executes the `ChatClient`'s `defaultTools(...)` callbacks
+  itself rather than leaking them to the front end.
 
 **Tool-call mapping**: streaming argument chunks are correlated by tool-call id;
 the first chunk carrying an id (or a name) opens the call, later chunks append

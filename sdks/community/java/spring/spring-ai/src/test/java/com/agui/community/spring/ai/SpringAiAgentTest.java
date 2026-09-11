@@ -13,6 +13,8 @@ import com.agui.community.core.event.Event;
 import com.agui.community.core.event.EventType;
 import com.agui.community.core.event.JsonPatchOperation;
 import com.agui.community.core.event.RunErrorEvent;
+import com.agui.community.core.event.ReasoningMessageContentEvent;
+import com.agui.community.core.event.ReasoningMessageStartEvent;
 import com.agui.community.core.event.RunFinishedEvent;
 import com.agui.community.core.event.StateDeltaEvent;
 import com.agui.community.core.event.StateSnapshotEvent;
@@ -29,6 +31,7 @@ import com.agui.community.core.tool.Tool;
 import com.agui.community.core.tool.ToolParameters;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
@@ -518,6 +521,141 @@ class SpringAiAgentTest {
                 .map(org.springframework.ai.chat.messages.Message::getText)
                 .anyMatch(text -> text.contains("<think>"));
         assertFalse(hasReasoning, "blank reasoning must not be replayed into the prompt");
+    }
+
+    @Test
+    void streamsThinkTagReasoningWithRoleAndRoundTripsHistory() {
+        // A normal reasoning-model response: <think>planning</think>answer, with the tags
+        // split across streaming chunks. The reasoning sub-stream must be surfaced with
+        // role "reasoning" (required by the protocol - a client aborts otherwise) and the
+        // plain answer must survive as assistant text.
+        ChatModel model = streaming(
+                chunk("<th"), chunk("ink>plan"), chunk("ning</thi"), chunk("nk>ans"), chunk("wer"));
+        SpringAiAgent agent = new SpringAiAgent(ChatClient.create(model), () -> "msg-1");
+
+        List<Event> events = collect(agent.run(INPUT));
+
+        ReasoningMessageStartEvent reasoningStart = (ReasoningMessageStartEvent) events.stream()
+                .filter(e -> e.type() == EventType.REASONING_MESSAGE_START)
+                .findFirst()
+                .orElseThrow();
+        assertEquals(Role.REASONING, reasoningStart.role());
+
+        String reasoning = events.stream()
+                .filter(e -> e instanceof ReasoningMessageContentEvent)
+                .map(e -> ((ReasoningMessageContentEvent) e).delta())
+                .collect(Collectors.joining());
+        String answer = events.stream()
+                .filter(e -> e instanceof TextMessageContentEvent)
+                .map(e -> ((TextMessageContentEvent) e).delta())
+                .collect(Collectors.joining());
+        assertEquals("planning", reasoning);
+        assertEquals("answer", answer);
+
+        // Second turn: the reasoning + answer come back as conversation history. It must
+        // round-trip (reasoning replayed as <think>...</think>) without aborting the run.
+        AtomicReference<Prompt> captured = new AtomicReference<>();
+        RunAgentInput second = new RunAgentInput("t1", "r2",
+                List.of(new UserMessage("u1", "hi"),
+                        new com.agui.community.core.message.ReasoningMessage("msg-1", "planning"),
+                        new com.agui.community.core.message.AssistantMessage("msg-1", "answer")),
+                List.of());
+        SpringAiAgent agent2 = new SpringAiAgent(ChatClient.create(capturingModel(captured)), () -> "msg-2");
+
+        List<Event> secondEvents = collect(agent2.run(second));
+
+        assertEquals(EventType.RUN_FINISHED, secondEvents.get(secondEvents.size() - 1).type());
+        assertTrue(secondEvents.stream().noneMatch(e -> e.type() == EventType.RUN_ERROR));
+        boolean replayed = captured.get().getInstructions().stream()
+                .filter(m -> m instanceof AssistantMessage)
+                .map(org.springframework.ai.chat.messages.Message::getText)
+                .anyMatch(t -> "<think>planning</think>".equals(t));
+        assertTrue(replayed, "reasoning must be replayed into the second-turn prompt");
+    }
+
+    @Test
+    void executesChatClientDefaultToolsWhenTheAdapterDrivesTheLoop() {
+        // Backend tool registered directly on the ChatClient via defaultTools(...), the
+        // documented Spring AI configuration - not through SpringAiAgent.Builder.tools().
+        // Adding a front-end tool makes the adapter take over the tool loop and suppress
+        // the ChatClient's own execution; it must still run the ChatClient's backend tool
+        // rather than leaking it to the front end.
+        ToolCallback weather = backendTool("getWeather", "{\"temperature\":21}");
+        ChatModel model = new ChatModel() {
+            @Override
+            public ChatResponse call(Prompt prompt) {
+                return new ChatResponse(List.of());
+            }
+
+            @Override
+            public Flux<ChatResponse> stream(Prompt prompt) {
+                boolean afterToolResult = prompt.getInstructions().stream()
+                        .anyMatch(m -> m instanceof ToolResponseMessage);
+                if (afterToolResult) {
+                    return Flux.just(chunk("It is 21 degrees in Paris."));
+                }
+                return Flux.just(toolChunk("call-1", "getWeather", "{\"location\":\"Paris\"}"));
+            }
+        };
+        ChatClient chatClient = ChatClient.builder(model).defaultTools(weather).build();
+        // A front-end tool triggers the adapter's execution-suppression branch.
+        Tool clientTool = new Tool("showDialog", "Show a dialog",
+                new ToolParameters(Map.of(), List.of()));
+        RunAgentInput input = new RunAgentInput("t1", "r1",
+                List.of(new UserMessage("m1", "weather in Paris?")), List.of(clientTool));
+        SpringAiAgent agent = SpringAiAgent.builder(chatClient).messageIdGenerator(sequentialIds()).build();
+
+        List<Event> events = collect(agent.run(input));
+
+        // The ChatClient's backend tool executed and its result was emitted (not left for
+        // the front end), and the model continued to a text answer.
+        ToolCallResultEvent result = (ToolCallResultEvent) events.stream()
+                .filter(e -> e.type() == EventType.TOOL_CALL_RESULT)
+                .findFirst()
+                .orElseThrow();
+        assertEquals("call-1", result.toolCallId());
+        assertTrue(result.content().contains("21"), result.content());
+        assertTrue(events.stream().anyMatch(e -> e.type() == EventType.TEXT_MESSAGE_CONTENT));
+    }
+
+    @Test
+    void executesChatClientDefaultToolsWhenSharedStateDrivesTheLoop() {
+        // Enabling shared state also makes the adapter take over the tool loop (the
+        // update_state tool is advertised), so the ChatClient's backend tools must still
+        // be executed even with no front-end tools present.
+        ToolCallback weather = backendTool("getWeather", "{\"temperature\":21}");
+        ChatModel model = new ChatModel() {
+            @Override
+            public ChatResponse call(Prompt prompt) {
+                return new ChatResponse(List.of());
+            }
+
+            @Override
+            public Flux<ChatResponse> stream(Prompt prompt) {
+                boolean afterToolResult = prompt.getInstructions().stream()
+                        .anyMatch(m -> m instanceof ToolResponseMessage);
+                if (afterToolResult) {
+                    return Flux.just(chunk("done"));
+                }
+                return Flux.just(toolChunk("call-1", "getWeather", "{}"));
+            }
+        };
+        ChatClient chatClient = ChatClient.builder(model).defaultTools(weather).build();
+        RunAgentInput input = new RunAgentInput("t1", "r1", Map.of("count", 1),
+                List.of(new UserMessage("m1", "hi")), List.of(), List.of(), null);
+        SpringAiAgent agent = SpringAiAgent.builder(chatClient)
+                .messageIdGenerator(sequentialIds())
+                .shareState(true)
+                .build();
+
+        List<Event> events = collect(agent.run(input));
+
+        ToolCallResultEvent result = (ToolCallResultEvent) events.stream()
+                .filter(e -> e.type() == EventType.TOOL_CALL_RESULT)
+                .findFirst()
+                .orElseThrow();
+        assertEquals("call-1", result.toolCallId());
+        assertTrue(result.content().contains("21"), result.content());
     }
 
     private static Supplier<String> sequentialIds() {
