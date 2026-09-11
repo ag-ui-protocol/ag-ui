@@ -876,6 +876,19 @@ class EventTranslator:
             for i, part in enumerate(adk_event.content.parts):
                 if part.function_call:
                     fc = part.function_call
+                    fc_id = getattr(fc, 'id', None)
+                    # Backend NodeTool calls share this LRO-only route when a
+                    # client/HITL call is on the same event. Emit their
+                    # START/ARGS/END here so RESULT is not orphaned, but do
+                    # not add them to pending HITL ids (#2674).
+                    if (
+                        fc_id
+                        and fc_id in self.backend_tool_ids
+                        and fc_id not in self.emitted_tool_call_ids
+                    ):
+                        async for event in self._translate_function_calls([fc]):
+                            yield event
+                        continue
                     if getattr(fc, 'id', None) in lro_ids \
                       and fc.id not in self.emitted_tool_call_ids:
                         position = seen_in_event.get(fc.name, 0) + 1

@@ -520,6 +520,13 @@ class ADKAgent:
         return None
 
     @staticmethod
+    def _seq(value: Any) -> list:
+        """Iterate only real sequences. A Mock agent.sub_agents is truthy but not a list."""
+        if isinstance(value, (list, tuple)):
+            return list(value)
+        return []
+
+    @staticmethod
     def _is_node_tool(tool: Any) -> bool:
         """True when *tool* is a NodeTool or a Workflow used as a tool."""
         if tool is None:
@@ -553,19 +560,18 @@ class ADKAgent:
         seen.add(ident)
         if isinstance(agent, Workflow):
             return True
-        for sub in getattr(agent, "sub_agents", None) or []:
+        for sub in cls._seq(getattr(agent, "sub_agents", None)):
             if cls._agent_tree_contains_workflow(sub, seen):
                 return True
         graph = getattr(agent, "graph", None)
-        for node in getattr(graph, "nodes", None) or []:
+        for node in cls._seq(getattr(graph, "nodes", None)):
             if cls._agent_tree_contains_workflow(node, seen):
                 return True
         tools = getattr(agent, "tools", None)
-        if isinstance(tools, (list, tuple)):
-            for tool in tools:
-                inner = cls._unwrap_tool_agent(tool)
-                if inner is not None and cls._agent_tree_contains_workflow(inner, seen):
-                    return True
+        for tool in cls._seq(tools):
+            inner = cls._unwrap_tool_agent(tool)
+            if inner is not None and cls._agent_tree_contains_workflow(inner, seen):
+                return True
         return False
 
     @classmethod
@@ -581,19 +587,18 @@ class ADKAgent:
             return names
         seen.add(ident)
         tools = getattr(agent, "tools", None)
-        if isinstance(tools, (list, tuple)):
-            for tool in tools:
-                if cls._is_node_tool(tool):
-                    tool_name = getattr(tool, "name", None)
-                    if tool_name:
-                        names.add(tool_name)
-                nested = cls._unwrap_tool_agent(tool)
-                if nested is not None:
-                    names |= cls._collect_node_tool_names(nested, seen)
-        for sub in getattr(agent, "sub_agents", None) or []:
+        for tool in cls._seq(tools):
+            if cls._is_node_tool(tool):
+                tool_name = getattr(tool, "name", None)
+                if tool_name:
+                    names.add(tool_name)
+            nested = cls._unwrap_tool_agent(tool)
+            if nested is not None:
+                names |= cls._collect_node_tool_names(nested, seen)
+        for sub in cls._seq(getattr(agent, "sub_agents", None)):
             names |= cls._collect_node_tool_names(sub, seen)
         graph = getattr(agent, "graph", None)
-        for node in getattr(graph, "nodes", None) or []:
+        for node in cls._seq(getattr(graph, "nodes", None)):
             names |= cls._collect_node_tool_names(node, seen)
         return names
 
@@ -628,7 +633,7 @@ class ADKAgent:
             return True
 
         def _has_composite_descendant(agent):
-            for sub in getattr(agent, 'sub_agents', None) or []:
+            for sub in ADKAgent._seq(getattr(agent, 'sub_agents', None)):
                 if isinstance(sub, composite_types):
                     return True
                 if _has_composite_descendant(sub):

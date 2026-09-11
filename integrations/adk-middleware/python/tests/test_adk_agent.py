@@ -1267,6 +1267,26 @@ class TestThreadIdSessionIdMapping:
             use_in_memory_services=True
         )
 
+    @pytest.fixture
+    def sample_input(self):
+        return RunAgentInput(
+            thread_id="test_thread",
+            run_id="test_run",
+            messages=[
+                UserMessage(
+                    id="msg1",
+                    role="user",
+                    content="Hello, test!"
+                )
+            ],
+            context=[
+                Context(description="test", value="true")
+            ],
+            state={},
+            tools=[],
+            forwarded_props={}
+        )
+
     @pytest.mark.asyncio
     async def test_thread_id_becomes_session_id(self, adk_agent):
         """Test that thread_id from RunAgentInput is used as session_id in ADK session."""
@@ -1695,4 +1715,283 @@ class TestThreadIdSessionIdMapping:
         assert get_or_create_calls[0]["skip_find"] is True
         # Key should be consumed
         assert cache_key not in adk_agent._cache_checked_keys
+
+    @pytest.mark.asyncio
+    async def test_mixed_backend_and_hitl_emits_backend_call_events(self, sample_input):
+        """NodeTool + client HITL on one ADK event keep both call triples."""
+        try:
+            from google.adk.tools._node_tool import NodeTool
+            from google.adk.workflow import Workflow
+            wf = Workflow(
+                name="hs_classifier",
+                description="Classify an item.",
+                input_schema=str,
+            )
+            root = Agent(
+                name="coordinator",
+                instruction="coordinate",
+                tools=[NodeTool(wf, name="classify")],
+            )
+            collect_patch = None
+        except ImportError:
+            root = Agent(name="coordinator", instruction="coordinate")
+            collect_patch = patch.object(
+                ADKAgent, "_collect_node_tool_names", return_value={"classify"}
+            )
+
+        adk_agent = ADKAgent(
+            adk_agent=root,
+            app_name="test_app",
+            user_id="test_user",
+            use_in_memory_services=True,
+        )
+
+        backend_id = "fc-1"
+        client_id = "client-1"
+
+        def _fc(call_id, name):
+            fc = MagicMock()
+            fc.id = call_id
+            fc.name = name
+            fc.args = {}
+            return fc
+
+        backend_fc = _fc(backend_id, "classify")
+        client_fc = _fc(client_id, "check_status")
+        backend_part = MagicMock(function_call=backend_fc, text=None)
+        client_part = MagicMock(function_call=client_fc, text=None)
+
+        mock_event = MagicMock()
+        mock_event.id = "mixed"
+        mock_event.author = "assistant"
+        mock_event.partial = False
+        mock_event.turn_complete = False
+        mock_event.finish_reason = None
+        mock_event.usage_metadata = None
+        mock_event.is_final_response = MagicMock(return_value=False)
+        mock_event.content = MagicMock()
+        mock_event.content.parts = [backend_part, client_part]
+        mock_event.actions = None
+        mock_event.get_function_calls = MagicMock(return_value=[backend_fc, client_fc])
+        mock_event.get_function_responses = MagicMock(return_value=[])
+        mock_event.custom_data = None
+        mock_event.long_running_tool_ids = [backend_id, client_id]
+        mock_event.invocation_id = "inv-1"
+
+        class DummyRunner:
+            async def run_async(self, *args, **kwargs):
+                yield mock_event
+
+            async def close(self):
+                return
+
+        runner_patch = patch.object(adk_agent, "_create_runner", return_value=DummyRunner())
+        extra = collect_patch if collect_patch is not None else patch.dict({})
+        with extra, runner_patch:
+            events = []
+            async for event in adk_agent.run(sample_input):
+                events.append(event)
+
+        starts = [
+            getattr(ev, "tool_call_id", None)
+            for ev in events
+            if ev.type == EventType.TOOL_CALL_START
+        ]
+        assert backend_id in starts, f"backend call missing START, got {starts!r}"
+        assert client_id in starts, f"client HITL missing START, got {starts!r}"
+
+        session, _ = await adk_agent._ensure_session_exists(
+            "test_app", "test_user", "test_thread", {}
+        )
+        pending = (session.state or {}).get("pending_tool_calls") or []
+        assert client_id in pending
+        assert backend_id not in pending
+
+    @pytest.mark.asyncio
+    async def test_two_hitl_resumes_keep_backend_call_before_result(self, sample_input):
+        """Two successive HITL answers still pair every backend RESULT with a prior START."""
+        try:
+            from google.adk.tools._node_tool import NodeTool
+            from google.adk.workflow import Workflow
+            wf = Workflow(
+                name="hs_classifier",
+                description="Classify an item.",
+                input_schema=str,
+            )
+            root = Agent(
+                name="coordinator",
+                instruction="coordinate",
+                tools=[NodeTool(wf, name="classify")],
+            )
+            collect_patch = None
+        except ImportError:
+            root = Agent(name="coordinator", instruction="coordinate")
+            collect_patch = patch.object(
+                ADKAgent, "_collect_node_tool_names", return_value={"classify"}
+            )
+
+        from ag_ui.core import AssistantMessage, FunctionCall, ToolCall, ToolMessage
+        adk_agent = ADKAgent(
+            adk_agent=root,
+            app_name="test_app",
+            user_id="test_user",
+            use_in_memory_services=True,
+        )
+
+        backend_id = "fc-1"
+        hitl_1 = "client-1"
+        hitl_2 = "client-2"
+
+        def _fc(call_id, name):
+            fc = MagicMock()
+            fc.id = call_id
+            fc.name = name
+            fc.args = {}
+            return fc
+
+        def _part(fc):
+            return MagicMock(function_call=fc, text=None)
+
+        def _call_event(event_id, fcs, lro_ids):
+            event = MagicMock()
+            event.id = event_id
+            event.author = "assistant"
+            event.partial = False
+            event.turn_complete = False
+            event.finish_reason = None
+            event.usage_metadata = None
+            event.is_final_response = MagicMock(return_value=False)
+            event.content = MagicMock()
+            event.content.parts = [_part(fc) for fc in fcs]
+            event.actions = None
+            event.get_function_calls = MagicMock(return_value=fcs)
+            event.get_function_responses = MagicMock(return_value=[])
+            event.custom_data = None
+            event.long_running_tool_ids = list(lro_ids)
+            event.invocation_id = "inv-1"
+            return event
+
+        def _result_event(event_id, call_id):
+            fr = MagicMock()
+            fr.id = call_id
+            fr.name = "classify"
+            fr.response = {"label": "ok"}
+            event = MagicMock()
+            event.id = event_id
+            event.author = "assistant"
+            event.partial = False
+            event.turn_complete = False
+            event.finish_reason = None
+            event.usage_metadata = None
+            event.is_final_response = MagicMock(return_value=False)
+            event.content = MagicMock()
+            event.content.parts = []
+            event.actions = None
+            event.get_function_calls = MagicMock(return_value=[])
+            event.get_function_responses = MagicMock(return_value=[fr])
+            event.custom_data = None
+            event.long_running_tool_ids = [call_id]
+            event.invocation_id = "inv-1"
+            return event
+
+        backend_fc = _fc(backend_id, "classify")
+        first = _call_event(
+            "mixed",
+            [backend_fc, _fc(hitl_1, "check_status")],
+            [backend_id, hitl_1],
+        )
+        backend_result = _result_event("backend-result", backend_id)
+        second = _call_event("hitl2", [_fc(hitl_2, "check_status")], [hitl_2])
+        done = MagicMock()
+        done.id = "done"
+        done.author = "assistant"
+        done.partial = False
+        done.turn_complete = True
+        done.finish_reason = "STOP"
+        done.usage_metadata = None
+        done.is_final_response = MagicMock(return_value=True)
+        done.content = MagicMock()
+        done.content.parts = [MagicMock(text="all done", function_call=None)]
+        done.actions = None
+        done.get_function_calls = MagicMock(return_value=[])
+        done.get_function_responses = MagicMock(return_value=[])
+        done.custom_data = None
+        done.long_running_tool_ids = []
+        done.invocation_id = "inv-1"
+
+        batches = [
+            [first, backend_result],
+            [second],
+            [done],
+        ]
+
+        class ScriptedRunner:
+            def __init__(self):
+                self.step = 0
+
+            async def run_async(self, *args, **kwargs):
+                events = batches[min(self.step, len(batches) - 1)]
+                self.step += 1
+                for event in events:
+                    yield event
+
+            async def close(self):
+                return
+
+        runner = ScriptedRunner()
+
+        def _hitl_input(run_id, tool_call_id, result_id):
+            return RunAgentInput(
+                thread_id=sample_input.thread_id,
+                run_id=run_id,
+                messages=[
+                    sample_input.messages[0],
+                    AssistantMessage(
+                        id=f"a-{tool_call_id}",
+                        role="assistant",
+                        content=None,
+                        tool_calls=[
+                            ToolCall(
+                                id=tool_call_id,
+                                function=FunctionCall(name="check_status", arguments="{}"),
+                            )
+                        ],
+                    ),
+                    ToolMessage(
+                        id=result_id,
+                        role="tool",
+                        content='{"ok": true}',
+                        tool_call_id=tool_call_id,
+                    ),
+                ],
+                context=sample_input.context,
+                state={},
+                tools=[],
+                forwarded_props={},
+            )
+
+        collected = []
+        extra = collect_patch if collect_patch is not None else patch.dict({})
+        with extra, patch.object(adk_agent, "_create_runner", return_value=runner):
+            async for event in adk_agent.run(sample_input):
+                collected.append(event)
+            async for event in adk_agent.run(_hitl_input("run-2", hitl_1, "t1")):
+                collected.append(event)
+            async for event in adk_agent.run(_hitl_input("run-3", hitl_2, "t2")):
+                collected.append(event)
+
+        type_and_id = [
+            (str(ev.type).split(".")[-1], getattr(ev, "tool_call_id", None))
+            for ev in collected
+        ]
+        starts = [tid for kind, tid in type_and_id if kind == "TOOL_CALL_START"]
+        results = [tid for kind, tid in type_and_id if kind == "TOOL_CALL_RESULT"]
+        assert backend_id in starts
+        assert hitl_1 in starts
+        assert hitl_2 in starts
+        if backend_id in results:
+            assert starts.index(backend_id) < [
+                i for i, (kind, tid) in enumerate(type_and_id)
+                if kind == "TOOL_CALL_RESULT" and tid == backend_id
+            ][0]
 
