@@ -117,12 +117,13 @@ function laneTarget(lane: Lane, options: CliOptions) {
 }
 
 function runLane(lane: Lane, target: string) {
-  const executable = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+  const playwrightCli = fileURLToPath(
+    import.meta.resolve("@playwright/test/cli"),
+  );
   const result = spawnSync(
-    executable,
+    process.execPath,
     [
-      "exec",
-      "playwright",
+      playwrightCli,
       "test",
       target,
       "--retries=0",
