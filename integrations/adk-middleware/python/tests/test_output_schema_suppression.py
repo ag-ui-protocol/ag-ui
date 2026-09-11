@@ -293,41 +293,34 @@ class TestCollectOutputSchemaAgentNames:
         assert result == {"classifier"}
 
     def test_node_tool_workflow_with_output_schema(self):
-        """A Workflow attached as a NodeTool is walked for output_schema (#2674)."""
-        from google.adk.agents import LlmAgent, BaseAgent
+        """A real Workflow passed through tools exposes its classifier schema."""
+        from google.adk.agents import LlmAgent
+        from pydantic import BaseModel
         from ag_ui_adk.adk_agent import ADKAgent
 
         try:
             from google.adk.tools._node_tool import NodeTool
+            from google.adk.workflow import Workflow
         except ImportError:
-            pytest.skip("NodeTool not available on this ADK version (1.x)")
+            pytest.skip("NodeTool requires ADK >= 2.8")
 
-        classifier = MagicMock(spec=LlmAgent)
-        classifier.name = "hs_classifier"
-        classifier.output_schema = str
-        classifier.sub_agents = []
-        classifier.tools = []
+        class Classification(BaseModel):
+            category: str
 
-        workflow = MagicMock(spec=BaseAgent)
-        workflow.name = "hs_classifier_workflow"
-        workflow.sub_agents = [classifier]
-        workflow.graph = None
-        workflow.tools = []
+        classifier = LlmAgent(
+            name="hs_classifier",
+            output_schema=Classification,
+        )
+        workflow = Workflow(
+            name="hs_classifier_workflow",
+            description="Classify an item.",
+            input_schema=str,
+            edges=[("START", classifier)],
+        )
+        root = LlmAgent(name="coordinator", tools=[workflow])
 
-        class SubNodeTool(NodeTool):
-            def __init__(self, name, node):
-                self.name = name
-                self.node = node
-
-        root = MagicMock(spec=LlmAgent)
-        root.name = "coordinator"
-        root.output_schema = None
-        root.sub_agents = []
-        root.tools = [SubNodeTool("classify", workflow)]
-        root.graph = None
-
-        result = ADKAgent._collect_output_schema_agent_names(root)
-        assert result == {"hs_classifier"}
+        assert isinstance(root.tools[0], NodeTool)
+        assert ADKAgent._collect_output_schema_agent_names(root) == {"hs_classifier"}
 
     def test_deeply_nested_agents(self):
         """output_schema agents are found at arbitrary depth."""
