@@ -10,58 +10,62 @@ library.
 This repository is kept separate so the core `ag-ui` modules stay dependency-light;
 the Spring (and Reactor) dependency tree lives only here.
 
+## Layout
+
+The integration is split into two independently-released **sub-reactors**, one per
+framework line. A thin top-level aggregator (`pom.xml`) builds and tests both in one
+pass (`mvn verify`) but is not itself published.
+
+- [`spring-boot/`](spring-boot) — the **Spring Boot server** line (`ag-ui-spring-boot-parent`, tracks Spring Boot `4.1.x`).
+- [`spring-ai/`](spring-ai) — the **Spring AI** line (`ag-ui-spring-ai-parent`, tracks Spring AI `2.x`); its Boot starters depend on the server line.
+
 ## Modules
 
 | Module | Artifact | Version line | Description |
 |--------|----------|--------------|-------------|
-| [`spring-server-core`](spring-server-core) | `ag-ui-spring-server-core` | tracks **Spring Boot** (`4.1.x`) | Framework-agnostic code shared by both servers: the Jackson-backed `Serializer` (configured for the AG-UI sealed hierarchies) and `AgentNotFoundException`. No Spring dependency. |
-| [`spring-webflux-server`](spring-webflux-server) | `ag-ui-spring-webflux-server` | tracks **Spring Boot** (`4.1.x`) | A reactive **Spring WebFlux** endpoint that streams an `Agent`'s events as Server-Sent Events, plus Spring Boot auto-configuration. Uses the shared serializer from `spring-server-core`. |
-| [`spring-webmvc-server`](spring-webmvc-server) | `ag-ui-spring-webmvc-server` | tracks **Spring Boot** (`4.1.x`) | The Servlet (**Spring WebMVC**) equivalent, streaming an `Agent`'s events via an `SseEmitter`. Same routing and shared serializer — pick this if your app is Servlet-based rather than reactive. |
-| [`spring-webflux-boot-starter`](spring-webflux-boot-starter) | `ag-ui-spring-webflux-boot-starter` | tracks **Spring Boot** (`4.1.x`) | Drop-in starter over `spring-webflux-server`: add it and define one `Agent` bean to get a working reactive `/agent` endpoint. |
-| [`spring-webmvc-boot-starter`](spring-webmvc-boot-starter) | `ag-ui-spring-webmvc-boot-starter` | tracks **Spring Boot** (`4.1.x`) | Drop-in starter over `spring-webmvc-server`: the Servlet equivalent of the WebFlux starter. |
-| [`spring-ai`](spring-ai) | `ag-ui-spring-ai` | tracks **Spring AI** (`2.x`) | Adapts a Spring AI `ChatClient` into an AG-UI `Agent`, translating its streamed response into the AG-UI event lifecycle. |
-| [`spring-ai-spring-boot-starter`](spring-ai-spring-boot-starter) | `ag-ui-spring-ai-spring-boot-starter` | tracks **Spring AI** (`2.x`) | Zero-code starter (**reactive / WebFlux**): auto-registers a `SpringAiAgent` from the auto-configured `ChatClient.Builder` and exposes it at `/agent`. |
-| [`spring-ai-webmvc-boot-starter`](spring-ai-webmvc-boot-starter) | `ag-ui-spring-ai-webmvc-boot-starter` | tracks **Spring AI** (`2.x`) | The **Servlet / WebMVC** equivalent zero-code Spring AI starter: same auto-registration, served over an `SseEmitter`-backed `/agent`. |
+| [`spring-boot/spring-server-core`](spring-boot/spring-server-core) | `ag-ui-spring-server-core` | tracks **Spring Boot** (`4.1.x`) | Framework-agnostic code shared by both servers: the Jackson-backed `Serializer` (configured for the AG-UI sealed hierarchies) and `AgentNotFoundException`. No Spring dependency. |
+| [`spring-boot/spring-webflux-server`](spring-boot/spring-webflux-server) | `ag-ui-spring-webflux-server` | tracks **Spring Boot** (`4.1.x`) | A reactive **Spring WebFlux** endpoint that streams an `Agent`'s events as Server-Sent Events, plus Spring Boot auto-configuration. Uses the shared serializer from `spring-server-core`. |
+| [`spring-boot/spring-webmvc-server`](spring-boot/spring-webmvc-server) | `ag-ui-spring-webmvc-server` | tracks **Spring Boot** (`4.1.x`) | The Servlet (**Spring WebMVC**) equivalent, streaming an `Agent`'s events via an `SseEmitter`. Same routing and shared serializer — pick this if your app is Servlet-based rather than reactive. |
+| [`spring-boot/spring-webflux-boot-starter`](spring-boot/spring-webflux-boot-starter) | `ag-ui-spring-webflux-boot-starter` | tracks **Spring Boot** (`4.1.x`) | Drop-in starter over `spring-webflux-server`: add it and define one `Agent` bean to get a working reactive `/agent` endpoint. |
+| [`spring-boot/spring-webmvc-boot-starter`](spring-boot/spring-webmvc-boot-starter) | `ag-ui-spring-webmvc-boot-starter` | tracks **Spring Boot** (`4.1.x`) | Drop-in starter over `spring-webmvc-server`: the Servlet equivalent of the WebFlux starter. |
+| [`spring-ai/spring-ai`](spring-ai/spring-ai) | `ag-ui-spring-ai` | tracks **Spring AI** (`2.x`) | Adapts a Spring AI `ChatClient` into an AG-UI `Agent`, translating its streamed response into the AG-UI event lifecycle. |
+| [`spring-ai/spring-ai-spring-boot-starter`](spring-ai/spring-ai-spring-boot-starter) | `ag-ui-spring-ai-spring-boot-starter` | tracks **Spring AI** (`2.x`) | Zero-code starter (**reactive / WebFlux**): auto-registers a `SpringAiAgent` from the auto-configured `ChatClient.Builder` and exposes it at `/agent`. |
+| [`spring-ai/spring-ai-webmvc-boot-starter`](spring-ai/spring-ai-webmvc-boot-starter) | `ag-ui-spring-ai-webmvc-boot-starter` | tracks **Spring AI** (`2.x`) | The **Servlet / WebMVC** equivalent zero-code Spring AI starter: same auto-registration, served over an `SseEmitter`-backed `/agent`. |
 
 ## Versioning
 
-The two modules are **versioned and released independently**, because each tracks a
+The two lines are **versioned and released independently**, because each tracks a
 different framework's compatibility:
 
-- the `ag-ui-spring-webflux-server` / `ag-ui-spring-webmvc-server` servers are versioned on the **Spring Boot** line they target (e.g. `4.1.0`);
-- `ag-ui-spring-ai` is versioned on the **Spring AI** line it targets (e.g. `2.0.0`).
+- the **spring-boot** line (`ag-ui-spring-boot-parent`) is versioned on the **Spring Boot** line it targets (e.g. `4.1.0`); every module in it shares that version;
+- the **spring-ai** line (`ag-ui-spring-ai-parent`) is versioned on the **Spring AI** line it targets (e.g. `2.0.0`); every module in it shares that version.
 
-Each module owns its framework BOM in its own pom, so they can be bumped and
-released on separate cadences. The repository's parent pom carries a small,
-stable "platform" version (`0.1.0`) for shared configuration only — it does not
-force the modules into lockstep. Mix and match the versions you need.
+Each sub-reactor is self-contained (it owns its framework BOM and build/release
+config), so the two lines can be bumped and released on separate cadences. Mix and
+match the versions you need.
 
 ### Releasing
 
-Each line is published to Maven Central on its own tag by the `release` workflow:
+Both lines publish to Maven Central through the monorepo's
+[`publish-release.yml`](../../../../.github/workflows/publish-release.yml) workflow,
+which detects a version bump in each sub-reactor's `pom.xml` (registered in
+`scripts/release/release.config.json` as the `integration-spring-boot-java` and
+`integration-spring-ai-java` scopes) and deploys that reactor with the `release`
+Maven profile. That profile flattens each module's POM (inlining the reactor parent),
+so the two lines publish as self-contained artifacts and the aggregators need not be
+resolvable by consumers.
 
-| Tag | Publishes |
-|-----|-----------|
-| `spring-server-core-vX.Y.Z` | `ag-ui-spring-server-core` |
-| `spring-webflux-server-vX.Y.Z` | `ag-ui-spring-webflux-server` + `ag-ui-spring-webflux-boot-starter` |
-| `spring-webmvc-server-vX.Y.Z` | `ag-ui-spring-webmvc-server` + `ag-ui-spring-webmvc-boot-starter` |
-| `spring-ai-vX.Y.Z` | `ag-ui-spring-ai` + `ag-ui-spring-ai-spring-boot-starter` + `ag-ui-spring-ai-webmvc-boot-starter` |
-
-Both server lines depend on `ag-ui-spring-server-core`, so release the
-`spring-server-core` line first.
-
-The `release` Maven profile flattens each module's POM (inlining the aggregator
-parent), so the lines publish independently. Release the `spring-webflux-server`
-line before the `spring-ai` line, since the Spring AI starter depends on the
-WebFlux server module — and ensure the `ag-ui` artifacts are on Central first (the Central
-Portal rejects SNAPSHOT dependencies).
+The **spring-ai** line's Boot starters depend on the **spring-boot** server modules,
+so the server line is built and deployed first (the workflow preserves this order).
+The `ag-ui` artifacts (`java-core`, `:java-server`) must already be on Central — the
+Central Portal rejects SNAPSHOT dependencies.
 
 ## Requirements
 
 - **Java 17+**
 - **Spring Boot 4.1.x** / **Spring AI 2.x**
 - The `ag-ui` artifacts (`com.ag-ui.community:java-core`, `:java-server`) — resolved from
-  Maven Central (currently `0.1.0`; see `ag-ui.version` in the root POM).
+  Maven Central (currently `0.1.1`; see `ag-ui.version` in each sub-reactor POM).
 
 ## Quick start
 

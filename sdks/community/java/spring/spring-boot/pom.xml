@@ -5,19 +5,19 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>com.ag-ui.community</groupId>
-    <artifactId>ag-ui-spring-ai-parent</artifactId>
+    <artifactId>ag-ui-spring-boot-parent</artifactId>
     <!--
-      The Spring AI line, released as a self-contained reactor. Versioned as one
-      unit tracking the Spring AI line it targets (2.x); every module below shares
-      this version. Kept independent of the spring-boot line so the two release on
-      separate cadences. Self-contained (no external parent) so each published
-      module's POM ancestry resolves without an unpublished parent.
+      The Spring Boot server line, released as a self-contained reactor. Versioned
+      as one unit tracking the Spring Boot line these modules target (4.1.x); every
+      module below shares this version. Kept independent of the spring-ai line so
+      the two release on separate cadences. Self-contained (no external parent) so
+      each published module's POM ancestry resolves without an unpublished parent.
     -->
-    <version>2.0.0</version>
+    <version>4.1.0</version>
     <packaging>pom</packaging>
 
-    <name>ag-ui-spring-ai-parent</name>
-    <description>Reactor for the AG-UI Spring AI modules (the ChatClient adapter and its Boot starters)</description>
+    <name>ag-ui-spring-boot-parent</name>
+    <description>Reactor for the AG-UI Spring Boot server modules (server core, WebFlux/WebMVC servers and starters)</description>
     <url>https://github.com/ag-ui-protocol/ag-ui</url>
 
     <licenses>
@@ -42,9 +42,11 @@
     </scm>
 
     <modules>
-        <module>spring-ai</module>
-        <module>spring-ai-spring-boot-starter</module>
-        <module>spring-ai-webmvc-boot-starter</module>
+        <module>spring-server-core</module>
+        <module>spring-webflux-server</module>
+        <module>spring-webmvc-server</module>
+        <module>spring-webflux-boot-starter</module>
+        <module>spring-webmvc-boot-starter</module>
     </modules>
 
     <properties>
@@ -53,39 +55,14 @@
 
         <!-- ag-ui is published to Maven Central, so resolve the release directly. -->
         <ag-ui.version>0.1.1</ag-ui.version>
-        <spring-ai.version>2.0.0</spring-ai.version>
-        <!-- Reactor train matching the Spring AI / Spring 6.2 line. -->
-        <reactor-bom.version>2024.0.12</reactor-bom.version>
-        <!-- Spring Boot autoconfigure/test used by the Boot starters in this line. -->
         <spring-boot.version>4.1.0</spring-boot.version>
-        <!--
-          The spring-boot server line this line consumes. It is released as its own
-          reactor (see ../spring-boot); its artifacts must be available (locally or
-          on Maven Central) before this line is built or released.
-        -->
-        <ag-ui-spring-server.version>4.1.0</ag-ui-spring-server.version>
         <junit.version>5.10.2</junit.version>
         <jacoco.version>0.8.13</jacoco.version>
     </properties>
 
     <dependencyManagement>
         <dependencies>
-            <dependency>
-                <groupId>org.springframework.ai</groupId>
-                <artifactId>spring-ai-bom</artifactId>
-                <version>${spring-ai.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-            <!-- Spring AI's BOM does not manage Reactor, so manage it here. -->
-            <dependency>
-                <groupId>io.projectreactor</groupId>
-                <artifactId>reactor-bom</artifactId>
-                <version>${reactor-bom.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-            <!-- Pins Spring Boot (autoconfigure, test) for the Boot starters. -->
+            <!-- Pins Spring (and Jackson) for every module in this line. -->
             <dependency>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-dependencies</artifactId>
@@ -94,30 +71,28 @@
                 <scope>import</scope>
             </dependency>
 
-            <!-- ag-ui-4j core module used by the adapter. -->
+            <!-- ag-ui-4j server module used by spring-server-core. -->
             <dependency>
                 <groupId>com.ag-ui.community</groupId>
-                <artifactId>java-core</artifactId>
+                <artifactId>java-server</artifactId>
                 <version>${ag-ui.version}</version>
             </dependency>
 
-            <!-- Internal module of this line, at the shared reactor version. -->
+            <!-- Internal modules of this line, at the shared reactor version. -->
             <dependency>
                 <groupId>com.ag-ui.community</groupId>
-                <artifactId>ag-ui-spring-ai</artifactId>
+                <artifactId>ag-ui-spring-server-core</artifactId>
                 <version>${project.version}</version>
             </dependency>
-
-            <!-- Server line consumed by the Boot starters (separate reactor/version). -->
             <dependency>
                 <groupId>com.ag-ui.community</groupId>
                 <artifactId>ag-ui-spring-webflux-server</artifactId>
-                <version>${ag-ui-spring-server.version}</version>
+                <version>${project.version}</version>
             </dependency>
             <dependency>
                 <groupId>com.ag-ui.community</groupId>
                 <artifactId>ag-ui-spring-webmvc-server</artifactId>
-                <version>${ag-ui-spring-server.version}</version>
+                <version>${project.version}</version>
             </dependency>
 
             <dependency>

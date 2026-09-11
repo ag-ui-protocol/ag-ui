@@ -6,13 +6,12 @@
 
     <parent>
         <groupId>com.ag-ui.community</groupId>
-        <artifactId>ag-ui-spring</artifactId>
-        <version>0.1.0</version>
+        <artifactId>ag-ui-spring-boot-parent</artifactId>
+        <version>4.1.0</version>
+        <relativePath>../pom.xml</relativePath>
     </parent>
 
     <artifactId>ag-ui-spring-webflux-boot-starter</artifactId>
-    <!-- Tracks the Spring Boot line, like the spring-server module it bundles. -->
-    <version>4.1.0</version>
 
     <name>ag-ui-spring-webflux-boot-starter</name>
     <description>Spring Boot starter that exposes an AG-UI Agent over a reactive (WebFlux) SSE endpoint</description>

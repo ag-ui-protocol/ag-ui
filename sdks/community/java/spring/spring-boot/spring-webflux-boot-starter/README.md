@@ -31,8 +31,8 @@ Agent agent() {
 Override the path with `ag-ui.server.path`.
 
 > Use this when you bring your own `Agent`. To expose a **Spring AI** model with
-> no code, use [`ag-ui-spring-ai-spring-boot-starter`](../spring-ai-spring-boot-starter)
+> no code, use [`ag-ui-spring-ai-spring-boot-starter`](../../spring-ai/spring-ai-spring-boot-starter)
 > instead.
 
 This starter is versioned on the **Spring Boot 3.4.x** line. See the
-[root README](../README.md) for the project overview.
+[root README](../../README.md) for the project overview.

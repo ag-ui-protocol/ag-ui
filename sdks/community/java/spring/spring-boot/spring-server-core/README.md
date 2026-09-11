@@ -29,4 +29,4 @@ rather than on `spring-server-core` directly.
 ```
 
 > Versioned on the **Spring Boot 3.4.x** line (it shares that line's Jackson
-> version). See the [root README](../README.md) for the project overview.
+> version). See the [root README](../../README.md) for the project overview.
