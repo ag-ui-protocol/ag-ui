@@ -83,8 +83,8 @@ public sealed class AGUIContentJsonConverter : JsonConverter<AGUIContent>
     }
 
     /// <summary>
-    /// Writes a named <c>content</c> property: plain text as a string, a single text
-    /// part collapsed to its string, and anything else as the parts array.
+    /// Writes a named <c>content</c> property: plain text as a string, a single bare
+    /// text part collapsed to its string, and anything else as the parts array.
     /// </summary>
     internal static void WriteContent(
         Utf8JsonWriter writer,
@@ -103,7 +103,12 @@ public sealed class AGUIContentJsonConverter : JsonConverter<AGUIContent>
             case string text:
                 writer.WriteStringValue(text);
                 break;
-            case IList<AGUIInputContent> parts when parts.Count == 1 && parts[0] is AGUITextInputContent singleText:
+            case IList<AGUIInputContent> parts
+                when parts.Count == 1
+                    && parts[0] is AGUITextInputContent { Id: null, Metadata: null } singleText:
+                // A lone text part carrying nothing but its text is the string
+                // form; one carrying an id or metadata is written as the array,
+                // or those fields would be lost.
                 writer.WriteStringValue(singleText.Text);
                 break;
             case IList<AGUIInputContent> parts when parts.Count > 0:

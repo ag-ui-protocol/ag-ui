@@ -176,6 +176,47 @@ public sealed class AGUIContentTest
     }
 
     [Fact]
+    public void SingleTextPart_WithIdOrMetadata_IsWrittenAsArray_SoNothingIsLost()
+    {
+        AGUIMessage message = new AGUIToolMessage
+        {
+            Id = "t1",
+            ToolCallId = "c1",
+            Content =
+            [
+                new AGUITextInputContent { Id = "p1", Text = "hit", Metadata = JsonSerializer.SerializeToElement(new { title = "Source" }) },
+            ],
+        };
+
+        var json = JsonSerializer.Serialize(message, AGUIJsonSerializerContext.Default.AGUIMessage);
+        using var doc = JsonDocument.Parse(json);
+        var contentElement = doc.RootElement.GetProperty("content");
+        Assert.Equal(JsonValueKind.Array, contentElement.ValueKind);
+        Assert.Equal("p1", contentElement[0].GetProperty("id").GetString());
+        Assert.Equal("Source", contentElement[0].GetProperty("metadata").GetProperty("title").GetString());
+
+        var tool = Assert.IsType<AGUIToolMessage>(JsonSerializer.Deserialize(json, AGUIJsonSerializerContext.Default.AGUIMessage));
+        var part = Assert.IsType<AGUITextInputContent>(Assert.Single(Assert.IsType<List<AGUIInputContent>>(tool.Content.Value)));
+        Assert.Equal("p1", part.Id);
+        Assert.Equal("Source", part.Metadata!.Value.GetProperty("title").GetString());
+    }
+
+    [Fact]
+    public void SingleBareTextPart_StillCollapsesToAString()
+    {
+        AGUIMessage message = new AGUIToolMessage
+        {
+            Id = "t1",
+            ToolCallId = "c1",
+            Content = [new AGUITextInputContent { Text = "just text" }],
+        };
+
+        var json = JsonSerializer.Serialize(message, AGUIJsonSerializerContext.Default.AGUIMessage);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal("just text", doc.RootElement.GetProperty("content").GetString());
+    }
+
+    [Fact]
     public void ToString_FlattensToText_DroppingMedia()
     {
         AGUIContent content =

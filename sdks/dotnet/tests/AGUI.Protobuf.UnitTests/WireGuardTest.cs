@@ -185,6 +185,23 @@ public sealed class WireGuardTest
     }
 
     [Fact]
+    public void ToolCallResult_StringContentAlongsideParts_Throws()
+    {
+        var evt = new Proto.ToolCallResultEvent
+        {
+            BaseEvent = new Proto.BaseEvent { Type = Proto.EventType.ToolCallResult },
+            MessageId = "m1",
+            ToolCallId = "c1",
+            Content = "hi",
+        };
+        evt.ContentParts.Add(new Proto.InputContent
+        {
+            Text = new Proto.TextInputPart { Text = "also" },
+        });
+        Assert.Throws<InvalidDataException>(() => AGUIProtobuf.Decode(Wrap(new Proto.Event { ToolCallResult = evt })));
+    }
+
+    [Fact]
     public void StringContentAlongsideParts_Throws()
     {
         var snapshot = new Proto.MessagesSnapshotEvent

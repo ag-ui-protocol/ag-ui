@@ -609,6 +609,15 @@ internal static class ProtoMessageMapper
         string content,
         Google.Protobuf.Collections.RepeatedField<Proto.InputContent> protoParts)
     {
+        if (hasContent && protoParts.Count > 0)
+        {
+            // String content and parts together is a contradiction the encoder
+            // never writes; resolving it either way would silently discard the
+            // other half. The TypeScript translation rejects the same packet.
+            throw new InvalidDataException(
+                "Invalid event: content carries both string content and content parts.");
+        }
+
         if (hasContent)
         {
             return content;
