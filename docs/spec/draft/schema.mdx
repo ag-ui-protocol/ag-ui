@@ -355,7 +355,7 @@ Closes a run that did not fail. Run-scoped, so it carries no subagent attributio
 - `runId` — `string`, **required**. The run being closed.
 - `result` — any JSON value except `null`, optional. The run's return value, if it has one. Any JSON value.
 - `outcome` — [`RunFinishedOutcome`](#runfinishedoutcome), optional. Why the run ended. Absent means success, so every producer written before outcomes existed is already conformant.
-- `usage` — array of [`TokenUsage`](#tokenusage), optional. Token usage for the run, one entry per provider and model, so a run that invoked several models keeps them separate. A consumer that only wants totals sums across the entries.
+- `usage` — array of [`TokenUsage`](#tokenusage), optional. Token usage for the run, one entry per provider and model, so a run that invoked several models keeps them separate. A consumer that only wants totals sums across the entries. The run is the accounting boundary: usage covers every model call made within the run, calls made by its subagents included; an agent invoked as a separate run under parentRunId reports its own usage on its own terminal event; and a run that resumes an interrupted one reports only the calls it made itself, not the interrupted run's.
 
 Closed object: the schema rejects members not listed here.
 
@@ -373,7 +373,7 @@ Ends a run that failed. Run-scoped, so it carries no subagent attribution; a sub
 - `metadata` — [`Metadata`](#metadata), optional. Extra information attached to this event.
 - `message` — `string`, **required**. What went wrong, for a person to read.
 - `code` — `string`, optional. A machine-readable error code. An open string: the protocol defines no vocabulary.
-- `usage` — array of [`TokenUsage`](#tokenusage), optional. Token usage accrued before the failure, for a run that completed one or more model calls before dying.
+- `usage` — array of [`TokenUsage`](#tokenusage), optional. Token usage accrued before the failure, for a run that completed one or more model calls before dying. Scoped as on RUN_FINISHED: the run's own calls, subagents included.
 
 Closed object: the schema rejects members not listed here.
 
@@ -1198,17 +1198,18 @@ Closed object: the schema rejects members not listed here.
 
 ### `TokenUsage`
 
-Token counts for one provider and model. Every field is a label or a number — nothing content-bearing or identifying, no prompts, completions, messages, or thread, run and user identifiers.
+Token counts for one provider and model, in the protocol's own accounting: every count is either a total or a named part of one, so entries from different providers add up without double-counting. inputTokens and outputTokens are the totals; reasoningTokens, cachedInputTokens and cacheWriteInputTokens are parts of them, never additions to them; totalTokens is the two totals summed. Every field is a label or a number — nothing content-bearing or identifying, no prompts, completions, messages, or thread, run and user identifiers.
 
 **Fields:**
 
 - `provider` — `string`, optional. Which provider served the request.
 - `model` — `string`, optional. Which model served the request.
-- `inputTokens` — `integer` (min 0, max 9007199254740991), optional. Prompt tokens consumed. Bounded like timestamp and for the same reason: a count above the JSON safe-integer range does not survive a round trip, so a consumer would silently read a different number than the producer wrote.
-- `outputTokens` — `integer` (min 0, max 9007199254740991), optional. Completion tokens produced.
-- `totalTokens` — `integer` (min 0, max 9007199254740991), optional. Total tokens, as the provider reports it rather than as a sum the protocol computes.
-- `reasoningTokens` — `integer` (min 0, max 9007199254740991), optional. Tokens spent on reasoning, where the provider distinguishes them.
-- `cachedInputTokens` — `integer` (min 0, max 9007199254740991), optional. Prompt tokens served from a provider cache.
+- `inputTokens` — `integer` (min 0, max 9007199254740991), optional. Every prompt token the call was charged for: tokens read from a provider cache, tokens written to one, and audio or other non-text input all count here. cachedInputTokens and cacheWriteInputTokens break this number down and are never added to it — a provider that reports its cache counts beside a smaller input count has them added in by the producer before the entry leaves. Bounded like timestamp and for the same reason: a count above the JSON safe-integer range does not survive a round trip, so a consumer would silently read a different number than the producer wrote.
+- `outputTokens` — `integer` (min 0, max 9007199254740991), optional. Every generated token, reasoning included where the provider distinguishes it. reasoningTokens breaks this number down and is never added to it — a provider that reports reasoning tokens beside a smaller completion count has them added in by the producer.
+- `totalTokens` — `integer` (min 0, max 9007199254740991), optional. inputTokens plus outputTokens, under the accounting above. A producer MAY compute it rather than copy a provider's total, and copies a provider's total only when that total counts the same way, so a consumer can read this field as the sum of the other two.
+- `reasoningTokens` — `integer` (min 0, max 9007199254740991), optional. Output tokens spent on reasoning, where the provider distinguishes them. Part of outputTokens, not in addition to it.
+- `cachedInputTokens` — `integer` (min 0, max 9007199254740991), optional. Input tokens read from a provider cache. Part of inputTokens, not in addition to it, and disjoint from cacheWriteInputTokens.
+- `cacheWriteInputTokens` — `integer` (min 0, max 9007199254740991), optional. Input tokens written to a provider cache on this call, where the provider distinguishes them. Part of inputTokens, not in addition to it, and disjoint from cachedInputTokens. Its own field because providers price a cache write differently from a cache read, so a consumer computing cost cannot do without it.
 
 Closed object: the schema rejects members not listed here.
 

@@ -54,7 +54,8 @@ Closes a run that did not fail, and reports how it ended:
 - A producer MUST NOT send an outcome value the schema does not describe.
 - `result` is OPTIONAL and carries the run's return value, if it has one.
 - `usage` is OPTIONAL and reports token usage, one entry per provider and
-  model. A consumer that only wants totals sums across the entries.
+  model, under the [accounting below](#token-usage). A consumer that only
+  wants totals sums across the entries.
 
 An outcome a consumer does not recognise is unrecognised material like any
 other, and is stripped on the same terms as the rest. Stripping an optional
@@ -74,7 +75,8 @@ named after that consumer shipped.
 
 Ends a run that failed. `message` says what went wrong, for a person to read;
 `code` is OPTIONAL and machine-readable, an open string the protocol defines no
-vocabulary for; `usage` MAY report tokens accrued before the failure.
+vocabulary for; `usage` MAY report tokens accrued before the failure, under
+the same [accounting](#token-usage) as on `RUN_FINISHED`.
 
 A `RUN_ERROR` is a well-formed event: the producer is reporting its own
 failure, not sending something a consumer should reject. Treating a run as
@@ -83,6 +85,49 @@ NOT report the run as having succeeded. It does not prescribe how — whether th
 call that started the run raises, resolves with the failure, or reports it
 through a callback is the implementation's business, and two conforming
 consumers may differ.
+
+### Token usage
+
+`usage` on `RUN_FINISHED` and `RUN_ERROR` reports what the run's model calls
+cost, one [`TokenUsage`](/spec/draft/schema#tokenusage) entry per provider and
+model. Providers count differently — one folds cached prompt tokens into its
+input count, another reports them beside it, a third reports reasoning apart
+from the rest of the output — so the protocol fixes one accounting and the
+producer translates into it. Every count is either a total or a named part of
+one:
+
+- `inputTokens` is every prompt token the call was charged for: cached or not,
+  written to a cache or not, text or not. `outputTokens` is every generated
+  token, reasoning included.
+- `cachedInputTokens` (cache reads), `cacheWriteInputTokens` (cache writes) and
+  `reasoningTokens` are parts of those totals, never additions to them. The two
+  cache counts are disjoint. A producer whose provider reports one of these
+  beside a smaller total MUST add it into the total before emitting the entry;
+  a producer whose provider already includes it MUST NOT add it again.
+- `totalTokens` is `inputTokens` plus `outputTokens`. A producer MAY compute it
+  rather than copy a provider's total, and MUST NOT copy a provider's total
+  that counts differently.
+- An absent count means the provider did not report it; a zero means it
+  reported zero. A producer MUST NOT emit a zero for a count it has no data
+  for, and a consumer MUST NOT read an absent count as zero.
+
+The run is the accounting boundary:
+
+- Usage covers every model call made within the run, including calls made by
+  its [subagents](/spec/draft/events/subagents): subagent events carry no
+  usage of their own, and a subagent's calls are the run's.
+- An agent invoked as a separate run — named by `parentRunId` — reports its
+  own usage on its own terminal event, and the run that spawned it MUST NOT
+  include that usage in its own.
+- A run that [resumes](/spec/draft/basic/patterns/interrupt-resume) an
+  interrupted one reports only the calls it made itself. The interrupted run
+  already reported its own, and a consumer wanting a thread's total sums
+  across the thread's runs.
+
+Under this accounting a consumer that only wants a total sums `totalTokens`
+across entries and runs, and a consumer computing cost has each part it needs
+to price cache reads, cache writes and reasoning at their own rates, without
+double-counting any of them.
 
 ### After a run closes
 

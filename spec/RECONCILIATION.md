@@ -463,15 +463,16 @@ as optional.
 
 ## TokenUsage
 
-| field             | TypeScript | Python             | .NET               | schema   |
-| ----------------- | ---------- | ------------------ | ------------------ | -------- |
-| cachedInputTokens | optional   | optional, nullable | optional, nullable | optional |
-| inputTokens       | optional   | optional, nullable | optional, nullable | optional |
-| model             | optional   | optional, nullable | optional, nullable | optional |
-| outputTokens      | optional   | optional, nullable | optional, nullable | optional |
-| provider          | optional   | optional, nullable | optional, nullable | optional |
-| reasoningTokens   | optional   | optional, nullable | optional, nullable | optional |
-| totalTokens       | optional   | optional, nullable | optional, nullable | optional |
+| field                 | TypeScript | Python             | .NET               | schema   |
+| --------------------- | ---------- | ------------------ | ------------------ | -------- |
+| cacheWriteInputTokens | optional   | optional, nullable | optional, nullable | optional |
+| cachedInputTokens     | optional   | optional, nullable | optional, nullable | optional |
+| inputTokens           | optional   | optional, nullable | optional, nullable | optional |
+| model                 | optional   | optional, nullable | optional, nullable | optional |
+| outputTokens          | optional   | optional, nullable | optional, nullable | optional |
+| provider              | optional   | optional, nullable | optional, nullable | optional |
+| reasoningTokens       | optional   | optional, nullable | optional, nullable | optional |
+| totalTokens           | optional   | optional, nullable | optional, nullable | optional |
 
 ## DeveloperMessage
 

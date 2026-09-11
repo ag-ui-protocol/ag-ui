@@ -702,7 +702,12 @@ public sealed class RunFinishedEvent : BaseEvent
     /// <summary>
     /// Token usage for the run, one entry per provider and model, so a run that
     /// invoked several models keeps them separate. A consumer that only wants
-    /// totals sums across the entries.
+    /// totals sums across the entries. The run is the accounting boundary:
+    /// usage covers every model call made within the run, calls made by its
+    /// subagents included; an agent invoked as a separate run under parentRunId
+    /// reports its own usage on its own terminal event; and a run that resumes
+    /// an interrupted one reports only the calls it made itself, not the
+    /// interrupted run's.
     /// </summary>
     [JsonPropertyName("usage")]
     public IList<TokenUsage>? Usage { get; set; }
@@ -736,7 +741,8 @@ public sealed class RunErrorEvent : BaseEvent
 
     /// <summary>
     /// Token usage accrued before the failure, for a run that completed one or
-    /// more model calls before dying.
+    /// more model calls before dying. Scoped as on RUN_FINISHED: the run's own
+    /// calls, subagents included.
     /// </summary>
     [JsonPropertyName("usage")]
     public IList<TokenUsage>? Usage { get; set; }

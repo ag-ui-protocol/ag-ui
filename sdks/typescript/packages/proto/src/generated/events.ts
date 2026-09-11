@@ -547,7 +547,11 @@ export interface RunFinishedEvent {
   /**
    * Token usage for the run, one entry per provider and model, so a run that
    * invoked several models keeps them separate. A consumer that only wants
-   * totals sums across the entries.
+   * totals sums across the entries. The run is the accounting boundary: usage
+   * covers every model call made within the run, calls made by its subagents
+   * included; an agent invoked as a separate run under parentRunId reports its
+   * own usage on its own terminal event; and a run that resumes an interrupted
+   * one reports only the calls it made itself, not the interrupted run's.
    */
   usage: Usage[];
 }
@@ -572,7 +576,8 @@ export interface RunErrorEvent {
   message: string;
   /**
    * Token usage accrued before the failure, for a run that completed one or more
-   * model calls before dying.
+   * model calls before dying. Scoped as on RUN_FINISHED: the run's own calls,
+   * subagents included.
    */
   usage: Usage[];
 }
@@ -890,9 +895,14 @@ export interface Event {
 }
 
 /**
- * Token counts for one provider and model. Every field is a label or a number —
- * nothing content-bearing or identifying, no prompts, completions, messages, or
- * thread, run and user identifiers.
+ * Token counts for one provider and model, in the protocol's own accounting:
+ * every count is either a total or a named part of one, so entries from
+ * different providers add up without double-counting. inputTokens and
+ * outputTokens are the totals; reasoningTokens, cachedInputTokens and
+ * cacheWriteInputTokens are parts of them, never additions to them; totalTokens
+ * is the two totals summed. Every field is a label or a number — nothing
+ * content-bearing or identifying, no prompts, completions, messages, or thread,
+ * run and user identifiers.
  */
 export interface Usage {
   /** Which provider served the request. */
@@ -904,30 +914,58 @@ export interface Usage {
     | string
     | undefined;
   /**
-   * Prompt tokens consumed. Bounded like timestamp and for the same reason: a
-   * count above the JSON safe-integer range does not survive a round trip, so a
-   * consumer would silently read a different number than the producer wrote.
+   * Every prompt token the call was charged for: tokens read from a provider
+   * cache, tokens written to one, and audio or other non-text input all count
+   * here. cachedInputTokens and cacheWriteInputTokens break this number down and
+   * are never added to it — a provider that reports its cache counts beside a
+   * smaller input count has them added in by the producer before the entry
+   * leaves. Bounded like timestamp and for the same reason: a count above the
+   * JSON safe-integer range does not survive a round trip, so a consumer would
+   * silently read a different number than the producer wrote.
    */
   inputTokens?:
     | number
     | undefined;
-  /** Completion tokens produced. */
+  /**
+   * Every generated token, reasoning included where the provider distinguishes
+   * it. reasoningTokens breaks this number down and is never added to it — a
+   * provider that reports reasoning tokens beside a smaller completion count has
+   * them added in by the producer.
+   */
   outputTokens?:
     | number
     | undefined;
   /**
-   * Total tokens, as the provider reports it rather than as a sum the protocol
-   * computes.
+   * inputTokens plus outputTokens, under the accounting above. A producer MAY
+   * compute it rather than copy a provider's total, and copies a provider's
+   * total only when that total counts the same way, so a consumer can read this
+   * field as the sum of the other two.
    */
   totalTokens?:
     | number
     | undefined;
-  /** Tokens spent on reasoning, where the provider distinguishes them. */
+  /**
+   * Output tokens spent on reasoning, where the provider distinguishes them.
+   * Part of outputTokens, not in addition to it.
+   */
   reasoningTokens?:
     | number
     | undefined;
-  /** Prompt tokens served from a provider cache. */
-  cachedInputTokens?: number | undefined;
+  /**
+   * Input tokens read from a provider cache. Part of inputTokens, not in
+   * addition to it, and disjoint from cacheWriteInputTokens.
+   */
+  cachedInputTokens?:
+    | number
+    | undefined;
+  /**
+   * Input tokens written to a provider cache on this call, where the provider
+   * distinguishes them. Part of inputTokens, not in addition to it, and disjoint
+   * from cachedInputTokens. Its own field because providers price a cache write
+   * differently from a cache read, so a consumer computing cost cannot do
+   * without it.
+   */
+  cacheWriteInputTokens?: number | undefined;
 }
 
 function createBaseBaseEvent(): BaseEvent {
@@ -4298,6 +4336,7 @@ function createBaseUsage(): Usage {
     totalTokens: undefined,
     reasoningTokens: undefined,
     cachedInputTokens: undefined,
+    cacheWriteInputTokens: undefined,
   };
 }
 
@@ -4323,6 +4362,9 @@ export const Usage: MessageFns<Usage> = {
     }
     if (message.cachedInputTokens !== undefined) {
       writer.uint32(56).int64(message.cachedInputTokens);
+    }
+    if (message.cacheWriteInputTokens !== undefined) {
+      writer.uint32(64).int64(message.cacheWriteInputTokens);
     }
     return writer;
   },
@@ -4390,6 +4432,14 @@ export const Usage: MessageFns<Usage> = {
           message.cachedInputTokens = longToNumber(reader.int64());
           continue;
         }
+        case 8: {
+          if (tag !== 64) {
+            break;
+          }
+
+          message.cacheWriteInputTokens = longToNumber(reader.int64());
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -4411,6 +4461,7 @@ export const Usage: MessageFns<Usage> = {
     message.totalTokens = object.totalTokens ?? undefined;
     message.reasoningTokens = object.reasoningTokens ?? undefined;
     message.cachedInputTokens = object.cachedInputTokens ?? undefined;
+    message.cacheWriteInputTokens = object.cacheWriteInputTokens ?? undefined;
     return message;
   },
 };

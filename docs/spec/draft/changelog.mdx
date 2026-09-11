@@ -82,7 +82,12 @@ specification.
    ([Metadata](/spec/draft/basic/metadata)).
 3. Absent means absent: optional fields are omitted, never `null`
    ([The event model](/spec/draft/basic#absent-means-absent)).
-4. `RUN_FINISHED` and `RUN_ERROR` MAY carry per-provider token usage.
+4. `RUN_FINISHED` and `RUN_ERROR` MAY carry per-provider token usage, in one
+   accounting: the input and output counts are totals, cached and reasoning
+   tokens are parts of them, cache reads and cache writes are reported
+   separately, and usage follows the run boundary — subagents' calls in,
+   child and resumed runs' calls out
+   ([Runs and steps](/spec/draft/events/lifecycle#token-usage)).
 5. Input messages MAY carry multimodal content parts (text, image, audio,
    video, document), by URL or inline data
    ([Run input](/spec/draft/basic/run-input)).
