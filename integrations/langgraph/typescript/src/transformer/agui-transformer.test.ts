@@ -486,7 +486,12 @@ describe("aguiTransformer", () => {
             aiMessage({
               id: "rs_1",
               type: "reasoning",
-              summary: [{ type: "summary_text", text: "I weighed reliability and value." }],
+              summary: [
+                {
+                  type: "summary_text",
+                  text: "I weighed reliability and value.",
+                },
+              ],
             }),
           ],
         },
@@ -505,7 +510,9 @@ describe("aguiTransformer", () => {
       const { events, process } = harness();
       process("values", {
         namespace: [],
-        data: { messages: [aiMessage({ id: "rs_2", type: "reasoning", summary: [] })] },
+        data: {
+          messages: [aiMessage({ id: "rs_2", type: "reasoning", summary: [] })],
+        },
       });
       process("lifecycle", { data: { event: "completed" }, namespace: [] });
       expect(only(events, EventType.REASONING_START).length).toBe(0);

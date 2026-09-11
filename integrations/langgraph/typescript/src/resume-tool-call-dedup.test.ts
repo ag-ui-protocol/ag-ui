@@ -91,13 +91,17 @@ function commandToolEndEvent(toolCallId: string) {
   };
 }
 
-const startEvents = (d: any[]) => d.filter((e) => e.type === EventType.TOOL_CALL_START);
-const resultEvents = (d: any[]) => d.filter((e) => e.type === EventType.TOOL_CALL_RESULT);
+const startEvents = (d: any[]) =>
+  d.filter((e) => e.type === EventType.TOOL_CALL_START);
+const resultEvents = (d: any[]) =>
+  d.filter((e) => e.type === EventType.TOOL_CALL_RESULT);
 
 describe("issue #2014: OnToolEnd must not re-emit TOOL_CALL_START on HITL resume", () => {
   it("skips the synthetic triple when the tool call is already in prior-run history (single path)", () => {
     const toolCallId = "tc-resumed";
-    const { agent, dispatched } = createAgent([priorAssistantMessage(toolCallId)]);
+    const { agent, dispatched } = createAgent([
+      priorAssistantMessage(toolCallId),
+    ]);
 
     agent.handleSingleEventV2(singleToolEndEvent(toolCallId));
 
@@ -115,7 +119,9 @@ describe("issue #2014: OnToolEnd must not re-emit TOOL_CALL_START on HITL resume
 
   it("skips the synthetic triple on resume for the Command/update.messages path", () => {
     const toolCallId = "tc-resumed-cmd";
-    const { agent, dispatched } = createAgent([priorAssistantMessage(toolCallId)]);
+    const { agent, dispatched } = createAgent([
+      priorAssistantMessage(toolCallId),
+    ]);
 
     agent.handleSingleEventV2(commandToolEndEvent(toolCallId));
 

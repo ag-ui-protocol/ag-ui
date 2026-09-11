@@ -192,6 +192,16 @@ function isGeneratedIdentityField(
   if (GENERATED_ID_FIELDS.has(key)) return true;
   if (key !== "id") return false;
 
+  // V3 exposes generated interrupt handles in the root state snapshot.
+  // IDs inside the interrupt value belong to the application and stay intact.
+  if (
+    path.length === 2 &&
+    path[0] === "snapshot" &&
+    path[1] === "__interrupt__"
+  ) {
+    return true;
+  }
+
   if (path.includes("rawEvent") && GENERATED_MODEL_ID_PATTERN.test(value)) {
     return true;
   }

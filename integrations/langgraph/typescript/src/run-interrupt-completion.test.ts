@@ -27,13 +27,20 @@ function makeConfig(): LangGraphAgentConfig {
       get: vi.fn().mockResolvedValue({ thread_id: "thread-1" }),
       create: vi.fn().mockResolvedValue({ thread_id: "thread-1" }),
       getState: vi.fn().mockResolvedValue(agentState),
-      updateState: vi.fn().mockResolvedValue({ checkpoint: { checkpoint_id: "ck-1" } }),
+      updateState: vi
+        .fn()
+        .mockResolvedValue({ checkpoint: { checkpoint_id: "ck-1" } }),
       stream: vi.fn(),
     },
     runs: { cancel: vi.fn(), stream: vi.fn() },
     assistants: {
       search: vi.fn().mockResolvedValue([
-        { assistant_id: "asst-1", graph_id: "test-graph", config: {}, metadata: {} },
+        {
+          assistant_id: "asst-1",
+          graph_id: "test-graph",
+          config: {},
+          metadata: {},
+        },
       ]),
       getGraph: vi.fn().mockResolvedValue({ nodes: [], edges: [] }),
       getSchemas: vi.fn().mockResolvedValue({
@@ -44,7 +51,11 @@ function makeConfig(): LangGraphAgentConfig {
       }),
     },
   };
-  return { deploymentUrl: "http://localhost:2024", graphId: "test-graph", client };
+  return {
+    deploymentUrl: "http://localhost:2024",
+    graphId: "test-graph",
+    client,
+  };
 }
 
 describe("interrupt-only run completes without erroring the subscriber", () => {
@@ -83,7 +94,9 @@ describe("interrupt-only run completes without erroring the subscriber", () => {
     expect(types).toContain(EventType.RUN_STARTED);
     expect(types).toContain(EventType.RUN_FINISHED);
     expect(
-      dispatched.some((e) => e.type === EventType.CUSTOM && e.name === "on_interrupt"),
+      dispatched.some(
+        (e) => e.type === EventType.CUSTOM && e.name === "on_interrupt",
+      ),
     ).toBe(true);
   });
 });

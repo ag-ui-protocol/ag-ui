@@ -41,7 +41,10 @@ describe("B3: getCheckpointByMessage recursion guard", () => {
       },
     ];
     const getHistory = vi.fn().mockResolvedValue(history);
-    const agent = makeAgent({ threads: { getHistory }, runs: { cancel: vi.fn() } });
+    const agent = makeAgent({
+      threads: { getHistory },
+      runs: { cancel: vi.fn() },
+    });
 
     await expect(
       agent.getCheckpointByMessage("m1", "thread-1"),
@@ -65,7 +68,10 @@ describe("B3: getCheckpointByMessage recursion guard", () => {
       },
     ];
     const getHistory = vi.fn().mockResolvedValue(history);
-    const agent = makeAgent({ threads: { getHistory }, runs: { cancel: vi.fn() } });
+    const agent = makeAgent({
+      threads: { getHistory },
+      runs: { cancel: vi.fn() },
+    });
 
     // m2 is the last message in ck-1 → no recursion, returns a checkpoint.
     const result = await agent.getCheckpointByMessage("m2", "thread-1");
@@ -113,11 +119,12 @@ describe("B7: OnChatModelStream missing response_metadata", () => {
       }),
     ).not.toThrow();
 
-    expect(events.some((e) => e.type === EventType.TEXT_MESSAGE_START)).toBe(true);
+    expect(events.some((e) => e.type === EventType.TEXT_MESSAGE_START)).toBe(
+      true,
+    );
     expect(
       events.some(
-        (e) =>
-          e.type === EventType.TEXT_MESSAGE_CONTENT && e.delta === "hello",
+        (e) => e.type === EventType.TEXT_MESSAGE_CONTENT && e.delta === "hello",
       ),
     ).toBe(true);
   });

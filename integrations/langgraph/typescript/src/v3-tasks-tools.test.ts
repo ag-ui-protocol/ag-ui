@@ -89,7 +89,11 @@ async function runV3(chunks: any[], getStateResult: any = EMPTY_STATE) {
   await (agent as any).handleStreamEventsV3(
     makeStreamArg(chunks),
     "thread1",
-    { next: (e: any) => dispatched.push(e), error: () => {}, complete: () => {} },
+    {
+      next: (e: any) => dispatched.push(e),
+      error: () => {},
+      complete: () => {},
+    },
     {
       runId: "run1",
       threadId: "thread1",
@@ -108,10 +112,12 @@ async function runV3(chunks: any[], getStateResult: any = EMPTY_STATE) {
   return dispatched;
 }
 
-const toolResults = (d: any[]) => d.filter((e) => e.type === EventType.TOOL_CALL_RESULT);
+const toolResults = (d: any[]) =>
+  d.filter((e) => e.type === EventType.TOOL_CALL_RESULT);
 const interrupts = (d: any[]) =>
   d.filter((e) => e.type === EventType.CUSTOM && e.name === "on_interrupt");
-const textStarts = (d: any[]) => d.filter((e) => e.type === EventType.TEXT_MESSAGE_START);
+const textStarts = (d: any[]) =>
+  d.filter((e) => e.type === EventType.TEXT_MESSAGE_START);
 
 /** An agui-channel passthrough event (method === "agui"). */
 function aguiChunk(event: any) {
@@ -153,7 +159,11 @@ describe("v3 tools channel → TOOL_CALL_RESULT", () => {
 
   it("passes a string output through unchanged", async () => {
     const dispatched = await runV3([
-      makeChunk("tools", { event: "tool-finished", tool_call_id: "tc-1", output: "done" }),
+      makeChunk("tools", {
+        event: "tool-finished",
+        tool_call_id: "tc-1",
+        output: "done",
+      }),
     ]);
     expect(toolResults(dispatched)[0].content).toBe("done");
   });
@@ -165,7 +175,9 @@ describe("v3 tools channel → TOOL_CALL_RESULT", () => {
     // string a consumer parses), not the stringified wrapper — matching the v2
     // path. Regression guard for A2UI surfaces (a2ui_operations live in the
     // inner content and are invisible if the wrapper is stringified).
-    const inner = JSON.stringify({ a2ui_operations: [{ surfaceId: "hotel-comparison" }] });
+    const inner = JSON.stringify({
+      a2ui_operations: [{ surfaceId: "hotel-comparison" }],
+    });
     const dispatched = await runV3([
       makeChunk("tools", {
         event: "tool-finished",
@@ -181,7 +193,10 @@ describe("v3 tools channel → TOOL_CALL_RESULT", () => {
       makeChunk("tools", {
         event: "tool-finished",
         tool_call_id: "tc-1",
-        output: { status: "success", content: [{ type: "text", text: "a" }, "b"] },
+        output: {
+          status: "success",
+          content: [{ type: "text", text: "a" }, "b"],
+        },
       }),
     ]);
     expect(toolResults(dispatched)[0].content).toBe("ab");
@@ -189,7 +204,11 @@ describe("v3 tools channel → TOOL_CALL_RESULT", () => {
 
   it("emits TOOL_CALL_RESULT carrying the error message on tool-error", async () => {
     const dispatched = await runV3([
-      makeChunk("tools", { event: "tool-error", tool_call_id: "tc-1", message: "boom" }),
+      makeChunk("tools", {
+        event: "tool-error",
+        tool_call_id: "tc-1",
+        message: "boom",
+      }),
     ]);
     const results = toolResults(dispatched);
     expect(results).toHaveLength(1);
@@ -199,8 +218,17 @@ describe("v3 tools channel → TOOL_CALL_RESULT", () => {
 
   it("emits nothing for tool-started / tool-output-delta", async () => {
     const dispatched = await runV3([
-      makeChunk("tools", { event: "tool-started", tool_call_id: "tc-1", tool_name: "x", input: {} }),
-      makeChunk("tools", { event: "tool-output-delta", tool_call_id: "tc-1", delta: "partial" }),
+      makeChunk("tools", {
+        event: "tool-started",
+        tool_call_id: "tc-1",
+        tool_name: "x",
+        input: {},
+      }),
+      makeChunk("tools", {
+        event: "tool-output-delta",
+        tool_call_id: "tc-1",
+        delta: "partial",
+      }),
     ]);
     expect(toolResults(dispatched)).toHaveLength(0);
   });
@@ -228,7 +256,13 @@ describe("v3 tasks channel → deduped OnInterrupt", () => {
     const sameInterrupt = { id: "int-1", value: "approve?" };
     const dispatched = await runV3(
       // live frame on the tasks channel...
-      [makeChunk("tasks", { id: "task-1", name: "node", interrupts: [sameInterrupt] })],
+      [
+        makeChunk("tasks", {
+          id: "task-1",
+          name: "node",
+          interrupts: [sameInterrupt],
+        }),
+      ],
       // ...and the post-run getState returns the same pending interrupt.
       { ...EMPTY_STATE, tasks: [{ interrupts: [sameInterrupt] }] },
     );
@@ -238,15 +272,29 @@ describe("v3 tasks channel → deduped OnInterrupt", () => {
   it("dedups the same tasks interrupt repeated across frames (create + result)", async () => {
     const sameInterrupt = { id: "int-1", value: "approve?" };
     const dispatched = await runV3([
-      makeChunk("tasks", { id: "task-1", name: "node", interrupts: [sameInterrupt] }),
-      makeChunk("tasks", { id: "task-1", name: "node", interrupts: [sameInterrupt] }),
+      makeChunk("tasks", {
+        id: "task-1",
+        name: "node",
+        interrupts: [sameInterrupt],
+      }),
+      makeChunk("tasks", {
+        id: "task-1",
+        name: "node",
+        interrupts: [sameInterrupt],
+      }),
     ]);
     expect(interrupts(dispatched)).toHaveLength(1);
   });
 
   it("dedups id-less interrupts by their value", async () => {
     const dispatched = await runV3(
-      [makeChunk("tasks", { id: "task-1", name: "node", interrupts: [{ value: "approve?" }] })],
+      [
+        makeChunk("tasks", {
+          id: "task-1",
+          name: "node",
+          interrupts: [{ value: "approve?" }],
+        }),
+      ],
       { ...EMPTY_STATE, tasks: [{ interrupts: [{ value: "approve?" }] }] },
     );
     expect(interrupts(dispatched)).toHaveLength(1);
@@ -257,7 +305,10 @@ describe("v3 tasks channel → deduped OnInterrupt", () => {
       makeChunk("tasks", {
         id: "task-1",
         name: "node",
-        interrupts: [{ id: "int-1", value: "a" }, { id: "int-2", value: "b" }],
+        interrupts: [
+          { id: "int-1", value: "a" },
+          { id: "int-2", value: "b" },
+        ],
       }),
     ]);
     expect(interrupts(dispatched)).toHaveLength(2);
@@ -270,9 +321,7 @@ describe("v3 tasks channel → deduped OnInterrupt", () => {
 
 describe("v3 transformer mode (lazy flip)", () => {
   it("without any agui event, raw messages are translated", async () => {
-    const dispatched = await runV3([
-      ...rawTextMessage("m1"),
-    ]);
+    const dispatched = await runV3([...rawTextMessage("m1")]);
     // Raw path opened a text message.
     expect(textStarts(dispatched)).toHaveLength(1);
     expect(textStarts(dispatched)[0].messageId).toBe("m1");
@@ -281,7 +330,11 @@ describe("v3 transformer mode (lazy flip)", () => {
   it("flips on first agui event and suppresses subsequent raw translation", async () => {
     const dispatched = await runV3([
       // agui passthrough first (mux pushes it ahead of the raw source)...
-      aguiChunk({ type: EventType.TEXT_MESSAGE_START, messageId: "agui-1", role: "assistant" }),
+      aguiChunk({
+        type: EventType.TEXT_MESSAGE_START,
+        messageId: "agui-1",
+        role: "assistant",
+      }),
       // ...then raw frames that WOULD open another text message if translated.
       ...rawTextMessage("m1"),
     ]);
@@ -293,9 +346,21 @@ describe("v3 transformer mode (lazy flip)", () => {
 
   it("passes through agui events verbatim and ignores raw tools/tasks once flipped", async () => {
     const dispatched = await runV3([
-      aguiChunk({ type: EventType.TEXT_MESSAGE_START, messageId: "agui-1", role: "assistant" }),
-      makeChunk("tools", { event: "tool-finished", tool_call_id: "tc-1", output: "x" }),
-      makeChunk("tasks", { id: "t", name: "n", interrupts: [{ id: "int-1", value: "v" }] }),
+      aguiChunk({
+        type: EventType.TEXT_MESSAGE_START,
+        messageId: "agui-1",
+        role: "assistant",
+      }),
+      makeChunk("tools", {
+        event: "tool-finished",
+        tool_call_id: "tc-1",
+        output: "x",
+      }),
+      makeChunk("tasks", {
+        id: "t",
+        name: "n",
+        interrupts: [{ id: "int-1", value: "v" }],
+      }),
     ]);
     // Raw tools must NOT produce a TOOL_CALL_RESULT in transformer mode.
     expect(toolResults(dispatched)).toHaveLength(0);

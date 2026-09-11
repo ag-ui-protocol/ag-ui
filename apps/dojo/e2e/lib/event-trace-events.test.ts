@@ -817,3 +817,47 @@ test("rewrites a forwarded-header bag only when it is record-shaped", () => {
     );
   }
 });
+
+test("normalizes v3 interrupt handles with aliases while preserving payload IDs", () => {
+  const makeTrace = (first: string, second: string) => [
+    {
+      type: "STATE_SNAPSHOT",
+      snapshot: {
+        id: "app-state-id",
+        __interrupt__: [
+          {
+            id: first,
+            value: { id: "user-record-id", nested: { id: "nested-id" } },
+          },
+          { id: second, value: { label: "second" } },
+        ],
+      },
+    },
+    { type: "RUN_FINISHED", outcome: { interruptIds: [second, first] } },
+    { type: "STATE_SNAPSHOT", snapshot: { __interrupt__: [{ id: first }] } },
+  ];
+  const normalized = normalizeEventTrace(
+    makeTrace("generated-first", "generated-second"),
+  );
+  assert.deepEqual(normalized, [
+    {
+      type: "STATE_SNAPSHOT",
+      snapshot: {
+        id: "app-state-id",
+        __interrupt__: [
+          {
+            id: "id-1",
+            value: { id: "user-record-id", nested: { id: "nested-id" } },
+          },
+          { id: "id-2", value: { label: "second" } },
+        ],
+      },
+    },
+    { type: "RUN_FINISHED", outcome: { interruptIds: ["id-2", "id-1"] } },
+    { type: "STATE_SNAPSHOT", snapshot: { __interrupt__: [{ id: "id-1" }] } },
+  ]);
+  assert.deepEqual(
+    normalizeEventTrace(makeTrace("other-first", "other-second")),
+    normalized,
+  );
+});

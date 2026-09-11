@@ -6,7 +6,13 @@ import { ChatOpenAI } from "@langchain/openai";
 import { SystemMessage } from "@langchain/core/messages";
 import { RunnableConfig } from "@langchain/core/runnables";
 import { dispatchCustomEvent } from "@langchain/core/callbacks/dispatch";
-import { Annotation, Command, MessagesAnnotation, StateGraph, END } from "@langchain/langgraph";
+import {
+  Annotation,
+  Command,
+  MessagesAnnotation,
+  StateGraph,
+  END,
+} from "@langchain/langgraph";
 import { aguiTransformer } from "@ag-ui/langgraph/transformer";
 
 // This tool simulates performing a task on the server.
@@ -15,7 +21,8 @@ const PERFORM_TASK_TOOL = {
   type: "function",
   function: {
     name: "generate_task_steps_generative_ui",
-    description: "Make up 10 steps (only a couple of words per step) that are required for a task. The step should be in gerund form (i.e. Digging hole, opening door, ...)",
+    description:
+      "Make up 10 steps (only a couple of words per step) that are required for a task. The step should be in gerund form (i.e. Digging hole, opening door, ...)",
     parameters: {
       type: "object",
       properties: {
@@ -26,32 +33,33 @@ const PERFORM_TASK_TOOL = {
             properties: {
               description: {
                 type: "string",
-                description: "The text of the step in gerund form"
+                description: "The text of the step in gerund form",
               },
               status: {
                 type: "string",
                 enum: ["pending"],
-                description: "The status of the step, always 'pending'"
-              }
+                description: "The status of the step, always 'pending'",
+              },
             },
-            required: ["description", "status"]
+            required: ["description", "status"],
           },
-          description: "An array of 10 step objects, each containing text and status"
-        }
+          description:
+            "An array of 10 step objects, each containing text and status",
+        },
       },
-      required: ["steps"]
-    }
-  }
+      required: ["steps"],
+    },
+  },
 };
 
 const AgentStateAnnotation = Annotation.Root({
   steps: Annotation<Array<{ description: string; status: string }>>({
     reducer: (x, y) => y ?? x,
-    default: () => []
+    default: () => [],
   }),
   tools: Annotation<any[]>({
     reducer: (x, y) => y ?? x,
-    default: () => []
+    default: () => [],
   }),
   ...MessagesAnnotation.spec,
 });
@@ -64,7 +72,7 @@ async function startFlow(state: AgentState, config?: RunnableConfig) {
    * Always clear steps so old steps from previous runs don't persist.
    */
   return {
-    steps: []
+    steps: [],
   };
 }
 
@@ -83,7 +91,7 @@ async function chatNode(state: AgentState, config?: RunnableConfig) {
 
   // Define the model
   const model = new ChatOpenAI({ model: "gpt-4o" });
-  
+
   // Define config for the model with emit_intermediate_state to stream tool calls to frontend
   if (!config) {
     config = { recursionLimit: 25 };
@@ -91,47 +99,43 @@ async function chatNode(state: AgentState, config?: RunnableConfig) {
 
   // Use "predict_state" metadata to set up streaming for the write_document tool
   if (!config.metadata) config.metadata = {};
-  config.metadata.predict_state = [{
-    state_key: "steps",
-    tool: "generate_task_steps_generative_ui",
-    tool_argument: "steps",
-  }];
+  config.metadata.predict_state = [
+    {
+      state_key: "steps",
+      tool: "generate_task_steps_generative_ui",
+      tool_argument: "steps",
+    },
+  ];
 
   // Bind the tools to the model
-  const modelWithTools = model.bindTools(
-    [
-      ...state.tools,
-      PERFORM_TASK_TOOL
-    ],
-    {
-      // Disable parallel tool calls to avoid race conditions
-      parallel_tool_calls: false,
-    }
-  );
+  const modelWithTools = model.bindTools([...state.tools, PERFORM_TASK_TOOL], {
+    // Disable parallel tool calls to avoid race conditions
+    parallel_tool_calls: false,
+  });
 
   // Run the model to generate a response
-  const response = await modelWithTools.invoke([
-    new SystemMessage({ content: systemPrompt }),
-    ...state.messages,
-  ], config);
+  const response = await modelWithTools.invoke(
+    [new SystemMessage({ content: systemPrompt }), ...state.messages],
+    config,
+  );
 
   const messages = [...state.messages, response];
 
   // Extract any tool calls from the response
   if (response.tool_calls && response.tool_calls.length > 0) {
     const toolCall = response.tool_calls[0];
-    
+
     if (toolCall.name === "generate_task_steps_generative_ui") {
       const steps = toolCall.args.steps.map((step: any) => ({
         description: step.description,
-        status: step.status
+        status: step.status,
       }));
-      
+
       // Add the tool response to messages
       const toolResponse = {
         role: "tool" as const,
         content: "Steps executed.",
-        tool_call_id: toolCall.id
+        tool_call_id: toolCall.id,
       };
 
       const updatedMessages = [...messages, toolResponse];
@@ -139,20 +143,20 @@ async function chatNode(state: AgentState, config?: RunnableConfig) {
       // Simulate executing the steps
       for (let i = 0; i < steps.length; i++) {
         // simulate executing the step
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise((resolve) => setTimeout(resolve, 1000));
         steps[i].status = "completed";
         // Update the state with the completed step
         state.steps = steps;
         // Emit custom events to update the frontend
         await dispatchCustomEvent("manually_emit_state", state, config);
       }
-      
+
       return new Command({
         goto: "chat_node",
         update: {
           messages: updatedMessages,
-          steps: state.steps
-        }
+          steps: state.steps,
+        },
       });
     }
   }
@@ -161,8 +165,8 @@ async function chatNode(state: AgentState, config?: RunnableConfig) {
     goto: END,
     update: {
       messages: messages,
-      steps: state.steps
-    }
+      steps: state.steps,
+    },
   });
 }
 

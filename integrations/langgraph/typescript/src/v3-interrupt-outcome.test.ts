@@ -25,7 +25,9 @@ const STATE_WITH_INTERRUPT = {
   metadata: { writes: {} },
 };
 
-function makeConfig(overrides: Partial<LangGraphAgentConfig> = {}): LangGraphAgentConfig {
+function makeConfig(
+  overrides: Partial<LangGraphAgentConfig> = {},
+): LangGraphAgentConfig {
   return {
     deploymentUrl: "http://localhost:2024",
     graphId: "test-graph",
@@ -38,14 +40,22 @@ function makeConfig(overrides: Partial<LangGraphAgentConfig> = {}): LangGraphAge
 }
 
 function makeChunk(method: string, data: any) {
-  return { type: "event", seq: 0, method, params: { namespace: [], timestamp: 0, data } };
+  return {
+    type: "event",
+    seq: 0,
+    method,
+    params: { namespace: [], timestamp: 0, data },
+  };
 }
 
 async function* makeStream(chunks: any[]) {
   for (const chunk of chunks) yield chunk;
 }
 
-async function runV3(chunks: any[], configOverrides: Partial<LangGraphAgentConfig> = {}) {
+async function runV3(
+  chunks: any[],
+  configOverrides: Partial<LangGraphAgentConfig> = {},
+) {
   const agent = new LangGraphAgent(makeConfig(configOverrides));
   const dispatched: any[] = [];
   agent.dispatchEvent = (event: any) => {
@@ -65,8 +75,20 @@ async function runV3(chunks: any[], configOverrides: Partial<LangGraphAgentConfi
   await (agent as any).handleStreamEventsV3(
     { streamResponse: makeStream(chunks), state: { ...STATE_WITH_INTERRUPT } },
     "thread1",
-    { next: (e: any) => dispatched.push(e), error: () => {}, complete: () => {} },
-    { runId: "run1", threadId: "thread1", messages: [], state: {}, tools: [], context: [], forwardedProps: { nodeName: "chat" } },
+    {
+      next: (e: any) => dispatched.push(e),
+      error: () => {},
+      complete: () => {},
+    },
+    {
+      runId: "run1",
+      threadId: "thread1",
+      messages: [],
+      state: {},
+      tools: [],
+      context: [],
+      forwardedProps: { nodeName: "chat" },
+    },
     [],
   );
   return dispatched;
@@ -74,7 +96,8 @@ async function runV3(chunks: any[], configOverrides: Partial<LangGraphAgentConfi
 
 const onInterrupts = (d: any[]) =>
   d.filter((e) => e.type === EventType.CUSTOM && e.name === "on_interrupt");
-const runFinished = (d: any[]) => d.filter((e) => e.type === EventType.RUN_FINISHED);
+const runFinished = (d: any[]) =>
+  d.filter((e) => e.type === EventType.RUN_FINISHED);
 
 // ---------------------------------------------------------------------------
 // Finding 6: run-end interrupt honors the outcome contract on v3

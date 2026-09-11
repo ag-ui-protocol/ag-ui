@@ -108,11 +108,14 @@ function makeConfig(opts?: {
       stream: vi.fn(),
     },
     assistants: {
-      search: vi
-        .fn()
-        .mockResolvedValue([
-          { assistant_id: "asst-1", graph_id: "test-graph", config: {}, metadata: {} },
-        ]),
+      search: vi.fn().mockResolvedValue([
+        {
+          assistant_id: "asst-1",
+          graph_id: "test-graph",
+          config: {},
+          metadata: {},
+        },
+      ]),
       getGraph: vi.fn().mockResolvedValue({ nodes: [], edges: [] }),
       getSchemas: vi.fn().mockResolvedValue({
         input_schema: { properties: { messages: {} } },
@@ -175,9 +178,7 @@ describe("sanitizeAssistantMessages (named export)", () => {
    */
   async function loadHelper() {
     const mod: any = await import("./agent");
-    return mod.sanitizeAssistantMessages as (
-      payloadInput: any,
-    ) => any;
+    return mod.sanitizeAssistantMessages as (payloadInput: any) => any;
   }
 
   it("is exported from ./agent", async () => {
@@ -300,7 +301,10 @@ describe("transformerThreads cache (acquireThreadStream)", () => {
     };
 
     await agent.prepareStream(input, ["events", "values"]);
-    await agent.prepareStream({ ...input, runId: "run-2" }, ["events", "values"]);
+    await agent.prepareStream({ ...input, runId: "run-2" }, [
+      "events",
+      "values",
+    ]);
 
     // Only one ThreadStream should ever be opened for thread-1.
     const streamCalls = client.threads.stream.mock.calls.filter(
@@ -338,14 +342,21 @@ describe("transformerThreads cache (acquireThreadStream)", () => {
     const child = parent.clone() as LangGraphAgent;
     child.dispatchEvent = (e: any) => e as any;
     // clone() should share `transformerThreads` by reference.
-    expect((child as any).transformerThreads).toBe((parent as any).transformerThreads);
+    expect((child as any).transformerThreads).toBe(
+      (parent as any).transformerThreads,
+    );
 
-    await child.prepareStream({ ...baseInput, runId: "run-2" }, ["events", "values"]);
+    await child.prepareStream({ ...baseInput, runId: "run-2" }, [
+      "events",
+      "values",
+    ]);
 
     const entry = threadStreams.get("thread-1")!;
     expect(entry.thread.subscribe).toHaveBeenCalledTimes(1);
     expect(
-      client.threads.stream.mock.calls.filter((c: any[]) => c[0] === "thread-1"),
+      client.threads.stream.mock.calls.filter(
+        (c: any[]) => c[0] === "thread-1",
+      ),
     ).toHaveLength(1);
   });
 
@@ -381,8 +392,12 @@ describe("transformerThreads cache (acquireThreadStream)", () => {
 
     expect(threadStreams.has("thread-a")).toBe(true);
     expect(threadStreams.has("thread-b")).toBe(true);
-    expect(threadStreams.get("thread-a")!.thread.subscribe).toHaveBeenCalledTimes(1);
-    expect(threadStreams.get("thread-b")!.thread.subscribe).toHaveBeenCalledTimes(1);
+    expect(
+      threadStreams.get("thread-a")!.thread.subscribe,
+    ).toHaveBeenCalledTimes(1);
+    expect(
+      threadStreams.get("thread-b")!.thread.subscribe,
+    ).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -422,7 +437,10 @@ describe("resume vs submitRun routing (transformer branch)", () => {
       namespace: ["task-1"] as readonly string[],
     };
     const seeded = makeThreadStream({ interrupts: [seededInterrupt] });
-    const threadStreams = new Map<string, ReturnType<typeof makeThreadStream>>();
+    const threadStreams = new Map<
+      string,
+      ReturnType<typeof makeThreadStream>
+    >();
     threadStreams.set("thread-1", seeded);
 
     const { config } = makeConfig({ threadStreams });
@@ -643,6 +661,8 @@ describe("A4: interrupt-only fast path STEP balance", () => {
     expect(stepFinishedIdx).toBeGreaterThan(-1);
     // Step closes BEFORE the run finishes, and nothing re-opens a step after.
     expect(stepFinishedIdx).toBeLessThan(runFinishedIdx);
-    expect(types.slice(runFinishedIdx + 1)).not.toContain(EventType.STEP_STARTED);
+    expect(types.slice(runFinishedIdx + 1)).not.toContain(
+      EventType.STEP_STARTED,
+    );
   });
 });

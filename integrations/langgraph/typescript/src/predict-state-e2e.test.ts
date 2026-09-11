@@ -24,7 +24,11 @@ function makeConfig(): LangGraphAgentConfig {
     client: {
       threads: {
         getState: vi.fn().mockResolvedValue({
-          values: { messages: [], copilotkit: {}, todos: [{ id: "real-1", title: "Todo 1" }] },
+          values: {
+            messages: [],
+            copilotkit: {},
+            todos: [{ id: "real-1", title: "Todo 1" }],
+          },
           tasks: [],
           next: [],
           metadata: { writes: {} },
@@ -32,8 +36,18 @@ function makeConfig(): LangGraphAgentConfig {
       },
       runs: { cancel: vi.fn() },
       assistants: {
-        search: vi.fn().mockResolvedValue([{ assistant_id: "asst-1", graph_id: "test-graph", config: {}, metadata: {} }]),
-        getGraph: vi.fn().mockResolvedValue({ nodes: [{ id: "model" }, { id: "tools" }], edges: [] }),
+        search: vi.fn().mockResolvedValue([
+          {
+            assistant_id: "asst-1",
+            graph_id: "test-graph",
+            config: {},
+            metadata: {},
+          },
+        ]),
+        getGraph: vi.fn().mockResolvedValue({
+          nodes: [{ id: "model" }, { id: "tools" }],
+          edges: [],
+        }),
       },
     } as any,
   };
@@ -75,7 +89,9 @@ function makeModelStreamEvent(toolName: string, metadata: any = {}) {
       chunk: {
         content: "",
         response_metadata: {},
-        tool_call_chunks: toolName ? [{ name: toolName, args: "", id: "tc1", index: 0 }] : [],
+        tool_call_chunks: toolName
+          ? [{ name: toolName, args: "", id: "tc1", index: 0 }]
+          : [],
       },
     },
   });
@@ -155,8 +171,19 @@ async function runStream(chunks: any[], initialState: any = {}) {
   await (agent as any).handleStreamEventsV2(
     makeStreamArg(chunks, initialState),
     "thread1",
-    { next: (e: any) => dispatched.push(e), error: () => {}, complete: () => {} },
-    { runId: "run1", threadId: "thread1", messages: [], state: {}, tools: [], context: [] },
+    {
+      next: (e: any) => dispatched.push(e),
+      error: () => {},
+      complete: () => {},
+    },
+    {
+      runId: "run1",
+      threadId: "thread1",
+      messages: [],
+      state: {},
+      tools: [],
+      context: [],
+    },
     ["events", "values"],
   );
 
@@ -177,13 +204,18 @@ function snapshotHasTodos(snapshot: any) {
 // ---------------------------------------------------------------------------
 
 describe("predict_state: no STATE_SNAPSHOT with absent todos during streaming", () => {
-
   it("suppresses STATE_SNAPSHOT while manage_todos is streaming args", async () => {
-    const predictStateMeta = [{ tool: "manage_todos", state_key: "todos", tool_argument: "todos" }];
+    const predictStateMeta = [
+      { tool: "manage_todos", state_key: "todos", tool_argument: "todos" },
+    ];
 
     const chunks = [
       // Node name set (snapshot here is fine — before streaming starts)
-      makeEventsChunk({ event: "on_chain_start", metadata: { langgraph_node: "model" }, data: {} }),
+      makeEventsChunk({
+        event: "on_chain_start",
+        metadata: { langgraph_node: "model" },
+        data: {},
+      }),
       // Tracked tool call starts streaming — modelMadeToolCall set, PredictState fires
       makeModelStreamEvent("manage_todos", { predict_state: predictStateMeta }),
       // State updates with no todos — snapshots must be suppressed from here
@@ -192,11 +224,18 @@ describe("predict_state: no STATE_SNAPSHOT with absent todos during streaming", 
       // Tool ends — resets flag
       makeToolEndEvent("manage_todos"),
       // State now has todos
-      makeValuesChunk({ messages: [{ id: "m1" }], copilotkit: {}, todos: [{ id: "real-1", title: "Todo 1" }] }),
+      makeValuesChunk({
+        messages: [{ id: "m1" }],
+        copilotkit: {},
+        todos: [{ id: "real-1", title: "Todo 1" }],
+      }),
       makeChainEndEvent("tools"),
     ];
 
-    const dispatched = await runStream(chunks, { messages: [], copilotkit: {} });
+    const dispatched = await runStream(chunks, {
+      messages: [],
+      copilotkit: {},
+    });
 
     // Find index of PredictState event — snapshots AFTER this must not have absent todos
     const predictStateIdx = dispatched.findIndex(
@@ -212,14 +251,24 @@ describe("predict_state: no STATE_SNAPSHOT with absent todos during streaming", 
   });
 
   it("emits STATE_SNAPSHOT with todos after tool completes", async () => {
-    const predictStateMeta = [{ tool: "manage_todos", state_key: "todos", tool_argument: "todos" }];
+    const predictStateMeta = [
+      { tool: "manage_todos", state_key: "todos", tool_argument: "todos" },
+    ];
 
     const chunks = [
-      makeEventsChunk({ event: "on_chain_start", metadata: { langgraph_node: "tools" }, data: {} }),
+      makeEventsChunk({
+        event: "on_chain_start",
+        metadata: { langgraph_node: "tools" },
+        data: {},
+      }),
       makeModelStreamEvent("manage_todos", { predict_state: predictStateMeta }),
       makeValuesChunk({ messages: [], copilotkit: {} }),
       makeToolEndEvent("manage_todos"),
-      makeValuesChunk({ messages: [], copilotkit: {}, todos: [{ id: "real-1" }] }),
+      makeValuesChunk({
+        messages: [],
+        copilotkit: {},
+        todos: [{ id: "real-1" }],
+      }),
       makeChainEndEvent("tools"),
     ];
 
@@ -231,17 +280,26 @@ describe("predict_state: no STATE_SNAPSHOT with absent todos during streaming", 
   });
 
   it("untracked tool does NOT suppress STATE_SNAPSHOT", async () => {
-    const predictStateMeta = [{ tool: "manage_todos", state_key: "todos", tool_argument: "todos" }];
+    const predictStateMeta = [
+      { tool: "manage_todos", state_key: "todos", tool_argument: "todos" },
+    ];
 
     const chunks = [
-      makeEventsChunk({ event: "on_chain_start", metadata: { langgraph_node: "model" }, data: {} }),
+      makeEventsChunk({
+        event: "on_chain_start",
+        metadata: { langgraph_node: "model" },
+        data: {},
+      }),
       // open_canvas is untracked — should NOT suppress
       makeModelStreamEvent("open_canvas", { predict_state: predictStateMeta }),
       makeValuesChunk({ messages: [{ id: "m1" }], copilotkit: {} }),
       makeChainEndEvent("model"),
     ];
 
-    const dispatched = await runStream(chunks, { messages: [], copilotkit: {} });
+    const dispatched = await runStream(chunks, {
+      messages: [],
+      copilotkit: {},
+    });
     const snapshots = stateSnapshots(dispatched);
 
     // Snapshots should fire (not suppressed) even though they lack todos
@@ -249,10 +307,16 @@ describe("predict_state: no STATE_SNAPSHOT with absent todos during streaming", 
   });
 
   it("PredictState custom event is emitted for tracked tool", async () => {
-    const predictStateMeta = [{ tool: "manage_todos", state_key: "todos", tool_argument: "todos" }];
+    const predictStateMeta = [
+      { tool: "manage_todos", state_key: "todos", tool_argument: "todos" },
+    ];
 
     const chunks = [
-      makeEventsChunk({ event: "on_chain_start", metadata: { langgraph_node: "model" }, data: {} }),
+      makeEventsChunk({
+        event: "on_chain_start",
+        metadata: { langgraph_node: "model" },
+        data: {},
+      }),
       makeModelStreamEvent("manage_todos", { predict_state: predictStateMeta }),
       makeToolEndEvent("manage_todos"),
     ];
@@ -267,18 +331,31 @@ describe("predict_state: no STATE_SNAPSHOT with absent todos during streaming", 
   });
 
   it("on_tool_error clears modelMadeToolCall so later snapshots emit", async () => {
-    const predictStateMeta = [{ tool: "manage_todos", state_key: "todos", tool_argument: "todos" }];
+    const predictStateMeta = [
+      { tool: "manage_todos", state_key: "todos", tool_argument: "todos" },
+    ];
 
     const chunks = [
-      makeEventsChunk({ event: "on_chain_start", metadata: { langgraph_node: "model" }, data: {} }),
+      makeEventsChunk({
+        event: "on_chain_start",
+        metadata: { langgraph_node: "model" },
+        data: {},
+      }),
       makeModelStreamEvent("manage_todos", { predict_state: predictStateMeta }),
       makeToolErrorEvent("manage_todos"),
       // Post-error state update with todos — should emit a snapshot if flag was reset
-      makeValuesChunk({ messages: [{ id: "m1" }], copilotkit: {}, todos: [{ id: "real-1" }] }),
+      makeValuesChunk({
+        messages: [{ id: "m1" }],
+        copilotkit: {},
+        todos: [{ id: "real-1" }],
+      }),
       makeChainEndEvent("tools"),
     ];
 
-    const dispatched = await runStream(chunks, { messages: [], copilotkit: {} });
+    const dispatched = await runStream(chunks, {
+      messages: [],
+      copilotkit: {},
+    });
     const snapshots = stateSnapshots(dispatched);
     const withTodos = snapshots.filter(snapshotHasTodos);
 
@@ -286,17 +363,30 @@ describe("predict_state: no STATE_SNAPSHOT with absent todos during streaming", 
   });
 
   it("Command-style OnToolEnd resets modelMadeToolCall", async () => {
-    const predictStateMeta = [{ tool: "manage_todos", state_key: "todos", tool_argument: "todos" }];
+    const predictStateMeta = [
+      { tool: "manage_todos", state_key: "todos", tool_argument: "todos" },
+    ];
 
     const chunks = [
-      makeEventsChunk({ event: "on_chain_start", metadata: { langgraph_node: "model" }, data: {} }),
+      makeEventsChunk({
+        event: "on_chain_start",
+        metadata: { langgraph_node: "model" },
+        data: {},
+      }),
       makeModelStreamEvent("manage_todos", { predict_state: predictStateMeta }),
       makeCommandToolEndEvent("manage_todos"),
-      makeValuesChunk({ messages: [], copilotkit: {}, todos: [{ id: "real-1" }] }),
+      makeValuesChunk({
+        messages: [],
+        copilotkit: {},
+        todos: [{ id: "real-1" }],
+      }),
       makeChainEndEvent("tools"),
     ];
 
-    const dispatched = await runStream(chunks, { messages: [], copilotkit: {} });
+    const dispatched = await runStream(chunks, {
+      messages: [],
+      copilotkit: {},
+    });
     const snapshots = stateSnapshots(dispatched);
     const withTodos = snapshots.filter(snapshotHasTodos);
 
@@ -309,17 +399,26 @@ describe("predict_state: no STATE_SNAPSHOT with absent todos during streaming", 
     // Documents current behavior: any OnToolEnd unconditionally resets the
     // flag, so an untracked tool finishing first clears the flag before the
     // tracked tool has completed. A post-end state change then emits.
-    const predictStateMeta = [{ tool: "manage_todos", state_key: "todos", tool_argument: "todos" }];
+    const predictStateMeta = [
+      { tool: "manage_todos", state_key: "todos", tool_argument: "todos" },
+    ];
 
     const chunks = [
-      makeEventsChunk({ event: "on_chain_start", metadata: { langgraph_node: "model" }, data: {} }),
+      makeEventsChunk({
+        event: "on_chain_start",
+        metadata: { langgraph_node: "model" },
+        data: {},
+      }),
       makeModelStreamEvent("manage_todos", { predict_state: predictStateMeta }),
       makeToolEndEvent("search_web", "tc2"),
       makeValuesChunk({ messages: [{ id: "m1" }], copilotkit: {} }),
       makeChainEndEvent("tools"),
     ];
 
-    const dispatched = await runStream(chunks, { messages: [], copilotkit: {} });
+    const dispatched = await runStream(chunks, {
+      messages: [],
+      copilotkit: {},
+    });
     const snapshots = stateSnapshots(dispatched);
 
     // Flag cleared prematurely → snapshot emits after the untracked tool ended.
@@ -327,10 +426,16 @@ describe("predict_state: no STATE_SNAPSHOT with absent todos during streaming", 
   });
 
   it("PredictState custom event NOT emitted for untracked tool", async () => {
-    const predictStateMeta = [{ tool: "manage_todos", state_key: "todos", tool_argument: "todos" }];
+    const predictStateMeta = [
+      { tool: "manage_todos", state_key: "todos", tool_argument: "todos" },
+    ];
 
     const chunks = [
-      makeEventsChunk({ event: "on_chain_start", metadata: { langgraph_node: "model" }, data: {} }),
+      makeEventsChunk({
+        event: "on_chain_start",
+        metadata: { langgraph_node: "model" },
+        data: {},
+      }),
       makeModelStreamEvent("open_canvas", { predict_state: predictStateMeta }),
       makeToolEndEvent("open_canvas"),
     ];
@@ -358,15 +463,27 @@ describe("B6: state-diff STATE_SNAPSHOT (same node, changing values)", () => {
   it("emits a snapshot when state values change without a node change", async () => {
     const chunks = [
       // First event on node "model" → node-change snapshot (state still empty).
-      makeEventsChunk({ event: "on_chain_start", metadata: { langgraph_node: "model" }, data: {} }),
+      makeEventsChunk({
+        event: "on_chain_start",
+        metadata: { langgraph_node: "model" },
+        data: {},
+      }),
       // State changes.
       makeValuesChunk({ counter: 1 }),
       // Same node again — only a working state-diff can fire the snapshot here.
-      makeEventsChunk({ event: "on_chain_start", metadata: { langgraph_node: "model" }, data: {} }),
+      makeEventsChunk({
+        event: "on_chain_start",
+        metadata: { langgraph_node: "model" },
+        data: {},
+      }),
       // State changes again.
       makeValuesChunk({ counter: 2 }),
       // Same node once more.
-      makeEventsChunk({ event: "on_chain_start", metadata: { langgraph_node: "model" }, data: {} }),
+      makeEventsChunk({
+        event: "on_chain_start",
+        metadata: { langgraph_node: "model" },
+        data: {},
+      }),
     ];
 
     const dispatched = await runStream(chunks, {});

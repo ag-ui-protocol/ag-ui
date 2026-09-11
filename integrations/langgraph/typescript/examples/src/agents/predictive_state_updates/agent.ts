@@ -6,7 +6,14 @@ import { v4 as uuidv4 } from "uuid";
 import { ChatOpenAI } from "@langchain/openai";
 import { SystemMessage } from "@langchain/core/messages";
 import { RunnableConfig } from "@langchain/core/runnables";
-import { Command, Annotation, MessagesAnnotation, StateGraph, END, START } from "@langchain/langgraph";
+import {
+  Command,
+  Annotation,
+  MessagesAnnotation,
+  StateGraph,
+  END,
+  START,
+} from "@langchain/langgraph";
 import { aguiTransformer } from "@ag-ui/langgraph/transformer";
 
 const WRITE_DOCUMENT_TOOL = {
@@ -20,31 +27,34 @@ const WRITE_DOCUMENT_TOOL = {
       "However, do not use italic or strike-through formatting, it's reserved for another purpose.",
       "You MUST write the full document, even when changing only a few words.",
       "When making edits to the document, try to make them minimal - do not change every word.",
-      "Keep stories SHORT!"
+      "Keep stories SHORT!",
     ].join(" "),
     parameters: {
       type: "object",
       properties: {
         document: {
           type: "string",
-          description: "The document to write"
+          description: "The document to write",
         },
       },
-    }
-  }
+    },
+  },
 };
 
 export const AgentStateAnnotation = Annotation.Root({
   document: Annotation<string | undefined>({
     reducer: (x, y) => y ?? x,
-    default: () => undefined
+    default: () => undefined,
   }),
   tools: Annotation<any[]>(),
   ...MessagesAnnotation.spec,
 });
 export type AgentState = typeof AgentStateAnnotation.State;
 
-async function chatNode(state: AgentState, config?: RunnableConfig): Promise<Command> {
+async function chatNode(
+  state: AgentState,
+  config?: RunnableConfig,
+): Promise<Command> {
   /**
    * Standard chat node.
    */
@@ -55,7 +65,7 @@ async function chatNode(state: AgentState, config?: RunnableConfig): Promise<Com
     You MUST write the full document, even when changing only a few words.
     When you wrote the document, DO NOT repeat it as a message.
     Just briefly summarize the changes you made. 2 sentences max.
-    This is the current state of the document: ----\n ${state.document || ''}\n-----
+    This is the current state of the document: ----\n ${state.document || ""}\n-----
     `;
 
   // Define the model
@@ -68,29 +78,28 @@ async function chatNode(state: AgentState, config?: RunnableConfig): Promise<Com
 
   // Use "predict_state" metadata to set up streaming for the write_document_local tool
   if (!config.metadata) config.metadata = {};
-  config.metadata.predict_state = [{
-    state_key: "document",
-    tool: "write_document_local",
-    tool_argument: "document"
-  }];
+  config.metadata.predict_state = [
+    {
+      state_key: "document",
+      tool: "write_document_local",
+      tool_argument: "document",
+    },
+  ];
 
   // Bind the tools to the model
   const modelWithTools = model.bindTools(
-    [
-      ...state.tools,
-      WRITE_DOCUMENT_TOOL
-    ],
+    [...state.tools, WRITE_DOCUMENT_TOOL],
     {
       // Disable parallel tool calls to avoid race conditions
       parallel_tool_calls: false,
-    }
+    },
   );
 
   // Run the model to generate a response
-  const response = await modelWithTools.invoke([
-    new SystemMessage({ content: systemPrompt }),
-    ...state.messages,
-  ], config);
+  const response = await modelWithTools.invoke(
+    [new SystemMessage({ content: systemPrompt }), ...state.messages],
+    config,
+  );
 
   // Update messages with the response
   const messages = [...state.messages, response];
@@ -104,21 +113,23 @@ async function chatNode(state: AgentState, config?: RunnableConfig): Promise<Com
       const toolResponse = {
         role: "tool" as const,
         content: "Document written.",
-        tool_call_id: toolCall.id
+        tool_call_id: toolCall.id,
       };
 
       // Add confirmation tool call
       const confirmToolCall = {
         role: "assistant" as const,
         content: "",
-        tool_calls: [{
-          id: uuidv4(),
-          type: "function" as const,
-          function: {
-            name: "confirm_changes",
-            arguments: "{}"
-          }
-        }]
+        tool_calls: [
+          {
+            id: uuidv4(),
+            type: "function" as const,
+            function: {
+              name: "confirm_changes",
+              arguments: "{}",
+            },
+          },
+        ],
       };
 
       const updatedMessages = [...messages, toolResponse, confirmToolCall];
@@ -128,8 +139,8 @@ async function chatNode(state: AgentState, config?: RunnableConfig): Promise<Com
         goto: END,
         update: {
           messages: updatedMessages,
-          document: toolCall.args.document
-        }
+          document: toolCall.args.document,
+        },
       });
     }
   }
@@ -138,16 +149,16 @@ async function chatNode(state: AgentState, config?: RunnableConfig): Promise<Com
   return new Command({
     goto: END,
     update: {
-      messages: messages
-    }
+      messages: messages,
+    },
   });
 }
 
 // Define the graph
-const workflow = new StateGraph(AgentStateAnnotation);
-
-// Add nodes
-workflow.addNode("chat_node", chatNode);
+const workflow = new StateGraph(AgentStateAnnotation).addNode(
+  "chat_node",
+  chatNode,
+);
 
 // Add edges
 workflow.addEdge(START, "chat_node");

@@ -1,7 +1,7 @@
 "use client";
 import React, { useState } from "react";
 import "@copilotkit/react-core/v2/styles.css";
-import { 
+import {
   useFrontendTool,
   useConfigureSuggestions,
   CopilotSidebar,
@@ -30,7 +30,9 @@ interface Haiku {
   gradient: string;
 }
 
-export default function ToolBasedGenerativeUI({ params }: ToolBasedGenerativeUIProps) {
+export default function ToolBasedGenerativeUI({
+  params,
+}: ToolBasedGenerativeUIProps) {
   const { integrationId } = React.use(params);
   const { chatDefaultOpen } = useURLParams();
 
@@ -85,7 +87,11 @@ function HaikuDisplay() {
   const [haikus, setHaikus] = useState<Haiku[]>([
     {
       japanese: ["仮の句よ", "まっさらながら", "花を呼ぶ"],
-      english: ["A placeholder verse—", "even in a blank canvas,", "it beckons flowers."],
+      english: [
+        "A placeholder verse—",
+        "even in a blank canvas,",
+        "it beckons flowers.",
+      ],
       image_name: null,
       gradient: "",
     },
@@ -94,16 +100,33 @@ function HaikuDisplay() {
   useFrontendTool(
     {
       agentId: "tool_based_generative_ui",
-      description: "Generates a haiku with Japanese and English translations, an image name, and a CSS gradient for the background.",
+      description:
+        "Generates a haiku with Japanese and English translations, an image name, and a CSS gradient for the background.",
       name: "generate_haiku",
-       parameters: z.object({
+      parameters: z.object({
         japanese: z.array(z.string()).describe("3 lines of haiku in Japanese"),
-        english: z.array(z.string()).describe("3 lines of haiku translated to English"),
-        image_name: z.string().describe(`One relevant image name from: ${VALID_IMAGE_NAMES.join(", ")}`),
+        english: z
+          .array(z.string())
+          .describe("3 lines of haiku translated to English"),
+        image_name: z
+          .string()
+          .describe(
+            `One relevant image name from: ${VALID_IMAGE_NAMES.join(", ")}`,
+          ),
         gradient: z.string().describe("CSS Gradient color for the background"),
       }),
       followUp: false,
-      handler: async ({ japanese, english, image_name, gradient }: { japanese: string[]; english: string[]; image_name: string; gradient: string }) => {
+      handler: async ({
+        japanese,
+        english,
+        image_name,
+        gradient,
+      }: {
+        japanese: string[];
+        english: string[];
+        image_name: string;
+        gradient: string;
+      }) => {
         const newHaiku: Haiku = {
           japanese: japanese || [],
           english: english || [],

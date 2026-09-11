@@ -19,7 +19,10 @@ import { LangGraphAgent } from "./agent";
 import type { LangGraphAgentConfig } from "./agent";
 
 beforeEach(() => {
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ status: 200 } as Response));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue({ status: 200 } as Response),
+  );
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -50,24 +53,41 @@ function makeThreadStream(opts: {
   return { thread, aguiSub, unsubscribe };
 }
 
-function makeConfig(streamEntry: ReturnType<typeof makeThreadStream>, agentState?: any) {
+function makeConfig(
+  streamEntry: ReturnType<typeof makeThreadStream>,
+  agentState?: any,
+) {
   const client: any = {
     threads: {
       get: vi.fn().mockResolvedValue({ thread_id: "thread-1" }),
       create: vi.fn().mockResolvedValue({ thread_id: "thread-1" }),
       getState: vi.fn().mockResolvedValue(
-        agentState ?? { values: { messages: [] }, tasks: [], next: [], metadata: { writes: {} } },
+        agentState ?? {
+          values: { messages: [] },
+          tasks: [],
+          next: [],
+          metadata: { writes: {} },
+        },
       ),
-      updateState: vi.fn().mockResolvedValue({ checkpoint: { checkpoint_id: "ck-1" } }),
+      updateState: vi
+        .fn()
+        .mockResolvedValue({ checkpoint: { checkpoint_id: "ck-1" } }),
       stream: vi.fn(() => streamEntry.thread),
     },
     runs: {
       cancel: vi.fn(),
-      stream: vi.fn().mockReturnValue({ [Symbol.asyncIterator]: async function* () {} }),
+      stream: vi
+        .fn()
+        .mockReturnValue({ [Symbol.asyncIterator]: async function* () {} }),
     },
     assistants: {
       search: vi.fn().mockResolvedValue([
-        { assistant_id: "asst-1", graph_id: "test-graph", config: {}, metadata: {} },
+        {
+          assistant_id: "asst-1",
+          graph_id: "test-graph",
+          config: {},
+          metadata: {},
+        },
       ]),
       getGraph: vi.fn().mockResolvedValue({ nodes: [], edges: [] }),
       getSchemas: vi.fn().mockResolvedValue({
@@ -95,7 +115,12 @@ function makeAgent(config: LangGraphAgentConfig) {
     hasFunctionStreaming: false,
     modelMadeToolCall: false,
   };
-  (agent as any).subscriber = { next: vi.fn(), error: vi.fn(), complete: vi.fn(), closed: false };
+  (agent as any).subscriber = {
+    next: vi.fn(),
+    error: vi.fn(),
+    complete: vi.fn(),
+    closed: false,
+  };
   return agent;
 }
 
@@ -130,7 +155,9 @@ describe("protocol detection is scoped to subscribe", () => {
 
   it("transient subscribe error → fall back WITHOUT memoising v2", async () => {
     const entry = makeThreadStream({
-      subscribeReject: new Error("Protocol request failed: 503 Service Unavailable"),
+      subscribeReject: new Error(
+        "Protocol request failed: 503 Service Unavailable",
+      ),
     });
     const { config, client } = makeConfig(entry);
     const agent = makeAgent(config);
@@ -150,7 +177,9 @@ describe("protocol detection is scoped to subscribe", () => {
     const { config, client } = makeConfig(entry);
     const agent = makeAgent(config);
 
-    await expect(agent.prepareStream(baseInput() as any, ["events", "values"])).rejects.toThrow();
+    await expect(
+      agent.prepareStream(baseInput() as any, ["events", "values"]),
+    ).rejects.toThrow();
 
     // Subscribe was healthy → v3 IS present, must not be memoised as v2.
     expect((agent as any).v3Support.value).not.toBe(false);
@@ -171,7 +200,9 @@ describe("submit failure releases the lifecycle listener", () => {
     const { config } = makeConfig(entry);
     const agent = makeAgent(config);
 
-    await expect(agent.prepareStream(baseInput() as any, ["events", "values"])).rejects.toThrow();
+    await expect(
+      agent.prepareStream(baseInput() as any, ["events", "values"]),
+    ).rejects.toThrow();
 
     expect(entry.unsubscribe).toHaveBeenCalledTimes(1);
   });
@@ -183,7 +214,10 @@ describe("submit failure releases the lifecycle listener", () => {
 
 describe("canonical input.resume[] routes to respondInput", () => {
   it("uses respondInput (not submitRun) for a canonical resume with a pending interrupt", async () => {
-    const seededInterrupt = { interruptId: "intr-A", namespace: ["task-1"] as readonly string[] };
+    const seededInterrupt = {
+      interruptId: "intr-A",
+      namespace: ["task-1"] as readonly string[],
+    };
     const entry = makeThreadStream({ interrupts: [seededInterrupt] });
     const { config } = makeConfig(entry);
     const agent = makeAgent(config);

@@ -38,7 +38,11 @@ function makeThreadStream(v3 = true) {
     // runs.stream path. Model that here — reject subscribe when !v3.
     subscribe: v3
       ? vi.fn().mockResolvedValue(aguiSub)
-      : vi.fn().mockRejectedValue(new Error("Protocol request failed: 404 Not Found")),
+      : vi
+          .fn()
+          .mockRejectedValue(
+            new Error("Protocol request failed: 404 Not Found"),
+          ),
     onEvent: vi.fn().mockReturnValue(() => {}),
     submitRun: vi.fn().mockResolvedValue({ run_id: "regen-run" }),
     respondInput: vi.fn().mockResolvedValue(undefined),
@@ -117,7 +121,12 @@ function makeConfig(opts: { v3: boolean }) {
     },
     assistants: {
       search: vi.fn().mockResolvedValue([
-        { assistant_id: "asst-1", graph_id: "test-graph", config: {}, metadata: {} },
+        {
+          assistant_id: "asst-1",
+          graph_id: "test-graph",
+          config: {},
+          metadata: {},
+        },
       ]),
       getGraph: vi.fn().mockResolvedValue({ nodes: [], edges: [] }),
       getSchemas: vi.fn().mockResolvedValue({
@@ -176,7 +185,10 @@ describe("prepareRegenerateStream — transformer parity", () => {
     const { config, client, threadStreams } = makeConfig({ v3: true });
     const agent = makeAgent(config);
 
-    await agent.prepareRegenerateStream(regenInput as any, ["events", "values"]);
+    await agent.prepareRegenerateStream(regenInput as any, [
+      "events",
+      "values",
+    ]);
 
     // The legacy path MUST NOT be used when the transformer is on.
     expect(client.runs.stream).not.toHaveBeenCalled();
@@ -193,36 +205,45 @@ describe("prepareRegenerateStream — transformer parity", () => {
     );
   });
 
-  it.each([true, false])("preserves context and forwarded headers when regenerating (v3=%s)", async (v3) => {
-    const { config, client, threadStreams } = makeConfig({ v3 });
-    client.assistants.getSchemas.mockResolvedValue({
-      input_schema: { properties: { messages: {} } },
-      output_schema: { properties: { messages: {} } },
-      config_schema: { properties: {} },
-      context_schema: { properties: { user_id: {} } },
-    });
-    const agent = makeAgent(config);
-    agent.assistant = await agent.getAssistant();
-    (agent as any).activeRun.schemaKeys = await agent.getSchemaKeys();
-    agent.headers = { "x-request-id": "regen-request" };
-    await agent.prepareRegenerateStream({
-      ...regenInput,
-      forwardedProps: { config: { configurable: { user_id: "user-1" } } },
-    } as any, ["events", "values"]);
-    const payload = v3
-      ? threadStreams.get("thread-1")!.thread.submitRun.mock.calls[0][0]
-      : client.runs.stream.mock.calls[0][2];
-    expect(payload.context).toEqual({ user_id: "user-1" });
-    expect(payload.config.configurable).toEqual({
-      copilotkit_forwarded_headers: { "x-request-id": "regen-request" },
-    });
-  });
+  it.each([true, false])(
+    "preserves context and forwarded headers when regenerating (v3=%s)",
+    async (v3) => {
+      const { config, client, threadStreams } = makeConfig({ v3 });
+      client.assistants.getSchemas.mockResolvedValue({
+        input_schema: { properties: { messages: {} } },
+        output_schema: { properties: { messages: {} } },
+        config_schema: { properties: {} },
+        context_schema: { properties: { user_id: {} } },
+      });
+      const agent = makeAgent(config);
+      agent.assistant = await agent.getAssistant();
+      (agent as any).activeRun.schemaKeys = await agent.getSchemaKeys();
+      agent.headers = { "x-request-id": "regen-request" };
+      await agent.prepareRegenerateStream(
+        {
+          ...regenInput,
+          forwardedProps: { config: { configurable: { user_id: "user-1" } } },
+        } as any,
+        ["events", "values"],
+      );
+      const payload = v3
+        ? threadStreams.get("thread-1")!.thread.submitRun.mock.calls[0][0]
+        : client.runs.stream.mock.calls[0][2];
+      expect(payload.context).toEqual({ user_id: "user-1" });
+      expect(payload.config.configurable).toEqual({
+        copilotkit_forwarded_headers: { "x-request-id": "regen-request" },
+      });
+    },
+  );
 
   it("v3 server → opens / reuses the same raw-channel subscription as prepareStream", async () => {
     const { config, threadStreams } = makeConfig({ v3: true });
     const agent = makeAgent(config);
 
-    await agent.prepareRegenerateStream(regenInput as any, ["events", "values"]);
+    await agent.prepareRegenerateStream(regenInput as any, [
+      "events",
+      "values",
+    ]);
     const entry = threadStreams.get("thread-1");
     expect(entry).toBeDefined();
     // Exactly one subscription was opened — the SAME shared-cache rule
@@ -239,10 +260,14 @@ describe("prepareRegenerateStream — transformer parity", () => {
     const { config, client, threadStreams } = makeConfig({ v3: false });
     const agent = makeAgent(config);
 
-    await agent.prepareRegenerateStream(regenInput as any, ["events", "values"]);
+    await agent.prepareRegenerateStream(regenInput as any, [
+      "events",
+      "values",
+    ]);
 
     expect(client.runs.stream).toHaveBeenCalledTimes(1);
-    const [threadIdArg, assistantIdArg, payload] = client.runs.stream.mock.calls[0];
+    const [threadIdArg, assistantIdArg, payload] =
+      client.runs.stream.mock.calls[0];
     expect(threadIdArg).toBe("thread-1");
     expect(assistantIdArg).toBe("asst-1");
     expect(payload).toEqual(

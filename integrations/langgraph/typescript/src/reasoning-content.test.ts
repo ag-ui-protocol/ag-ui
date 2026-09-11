@@ -4,7 +4,10 @@
  * fix for issue #1361.
  */
 
-import { resolveReasoningContent, resolveEncryptedReasoningContent } from "./utils";
+import {
+  resolveReasoningContent,
+  resolveEncryptedReasoningContent,
+} from "./utils";
 import { LangGraphAgent } from "./agent";
 import { EventType } from "@ag-ui/client";
 
@@ -25,7 +28,14 @@ describe("resolveReasoningContent", () => {
   it("should handle Anthropic old format with signature", () => {
     const eventData = {
       chunk: {
-        content: [{ type: "thinking", thinking: "Deep thought", signature: "sig123", index: 1 }],
+        content: [
+          {
+            type: "thinking",
+            thinking: "Deep thought",
+            signature: "sig123",
+            index: 1,
+          },
+        ],
       },
     };
     const result = resolveReasoningContent(eventData);
@@ -48,7 +58,9 @@ describe("resolveReasoningContent", () => {
   it("should handle OpenAI Responses API v1 format", () => {
     const eventData = {
       chunk: {
-        content: [{ type: "reasoning", summary: [{ text: "Because X implies Y" }] }],
+        content: [
+          { type: "reasoning", summary: [{ text: "Because X implies Y" }] },
+        ],
       },
     };
     const result = resolveReasoningContent(eventData);
@@ -114,32 +126,44 @@ describe("resolveReasoningContent", () => {
 
   it("should return null for unknown format", () => {
     expect(
-      resolveReasoningContent({ chunk: { content: [{ type: "unknown", data: "stuff" }] } }),
+      resolveReasoningContent({
+        chunk: { content: [{ type: "unknown", data: "stuff" }] },
+      }),
     ).toBeNull();
   });
 
   it("should return null for regular text blocks", () => {
     expect(
-      resolveReasoningContent({ chunk: { content: [{ type: "text", text: "Regular" }] } }),
+      resolveReasoningContent({
+        chunk: { content: [{ type: "text", text: "Regular" }] },
+      }),
     ).toBeNull();
   });
 
   it("should return null for empty thinking", () => {
     expect(
-      resolveReasoningContent({ chunk: { content: [{ type: "thinking", thinking: "" }] } }),
+      resolveReasoningContent({
+        chunk: { content: [{ type: "thinking", thinking: "" }] },
+      }),
     ).toBeNull();
   });
 
   it("should return null for empty reasoning", () => {
     expect(
-      resolveReasoningContent({ chunk: { content: [{ type: "reasoning", reasoning: "" }] } }),
+      resolveReasoningContent({
+        chunk: { content: [{ type: "reasoning", reasoning: "" }] },
+      }),
     ).toBeNull();
   });
 
   it("should return null when reasoning_content inner value is not an object", () => {
     expect(
       resolveReasoningContent({
-        chunk: { content: [{ type: "reasoning_content", reasoning_content: "not-an-object" }] },
+        chunk: {
+          content: [
+            { type: "reasoning_content", reasoning_content: "not-an-object" },
+          ],
+        },
       }),
     ).toBeNull();
   });
@@ -147,7 +171,11 @@ describe("resolveReasoningContent", () => {
   it("should return null when reasoning_content inner dict has no text key", () => {
     expect(
       resolveReasoningContent({
-        chunk: { content: [{ type: "reasoning_content", reasoning_content: { type: "text" } }] },
+        chunk: {
+          content: [
+            { type: "reasoning_content", reasoning_content: { type: "text" } },
+          ],
+        },
       }),
     ).toBeNull();
   });
@@ -160,14 +188,19 @@ describe("resolveReasoningContent", () => {
 
   it("should return null for OpenAI Responses API with empty summary list", () => {
     expect(
-      resolveReasoningContent({ chunk: { content: [{ type: "reasoning", summary: [] }] } }),
+      resolveReasoningContent({
+        chunk: { content: [{ type: "reasoning", summary: [] }] },
+      }),
     ).toBeNull();
   });
 
   it("should return null for additional_kwargs with empty summary list", () => {
     expect(
       resolveReasoningContent({
-        chunk: { content: [], additional_kwargs: { reasoning: { summary: [] } } },
+        chunk: {
+          content: [],
+          additional_kwargs: { reasoning: { summary: [] } },
+        },
       }),
     ).toBeNull();
   });
@@ -175,7 +208,10 @@ describe("resolveReasoningContent", () => {
   it("should return null for additional_kwargs summary entry without text key", () => {
     expect(
       resolveReasoningContent({
-        chunk: { content: [], additional_kwargs: { reasoning: { summary: [{ index: 0 }] } } },
+        chunk: {
+          content: [],
+          additional_kwargs: { reasoning: { summary: [{ index: 0 }] } },
+        },
       }),
     ).toBeNull();
   });
@@ -188,7 +224,9 @@ describe("resolveEncryptedReasoningContent", () => {
         content: [{ type: "redacted_thinking", data: "encrypted_data_here" }],
       },
     };
-    expect(resolveEncryptedReasoningContent(eventData)).toBe("encrypted_data_here");
+    expect(resolveEncryptedReasoningContent(eventData)).toBe(
+      "encrypted_data_here",
+    );
   });
 
   it("should return null for non-redacted content", () => {
@@ -200,7 +238,9 @@ describe("resolveEncryptedReasoningContent", () => {
   });
 
   it("should return null for empty content", () => {
-    expect(resolveEncryptedReasoningContent({ chunk: { content: [] } })).toBeNull();
+    expect(
+      resolveEncryptedReasoningContent({ chunk: { content: [] } }),
+    ).toBeNull();
   });
 
   it("should return null for null chunk", () => {
@@ -227,12 +267,14 @@ describe("resolveReasoningContent canonical id", () => {
   it("surfaces the empty-text summary_part.added chunk and extracts the id", () => {
     const eventData = {
       chunk: {
-        content: [{
-          type: "reasoning",
-          id: "rs-canonical",
-          summary: [{ index: 0, type: "summary_text", text: "" }],
-          index: 0,
-        }],
+        content: [
+          {
+            type: "reasoning",
+            id: "rs-canonical",
+            summary: [{ index: 0, type: "summary_text", text: "" }],
+            index: 0,
+          },
+        ],
       },
     };
     const result = resolveReasoningContent(eventData);
@@ -245,11 +287,13 @@ describe("resolveReasoningContent canonical id", () => {
   it("does not invent an id on text delta chunks", () => {
     const eventData = {
       chunk: {
-        content: [{
-          type: "reasoning",
-          summary: [{ index: 0, type: "summary_text", text: "Because X" }],
-          index: 0,
-        }],
+        content: [
+          {
+            type: "reasoning",
+            summary: [{ index: 0, type: "summary_text", text: "Because X" }],
+            index: 0,
+          },
+        ],
       },
     };
     const result = resolveReasoningContent(eventData);
@@ -260,11 +304,13 @@ describe("resolveReasoningContent canonical id", () => {
   it("attaches the id when text and id are both present", () => {
     const eventData = {
       chunk: {
-        content: [{
-          type: "reasoning",
-          id: "rs-canonical",
-          summary: [{ index: 0, type: "summary_text", text: "Hi" }],
-        }],
+        content: [
+          {
+            type: "reasoning",
+            id: "rs-canonical",
+            summary: [{ index: 0, type: "summary_text", text: "Hi" }],
+          },
+        ],
       },
     };
     const result = resolveReasoningContent(eventData);
@@ -276,7 +322,9 @@ describe("resolveReasoningContent canonical id", () => {
     // The only id carrier observed on the LangGraph Platform wire.
     const eventData = {
       chunk: {
-        content: [{ type: "reasoning", id: "rs-canonical", summary: [], index: 0 }],
+        content: [
+          { type: "reasoning", id: "rs-canonical", summary: [], index: 0 },
+        ],
       },
     };
     const result = resolveReasoningContent(eventData);
@@ -295,12 +343,14 @@ describe("resolveReasoningContent canonical id", () => {
   it("drops the part.added shape when its id is null (platform wire shape)", () => {
     const eventData = {
       chunk: {
-        content: [{
-          type: "reasoning",
-          id: null,
-          summary: [{ index: 0, type: "summary_text", text: "" }],
-          index: 0,
-        }],
+        content: [
+          {
+            type: "reasoning",
+            id: null,
+            summary: [{ index: 0, type: "summary_text", text: "" }],
+            index: 0,
+          },
+        ],
       },
     };
     expect(resolveReasoningContent(eventData)).toBeNull();
@@ -309,12 +359,14 @@ describe("resolveReasoningContent canonical id", () => {
   it("does not reuse the item id for non-first summary parts", () => {
     const eventData = {
       chunk: {
-        content: [{
-          type: "reasoning",
-          id: "rs-canonical",
-          summary: [{ index: 1, type: "summary_text", text: "" }],
-          index: 0,
-        }],
+        content: [
+          {
+            type: "reasoning",
+            id: "rs-canonical",
+            summary: [{ index: 1, type: "summary_text", text: "" }],
+            index: 0,
+          },
+        ],
       },
     };
     const result = resolveReasoningContent(eventData);
@@ -340,16 +392,28 @@ describe("handleReasoningEvent canonical id", () => {
 
   it("stashes the id from a text-less carrier without emitting anything", () => {
     const { agent, dispatched } = buildAgent();
-    agent.handleReasoningEvent({ type: "text", text: "", index: 0, id: "rs-canonical" });
+    agent.handleReasoningEvent({
+      type: "text",
+      text: "",
+      index: 0,
+      id: "rs-canonical",
+    });
     expect(dispatched).toHaveLength(0);
   });
 
   it("opens REASONING_START under the stashed canonical id on the first text delta", () => {
     const { agent, dispatched } = buildAgent();
-    agent.handleReasoningEvent({ type: "text", text: "", index: 0, id: "rs-canonical" });
+    agent.handleReasoningEvent({
+      type: "text",
+      text: "",
+      index: 0,
+      id: "rs-canonical",
+    });
     agent.handleReasoningEvent({ type: "text", text: "Because X", index: 0 });
 
-    const starts = dispatched.filter((e) => e.type === EventType.REASONING_START);
+    const starts = dispatched.filter(
+      (e) => e.type === EventType.REASONING_START,
+    );
     const contents = dispatched.filter(
       (e) => e.type === EventType.REASONING_MESSAGE_CONTENT,
     );
@@ -364,7 +428,9 @@ describe("handleReasoningEvent canonical id", () => {
     const { agent, dispatched } = buildAgent();
     agent.handleReasoningEvent({ type: "text", text: "thinking…", index: 0 });
 
-    const starts = dispatched.filter((e) => e.type === EventType.REASONING_START);
+    const starts = dispatched.filter(
+      (e) => e.type === EventType.REASONING_START,
+    );
     expect(starts).toHaveLength(1);
     expect(starts[0].messageId).toBeTruthy();
     expect(starts[0].messageId).not.toBe("rs-canonical");
@@ -386,7 +452,11 @@ describe("handleReasoningEvent canonical id", () => {
     // Open a reasoning process at index 0.
     agent.handleReasoningEvent({ type: "text", text: "first block", index: 0 });
     // A new reasoning block at index 1 must close the index-0 one first.
-    agent.handleReasoningEvent({ type: "text", text: "second block", index: 1 });
+    agent.handleReasoningEvent({
+      type: "text",
+      text: "second block",
+      index: 1,
+    });
 
     const ends = dispatched.filter((e) => e.type === EventType.REASONING_END);
     const starts = dispatched.filter(

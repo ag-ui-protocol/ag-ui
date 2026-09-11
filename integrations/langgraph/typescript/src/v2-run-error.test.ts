@@ -60,8 +60,20 @@ describe("v2 RUN_ERROR is terminal", () => {
     await (agent as any).handleStreamEventsV2(
       stream,
       "thread1",
-      { next: (e: any) => dispatched.push(e), error: () => {}, complete: () => {} },
-      { runId: "run1", threadId: "thread1", messages: [], state: {}, tools: [], context: [], forwardedProps: {} },
+      {
+        next: (e: any) => dispatched.push(e),
+        error: () => {},
+        complete: () => {},
+      },
+      {
+        runId: "run1",
+        threadId: "thread1",
+        messages: [],
+        state: {},
+        tools: [],
+        context: [],
+        forwardedProps: {},
+      },
       ["events", "values", "updates", "messages-tuple"],
     );
 

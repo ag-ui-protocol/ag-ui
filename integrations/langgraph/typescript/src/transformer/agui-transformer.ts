@@ -225,7 +225,11 @@ export const aguiTransformer = (): StreamTransformer<{
         messageId,
         role: "reasoning",
       });
-      push({ type: EventType.REASONING_MESSAGE_CONTENT, messageId, delta: text });
+      push({
+        type: EventType.REASONING_MESSAGE_CONTENT,
+        messageId,
+        delta: text,
+      });
       push({ type: EventType.REASONING_MESSAGE_END, messageId });
       push({ type: EventType.REASONING_END, messageId });
     }

@@ -39,7 +39,12 @@ function makeConfig(getStateResult: any = EMPTY_STATE): LangGraphAgentConfig {
 }
 
 function makeChunk(method: string, data: any) {
-  return { type: "event", seq: 0, method, params: { namespace: [], timestamp: 0, data } };
+  return {
+    type: "event",
+    seq: 0,
+    method,
+    params: { namespace: [], timestamp: 0, data },
+  };
 }
 
 async function* makeStream(chunks: any[]) {
@@ -68,7 +73,11 @@ async function runV3(chunks: any[]) {
   await (agent as any).handleStreamEventsV3(
     { streamResponse: makeStream(chunks), state: { ...EMPTY_STATE } },
     "thread1",
-    { next: (e: any) => dispatched.push(e), error: () => {}, complete: () => {} },
+    {
+      next: (e: any) => dispatched.push(e),
+      error: () => {},
+      complete: () => {},
+    },
     {
       runId: "run1",
       threadId: "thread1",
@@ -93,8 +102,16 @@ describe("message-error closes open blocks", () => {
   it("emits TEXT_MESSAGE_END for an open text block on message-error", async () => {
     const dispatched = await runV3([
       makeChunk("messages", { event: "message-start", id: "m1" }),
-      makeChunk("messages", { event: "content-block-start", index: 0, content: { type: "text" } }),
-      makeChunk("messages", { event: "content-block-delta", index: 0, delta: { type: "text-delta", text: "hi" } }),
+      makeChunk("messages", {
+        event: "content-block-start",
+        index: 0,
+        content: { type: "text" },
+      }),
+      makeChunk("messages", {
+        event: "content-block-delta",
+        index: 0,
+        delta: { type: "text-delta", text: "hi" },
+      }),
       makeChunk("messages", { event: "message-error" }),
     ]);
     const starts = byType(dispatched, EventType.TEXT_MESSAGE_START);
@@ -127,10 +144,26 @@ describe("multiple text blocks under one message id", () => {
   it("emits exactly one START and one END across two text blocks", async () => {
     const dispatched = await runV3([
       makeChunk("messages", { event: "message-start", id: "m1" }),
-      makeChunk("messages", { event: "content-block-start", index: 0, content: { type: "text" } }),
-      makeChunk("messages", { event: "content-block-start", index: 1, content: { type: "text" } }),
-      makeChunk("messages", { event: "content-block-finish", index: 0, content: { type: "text" } }),
-      makeChunk("messages", { event: "content-block-finish", index: 1, content: { type: "text" } }),
+      makeChunk("messages", {
+        event: "content-block-start",
+        index: 0,
+        content: { type: "text" },
+      }),
+      makeChunk("messages", {
+        event: "content-block-start",
+        index: 1,
+        content: { type: "text" },
+      }),
+      makeChunk("messages", {
+        event: "content-block-finish",
+        index: 0,
+        content: { type: "text" },
+      }),
+      makeChunk("messages", {
+        event: "content-block-finish",
+        index: 1,
+        content: { type: "text" },
+      }),
     ]);
     const starts = byType(dispatched, EventType.TEXT_MESSAGE_START);
     const ends = byType(dispatched, EventType.TEXT_MESSAGE_END);
@@ -229,9 +262,16 @@ describe("deferred tool name", () => {
       makeChunk("messages", {
         event: "content-block-delta",
         index: 0,
-        delta: { type: "block-delta", fields: { name: "search", args: '{"q":1}' } },
+        delta: {
+          type: "block-delta",
+          fields: { name: "search", args: '{"q":1}' },
+        },
       }),
-      makeChunk("messages", { event: "content-block-finish", index: 0, content: { type: "tool_call_chunk" } }),
+      makeChunk("messages", {
+        event: "content-block-finish",
+        index: 0,
+        content: { type: "tool_call_chunk" },
+      }),
     ]);
     const starts = byType(dispatched, EventType.TOOL_CALL_START);
     expect(starts).toHaveLength(1);
@@ -271,9 +311,15 @@ describe("block-delta arg correction (common-prefix diff)", () => {
         index: 0,
         delta: { type: "block-delta", fields: { args: '{"b":2}' } },
       }),
-      makeChunk("messages", { event: "content-block-finish", index: 0, content: { type: "tool_call" } }),
+      makeChunk("messages", {
+        event: "content-block-finish",
+        index: 0,
+        content: { type: "tool_call" },
+      }),
     ]);
-    const args = byType(dispatched, EventType.TOOL_CALL_ARGS).map((a) => a.delta);
+    const args = byType(dispatched, EventType.TOOL_CALL_ARGS).map(
+      (a) => a.delta,
+    );
     expect(args).toEqual(['{"a":1', 'b":2}']);
     // Balanced.
     expect(byType(dispatched, EventType.TOOL_CALL_START)).toHaveLength(1);
@@ -298,9 +344,15 @@ describe("block-delta arg correction (common-prefix diff)", () => {
         index: 0,
         delta: { type: "block-delta", fields: { args: '{"q":42}' } },
       }),
-      makeChunk("messages", { event: "content-block-finish", index: 0, content: { type: "tool_call" } }),
+      makeChunk("messages", {
+        event: "content-block-finish",
+        index: 0,
+        content: { type: "tool_call" },
+      }),
     ]);
-    const args = byType(dispatched, EventType.TOOL_CALL_ARGS).map((a) => a.delta);
+    const args = byType(dispatched, EventType.TOOL_CALL_ARGS).map(
+      (a) => a.delta,
+    );
     expect(args.join("")).toBe('{"q":42}');
     expect(args).toEqual(['{"q":', "42}"]);
   });
@@ -366,7 +418,10 @@ describe("v3-raw custom channel translation", () => {
 
   it("passes an unknown custom event through as a generic CUSTOM", async () => {
     const dispatched = await runV3([
-      makeChunk("custom", { name: "app_notification", payload: { level: "info" } }),
+      makeChunk("custom", {
+        name: "app_notification",
+        payload: { level: "info" },
+      }),
     ]);
     const custom = byType(dispatched, EventType.CUSTOM);
     expect(custom).toHaveLength(1);

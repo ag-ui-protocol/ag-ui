@@ -159,8 +159,14 @@ export interface TransformerThreadEntry {
  * is a discriminated union over message roles).
  */
 type AssistantContentBlock = { type?: string; [key: string]: unknown };
-type AssistantResponseMetadata = { output_version?: string; [key: string]: unknown };
-type AssistantMessageLike = Omit<LangGraphMessage, "content" | "response_metadata"> & {
+type AssistantResponseMetadata = {
+  output_version?: string;
+  [key: string]: unknown;
+};
+type AssistantMessageLike = Omit<
+  LangGraphMessage,
+  "content" | "response_metadata"
+> & {
   content?: string | AssistantContentBlock[];
   response_metadata?: AssistantResponseMetadata;
 };
@@ -187,8 +193,14 @@ type AssistantMessageLike = Omit<LangGraphMessage, "content" | "response_metadat
  * Pure function — no side effects, no I/O.
  */
 export function sanitizeAssistantMessages(
-  payloadInput: { messages?: LangGraphMessage[]; [key: string]: unknown } | null | undefined,
-): { messages?: LangGraphMessage[]; [key: string]: unknown } | null | undefined {
+  payloadInput:
+    | { messages?: LangGraphMessage[]; [key: string]: unknown }
+    | null
+    | undefined,
+):
+  | { messages?: LangGraphMessage[]; [key: string]: unknown }
+  | null
+  | undefined {
   if (!payloadInput || !payloadInput.messages) return payloadInput;
   return {
     ...payloadInput,
@@ -294,12 +306,12 @@ const ASYNC_BOUNDARY_CHECKPOINT_RETRY_DELAY_MS = 25;
 //   - tasks → live interrupts (today interrupts are read from a post-run
 //     threads.getState() poll, not this channel)
 const DEFAULT_STREAM_MODES = [
-    "values",
-    "messages",
-    "tools",
-    "lifecycle",
-    "tasks",
-    "custom",
+  "values",
+  "messages",
+  "tools",
+  "lifecycle",
+  "tasks",
+  "custom",
 ] as const;
 
 export class LangGraphAgent extends AbstractAgent {
@@ -641,7 +653,9 @@ export class LangGraphAgent extends AbstractAgent {
     // ourselves on the client side. Multi-channel + non-array params
     // disables the SDK's `unwrapNamedCustom`, so for-await yields the
     // raw Event envelope (method + params), not unwrapped payloads.
-    const aguiSub = await thread.subscribe({ channels: [...DEFAULT_STREAM_MODES] }) as SubscriptionHandle<any, ProtocolEvent>;
+    const aguiSub = (await thread.subscribe({
+      channels: [...DEFAULT_STREAM_MODES],
+    })) as SubscriptionHandle<any, ProtocolEvent>;
     const entry: TransformerThreadEntry = { thread, aguiSub };
     this.transformerThreads.set(threadId, entry);
     return entry;
@@ -662,8 +676,14 @@ export class LangGraphAgent extends AbstractAgent {
     resumeRequested: boolean,
   ): { interruptId: string; namespace: readonly string[] } | undefined {
     if (!resumeRequested) return undefined;
-    const live = (streamingThread as { interrupts?: Array<{ interruptId: string; namespace: readonly string[] }> })
-      .interrupts;
+    const live = (
+      streamingThread as {
+        interrupts?: Array<{
+          interruptId: string;
+          namespace: readonly string[];
+        }>;
+      }
+    ).interrupts;
     const last = live?.[live.length - 1];
     if (last?.interruptId) {
       return { interruptId: last.interruptId, namespace: last.namespace };
@@ -692,12 +712,16 @@ export class LangGraphAgent extends AbstractAgent {
   protected watchForRootTerminal(
     streamingThread: ThreadStream,
     aguiSub: SubscriptionHandle<any, ProtocolEvent>,
+    terminal: { error?: string } = {},
   ): () => void {
     const TERMINAL = new Set(["completed", "failed", "interrupted"]);
     const unsubscribe = streamingThread.onEvent((event) => {
       const ev = event as {
         method?: string;
-        params?: { namespace?: unknown; data?: { event?: string } };
+        params?: {
+          namespace?: unknown;
+          data?: { event?: string; error?: string };
+        };
       };
       if (
         ev.method === "lifecycle" &&
@@ -705,7 +729,11 @@ export class LangGraphAgent extends AbstractAgent {
         ev.params!.namespace.length === 0 &&
         TERMINAL.has(ev.params!.data?.event ?? "")
       ) {
-        aguiSub.pause();
+        if (ev.params!.data?.event === "failed") {
+          terminal.error = ev.params!.data.error ?? "LangGraph run failed";
+        }
+        // onEvent precedes the SDK subscription push; let that frame land first.
+        queueMicrotask(() => aguiSub.pause());
         unsubscribe();
       }
     });
@@ -748,7 +776,7 @@ export class LangGraphAgent extends AbstractAgent {
         "values",
         "updates",
         "messages-tuple",
-          "custom",
+        "custom",
       ] satisfies StreamMode[]);
 
     const preparedStream = await this.prepareStream(
@@ -914,8 +942,9 @@ export class LangGraphAgent extends AbstractAgent {
       });
     }
 
-    const forkedCheckpointId = (fork as { checkpoint: { checkpoint_id: string } })
-      .checkpoint.checkpoint_id;
+    const forkedCheckpointId = (
+      fork as { checkpoint: { checkpoint_id: string } }
+    ).checkpoint.checkpoint_id;
     const regenInput = this.langGraphDefaultMergeState(
       timeTravelCheckpoint.values,
       [messageCheckpoint],
@@ -956,15 +985,24 @@ export class LangGraphAgent extends AbstractAgent {
         // roots the new run at the chosen checkpoint. Resume semantics
         // don't apply on regen.
         const { thread: streamingThread, aguiSub } = transformer;
-        const unsubscribeOnEvent = this.watchForRootTerminal(streamingThread, aguiSub);
+        const terminal: { error?: string } = {};
+        const unsubscribeOnEvent = this.watchForRootTerminal(
+          streamingThread,
+          aguiSub,
+          terminal,
+        );
         try {
-          const sanitizedInput = sanitizeAssistantMessages(regenInput as Record<string, unknown>);
+          const sanitizedInput = sanitizeAssistantMessages(
+            regenInput as Record<string, unknown>,
+          );
           const submitted = await streamingThread.submitRun({
             ...(input.forwardedProps ?? {}),
             input: sanitizedInput,
             config: configForPayload,
             ...(payloadContext ? { context: payloadContext } : {}),
-            metadata: (input.forwardedProps as { metadata?: Record<string, unknown> })?.metadata,
+            metadata: (
+              input.forwardedProps as { metadata?: Record<string, unknown> }
+            )?.metadata,
             forkFrom: forkedCheckpointId,
           });
           this.v3Support.value = true;
@@ -973,6 +1011,7 @@ export class LangGraphAgent extends AbstractAgent {
 
           return {
             streamResponse: aguiSub,
+            terminal,
             state: timeTravelCheckpoint as ThreadState<State>,
             streamMode,
             close: () => {
@@ -1154,10 +1193,7 @@ export class LangGraphAgent extends AbstractAgent {
     // "start". Mirrors the Python reader, which resolves the mode from
     // node_name_input (agent.py: node_name_for_mode).
     const mode =
-      !hasResume &&
-      threadId &&
-      nodeNameInput != "__end__" &&
-      nodeNameInput
+      !hasResume && threadId && nodeNameInput != "__end__" && nodeNameInput
         ? "continue"
         : "start";
 
@@ -1285,7 +1321,12 @@ export class LangGraphAgent extends AbstractAgent {
 
       if (transformer) {
         const { thread: streamingThread, aguiSub } = transformer;
-        const unsubscribeOnEvent = this.watchForRootTerminal(streamingThread, aguiSub);
+        const terminal: { error?: string } = {};
+        const unsubscribeOnEvent = this.watchForRootTerminal(
+          streamingThread,
+          aguiSub,
+          terminal,
+        );
         try {
           const sanitizedInput = sanitizeAssistantMessages(payloadInput);
 
@@ -1297,9 +1338,9 @@ export class LangGraphAgent extends AbstractAgent {
           // resuming the interrupt.
           const resumeRequested = hasResume;
           const pendingInterrupt = this.findPendingInterrupt(
-              streamingThread,
-              agentState,
-              resumeRequested,
+            streamingThread,
+            agentState,
+            resumeRequested,
           );
 
           let runId: string | undefined;
@@ -1332,6 +1373,7 @@ export class LangGraphAgent extends AbstractAgent {
 
           return {
             streamResponse: aguiSub,
+            terminal,
             state: threadState as ThreadState<State>,
             // Per-run cleanup only — the cached thread + sub live on for
             // the next request on this threadId.
@@ -1407,7 +1449,10 @@ export class LangGraphAgent extends AbstractAgent {
       });
       this.handleNodeChange(nodeNameInput);
 
-      for await (let streamResponseChunk of streamResponse as AsyncIterable<{ event: string; data: unknown }>) {
+      for await (let streamResponseChunk of streamResponse as AsyncIterable<{
+        event: string;
+        data: unknown;
+      }>) {
         // If a cancel was requested and we haven't sent it yet, try now.
         if (
           this.cancelRequested &&
@@ -1473,7 +1518,10 @@ export class LangGraphAgent extends AbstractAgent {
         if (streamResponseChunk.event === "error") {
           this.dispatchEvent({
             type: EventType.RUN_ERROR,
-            message: typeof chunk.data.message === "string" ? chunk.data.message : "Unknown error",
+            message:
+              typeof chunk.data.message === "string"
+                ? chunk.data.message
+                : "Unknown error",
             rawEvent: streamResponseChunk,
           });
           runErrored = true;
@@ -2317,17 +2365,17 @@ export class LangGraphAgent extends AbstractAgent {
   }
 
   async handleStreamEventsV3(
-      stream: Awaited<
-          | ReturnType<typeof this.prepareStream>
-          | ReturnType<typeof this.prepareRegenerateStream>
-      >,
-      threadId: string,
-      subscriber: Subscriber<ProcessedEvents>,
-      input: RunAgentExtendedInput,
-      streamModes: StreamMode | StreamMode[],
+    stream: Awaited<
+      | ReturnType<typeof this.prepareStream>
+      | ReturnType<typeof this.prepareRegenerateStream>
+    >,
+    threadId: string,
+    subscriber: Subscriber<ProcessedEvents>,
+    input: RunAgentExtendedInput,
+    streamModes: StreamMode | StreamMode[],
   ) {
     // @ts-expect-error -- TODO: fix this
-    streamModes = DEFAULT_STREAM_MODES
+    streamModes = DEFAULT_STREAM_MODES;
     const { forwardedProps } = input;
     const nodeNameInput = forwardedProps?.nodeName;
     this.subscriber = subscriber;
@@ -2357,6 +2405,18 @@ export class LangGraphAgent extends AbstractAgent {
     // AG-UI verify forbids ANY event after RUN_ERROR, so all post-loop
     // dispatching (step closes, snapshots, RUN_FINISHED) must be skipped.
     let runErrored = false;
+    const terminal = "terminal" in stream ? stream.terminal : undefined;
+    let rootFailure: string | undefined;
+    // Usage snapshots replace earlier counts. Namespace/node routing keeps
+    // interleaved calls independent when frames do not carry message IDs.
+    const activeUsageMessages = new Map<string, string>();
+    const usageMessages = new Map<
+      string,
+      {
+        metadata?: { ls_provider?: string; ls_model_name?: string };
+        usage?: unknown;
+      }
+    >();
 
     this.activeRun!.prevNodeName = null;
     let latestStateValues = {} as ThreadState<State>["values"];
@@ -2373,15 +2433,15 @@ export class LangGraphAgent extends AbstractAgent {
       for await (const streamResponseChunk of streamResponse as AsyncIterable<ProtocolEvent>) {
         // If a cancel was requested and we haven't sent it yet, try now.
         if (
-            this.cancelRequested &&
-            !this.cancelSent &&
-            this.activeRun?.threadId &&
-            this.activeRun?.id
+          this.cancelRequested &&
+          !this.cancelSent &&
+          this.activeRun?.threadId &&
+          this.activeRun?.id
         ) {
           try {
             await this.client.runs.cancel(
-                this.activeRun.threadId,
-                this.activeRun.id,
+              this.activeRun.threadId,
+              this.activeRun.id,
             );
           } catch (_) {
             // Ignore cancellation errors
@@ -2397,12 +2457,53 @@ export class LangGraphAgent extends AbstractAgent {
         }
 
         const subgraphsStreamEnabled =
-            input.forwardedProps?.streamSubgraphs ?? true;
+          input.forwardedProps?.streamSubgraphs ?? true;
         const isSubgraphStream =
-            subgraphsStreamEnabled && isSubgraphStreamEvent(streamResponseChunk);
+          subgraphsStreamEnabled && isSubgraphStreamEvent(streamResponseChunk);
 
-        const chunkData = streamResponseChunk.params.data as Record<string, any>;
+        const chunkData = streamResponseChunk.params.data as Record<
+          string,
+          any
+        >;
         const eventType = streamResponseChunk.method;
+        if (eventType === "messages") {
+          const route = JSON.stringify([
+            streamResponseChunk.params.namespace,
+            streamResponseChunk.params.node ?? "",
+          ]);
+          if (chunkData.event === "message-start") {
+            const key = JSON.stringify([route, chunkData.id ?? ""]);
+            activeUsageMessages.set(route, key);
+            usageMessages.set(key, {
+              metadata: chunkData.metadata,
+              usage: chunkData.usage,
+            });
+          }
+          const key = activeUsageMessages.get(route);
+          const message = key ? usageMessages.get(key) : undefined;
+          if (message && chunkData.usage != null)
+            message.usage = chunkData.usage;
+          if (message && chunkData.responseMetadata) {
+            message.metadata = {
+              ...message.metadata,
+              ...chunkData.responseMetadata,
+            };
+          }
+          if (
+            chunkData.event === "message-finish" ||
+            chunkData.event === "message-error"
+          ) {
+            activeUsageMessages.delete(route);
+          }
+        }
+        if (
+          eventType === "lifecycle" &&
+          streamResponseChunk.params.namespace.length === 0 &&
+          chunkData.event === "failed"
+        ) {
+          rootFailure = chunkData.error ?? "LangGraph run failed";
+          break;
+        }
 
         // Transformer passthrough. When the graph compiled-in the
         // `aguiTransformer`, fully-formed AG-UI events arrive on the
@@ -2412,8 +2513,17 @@ export class LangGraphAgent extends AbstractAgent {
         // (handleSingleEventV3 unpacks the raw `messages` channel below)
         // from one code path. Checked before the streamModes filter
         // because the `agui` channel is not a standard stream mode.
-        const passthrough = this.extractAguiPassthroughEvent(eventType, chunkData);
+        const passthrough = this.extractAguiPassthroughEvent(
+          eventType,
+          chunkData,
+        );
         if (passthrough) {
+          if (!transformerMode) {
+            // Raw lifecycle frames can open a client-owned step before the
+            // first transformer event. Close it before ownership switches,
+            // especially when the transformer opens that same step name.
+            this.handleNodeChange(undefined);
+          }
           transformerMode = true;
           // Track step balance so we can close any the transformer's
           // finalize didn't get to flush before the stream ended.
@@ -2427,6 +2537,7 @@ export class LangGraphAgent extends AbstractAgent {
             runErrored = true;
           }
           this.dispatchEvent(passthrough);
+          if (runErrored) break;
           continue;
         }
 
@@ -2439,10 +2550,10 @@ export class LangGraphAgent extends AbstractAgent {
 
         // @ts-ignore
         if (
-            !streamModes.includes(eventType as StreamMode) &&
-            !isSubgraphStream &&
-            !isMessageTupleEvent(streamResponseChunk) &&
-            eventType !== "error"
+          !streamModes.includes(eventType as StreamMode) &&
+          !isSubgraphStream &&
+          !isMessageTupleEvent(streamResponseChunk) &&
+          eventType !== "error"
         ) {
           continue;
         }
@@ -2462,7 +2573,8 @@ export class LangGraphAgent extends AbstractAgent {
         // CUSTOM OnInterrupt mid-run. Deduped (shared with the post-run
         // getState scan) so the same interrupt renders once.
         if (eventType === "tasks") {
-          const taskInterrupts = (chunkData?.interrupts ?? []) as LangGraphInterrupt[];
+          const taskInterrupts = (chunkData?.interrupts ??
+            []) as LangGraphInterrupt[];
           for (const interrupt of taskInterrupts) {
             this.emitInterruptOnce(interrupt);
           }
@@ -2488,7 +2600,9 @@ export class LangGraphAgent extends AbstractAgent {
         // tasks/tools/values), so it is not gated by the node-name guard
         // below.
         if (eventType === "custom") {
-          this.handleCustomEventV3(chunkData as { name?: string; payload?: any });
+          this.handleCustomEventV3(
+            chunkData as { name?: string; payload?: any },
+          );
           continue;
         }
 
@@ -2498,10 +2612,7 @@ export class LangGraphAgent extends AbstractAgent {
             ...chunkData,
           };
           continue;
-        } else if (
-            subgraphsStreamEnabled &&
-            eventType.startsWith("values|")
-        ) {
+        } else if (subgraphsStreamEnabled && eventType.startsWith("values|")) {
           // TODO: deal with subgraphs! on the above line: "eventType.startsWith("values|")"
           latestStateValues = {
             ...latestStateValues,
@@ -2532,14 +2643,14 @@ export class LangGraphAgent extends AbstractAgent {
           this.activeRun!.serverRunIdKnown = true;
           // If cancel was requested earlier (before server id was known), send it now.
           if (
-              this.cancelRequested &&
-              !this.cancelSent &&
-              this.activeRun?.threadId
+            this.cancelRequested &&
+            !this.cancelSent &&
+            this.activeRun?.threadId
           ) {
             try {
               await this.client.runs.cancel(
-                  this.activeRun.threadId!,
-                  this.activeRun.id,
+                this.activeRun.threadId!,
+                this.activeRun.id,
               );
             } catch (_) {
               // Ignore cancellation errors
@@ -2567,8 +2678,8 @@ export class LangGraphAgent extends AbstractAgent {
           // doesn't lose the streamed-in fields if the graph's own values/Command
           // chunk for those fields hasn't landed yet.
           if (
-              this.activeRun!.manuallyEmittedState &&
-              typeof this.activeRun!.manuallyEmittedState === "object"
+            this.activeRun!.manuallyEmittedState &&
+            typeof this.activeRun!.manuallyEmittedState === "object"
           ) {
             latestStateValues = {
               ...latestStateValues,
@@ -2581,15 +2692,15 @@ export class LangGraphAgent extends AbstractAgent {
         // we only want to update the node name under certain conditions
         // since we don't need any internal node names to be sent to the frontend
         if (
-            this.activeRun!.graphInfo?.["nodes"].some(
-                (node) => node.id === currentNodeName,
-            )
+          this.activeRun!.graphInfo?.["nodes"].some(
+            (node) => node.id === currentNodeName,
+          )
         ) {
           this.handleNodeChange(currentNodeName);
         }
 
         updatedState.values =
-            this.activeRun!.manuallyEmittedState ?? latestStateValues;
+          this.activeRun!.manuallyEmittedState ?? latestStateValues;
 
         if (!this.activeRun!.nodeName) {
           continue;
@@ -2639,6 +2750,26 @@ export class LangGraphAgent extends AbstractAgent {
         }
       }
 
+      rootFailure ??= terminal?.error;
+      if (!runErrored && rootFailure !== undefined) {
+        this.closeOpenTextBlocks(this.activeRun!);
+        this.closeOpenReasoningBlocks(this.activeRun!);
+        this.closeOpenToolBlocks(this.activeRun!);
+        this.handleNodeChange(undefined);
+        for (const stepName of openTransformerSteps) {
+          this.dispatchEvent({ type: EventType.STEP_FINISHED, stepName });
+        }
+        this.dispatchEvent({ type: EventType.RUN_ERROR, message: rootFailure });
+        runErrored = true;
+      }
+      for (const message of usageMessages.values()) {
+        const entry = tokenUsageFromLangChainMetadata(message.usage, {
+          provider: message.metadata?.ls_provider,
+          model: message.metadata?.ls_model_name,
+        });
+        if (entry) (this.activeRun!.usage ??= []).push(entry);
+      }
+
       // If the run already errored, RUN_ERROR is terminal — AG-UI verify
       // rejects any further event. Skip all post-loop emission (step
       // closes, snapshots, RUN_FINISHED) and just finish the stream.
@@ -2653,7 +2784,7 @@ export class LangGraphAgent extends AbstractAgent {
       const tasks = state.tasks;
       // Collect interrupts from ALL tasks, not just tasks[0] (fixes #1409)
       const interrupts = (tasks ?? []).flatMap(
-          (t: any) => t.interrupts ?? [],
+        (t: any) => t.interrupts ?? [],
       ) as LangGraphInterrupt[];
       const isEndNode = state.next.length === 0;
       const writes = state.metadata?.writes ?? {};
@@ -2663,8 +2794,8 @@ export class LangGraphAgent extends AbstractAgent {
 
       if (!interrupts?.length) {
         newNodeName = isEndNode
-            ? "__end__"
-            : (state.next[0] ?? Object.keys(writes)[0]);
+          ? "__end__"
+          : (state.next[0] ?? Object.keys(writes)[0]);
       }
 
       // Terminal interrupts (the run paused at interrupt()) are read from
@@ -2726,10 +2857,12 @@ export class LangGraphAgent extends AbstractAgent {
           suppressLegacy: transformerMode,
         });
       } else {
+        const usage = this.collectRunUsage();
         this.dispatchEvent({
           type: EventType.RUN_FINISHED,
           threadId,
           runId: this.activeRun!.id,
+          ...(usage ? { usage } : {}),
         });
       }
       // Reset cancel flags when run completes
@@ -2744,7 +2877,9 @@ export class LangGraphAgent extends AbstractAgent {
       // unsubscribe from the cached ThreadStream's lifecycle watcher).
       // Best-effort — the cached thread + sub themselves live on for
       // the next request on this threadId.
-      const closer = (stream as { close?: () => void | Promise<void> } | undefined)?.close;
+      const closer = (
+        stream as { close?: () => void | Promise<void> } | undefined
+      )?.close;
       if (typeof closer === "function") {
         try {
           await closer();
@@ -2762,11 +2897,11 @@ export class LangGraphAgent extends AbstractAgent {
    * pushes fully-formed AG-UI events onto a dedicated `agui` stream
    * channel. Those surface two ways depending on transport:
    *  - In-process: the mux forwards each push as a protocol event whose
-   *    `method` is the channel name (`"agui"`) and whose `params.data`
+   *    `method` is `"custom:agui"` (older runtimes use `"agui"`) and whose `params.data`
    *    is the AG-UI event itself.
    *  - Remote SDK wire: a named custom channel surfaces as `method:
    *    "custom"` with the channel identity on `params.data`
-   *    (`name`/`type` === `"agui"`) and the AG-UI event carried inline
+   *    (`name`/`type` is `"custom:agui"` or `"agui"`) and the AG-UI event carried inline
    *    or under `payload`.
    *
    * Returns the AG-UI event ready to re-dispatch, or undefined when the
@@ -2784,14 +2919,17 @@ export class LangGraphAgent extends AbstractAgent {
         typeof (candidate as { type: unknown }).type === "string" &&
         // Guard against treating the channel wrapper (type === "agui")
         // as if it were an AG-UI event.
-        (candidate as { type: string }).type !== "agui"
+        (candidate as { type: string }).type !== "agui" &&
+        (candidate as { type: string }).type !== "custom:agui"
       ) {
         return candidate as ProcessedEvents;
       }
       return undefined;
     };
 
-    if (eventType === "agui") return asEvent(chunkData);
+    const isAguiChannel = (name: unknown) =>
+      name === "agui" || name === "custom:agui";
+    if (isAguiChannel(eventType)) return asEvent(chunkData);
 
     if (
       eventType === "custom" &&
@@ -2803,7 +2941,7 @@ export class LangGraphAgent extends AbstractAgent {
         type?: unknown;
         payload?: unknown;
       };
-      if (wrapper.name === "agui" || wrapper.type === "agui") {
+      if (isAguiChannel(wrapper.name) || isAguiChannel(wrapper.type)) {
         return asEvent(wrapper.payload) ?? asEvent(chunkData);
       }
     }
@@ -2894,7 +3032,10 @@ export class LangGraphAgent extends AbstractAgent {
    * everything else — plus ManuallyEmitState — through as a generic CUSTOM so
    * app listeners still receive it. Mirrors the transformer's `case "custom"`.
    */
-  private handleCustomEventV3(chunkData: { name?: string; payload?: any }): void {
+  private handleCustomEventV3(chunkData: {
+    name?: string;
+    payload?: any;
+  }): void {
     const name = chunkData?.name;
     if (!name) return;
     const payload = chunkData.payload;
@@ -3063,7 +3204,10 @@ export class LangGraphAgent extends AbstractAgent {
               encryptedValue: block.data,
             });
           }
-        } else if (blockType === "tool_call_chunk" || blockType === "tool_call") {
+        } else if (
+          blockType === "tool_call_chunk" ||
+          blockType === "tool_call"
+        ) {
           const block = data.content;
           const toolCallId = block?.id ?? `tc-${data.index}`;
           const toolCallName = block?.name ?? "";
@@ -3095,7 +3239,9 @@ export class LangGraphAgent extends AbstractAgent {
           // content-block-start). Treat that as implicit open: mint a
           // TEXT_MESSAGE_START on first delta. End is taken care of
           // on message-finish.
-          let messageId: string | undefined = run.textBlockMessageIds.get(data.index);
+          let messageId: string | undefined = run.textBlockMessageIds.get(
+            data.index,
+          );
           if (!messageId && run.activeMessageId) {
             messageId = run.activeMessageId;
             // Same dedup as content-block-start: only START if this id is
@@ -3116,7 +3262,10 @@ export class LangGraphAgent extends AbstractAgent {
             messageId,
             delta: data.delta?.text ?? "",
           });
-        } else if (deltaType === "reasoning-delta" || deltaType === "thinking-delta") {
+        } else if (
+          deltaType === "reasoning-delta" ||
+          deltaType === "thinking-delta"
+        ) {
           const r = run.reasoningBlocks.get(data.index);
           if (!r) break;
           const text: string =
@@ -3143,7 +3292,8 @@ export class LangGraphAgent extends AbstractAgent {
           const tool = run.toolBlocks.get(data.index);
           if (!tool) break;
           const fields = data.delta?.fields;
-          if (fields?.name && !tool.toolCallName) tool.toolCallName = fields.name;
+          if (fields?.name && !tool.toolCallName)
+            tool.toolCallName = fields.name;
 
           if (!this.emittedToolCallStartIds.has(tool.toolCallId)) {
             // START was deferred pending a tool name. Buffer the cumulative
@@ -3213,7 +3363,10 @@ export class LangGraphAgent extends AbstractAgent {
             // references this id, so multiple text blocks sharing one id
             // yield exactly one END (paired with the single START above).
             if (!this.isTextMessageOpen(run, messageId)) {
-              this.dispatchEvent({ type: EventType.TEXT_MESSAGE_END, messageId });
+              this.dispatchEvent({
+                type: EventType.TEXT_MESSAGE_END,
+                messageId,
+              });
             }
           }
         } else if (finishType === "reasoning" || finishType === "thinking") {
@@ -3231,7 +3384,10 @@ export class LangGraphAgent extends AbstractAgent {
             });
             run.reasoningBlocks.delete(data.index);
           }
-        } else if (finishType === "tool_call_chunk" || finishType === "tool_call") {
+        } else if (
+          finishType === "tool_call_chunk" ||
+          finishType === "tool_call"
+        ) {
           if (run.toolBlocks.has(data.index)) {
             this.finalizeToolBlock(run, data.index);
           }

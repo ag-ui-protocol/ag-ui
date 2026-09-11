@@ -121,5 +121,17 @@ export async function POST(request: NextRequest, context: RouteParams) {
       integration_id: integrationId,
     },
   });
-  return handler(request);
+  const response = await handler(request);
+  if (response.headers.get("content-type")?.startsWith("text/event-stream")) {
+    // SSE is UTF-8. Declare it explicitly so Chromium's response-body capture
+    // uses the same decoding as the browser's streaming consumer.
+    const headers = new Headers(response.headers);
+    headers.set("content-type", "text/event-stream; charset=utf-8");
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
+  }
+  return response;
 }
