@@ -19,6 +19,8 @@ import {
   MessagesSnapshotEvent,
   ToolCall,
   RunErrorEvent,
+  contentHasMedia,
+  contentToText,
 } from "@ag-ui/core";
 import { Observable } from "rxjs";
 import {
@@ -70,6 +72,20 @@ const flattenMessageContentToText = (content: Message["content"]) => {
  * unsilenceable, which in a per-chunk hot path is a reason to patch the
  * library out rather than to set the flag.
  */
+/**
+ * The string the legacy ActionExecutionResult can hold, from content that may
+ * be parts. Text parts are concatenated; anything else is dropped with a
+ * warning naming the call, because the legacy consumer cannot receive it.
+ */
+function flattenLegacyResult(event: ToolCallResultEvent): string {
+  if (contentHasMedia(event.content)) {
+    warnLegacy(
+      `[ag-ui][legacy] The result of tool call '${event.toolCallId}' carries content parts the legacy protocol cannot represent; only its text parts are bridged and the rest is dropped.`,
+    );
+  }
+  return contentToText(event.content);
+}
+
 const warnLegacy = (message: string): void => {
   if (
     typeof process !== "undefined" &&
@@ -284,7 +300,11 @@ export const convertToLegacyEvents =
               {
                 type: LegacyRuntimeEventTypes.ActionExecutionResult,
                 actionExecutionId: resultEvent.toolCallId,
-                result: resultEvent.content,
+                // The legacy protocol holds a string. A result carrying parts is
+                // flattened to its text — the downgrade the versioning rules permit for
+                // an older peer — and the loss is announced, since a dropped attachment
+                // must never vanish quietly.
+                result: flattenLegacyResult(resultEvent),
                 // `||`, not `??`: see the guard above — an empty name is as
                 // unroutable as an absent one, and the two must agree.
                 actionName: knownName || "unknown",

@@ -14,6 +14,7 @@ import {
   ToolCallStartEvent,
   ToolCallArgsEvent,
   Tool,
+  contentToText,
 } from "@ag-ui/client";
 import { Observable } from "rxjs";
 
@@ -786,7 +787,7 @@ export class A2UIMiddleware extends Middleware {
               }
 
               if (!outerHasStreamedSurface) {
-                const parsed = tryParseA2UIOperations(resultEvent.content);
+                const parsed = tryParseA2UIOperations(contentToText(resultEvent.content));
                 if (parsed) {
                   // surfaceId-based dedup (framework-agnostic): drop any
                   // operation whose target surface was already painted via the

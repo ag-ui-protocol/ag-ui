@@ -22,3 +22,7 @@ export * from "./metadata";
 
 // Token usage helpers (aggregation + LangChain-family metadata mapping)
 export * from "./token-usage";
+
+// String-or-parts content helpers: the text of a content value, for consumers
+// that can only hold a string.
+export * from "./content";
