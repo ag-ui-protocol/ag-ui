@@ -54,29 +54,62 @@ The run that continues carries its answers in the input's `resume` list, one
   is envelope information about the response, not part of the answer.
 - The resume list MUST cover every interrupt of the run being continued: each
   one answered, or explicitly abandoned by an entry with the abandoned status.
-  Omission is not abandonment — a consumer MUST NOT silently continue past an
-  interrupt it has no entry for, and a resuming input that leaves one
-  uncovered is rejected before the run starts. What an abandoned interrupt
-  means for the agent's work is the producer's business.
+  Omission is not abandonment. Coverage is the *consumer's* rule to enforce:
+  the consumer holds the interrupts the closing `RUN_FINISHED` delivered and
+  it assembles the resume list, so it is the one participant that can always
+  tell whether the list is complete. A consumer MUST reject a resuming input
+  that leaves an interrupt uncovered before the run starts — before anything
+  is sent — and MUST NOT silently continue past an interrupt it has no entry
+  for. The producer is not asked to check this, and needs to retain nothing
+  from the interrupted run to be conformant; what it does when a defective
+  consumer sends an incomplete list anyway is its error handling, below. What
+  an abandoned interrupt means for the agent's work is the producer's
+  business.
 - `expiresAt` is deliberately format-unconstrained, so *whether* an interrupt
   has expired is the judging consumer's own reading of it — the reference
   reads it as a date and treats now-or-earlier as expired. The rule attaches
   to the judgment, not to a parse the schema refuses to specify: an interrupt
-  the consumer judges expired can no longer be *answered* — a resume entry
-  resolving it is rejected before the run starts. It can still be — and,
-  coverage being mandatory, must be — abandoned, which is how a thread moves
-  past an interrupt nobody answered in time.
+  the consumer judges expired can no longer be *answered* — the consumer
+  rejects a resume entry resolving it before the run starts, as it rejects an
+  uncovered interrupt. It can still be — and, coverage being mandatory, must
+  be — abandoned, which is how a thread moves past an interrupt nobody
+  answered in time.
 - Thread and state continuity hold across the gap: the resuming run carries the
   same `threadId`, the accumulated messages, and the state the interrupted run
   left behind, exactly as any [sequential run](/spec/draft/events/lifecycle)
   does.
 
 A producer receiving resume entries treats them as the answers it stopped for.
-An entry naming an interrupt the producer does not recognise violates the
-consumer's rule above; this sentence is the producer's error handling for it,
-not permission to send it: the run SHOULD proceed without the entry, and the
-producer SHOULD surface a warning rather than fail a run over an answer it
-never asked for.
+The list is the consumer's complete statement of what was decided, and the
+producer takes it as such: it is not required to remember the interrupts of a
+prior run, to compare the list against them, or to keep any state between
+runs for that purpose. A producer that carries nothing across the gap is
+conformant.
+
+Two violations of the consumer's rules can nevertheless reach a producer. What
+follows is the producer's error handling for them, not permission to send them.
+
+- **An unrecognised entry** — one naming an interrupt the producer did not
+  raise: the run SHOULD proceed without the entry, and the producer SHOULD
+  surface a warning rather than fail a run over an answer it never asked for.
+
+- **An uncovered interrupt** — one the producer can tell is still open and
+  has no entry, because it kept the interrupted run's checkpoint, or because
+  the messages carry an approval-gated tool call with neither a result nor an
+  entry answering it.
+  A producer MUST NOT perform the interrupted action on the strength of an
+  absent entry, and MUST NOT treat the omission as abandonment — dropping the
+  call with a warning and finishing as success would let a defective consumer
+  abandon what nobody decided to abandon, which is the outcome the coverage
+  rule exists to prevent. Having noticed, the producer keeps the interrupt
+  open. It MAY reject the input before the run starts, as any invalid input
+  (a stream opening with `RUN_ERROR`, or the transport's own rejection of the
+  request); or it MAY run what the covered entries permit and end with the
+  interrupt outcome again, carrying the still-open interrupt so the consumer
+  gets another chance to answer it. Either way the run MUST NOT end as
+  success while an interrupt the producer knows to be open stands
+  unanswered. A producer that cannot tell — the stateless case above — is
+  under no obligation here, because it has nothing to notice.
 
 ## Message Flow
 
