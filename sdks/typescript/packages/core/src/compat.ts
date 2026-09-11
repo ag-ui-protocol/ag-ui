@@ -1,7 +1,15 @@
 import type {
   Event,
   BaseEvent as ProtocolBaseEvent,
-  InputContent,
+  ContentPart,
+  TextPart,
+  ImagePart,
+  AudioPart,
+  VideoPart,
+  DocumentPart,
+  PartSource,
+  DataSource,
+  UrlSource,
   ResumeEntry,
 } from "./generated/types";
 import { EventType } from "./generated/types";
@@ -119,20 +127,48 @@ export type SubagentFinishedEventProps = EventProps<
 export type SubagentErrorEventProps = EventProps<import("./generated/types").SubagentErrorEvent>;
 
 /**
- * Historic aliases for the media input parts: the schema names them
- * ...InputContent, and this package has always also exported them as
- * ...InputPart. The matching validator aliases live in src/schemas.ts, which
- * is where every runtime validator this package ships lives.
+ * The names the content parts carried before 1.0 renamed them (InputContent
+ * -> ContentPart, TextInputContent -> TextPart, and so on): the same parts now
+ * sit on tool messages as well as user messages, so they are named by what
+ * they are rather than by direction. The wire is unchanged — every `type`
+ * value is the same — and so is every type behind these names; only the
+ * spelling moved. Kept for one release, see DEPRECATIONS.md. The matching
+ * validator aliases live in src/schemas.ts, which is where every runtime
+ * validator this package ships lives.
+ *
+ * @deprecated Use the ...Part names.
+ */
+export type InputContent = ContentPart;
+/** @deprecated Use TextPart. */
+export type TextInputContent = TextPart;
+/** @deprecated Use ImagePart. */
+export type ImageInputContent = ImagePart;
+/** @deprecated Use AudioPart. */
+export type AudioInputContent = AudioPart;
+/** @deprecated Use VideoPart. */
+export type VideoInputContent = VideoPart;
+/** @deprecated Use DocumentPart. */
+export type DocumentInputContent = DocumentPart;
+/** @deprecated Use PartSource. */
+export type InputContentSource = PartSource;
+/** @deprecated Use DataSource. */
+export type InputContentDataSource = DataSource;
+/** @deprecated Use UrlSource. */
+export type InputContentUrlSource = UrlSource;
+
+/**
+ * Historic aliases for the media parts: this package has always also exported
+ * them as ...InputPart.
  */
 export type {
-  ImageInputContent as ImageInputPart,
-  AudioInputContent as AudioInputPart,
-  VideoInputContent as VideoInputPart,
-  DocumentInputContent as DocumentInputPart,
+  ImagePart as ImageInputPart,
+  AudioPart as AudioInputPart,
+  VideoPart as VideoInputPart,
+  DocumentPart as DocumentInputPart,
 } from "./generated/types";
 
 /** Historic alias: a content part of a user message. */
-export type InputContentPart = InputContent;
+export type InputContentPart = ContentPart;
 
 /** Whether an interrupt was answered or abandoned. */
 export type ResumeStatus = ResumeEntry["status"];

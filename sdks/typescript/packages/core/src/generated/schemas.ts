@@ -177,6 +177,108 @@ export const ToolCallChunkEventSchema = z.looseObject({
 });
 
 /**
+ * A text part.
+ */
+export const TextPartSchema = z.looseObject({
+  type: z.literal("text"),
+  id: z.string().optional(),
+  text: z.string(),
+  metadata: z
+    .any()
+    .refine((value) => value !== null)
+    .optional(),
+});
+
+/**
+ * Bytes carried inline.
+ */
+export const DataSourceSchema = z.looseObject({
+  type: z.literal("data"),
+  value: z.string(),
+  mimeType: z.string(),
+});
+
+/**
+ * Bytes referenced by URL, fetched by whoever needs them.
+ */
+export const UrlSourceSchema = z.looseObject({
+  type: z.literal("url"),
+  value: z.string(),
+  mimeType: z.string().optional(),
+});
+
+/**
+ * Where a media part's bytes come from: carried inline, or referenced by URL.
+ */
+export const PartSourceSchema = z.discriminatedUnion("type", [DataSourceSchema, UrlSourceSchema]);
+
+/**
+ * An image part.
+ */
+export const ImagePartSchema = z.looseObject({
+  type: z.literal("image"),
+  id: z.string().optional(),
+  source: PartSourceSchema,
+  metadata: z
+    .any()
+    .refine((value) => value !== null)
+    .optional(),
+});
+
+/**
+ * An audio part.
+ */
+export const AudioPartSchema = z.looseObject({
+  type: z.literal("audio"),
+  id: z.string().optional(),
+  source: PartSourceSchema,
+  metadata: z
+    .any()
+    .refine((value) => value !== null)
+    .optional(),
+});
+
+/**
+ * A video part.
+ */
+export const VideoPartSchema = z.looseObject({
+  type: z.literal("video"),
+  id: z.string().optional(),
+  source: PartSourceSchema,
+  metadata: z
+    .any()
+    .refine((value) => value !== null)
+    .optional(),
+});
+
+/**
+ * A document part.
+ */
+export const DocumentPartSchema = z.looseObject({
+  type: z.literal("document"),
+  id: z.string().optional(),
+  source: PartSourceSchema,
+  metadata: z
+    .any()
+    .refine((value) => value !== null)
+    .optional(),
+});
+
+/**
+ * One part of a message body: what a person sends in a user message, or what a
+ * tool returns in a tool message. Discriminated by type. Named by what the
+ * part is rather than by direction, because the same part travels into the
+ * model inside a user message and back out of the stream inside a tool result.
+ */
+export const ContentPartSchema = z.discriminatedUnion("type", [
+  TextPartSchema,
+  ImagePartSchema,
+  AudioPartSchema,
+  VideoPartSchema,
+  DocumentPartSchema,
+]);
+
+/**
  * Carries what a tool returned. Mints a tool message rather than appending to
  * an existing one, which is why it has its own messageId.
  */
@@ -191,7 +293,7 @@ export const ToolCallResultEventSchema = z.looseObject({
   subagentRunId: SubagentRunIdSchema.optional(),
   messageId: z.string(),
   toolCallId: z.string(),
-  content: z.string(),
+  content: z.union([z.string(), z.array(ContentPartSchema)]),
   role: z.literal("tool").optional(),
 });
 
@@ -398,99 +500,6 @@ export const AssistantMessageSchema = z.looseObject({
 });
 
 /**
- * A text part.
- */
-export const TextInputContentSchema = z.looseObject({
-  type: z.literal("text"),
-  text: z.string(),
-});
-
-/**
- * Bytes carried inline.
- */
-export const InputContentDataSourceSchema = z.looseObject({
-  type: z.literal("data"),
-  value: z.string(),
-  mimeType: z.string(),
-});
-
-/**
- * Bytes referenced by URL, fetched by whoever needs them.
- */
-export const InputContentUrlSourceSchema = z.looseObject({
-  type: z.literal("url"),
-  value: z.string(),
-  mimeType: z.string().optional(),
-});
-
-/**
- * Where a media part's bytes come from: carried inline, or referenced by URL.
- */
-export const InputContentSourceSchema = z.discriminatedUnion("type", [
-  InputContentDataSourceSchema,
-  InputContentUrlSourceSchema,
-]);
-
-/**
- * An image part.
- */
-export const ImageInputContentSchema = z.looseObject({
-  type: z.literal("image"),
-  source: InputContentSourceSchema,
-  metadata: z
-    .any()
-    .refine((value) => value !== null)
-    .optional(),
-});
-
-/**
- * An audio part.
- */
-export const AudioInputContentSchema = z.looseObject({
-  type: z.literal("audio"),
-  source: InputContentSourceSchema,
-  metadata: z
-    .any()
-    .refine((value) => value !== null)
-    .optional(),
-});
-
-/**
- * A video part.
- */
-export const VideoInputContentSchema = z.looseObject({
-  type: z.literal("video"),
-  source: InputContentSourceSchema,
-  metadata: z
-    .any()
-    .refine((value) => value !== null)
-    .optional(),
-});
-
-/**
- * A document part.
- */
-export const DocumentInputContentSchema = z.looseObject({
-  type: z.literal("document"),
-  source: InputContentSourceSchema,
-  metadata: z
-    .any()
-    .refine((value) => value !== null)
-    .optional(),
-});
-
-/**
- * One part of a multimodal user message. Discriminated by type.
- */
-export const InputContentSchema = z.discriminatedUnion("type", [
-  TextInputContentSchema,
-  ImageInputContentSchema,
-  AudioInputContentSchema,
-  VideoInputContentSchema,
-  DocumentInputContentSchema,
-]);
-
-/**
  * A message from the person using the application.
  */
 export const UserMessageSchema = z.looseObject({
@@ -500,7 +509,7 @@ export const UserMessageSchema = z.looseObject({
   name: z.string().optional(),
   encryptedValue: z.string().optional(),
   metadata: MetadataSchema.optional(),
-  content: z.union([z.string(), z.array(InputContentSchema)]),
+  content: z.union([z.string(), z.array(ContentPartSchema)]),
 });
 
 /**
@@ -511,7 +520,7 @@ export const ToolMessageSchema = z.looseObject({
   subagentRunId: SubagentRunIdSchema.optional(),
   id: z.string(),
   role: z.literal("tool"),
-  content: z.string(),
+  content: z.union([z.string(), z.array(ContentPartSchema)]),
   toolCallId: z.string(),
   error: z.string().optional(),
   encryptedValue: z.string().optional(),

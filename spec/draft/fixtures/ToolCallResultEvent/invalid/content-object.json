@@ -1,0 +1,6 @@
+{
+  "type": "TOOL_CALL_RESULT",
+  "messageId": "m2",
+  "toolCallId": "c1",
+  "content": { "temperature": 22.5 }
+}

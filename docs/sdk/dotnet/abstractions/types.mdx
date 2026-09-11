@@ -198,7 +198,7 @@ var message = new AGUIAssistantMessage
 
 ### AGUIUserMessage
 
-`AGUIUserMessage.Content` is an `AGUIUserContent` value. It models the AG-UI
+`AGUIUserMessage.Content` is an `AGUIContent` value. It models the AG-UI
 wire union `string | InputContent[]`.
 
 ```csharp
@@ -229,7 +229,7 @@ var multimodal = new AGUIUserMessage
 };
 ```
 
-`AGUIUserContent` supports implicit conversions from `string`,
+`AGUIContent` supports implicit conversions from `string`,
 `List<AGUIInputContent>`, and `AGUIInputContent[]`. It also has a collection
 builder, so C# collection expressions work. For reading, it implements
 `IReadOnlyList<AGUIInputContent>`; a plain string is exposed as one
@@ -239,7 +239,7 @@ builder, so C# collection expressions work. For reading, it implements
 | ----------- | ---------- | ---- | ----------- |
 | `Id` | `id` | `string?` | Message ID |
 | `Role` | `role` | `"user"` | Fixed role discriminator |
-| `Content` | `content` | `AGUIUserContent` | Plain text or ordered multimodal parts |
+| `Content` | `content` | `AGUIContent` | Plain text or ordered multimodal parts |
 | `Name` | `name` | `string?` | Optional user name |
 | `EncryptedValue` | `encryptedValue` | `string?` | Optional opaque encrypted value |
 

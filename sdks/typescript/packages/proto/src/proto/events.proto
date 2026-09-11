@@ -215,12 +215,17 @@ message ToolCallResultEvent {
   string message_id = 3;
   // The call being answered.
   string tool_call_id = 4;
-  // What the tool returned, as a string. A tool returning structured data
-  // serialises it.
-  string content = 5;
+  // What the tool returned: either plain text, or an ordered list of parts,
+  // exactly as on the tool message this event mints. A tool returning structured
+  // data serialises it into text; media travel as parts of their own.
+  optional string content = 5;
   // Present only for symmetry with the message it mints; the value is fixed, so
   // a producer may leave it out.
   optional string role = 6;
+  // What the tool returned: either plain text, or an ordered list of parts,
+  // exactly as on the tool message this event mints. A tool returning structured
+  // data serialises it into text; media travel as parts of their own.
+  repeated InputContent content_parts = 7;
 }
 
 // Replaces the agent state wholesale. Sent when a delta cannot express the

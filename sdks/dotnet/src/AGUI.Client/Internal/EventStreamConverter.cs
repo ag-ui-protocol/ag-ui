@@ -1138,7 +1138,7 @@ internal static class EventStreamConverter
                 case ToolCallResultEvent toolResult:
                 {
                     var resultUpdate = new ChatResponseUpdate(ChatRole.Tool,
-                        [new FunctionResultContent(toolResult.ToolCallId, toolResult.Content)])
+                        [new FunctionResultContent(toolResult.ToolCallId, toolResult.Content.ToString())])
                     {
                         ConversationId = conversationId,
                         ResponseId = responseId,

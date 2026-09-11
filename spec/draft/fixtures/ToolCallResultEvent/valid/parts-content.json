@@ -1,0 +1,18 @@
+{
+  "type": "TOOL_CALL_RESULT",
+  "messageId": "m2",
+  "toolCallId": "c1",
+  "content": [
+    { "type": "text", "text": "Invoice INV-2291 attached." },
+    {
+      "type": "document",
+      "id": "inv-2291",
+      "source": {
+        "type": "url",
+        "value": "https://example.com/invoices/INV-2291.pdf",
+        "mimeType": "application/pdf"
+      },
+      "metadata": { "title": "INV-2291" }
+    }
+  ]
+}

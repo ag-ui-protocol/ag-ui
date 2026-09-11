@@ -18,7 +18,10 @@ import {
   StateDeltaEvent,
   MessagesSnapshotEvent,
   ToolCall,
+  ToolMessage,
   RunErrorEvent,
+  contentHasMedia,
+  contentToText,
 } from "@ag-ui/core";
 import { Observable } from "rxjs";
 import {
@@ -70,6 +73,20 @@ const flattenMessageContentToText = (content: Message["content"]) => {
  * unsilenceable, which in a per-chunk hot path is a reason to patch the
  * library out rather than to set the flag.
  */
+/**
+ * The string the legacy ActionExecutionResult can hold, from content that may
+ * be parts. Text parts are concatenated; anything else is dropped with a
+ * warning naming the call, because the legacy consumer cannot receive it.
+ */
+function flattenLegacyResult(toolCallId: string, content: ToolMessage["content"]): string {
+  if (contentHasMedia(content)) {
+    warnLegacy(
+      `[ag-ui][legacy] The result of tool call '${toolCallId}' carries content parts the legacy protocol cannot represent; only its text parts are bridged and the rest is dropped.`,
+    );
+  }
+  return contentToText(content);
+}
+
 const warnLegacy = (message: string): void => {
   if (
     typeof process !== "undefined" &&
@@ -284,7 +301,11 @@ export const convertToLegacyEvents =
               {
                 type: LegacyRuntimeEventTypes.ActionExecutionResult,
                 actionExecutionId: resultEvent.toolCallId,
-                result: resultEvent.content,
+                // The legacy protocol holds a string. A result carrying parts is
+                // flattened to its text — the downgrade the versioning rules permit for
+                // an older peer — and the loss is announced, since a dropped attachment
+                // must never vanish quietly.
+                result: flattenLegacyResult(resultEvent.toolCallId, resultEvent.content),
                 // `||`, not `??`: see the guard above — an empty name is as
                 // unroutable as an absent one, and the two must agree.
                 actionName: knownName || "unknown",
@@ -546,7 +567,9 @@ export function convertMessagesToLegacyFormat(messages: Message[]): LegacyMessag
       }
       const toolMessage: LegacyResultMessage = {
         id: message.id,
-        result: message.content,
+        // The same flattening the live TOOL_CALL_RESULT gets: a result must
+        // not downgrade one way when streamed and another when replayed.
+        result: flattenLegacyResult(message.toolCallId, message.content),
         actionExecutionId: message.toolCallId,
         actionName,
       };

@@ -782,7 +782,7 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
 
         var resultEvent = events.OfType<ToolCallResultEvent>().Single();
         Assert.Equal("call-1", resultEvent.ToolCallId);
-        Assert.Equal("result-data", resultEvent.Content);
+        Assert.Equal("result-data", resultEvent.Content.Value);
     }
 
     [Fact]
@@ -798,7 +798,7 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
         var events = await CollectEvents(ToAsyncEnumerable(update));
 
         var resultEvent = events.OfType<ToolCallResultEvent>().Single();
-        Assert.Equal("", resultEvent.Content);
+        Assert.Equal("", resultEvent.Content.Value);
     }
 
     [Fact]
@@ -815,8 +815,8 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
         var events = await CollectEvents(ToAsyncEnumerable(update));
 
         var resultEvent = events.OfType<ToolCallResultEvent>().Single();
-        Assert.Contains("status", resultEvent.Content);
-        Assert.Contains("ok", resultEvent.Content);
+        Assert.Contains("status", resultEvent.Content.ToString());
+        Assert.Contains("ok", resultEvent.Content.ToString());
     }
 
     [Fact]
@@ -833,8 +833,8 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
         var events = await CollectEvents(ToAsyncEnumerable(update));
 
         var resultEvent = events.OfType<ToolCallResultEvent>().Single();
-        Assert.Contains("key", resultEvent.Content);
-        Assert.Contains("value", resultEvent.Content);
+        Assert.Contains("key", resultEvent.Content.ToString());
+        Assert.Contains("value", resultEvent.Content.ToString());
     }
 
     #endregion
@@ -1677,7 +1677,7 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
         var events = await CollectEvents(ToAsyncEnumerable(update));
 
         var result = events.OfType<ToolCallResultEvent>().Single();
-        Assert.Equal("Résultat: 42°C — succès ✓", result.Content);
+        Assert.Equal("Résultat: 42°C — succès ✓", result.Content.Value);
     }
 
     #endregion

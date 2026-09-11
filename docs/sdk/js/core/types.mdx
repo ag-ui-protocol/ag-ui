@@ -174,94 +174,89 @@ Represents a message from a user.
 type UserMessage = {
   id: string
   role: "user"
-  content: string | InputContent[]
+  content: string | ContentPart[]
   name?: string
 }
 ```
 
-| Property  | Type                       | Description                                                           |
-| --------- | -------------------------- | --------------------------------------------------------------------- |
-| `id`      | `string`                   | Unique identifier for the message                                     |
-| `role`    | `"user"`                   | Role of the message sender, fixed as "user"                           |
-| `content` | `string \| InputContent[]` | Either plain text or an ordered array of multimodal content fragments |
-| `name`    | `string`                   | Optional name of the sender                                           |
+| Property  | Type                      | Description                                                           |
+| --------- | ------------------------- | --------------------------------------------------------------------- |
+| `id`      | `string`                  | Unique identifier for the message                                     |
+| `role`    | `"user"`                  | Role of the message sender, fixed as "user"                           |
+| `content` | `string \| ContentPart[]` | Either plain text or an ordered array of multimodal content fragments |
+| `name`    | `string`                  | Optional name of the sender                                           |
 
-### InputContent
+### ContentPart
 
 Union of supported multimodal fragments.
 
 ```typescript
-type InputContent =
-  | TextInputContent
-  | ImageInputContent
-  | AudioInputContent
-  | VideoInputContent
-  | DocumentInputContent
+type ContentPart = TextPart | ImagePart | AudioPart | VideoPart | DocumentPart
 ```
 
-### InputContentSource
+### PartSource
 
 ```typescript
-type InputContentSource = InputContentDataSource | InputContentUrlSource
+type PartSource = DataSource | UrlSource
 
-type InputContentDataSource = {
+type DataSource = {
   type: "data"
   value: string
   mimeType: string
 }
 
-type InputContentUrlSource = {
+type UrlSource = {
   type: "url"
   value: string
   mimeType?: string
 }
 ```
 
-### TextInputContent
+### TextPart
 
 ```typescript
-type TextInputContent = {
+type TextPart = {
   type: "text"
   text: string
 }
 ```
 
-### ImageInputContent
+### ImagePart
 
 ```typescript
-type ImageInputContent = {
+type ImagePart = {
   type: "image"
-  source: InputContentSource
+  source: PartSource
   metadata?: unknown
 }
 ```
 
-### AudioInputContent
+### AudioPart
 
 ```typescript
-type AudioInputContent = {
+type AudioPart = {
   type: "audio"
-  source: InputContentSource
+  source: PartSource
   metadata?: unknown
 }
 ```
 
-### VideoInputContent
+### VideoPart
 
 ```typescript
-type VideoInputContent = {
+type VideoPart = {
   type: "video"
-  source: InputContentSource
+  source: PartSource
   metadata?: unknown
 }
 ```
 
-### DocumentInputContent
+### DocumentPart
 
 ```typescript
-type DocumentInputContent = {
+type DocumentPart = {
   type: "document"
-  source: InputContentSource
+  source: PartSource
   metadata?: unknown
 }
 ```

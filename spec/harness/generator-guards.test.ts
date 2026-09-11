@@ -540,14 +540,21 @@ describe("the Python emitter", () => {
 describe("the schema reference page", () => {
   it("refuses a definition two sections both claim", () => {
     const schema = realSchema();
-    schema.$defs.InputContentOutcome = {
+    // A content part (so the run-input section claims it, by union membership)
+    // whose name the outcome section matches by substring.
+    schema.$defs.ClaimedOutcome = {
       type: "object",
-      description: "A name both the input and the outcome section match.",
-      properties: { label: { type: "string", description: "A label." } },
-      required: ["label"],
+      description: "A part both the input and the outcome section claim.",
+      properties: {
+        type: { const: "claimed", description: "Discriminator." },
+        label: { type: "string", description: "A label." },
+      },
+      required: ["type", "label"],
+      unevaluatedProperties: false,
     };
+    schema.$defs.ContentPart.oneOf.push({ $ref: "#/$defs/ClaimedOutcome" });
     expect(() => emitSchemaReference(buildModel(schema))).toThrow(
-      /InputContentOutcome would be rendered in both/,
+      /ClaimedOutcome would be rendered in both/,
     );
   });
 

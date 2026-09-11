@@ -128,7 +128,7 @@ public sealed class AGUIChatMessageExtensionsTest
         Assert.Single(aguiMessages);
         var toolMsg = Assert.IsType<AGUIToolMessage>(aguiMessages[0]);
         Assert.Equal("tc_1", toolMsg.ToolCallId);
-        Assert.Equal("72°F, sunny", toolMsg.Content);
+        Assert.Equal("72°F, sunny", toolMsg.Content.Value);
         // Tool messages are keyed on the tool call id in both directions (the response side
         // likewise sets TOOL_CALL_RESULT.messageId = toolCallId), so the AG-UI message id is the
         // call id rather than the dropped/echoed ChatMessage.MessageId.
@@ -166,8 +166,8 @@ public sealed class AGUIChatMessageExtensionsTest
         // Each message is keyed on its own call id (distinct), never on the shared MessageId.
         Assert.Equal("call_weather", weather.Id);
         Assert.Equal("call_time", time.Id);
-        Assert.Equal("Paris: 22°C, sunny", weather.Content);
-        Assert.Equal("Asia/Tokyo: 2026-06-18 18:30", time.Content);
+        Assert.Equal("Paris: 22°C, sunny", weather.Content.Value);
+        Assert.Equal("Asia/Tokyo: 2026-06-18 18:30", time.Content.Value);
     }
 
     [Fact]
@@ -236,7 +236,7 @@ public sealed class AGUIChatMessageExtensionsTest
         Assert.Equal("tc_1", toolMsg.ToolCallId);
 
         // Verify the content is valid JSON, not a type name
-        var parsed = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(toolMsg.Content);
+        var parsed = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(toolMsg.Content.ToString());
         Assert.NotNull(parsed);
         Assert.Equal("sunny", parsed!["condition"].GetString());
     }
@@ -362,7 +362,7 @@ public sealed class AGUIChatMessageExtensionsTest
         var roundTripped = Assert.IsType<AGUIToolMessage>(deserialized);
         Assert.Equal("tool", roundTripped.Role);
         Assert.Equal("tc_1", roundTripped.ToolCallId);
-        Assert.Equal("plain string result", roundTripped.Content);
+        Assert.Equal("plain string result", roundTripped.Content.Value);
     }
 
     [Fact]
