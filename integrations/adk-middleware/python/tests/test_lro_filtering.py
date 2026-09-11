@@ -1155,6 +1155,51 @@ async def test_backend_node_tool_ids_emit_call_before_result():
     assert start_at < result_at
 
 
+async def test_translate_lro_emits_backend_call_alongside_client_hitl():
+    """A mixed event must still emit the backend NodeTool call (#2674).
+
+    The LRO-only route used to drop classify(fc-1) when check_status(client-1)
+    selected it, leaving TOOL_CALL_RESULT(fc-1) with no matching start.
+    """
+    translator = EventTranslator()
+    backend_id = "fc-1"
+    client_id = "client-1"
+    translator.backend_tool_ids.add(backend_id)
+
+    backend_call = MagicMock()
+    backend_call.id = backend_id
+    backend_call.name = "classify"
+    backend_call.args = {"ticket": "42"}
+
+    client_call = MagicMock()
+    client_call.id = client_id
+    client_call.name = "check_status"
+    client_call.args = {"prompt": "ok?"}
+
+    backend_part = MagicMock()
+    backend_part.function_call = backend_call
+    client_part = MagicMock()
+    client_part.function_call = client_call
+
+    adk_event = MagicMock()
+    adk_event.content = MagicMock()
+    adk_event.content.parts = [backend_part, client_part]
+    adk_event.long_running_tool_ids = [backend_id, client_id]
+
+    events = []
+    async for e in translator.translate_lro_function_calls(adk_event):
+        events.append(e)
+
+    starts = [
+        getattr(ev, "tool_call_id", None)
+        for ev in events
+        if str(ev.type).split(".")[-1] == "TOOL_CALL_START"
+    ]
+    assert starts == [backend_id, client_id]
+    assert backend_id not in translator.long_running_tool_ids
+    assert client_id in translator.long_running_tool_ids
+
+
 if __name__ == "__main__":
     asyncio.run(test_translate_skips_lro_function_calls())
     asyncio.run(test_translate_lro_function_calls_only_emits_lro())
@@ -1180,5 +1225,6 @@ if __name__ == "__main__":
     asyncio.run(test_non_resumable_agent_tool_round_trip())
     asyncio.run(test_resumable_agent_no_duplicate_emission())
     asyncio.run(test_backend_node_tool_ids_emit_call_before_result())
+    asyncio.run(test_translate_lro_emits_backend_call_alongside_client_hitl())
     print("\n✅ LRO and partial filtering tests ran to completion")
 
