@@ -46,15 +46,15 @@ from ag_ui._generated.models import (
     ResumeEntry,
     RunAgentInput,
     State,
-    TextInputContent,
-    InputContentDataSource,
-    InputContentUrlSource,
-    InputContentSource,
-    ImageInputContent,
-    AudioInputContent,
-    VideoInputContent,
-    DocumentInputContent,
-    InputContent,
+    TextPart,
+    DataSource,
+    UrlSource,
+    PartSource,
+    ImagePart,
+    AudioPart,
+    VideoPart,
+    DocumentPart,
+    ContentPart,
 )
 
 AGUI_METADATA_KEY = "ag-ui"
@@ -76,15 +76,30 @@ populate by name, unknown fields kept).
 ResumeStatus = Literal["resolved", "cancelled"]
 """Whether the interrupt was answered or abandoned (ResumeEntry.status)."""
 
-# Historic aliases for the media input parts: the schema names them
-# ...InputContent, and this package has always also exported them as
-# ...InputPart.
-ImageInputPart = ImageInputContent
-AudioInputPart = AudioInputContent
-VideoInputPart = VideoInputContent
-DocumentInputPart = DocumentInputContent
+# The names the content parts carried before 1.0 renamed them (InputContent
+# -> ContentPart, TextInputContent -> TextPart, and so on): the same parts now
+# sit on tool messages as well as user messages, so they are named by what they
+# are rather than by direction. The wire is unchanged — every ``type`` value is
+# the same — and so is every class behind these names; only the spelling moved.
+# Kept for one release, see the repo-root DEPRECATIONS.md.
+InputContent = ContentPart
+TextInputContent = TextPart
+ImageInputContent = ImagePart
+AudioInputContent = AudioPart
+VideoInputContent = VideoPart
+DocumentInputContent = DocumentPart
+InputContentSource = PartSource
+InputContentDataSource = DataSource
+InputContentUrlSource = UrlSource
 
-InputContentPart = InputContent
+# Historic aliases for the media parts: this package has always also exported
+# them as ...InputPart.
+ImageInputPart = ImagePart
+AudioInputPart = AudioPart
+VideoInputPart = VideoPart
+DocumentInputPart = DocumentPart
+
+InputContentPart = ContentPart
 """Historic alias: a content part of a user message."""
 
 __all__ = [
@@ -113,6 +128,16 @@ __all__ = [
     "ResumeStatus",
     "RunAgentInput",
     "State",
+    "ContentPart",
+    "TextPart",
+    "ImagePart",
+    "AudioPart",
+    "VideoPart",
+    "DocumentPart",
+    "PartSource",
+    "DataSource",
+    "UrlSource",
+    "InputContent",
     "TextInputContent",
     "InputContentDataSource",
     "InputContentUrlSource",
@@ -125,6 +150,5 @@ __all__ = [
     "AudioInputPart",
     "VideoInputPart",
     "DocumentInputPart",
-    "InputContent",
     "InputContentPart",
 ]
