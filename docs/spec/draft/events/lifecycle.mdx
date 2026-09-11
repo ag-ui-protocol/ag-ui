@@ -48,9 +48,11 @@ when an agent invokes another agent as a separate run rather than as a
 Closes a run that did not fail, and reports how it ended:
 
 - Its `outcome` distinguishes a run that completed from one interrupted
-  awaiting outside input; an absent outcome means success. The interrupt
-  outcome and what follows it are specified in
-  [Interrupts and Resume](/spec/draft/basic/patterns/interrupt-resume).
+  awaiting outside input, and from one stopped before it completed; an absent
+  outcome means success. The interrupt outcome and what follows it are
+  specified in
+  [Interrupts and Resume](/spec/draft/basic/patterns/interrupt-resume); the
+  cancelled outcome is specified [below](#cancelled-runs).
 - A producer MUST NOT send an outcome value the schema does not describe.
 - `result` is OPTIONAL and carries the run's return value, if it has one.
 - `usage` is OPTIONAL and reports token usage, one entry per provider and
@@ -67,8 +69,48 @@ named after that consumer shipped.
   in a later version reaches an older consumer as a successful run, so a version
   that needs older consumers to *notice* a new way of ending cannot say so
   through `outcome` alone — it needs a carrier those consumers already treat as
-  significant.
+  significant. It is also why the cancelled outcome below is named in 1.0
+  rather than left for later: added afterwards, a cancelled run would reach
+  every 1.0 consumer as a completed one.
 </Note>
+
+### Cancelled runs
+
+A run can be stopped on purpose before it completes — by the person it is
+running for, by the application's own code, by a limit the producer enforces.
+It did not fail, and it is not waiting for anything, but it did not complete
+either, and a consumer that cannot tell it from a completed run presents
+partial work as the whole. The cancelled outcome names that ending.
+
+- A producer that stops a run before completion, for a reason that is not a
+  failure, MUST close it with `RUN_FINISHED` carrying the cancelled outcome.
+  It MUST NOT report a stopped run as success — neither with the success
+  outcome nor by omitting the outcome.
+- Everything that holds for a closed run holds here. A producer MUST close
+  what the run opened — messages, tool calls, steps, subagents — before the
+  `RUN_FINISHED` that cancels it, exactly as before one that succeeds. Closing
+  a tool call establishes that its argument text is complete, not that it is
+  valid, so a call cut off mid-arguments closes like any other and what to do
+  with arguments that do not parse is the application's decision, per the
+  [tool call rules](/spec/draft/events/tool-calls#tool_call_end). A producer
+  that cannot close in order — the stop tore down the stream under it —
+  reports `RUN_ERROR` instead: that run did not end cleanly, and `RUN_ERROR`
+  is the event for a run that did not.
+- A cancelled run has no return value: `result` SHOULD be absent. `usage` MAY
+  report the tokens accrued before the stop.
+- A cancelled run waits for nothing. Its outcome carries no interrupts, and
+  the next run on the thread is an ordinary new run, not a resume.
+- A consumer MUST NOT present a cancelled run as having succeeded, and MUST
+  NOT present it as having failed — a stop the user asked for is not an error
+  to show them. Everything the run delivered before the stop remains
+  delivered, as after `RUN_ERROR`. How to surface the stop beyond that is the
+  consumer's business.
+
+Cancellation is a producer's report about a run it was running. A consumer
+that abandons a stream — closes the connection, stops reading — has a
+[truncated run](/spec/draft/basic/transports#truncation), not a cancelled one:
+it MUST NOT synthesize a `RUN_FINISHED`, cancelled or otherwise, for a run
+whose ending it never received.
 
 ### `RUN_ERROR`
 
