@@ -66,7 +66,10 @@ const APP_CONTEXT_PREFIX = "App Context:\n";
 const UUID_PATTERN =
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
 const CANONICAL_ID_PATTERN = /\bid-\d+\b/g;
-const EXACT_CANONICAL_ID_PATTERN = /^id-\d+$/;
+const STRUCTURED_ID_PATTERN = new RegExp(
+  `${UUID_PATTERN.source}|${CANONICAL_ID_PATTERN.source}`,
+  "gi",
+);
 
 export function isTraceEvent(value: unknown): value is TraceEvent {
   return (
@@ -264,52 +267,20 @@ export function normalizeEventTrace(
   events: readonly TraceEvent[],
 ): TraceEvent[] {
   const identities = new Map<string, string>();
-  const reservedIdentityTokens = new Set<string>();
   let nextIdentity = 1;
 
-  const reserveCanonicalIdentityTokens = (
-    value: unknown,
-    path: readonly string[],
-  ) => {
-    if (typeof value === "string") {
-      for (const token of value.matchAll(CANONICAL_ID_PATTERN)) {
-        reservedIdentityTokens.add(token[0]);
-      }
-      return;
-    }
-    if (Array.isArray(value)) {
-      for (const child of value) reserveCanonicalIdentityTokens(child, path);
-      return;
-    }
-    if (typeof value !== "object" || value === null) return;
-
-    for (const [key, child] of Object.entries(value)) {
-      if (key === "rawEvent" && path.length === 0) continue;
-      reserveCanonicalIdentityTokens(child, [...path, key]);
-    }
-  };
-
-  reserveCanonicalIdentityTokens(events, []);
-
   const normalizeIdentity = (value: string) => {
-    if (EXACT_CANONICAL_ID_PATTERN.test(value)) return value;
     const existing = identities.get(value);
     if (existing) return existing;
 
-    let token = `id-${nextIdentity}`;
-    while (reservedIdentityTokens.has(token)) {
-      nextIdentity += 1;
-      token = `id-${nextIdentity}`;
-    }
-    nextIdentity += 1;
-    reservedIdentityTokens.add(token);
+    const token = `id-${nextIdentity++}`;
     identities.set(value, token);
     return token;
   };
 
   const normalizeStructuredIdentity = (value: string) => {
-    return value.replace(UUID_PATTERN, (uuid) =>
-      normalizeIdentity(uuid.toLowerCase()),
+    return value.replace(STRUCTURED_ID_PATTERN, (identity) =>
+      normalizeIdentity(identity.toLowerCase()),
     );
   };
 

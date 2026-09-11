@@ -240,31 +240,41 @@ test("normalizes subagent run identities while preserving their namespace and re
   assert.deepEqual(normalizeEventTrace(normalized), normalized);
 });
 
-test("does not reuse canonical identity tokens when normalizing new identities", () => {
-  assert.deepEqual(
-    normalizeEventTrace([
-      {
-        type: "SUBAGENT_STARTED",
-        subagentRunId: "tools:id-2",
-        parentToolCallId: "id-1",
-      },
-      {
-        type: "TEXT_MESSAGE_START",
-        messageId: "generated-message",
-      },
-    ]),
-    [
-      {
-        type: "SUBAGENT_STARTED",
-        subagentRunId: "tools:id-2",
-        parentToolCallId: "id-1",
-      },
-      {
-        type: "TEXT_MESSAGE_START",
-        messageId: "id-3",
-      },
-    ],
-  );
+test("renumbers embedded and plain canonical identities together", () => {
+  const normalized = normalizeEventTrace([
+    {
+      type: "SUBAGENT_STARTED",
+      subagentRunId: "tools:id-7",
+      parentToolCallId: "id-4",
+    },
+    {
+      type: "SUBAGENT_FINISHED",
+      subagentRunId: "tools:id-7",
+      parentToolCallId: "id-4",
+    },
+    {
+      type: "TEXT_MESSAGE_START",
+      messageId: "generated-message",
+    },
+  ]);
+
+  assert.deepEqual(normalized, [
+    {
+      type: "SUBAGENT_STARTED",
+      subagentRunId: "tools:id-1",
+      parentToolCallId: "id-2",
+    },
+    {
+      type: "SUBAGENT_FINISHED",
+      subagentRunId: "tools:id-1",
+      parentToolCallId: "id-2",
+    },
+    {
+      type: "TEXT_MESSAGE_START",
+      messageId: "id-3",
+    },
+  ]);
+  assert.deepEqual(normalizeEventTrace(normalized), normalized);
 });
 
 test("normalizes application identities without retaining transport payloads", () => {
