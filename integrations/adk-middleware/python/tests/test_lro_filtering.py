@@ -1086,6 +1086,75 @@ async def test_resumable_agent_no_duplicate_emission():
     # (ClientProxyTool would emit exactly 1 set — not tested here as it's a different component)
 
 
+async def test_backend_node_tool_ids_emit_call_before_result():
+    """NodeTool ids ADK tags as LRO still emit START/ARGS/END before RESULT (#2674)."""
+    translator = EventTranslator()
+    backend_id = "node-tool-1"
+    translator.backend_tool_ids.add(backend_id)
+
+    fc = MagicMock()
+    fc.id = backend_id
+    fc.name = "classify"
+    fc.args = {"ticket": "42"}
+
+    part = MagicMock()
+    part.function_call = fc
+
+    adk_event = MagicMock()
+    adk_event.author = "assistant"
+    adk_event.partial = False
+    adk_event.content = MagicMock()
+    adk_event.content.parts = []  # no text; function calls come from get_function_calls
+    adk_event.get_function_calls = lambda: [fc]
+    adk_event.get_function_responses = lambda: []
+    adk_event.long_running_tool_ids = [backend_id]
+    adk_event.is_final_response = lambda: False
+    adk_event.actions = None
+    adk_event.custom_data = None
+
+    events = []
+    async for e in translator.translate(adk_event, "thread", "run"):
+        events.append(e)
+
+    lro_event = MagicMock()
+    lro_event.content = MagicMock()
+    lro_event.content.parts = [part]
+    lro_event.long_running_tool_ids = [backend_id]
+    async for e in translator.translate_lro_function_calls(lro_event):
+        events.append(e)
+
+    type_names = [str(ev.type).split(".")[-1] for ev in events]
+    assert type_names.count("TOOL_CALL_START") == 1
+    assert type_names.count("TOOL_CALL_ARGS") == 1
+    assert type_names.count("TOOL_CALL_END") == 1
+    assert all(getattr(ev, "tool_call_id", None) == backend_id for ev in events if hasattr(ev, "tool_call_id"))
+
+    fr = MagicMock()
+    fr.id = backend_id
+    fr.response = {"label": "ok"}
+
+    resp_event = MagicMock()
+    resp_event.author = "assistant"
+    resp_event.partial = False
+    resp_event.content = MagicMock()
+    resp_event.content.parts = []
+    resp_event.get_function_calls = lambda: []
+    resp_event.get_function_responses = lambda: [fr]
+    resp_event.long_running_tool_ids = [backend_id]
+    resp_event.is_final_response = lambda: False
+    resp_event.actions = None
+    resp_event.custom_data = None
+
+    async for e in translator.translate(resp_event, "thread", "run"):
+        events.append(e)
+
+    type_names = [str(ev.type).split(".")[-1] for ev in events]
+    assert type_names.count("TOOL_CALL_RESULT") == 1
+    start_at = type_names.index("TOOL_CALL_START")
+    result_at = type_names.index("TOOL_CALL_RESULT")
+    assert start_at < result_at
+
+
 if __name__ == "__main__":
     asyncio.run(test_translate_skips_lro_function_calls())
     asyncio.run(test_translate_lro_function_calls_only_emits_lro())
@@ -1110,5 +1179,6 @@ if __name__ == "__main__":
     asyncio.run(test_has_lro_function_call_sets_is_long_running_tool_even_when_translator_skips())
     asyncio.run(test_non_resumable_agent_tool_round_trip())
     asyncio.run(test_resumable_agent_no_duplicate_emission())
+    asyncio.run(test_backend_node_tool_ids_emit_call_before_result())
     print("\n✅ LRO and partial filtering tests ran to completion")
 
