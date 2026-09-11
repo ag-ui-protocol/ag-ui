@@ -18,6 +18,7 @@ describe("token usage — proto round-trip", () => {
           totalTokens: 150,
           reasoningTokens: 20,
           cachedInputTokens: 10,
+          cacheWriteInputTokens: 5,
         },
       ],
     };
