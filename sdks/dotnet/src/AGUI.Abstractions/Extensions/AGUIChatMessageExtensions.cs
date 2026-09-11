@@ -153,7 +153,7 @@ public static class AGUIChatMessageExtensions
             {
                 var contents = new List<AIContent>
                 {
-                    new FunctionResultContent(toolMessage.ToolCallId ?? string.Empty, toolMessage.Content)
+                    new FunctionResultContent(toolMessage.ToolCallId ?? string.Empty, toolMessage.Content.ToString())
                 };
 
                 yield return WithSubagentRunId(

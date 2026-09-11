@@ -364,7 +364,7 @@ public sealed class EventRoundTripTest
         Assert.Equal("{\"q\":\"x\"}", toolCall.Function.Arguments);
 
         var tool = Assert.IsType<AGUIToolMessage>(result.Messages[3]);
-        Assert.Equal("result", tool.Content);
+        Assert.Equal("result", tool.Content.Value);
         Assert.Equal("tc-1", tool.ToolCallId);
 
         var developer = Assert.IsType<AGUIDeveloperMessage>(result.Messages[4]);
@@ -416,6 +416,72 @@ public sealed class EventRoundTripTest
         var audioSource = Assert.IsType<AGUIInputContentDataSource>(audio.Source);
         Assert.Equal("base64data", audioSource.Value);
         Assert.Equal("audio/mpeg", audioSource.MimeType);
+    }
+
+    [Fact]
+    public void ToolCallResult_Parts_RoundTrips()
+    {
+        var result = RoundTrip(new ToolCallResultEvent
+        {
+            MessageId = "m2",
+            ToolCallId = "c1",
+            Content = new List<AGUIInputContent>
+            {
+                new AGUITextInputContent { Id = "p1", Text = "Invoice attached.", Metadata = JsonTestHelpers.Parse("{\"title\":\"INV\"}") },
+                new AGUIDocumentInputContent
+                {
+                    Id = "doc",
+                    Source = new AGUIInputContentUrlSource { Value = "https://example.com/i.pdf", MimeType = "application/pdf" },
+                },
+            },
+        });
+
+        var parts = Assert.IsType<List<AGUIInputContent>>(result.Content.Value);
+        var text = Assert.IsType<AGUITextInputContent>(parts[0]);
+        Assert.Equal("p1", text.Id);
+        Assert.Equal("Invoice attached.", text.Text);
+        JsonTestHelpers.AssertEqual(JsonTestHelpers.Parse("{\"title\":\"INV\"}"), text.Metadata!.Value);
+        var document = Assert.IsType<AGUIDocumentInputContent>(parts[1]);
+        Assert.Equal("doc", document.Id);
+        Assert.Equal("https://example.com/i.pdf", Assert.IsType<AGUIInputContentUrlSource>(document.Source).Value);
+    }
+
+    [Fact]
+    public void ToolCallResult_StringContent_RoundTrips()
+    {
+        var result = RoundTrip(new ToolCallResultEvent { MessageId = "m2", ToolCallId = "c1", Content = "3 results" });
+        Assert.Equal("3 results", result.Content.Value);
+    }
+
+    [Fact]
+    public void MessagesSnapshot_ToolPartsContent_RoundTrips()
+    {
+        var snapshot = new MessagesSnapshotEvent
+        {
+            Messages =
+            {
+                new AGUIToolMessage
+                {
+                    Id = "t1",
+                    ToolCallId = "c1",
+                    Content = new List<AGUIInputContent>
+                    {
+                        new AGUITextInputContent { Text = "see attached" },
+                        new AGUIImageInputContent
+                        {
+                            Source = new AGUIInputContentDataSource { Value = "aGk=", MimeType = "image/png" },
+                        },
+                    },
+                },
+            },
+        };
+
+        var result = RoundTrip(snapshot);
+
+        var tool = Assert.IsType<AGUIToolMessage>(Assert.Single(result.Messages));
+        var parts = Assert.IsType<List<AGUIInputContent>>(tool.Content.Value);
+        Assert.Equal("see attached", Assert.IsType<AGUITextInputContent>(parts[0]).Text);
+        Assert.Equal("aGk=", Assert.IsType<AGUIInputContentDataSource>(Assert.IsType<AGUIImageInputContent>(parts[1]).Source).Value);
     }
 
     [Fact]
