@@ -111,7 +111,10 @@ class RunStartedEvent(BaseEvent):
 
 A reusable, numeric-only token usage summary carried on terminal run events.
 It intentionally contains **only** provider/model labels and token counts — no
-prompts, completions, messages, or identifiers.
+prompts, completions, messages, or identifiers. The counts follow the
+protocol's [accounting](/spec/draft/events/lifecycle#token-usage): the input
+and output counts are totals, and the cache and reasoning counts are parts of
+them, never additions.
 
 ```python
 class TokenUsage(ConfiguredBaseModel):
@@ -122,17 +125,19 @@ class TokenUsage(ConfiguredBaseModel):
     total_tokens: Optional[int] = None
     reasoning_tokens: Optional[int] = None
     cached_input_tokens: Optional[int] = None
+    cache_write_input_tokens: Optional[int] = None
 ```
 
-| Property              | Type            | Description                                       |
-| --------------------- | --------------- | ------------------------------------------------- |
-| `provider`            | `Optional[str]` | Provider that reported the usage (e.g. `openai`)  |
-| `model`               | `Optional[str]` | Model that produced the usage                     |
-| `input_tokens`        | `Optional[int]` | Prompt/input tokens                               |
-| `output_tokens`       | `Optional[int]` | Completion/output tokens                          |
-| `total_tokens`        | `Optional[int]` | Total tokens for the entry                        |
-| `reasoning_tokens`    | `Optional[int]` | Reasoning tokens, when the model reports them     |
-| `cached_input_tokens` | `Optional[int]` | Cached (prompt-cache read) input tokens           |
+| Property                   | Type            | Description                                                     |
+| -------------------------- | --------------- | --------------------------------------------------------------- |
+| `provider`                 | `Optional[str]` | Provider that reported the usage (e.g. `openai`)                |
+| `model`                    | `Optional[str]` | Model that produced the usage                                   |
+| `input_tokens`             | `Optional[int]` | All input tokens, cache reads and writes included               |
+| `output_tokens`            | `Optional[int]` | All output tokens, reasoning included                           |
+| `total_tokens`             | `Optional[int]` | `input_tokens` plus `output_tokens`                             |
+| `reasoning_tokens`         | `Optional[int]` | Output tokens spent on reasoning; part of `output_tokens`       |
+| `cached_input_tokens`      | `Optional[int]` | Input tokens read from a prompt cache; part of `input_tokens`   |
+| `cache_write_input_tokens` | `Optional[int]` | Input tokens written to a prompt cache; part of `input_tokens`  |
 
 ### RunFinishedEvent
 

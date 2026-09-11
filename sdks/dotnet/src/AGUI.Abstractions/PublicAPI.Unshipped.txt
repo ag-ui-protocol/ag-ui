@@ -637,6 +637,8 @@ AGUI.Abstractions.TextMessageStartEvent.TextMessageStartEvent() -> void
 AGUI.Abstractions.TokenUsage
 AGUI.Abstractions.TokenUsage.CachedInputTokens.get -> long?
 AGUI.Abstractions.TokenUsage.CachedInputTokens.set -> void
+AGUI.Abstractions.TokenUsage.CacheWriteInputTokens.get -> long?
+AGUI.Abstractions.TokenUsage.CacheWriteInputTokens.set -> void
 AGUI.Abstractions.TokenUsage.InputTokens.get -> long?
 AGUI.Abstractions.TokenUsage.InputTokens.set -> void
 AGUI.Abstractions.TokenUsage.Model.get -> string?

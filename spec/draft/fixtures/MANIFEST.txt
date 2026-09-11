@@ -117,6 +117,7 @@ RunAgentInput/valid/without-tools-or-context.json
 RunErrorEvent/invalid/usage-item-not-a-token-usage.expect.json
 RunErrorEvent/invalid/usage-item-not-a-token-usage.json
 RunErrorEvent/valid/minimal.json
+RunErrorEvent/valid/usage-cache-breakdown.json
 RunFinishedEvent/invalid/outcome-interrupt-item-not-an-interrupt.expect.json
 RunFinishedEvent/invalid/outcome-interrupt-item-not-an-interrupt.json
 RunFinishedEvent/invalid/outcome-interrupt-with-no-interrupts.expect.json
@@ -127,6 +128,8 @@ RunFinishedEvent/invalid/outcome-success-carrying-interrupts.expect.json
 RunFinishedEvent/invalid/outcome-success-carrying-interrupts.json
 RunFinishedEvent/invalid/usage-item-not-a-token-usage.expect.json
 RunFinishedEvent/invalid/usage-item-not-a-token-usage.json
+RunFinishedEvent/invalid/usage-negative-cache-write-count.expect.json
+RunFinishedEvent/invalid/usage-negative-cache-write-count.json
 RunFinishedEvent/invalid/usage-negative-token-count.expect.json
 RunFinishedEvent/invalid/usage-negative-token-count.json
 RunFinishedEvent/valid/minimal.json
@@ -138,6 +141,7 @@ RunFinishedEvent/valid/result-array.json
 RunFinishedEvent/valid/result-number.json
 RunFinishedEvent/valid/result-object.json
 RunFinishedEvent/valid/result-string.json
+RunFinishedEvent/valid/usage-cache-breakdown.json
 RunFinishedEvent/valid/usage.json
 RunStartedEvent/valid/minimal.json
 RunStartedEvent/valid/with-input.json

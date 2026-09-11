@@ -92,7 +92,8 @@ public sealed class RunFinishedEventTest
                     OutputTokens = 22,
                     TotalTokens = 33,
                     ReasoningTokens = 44,
-                    CachedInputTokens = 55
+                    CachedInputTokens = 55,
+                    CacheWriteInputTokens = 66
                 }
             ]
         };
@@ -109,6 +110,7 @@ public sealed class RunFinishedEventTest
         Assert.Equal(33, usage[0].GetProperty("totalTokens").GetInt64());
         Assert.Equal(44, usage[0].GetProperty("reasoningTokens").GetInt64());
         Assert.Equal(55, usage[0].GetProperty("cachedInputTokens").GetInt64());
+        Assert.Equal(66, usage[0].GetProperty("cacheWriteInputTokens").GetInt64());
     }
 
     [Fact]

@@ -779,8 +779,13 @@ export const RunFinishedOutcomeSchema = z.discriminatedUnion("type", [
 ]);
 
 /**
- * Token counts for one provider and model. Every field is a label or a number
- * — nothing content-bearing or identifying, no prompts, completions, messages,
+ * Token counts for one provider and model, in the protocol's own accounting:
+ * every count is either a total or a named part of one, so entries from
+ * different providers add up without double-counting. inputTokens and
+ * outputTokens are the totals; reasoningTokens, cachedInputTokens and
+ * cacheWriteInputTokens are parts of them, never additions to them;
+ * totalTokens is the two totals summed. Every field is a label or a number —
+ * nothing content-bearing or identifying, no prompts, completions, messages,
  * or thread, run and user identifiers.
  */
 export const TokenUsageSchema = z.looseObject({
@@ -791,6 +796,7 @@ export const TokenUsageSchema = z.looseObject({
   totalTokens: z.int().min(0).max(9007199254740991).optional(),
   reasoningTokens: z.int().min(0).max(9007199254740991).optional(),
   cachedInputTokens: z.int().min(0).max(9007199254740991).optional(),
+  cacheWriteInputTokens: z.int().min(0).max(9007199254740991).optional(),
 });
 
 /**

@@ -201,6 +201,7 @@ const shapes: Record<string, Shape> = {
       "totalTokens",
       "reasoningTokens",
       "cachedInputTokens",
+      "cacheWriteInputTokens",
     ],
     fields: {},
   },

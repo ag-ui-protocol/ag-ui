@@ -282,6 +282,7 @@ ToolCallStartEvent.parent_message_id = 4
 ToolCallStartEvent.subagent_run_id = 5
 ToolCallStartEvent.tool_call_id = 2
 ToolCallStartEvent.tool_call_name = 3
+Usage.cache_write_input_tokens = 8
 Usage.cached_input_tokens = 7
 Usage.input_tokens = 3
 Usage.model = 2

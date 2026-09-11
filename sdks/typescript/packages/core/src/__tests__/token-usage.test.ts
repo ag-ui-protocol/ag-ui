@@ -29,6 +29,41 @@ describe("tokenUsageFromAiSdkUsage", () => {
     });
   });
 
+  it("maps AI-SDK v6 token details, where the cache-write count lives", () => {
+    const u = tokenUsageFromAiSdkUsage(
+      {
+        inputTokens: 100,
+        outputTokens: 50,
+        totalTokens: 150,
+        inputTokenDetails: { noCacheTokens: 70, cacheReadTokens: 20, cacheWriteTokens: 10 },
+        outputTokenDetails: { textTokens: 45, reasoningTokens: 5 },
+      },
+      {},
+    );
+    expect(u).toEqual({
+      inputTokens: 100,
+      outputTokens: 50,
+      totalTokens: 150,
+      reasoningTokens: 5,
+      cachedInputTokens: 20,
+      cacheWriteInputTokens: 10,
+    });
+  });
+
+  it("prefers the v5 top-level cache-read and reasoning counts when both forms are present", () => {
+    const u = tokenUsageFromAiSdkUsage(
+      {
+        inputTokens: 10,
+        reasoningTokens: 3,
+        cachedInputTokens: 4,
+        inputTokenDetails: { cacheReadTokens: 999 },
+        outputTokenDetails: { reasoningTokens: 999 },
+      },
+      {},
+    );
+    expect(u).toEqual({ inputTokens: 10, reasoningTokens: 3, cachedInputTokens: 4 });
+  });
+
   it("ignores non-finite counts (AI-SDK reports NaN for unknown)", () => {
     const u = tokenUsageFromAiSdkUsage(
       { inputTokens: 12, outputTokens: NaN, totalTokens: undefined },
@@ -50,11 +85,14 @@ describe("tokenUsageFromLangChainMetadata", () => {
         input_tokens: 100,
         output_tokens: 50,
         total_tokens: 150,
-        input_token_details: { cache_read: 10 },
+        input_token_details: { cache_read: 10, cache_creation: 5 },
         output_token_details: { reasoning: 20 },
       },
       { provider: "anthropic", model: "claude-sonnet-4" },
     );
+    // LangChain's `input_tokens` already includes the cache details and its
+    // `output_tokens` the reasoning detail, which is the protocol's own
+    // accounting — so every count passes through unchanged.
     expect(u).toEqual({
       provider: "anthropic",
       model: "claude-sonnet-4",
@@ -63,6 +101,7 @@ describe("tokenUsageFromLangChainMetadata", () => {
       totalTokens: 150,
       reasoningTokens: 20,
       cachedInputTokens: 10,
+      cacheWriteInputTokens: 5,
     });
   });
 
@@ -101,6 +140,14 @@ describe("aggregateTokenUsage", () => {
     expect(aggregateTokenUsage([])).toEqual([]);
   });
 
+  it("sums the cache breakdown like every other count", () => {
+    const agg = aggregateTokenUsage([
+      { provider: "p", model: "m", inputTokens: 10, cachedInputTokens: 4, cacheWriteInputTokens: 2 },
+      { provider: "p", model: "m", inputTokens: 20, cachedInputTokens: 6, cacheWriteInputTokens: 3 },
+    ]);
+    expect(agg[0]).toMatchObject({ inputTokens: 30, cachedInputTokens: 10, cacheWriteInputTokens: 5 });
+  });
+
   it("leaves a count undefined when no group member reported it", () => {
     const agg = aggregateTokenUsage([
       { provider: "p", model: "m", inputTokens: 1 },
@@ -133,6 +180,7 @@ describe("TokenUsageSchema — count constraints", () => {
       "totalTokens",
       "reasoningTokens",
       "cachedInputTokens",
+      "cacheWriteInputTokens",
     ]) {
       expect(parse({ [field]: 1.5 })).toBe(false);
     }
