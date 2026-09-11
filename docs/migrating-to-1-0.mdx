@@ -175,6 +175,22 @@ own `onRunErrorEvent` subscriber; the client will not do it for you.
   nothing downstream has to narrow.
 - `AbstractAgent.maxVersion` is deprecated in favour of `maxProtocolVersion`.
   An override of the old name still works and warns once per process.
+- The content parts are named by what they are, not by direction:
+  `InputContent` → `ContentPart`, `TextInputContent` → `TextPart`,
+  `ImageInputContent` → `ImagePart` (audio, video, document alike),
+  `InputContentSource` → `PartSource`, `InputContentDataSource` →
+  `DataSource`, `InputContentUrlSource` → `UrlSource`, with the matching
+  `...Schema` validators. The old names are exported as deprecated aliases of
+  the same types and validators, so nothing breaks; the wire `type` values are
+  unchanged.
+- `ToolMessage.content` and `ToolCallResultEvent.content` are
+  `string | ContentPart[]`, as `UserMessage.content` already was. Code that
+  passed a tool result straight into a string slot narrows it first;
+  `contentToText()` from `@ag-ui/core` gives the text parts concatenated and
+  `contentHasMedia()` says whether that flattening would lose anything. The
+  legacy `ActionExecutionResult` bridge flattens this way and warns.
+- Every content part has an optional `id`, and `TextPart` has the optional
+  `metadata` the media parts already had.
 - `execution.maxIterations` and `maxExecutionTime` on capabilities validate as
   non-negative integers within JavaScript's safe range.
 
@@ -274,6 +290,17 @@ is a model.
   `subagents` (wire key `subagents`). No alias.
 - `ExecutionCapabilities.max_iterations` and `max_execution_time` now reject
   negative values.
+- The content parts are named by what they are, not by direction:
+  `InputContent` → `ContentPart`, `TextInputContent` → `TextPart`,
+  `ImageInputContent` → `ImagePart` (audio, video, document alike),
+  `InputContentSource` → `PartSource`, `InputContentDataSource` →
+  `DataSource`, `InputContentUrlSource` → `UrlSource`. The old names remain
+  exported from `ag_ui.core` as aliases of the same classes.
+- `ToolMessage.content` and `ToolCallResultEvent.content` are
+  `Union[str, List[ContentPart]]`, as `UserMessage.content` already was. Code
+  that treated a tool result as `str` narrows it first. Every part has an
+  optional `id`, and `TextPart` has the optional `metadata` the media parts
+  already had.
 
 ---
 
@@ -328,6 +355,14 @@ with it.
 - `Tool.Parameters` and `RunAgentInput.ForwardedProperties` (wire key
   `forwardedProps`) are nullable `JsonElement?`, as the schema says; a
   message's `Id` is a non-nullable string that is always written.
+- `AGUIUserContent` → `AGUIContent`: the string-or-parts union is no longer
+  the user message's alone. `AGUIToolMessage.Content` and
+  `ToolCallResultEvent.Content` are `AGUIContent` rather than `string`; a
+  string still assigns implicitly, and reading one back is
+  `Content.Value as string` or a walk over its parts. The part classes keep
+  their `AGUI...InputContent` names even though the schema renamed them to
+  `...Part`. Every part has an optional `Id`, and `AGUITextInputContent` has
+  the optional `Metadata` the media parts already had.
 
 ### AOT
 

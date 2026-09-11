@@ -169,43 +169,43 @@ Represents a message from a user.
 ```python
 class UserMessage(BaseMessage):
     role: Literal["user"]
-    content: Union[str, List["InputContent"]]
+    content: Union[str, List["ContentPart"]]
 ```
 
-| Property  | Type                               | Description                                                           |
-| --------- | ---------------------------------- | --------------------------------------------------------------------- |
-| `id`      | `str`                              | Unique identifier for the message                                     |
-| `role`    | `Literal["user"]`                  | Role of the message sender, fixed as "user"                           |
-| `content` | `Union[str, List["InputContent"]]` | Either a plain text string or an ordered list of multimodal fragments |
-| `name`    | `Optional[str]`                    | Optional name of the sender                                           |
+| Property  | Type                              | Description                                                           |
+| --------- | --------------------------------- | --------------------------------------------------------------------- |
+| `id`      | `str`                             | Unique identifier for the message                                     |
+| `role`    | `Literal["user"]`                 | Role of the message sender, fixed as "user"                           |
+| `content` | `Union[str, List["ContentPart"]]` | Either a plain text string or an ordered list of multimodal fragments |
+| `name`    | `Optional[str]`                   | Optional name of the sender                                           |
 
-### InputContentSource
+### PartSource
 
 Represents how a non-text part is supplied.
 
 ```python
-InputContentSource = Annotated[
-    Union[InputContentDataSource, InputContentUrlSource],
+PartSource = Annotated[
+    Union[DataSource, UrlSource],
     Field(discriminator="type"),
 ]
 
-class InputContentDataSource(ConfiguredBaseModel):
+class DataSource(ConfiguredBaseModel):
     type: Literal["data"]
     value: str
     mime_type: str
 
-class InputContentUrlSource(ConfiguredBaseModel):
+class UrlSource(ConfiguredBaseModel):
     type: Literal["url"]
     value: str
     mime_type: Optional[str] = None
 ```
 
-### TextInputContent
+### TextPart
 
 Represents a text fragment inside a multimodal user message.
 
 ```python
-class TextInputContent(ConfiguredBaseModel):
+class TextPart(ConfiguredBaseModel):
     type: Literal["text"]
     text: str
 ```
@@ -243,27 +243,27 @@ class BinaryInputContent(ConfiguredBaseModel):
 > **Deprecated:** `BinaryInputContent` remains available as a temporary
 > compatibility model. Prefer modality-specific parts below.
 
-### ImageInputContent / AudioInputContent / VideoInputContent / DocumentInputContent
+### ImagePart / AudioPart / VideoPart / DocumentPart
 
 ```python
-class ImageInputContent(ConfiguredBaseModel):
+class ImagePart(ConfiguredBaseModel):
     type: Literal["image"]
-    source: InputContentSource
+    source: PartSource
     metadata: Optional[Any] = None
 
-class AudioInputContent(ConfiguredBaseModel):
+class AudioPart(ConfiguredBaseModel):
     type: Literal["audio"]
-    source: InputContentSource
+    source: PartSource
     metadata: Optional[Any] = None
 
-class VideoInputContent(ConfiguredBaseModel):
+class VideoPart(ConfiguredBaseModel):
     type: Literal["video"]
-    source: InputContentSource
+    source: PartSource
     metadata: Optional[Any] = None
 
-class DocumentInputContent(ConfiguredBaseModel):
+class DocumentPart(ConfiguredBaseModel):
     type: Literal["document"]
-    source: InputContentSource
+    source: PartSource
     metadata: Optional[Any] = None
 ```
 

@@ -6,7 +6,7 @@ description: "Use modality-specific user input parts with typed data and URL sou
 # Multimodal Inputs
 
 `AGUIUserMessage.Content` accepts either plain text or an ordered array of
-multimodal content parts through the `AGUIUserContent` union.
+multimodal content parts through the `AGUIContent` union.
 
 ```csharp
 using System.Text.Json;
@@ -44,7 +44,7 @@ var message = new AGUIUserMessage
 ## User Message Content
 
 The AG-UI wire model for user messages is `content: string | InputContent[]`.
-In .NET, that is represented by `AGUIUserContent`.
+In .NET, that is represented by `AGUIContent`.
 
 ```csharp
 var plainText = new AGUIUserMessage
@@ -71,7 +71,7 @@ var parts = new AGUIUserMessage
 };
 ```
 
-`AGUIUserContent` has implicit conversions from `string`,
+`AGUIContent` has implicit conversions from `string`,
 `List<AGUIInputContent>`, and `AGUIInputContent[]`, supports collection
 expressions, and implements `IReadOnlyList<AGUIInputContent>` for normalized
 reads. When the stored value is a string, the read-only list facade exposes it
