@@ -8,6 +8,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.agui.community.core.agent.RunAgentInput;
 import com.agui.community.core.event.Event;
 import com.agui.community.core.event.EventType;
+import com.agui.community.core.event.ReasoningEndEvent;
+import com.agui.community.core.event.ReasoningMessageContentEvent;
+import com.agui.community.core.event.ReasoningMessageEndEvent;
+import com.agui.community.core.event.ReasoningMessageStartEvent;
+import com.agui.community.core.event.ReasoningStartEvent;
 import com.agui.community.core.event.RunFinishedEvent;
 import com.agui.community.core.event.TextMessageStartEvent;
 import com.agui.community.core.interrupt.Interrupt;
@@ -39,6 +44,44 @@ class JacksonSerializerTest {
         assertTrue(json.contains("\"role\":\"assistant\""), json);
         assertInstanceOf(TextMessageStartEvent.class, back);
         assertEquals(original, back);
+    }
+
+    @Test
+    void serializesReasoningMessageStartWithProtocolRequiredRole() {
+        // The AG-UI protocol requires role:"reasoning" on REASONING_MESSAGE_START
+        // (ReasoningMessageStartEventSchema); a compliant client aborts the run when the
+        // field is missing. Lock in the emitted wire shape so this cannot regress.
+        String json = serializer.serialize(new ReasoningMessageStartEvent("m1"));
+
+        assertTrue(json.contains("\"type\":\"REASONING_MESSAGE_START\""), json);
+        assertTrue(json.contains("\"role\":\"reasoning\""), json);
+
+        Event back = serializer.deserialize(json, Event.class);
+        assertInstanceOf(ReasoningMessageStartEvent.class, back);
+        assertEquals(Role.REASONING, ((ReasoningMessageStartEvent) back).role());
+    }
+
+    @Test
+    void roundTripsTheReasoningEventLifecycleViaTypeDiscriminators() {
+        // The full reasoning sub-stream a reasoning turn emits, in order. Each frame must
+        // serialize under its wire type discriminator and read back as the same event, so
+        // a client can consume and replay the reasoning stream.
+        List<Event> lifecycle = List.of(
+                new ReasoningStartEvent("m1"),
+                new ReasoningMessageStartEvent("m1"),
+                new ReasoningMessageContentEvent("m1", "planning"),
+                new ReasoningMessageEndEvent("m1"),
+                new ReasoningEndEvent("m1"));
+        List<String> expectedTypes = List.of(
+                "REASONING_START", "REASONING_MESSAGE_START", "REASONING_MESSAGE_CONTENT",
+                "REASONING_MESSAGE_END", "REASONING_END");
+
+        for (int i = 0; i < lifecycle.size(); i++) {
+            Event original = lifecycle.get(i);
+            String json = serializer.serialize(original);
+            assertTrue(json.contains("\"type\":\"" + expectedTypes.get(i) + "\""), json);
+            assertEquals(original, serializer.deserialize(json, Event.class));
+        }
     }
 
     @Test
