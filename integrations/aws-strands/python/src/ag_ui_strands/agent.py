@@ -5288,12 +5288,26 @@ class StrandsAgent:
                                 for item in msg.content
                             )
                             if has_media:
+                                dropped_media: List[Dict[str, str]] = []
                                 user_message = await asyncio.to_thread(
                                     convert_agui_content_to_strands,
                                     msg.content,
                                     self.config.url_fetch_policy,
                                     message_id=getattr(msg, "id", None),
+                                    dropped=dropped_media,
                                 )
+                                if dropped_media:
+                                    yield CustomEvent(
+                                        type=EventType.CUSTOM,
+                                        name="MediaDropped",
+                                        value={
+                                            "dropped": dropped_media,
+                                            "delivered": sum(
+                                                any(kind in block for kind in ("image", "document", "video"))
+                                                for block in user_message
+                                            ),
+                                        },
+                                    )
                                 if not user_message:
                                     text_fallback = flatten_content_to_text(msg.content)
                                     if not text_fallback:
