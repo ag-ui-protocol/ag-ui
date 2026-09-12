@@ -292,6 +292,36 @@ class TestCollectOutputSchemaAgentNames:
         result = ADKAgent._collect_output_schema_agent_names(workflow)
         assert result == {"classifier"}
 
+    def test_node_tool_workflow_with_output_schema(self):
+        """A real Workflow passed through tools exposes its classifier schema."""
+        from google.adk.agents import LlmAgent
+        from pydantic import BaseModel
+        from ag_ui_adk.adk_agent import ADKAgent
+
+        try:
+            from google.adk.tools._node_tool import NodeTool
+            from google.adk.workflow import Workflow
+        except ImportError:
+            pytest.skip("NodeTool requires ADK >= 2.8")
+
+        class Classification(BaseModel):
+            category: str
+
+        classifier = LlmAgent(
+            name="hs_classifier",
+            output_schema=Classification,
+        )
+        workflow = Workflow(
+            name="hs_classifier_workflow",
+            description="Classify an item.",
+            input_schema=str,
+            edges=[("START", classifier)],
+        )
+        root = LlmAgent(name="coordinator", tools=[workflow])
+
+        assert isinstance(root.tools[0], NodeTool)
+        assert ADKAgent._collect_output_schema_agent_names(root) == {"hs_classifier"}
+
     def test_deeply_nested_agents(self):
         """output_schema agents are found at arbitrary depth."""
         from google.adk.agents import LlmAgent, BaseAgent

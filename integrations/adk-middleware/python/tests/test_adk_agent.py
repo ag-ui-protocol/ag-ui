@@ -1267,6 +1267,26 @@ class TestThreadIdSessionIdMapping:
             use_in_memory_services=True
         )
 
+    @pytest.fixture
+    def sample_input(self):
+        return RunAgentInput(
+            thread_id="test_thread",
+            run_id="test_run",
+            messages=[
+                UserMessage(
+                    id="msg1",
+                    role="user",
+                    content="Hello, test!"
+                )
+            ],
+            context=[
+                Context(description="test", value="true")
+            ],
+            state={},
+            tools=[],
+            forwarded_props={}
+        )
+
     @pytest.mark.asyncio
     async def test_thread_id_becomes_session_id(self, adk_agent):
         """Test that thread_id from RunAgentInput is used as session_id in ADK session."""
@@ -1696,3 +1716,517 @@ class TestThreadIdSessionIdMapping:
         # Key should be consumed
         assert cache_key not in adk_agent._cache_checked_keys
 
+    @pytest.mark.asyncio
+    async def test_mixed_backend_and_hitl_emits_backend_call_events(self, sample_input):
+        """NodeTool + client HITL on one ADK event keep both call triples."""
+        try:
+            from google.adk.tools._node_tool import NodeTool
+            from google.adk.workflow import Workflow
+            wf = Workflow(
+                name="hs_classifier",
+                description="Classify an item.",
+                input_schema=str,
+            )
+            root = Agent(
+                name="coordinator",
+                instruction="coordinate",
+                tools=[NodeTool(wf, name="classify")],
+            )
+            collect_patch = None
+        except ImportError:
+            root = Agent(name="coordinator", instruction="coordinate")
+            collect_patch = patch.object(
+                ADKAgent, "_collect_node_tool_names", return_value={"classify"}
+            )
+
+        adk_agent = ADKAgent(
+            adk_agent=root,
+            app_name="test_app",
+            user_id="test_user",
+            use_in_memory_services=True,
+        )
+
+        backend_id = "fc-1"
+        client_id = "client-1"
+
+        def _fc(call_id, name):
+            fc = MagicMock()
+            fc.id = call_id
+            fc.name = name
+            fc.args = {}
+            return fc
+
+        backend_fc = _fc(backend_id, "classify")
+        client_fc = _fc(client_id, "check_status")
+        backend_part = MagicMock(function_call=backend_fc, text=None)
+        client_part = MagicMock(function_call=client_fc, text=None)
+
+        mock_event = MagicMock()
+        mock_event.id = "mixed"
+        mock_event.author = "assistant"
+        mock_event.partial = False
+        mock_event.turn_complete = False
+        mock_event.finish_reason = None
+        mock_event.usage_metadata = None
+        mock_event.is_final_response = MagicMock(return_value=False)
+        mock_event.content = MagicMock()
+        mock_event.content.parts = [backend_part, client_part]
+        mock_event.actions = None
+        mock_event.get_function_calls = MagicMock(return_value=[backend_fc, client_fc])
+        mock_event.get_function_responses = MagicMock(return_value=[])
+        mock_event.custom_data = None
+        mock_event.long_running_tool_ids = [backend_id, client_id]
+        mock_event.invocation_id = "inv-1"
+
+        class DummyRunner:
+            async def run_async(self, *args, **kwargs):
+                yield mock_event
+
+            async def close(self):
+                return
+
+        runner_patch = patch.object(adk_agent, "_create_runner", return_value=DummyRunner())
+        extra = collect_patch if collect_patch is not None else patch.dict({})
+        with extra, runner_patch:
+            events = []
+            async for event in adk_agent.run(sample_input):
+                events.append(event)
+
+        starts = [
+            getattr(ev, "tool_call_id", None)
+            for ev in events
+            if ev.type == EventType.TOOL_CALL_START
+        ]
+        assert backend_id in starts, f"backend call missing START, got {starts!r}"
+        assert client_id in starts, f"client HITL missing START, got {starts!r}"
+
+        session, _ = await adk_agent._ensure_session_exists(
+            "test_app", "test_user", "test_thread", {}
+        )
+        pending = (session.state or {}).get("pending_tool_calls") or []
+        assert client_id in pending
+        assert backend_id not in pending
+
+    @pytest.mark.asyncio
+    async def test_two_hitl_resumes_keep_backend_call_before_result(self, sample_input):
+        """Two successive HITL answers still pair every backend RESULT with a prior START."""
+        try:
+            from google.adk.tools._node_tool import NodeTool
+            from google.adk.workflow import Workflow
+            wf = Workflow(
+                name="hs_classifier",
+                description="Classify an item.",
+                input_schema=str,
+            )
+            root = Agent(
+                name="coordinator",
+                instruction="coordinate",
+                tools=[NodeTool(wf, name="classify")],
+            )
+            collect_patch = None
+        except ImportError:
+            root = Agent(name="coordinator", instruction="coordinate")
+            collect_patch = patch.object(
+                ADKAgent, "_collect_node_tool_names", return_value={"classify"}
+            )
+
+        from ag_ui.core import AssistantMessage, FunctionCall, ToolCall, ToolMessage
+        adk_agent = ADKAgent(
+            adk_agent=root,
+            app_name="test_app",
+            user_id="test_user",
+            use_in_memory_services=True,
+        )
+
+        backend_id = "fc-1"
+        hitl_1 = "client-1"
+        hitl_2 = "client-2"
+
+        def _fc(call_id, name):
+            fc = MagicMock()
+            fc.id = call_id
+            fc.name = name
+            fc.args = {}
+            return fc
+
+        def _part(fc):
+            return MagicMock(function_call=fc, text=None)
+
+        def _call_event(event_id, fcs, lro_ids):
+            event = MagicMock()
+            event.id = event_id
+            event.author = "assistant"
+            event.partial = False
+            event.turn_complete = False
+            event.finish_reason = None
+            event.usage_metadata = None
+            event.is_final_response = MagicMock(return_value=False)
+            event.content = MagicMock()
+            event.content.parts = [_part(fc) for fc in fcs]
+            event.actions = None
+            event.get_function_calls = MagicMock(return_value=fcs)
+            event.get_function_responses = MagicMock(return_value=[])
+            event.custom_data = None
+            event.long_running_tool_ids = list(lro_ids)
+            event.invocation_id = "inv-1"
+            return event
+
+        def _result_event(event_id, call_id):
+            fr = MagicMock()
+            fr.id = call_id
+            fr.name = "classify"
+            fr.response = {"label": "ok"}
+            event = MagicMock()
+            event.id = event_id
+            event.author = "assistant"
+            event.partial = False
+            event.turn_complete = False
+            event.finish_reason = None
+            event.usage_metadata = None
+            event.is_final_response = MagicMock(return_value=False)
+            event.content = MagicMock()
+            event.content.parts = []
+            event.actions = None
+            event.get_function_calls = MagicMock(return_value=[])
+            event.get_function_responses = MagicMock(return_value=[fr])
+            event.custom_data = None
+            event.long_running_tool_ids = [call_id]
+            event.invocation_id = "inv-1"
+            return event
+
+        backend_fc = _fc(backend_id, "classify")
+        first = _call_event(
+            "mixed",
+            [backend_fc, _fc(hitl_1, "check_status")],
+            [backend_id, hitl_1],
+        )
+        backend_result = _result_event("backend-result", backend_id)
+        second = _call_event("hitl2", [_fc(hitl_2, "check_status")], [hitl_2])
+        done = MagicMock()
+        done.id = "done"
+        done.author = "assistant"
+        done.partial = False
+        done.turn_complete = True
+        done.finish_reason = "STOP"
+        done.usage_metadata = None
+        done.is_final_response = MagicMock(return_value=True)
+        done.content = MagicMock()
+        done.content.parts = [MagicMock(text="all done", function_call=None)]
+        done.actions = None
+        done.get_function_calls = MagicMock(return_value=[])
+        done.get_function_responses = MagicMock(return_value=[])
+        done.custom_data = None
+        done.long_running_tool_ids = []
+        done.invocation_id = "inv-1"
+
+        batches = [
+            [first, backend_result],
+            [second],
+            [done],
+        ]
+
+        class ScriptedRunner:
+            def __init__(self):
+                self.step = 0
+
+            async def run_async(self, *args, **kwargs):
+                events = batches[min(self.step, len(batches) - 1)]
+                self.step += 1
+                for event in events:
+                    yield event
+
+            async def close(self):
+                return
+
+        runner = ScriptedRunner()
+
+        def _hitl_input(run_id, tool_call_id, result_id):
+            return RunAgentInput(
+                thread_id=sample_input.thread_id,
+                run_id=run_id,
+                messages=[
+                    sample_input.messages[0],
+                    AssistantMessage(
+                        id=f"a-{tool_call_id}",
+                        role="assistant",
+                        content=None,
+                        tool_calls=[
+                            ToolCall(
+                                id=tool_call_id,
+                                function=FunctionCall(name="check_status", arguments="{}"),
+                            )
+                        ],
+                    ),
+                    ToolMessage(
+                        id=result_id,
+                        role="tool",
+                        content='{"ok": true}',
+                        tool_call_id=tool_call_id,
+                    ),
+                ],
+                context=sample_input.context,
+                state={},
+                tools=[],
+                forwarded_props={},
+            )
+
+        collected = []
+        extra = collect_patch if collect_patch is not None else patch.dict({})
+        with extra, patch.object(adk_agent, "_create_runner", return_value=runner):
+            async for event in adk_agent.run(sample_input):
+                collected.append(event)
+            async for event in adk_agent.run(_hitl_input("run-2", hitl_1, "t1")):
+                collected.append(event)
+            async for event in adk_agent.run(_hitl_input("run-3", hitl_2, "t2")):
+                collected.append(event)
+
+        type_and_id = [
+            (str(ev.type).split(".")[-1], getattr(ev, "tool_call_id", None))
+            for ev in collected
+        ]
+        starts = [tid for kind, tid in type_and_id if kind == "TOOL_CALL_START"]
+        results = [tid for kind, tid in type_and_id if kind == "TOOL_CALL_RESULT"]
+        assert backend_id in starts
+        assert hitl_1 in starts
+        assert hitl_2 in starts
+        if backend_id in results:
+            assert starts.index(backend_id) < [
+                i for i, (kind, tid) in enumerate(type_and_id)
+                if kind == "TOOL_CALL_RESULT" and tid == backend_id
+            ][0]
+
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("scenario", ["mixed", "nested"])
+    async def test_node_tool_lifecycle_with_real_runner(self, sample_input, scenario):
+        """Exercise real NodeTool execution, pending state, and nested resumes."""
+        import json
+
+        pytest.importorskip("google.adk.tools._node_tool", reason="Requires ADK >= 2.8")
+        if scenario == "nested":
+            # Tagged 2.8.0 lacks the upstream nested-resume fix used in #2674.
+            # That fix introduced this module; b0180620f includes it.
+            pytest.importorskip(
+                "google.adk.flows.llm_flows._resume_utils",
+                reason="Requires google/adk-python@6d1451806; see #2674",
+            )
+
+        from google.adk import Context as NodeContext, Event as NodeEvent
+        from google.adk.apps import App, ResumabilityConfig
+        from google.adk.events import RequestInput
+        from google.adk.models.base_llm import BaseLlm
+        from google.adk.models.llm_response import LlmResponse
+        from google.adk.tools._node_tool import NodeTool
+        from google.adk.workflow import Workflow, node
+        from google.genai import types
+        from pydantic import BaseModel
+        from ag_ui.core import (
+            AssistantMessage,
+            FunctionCall,
+            Tool,
+            ToolCall,
+            ToolMessage,
+        )
+
+        class Arguments(BaseModel):
+            description: str
+
+        received_answers = []
+
+        @node(rerun_on_resume=True)
+        def first_question(ctx: NodeContext):
+            answer = ctx.resume_inputs.get("q_one")
+            if answer is None:
+                yield RequestInput(interrupt_id="q_one", message="First answer?")
+                return
+            received_answers.append(("q_one", answer))
+            yield NodeEvent(state={"first": answer})
+
+        @node(rerun_on_resume=True)
+        def second_question(ctx: NodeContext):
+            answer = ctx.resume_inputs.get("q_two")
+            if answer is None:
+                yield RequestInput(interrupt_id="q_two", message="Second answer?")
+                return
+            received_answers.append(("q_two", answer))
+            yield NodeEvent(state={"second": answer})
+
+        def finish(ctx: NodeContext):
+            if scenario == "nested":
+                yield NodeEvent(
+                    output={
+                        "first": ctx.state["first"],
+                        "second": ctx.state["second"],
+                    }
+                )
+            else:
+                yield NodeEvent(output={"category": "goods"})
+
+        class ScriptedModel(BaseLlm):
+            model: str = "local-regression-test"
+            calls: int = 0
+
+            async def generate_content_async(self, llm_request, stream=False):
+                self.calls += 1
+                parts = [types.Part(text="completed")]
+                if self.calls == 1:
+                    parts = [
+                        types.Part(
+                            function_call=types.FunctionCall(
+                                id="fc-1",
+                                name="classify",
+                                args={"description": "widget"},
+                            )
+                        )
+                    ]
+                    if scenario == "mixed":
+                        parts.append(
+                            types.Part(
+                                function_call=types.FunctionCall(
+                                    id="client-1",
+                                    name="check_status",
+                                    args={},
+                                )
+                            )
+                        )
+                yield LlmResponse(content=types.Content(role="model", parts=parts))
+
+        edges = [("START", first_question, second_question, finish)]
+        if scenario == "mixed":
+            edges = [("START", finish)]
+        workflow = Workflow(
+            name="classification",
+            description="Classify an item.",
+            input_schema=Arguments,
+            edges=edges,
+        )
+        model = ScriptedModel()
+        root = Agent(
+            name="coordinator",
+            model=model,
+            tools=[NodeTool(workflow, name="classify"), AGUIToolset()],
+        )
+        middleware = ADKAgent.from_app(
+            App(
+                name="node_tool_regression",
+                root_agent=root,
+                resumability_config=ResumabilityConfig(is_resumable=True),
+            ),
+            user_id="test_user",
+            use_in_memory_services=True,
+        )
+        frontend_tools = [
+            Tool(
+                name="check_status",
+                description="Ask the user for status.",
+                parameters={"type": "object", "properties": {}},
+            )
+        ]
+        answers = {
+            "q_one": {"text": "alpha"},
+            "q_two": {"text": "beta"},
+            "client-1": {"ok": True},
+        }
+        expected_pending = [["q_one"], ["q_two"], []]
+        if scenario == "mixed":
+            expected_pending = [["client-1"], []]
+        history = list(sample_input.messages)
+        all_events = []
+
+        async def run_turn(turn):
+            return [
+                event
+                async for event in middleware.run(
+                    RunAgentInput(
+                        thread_id=sample_input.thread_id,
+                        run_id=f"run-{turn}",
+                        messages=list(history),
+                        tools=frontend_tools,
+                        context=[],
+                        state={},
+                        forwarded_props={},
+                    )
+                )
+            ]
+
+        for turn, pending in enumerate(expected_pending):
+            events = await asyncio.wait_for(run_turn(turn), timeout=30)
+            assert not [e for e in events if e.type == EventType.RUN_ERROR]
+            assert events[-1].type == EventType.RUN_FINISHED
+            assert set(
+                await middleware._get_pending_tool_call_ids(
+                    sample_input.thread_id,
+                    "test_user",
+                )
+            ) == set(pending)
+            all_events.extend(events)
+
+            calls = [
+                ToolCall(
+                    id=e.tool_call_id,
+                    function=FunctionCall(
+                        name=e.tool_call_name,
+                        arguments="".join(
+                            arg.delta
+                            for arg in events
+                            if arg.type == EventType.TOOL_CALL_ARGS
+                            and arg.tool_call_id == e.tool_call_id
+                        )
+                        or "{}",
+                    ),
+                )
+                for e in events
+                if e.type == EventType.TOOL_CALL_START
+            ]
+            assert set(pending) <= {call.id for call in calls}
+            if calls:
+                history.append(
+                    AssistantMessage(
+                        id=f"assistant-{turn}",
+                        role="assistant",
+                        tool_calls=calls,
+                    )
+                )
+            for event in events:
+                if event.type == EventType.TOOL_CALL_RESULT:
+                    history.append(
+                        ToolMessage(
+                            id=f"result-{turn}-{event.tool_call_id}",
+                            role="tool",
+                            tool_call_id=event.tool_call_id,
+                            content=event.content,
+                        )
+                    )
+            for call_id in pending:
+                history.append(
+                    ToolMessage(
+                        id=f"answer-{turn}",
+                        role="tool",
+                        tool_call_id=call_id,
+                        content=json.dumps(answers[call_id]),
+                    )
+                )
+
+        backend_events = [
+            event
+            for event in all_events
+            if getattr(event, "tool_call_id", None) == "fc-1"
+        ]
+        assert [event.type for event in backend_events] == [
+            EventType.TOOL_CALL_START,
+            EventType.TOOL_CALL_ARGS,
+            EventType.TOOL_CALL_END,
+            EventType.TOOL_CALL_RESULT,
+        ]
+        expected_result = {"category": "goods"}
+        if scenario == "nested":
+            # ADK may replay completed nodes; every visit must get the right answer.
+            assert {name for name, _ in received_answers} == {"q_one", "q_two"}
+            assert all(answer == answers[name] for name, answer in received_answers)
+            expected_result = {"first": answers["q_one"], "second": answers["q_two"]}
+        assert json.loads(backend_events[-1].content) == expected_result
+        assert (
+            "".join(e.delta for e in events if e.type == EventType.TEXT_MESSAGE_CONTENT)
+            == "completed"
+        )
+        assert model.calls == 2
