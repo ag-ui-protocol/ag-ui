@@ -1,4 +1,5 @@
 import { Tool } from "@ag-ui/client";
+import type { A2UIMiddlewareConfig } from "./types";
 
 /**
  * Tool name for the structured render_a2ui tool
@@ -9,6 +10,21 @@ export const RENDER_A2UI_TOOL_NAME = "render_a2ui";
  * Tool name for logging A2UI events (synthetic, used for context)
  */
 export const LOG_A2UI_EVENT_TOOL_NAME = "log_a2ui_event";
+
+/** Live interception and history must recognize the same injected tool. */
+export function resolveA2UIToolNames(
+  config: A2UIMiddlewareConfig,
+): Set<string> {
+  const names = new Set(config.a2uiToolNames ?? [RENDER_A2UI_TOOL_NAME]);
+  if (config.injectA2UITool) {
+    names.add(
+      typeof config.injectA2UITool === "string"
+        ? config.injectA2UITool
+        : RENDER_A2UI_TOOL_NAME,
+    );
+  }
+  return names;
+}
 
 /**
  * Tool definition for rendering A2UI surfaces.
@@ -31,14 +47,14 @@ export const RENDER_A2UI_TOOL: Tool = {
       components: {
         type: "array",
         description:
-          "A2UI v0.9 component array (flat format). The root component must have id \"root\".",
+          'A2UI v0.9 component array (flat format). The root component must have id "root".',
         items: { type: "object" },
       },
       data: {
         type: "object",
         description:
           "Initial data model for the surface. Written to the root path. " +
-          "Use for pre-filling form values (e.g. {\"form\": {\"name\": \"Alice\"}}) " +
+          'Use for pre-filling form values (e.g. {"form": {"name": "Alice"}}) ' +
           "or providing data for components bound to data model paths.",
       },
     },

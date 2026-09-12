@@ -28,7 +28,7 @@
     "unlink:global": "pnpm unlink --global"
   },
   "peerDependencies": {
-    "@ag-ui/client": ">=0.0.40",
+    "@ag-ui/client": ">=0.0.42",
     "rxjs": "7.8.1"
   },
   "dependencies": {
@@ -43,5 +43,28 @@
     "tsup": "^8.0.2",
     "typescript": "^5.3.3",
     "vitest": "^2.0.0"
+  },
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    },
+    "./activity": {
+      "import": {
+        "types": "./dist/activity.d.mts",
+        "default": "./dist/activity.mjs"
+      },
+      "require": {
+        "types": "./dist/activity.d.ts",
+        "default": "./dist/activity.js"
+      }
+    },
+    "./package.json": "./package.json"
   }
 }

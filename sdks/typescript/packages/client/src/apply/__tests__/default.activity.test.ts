@@ -431,7 +431,8 @@ describe("MESSAGES_SNAPSHOT preserves client-only messages", () => {
   it("preserves activity position when a message ID changes in snapshot", async () => {
     // Simulates the real-world scenario: streaming creates a tool message with ID "tool-stream",
     // but MESSAGES_SNAPSHOT has the same tool message with a different canonical ID "tool-canon".
-    // The activity stays in its original position; the renamed message is appended as new.
+    // The canonical tool result stays before the final answer; the activity
+    // remains anchored before that same final answer.
     const msgs = await applySnapshot(
       [
         { id: "m1", role: "user", content: "create a dashboard" },
@@ -453,7 +454,7 @@ describe("MESSAGES_SNAPSHOT preserves client-only messages", () => {
       ],
     );
 
-    expect(msgs.map((m) => m.id)).toEqual(["m1", "asst-1", "act-1", "asst-2", "tool-canon"]);
+    expect(msgs.map((m) => m.id)).toEqual(["m1", "asst-1", "tool-canon", "act-1", "asst-2"]);
   });
 });
 
@@ -801,3 +802,95 @@ describe("REASONING_MESSAGE_* against an activity message's id", () => {
     expect(reasoning.content).toBe("thinking");
   });
 });
+
+it("anchors foreign activities when an owner replaces its authoritative activity set", async () => {
+  const user: Message = { id: "u", role: "user", content: "prompt" };
+  const answer: Message = { id: "a", role: "assistant", content: "answer" };
+  const foreign: Message = { id: "foreign", role: "activity", activityType: "other", content: {} };
+  const owned: Message = {
+    id: "owned",
+    role: "activity",
+    activityType: "a2ui-surface",
+    content: {},
+  };
+  const updates = await emitAndCollect([user, foreign, answer], (events) => {
+    events.next({
+      type: EventType.MESSAGES_SNAPSHOT,
+      messages: [user, owned, answer],
+      metadata: { "@ag-ui/client": { authoritativeActivityTypes: ["a2ui-surface"] } },
+    });
+  });
+  expect(updates.at(-1)?.messages?.map((message) => message.id)).toEqual([
+    "u",
+    "owned",
+    "foreign",
+    "a",
+  ]);
+});
+
+it("takes canonical tool-result order from an unmarked snapshot", async () => {
+  const user: Message = { id: "u", role: "user", content: "apply" };
+  const toolCall: Message = {
+    id: "call",
+    role: "assistant",
+    toolCalls: [
+      {
+        id: "tool-call",
+        type: "function",
+        function: { name: "apply", arguments: "{}" },
+      },
+    ],
+  };
+  const result: Message = {
+    id: "result-canonical",
+    role: "tool",
+    toolCallId: "tool-call",
+    content: "done",
+  };
+  const answer: Message = { id: "answer", role: "assistant", content: "Applied." };
+  const snapshot: Message[] = [user, toolCall, result, answer];
+
+  const messages = await applySnapshot(
+    [user, toolCall, { ...result, id: "result-browser" }, answer],
+    snapshot,
+  );
+
+  expect(messages).toEqual(snapshot);
+  expect(await applySnapshot(messages, snapshot)).toEqual(snapshot);
+});
+
+it.each([
+  { scope: null, expected: [] },
+  { scope: [], expected: ["file", "surface"] },
+  { scope: ["a2ui-surface"], expected: ["file"] },
+])(
+  "reconciles empty snapshots with explicit authority $scope",
+  async ({ scope, expected }) => {
+    const previous: Message[] = [
+      {
+        id: "file",
+        role: "activity",
+        activityType: "dsh-deliverables",
+        content: {},
+      },
+      {
+        id: "surface",
+        role: "activity",
+        activityType: "a2ui-surface",
+        content: {},
+      },
+    ];
+    const updates = await emitAndCollect(previous, (events) => {
+      events.next({
+        type: EventType.MESSAGES_SNAPSHOT,
+        messages: [],
+        metadata: {
+          "@ag-ui/client": { authoritativeActivityTypes: scope },
+        },
+      });
+    });
+    expect(updates.at(-1)?.messages?.map((message) => message.id)).toEqual(
+      expected,
+    );
+  },
+);
