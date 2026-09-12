@@ -1613,7 +1613,9 @@ export function buildSnapshotMessages(
       const user: AguiUserMessage = {
         id: msgId,
         role: "user",
-        content: _coerceText(msg.content),
+        content: Array.isArray(msg.content)
+          ? msg.content
+          : _coerceText(msg.content),
       };
       const userMetadata = _carriedMetadata(msg);
       if (userMetadata) user.metadata = userMetadata;

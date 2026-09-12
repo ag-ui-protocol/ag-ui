@@ -111,11 +111,11 @@ value that has to differ per thread, build it in
 `StrandsAgentConfig.thread_agent_kwargs`, which runs per request and wins over
 both routes above.
 
-| Scenario                                                | Support boundary                                                                                                                                                        |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `hooks=[...]`                                           | Supported on every release this package supports.                                                                                                                        |
-| `plugins=[...]`                                         | Requires `strands-agents >= 1.28.0`, the release that added `plugins` to `Agent`. On an older release the wrapper raises `TypeError` when it is constructed, not on the first request. |
-| `hooks` / `plugins` with a multi-agent orchestrator     | Ignored. An orchestrator is invoked directly, so there is no per-thread agent to attach them to.                                                                          |
+| Scenario                                            | Support boundary                                                                                                                                                                       |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hooks=[...]`                                       | Supported on every release this package supports.                                                                                                                                      |
+| `plugins=[...]`                                     | Requires `strands-agents >= 1.28.0`, the release that added `plugins` to `Agent`. On an older release the wrapper raises `TypeError` when it is constructed, not on the first request. |
+| `hooks` / `plugins` with a multi-agent orchestrator | Ignored. An orchestrator is invoked directly, so there is no per-thread agent to attach them to.                                                                                       |
 
 ## Key Files
 
@@ -531,6 +531,15 @@ transport would resolve the host again at connection time.
 
 A run whose media all fail conversion with no text fallback ends with
 `RUN_ERROR` under `MEDIA_RESOLUTION_FAILED`.
+
+When an attachment is dropped, the run emits a `CUSTOM` event named
+`MediaDropped` before invoking the model or reporting that terminal error.
+Its `value` contains `dropped` entries with `type` and `reason`, plus the number
+of successfully converted attachments in `delivered`. Reasons distinguish
+unsupported or malformed MIME types, empty content, and unresolved sources.
+Text that survives conversion can still reach the model. Drop details do not
+include attachment bytes or source URLs, and message snapshots retain the
+original user attachment parts for display.
 
 ## Supported AG-UI Events
 
