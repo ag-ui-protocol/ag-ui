@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.ag-ui.community</groupId>
+        <artifactId>ag-ui-spring-boot-parent</artifactId>
+        <version>4.1.0</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>ag-ui-spring-server-core</artifactId>
+
+    <name>ag-ui-spring-server-core</name>
+    <description>Shared serialization and routing support for the AG-UI Spring server modules</description>
+
+    <!-- The Spring Boot BOM (pinning the Jackson version this module uses) is
+         imported by the parent reactor. This module has no Spring dependency. -->
+    <dependencies>
+        <dependency>
+            <groupId>com.ag-ui.community</groupId>
+            <artifactId>java-server</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+    </dependencies>
+</project>

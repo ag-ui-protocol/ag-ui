@@ -56,6 +56,8 @@ on:
           - integration-mastra
           - integration-pydantic-ai
           - integration-spring-ai
+          - integration-spring-ai-java
+          - integration-spring-boot-java
           - integration-watsonx-py
           - integration-watsonx-ts
           - middleware-a2a

@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.ag-ui.community</groupId>
+        <artifactId>ag-ui-spring-ai-parent</artifactId>
+        <version>2.0.0</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>ag-ui-spring-ai-spring-boot-starter</artifactId>
+
+    <name>ag-ui-spring-ai-spring-boot-starter</name>
+    <description>Spring Boot starter that exposes a Spring AI ChatModel as an AG-UI agent</description>
+
+    <!--
+      Combines the Spring AI agent adapter with the AG-UI server endpoint and
+      adds auto-configuration that registers a SpringAiAgent from any ChatModel
+      bean. Add this starter and a ChatModel to get a working AG-UI endpoint with
+      no code.
+    -->
+    <dependencies>
+        <dependency>
+            <groupId>com.ag-ui.community</groupId>
+            <artifactId>ag-ui-spring-ai</artifactId>
+        </dependency>
+        <!--
+          The WebFlux AG-UI server: provides the auto-configured /agent SSE endpoint
+          (AgUiServerAutoConfiguration) and, via spring-boot-starter-webflux, the
+          embedded reactive web server. Part of the spring-boot server line; its
+          version is managed by the parent reactor.
+        -->
+        <dependency>
+            <groupId>com.ag-ui.community</groupId>
+            <artifactId>ag-ui-spring-webflux-server</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-autoconfigure</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>
