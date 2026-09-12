@@ -35,6 +35,9 @@ test.describe("Shared State Feature", () => {
     await page.goto("/langgraph-fastapi/feature/shared_state");
 
     await sharedStateAgent.openChat();
+    // Wait for the runtime-backed agent to replace the provisional agent before
+    // editing shared state, so the graph observes the same recipe as the UI.
+    await sharedStateAgent.awaitAgentReady();
 
     // Add new ingredient via UI
     await sharedStateAgent.addIngredient.click();

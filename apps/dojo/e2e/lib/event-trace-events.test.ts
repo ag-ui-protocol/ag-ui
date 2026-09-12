@@ -46,6 +46,109 @@ test("ignores empty SSE data frames", () => {
   assert.deepEqual(events, [{ type: "RUN_STARTED" }]);
 });
 
+test("removes transport rawEvent payloads without touching application state", () => {
+  assert.deepEqual(
+    normalizeEventTrace([
+      {
+        type: "STATE_SNAPSHOT",
+        snapshot: {
+          count: 1,
+          rawEvent: { applicationOwned: true },
+        },
+        rawEvent: {
+          event: "values",
+          data: { transportOnly: true },
+        },
+      },
+    ]),
+    [
+      {
+        type: "STATE_SNAPSHOT",
+        snapshot: {
+          count: 1,
+          rawEvent: { applicationOwned: true },
+        },
+      },
+    ],
+  );
+});
+
+test("preserves transport-looking field names inside application state", () => {
+  const applicationState = {
+    rawEvent: {
+      id: "chatcmpl-application-value",
+      response_metadata: { created_at: 123 },
+      metadata: { lc_versions: { application: "keep" } },
+    },
+    LANGSMITH_PROJECT: "customer-owned",
+    langgraph_version: "customer-owned",
+    langgraph_auth_user_id: "customer-owned",
+  };
+
+  assert.deepEqual(
+    normalizeEventTrace([
+      { type: "STATE_SNAPSHOT", snapshot: applicationState },
+    ]),
+    [{ type: "STATE_SNAPSHOT", snapshot: applicationState }],
+  );
+});
+
+test("collapses identical state snapshot pulses until state changes", () => {
+  const repeatedSnapshot = {
+    type: "STATE_SNAPSHOT",
+    snapshot: { count: 1 },
+  };
+  const stateDelta = {
+    type: "STATE_DELTA",
+    delta: [{ op: "replace", path: "/count", value: 1 }],
+  };
+
+  assert.deepEqual(
+    normalizeEventTrace([
+      repeatedSnapshot,
+      { type: "STEP_STARTED", stepName: "model" },
+      repeatedSnapshot,
+      stateDelta,
+      repeatedSnapshot,
+      repeatedSnapshot,
+      { type: "STATE_SNAPSHOT", snapshot: { count: 2 } },
+    ]),
+    [
+      repeatedSnapshot,
+      { type: "STEP_STARTED", stepName: "model" },
+      stateDelta,
+      repeatedSnapshot,
+      { type: "STATE_SNAPSHOT", snapshot: { count: 2 } },
+    ],
+  );
+});
+
+test("keeps identical snapshots from separate runs", () => {
+  const repeatedSnapshot = {
+    type: "STATE_SNAPSHOT",
+    snapshot: { count: 1 },
+  };
+
+  assert.deepEqual(
+    normalizeEventTrace([
+      { type: "RUN_STARTED", runId: "first" },
+      repeatedSnapshot,
+      { type: "RUN_FINISHED", runId: "first" },
+      { type: "RUN_STARTED", runId: "second" },
+      repeatedSnapshot,
+      { type: "RUN_FINISHED", runId: "second" },
+    ]).map(({ type }) => type),
+    [
+      "RUN_STARTED",
+      "STATE_SNAPSHOT",
+      "RUN_FINISHED",
+      "RUN_STARTED",
+      "STATE_SNAPSHOT",
+      "RUN_FINISHED",
+    ],
+  );
+});
+
 test("normalizes generated identities while retaining their relationships", () => {
   const normalized = normalizeEventTrace([
     {
@@ -95,56 +198,91 @@ test("normalizes subagent run identities while preserving their namespace and re
   const subagentRunId = "tools:fdecf438-f47b-2e18-3753-b24a141985c2";
   const parentToolCallId = "call_7ctR-vROo_NGnX-w";
 
-  assert.deepEqual(
-    normalizeEventTrace([
-      {
-        type: "TOOL_CALL_START",
-        toolCallId: parentToolCallId,
-        toolCallName: "task",
-      },
-      {
-        type: "SUBAGENT_STARTED",
-        subagentRunId,
-        subagentId: "research-agent",
-        parentToolCallId,
-      },
-      {
-        type: "SUBAGENT_FINISHED",
-        subagentRunId,
-        outcome: { interruptIds: ["generated-interrupt"] },
-      },
-    ]),
-    [
-      {
-        type: "TOOL_CALL_START",
-        toolCallId: "id-1",
-        toolCallName: "task",
-      },
-      {
-        type: "SUBAGENT_STARTED",
-        subagentRunId: "tools:id-2",
-        subagentId: "research-agent",
-        parentToolCallId: "id-1",
-      },
-      {
-        type: "SUBAGENT_FINISHED",
-        subagentRunId: "tools:id-2",
-        outcome: { interruptIds: ["id-3"] },
-      },
-    ],
-  );
+  const events = [
+    {
+      type: "TOOL_CALL_START",
+      toolCallId: parentToolCallId,
+      toolCallName: "task",
+    },
+    {
+      type: "SUBAGENT_STARTED",
+      subagentRunId,
+      subagentId: "research-agent",
+      parentToolCallId,
+    },
+    {
+      type: "SUBAGENT_FINISHED",
+      subagentRunId,
+      outcome: { interruptIds: ["generated-interrupt"] },
+    },
+  ];
+
+  assert.deepEqual(normalizeEventTrace(events), [
+    {
+      type: "TOOL_CALL_START",
+      toolCallId: "id-1",
+      toolCallName: "task",
+    },
+    {
+      type: "SUBAGENT_STARTED",
+      subagentRunId: "tools:id-2",
+      subagentId: "research-agent",
+      parentToolCallId: "id-1",
+    },
+    {
+      type: "SUBAGENT_FINISHED",
+      subagentRunId: "tools:id-2",
+      outcome: { interruptIds: ["id-3"] },
+    },
+  ]);
+
+  const normalized = normalizeEventTrace(events);
+  assert.deepEqual(normalizeEventTrace(normalized), normalized);
 });
 
-test("normalizes LangGraph and model identities only in captured test traces", () => {
+test("renumbers embedded and plain canonical identities together", () => {
+  const normalized = normalizeEventTrace([
+    {
+      type: "SUBAGENT_STARTED",
+      subagentRunId: "tools:id-7",
+      parentToolCallId: "id-4",
+    },
+    {
+      type: "SUBAGENT_FINISHED",
+      subagentRunId: "tools:id-7",
+      parentToolCallId: "id-4",
+    },
+    {
+      type: "TEXT_MESSAGE_START",
+      messageId: "generated-message",
+    },
+  ]);
+
+  assert.deepEqual(normalized, [
+    {
+      type: "SUBAGENT_STARTED",
+      subagentRunId: "tools:id-1",
+      parentToolCallId: "id-2",
+    },
+    {
+      type: "SUBAGENT_FINISHED",
+      subagentRunId: "tools:id-1",
+      parentToolCallId: "id-2",
+    },
+    {
+      type: "TEXT_MESSAGE_START",
+      messageId: "id-3",
+    },
+  ]);
+  assert.deepEqual(normalizeEventTrace(normalized), normalized);
+});
+
+test("normalizes application identities without retaining transport payloads", () => {
   const runId = "019fff57-a2dc-76a8-9006-130a727563d9";
   const threadId = "cbf4e664-85d5-48fe-9c3e-f9f6e47102d1";
   // LangGraph checkpoint IDs are UUID-shaped but do not always carry RFC
   // version/variant bits, so identity normalization must accept the shape.
   const checkpointId = "f80e7e50-053d-ad30-c895-22300a175b85";
-  const requestId = "d1642ee1-80e8-4b3e-888d-202c3789c86f";
-  const appContext =
-    'App Context:\n{\n  "copilotkit_forwarded_headers": {\n    "x-forwarded-for": "::1",\n    "x-forwarded-host": "localhost:8989",\n    "x-forwarded-port": "8989",\n    "x-forwarded-proto": "http"\n  }\n}';
-
   const normalized = normalizeEventTrace([
     {
       type: "STATE_SNAPSHOT",
@@ -165,50 +303,9 @@ test("normalizes LangGraph and model identities only in captured test traces", (
         },
       },
       rawEvent: {
-        id: "a68f556f0c36f00a4bb3c6bb7d75225f",
-        data: {
-          run_id: runId,
-          chunk: { id: "chatcmpl-generated-at-runtime", content: "hello" },
-          output: { id: "chatcmpl-generated-at-runtime", content: "hello" },
-          metadata: {
-            thread_id: threadId,
-            run_id: runId,
-            langgraph_request_id: requestId,
-            parent_ids: [runId, requestId],
-            langgraph_api_url: "http://127.0.0.1:8985",
-            langgraph_version: "1.3.0",
-            langgraph_api_version: "0.7.96",
-            graph_id: "semantic-agent-id",
-            langgraph_checkpoint_ns: `agent:${checkpointId}:tools`,
-            checkpoint_ns: checkpointId,
-          },
-          model_chunk: {
-            content: [{ type: "reasoning", id: "msg-generated" }],
-            response_metadata: {
-              created_at: 1_786_713_411,
-              model_provider: "openai",
-            },
-            tool_call_chunks: [{ id: "call_generated", name: "lookup" }],
-          },
-        },
-      },
-    },
-    {
-      type: "STATE_SNAPSHOT",
-      rawEvent: {
-        data: [
-          {
-            id: "chatcmpl-generated-at-runtime",
-            type: "ai",
-            content: "hello",
-            response_metadata: { model_provider: "openai" },
-          },
-          {
-            id: "5325dca2-a9cd-4eef-82fb-78a2f1723278",
-            type: "system",
-            content: appContext,
-          },
-        ],
+        run_id: runId,
+        thread_id: threadId,
+        checkpoint_id: checkpointId,
       },
     },
   ]);
@@ -229,55 +326,11 @@ test("normalizes LangGraph and model identities only in captured test traces", (
           interceptedToolCalls: [{ id: "id-3", name: "lookup" }],
         },
       },
-      rawEvent: {
-        id: "id-4",
-        data: {
-          run_id: "id-5",
-          chunk: { id: "id-6", content: "hello" },
-          output: { id: "id-6", content: "hello" },
-          metadata: {
-            thread_id: "id-7",
-            run_id: "id-5",
-            langgraph_request_id: "id-8",
-            parent_ids: ["id-5", "id-8"],
-            langgraph_api_url: "<langgraph-api-url>",
-            langgraph_version: "<langgraph-version>",
-            langgraph_api_version: "<langgraph-api-version>",
-            graph_id: "semantic-agent-id",
-            langgraph_checkpoint_ns: "agent:id-9:tools",
-            checkpoint_ns: "id-9",
-          },
-          model_chunk: {
-            content: [{ type: "reasoning", id: "id-10" }],
-            response_metadata: { model_provider: "openai" },
-            tool_call_chunks: [{ id: "id-11", name: "lookup" }],
-          },
-        },
-      },
-    },
-    {
-      type: "STATE_SNAPSHOT",
-      rawEvent: {
-        data: [
-          {
-            id: "id-6",
-            type: "ai",
-            content: "hello",
-            response_metadata: { model_provider: "openai" },
-          },
-          {
-            id: "id-12",
-            type: "system",
-            content:
-              'App Context:\n{\n  "copilotkit_forwarded_headers": {\n    "x-forwarded-for": "<forwarded-for>",\n    "x-forwarded-host": "<forwarded-host>",\n    "x-forwarded-port": "<forwarded-port>",\n    "x-forwarded-proto": "<forwarded-proto>"\n  }\n}',
-          },
-        ],
-      },
     },
   ]);
 });
 
-test("orders adjacent LangGraph model-stream mirrors by their shared chunk identity", () => {
+test("ignores raw transport differences when collapsing adjacent snapshots", () => {
   const messageMirror = {
     type: "STATE_SNAPSHOT",
     rawEvent: {
@@ -305,7 +358,7 @@ test("orders adjacent LangGraph model-stream mirrors by their shared chunk ident
   );
 });
 
-test("collapses an exact LangGraph messages/events state mirror to the events representation", () => {
+test("collapses identical adjacent snapshots independently of raw transport metadata", () => {
   const snapshot = { messages: [{ id: "message-id", role: "assistant" }] };
   const chunk = {
     id: "chunk-id",
@@ -339,7 +392,7 @@ test("collapses an exact LangGraph messages/events state mirror to the events re
   );
 });
 
-test("collapses an exact LangGraph mirror when another event separates it", () => {
+test("collapses identical separated snapshots independently of raw transport metadata", () => {
   const snapshot = { messages: [{ id: "message-id", role: "assistant" }] };
   const chunk = { id: "chunk-id", content: "hello" };
   const messageMirror = {
@@ -366,11 +419,19 @@ test("collapses an exact LangGraph mirror when another event separates it", () =
 
   assert.deepEqual(
     normalizeEventTrace([messageMirror, separator, eventMirror]),
-    normalizeEventTrace([separator, eventMirror]),
+    normalizeEventTrace([messageMirror, separator]),
+  );
+  assert.deepEqual(
+    normalizeEventTrace([messageMirror, separator, eventMirror]),
+    normalizeEventTrace([
+      { type: "STATE_SNAPSHOT", snapshot },
+      separator,
+      { type: "STATE_SNAPSHOT", snapshot },
+    ]),
   );
 });
 
-test("collapses LangGraph messages/events mirrors one-to-one", () => {
+test("collapses repeated snapshots independently of how many raw mirrors arrive", () => {
   const snapshot = { messages: [{ id: "message-id", role: "assistant" }] };
   const chunk = { id: "chunk-id", content: "hello" };
   const messageMirror = {
@@ -396,11 +457,11 @@ test("collapses LangGraph messages/events mirrors one-to-one", () => {
 
   assert.equal(
     normalizeEventTrace([eventMirror, messageMirror, messageMirror]).length,
-    2,
+    1,
   );
 });
 
-test("preserves repeated snapshots unless both snapshot and mirrored model chunk match", () => {
+test("collapses repeated semantic snapshots after raw mirror differences are removed", () => {
   const snapshot = { count: 1 };
   const messageMirror = {
     type: "STATE_SNAPSHOT",
@@ -439,13 +500,13 @@ test("preserves repeated snapshots unless both snapshot and mirrored model chunk
 
   assert.equal(
     normalizeEventTrace([messageMirror, eventWithDifferentChunk]).length,
-    2,
+    1,
   );
   assert.equal(
     normalizeEventTrace([messageMirror, eventWithDifferentSnapshot]).length,
     2,
   );
-  assert.equal(normalizeEventTrace([ordinaryRepeat, ordinaryRepeat]).length, 2);
+  assert.equal(normalizeEventTrace([ordinaryRepeat, ordinaryRepeat]).length, 1);
 });
 
 test("preserves the order of different snapshots sharing a model message ID", () => {
@@ -531,38 +592,7 @@ test("retains the complete SSE response when a data frame is malformed", () => {
   );
 });
 
-test("drops auth-context metadata, whose presence varies by langgraph version", () => {
-  // Older langgraph stacks injected langgraph_auth_user_id: "" with no auth
-  // configured; newer ones omit the keys entirely. A trace recorded on either
-  // must match the other.
-  const normalized = normalizeEventTrace([
-    {
-      type: "STATE_SNAPSHOT",
-      rawEvent: {
-        data: {
-          metadata: {
-            graph_id: "agentic_chat",
-            langgraph_step: 1,
-            langgraph_auth_user: null,
-            langgraph_auth_user_id: "",
-            langgraph_auth_permissions: [],
-          },
-        },
-      },
-    },
-  ]);
-  const bare = normalizeEventTrace([
-    {
-      type: "STATE_SNAPSHOT",
-      rawEvent: {
-        data: { metadata: { graph_id: "agentic_chat", langgraph_step: 1 } },
-      },
-    },
-  ]);
-  assert.deepStrictEqual(normalized, bare);
-});
-
-test("drops LangChain version metadata from raw events", () => {
+test("retains application version data while discarding raw metadata", () => {
   const normalized = normalizeEventTrace([
     {
       type: "STATE_SNAPSHOT",
@@ -583,54 +613,20 @@ test("drops LangChain version metadata from raw events", () => {
     {
       type: "STATE_SNAPSHOT",
       snapshot: { lc_versions: { application: "keep-me" } },
-      rawEvent: { metadata: { graph_id: "agentic_chat" } },
-    },
-  ]);
-});
-
-test("drops LangSmith tracing env metadata, whose presence varies by environment", () => {
-  // `langgraph dev` always exports LANGSMITH_LANGGRAPH_API_VARIANT=local_dev,
-  // but it only reaches run metadata when a LangSmith key enabled tracing.
-  // A trace recorded without a key must still match one recorded with it.
-  const normalized = normalizeEventTrace([
-    {
-      type: "STATE_SNAPSHOT",
-      rawEvent: {
-        data: {
-          metadata: {
-            graph_id: "agentic_chat",
-            langgraph_step: 1,
-            LANGSMITH_LANGGRAPH_API_VARIANT: "local_dev",
-            LANGSMITH_PROJECT: "dojo",
-            LANGCHAIN_CALLBACKS_BACKGROUND: "true",
-          },
-        },
-      },
-    },
-  ]);
-
-  assert.deepEqual(normalized, [
-    {
-      type: "STATE_SNAPSHOT",
-      rawEvent: {
-        data: { metadata: { graph_id: "agentic_chat", langgraph_step: 1 } },
-      },
     },
   ]);
 });
 
 // The App Context envelope the normalizer emits: APP_CONTEXT_PREFIX followed by
-// 2-space JSON. Real traces carry it as a LangChain system message nested in
-// `rawEvent`, which is the shape these fixtures reproduce.
+// 2-space JSON. Keep these fixtures on the contractual messages surface rather
+// than the ignored transport payload.
 const appContextContent = (context: Record<string, unknown>) =>
   `App Context:\n${JSON.stringify(context, null, 2)}`;
 
 const systemMessageTrace = (...contents: readonly string[]) => [
   {
-    type: "STATE_SNAPSHOT",
-    rawEvent: {
-      data: contents.map((content) => ({ type: "system", content })),
-    },
+    type: "MESSAGES_SNAPSHOT",
+    messages: contents.map((content) => ({ role: "system", content })),
   },
 ];
 
