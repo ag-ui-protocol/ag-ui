@@ -1995,3 +1995,238 @@ class TestThreadIdSessionIdMapping:
                 if kind == "TOOL_CALL_RESULT" and tid == backend_id
             ][0]
 
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("scenario", ["mixed", "nested"])
+    async def test_node_tool_lifecycle_with_real_runner(self, sample_input, scenario):
+        """Exercise real NodeTool execution, pending state, and nested resumes."""
+        import json
+
+        pytest.importorskip("google.adk.tools._node_tool", reason="Requires ADK >= 2.8")
+        if scenario == "nested":
+            # Tagged 2.8.0 lacks the upstream nested-resume fix used in #2674.
+            # That fix introduced this module; b0180620f includes it.
+            pytest.importorskip(
+                "google.adk.flows.llm_flows._resume_utils",
+                reason="Requires google/adk-python@6d1451806; see #2674",
+            )
+
+        from google.adk import Context as NodeContext, Event as NodeEvent
+        from google.adk.apps import App, ResumabilityConfig
+        from google.adk.events import RequestInput
+        from google.adk.models.base_llm import BaseLlm
+        from google.adk.models.llm_response import LlmResponse
+        from google.adk.tools._node_tool import NodeTool
+        from google.adk.workflow import Workflow, node
+        from google.genai import types
+        from pydantic import BaseModel
+        from ag_ui.core import (
+            AssistantMessage,
+            FunctionCall,
+            Tool,
+            ToolCall,
+            ToolMessage,
+        )
+
+        class Arguments(BaseModel):
+            description: str
+
+        received_answers = []
+
+        @node(rerun_on_resume=True)
+        def first_question(ctx: NodeContext):
+            answer = ctx.resume_inputs.get("q_one")
+            if answer is None:
+                yield RequestInput(interrupt_id="q_one", message="First answer?")
+                return
+            received_answers.append(("q_one", answer))
+            yield NodeEvent(state={"first": answer})
+
+        @node(rerun_on_resume=True)
+        def second_question(ctx: NodeContext):
+            answer = ctx.resume_inputs.get("q_two")
+            if answer is None:
+                yield RequestInput(interrupt_id="q_two", message="Second answer?")
+                return
+            received_answers.append(("q_two", answer))
+            yield NodeEvent(state={"second": answer})
+
+        def finish(ctx: NodeContext):
+            if scenario == "nested":
+                yield NodeEvent(
+                    output={
+                        "first": ctx.state["first"],
+                        "second": ctx.state["second"],
+                    }
+                )
+            else:
+                yield NodeEvent(output={"category": "goods"})
+
+        class ScriptedModel(BaseLlm):
+            model: str = "local-regression-test"
+            calls: int = 0
+
+            async def generate_content_async(self, llm_request, stream=False):
+                self.calls += 1
+                parts = [types.Part(text="completed")]
+                if self.calls == 1:
+                    parts = [
+                        types.Part(
+                            function_call=types.FunctionCall(
+                                id="fc-1",
+                                name="classify",
+                                args={"description": "widget"},
+                            )
+                        )
+                    ]
+                    if scenario == "mixed":
+                        parts.append(
+                            types.Part(
+                                function_call=types.FunctionCall(
+                                    id="client-1",
+                                    name="check_status",
+                                    args={},
+                                )
+                            )
+                        )
+                yield LlmResponse(content=types.Content(role="model", parts=parts))
+
+        edges = [("START", first_question, second_question, finish)]
+        if scenario == "mixed":
+            edges = [("START", finish)]
+        workflow = Workflow(
+            name="classification",
+            description="Classify an item.",
+            input_schema=Arguments,
+            edges=edges,
+        )
+        model = ScriptedModel()
+        root = Agent(
+            name="coordinator",
+            model=model,
+            tools=[NodeTool(workflow, name="classify"), AGUIToolset()],
+        )
+        middleware = ADKAgent.from_app(
+            App(
+                name="node_tool_regression",
+                root_agent=root,
+                resumability_config=ResumabilityConfig(is_resumable=True),
+            ),
+            user_id="test_user",
+            use_in_memory_services=True,
+        )
+        frontend_tools = [
+            Tool(
+                name="check_status",
+                description="Ask the user for status.",
+                parameters={"type": "object", "properties": {}},
+            )
+        ]
+        answers = {
+            "q_one": {"text": "alpha"},
+            "q_two": {"text": "beta"},
+            "client-1": {"ok": True},
+        }
+        expected_pending = [["q_one"], ["q_two"], []]
+        if scenario == "mixed":
+            expected_pending = [["client-1"], []]
+        history = list(sample_input.messages)
+        all_events = []
+
+        async def run_turn(turn):
+            return [
+                event
+                async for event in middleware.run(
+                    RunAgentInput(
+                        thread_id=sample_input.thread_id,
+                        run_id=f"run-{turn}",
+                        messages=list(history),
+                        tools=frontend_tools,
+                        context=[],
+                        state={},
+                        forwarded_props={},
+                    )
+                )
+            ]
+
+        for turn, pending in enumerate(expected_pending):
+            events = await asyncio.wait_for(run_turn(turn), timeout=30)
+            assert not [e for e in events if e.type == EventType.RUN_ERROR]
+            assert events[-1].type == EventType.RUN_FINISHED
+            assert set(
+                await middleware._get_pending_tool_call_ids(
+                    sample_input.thread_id,
+                    "test_user",
+                )
+            ) == set(pending)
+            all_events.extend(events)
+
+            calls = [
+                ToolCall(
+                    id=e.tool_call_id,
+                    function=FunctionCall(
+                        name=e.tool_call_name,
+                        arguments="".join(
+                            arg.delta
+                            for arg in events
+                            if arg.type == EventType.TOOL_CALL_ARGS
+                            and arg.tool_call_id == e.tool_call_id
+                        )
+                        or "{}",
+                    ),
+                )
+                for e in events
+                if e.type == EventType.TOOL_CALL_START
+            ]
+            assert set(pending) <= {call.id for call in calls}
+            if calls:
+                history.append(
+                    AssistantMessage(
+                        id=f"assistant-{turn}",
+                        role="assistant",
+                        tool_calls=calls,
+                    )
+                )
+            for event in events:
+                if event.type == EventType.TOOL_CALL_RESULT:
+                    history.append(
+                        ToolMessage(
+                            id=f"result-{turn}-{event.tool_call_id}",
+                            role="tool",
+                            tool_call_id=event.tool_call_id,
+                            content=event.content,
+                        )
+                    )
+            for call_id in pending:
+                history.append(
+                    ToolMessage(
+                        id=f"answer-{turn}",
+                        role="tool",
+                        tool_call_id=call_id,
+                        content=json.dumps(answers[call_id]),
+                    )
+                )
+
+        backend_events = [
+            event
+            for event in all_events
+            if getattr(event, "tool_call_id", None) == "fc-1"
+        ]
+        assert [event.type for event in backend_events] == [
+            EventType.TOOL_CALL_START,
+            EventType.TOOL_CALL_ARGS,
+            EventType.TOOL_CALL_END,
+            EventType.TOOL_CALL_RESULT,
+        ]
+        expected_result = {"category": "goods"}
+        if scenario == "nested":
+            # ADK may replay completed nodes; every visit must get the right answer.
+            assert {name for name, _ in received_answers} == {"q_one", "q_two"}
+            assert all(answer == answers[name] for name, answer in received_answers)
+            expected_result = {"first": answers["q_one"], "second": answers["q_two"]}
+        assert json.loads(backend_events[-1].content) == expected_result
+        assert (
+            "".join(e.delta for e in events if e.type == EventType.TEXT_MESSAGE_CONTENT)
+            == "completed"
+        )
+        assert model.calls == 2
