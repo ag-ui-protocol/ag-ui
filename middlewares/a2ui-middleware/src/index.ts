@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   Middleware,
   RunAgentInput,
@@ -257,10 +257,12 @@ export class A2UIMiddleware extends Middleware {
       return input;
     }
 
-    // Generate IDs for the synthetic messages
-    const assistantMessageId = randomUUID();
-    const toolCallId = randomUUID();
-    const toolMessageId = randomUUID();
+    // Hash the run identity to keep retries stable and synthetic IDs bounded.
+    // A new click starts a new run, even when its payload is unchanged.
+    const actionId = createHash("sha256").update(input.runId).digest("hex");
+    const assistantMessageId = `a2ui-action-assistant-${actionId}`;
+    const toolCallId = `a2ui-action-call-${actionId}`;
+    const toolMessageId = `a2ui-action-result-${actionId}`;
 
     // Create synthetic assistant message with tool call
     const syntheticAssistantMessage: AssistantMessage = {
