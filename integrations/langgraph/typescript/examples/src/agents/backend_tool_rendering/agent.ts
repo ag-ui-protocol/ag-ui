@@ -5,12 +5,20 @@
 import { ChatOpenAI } from "@langchain/openai";
 import { SystemMessage } from "@langchain/core/messages";
 import { RunnableConfig } from "@langchain/core/runnables";
-import { Annotation, MessagesAnnotation, StateGraph, Command, START, END } from "@langchain/langgraph";
+import {
+  Annotation,
+  MessagesAnnotation,
+  StateGraph,
+  Command,
+  START,
+  END,
+} from "@langchain/langgraph";
+import { aguiTransformer } from "@ag-ui/langgraph/transformer";
 
 const AgentStateAnnotation = Annotation.Root({
   tools: Annotation<any[]>({
     reducer: (x, y) => y ?? x,
-    default: () => []
+    default: () => [],
   }),
   ...MessagesAnnotation.spec,
 });
@@ -25,13 +33,13 @@ async function chatNode(state: AgentState, config?: RunnableConfig) {
    * - Getting a response from the model
    * - Handling tool calls
    *
-   * For more about the ReAct design pattern, see: 
+   * For more about the ReAct design pattern, see:
    * https://www.perplexity.ai/search/react-agents-NcXLQhreS0WDzpVaS4m9Cg
    */
-  
+
   // 1. Define the model
   const model = new ChatOpenAI({ model: "gpt-4o" });
-  
+
   // Define config for the model
   if (!config) {
     config = { recursionLimit: 25 };
@@ -48,33 +56,35 @@ async function chatNode(state: AgentState, config?: RunnableConfig) {
       //     enable this for faster performance if you want to manage
       //     the complexity of running tool calls in parallel.
       parallel_tool_calls: false,
-    }
+    },
   );
 
   // 3. Define the system message by which the chat model will be run
   const systemMessage = new SystemMessage({
-    content: "You are a helpful assistant."
+    content: "You are a helpful assistant.",
   });
 
   // 4. Run the model to generate a response
-  const response = await modelWithTools.invoke([
-    systemMessage,
-    ...state.messages,
-  ], config);
+  const response = await modelWithTools.invoke(
+    [systemMessage, ...state.messages],
+    config,
+  );
 
   // 6. We've handled all tool calls, so we can end the graph.
   return new Command({
     goto: END,
     update: {
-      messages: [response]
-    }
-  })
+      messages: [response],
+    },
+  });
 }
 
-// Define a new graph  
+// Define a new graph
 const workflow = new StateGraph(AgentStateAnnotation)
   .addNode("chat_node", chatNode)
   .addEdge(START, "chat_node");
 
 // Compile the graph
-export const agenticChatGraph = workflow.compile();
+export const agenticChatGraph = workflow.compile({
+  transformers: [aguiTransformer],
+});

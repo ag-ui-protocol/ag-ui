@@ -50,12 +50,20 @@
 import { ChatOpenAI } from "@langchain/openai";
 import { SystemMessage } from "@langchain/core/messages";
 import { RunnableConfig } from "@langchain/core/runnables";
-import { Annotation, MessagesAnnotation, StateGraph, Command, START, END } from "@langchain/langgraph";
+import {
+  Annotation,
+  MessagesAnnotation,
+  StateGraph,
+  Command,
+  START,
+  END,
+} from "@langchain/langgraph";
+import { aguiTransformer } from "@ag-ui/langgraph/transformer";
 
 const AgentStateAnnotation = Annotation.Root({
   tools: Annotation<any[]>({
     reducer: (x, y) => y ?? x,
-    default: () => []
+    default: () => [],
   }),
   ...MessagesAnnotation.spec,
 });
@@ -81,32 +89,30 @@ async function visionChatNode(state: AgentState, config?: RunnableConfig) {
   }
 
   // 2. Bind tools if needed
-  const modelWithTools = model.bindTools(
-    state.tools ?? [],
-    {
-      parallel_tool_calls: false,
-    }
-  );
+  const modelWithTools = model.bindTools(state.tools ?? [], {
+    parallel_tool_calls: false,
+  });
 
   // 3. Define the system message
   const systemMessage = new SystemMessage({
-    content: "You are a helpful vision assistant. You can analyze images and " +
-             "answer questions about them. Describe what you see in detail."
+    content:
+      "You are a helpful vision assistant. You can analyze images and " +
+      "answer questions about them. Describe what you see in detail.",
   });
 
   // 4. Run the model with multimodal messages
   // The messages may contain both text and images
-  const response = await modelWithTools.invoke([
-    systemMessage,
-    ...state.messages,
-  ], config);
+  const response = await modelWithTools.invoke(
+    [systemMessage, ...state.messages],
+    config,
+  );
 
   // 5. Return the response
   return new Command({
     goto: END,
     update: {
-      messages: [response]
-    }
+      messages: [response],
+    },
   });
 }
 
@@ -117,4 +123,6 @@ const workflow = new StateGraph(AgentStateAnnotation)
   .addEdge("visionChatNode", END);
 
 // Compile the graph
-export const graph = workflow.compile();
+export const graph = workflow.compile({
+  transformers: [aguiTransformer],
+});

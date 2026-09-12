@@ -4,17 +4,22 @@
  */
 
 import { ChatOpenAI } from "@langchain/openai";
-import { SystemMessage, AIMessage, ToolMessage } from "@langchain/core/messages";
+import {
+  SystemMessage,
+  AIMessage,
+  ToolMessage,
+} from "@langchain/core/messages";
 import { RunnableConfig } from "@langchain/core/runnables";
-import { 
-  Annotation, 
-  MessagesAnnotation, 
-  StateGraph, 
-  Command, 
-  START, 
-  END, 
-  interrupt 
+import {
+  Annotation,
+  MessagesAnnotation,
+  StateGraph,
+  Command,
+  START,
+  END,
+  interrupt,
 } from "@langchain/langgraph";
+import { aguiTransformer } from "@ag-ui/langgraph/transformer";
 
 // Travel data interfaces
 interface Flight {
@@ -45,7 +50,10 @@ interface Itinerary {
 }
 
 // Custom reducer to merge itinerary updates
-function mergeItinerary(left: Itinerary | null, right?: Itinerary | null): Itinerary {
+function mergeItinerary(
+  left: Itinerary | null,
+  right?: Itinerary | null,
+): Itinerary {
   if (!left) left = {};
   if (!right) right = {};
   return { ...left, ...right };
@@ -62,13 +70,13 @@ export const TravelAgentStateAnnotation = Annotation.Root({
   // Itinerary with custom merger
   itinerary: Annotation<Itinerary | null>({
     reducer: mergeItinerary,
-    default: () => null
+    default: () => null,
   }),
 
   // Tools available to all agents
   tools: Annotation<any[]>({
     reducer: (x, y) => y ?? x,
-    default: () => []
+    default: () => [],
   }),
 
   // Supervisor routing
@@ -80,24 +88,76 @@ export type TravelAgentState = typeof TravelAgentStateAnnotation.State;
 
 // Static data for demonstration
 const STATIC_FLIGHTS: Flight[] = [
-  { airline: "KLM", departure: "Amsterdam (AMS)", arrival: "San Francisco (SFO)", price: "$650", duration: "11h 30m" },
-  { airline: "United", departure: "Amsterdam (AMS)", arrival: "San Francisco (SFO)", price: "$720", duration: "12h 15m" }
+  {
+    airline: "KLM",
+    departure: "Amsterdam (AMS)",
+    arrival: "San Francisco (SFO)",
+    price: "$650",
+    duration: "11h 30m",
+  },
+  {
+    airline: "United",
+    departure: "Amsterdam (AMS)",
+    arrival: "San Francisco (SFO)",
+    price: "$720",
+    duration: "12h 15m",
+  },
 ];
 
 const STATIC_HOTELS: Hotel[] = [
-  { name: "Hotel Zephyr", location: "Fisherman's Wharf", price_per_night: "$280/night", rating: "4.2 stars" },
-  { name: "The Ritz-Carlton", location: "Nob Hill", price_per_night: "$550/night", rating: "4.8 stars" },
-  { name: "Hotel Zoe", location: "Union Square", price_per_night: "$320/night", rating: "4.4 stars" }
+  {
+    name: "Hotel Zephyr",
+    location: "Fisherman's Wharf",
+    price_per_night: "$280/night",
+    rating: "4.2 stars",
+  },
+  {
+    name: "The Ritz-Carlton",
+    location: "Nob Hill",
+    price_per_night: "$550/night",
+    rating: "4.8 stars",
+  },
+  {
+    name: "Hotel Zoe",
+    location: "Union Square",
+    price_per_night: "$320/night",
+    rating: "4.4 stars",
+  },
 ];
 
 const STATIC_EXPERIENCES: Experience[] = [
-  { name: "Pier 39", type: "activity", description: "Iconic waterfront destination with shops and sea lions", location: "Fisherman's Wharf" },
-  { name: "Golden Gate Bridge", type: "activity", description: "World-famous suspension bridge with stunning views", location: "Golden Gate" },
-  { name: "Swan Oyster Depot", type: "restaurant", description: "Historic seafood counter serving fresh oysters", location: "Polk Street" },
-  { name: "Tartine Bakery", type: "restaurant", description: "Artisanal bakery famous for bread and pastries", location: "Mission District" }
+  {
+    name: "Pier 39",
+    type: "activity",
+    description: "Iconic waterfront destination with shops and sea lions",
+    location: "Fisherman's Wharf",
+  },
+  {
+    name: "Golden Gate Bridge",
+    type: "activity",
+    description: "World-famous suspension bridge with stunning views",
+    location: "Golden Gate",
+  },
+  {
+    name: "Swan Oyster Depot",
+    type: "restaurant",
+    description: "Historic seafood counter serving fresh oysters",
+    location: "Polk Street",
+  },
+  {
+    name: "Tartine Bakery",
+    type: "restaurant",
+    description: "Artisanal bakery famous for bread and pastries",
+    location: "Mission District",
+  },
 ];
 
-function createInterrupt(message: string, options: any[], recommendation: any, agent: string) {
+function createInterrupt(
+  message: string,
+  options: any[],
+  recommendation: any,
+  agent: string,
+) {
   return interrupt({
     message,
     options,
@@ -107,25 +167,32 @@ function createInterrupt(message: string, options: any[], recommendation: any, a
 }
 
 // Flights finder subgraph
-async function flightsFinder(state: TravelAgentState, config?: RunnableConfig): Promise<Command> {
+async function flightsFinder(
+  state: TravelAgentState,
+  config?: RunnableConfig,
+): Promise<Command> {
   // Simulate flight search with static data
   const flights = STATIC_FLIGHTS;
 
   const selectedFlight = state.itinerary?.flight;
-  
+
   let flightChoice: Flight;
-  const message = `Found ${flights.length} flight options from ${state.origin || 'Amsterdam'} to ${state.destination || 'San Francisco'}.\n` +
-    `I recommend choosing the flight by ${flights[0].airline} since it's known to be on time and cheaper.`
+  const message =
+    `Found ${flights.length} flight options from ${state.origin || "Amsterdam"} to ${state.destination || "San Francisco"}.\n` +
+    `I recommend choosing the flight by ${flights[0].airline} since it's known to be on time and cheaper.`;
   if (!selectedFlight) {
     const interruptResult = createInterrupt(
       message,
       flights,
       flights[0],
-      "flights"
+      "flights",
     );
-    
+
     // Parse the interrupt result if it's a string
-    flightChoice = typeof interruptResult === 'string' ? JSON.parse(interruptResult) : interruptResult;
+    flightChoice =
+      typeof interruptResult === "string"
+        ? JSON.parse(interruptResult)
+        : interruptResult;
   } else {
     flightChoice = selectedFlight;
   }
@@ -135,7 +202,7 @@ async function flightsFinder(state: TravelAgentState, config?: RunnableConfig): 
     update: {
       flights: flights,
       itinerary: {
-        flight: flightChoice
+        flight: flightChoice,
       },
       // Return all "messages" that the agent was sending
       messages: [
@@ -146,30 +213,36 @@ async function flightsFinder(state: TravelAgentState, config?: RunnableConfig): 
         new AIMessage({
           content: `Flights Agent: Great. I'll book you the ${flightChoice.airline} flight from ${flightChoice.departure} to ${flightChoice.arrival}.`,
         }),
-      ]
-    }
+      ],
+    },
   });
 }
 
 // Hotels finder subgraph
-async function hotelsFinder(state: TravelAgentState, config?: RunnableConfig): Promise<Command> {
+async function hotelsFinder(
+  state: TravelAgentState,
+  config?: RunnableConfig,
+): Promise<Command> {
   // Simulate hotel search with static data
   const hotels = STATIC_HOTELS;
   const selectedHotel = state.itinerary?.hotel;
-  
+
   let hotelChoice: Hotel;
-  const message = `Found ${hotels.length} accommodation options in ${state.destination || 'San Francisco'}.\n
-    I recommend choosing the ${hotels[2].name} since it strikes the balance between rating, price, and location.`
+  const message = `Found ${hotels.length} accommodation options in ${state.destination || "San Francisco"}.\n
+    I recommend choosing the ${hotels[2].name} since it strikes the balance between rating, price, and location.`;
   if (!selectedHotel) {
     const interruptResult = createInterrupt(
       message,
       hotels,
       hotels[2],
-      "hotels"
+      "hotels",
     );
-    
+
     // Parse the interrupt result if it's a string
-    hotelChoice = typeof interruptResult === 'string' ? JSON.parse(interruptResult) : interruptResult;
+    hotelChoice =
+      typeof interruptResult === "string"
+        ? JSON.parse(interruptResult)
+        : interruptResult;
   } else {
     hotelChoice = selectedHotel;
   }
@@ -179,7 +252,7 @@ async function hotelsFinder(state: TravelAgentState, config?: RunnableConfig): P
     update: {
       hotels: hotels,
       itinerary: {
-        hotel: hotelChoice
+        hotel: hotelChoice,
       },
       // Return all "messages" that the agent was sending
       messages: [
@@ -188,18 +261,25 @@ async function hotelsFinder(state: TravelAgentState, config?: RunnableConfig): P
           content: message,
         }),
         new AIMessage({
-          content: `Hotels Agent: Excellent choice! You'll like ${hotelChoice.name}.`
+          content: `Hotels Agent: Excellent choice! You'll like ${hotelChoice.name}.`,
         }),
-      ]
-    }
+      ],
+    },
   });
 }
 
 // Experiences finder subgraph
-async function experiencesFinder(state: TravelAgentState, config?: RunnableConfig): Promise<Command> {
+async function experiencesFinder(
+  state: TravelAgentState,
+  config?: RunnableConfig,
+): Promise<Command> {
   // Filter experiences (2 restaurants, 2 activities)
-  const restaurants = STATIC_EXPERIENCES.filter(exp => exp.type === "restaurant").slice(0, 2);
-  const activities = STATIC_EXPERIENCES.filter(exp => exp.type === "activity").slice(0, 2);
+  const restaurants = STATIC_EXPERIENCES.filter(
+    (exp) => exp.type === "restaurant",
+  ).slice(0, 2);
+  const activities = STATIC_EXPERIENCES.filter(
+    (exp) => exp.type === "activity",
+  ).slice(0, 2);
   const experiences = [...restaurants, ...activities];
 
   const model = new ChatOpenAI({ model: "gpt-4o" });
@@ -215,26 +295,26 @@ async function experiencesFinder(state: TravelAgentState, config?: RunnableConfi
     You already went ahead and found a bunch of experiences. All you have to do now, is to let the user know of your findings.
     
     Current status:
-    - Origin: ${state.origin || 'Amsterdam'}
-    - Destination: ${state.destination || 'San Francisco'}
-    - Flight chosen: ${JSON.stringify(itinerary.flight) || 'None'}
-    - Hotel chosen: ${JSON.stringify(itinerary.hotel) || 'None'}
+    - Origin: ${state.origin || "Amsterdam"}
+    - Destination: ${state.destination || "San Francisco"}
+    - Flight chosen: ${JSON.stringify(itinerary.flight) || "None"}
+    - Hotel chosen: ${JSON.stringify(itinerary.hotel) || "None"}
     - Activities found: ${JSON.stringify(activities)}
     - Restaurants found: ${JSON.stringify(restaurants)}
     `;
 
   // Get experiences response
-  const response = await model.invoke([
-    new SystemMessage({ content: systemPrompt }),
-    ...state.messages,
-  ], config);
+  const response = await model.invoke(
+    [new SystemMessage({ content: systemPrompt }), ...state.messages],
+    config,
+  );
 
   return new Command({
     goto: END,
     update: {
       experiences: experiences,
-      messages: [...state.messages, response]
-    }
+      messages: [...state.messages, response],
+    },
   });
 }
 
@@ -249,21 +329,30 @@ const SUPERVISOR_RESPONSE_TOOL = {
       properties: {
         answer: {
           type: "string",
-          description: "The answer to the user"
+          description: "The answer to the user",
         },
         next_agent: {
           type: "string",
-          enum: ["flights_agent", "hotels_agent", "experiences_agent", "complete"],
-          description: "The agent to go to. Not required if you do not want to route to another agent."
-        }
+          enum: [
+            "flights_agent",
+            "hotels_agent",
+            "experiences_agent",
+            "complete",
+          ],
+          description:
+            "The agent to go to. Not required if you do not want to route to another agent.",
+        },
       },
-      required: ["answer"]
-    }
-  }
+      required: ["answer"],
+    },
+  },
 };
 
 // Supervisor agent
-async function supervisorAgent(state: TravelAgentState, config?: RunnableConfig): Promise<Command> {
+async function supervisorAgent(
+  state: TravelAgentState,
+  config?: RunnableConfig,
+): Promise<Command> {
   const itinerary = state.itinerary || {};
 
   // Check what's already completed
@@ -275,8 +364,8 @@ async function supervisorAgent(state: TravelAgentState, config?: RunnableConfig)
     You are a travel planning supervisor. Your job is to coordinate specialized agents to help plan a trip.
     
     Current status:
-    - Origin: ${state.origin || 'Amsterdam'}
-    - Destination: ${state.destination || 'San Francisco'}
+    - Origin: ${state.origin || "Amsterdam"}
+    - Destination: ${state.destination || "San Francisco"}
     - Flights found: ${hasFlights}
     - Hotels found: ${hasHotels}
     - Experiences found: ${hasExperiences}
@@ -299,18 +388,15 @@ async function supervisorAgent(state: TravelAgentState, config?: RunnableConfig)
   }
 
   // Bind the routing tool
-  const modelWithTools = model.bindTools(
-    [SUPERVISOR_RESPONSE_TOOL],
-    {
-      parallel_tool_calls: false,
-    }
-  );
+  const modelWithTools = model.bindTools([SUPERVISOR_RESPONSE_TOOL], {
+    parallel_tool_calls: false,
+  });
 
   // Get supervisor decision
-  const response = await modelWithTools.invoke([
-    new SystemMessage({ content: systemPrompt }),
-    ...state.messages,
-  ], config);
+  const response = await modelWithTools.invoke(
+    [new SystemMessage({ content: systemPrompt }), ...state.messages],
+    config,
+  );
 
   let messages = [...state.messages, response];
 
@@ -326,9 +412,9 @@ async function supervisorAgent(state: TravelAgentState, config?: RunnableConfig)
     });
 
     messages = [
-      ...messages, 
-      toolResponse, 
-      new AIMessage({ content: toolCallArgs.answer })
+      ...messages,
+      toolResponse,
+      new AIMessage({ content: toolCallArgs.answer }),
     ];
 
     if (nextAgent && nextAgent !== "complete") {
@@ -339,40 +425,46 @@ async function supervisorAgent(state: TravelAgentState, config?: RunnableConfig)
   // Fallback if no tool call or complete
   return new Command({
     goto: END,
-    update: { messages }
+    update: { messages },
   });
 }
 
 // Create subgraphs
-const flightsGraph = new StateGraph(TravelAgentStateAnnotation);
-flightsGraph.addNode("flights_agent_chat_node", flightsFinder);
+const flightsGraph = new StateGraph(TravelAgentStateAnnotation).addNode(
+  "flights_agent_chat_node",
+  flightsFinder,
+);
 flightsGraph.setEntryPoint("flights_agent_chat_node");
 flightsGraph.addEdge(START, "flights_agent_chat_node");
 flightsGraph.addEdge("flights_agent_chat_node", END);
 const flightsSubgraph = flightsGraph.compile();
 
-const hotelsGraph = new StateGraph(TravelAgentStateAnnotation);
-hotelsGraph.addNode("hotels_agent_chat_node", hotelsFinder);
+const hotelsGraph = new StateGraph(TravelAgentStateAnnotation).addNode(
+  "hotels_agent_chat_node",
+  hotelsFinder,
+);
 hotelsGraph.setEntryPoint("hotels_agent_chat_node");
 hotelsGraph.addEdge(START, "hotels_agent_chat_node");
 hotelsGraph.addEdge("hotels_agent_chat_node", END);
 const hotelsSubgraph = hotelsGraph.compile();
 
-const experiencesGraph = new StateGraph(TravelAgentStateAnnotation);
-experiencesGraph.addNode("experiences_agent_chat_node", experiencesFinder);
+const experiencesGraph = new StateGraph(TravelAgentStateAnnotation).addNode(
+  "experiences_agent_chat_node",
+  experiencesFinder,
+);
 experiencesGraph.setEntryPoint("experiences_agent_chat_node");
 experiencesGraph.addEdge(START, "experiences_agent_chat_node");
 experiencesGraph.addEdge("experiences_agent_chat_node", END);
 const experiencesSubgraph = experiencesGraph.compile();
 
 // Main supervisor workflow
-const workflow = new StateGraph(TravelAgentStateAnnotation);
-
-// Add supervisor and subgraphs as nodes
-workflow.addNode("supervisor", supervisorAgent, { ends: ['flights_agent', 'hotels_agent', 'experiences_agent', END] });
-workflow.addNode("flights_agent", flightsSubgraph);
-workflow.addNode("hotels_agent", hotelsSubgraph);
-workflow.addNode("experiences_agent", experiencesSubgraph);
+const workflow = new StateGraph(TravelAgentStateAnnotation)
+  .addNode("supervisor", supervisorAgent, {
+    ends: ["flights_agent", "hotels_agent", "experiences_agent", END],
+  })
+  .addNode("flights_agent", flightsSubgraph)
+  .addNode("hotels_agent", hotelsSubgraph)
+  .addNode("experiences_agent", experiencesSubgraph);
 
 // Set entry point
 workflow.setEntryPoint("supervisor");
@@ -384,4 +476,6 @@ workflow.addEdge("hotels_agent", "supervisor");
 workflow.addEdge("experiences_agent", "supervisor");
 
 // Compile the graph
-export const subGraphsAgentGraph = workflow.compile();
+export const subGraphsAgentGraph = workflow.compile({
+  transformers: [aguiTransformer],
+});
