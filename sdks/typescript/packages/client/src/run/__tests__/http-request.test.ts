@@ -241,13 +241,31 @@ describe("bounded HTTP error bodies", () => {
     expect(error.message).toBe("HTTP 502: ");
   });
 
-  it("does not replace an HTTP error when cancellation rejects", async () => {
-    const cancel = vi.fn().mockRejectedValue(new Error("Cancel failed"));
-    const { response } = streamingError([new Uint8Array(cap)], "text/plain", cancel);
-    const error = await errorFrom(response);
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(error.status).toBe(500);
-    expect(cancel).toHaveBeenCalledOnce();
+  it.each([
+    [new DOMException("Aborted", "AbortError"), false],
+    [new Error("Cancel failed"), true],
+  ])("preserves HTTP errors and diagnoses cancellation appropriately: %s", async (failure, shouldWarn) => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    try {
+      const cancel = vi.fn().mockRejectedValue(failure);
+      const { response } = streamingError([new Uint8Array(cap)], "text/plain", cancel);
+      const error = await errorFrom(response);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(error.status).toBe(500);
+      expect(String(error.payload)).toHaveLength(cap + " [truncated]".length);
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(unhandled).not.toHaveBeenCalled();
+      if (shouldWarn) {
+        expect(warn).toHaveBeenCalledExactlyOnceWith("Failed to cancel HTTP response reader:", failure);
+      } else {
+        expect(warn).not.toHaveBeenCalled();
+      }
+    } finally {
+      process.off("unhandledRejection", unhandled);
+      warn.mockRestore();
+    }
   });
 
   it("cancels a pending error body when unsubscribed", async () => {

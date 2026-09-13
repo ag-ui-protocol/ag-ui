@@ -90,7 +90,12 @@ function readHttpError(response: Response): Observable<never> {
       if (reader && !finished && !cancelled) {
         cancelled = true;
         // Cleanup must not replace the HTTP error or produce an unhandled rejection.
-        void reader.cancel().catch(() => {});
+        void reader.cancel().catch((error) => {
+          if ((error as DOMException)?.name === "AbortError") {
+            return;
+          }
+          console.warn("Failed to cancel HTTP response reader:", error);
+        });
       }
     };
 
