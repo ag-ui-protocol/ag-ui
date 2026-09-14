@@ -103,7 +103,9 @@ var text = new AGUITextInputContent
 | C# property | JSON field | Type | Description |
 | ----------- | ---------- | ---- | ----------- |
 | `Type` | `type` | `"text"` | Content discriminator |
+| `Id` | `id` | `string?` | Optional part identifier |
 | `Text` | `text` | `string` | Text content |
+| `Metadata` | `metadata` | `JsonElement?` | Optional metadata, such as a search hit's source and title |
 
 ### Media Parts
 
@@ -124,6 +126,7 @@ var image = new AGUIImageInputContent
 | C# property | JSON field | Type | Description |
 | ----------- | ---------- | ---- | ----------- |
 | `Type` | `type` | `"image"`, `"audio"`, `"video"`, or `"document"` | Content discriminator |
+| `Id` | `id` | `string?` | Optional part identifier |
 | `Source` | `source` | `AGUIInputContentSource` | Data or URL source |
 | `Metadata` | `metadata` | `JsonElement?` | Optional modality-specific metadata |
 

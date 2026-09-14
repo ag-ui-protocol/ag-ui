@@ -826,7 +826,7 @@ export class A2UIMiddleware extends Middleware {
                   // returns a structured error envelope (no a2ui_operations).
                   // Surface it as a client-rendered failure rather than dropping
                   // it silently — the conversation stays usable.
-                  const failure = tryParseRecoveryFailure(resultEvent.content);
+                  const failure = tryParseRecoveryFailure(contentToText(resultEvent.content));
                   if (failure) {
                     // Hard failure replaces the building/retrying skeleton in
                     // place (same surface messageId). `attempts.length` is the

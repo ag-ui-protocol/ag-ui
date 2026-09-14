@@ -188,7 +188,10 @@ type UserMessage = {
 
 ### ContentPart
 
-Union of supported multimodal fragments.
+Union of supported content parts. The same parts appear on a `UserMessage`
+and on a `ToolMessage`: a tool result is a string or a list of them. Every part
+may carry an optional `id`; `metadata` is unconstrained and is where a text
+search hit keeps its source and title.
 
 ```typescript
 type ContentPart = TextPart | ImagePart | AudioPart | VideoPart | DocumentPart
@@ -217,7 +220,9 @@ type UrlSource = {
 ```typescript
 type TextPart = {
   type: "text"
+  id?: string
   text: string
+  metadata?: unknown
 }
 ```
 
@@ -226,6 +231,7 @@ type TextPart = {
 ```typescript
 type ImagePart = {
   type: "image"
+  id?: string
   source: PartSource
   metadata?: unknown
 }
@@ -236,6 +242,7 @@ type ImagePart = {
 ```typescript
 type AudioPart = {
   type: "audio"
+  id?: string
   source: PartSource
   metadata?: unknown
 }
@@ -246,6 +253,7 @@ type AudioPart = {
 ```typescript
 type VideoPart = {
   type: "video"
+  id?: string
   source: PartSource
   metadata?: unknown
 }
@@ -256,6 +264,7 @@ type VideoPart = {
 ```typescript
 type DocumentPart = {
   type: "document"
+  id?: string
   source: PartSource
   metadata?: unknown
 }
@@ -268,7 +277,7 @@ Represents a message from a tool.
 ```typescript
 type ToolMessage = {
   id: string
-  content: string
+  content: string | ContentPart[]
   role: "tool"
   toolCallId: string
   error?: string

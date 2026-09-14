@@ -202,18 +202,22 @@ class UrlSource(ConfiguredBaseModel):
 
 ### TextPart
 
-Represents a text fragment inside a multimodal user message.
+Represents a text part inside a user message or a tool result.
 
 ```python
 class TextPart(ConfiguredBaseModel):
     type: Literal["text"]
+    id: Optional[str] = None
     text: str
+    metadata: Optional[Any] = None
 ```
 
-| Property | Type              | Description                  |
-| -------- | ----------------- | ---------------------------- |
-| `type`   | `Literal["text"]` | Identifies the fragment type |
-| `text`   | `str`             | Text content                 |
+| Property   | Type              | Description                                                               |
+| ---------- | ----------------- | ------------------------------------------------------------------------- |
+| `type`     | `Literal["text"]` | Identifies the part type                                                  |
+| `id`       | `Optional[str]`   | Identifies the part within its message                                    |
+| `text`     | `str`             | Text content                                                              |
+| `metadata` | `Optional[Any]`   | Extra information about the part, such as a search hit's source and title |
 
 ### BinaryInputContent
 
@@ -248,21 +252,25 @@ class BinaryInputContent(ConfiguredBaseModel):
 ```python
 class ImagePart(ConfiguredBaseModel):
     type: Literal["image"]
+    id: Optional[str] = None
     source: PartSource
     metadata: Optional[Any] = None
 
 class AudioPart(ConfiguredBaseModel):
     type: Literal["audio"]
+    id: Optional[str] = None
     source: PartSource
     metadata: Optional[Any] = None
 
 class VideoPart(ConfiguredBaseModel):
     type: Literal["video"]
+    id: Optional[str] = None
     source: PartSource
     metadata: Optional[Any] = None
 
 class DocumentPart(ConfiguredBaseModel):
     type: Literal["document"]
+    id: Optional[str] = None
     source: PartSource
     metadata: Optional[Any] = None
 ```
@@ -277,7 +285,7 @@ Represents a message from a tool.
 class ToolMessage(ConfiguredBaseModel):
     id: str
     role: Literal["tool"]
-    content: str
+    content: Union[str, List[ContentPart]]
     tool_call_id: str
     error: Optional[str] = None
     encrypted_value: Optional[str] = None

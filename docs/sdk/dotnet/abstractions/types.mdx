@@ -255,13 +255,28 @@ var message = new AGUIToolMessage
     ToolCallId = "call-1",
     Content = """{"temperature":72}"""
 };
+
+// A result may also carry content parts — a document the tool returned, say.
+var attachment = new AGUIToolMessage
+{
+    Id = "tool-msg-2",
+    ToolCallId = "call-2",
+    Content =
+    [
+        new AGUITextInputContent { Text = "Invoice attached." },
+        new AGUIDocumentInputContent
+        {
+            Source = new AGUIInputContentUrlSource { Value = "https://example.com/INV-2291.pdf", MimeType = "application/pdf" },
+        },
+    ],
+};
 ```
 
 | C# property | JSON field | Type | Description |
 | ----------- | ---------- | ---- | ----------- |
 | `Id` | `id` | `string?` | Message ID |
 | `Role` | `role` | `"tool"` | Fixed role discriminator |
-| `Content` | `content` | `string` | Tool result content |
+| `Content` | `content` | `AGUIContent` | Tool result: plain text or ordered content parts, as on the user message |
 | `ToolCallId` | `toolCallId` | `string` | ID of the tool call this message answers |
 | `Error` | `error` | `string?` | Optional error message |
 | `EncryptedValue` | `encryptedValue` | `string?` | Optional opaque encrypted value |

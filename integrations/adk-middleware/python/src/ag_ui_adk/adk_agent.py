@@ -9,6 +9,7 @@ from typing import Optional, Dict, Callable, Any, AsyncGenerator, List, Iterable
 if TYPE_CHECKING:
     from google.adk.apps import App
 import time
+import base64
 import json
 import asyncio
 import inspect
@@ -153,6 +154,48 @@ class _HitlDeferringQueue(asyncio.Queue):
         for event in list(self._deferred_hitl_ends.values()):
             await super().put(event)
         self._deferred_hitl_ends.clear()
+
+
+
+def _tool_result_text_and_media(content: Any) -> Tuple[str, List[Any]]:
+    """Split AG-UI tool result content into its text and its inline media.
+
+    A string is returned as it is. A list of parts (AG-UI 1.0) yields the text
+    parts concatenated, plus a ``FunctionResponsePart`` carrying the bytes and
+    MIME type of every media part with an inline ``data`` source. URL sources
+    are dropped: the Gemini API takes no file references in a function
+    response, and a downgrade must not invent a placeholder for them.
+    """
+    if content is None:
+        return "", []
+    if isinstance(content, str):
+        return content, []
+    text_parts: List[str] = []
+    media: List[Any] = []
+    for part in content:
+        part_type = _attr_or_key(part, "type")
+        if part_type == "text":
+            text_parts.append(_attr_or_key(part, "text") or "")
+            continue
+        source = _attr_or_key(part, "source")
+        if source is None or _attr_or_key(source, "type") != "data":
+            continue
+        mime_type = _attr_or_key(source, "mime_type") or _attr_or_key(source, "mimeType")
+        value = _attr_or_key(source, "value")
+        if not mime_type or not value:
+            continue
+        media.append(
+            types.FunctionResponsePart(
+                inline_data=types.FunctionResponseBlob(mime_type=mime_type, data=base64.b64decode(value))
+            )
+        )
+    return "".join(text_parts), media
+
+
+def _attr_or_key(obj: Any, name: str) -> Any:
+    if isinstance(obj, dict):
+        return obj.get(name)
+    return getattr(obj, name, None)
 
 
 class ADKAgent:
@@ -1926,11 +1969,18 @@ class ADKAgent:
             tool_call_id = tool_result["message"].tool_call_id
             # Apply LRO ID remap: convert client-facing ID to ADK-persisted ID.
             tool_call_id = lro_id_remap.get(tool_call_id, tool_call_id)
-            content = tool_result["message"].content
+            raw_content = tool_result["message"].content
+            # AG-UI 1.0: a tool result is a string or a list of content parts.
+            # The text parts are what gets parsed below; inline media becomes
+            # FunctionResponse parts of its own, which is where Gemini takes
+            # media in a tool result. URL-referenced media has no bytes to
+            # hand over and is dropped, as the specification says a producer
+            # does with a part its model cannot take.
+            content, media_parts = _tool_result_text_and_media(raw_content)
 
             logger.debug(
                 f"Received tool result for call {tool_call_id}: "
-                f"content='{content}', type={type(content)}"
+                f"content='{content}', type={type(raw_content)}"
             )
 
             # Parse content - try JSON first, fall back to plain string.
@@ -1966,6 +2016,7 @@ class ADKAgent:
                         id=tool_call_id,
                         name=tool_result["tool_name"],
                         response=result,
+                        **({"parts": media_parts} if media_parts else {}),
                     )
                 )
             )
