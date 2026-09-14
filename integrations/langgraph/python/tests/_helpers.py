@@ -3,6 +3,9 @@
 These helpers build lightweight ``LangGraphAgent`` fixtures backed by
 ``MagicMock``/``AsyncMock`` stand-ins so tests can exercise agent logic in
 isolation, without spinning up a real graph or hitting any network.
+
+It also binds the multimodal content-part classes under 1.0's names whichever
+name the installed SDK actually exports — see THE CONTENT-PART NAMES below.
 """
 
 from typing import Any, Iterable, List, Optional
@@ -10,8 +13,76 @@ from unittest.mock import AsyncMock, MagicMock
 
 from langgraph.graph.state import CompiledStateGraph
 
+import ag_ui.core
 from ag_ui.core import EventType
 from ag_ui_langgraph.agent import LangGraphAgent
+
+
+# ── THE CONTENT-PART NAMES ────────────────────────────────────────────────
+#
+# AG-UI 1.0 renamed the multimodal content parts — ``TextInputContent`` became
+# ``TextPart``, ``ImageInputContent`` became ``ImagePart``, and so on, with
+# ``InputContentDataSource``/``InputContentUrlSource`` becoming
+# ``DataSource``/``UrlSource`` — and kept every old name as an ALIAS OF THE SAME
+# CLASS. Nothing breaks at runtime, so this is invisible to the code; it is only
+# visible to anything that reads a NAME.
+#
+# These tests run against two different SDKs. The locked ``langgraph-python``
+# lane installs this repo's ``sdks/python``, which exports both vocabularies.
+# The ``langgraph-python-declared-floor`` lane installs the published floor out
+# of ``pyproject.toml``, which exports only the OLD names. So the tests must not
+# import either vocabulary directly: the new names are absent under the floor,
+# and the old ones are the vocabulary 1.0 retired.
+#
+# Binding the new names to whatever the installed SDK has resolves that once,
+# here, and lets every test read in 1.0's vocabulary without pinning a version.
+def _part_class(new_name: str, old_name: str):
+    """The SDK's part class, under whichever of its two names it exports."""
+    part = getattr(ag_ui.core, new_name, None)
+    if part is None:
+        part = getattr(ag_ui.core, old_name)
+    return part
+
+
+TextPart = _part_class("TextPart", "TextInputContent")
+ImagePart = _part_class("ImagePart", "ImageInputContent")
+AudioPart = _part_class("AudioPart", "AudioInputContent")
+VideoPart = _part_class("VideoPart", "VideoInputContent")
+DocumentPart = _part_class("DocumentPart", "DocumentInputContent")
+DataSource = _part_class("DataSource", "InputContentDataSource")
+UrlSource = _part_class("UrlSource", "InputContentUrlSource")
+
+# The label a part carries in `../../cross-runtime-parity-cases.json`, keyed by
+# CLASS IDENTITY rather than by ``type(part).__name__``.
+#
+# The runtime ``__name__`` is exactly the thing that differs between the two
+# lanes above: under the published floor ``ImagePart`` above IS the class still
+# literally named ``ImageInputContent``, so a harness that derived its label
+# from ``__name__`` would compare ``"ImageInputContent"`` against a table
+# written in 1.0's vocabulary and fail on the installed SDK version rather than
+# on adapter behaviour. Identity does not move when the alias does.
+#
+# ``BinaryInputContent`` is deliberately absent: the legacy part was RETIRED
+# from the protocol rather than renamed, ``ag_ui_langgraph.utils`` owns whatever
+# shape is in play, and the table records it under that one name. It falls
+# through to the ``__name__`` default alongside ``dict`` and ``NoneType``.
+PART_LABELS = {
+    TextPart: "TextPart",
+    ImagePart: "ImagePart",
+    AudioPart: "AudioPart",
+    VideoPart: "VideoPart",
+    DocumentPart: "DocumentPart",
+}
+
+
+def part_label(part: Any) -> str:
+    """The parity table's label for one built item — a part, or anything else.
+
+    Anything the map above does not name (a raw ``dict`` an item could not be
+    validated into, ``NoneType``, the legacy ``BinaryInputContent``) reports its
+    own class name, which is what the table records for those.
+    """
+    return PART_LABELS.get(type(part), type(part).__name__)
 
 
 def make_agent(subgraph_names: Optional[Iterable[str]] = None, **agent_kwargs) -> LangGraphAgent:

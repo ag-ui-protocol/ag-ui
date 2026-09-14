@@ -7,12 +7,12 @@ import { Message as LangGraphMessage } from "@langchain/langgraph-sdk";
 import {
   Message,
   UserMessage,
-  TextInputContent,
-  InputContent,
-  ImageInputContent,
-  AudioInputContent,
-  VideoInputContent,
-  DocumentInputContent,
+  TextPart,
+  ContentPart,
+  ImagePart,
+  AudioPart,
+  VideoPart,
+  DocumentPart,
 } from "@ag-ui/client";
 // Imported at the TOP LEVEL, not dynamically inside the boundary tests below.
 // `@langchain/openai` pulls a large module graph, and on a cold CI runner the
@@ -30,11 +30,11 @@ import {
 // The legacy binary part left @ag-ui/core in 1.0; this boundary still reads
 // it (see utils.ts), so the tests type it locally.
 //
-// Hence the `as LegacyBinaryInputContent as unknown as InputContent` on the fixtures
+// Hence the `as LegacyBinaryInputContent as unknown as ContentPart` on the fixtures
 // below, which is two different things in one line.
 //
-// `as unknown as InputContent` is the half the compiler requires: 1.0's
-// InputContent union has no `binary` member, so a direct cast is an error and
+// `as unknown as ContentPart` is the half the compiler requires: 1.0's
+// ContentPart union has no `binary` member, so a direct cast is an error and
 // TypeScript's own advice is to launder through `unknown`. On its own it would
 // build — `{}` would too, which is the point of the other half.
 //
@@ -141,7 +141,7 @@ describe("Multimodal Message Conversion", () => {
       expect(lcMessages[0].id).toBe("test-1");
     });
 
-    it("should convert ImageInputContent with URL source to LangChain", () => {
+    it("should convert ImagePart with URL source to LangChain", () => {
       const aguiMessage: UserMessage = {
         id: "test-img-url",
         role: "user",
@@ -153,7 +153,7 @@ describe("Multimodal Message Conversion", () => {
               type: "url",
               value: "https://example.com/photo.jpg",
             },
-          } as ImageInputContent,
+          } as ImagePart,
         ],
       };
 
@@ -173,7 +173,7 @@ describe("Multimodal Message Conversion", () => {
       expect(content[1].image_url.url).toBe("https://example.com/photo.jpg");
     });
 
-    it("should convert ImageInputContent with data source to LangChain", () => {
+    it("should convert ImagePart with data source to LangChain", () => {
       const aguiMessage: UserMessage = {
         id: "test-img-data",
         role: "user",
@@ -186,7 +186,7 @@ describe("Multimodal Message Conversion", () => {
               value: "iVBORw0KGgoAAAANSUhEUgAAAAUA",
               mimeType: "image/png",
             },
-          } as ImageInputContent,
+          } as ImagePart,
         ],
       };
 
@@ -205,7 +205,7 @@ describe("Multimodal Message Conversion", () => {
       );
     });
 
-    it("should convert AudioInputContent with inline data to an audio block", () => {
+    it("should convert AudioPart with inline data to an audio block", () => {
       const aguiMessage: UserMessage = {
         id: "test-audio-data",
         role: "user",
@@ -218,7 +218,7 @@ describe("Multimodal Message Conversion", () => {
               value: "SGVsbG8=",
               mimeType: "audio/wav",
             },
-          } as AudioInputContent,
+          } as AudioPart,
         ],
       };
 
@@ -261,7 +261,7 @@ describe("Multimodal Message Conversion", () => {
               type: "url",
               value: "https://example.com/audio.mp3",
             },
-          } as AudioInputContent,
+          } as AudioPart,
         ],
       };
 
@@ -290,14 +290,14 @@ describe("Multimodal Message Conversion", () => {
               value: "dmlkZW9kYXRh",
               mimeType: "video/mp4",
             },
-          } as VideoInputContent,
+          } as VideoPart,
           {
             type: "video",
             source: {
               type: "url",
               value: "https://example.com/clip.mp4",
             },
-          } as VideoInputContent,
+          } as VideoPart,
         ],
       };
 
@@ -333,7 +333,7 @@ describe("Multimodal Message Conversion", () => {
               value: "https://example.com/doc.pdf",
             },
             metadata: { filename: "doc.pdf" },
-          } as DocumentInputContent,
+          } as DocumentPart,
         ],
       };
 
@@ -358,7 +358,7 @@ describe("Multimodal Message Conversion", () => {
             mimeType: "application/pdf",
             url: "https://example.com/legacy.pdf",
             filename: "legacy.pdf",
-          } as LegacyBinaryInputContent as unknown as InputContent,
+          } as LegacyBinaryInputContent as unknown as ContentPart,
         ],
       };
 
@@ -395,7 +395,7 @@ describe("Multimodal Message Conversion", () => {
               mimeType: "application/pdf",
             },
             metadata: { filename: "invoice-q2.pdf" },
-          } as DocumentInputContent,
+          } as DocumentPart,
         ],
       };
 
@@ -439,7 +439,7 @@ describe("Multimodal Message Conversion", () => {
               value: "JVBERi0xLjQK",
               mimeType: "application/pdf",
             },
-          } as DocumentInputContent,
+          } as DocumentPart,
         ],
       };
 
@@ -520,7 +520,7 @@ describe("Multimodal Message Conversion", () => {
             {
               type: "document",
               source: { type: "data", value: "JVBERi0xLjQK", mimeType },
-            } as DocumentInputContent,
+            } as DocumentPart,
           ],
         } as UserMessage,
       ])[0].content as Array<any>;
@@ -547,13 +547,13 @@ describe("Multimodal Message Conversion", () => {
                 mimeType: "application/pdf",
               },
               metadata: { filename: "" },
-            } as DocumentInputContent,
+            } as DocumentPart,
             {
               type: "binary",
               mimeType: "application/pdf",
               data: "JVBERi0xLjQK",
               filename: "",
-            } as LegacyBinaryInputContent as unknown as InputContent,
+            } as LegacyBinaryInputContent as unknown as ContentPart,
           ],
         } as UserMessage,
       ])[0].content as Array<any>;
@@ -580,7 +580,7 @@ describe("Multimodal Message Conversion", () => {
               mimeType: "application/pdf",
             },
             metadata: { filename: "invoice-q2.pdf" },
-          } as DocumentInputContent,
+          } as DocumentPart,
         ],
       };
 
@@ -613,7 +613,7 @@ describe("Multimodal Message Conversion", () => {
             mimeType: "application/pdf",
             data: "JVBERi0xLjQK",
             filename: "legacy-invoice.pdf",
-          } as LegacyBinaryInputContent as unknown as InputContent,
+          } as LegacyBinaryInputContent as unknown as ContentPart,
         ],
       };
 
@@ -639,7 +639,7 @@ describe("Multimodal Message Conversion", () => {
             type: "binary",
             mimeType: "image/jpeg",
             url: "https://example.com/photo.jpg",
-          } as LegacyBinaryInputContent as unknown as InputContent,
+          } as LegacyBinaryInputContent as unknown as ContentPart,
         ],
       };
 
@@ -661,7 +661,7 @@ describe("Multimodal Message Conversion", () => {
             type: "binary",
             mimeType: "image/png",
             data: "iVBORw0KGgoAAAANSUhEUgAAAAUA",
-          } as LegacyBinaryInputContent as unknown as InputContent,
+          } as LegacyBinaryInputContent as unknown as ContentPart,
         ],
       };
 
@@ -705,7 +705,7 @@ describe("Multimodal Message Conversion", () => {
         type: "video",
         source: { type: "data", value: "SGVsbG8=", mimeType: "video/mp4" },
         metadata: { filename: "clip.mp4" },
-      } as VideoInputContent);
+      } as VideoPart);
 
       // Unchanged on the wire: video still has no standard block that any
       // translator accepts, so it stays on `image_url` deliberately.
@@ -724,7 +724,7 @@ describe("Multimodal Message Conversion", () => {
       const { wire, content } = roundTrip({
         type: "audio",
         source: { type: "data", value: "SGVsbG8=", mimeType: "audio/ogg" },
-      } as AudioInputContent);
+      } as AudioPart);
 
       expect(wire).toEqual({
         type: "image_url",
@@ -757,7 +757,7 @@ describe("Multimodal Message Conversion", () => {
       const { content } = roundTrip({
         type: "image",
         source: { type: "data", value: "SGVsbG8=", mimeType: "image/png" },
-      } as ImageInputContent);
+      } as ImagePart);
 
       expect(content).toEqual({
         type: "image",
@@ -824,7 +824,7 @@ describe("Multimodal Message Conversion", () => {
           value: "https://example.com/clip.mp4",
           mimeType: "video/mp4",
         },
-      } as VideoInputContent);
+      } as VideoPart);
 
       expect(content).toEqual({
         type: "image",
@@ -848,7 +848,7 @@ describe("Multimodal Message Conversion", () => {
       expect(aguiMessages[0].content).toBe("Hello from LangChain");
     });
 
-    it("should convert LangChain image_url to ImageInputContent with URL source", () => {
+    it("should convert LangChain image_url to ImagePart with URL source", () => {
       const lcMessage: LangGraphMessage = {
         id: "test-lc-url",
         type: "human",
@@ -868,16 +868,16 @@ describe("Multimodal Message Conversion", () => {
       expect(Array.isArray(aguiMessages[0].content)).toBe(true);
 
       const content = aguiMessages[0].content as Array<
-        TextInputContent | ImageInputContent
+        TextPart | ImagePart
       >;
       expect(content).toHaveLength(2);
 
       // Check text content
       expect(content[0].type).toBe("text");
-      expect((content[0] as TextInputContent).text).toBe("What do you see?");
+      expect((content[0] as TextPart).text).toBe("What do you see?");
 
-      // Check image content - should now be ImageInputContent with URL source
-      const imageContent = content[1] as ImageInputContent;
+      // Check image content - should now be ImagePart with URL source
+      const imageContent = content[1] as ImagePart;
       expect(imageContent.type).toBe("image");
       expect(imageContent.source.type).toBe("url");
       expect(
@@ -885,7 +885,7 @@ describe("Multimodal Message Conversion", () => {
       ).toBe("https://example.com/image.jpg");
     });
 
-    it("should convert LangChain data URL to ImageInputContent with data source", () => {
+    it("should convert LangChain data URL to ImagePart with data source", () => {
       const lcMessage: LangGraphMessage = {
         id: "test-lc-data",
         type: "human",
@@ -904,12 +904,12 @@ describe("Multimodal Message Conversion", () => {
       expect(Array.isArray(aguiMessages[0].content)).toBe(true);
 
       const content = aguiMessages[0].content as Array<
-        TextInputContent | ImageInputContent
+        TextPart | ImagePart
       >;
       expect(content).toHaveLength(2);
 
-      // Check that data URL was parsed correctly into ImageInputContent
-      const imageContent = content[1] as ImageInputContent;
+      // Check that data URL was parsed correctly into ImagePart
+      const imageContent = content[1] as ImagePart;
       expect(imageContent.type).toBe("image");
       expect(imageContent.source.type).toBe("data");
 
@@ -947,7 +947,7 @@ describe("Multimodal Message Conversion", () => {
             type: "binary",
             mimeType: "image/jpeg",
             id: "img-123",
-          } as LegacyBinaryInputContent as unknown as InputContent,
+          } as LegacyBinaryInputContent as unknown as ContentPart,
         ],
       };
 
@@ -1001,7 +1001,7 @@ describe("Multimodal Message Conversion", () => {
             type: "binary",
             mimeType: "image/jpeg",
             // No url, data, or id
-          } as LegacyBinaryInputContent as unknown as InputContent,
+          } as LegacyBinaryInputContent as unknown as ContentPart,
         ],
       };
 
@@ -1043,7 +1043,7 @@ describe("Multimodal Message Conversion", () => {
           { type: "text", text: "Hello" },
           // `source` absent entirely — the shape `standardBlockTypeFor` already
           // guards with `source?.type` but `mediaSourceToUrl` did not.
-          { type: "image" } as unknown as ImageInputContent,
+          { type: "image" } as unknown as ImagePart,
         ],
       };
 
@@ -1067,11 +1067,11 @@ describe("Multimodal Message Conversion", () => {
         role: "user",
         content: [
           { type: "text", text: "look at these" },
-          { type: "audio", source: null } as unknown as AudioInputContent,
+          { type: "audio", source: null } as unknown as AudioPart,
           {
             type: "image",
             source: { type: "url", value: "https://example.com/photo.jpg" },
-          } as ImageInputContent,
+          } as ImagePart,
         ],
       };
 
@@ -1097,7 +1097,7 @@ describe("Multimodal Message Conversion", () => {
         {
           id: "m2",
           role: "user",
-          content: [{ type: "document" } as unknown as DocumentInputContent],
+          content: [{ type: "document" } as unknown as DocumentPart],
         } as UserMessage,
         { id: "m3", role: "user", content: "third" } as UserMessage,
       ]);
@@ -1115,7 +1115,7 @@ describe("Multimodal Message Conversion", () => {
         role: "user",
         content: [
           { type: "text", text: "before" },
-          null as unknown as TextInputContent,
+          null as unknown as TextPart,
           { type: "text", text: "after" },
         ],
       };
@@ -1306,7 +1306,7 @@ describe("Multimodal Message Conversion", () => {
       "logs exactly one drop for an image_url block with %s",
       (_name, payload) => {
         // The QUIET half of the same defect. These never threw — they minted an
-        // ImageInputContent whose url is `""`, or dropped the block with nothing
+        // ImagePart whose url is `""`, or dropped the block with nothing
         // said, which is rule 2's failure: an operator watching an attachment
         // vanish from a reopened thread had no string to search for.
         const { content, warnings } = inbound([
@@ -1373,7 +1373,7 @@ describe("Multimodal Message Conversion", () => {
       "drops and logs a text block whose text is %s",
       (_name, text, described) => {
         // The branch was gated on TRUTHINESS, which got both ends wrong: a truthy
-        // non-string was emitted VERBATIM into `TextInputContent.text` and failed
+        // non-string was emitted VERBATIM into `TextPart.text` and failed
         // schema validation downstream, well away from the block that caused it.
         const { content, warnings } = inbound([{ type: "text", text }]);
 
@@ -1530,7 +1530,7 @@ describe("Multimodal Message Conversion", () => {
       "drops and logs an outbound text item whose text is %s",
       (_name, text, described) => {
         // Python reaches its outbound converter with a pydantic-validated
-        // `TextInputContent`, so its `text` is a `str` by construction; nothing
+        // `TextPart`, so its `text` is a `str` by construction; nothing
         // validates the equivalent here, and a non-string forwarded into a provider
         // content block is a 400 from the provider rather than a dropped word.
         const { content, warnings } = outbound([{ type: "text", text }]);
@@ -2153,7 +2153,7 @@ describe("Multimodal Message Conversion", () => {
               mimeType: "application/pdf",
             },
             metadata: { filename: "invoice-q2.pdf" },
-          } as DocumentInputContent,
+          } as DocumentPart,
         ],
       };
 
@@ -2182,7 +2182,7 @@ describe("Multimodal Message Conversion", () => {
           {
             type: "audio",
             source: { type: "data", value: "SGVsbG8=", mimeType: "audio/wav" },
-          } as AudioInputContent,
+          } as AudioPart,
         ],
       };
 
@@ -2210,7 +2210,7 @@ describe("Multimodal Message Conversion", () => {
               value: "JVBERi0xLjQK",
               mimeType: "application/pdf",
             },
-          } as DocumentInputContent,
+          } as DocumentPart,
         ],
       };
 
@@ -2311,7 +2311,7 @@ describe("Multimodal Message Conversion", () => {
             mimeType: "application/pdf",
             data: "JVBERi0xLjQK",
             filename: "legacy-invoice.pdf",
-          } as LegacyBinaryInputContent as unknown as InputContent,
+          } as LegacyBinaryInputContent as unknown as ContentPart,
         ],
       };
 
@@ -2336,7 +2336,7 @@ describe("Multimodal Message Conversion", () => {
             type: "binary",
             mimeType: "audio/wav",
             data: "SGVsbG8=",
-          } as LegacyBinaryInputContent as unknown as InputContent,
+          } as LegacyBinaryInputContent as unknown as ContentPart,
         ],
       };
 
@@ -2383,7 +2383,7 @@ describe("Multimodal Message Conversion", () => {
             {
               type: "audio",
               source: { type: "data", value: "SGVsbG8=", mimeType },
-            } as AudioInputContent,
+            } as AudioPart,
           ],
         };
 
@@ -2415,7 +2415,7 @@ describe("Multimodal Message Conversion", () => {
               type: "binary",
               mimeType,
               data: "SGVsbG8=",
-            } as LegacyBinaryInputContent as unknown as InputContent,
+            } as LegacyBinaryInputContent as unknown as ContentPart,
           ],
         };
 
@@ -2487,7 +2487,7 @@ describe("Multimodal Message Conversion", () => {
             {
               type: "audio",
               source: { type: "data", value: "SGVsbG8=", mimeType },
-            } as AudioInputContent,
+            } as AudioPart,
           ],
         };
 
@@ -2518,7 +2518,7 @@ describe("Multimodal Message Conversion", () => {
               type: "binary",
               mimeType,
               data: "SGVsbG8=",
-            } as LegacyBinaryInputContent as unknown as InputContent,
+            } as LegacyBinaryInputContent as unknown as ContentPart,
           ],
         };
 
@@ -2547,7 +2547,7 @@ describe("Multimodal Message Conversion", () => {
               value: "JVBERi0xLjQK",
               mimeType: "application/vnd.ms-excel",
             },
-          } as DocumentInputContent,
+          } as DocumentPart,
         ],
       };
 
@@ -3428,12 +3428,12 @@ describe("Multimodal Message Conversion", () => {
             {
               type: "document",
               source: { type: "data", value: "aGk=", mimeType: "text/plain" },
-            } as DocumentInputContent,
+            } as DocumentPart,
             {
               type: "document",
               source: { type: "data", value: "aGk=", mimeType: "text/plain" },
               metadata: { filename: "notes.txt" },
-            } as DocumentInputContent,
+            } as DocumentPart,
           ],
         } as UserMessage,
       ])[0].content as Array<any>;

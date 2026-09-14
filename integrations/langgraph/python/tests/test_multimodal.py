@@ -10,15 +10,20 @@ import unittest
 import warnings
 from datetime import datetime
 from typing import NamedTuple
-from ag_ui.core import (
-    UserMessage,
-    TextInputContent,
-    ImageInputContent,
-    AudioInputContent,
-    VideoInputContent,
-    DocumentInputContent,
-    InputContentDataSource,
-    InputContentUrlSource,
+from ag_ui.core import UserMessage
+# 1.0's part vocabulary, bound to whichever name the installed SDK exports, and
+# the label the shared parity table records a built item under. See THE
+# CONTENT-PART NAMES in `_helpers` for why these are not imported from
+# `ag_ui.core` directly and why no label here comes from `type(x).__name__`.
+from tests._helpers import (
+    TextPart,
+    ImagePart,
+    AudioPart,
+    VideoPart,
+    DocumentPart,
+    DataSource,
+    UrlSource,
+    part_label,
 )
 from ag_ui_langgraph.utils import BinaryInputContent
 from langchain_core.messages import (
@@ -63,7 +68,7 @@ class TestMultimodalConversion(unittest.TestCase):
             id="test-2",
             role="user",
             content=[
-                TextInputContent(type="text", text="What's in this image?"),
+                TextPart(type="text", text="What's in this image?"),
                 BinaryInputContent(
                     type="binary",
                     mime_type="image/jpeg",
@@ -96,7 +101,7 @@ class TestMultimodalConversion(unittest.TestCase):
             id="test-3",
             role="user",
             content=[
-                TextInputContent(type="text", text="Analyze this"),
+                TextPart(type="text", text="Analyze this"),
                 BinaryInputContent(
                     type="binary",
                     mime_type="image/png",
@@ -119,18 +124,18 @@ class TestMultimodalConversion(unittest.TestCase):
             image_content["image_url"]["url"].startswith("data:image/png;base64,")
         )
 
-    # ── ImageInputContent ───────────────────────────────────────────────
+    # ── ImagePart ───────────────────────────────────────────────
 
     def test_agui_image_url_source_to_langchain(self):
-        """Test converting ImageInputContent with URL source to LangChain."""
+        """Test converting ImagePart with URL source to LangChain."""
         agui_message = UserMessage(
             id="test-img-url",
             role="user",
             content=[
-                TextInputContent(type="text", text="Describe this image"),
-                ImageInputContent(
+                TextPart(type="text", text="Describe this image"),
+                ImagePart(
                     type="image",
-                    source=InputContentUrlSource(
+                    source=UrlSource(
                         type="url",
                         value="https://example.com/photo.jpg",
                     ),
@@ -148,14 +153,14 @@ class TestMultimodalConversion(unittest.TestCase):
         self.assertEqual(content[1]["image_url"]["url"], "https://example.com/photo.jpg")
 
     def test_agui_image_data_source_to_langchain(self):
-        """Test converting ImageInputContent with data source to LangChain."""
+        """Test converting ImagePart with data source to LangChain."""
         agui_message = UserMessage(
             id="test-img-data",
             role="user",
             content=[
-                ImageInputContent(
+                ImagePart(
                     type="image",
-                    source=InputContentDataSource(
+                    source=DataSource(
                         type="data",
                         value="iVBORw0KGgoAAAANSUhEUgAAAAUA",
                         mime_type="image/png",
@@ -175,7 +180,7 @@ class TestMultimodalConversion(unittest.TestCase):
         )
 
     def test_agui_input_metadata_not_leaked_to_langchain_blocks(self):
-        """AG-UI InputContent metadata must NOT be attached to the LangChain
+        """AG-UI ContentPart metadata must NOT be attached to the LangChain
         content blocks handed to the model.
 
         Attaching a top-level ``metadata`` key produces a non-standard content
@@ -185,14 +190,14 @@ class TestMultimodalConversion(unittest.TestCase):
         The block must carry only spec-compliant keys. See issue #2100.
         """
         content_list = [
-            TextInputContent(
+            TextPart(
                 type="text",
                 text="Describe this image",
                 metadata={"source": "prompt"},
             ),
-            ImageInputContent(
+            ImagePart(
                 type="image",
-                source=InputContentUrlSource(
+                source=UrlSource(
                     type="url",
                     value="https://example.com/photo.jpg",
                 ),
@@ -226,14 +231,14 @@ class TestMultimodalConversion(unittest.TestCase):
             {"type": "image_url", "image_url": {"url": "https://example.com/legacy.png"}},
         )
 
-    # ── AudioInputContent ───────────────────────────────────────────────
+    # ── AudioPart ───────────────────────────────────────────────
 
     def test_agui_audio_data_source_to_langchain(self):
-        """Test converting AudioInputContent with data source to LangChain."""
+        """Test converting AudioPart with data source to LangChain."""
         content_list = [
-            AudioInputContent(
+            AudioPart(
                 type="audio",
-                source=InputContentDataSource(
+                source=DataSource(
                     type="data",
                     value="SGVsbG8gV29ybGQ=",
                     mime_type="audio/mp3",
@@ -271,9 +276,9 @@ class TestMultimodalConversion(unittest.TestCase):
     def test_agui_audio_url_source_stays_on_image_url(self):
         """Audio by URL keeps the legacy `image_url` block."""
         content_list = [
-            AudioInputContent(
+            AudioPart(
                 type="audio",
-                source=InputContentUrlSource(
+                source=UrlSource(
                     type="url",
                     value="https://example.com/audio.mp3",
                 ),
@@ -288,14 +293,14 @@ class TestMultimodalConversion(unittest.TestCase):
             {"type": "image_url", "image_url": {"url": "https://example.com/audio.mp3"}},
         )
 
-    # ── VideoInputContent ───────────────────────────────────────────────
+    # ── VideoPart ───────────────────────────────────────────────
 
     def test_agui_video_url_source_stays_on_image_url(self):
         """Video by URL keeps the legacy `image_url` block."""
         content_list = [
-            VideoInputContent(
+            VideoPart(
                 type="video",
-                source=InputContentUrlSource(
+                source=UrlSource(
                     type="url",
                     value="https://example.com/video.mp4",
                 ),
@@ -313,9 +318,9 @@ class TestMultimodalConversion(unittest.TestCase):
     def test_agui_video_data_source_stays_on_image_url(self):
         """Video by inline data keeps the legacy `image_url` block."""
         content_list = [
-            VideoInputContent(
+            VideoPart(
                 type="video",
-                source=InputContentDataSource(
+                source=DataSource(
                     type="data",
                     value="AAAA",
                     mime_type="video/mp4",
@@ -331,7 +336,7 @@ class TestMultimodalConversion(unittest.TestCase):
             {"type": "image_url", "image_url": {"url": "data:video/mp4;base64,AAAA"}},
         )
 
-    # ── DocumentInputContent ────────────────────────────────────────────
+    # ── DocumentPart ────────────────────────────────────────────
 
     def test_agui_document_url_source_stays_on_image_url(self):
         """Documents by URL keep the legacy `image_url` block.
@@ -340,9 +345,9 @@ class TestMultimodalConversion(unittest.TestCase):
         the URL keeps going out exactly as it always did.
         """
         content_list = [
-            DocumentInputContent(
+            DocumentPart(
                 type="document",
-                source=InputContentUrlSource(
+                source=UrlSource(
                     type="url",
                     value="https://example.com/doc.pdf",
                 ),
@@ -377,11 +382,11 @@ class TestMultimodalConversion(unittest.TestCase):
         )
 
     def test_agui_document_data_source_to_langchain(self):
-        """Test converting DocumentInputContent with data source to LangChain."""
+        """Test converting DocumentPart with data source to LangChain."""
         content_list = [
-            DocumentInputContent(
+            DocumentPart(
                 type="document",
-                source=InputContentDataSource(
+                source=DataSource(
                     type="data",
                     value="JVBERi0xLjQK",
                     mime_type="application/pdf",
@@ -480,9 +485,9 @@ class TestMultimodalConversion(unittest.TestCase):
         for mime_type, expected in cases:
             with self.subTest(mime_type=mime_type):
                 [block] = convert_agui_multimodal_to_langchain([
-                    DocumentInputContent(
+                    DocumentPart(
                         type="document",
-                        source=InputContentDataSource(
+                        source=DataSource(
                             type="data", value="JVBERi0xLjQK", mime_type=mime_type
                         ),
                     )
@@ -499,9 +504,9 @@ class TestMultimodalConversion(unittest.TestCase):
         `filename`.
         """
         typed, legacy = convert_agui_multimodal_to_langchain([
-            DocumentInputContent(
+            DocumentPart(
                 type="document",
-                source=InputContentDataSource(
+                source=DataSource(
                     type="data", value="JVBERi0xLjQK", mime_type="application/pdf"
                 ),
                 metadata={"filename": ""},
@@ -529,15 +534,15 @@ class TestMultimodalConversion(unittest.TestCase):
         name is untouched, which is the other half.
         """
         emitted = convert_agui_multimodal_to_langchain([
-            DocumentInputContent(
+            DocumentPart(
                 type="document",
-                source=InputContentDataSource(
+                source=DataSource(
                     type="data", value="aGk=", mime_type="text/plain"
                 ),
             ),
-            DocumentInputContent(
+            DocumentPart(
                 type="document",
-                source=InputContentDataSource(
+                source=DataSource(
                     type="data", value="aGk=", mime_type="text/plain"
                 ),
                 metadata={"filename": "notes.txt"},
@@ -563,9 +568,9 @@ class TestMultimodalConversion(unittest.TestCase):
         `BinaryInputContent.filename` into exactly that shape.
         """
         content_list = [
-            DocumentInputContent(
+            DocumentPart(
                 type="document",
-                source=InputContentDataSource(
+                source=DataSource(
                     type="data",
                     value="JVBERi0xLjQK",
                     mime_type="application/pdf",
@@ -598,10 +603,10 @@ class TestMultimodalConversion(unittest.TestCase):
         shows a bare line of text.
         """
         original = [
-            TextInputContent(type="text", text="Summarize this"),
-            DocumentInputContent(
+            TextPart(type="text", text="Summarize this"),
+            DocumentPart(
                 type="document",
-                source=InputContentDataSource(
+                source=DataSource(
                     type="data",
                     value="JVBERi0xLjQK",
                     mime_type="application/pdf",
@@ -615,7 +620,7 @@ class TestMultimodalConversion(unittest.TestCase):
         )
 
         self.assertEqual(len(round_tripped), 2)
-        self.assertIsInstance(round_tripped[1], DocumentInputContent)
+        self.assertIsInstance(round_tripped[1], DocumentPart)
         self.assertEqual(round_tripped[1].source.value, "JVBERi0xLjQK")
         self.assertEqual(round_tripped[1].source.mime_type, "application/pdf")
         self.assertEqual(round_tripped[1].metadata, {"filename": "invoice-q2.pdf"})
@@ -628,9 +633,9 @@ class TestMultimodalConversion(unittest.TestCase):
         covered by `TestModalitySurvivesImageUrlRoundTrip`.
         """
         original = [
-            AudioInputContent(
+            AudioPart(
                 type="audio",
-                source=InputContentDataSource(
+                source=DataSource(
                     type="data", value="SGVsbG8=", mime_type="audio/mp3"
                 ),
             ),
@@ -640,14 +645,14 @@ class TestMultimodalConversion(unittest.TestCase):
             convert_agui_multimodal_to_langchain(original)
         )
 
-        self.assertIsInstance(round_tripped[0], AudioInputContent)
+        self.assertIsInstance(round_tripped[0], AudioPart)
         self.assertEqual(round_tripped[0].source.mime_type, "audio/mp3")
         self.assertEqual(round_tripped[0].source.value, "SGVsbG8=")
 
     # ── LangChain to AG-UI (new types) ─────────────────────────────────
 
     def test_langchain_image_url_to_agui_produces_image_input_content(self):
-        """Test converting LangChain image_url with regular URL to AG-UI produces ImageInputContent."""
+        """Test converting LangChain image_url with regular URL to AG-UI produces ImagePart."""
         lc_content = [
             {"type": "text", "text": "What do you see?"},
             {
@@ -659,15 +664,15 @@ class TestMultimodalConversion(unittest.TestCase):
         agui_content = convert_langchain_multimodal_to_agui(lc_content)
 
         self.assertEqual(len(agui_content), 2)
-        self.assertIsInstance(agui_content[0], TextInputContent)
+        self.assertIsInstance(agui_content[0], TextPart)
         self.assertEqual(agui_content[0].text, "What do you see?")
 
-        self.assertIsInstance(agui_content[1], ImageInputContent)
-        self.assertIsInstance(agui_content[1].source, InputContentUrlSource)
+        self.assertIsInstance(agui_content[1], ImagePart)
+        self.assertIsInstance(agui_content[1].source, UrlSource)
         self.assertEqual(agui_content[1].source.value, "https://example.com/image.jpg")
 
     def test_langchain_data_url_to_agui_produces_image_input_content(self):
-        """Test converting LangChain data URL to AG-UI produces ImageInputContent with data source."""
+        """Test converting LangChain data URL to AG-UI produces ImagePart with data source."""
         lc_content = [
             {
                 "type": "image_url",
@@ -678,8 +683,8 @@ class TestMultimodalConversion(unittest.TestCase):
         agui_content = convert_langchain_multimodal_to_agui(lc_content)
 
         self.assertEqual(len(agui_content), 1)
-        self.assertIsInstance(agui_content[0], ImageInputContent)
-        self.assertIsInstance(agui_content[0].source, InputContentDataSource)
+        self.assertIsInstance(agui_content[0], ImagePart)
+        self.assertIsInstance(agui_content[0].source, DataSource)
         self.assertEqual(agui_content[0].source.mime_type, "image/png")
         self.assertEqual(agui_content[0].source.value, "iVBORw0KGgo")
 
@@ -695,8 +700,8 @@ class TestMultimodalConversion(unittest.TestCase):
         agui_content = convert_langchain_multimodal_to_agui(lc_content)
 
         self.assertEqual(len(agui_content), 1)
-        self.assertIsInstance(agui_content[0], ImageInputContent)
-        self.assertIsInstance(agui_content[0].source, InputContentDataSource)
+        self.assertIsInstance(agui_content[0], ImagePart)
+        self.assertIsInstance(agui_content[0].source, DataSource)
         self.assertEqual(agui_content[0].source.mime_type, "image/jpeg")
         self.assertEqual(agui_content[0].source.value, "/9j/4AAQ")
 
@@ -707,9 +712,9 @@ class TestMultimodalConversion(unittest.TestCase):
         agui_content = convert_langchain_multimodal_to_agui(lc_content)
 
         self.assertEqual(len(agui_content), 2)
-        self.assertIsInstance(agui_content[0], TextInputContent)
+        self.assertIsInstance(agui_content[0], TextPart)
         self.assertEqual(agui_content[0].text, "hello")
-        self.assertIsInstance(agui_content[1], TextInputContent)
+        self.assertIsInstance(agui_content[1], TextPart)
         self.assertEqual(agui_content[1].text, " world")
 
     def test_langchain_plain_string_interleaved_with_image_keeps_order(self):
@@ -723,12 +728,12 @@ class TestMultimodalConversion(unittest.TestCase):
         agui_content = convert_langchain_multimodal_to_agui(lc_content)
 
         self.assertEqual(len(agui_content), 3)
-        self.assertIsInstance(agui_content[0], TextInputContent)
+        self.assertIsInstance(agui_content[0], TextPart)
         self.assertEqual(agui_content[0].text, "before")
-        self.assertIsInstance(agui_content[1], ImageInputContent)
-        self.assertIsInstance(agui_content[1].source, InputContentUrlSource)
+        self.assertIsInstance(agui_content[1], ImagePart)
+        self.assertIsInstance(agui_content[1].source, UrlSource)
         self.assertEqual(agui_content[1].source.value, "https://example.com/pic.png")
-        self.assertIsInstance(agui_content[2], TextInputContent)
+        self.assertIsInstance(agui_content[2], TextPart)
         self.assertEqual(agui_content[2].text, "after")
 
     def test_langchain_plain_string_entries_preserved_verbatim(self):
@@ -749,7 +754,7 @@ class TestMultimodalConversion(unittest.TestCase):
         agui_content = convert_langchain_multimodal_to_agui(lc_content)
 
         self.assertEqual(len(agui_content), 2)
-        self.assertIsInstance(agui_content[0], TextInputContent)
+        self.assertIsInstance(agui_content[0], TextPart)
         self.assertEqual(agui_content[0].text, "")
         self.assertEqual(agui_content[1].text, "world")
 
@@ -758,7 +763,7 @@ class TestMultimodalConversion(unittest.TestCase):
         agui_content = convert_langchain_multimodal_to_agui("hi there")
 
         self.assertEqual(len(agui_content), 1)
-        self.assertIsInstance(agui_content[0], TextInputContent)
+        self.assertIsInstance(agui_content[0], TextPart)
         self.assertEqual(agui_content[0].text, "hi there")
 
     def test_langchain_bare_string_content_preserved_verbatim(self):
@@ -773,7 +778,7 @@ class TestMultimodalConversion(unittest.TestCase):
         agui_content = convert_langchain_multimodal_to_agui("")
 
         self.assertEqual(len(agui_content), 1)
-        self.assertIsInstance(agui_content[0], TextInputContent)
+        self.assertIsInstance(agui_content[0], TextPart)
         self.assertEqual(agui_content[0].text, "")
 
     def test_langchain_non_list_content_yields_no_items(self):
@@ -801,7 +806,7 @@ class TestMultimodalConversion(unittest.TestCase):
     def test_langchain_unknown_block_type_is_not_fabricated_into_content(self):
         """Test an unrecognized content block is dropped, never fabricated into an item."""
         # An unknown block must not reach the image_url handler, which would mint an
-        # ImageInputContent with an empty source. This asserts hollowness rather than
+        # ImagePart with an empty source. This asserts hollowness rather than
         # a count: if the converter is later taught langchain-core's standard blocks,
         # these should become real image and audio items — never sourceless ones.
         lc_content = [
@@ -814,16 +819,16 @@ class TestMultimodalConversion(unittest.TestCase):
         agui_content = convert_langchain_multimodal_to_agui(lc_content)
 
         self.assertEqual(
-            [c.text for c in agui_content if isinstance(c, TextInputContent)], ["look"]
+            [c.text for c in agui_content if isinstance(c, TextPart)], ["look"]
         )
         for item in agui_content:
-            if isinstance(item, ImageInputContent):
+            if isinstance(item, ImagePart):
                 self.assertTrue(item.source.value, f"sourceless media item: {item!r}")
 
     # ── Round-trip tests ────────────────────────────────────────────────
 
     def test_round_trip_langchain_url_to_agui_and_back(self):
-        """Test round-trip: LangChain image_url -> AG-UI ImageInputContent -> LangChain image_url."""
+        """Test round-trip: LangChain image_url -> AG-UI ImagePart -> LangChain image_url."""
         original_lc = [
             {"type": "text", "text": "Look at this"},
             {"type": "image_url", "image_url": {"url": "https://example.com/pic.png"}},
@@ -839,7 +844,7 @@ class TestMultimodalConversion(unittest.TestCase):
         self.assertEqual(result_lc[1]["image_url"]["url"], "https://example.com/pic.png")
 
     def test_round_trip_langchain_data_url_to_agui_and_back(self):
-        """Test round-trip: LangChain data URL -> AG-UI ImageInputContent -> LangChain data URL."""
+        """Test round-trip: LangChain data URL -> AG-UI ImagePart -> LangChain data URL."""
         original_lc = [
             {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc123"}},
         ]
@@ -859,14 +864,14 @@ class TestMultimodalConversion(unittest.TestCase):
     def test_mixed_content_types_to_langchain(self):
         """Test converting a mix of new typed content and legacy BinaryInputContent."""
         content_list = [
-            TextInputContent(type="text", text="Multi-media message"),
-            ImageInputContent(
+            TextPart(type="text", text="Multi-media message"),
+            ImagePart(
                 type="image",
-                source=InputContentUrlSource(type="url", value="https://example.com/img.jpg"),
+                source=UrlSource(type="url", value="https://example.com/img.jpg"),
             ),
-            AudioInputContent(
+            AudioPart(
                 type="audio",
-                source=InputContentDataSource(type="data", value="audiodata", mime_type="audio/wav"),
+                source=DataSource(type="data", value="audiodata", mime_type="audio/wav"),
             ),
             BinaryInputContent(
                 type="binary",
@@ -947,13 +952,13 @@ class TestMultimodalConversion(unittest.TestCase):
     def test_flatten_multimodal_content(self):
         """Test flattening multimodal content to plain text."""
         content = [
-            TextInputContent(type="text", text="Hello"),
+            TextPart(type="text", text="Hello"),
             BinaryInputContent(
                 type="binary",
                 mime_type="image/jpeg",
                 url="https://example.com/image.jpg"
             ),
-            TextInputContent(type="text", text="World"),
+            TextPart(type="text", text="World"),
         ]
 
         flattened = flatten_user_content(content)
@@ -965,7 +970,7 @@ class TestMultimodalConversion(unittest.TestCase):
     def test_flatten_with_filename(self):
         """Test flattening binary content with filename."""
         content = [
-            TextInputContent(type="text", text="Check this file"),
+            TextPart(type="text", text="Check this file"),
             BinaryInputContent(
                 type="binary",
                 mime_type="application/pdf",
@@ -980,12 +985,12 @@ class TestMultimodalConversion(unittest.TestCase):
         self.assertIn("[Binary content: report.pdf]", flattened)
 
     def test_flatten_image_input_content(self):
-        """Test flattening ImageInputContent to plain text."""
+        """Test flattening ImagePart to plain text."""
         content = [
-            TextInputContent(type="text", text="Here is an image"),
-            ImageInputContent(
+            TextPart(type="text", text="Here is an image"),
+            ImagePart(
                 type="image",
-                source=InputContentUrlSource(type="url", value="https://example.com/img.jpg"),
+                source=UrlSource(type="url", value="https://example.com/img.jpg"),
             ),
         ]
 
@@ -995,11 +1000,11 @@ class TestMultimodalConversion(unittest.TestCase):
         self.assertIn("[Image: https://example.com/img.jpg]", flattened)
 
     def test_flatten_image_data_source(self):
-        """Test flattening ImageInputContent with data source."""
+        """Test flattening ImagePart with data source."""
         content = [
-            ImageInputContent(
+            ImagePart(
                 type="image",
-                source=InputContentDataSource(type="data", value="abc", mime_type="image/png"),
+                source=DataSource(type="data", value="abc", mime_type="image/png"),
             ),
         ]
 
@@ -1007,11 +1012,11 @@ class TestMultimodalConversion(unittest.TestCase):
         self.assertIn("[Image: image/png]", flattened)
 
     def test_flatten_audio_input_content(self):
-        """Test flattening AudioInputContent to plain text."""
+        """Test flattening AudioPart to plain text."""
         content = [
-            AudioInputContent(
+            AudioPart(
                 type="audio",
-                source=InputContentUrlSource(type="url", value="https://example.com/a.mp3"),
+                source=UrlSource(type="url", value="https://example.com/a.mp3"),
             ),
         ]
 
@@ -1019,11 +1024,11 @@ class TestMultimodalConversion(unittest.TestCase):
         self.assertIn("[Audio: https://example.com/a.mp3]", flattened)
 
     def test_flatten_video_input_content(self):
-        """Test flattening VideoInputContent to plain text."""
+        """Test flattening VideoPart to plain text."""
         content = [
-            VideoInputContent(
+            VideoPart(
                 type="video",
-                source=InputContentUrlSource(type="url", value="https://example.com/v.mp4"),
+                source=UrlSource(type="url", value="https://example.com/v.mp4"),
             ),
         ]
 
@@ -1031,11 +1036,11 @@ class TestMultimodalConversion(unittest.TestCase):
         self.assertIn("[Video: https://example.com/v.mp4]", flattened)
 
     def test_flatten_document_input_content(self):
-        """Test flattening DocumentInputContent to plain text."""
+        """Test flattening DocumentPart to plain text."""
         content = [
-            DocumentInputContent(
+            DocumentPart(
                 type="document",
-                source=InputContentUrlSource(type="url", value="https://example.com/doc.pdf"),
+                source=UrlSource(type="url", value="https://example.com/doc.pdf"),
             ),
         ]
 
@@ -1043,11 +1048,11 @@ class TestMultimodalConversion(unittest.TestCase):
         self.assertIn("[Document: https://example.com/doc.pdf]", flattened)
 
     def test_flatten_document_data_source(self):
-        """Test flattening DocumentInputContent with data source."""
+        """Test flattening DocumentPart with data source."""
         content = [
-            DocumentInputContent(
+            DocumentPart(
                 type="document",
-                source=InputContentDataSource(type="data", value="pdf-data", mime_type="application/pdf"),
+                source=DataSource(type="data", value="pdf-data", mime_type="application/pdf"),
             ),
         ]
 
@@ -1079,7 +1084,7 @@ class TestMultimodalConversion(unittest.TestCase):
         )
 
         content_list = [
-            TextInputContent(type="text", text="Keep me"),
+            TextPart(type="text", text="Keep me"),
             binary_item,
         ]
 
@@ -1095,7 +1100,7 @@ class TestMultimodalConversion(unittest.TestCase):
     def test_convert_agui_multimodal_to_langchain_helper(self):
         """Test the convert_agui_multimodal_to_langchain helper with BinaryInputContent."""
         agui_content = [
-            TextInputContent(type="text", text="Test text"),
+            TextPart(type="text", text="Test text"),
             BinaryInputContent(
                 type="binary",
                 mime_type="image/png",
@@ -1121,10 +1126,10 @@ class TestMultimodalConversion(unittest.TestCase):
         agui_content = convert_langchain_multimodal_to_agui(lc_content)
 
         self.assertEqual(len(agui_content), 2)
-        self.assertIsInstance(agui_content[0], TextInputContent)
+        self.assertIsInstance(agui_content[0], TextPart)
         self.assertEqual(agui_content[0].text, "Test text")
-        self.assertIsInstance(agui_content[1], ImageInputContent)
-        self.assertIsInstance(agui_content[1].source, InputContentUrlSource)
+        self.assertIsInstance(agui_content[1], ImagePart)
+        self.assertIsInstance(agui_content[1].source, UrlSource)
         self.assertEqual(agui_content[1].source.value, "https://example.com/test.png")
 
 
@@ -1153,9 +1158,9 @@ class TestModalitySurvivesImageUrlRoundTrip(unittest.TestCase):
 
     def test_video_stays_a_video_across_the_round_trip(self):
         wire, content = self._round_trip(
-            VideoInputContent(
+            VideoPart(
                 type="video",
-                source=InputContentDataSource(
+                source=DataSource(
                     type="data", value="SGVsbG8=", mime_type="video/mp4"
                 ),
                 metadata={"filename": "clip.mp4"},
@@ -1168,16 +1173,16 @@ class TestModalitySurvivesImageUrlRoundTrip(unittest.TestCase):
             wire,
             {"type": "image_url", "image_url": {"url": "data:video/mp4;base64,SGVsbG8="}},
         )
-        self.assertIsInstance(content, VideoInputContent)
+        self.assertIsInstance(content, VideoPart)
         self.assertEqual(content.source.value, "SGVsbG8=")
         self.assertEqual(content.source.mime_type, "video/mp4")
 
     def test_audio_the_provider_cannot_carry_stays_audio(self):
         # `audio/ogg` is outside `input_audio.format`, so it rides `image_url` too.
         wire, content = self._round_trip(
-            AudioInputContent(
+            AudioPart(
                 type="audio",
-                source=InputContentDataSource(
+                source=DataSource(
                     type="data", value="SGVsbG8=", mime_type="audio/ogg"
                 ),
             )
@@ -1187,7 +1192,7 @@ class TestModalitySurvivesImageUrlRoundTrip(unittest.TestCase):
             wire,
             {"type": "image_url", "image_url": {"url": "data:audio/ogg;base64,SGVsbG8="}},
         )
-        self.assertIsInstance(content, AudioInputContent)
+        self.assertIsInstance(content, AudioPart)
         self.assertEqual(content.source.mime_type, "audio/ogg")
 
     def test_legacy_binary_video_stays_a_video(self):
@@ -1199,20 +1204,20 @@ class TestModalitySurvivesImageUrlRoundTrip(unittest.TestCase):
             wire,
             {"type": "image_url", "image_url": {"url": "data:video/mp4;base64,SGVsbG8="}},
         )
-        self.assertIsInstance(content, VideoInputContent)
+        self.assertIsInstance(content, VideoPart)
         self.assertEqual(content.source.mime_type, "video/mp4")
 
     def test_a_genuine_image_still_comes_back_an_image(self):
         _, content = self._round_trip(
-            ImageInputContent(
+            ImagePart(
                 type="image",
-                source=InputContentDataSource(
+                source=DataSource(
                     type="data", value="SGVsbG8=", mime_type="image/png"
                 ),
             )
         )
 
-        self.assertIsInstance(content, ImageInputContent)
+        self.assertIsInstance(content, ImagePart)
         self.assertEqual(content.source.mime_type, "image/png")
 
     def test_a_non_media_mime_type_reads_as_a_document(self):
@@ -1224,7 +1229,7 @@ class TestModalitySurvivesImageUrlRoundTrip(unittest.TestCase):
             [{"type": "image_url", "image_url": {"url": "data:application/pdf;base64,JVBERi0="}}]
         )[0]
 
-        self.assertIsInstance(content, DocumentInputContent)
+        self.assertIsInstance(content, DocumentPart)
         self.assertEqual(content.source.value, "JVBERi0=")
         self.assertEqual(content.source.mime_type, "application/pdf")
 
@@ -1234,7 +1239,7 @@ class TestModalitySurvivesImageUrlRoundTrip(unittest.TestCase):
             [{"type": "image_url", "image_url": {"url": "data:;base64,SGVsbG8="}}]
         )[0]
 
-        self.assertIsInstance(content, ImageInputContent)
+        self.assertIsInstance(content, ImagePart)
 
     def test_a_mime_less_data_url_reads_as_the_image_png_its_own_fallback_names(self):
         """A ``data:`` URL always has a colon, so the ``":" in header`` gate never
@@ -1254,7 +1259,7 @@ class TestModalitySurvivesImageUrlRoundTrip(unittest.TestCase):
             [{"type": "image_url", "image_url": {"url": "data:;base64,aGk="}}]
         )
 
-        self.assertIsInstance(content, ImageInputContent)
+        self.assertIsInstance(content, ImagePart)
         self.assertEqual(content.source.type, "data")
         self.assertEqual(content.source.value, "aGk=")
         self.assertEqual(content.source.mime_type, "image/png")
@@ -1263,9 +1268,9 @@ class TestModalitySurvivesImageUrlRoundTrip(unittest.TestCase):
         """The guard for the default above: it must not overwrite a real MIME
         type, and it must not disturb the modality recovery that reads it."""
         cases = [
-            ("data:image/jpeg;base64,aGk=", ImageInputContent, "image/jpeg"),
-            ("data:video/mp4;base64,aGk=", VideoInputContent, "video/mp4"),
-            ("data:application/pdf;base64,aGk=", DocumentInputContent, "application/pdf"),
+            ("data:image/jpeg;base64,aGk=", ImagePart, "image/jpeg"),
+            ("data:video/mp4;base64,aGk=", VideoPart, "video/mp4"),
+            ("data:application/pdf;base64,aGk=", DocumentPart, "application/pdf"),
         ]
 
         for url, expected_class, expected_mime in cases:
@@ -1286,15 +1291,15 @@ class TestModalitySurvivesImageUrlRoundTrip(unittest.TestCase):
         test exists so the limit is visible and a future fix has to change it
         deliberately."""
         _, content = self._round_trip(
-            VideoInputContent(
+            VideoPart(
                 type="video",
-                source=InputContentUrlSource(
+                source=UrlSource(
                     type="url", value="https://example.com/clip.mp4", mime_type="video/mp4"
                 ),
             )
         )
 
-        self.assertIsInstance(content, ImageInputContent)
+        self.assertIsInstance(content, ImagePart)
         self.assertEqual(content.source.value, "https://example.com/clip.mp4")
 
 
@@ -1335,9 +1340,9 @@ class TestProviderBoundary(unittest.TestCase):
 
     def test_emitted_document_block_translates_for_openai(self):
         block = self._emit(
-            DocumentInputContent(
+            DocumentPart(
                 type="document",
-                source=InputContentDataSource(
+                source=DataSource(
                     type="data", value="JVBERi0xLjQK", mime_type="application/pdf"
                 ),
                 metadata={"filename": "invoice-q2.pdf"},
@@ -1364,9 +1369,9 @@ class TestProviderBoundary(unittest.TestCase):
         same block, so both substitute the same name.
         """
         block = self._emit(
-            DocumentInputContent(
+            DocumentPart(
                 type="document",
-                source=InputContentDataSource(
+                source=DataSource(
                     type="data", value="JVBERi0xLjQK", mime_type="application/pdf"
                 ),
             )
@@ -1415,15 +1420,15 @@ class TestProviderBoundary(unittest.TestCase):
         Mirrors the TypeScript `names a document's bytes octet-stream at the
         provider when it has an %s`. That adapter parametrizes an ABSENT
         `mimeType` alongside the empty one; there is no absent case to
-        parametrize here, because `InputContentDataSource.mime_type` is a
+        parametrize here, because `DataSource.mime_type` is a
         required `str` that pydantic validates at this boundary — so the empty
         string is the only spelling of "no MIME type" that can reach this
         converter through the public API.
         """
         block = self._emit(
-            DocumentInputContent(
+            DocumentPart(
                 type="document",
-                source=InputContentDataSource(type="data", value="aGk=", mime_type=""),
+                source=DataSource(type="data", value="aGk=", mime_type=""),
             )
         )
 
@@ -1457,9 +1462,9 @@ class TestProviderBoundary(unittest.TestCase):
         cases = [
             (
                 "typed image content",
-                ImageInputContent(
+                ImagePart(
                     type="image",
-                    source=InputContentDataSource(
+                    source=DataSource(
                         type="data", value="aGk=", mime_type=""
                     ),
                 ),
@@ -1483,7 +1488,7 @@ class TestProviderBoundary(unittest.TestCase):
                 # to the document the octet-stream substitution would have made
                 # of it.
                 [returned] = convert_langchain_multimodal_to_agui([block])
-                self.assertIsInstance(returned, ImageInputContent)
+                self.assertIsInstance(returned, ImagePart)
 
     def test_every_filename_situation_reaches_the_provider(self):
         """The five filename situations an attachment can be in, each carried all
@@ -1500,9 +1505,9 @@ class TestProviderBoundary(unittest.TestCase):
         cases = [
             (
                 "supplied",
-                DocumentInputContent(
+                DocumentPart(
                     type="document",
-                    source=InputContentDataSource(
+                    source=DataSource(
                         type="data", value="aGk=", mime_type="application/pdf"
                     ),
                     metadata={"filename": "real.pdf"},
@@ -1511,9 +1516,9 @@ class TestProviderBoundary(unittest.TestCase):
             ),
             (
                 "empty-string supplied, typed",
-                DocumentInputContent(
+                DocumentPart(
                     type="document",
-                    source=InputContentDataSource(
+                    source=DataSource(
                         type="data", value="aGk=", mime_type="application/pdf"
                     ),
                     metadata={"filename": ""},
@@ -1529,9 +1534,9 @@ class TestProviderBoundary(unittest.TestCase):
             ),
             (
                 "absent with a known MIME type",
-                DocumentInputContent(
+                DocumentPart(
                     type="document",
-                    source=InputContentDataSource(
+                    source=DataSource(
                         type="data", value="aGk=", mime_type="text/plain"
                     ),
                 ),
@@ -1539,9 +1544,9 @@ class TestProviderBoundary(unittest.TestCase):
             ),
             (
                 "absent with an unknown MIME type",
-                DocumentInputContent(
+                DocumentPart(
                     type="document",
-                    source=InputContentDataSource(
+                    source=DataSource(
                         type="data", value="aGk=", mime_type="application/x-weird-thing"
                     ),
                 ),
@@ -1557,9 +1562,9 @@ class TestProviderBoundary(unittest.TestCase):
 
     def test_emitted_audio_block_translates_for_openai(self):
         block = self._emit(
-            AudioInputContent(
+            AudioPart(
                 type="audio",
-                source=InputContentDataSource(
+                source=DataSource(
                     type="data", value="SGVsbG8=", mime_type="audio/wav"
                 ),
             )
@@ -1642,9 +1647,9 @@ class TestProviderBoundary(unittest.TestCase):
         for mime_type, expected_format in admitted.items():
             with self.subTest(mime_type):
                 block = self._emit(
-                    AudioInputContent(
+                    AudioPart(
                         type="audio",
-                        source=InputContentDataSource(
+                        source=DataSource(
                             type="data", value="SGVsbG8=", mime_type=mime_type
                         ),
                     )
@@ -1714,9 +1719,9 @@ class TestProviderBoundary(unittest.TestCase):
         for mime_type in ("audio/ogg", "audio/aac", "audio/webm", "audio/flac", "audio/mp4"):
             with self.subTest(mime_type):
                 emitted = self._emit(
-                    AudioInputContent(
+                    AudioPart(
                         type="audio",
-                        source=InputContentDataSource(
+                        source=DataSource(
                             type="data", value="SGVsbG8=", mime_type=mime_type
                         ),
                     )
@@ -1766,9 +1771,9 @@ class TestProviderBoundary(unittest.TestCase):
         enum constrains it, so rewriting one there would corrupt a working path.
         """
         block = self._emit(
-            DocumentInputContent(
+            DocumentPart(
                 type="document",
-                source=InputContentDataSource(
+                source=DataSource(
                     type="data", value="JVBERi0xLjQK", mime_type="application/vnd.ms-excel"
                 ),
             )
@@ -1810,9 +1815,9 @@ class TestProviderBoundary(unittest.TestCase):
         """
         refused = {
             "audio by url": (
-                AudioInputContent(
+                AudioPart(
                     type="audio",
-                    source=InputContentUrlSource(
+                    source=UrlSource(
                         type="url", value="https://example.com/a.wav"
                     ),
                 ),
@@ -1820,9 +1825,9 @@ class TestProviderBoundary(unittest.TestCase):
                 "Key base64 is required for audio blocks",
             ),
             "video by base64": (
-                VideoInputContent(
+                VideoPart(
                     type="video",
-                    source=InputContentDataSource(
+                    source=DataSource(
                         type="data", value="AAA=", mime_type="video/mp4"
                     ),
                 ),
@@ -1830,9 +1835,9 @@ class TestProviderBoundary(unittest.TestCase):
                 "Block of type video is not supported",
             ),
             "video by url": (
-                VideoInputContent(
+                VideoPart(
                     type="video",
-                    source=InputContentUrlSource(
+                    source=UrlSource(
                         type="url", value="https://example.com/v.mp4"
                     ),
                 ),
@@ -1840,9 +1845,9 @@ class TestProviderBoundary(unittest.TestCase):
                 "Block of type video is not supported",
             ),
             "file by url": (
-                DocumentInputContent(
+                DocumentPart(
                     type="document",
-                    source=InputContentUrlSource(
+                    source=UrlSource(
                         type="url", value="https://example.com/d.pdf"
                     ),
                     metadata={"filename": "d.pdf"},
@@ -1900,8 +1905,8 @@ class TestProviderBoundary(unittest.TestCase):
         self.assertEqual(
             agui,
             [
-                DocumentInputContent(
-                    source=InputContentDataSource(
+                DocumentPart(
+                    source=DataSource(
                         type="data", value="JVBERi0xLjQK", mime_type="application/pdf"
                     ),
                     metadata={"filename": "in.pdf"},
@@ -1928,8 +1933,8 @@ class TestProviderBoundary(unittest.TestCase):
         self.assertEqual(
             agui,
             [
-                AudioInputContent(
-                    source=InputContentDataSource(
+                AudioPart(
+                    source=DataSource(
                         type="data", value="SGVsbG8=", mime_type="audio/wav"
                     )
                 )
@@ -1948,8 +1953,8 @@ class TestProviderBoundary(unittest.TestCase):
         """
         stored = {
             "PDF": (
-                DocumentInputContent(
-                    source=InputContentUrlSource(
+                DocumentPart(
+                    source=UrlSource(
                         type="url", value="data:application/pdf;base64,JVBERi0xLjQK"
                     ),
                     metadata={"filename": "in.pdf"},
@@ -1963,8 +1968,8 @@ class TestProviderBoundary(unittest.TestCase):
                 },
             ),
             "WAV": (
-                AudioInputContent(
-                    source=InputContentUrlSource(
+                AudioPart(
+                    source=UrlSource(
                         type="url", value="data:audio/wav;base64,SGVsbG8="
                     )
                 ),
@@ -2001,30 +2006,30 @@ class TestProviderBoundary(unittest.TestCase):
         """
         untouched = {
             "remote document": (
-                DocumentInputContent(
-                    source=InputContentUrlSource(
+                DocumentPart(
+                    source=UrlSource(
                         type="url", value="https://example.com/a.pdf"
                     )
                 ),
                 "https://example.com/a.pdf",
             ),
             "remote audio": (
-                AudioInputContent(
-                    source=InputContentUrlSource(
+                AudioPart(
+                    source=UrlSource(
                         type="url", value="https://example.com/a.wav"
                     )
                 ),
                 "https://example.com/a.wav",
             ),
             "non-base64 data URL": (
-                DocumentInputContent(
-                    source=InputContentUrlSource(type="url", value="data:text/plain,hello")
+                DocumentPart(
+                    source=UrlSource(type="url", value="data:text/plain,hello")
                 ),
                 "data:text/plain,hello",
             ),
             "payload-less data URL": (
-                DocumentInputContent(
-                    source=InputContentUrlSource(
+                DocumentPart(
+                    source=UrlSource(
                         type="url", value="data:application/pdf;base64,"
                     )
                 ),
@@ -2092,9 +2097,9 @@ class TestCrossRuntimeWireShape(unittest.TestCase):
         used to drop on the floor — an attachment that vanishes from a reopened
         thread.
         """
-        original = DocumentInputContent(
+        original = DocumentPart(
             type="document",
-            source=InputContentDataSource(
+            source=DataSource(
                 type="data", value="JVBERi0xLjQK", mime_type="application/pdf"
             ),
             metadata={"filename": "invoice-q2.pdf"},
@@ -2121,8 +2126,8 @@ class TestCrossRuntimeWireShape(unittest.TestCase):
 
         # … and this package's return leg rebuilds the item it started as.
         [returned] = convert_langchain_multimodal_to_agui([wire])
-        self.assertIsInstance(returned, DocumentInputContent)
-        self.assertIsInstance(returned.source, InputContentDataSource)
+        self.assertIsInstance(returned, DocumentPart)
+        self.assertIsInstance(returned.source, DataSource)
         self.assertEqual(returned.source.value, original.source.value)
         self.assertEqual(returned.source.mime_type, original.source.mime_type)
         self.assertEqual(returned.metadata, {"filename": "invoice-q2.pdf"})
@@ -2130,9 +2135,9 @@ class TestCrossRuntimeWireShape(unittest.TestCase):
     def test_audio_survives_the_cross_runtime_round_trip(self):
         """Same seam, for inline audio — which translates to `input_audio`
         rather than `file`, so it exercises a different translator branch."""
-        original = AudioInputContent(
+        original = AudioPart(
             type="audio",
-            source=InputContentDataSource(
+            source=DataSource(
                 type="data", value="SGVsbG8=", mime_type="audio/wav"
             ),
             metadata={"filename": "clip.wav"},
@@ -2149,8 +2154,8 @@ class TestCrossRuntimeWireShape(unittest.TestCase):
         )
 
         [returned] = convert_langchain_multimodal_to_agui([wire])
-        self.assertIsInstance(returned, AudioInputContent)
-        self.assertIsInstance(returned.source, InputContentDataSource)
+        self.assertIsInstance(returned, AudioPart)
+        self.assertIsInstance(returned.source, DataSource)
         self.assertEqual(returned.source.value, original.source.value)
         self.assertEqual(returned.source.mime_type, original.source.mime_type)
         self.assertEqual(returned.metadata, {"filename": "clip.wav"})
@@ -2170,9 +2175,9 @@ class TestCrossRuntimeWireShape(unittest.TestCase):
         two spellings of one format, so the bytes and the format are unchanged —
         only the name is, and only to the one the provider recognises.
         """
-        original = AudioInputContent(
+        original = AudioPart(
             type="audio",
-            source=InputContentDataSource(
+            source=DataSource(
                 type="data", value="SGVsbG8=", mime_type="audio/mpeg"
             ),
             metadata={"filename": "podcast.mp3"},
@@ -2190,7 +2195,7 @@ class TestCrossRuntimeWireShape(unittest.TestCase):
         )
 
         [returned] = convert_langchain_multimodal_to_agui([wire])
-        self.assertIsInstance(returned, AudioInputContent)
+        self.assertIsInstance(returned, AudioPart)
         self.assertEqual(returned.source.value, original.source.value)
         self.assertEqual(returned.source.mime_type, "audio/mp3")
         self.assertEqual(returned.metadata, {"filename": "podcast.mp3"})
@@ -2216,16 +2221,16 @@ class TestCrossRuntimeWireShape(unittest.TestCase):
         The `image` row is the one that had no test of its own. It was
         incidentally exercised elsewhere, which is not the same thing: deleting
         the row raised a `KeyError` somewhere unrelated, while RETYPING it —
-        mapping `image` to `DocumentInputContent` — left the whole suite green.
+        mapping `image` to `DocumentPart` — left the whole suite green.
 
         Mirrored in the TypeScript suite by
         `brings a standard %s block back as AG-UI %s content`.
         """
         cases = [
-            ("audio", "audio/wav", AudioInputContent),
-            ("video", "video/mp4", VideoInputContent),
-            ("image", "image/png", ImageInputContent),
-            ("file", "application/pdf", DocumentInputContent),
+            ("audio", "audio/wav", AudioPart),
+            ("video", "video/mp4", VideoPart),
+            ("image", "image/png", ImagePart),
+            ("file", "application/pdf", DocumentPart),
         ]
 
         for block_type, mime_type, agui_class in cases:
@@ -2256,8 +2261,8 @@ class TestCrossRuntimeWireShape(unittest.TestCase):
         ])
 
         self.assertEqual(len(agui_content), 1)
-        self.assertIsInstance(agui_content[0], DocumentInputContent)
-        self.assertIsInstance(agui_content[0].source, InputContentDataSource)
+        self.assertIsInstance(agui_content[0], DocumentPart)
+        self.assertIsInstance(agui_content[0].source, DataSource)
         self.assertEqual(agui_content[0].source.value, "JVBERi0xLjQK")
         self.assertEqual(agui_content[0].source.mime_type, "application/pdf")
         self.assertEqual(agui_content[0].metadata, {"filename": "invoice-q2.pdf"})
@@ -2274,8 +2279,8 @@ class TestCrossRuntimeWireShape(unittest.TestCase):
         ])
 
         self.assertEqual(len(agui_content), 1)
-        self.assertIsInstance(agui_content[0], AudioInputContent)
-        self.assertIsInstance(agui_content[0].source, InputContentUrlSource)
+        self.assertIsInstance(agui_content[0], AudioPart)
+        self.assertIsInstance(agui_content[0].source, UrlSource)
         self.assertEqual(agui_content[0].source.value, "https://example.com/clip.wav")
         self.assertEqual(agui_content[0].source.mime_type, "audio/wav")
         self.assertEqual(agui_content[0].metadata, {"filename": "clip.wav"})
@@ -2292,8 +2297,8 @@ class TestCrossRuntimeWireShape(unittest.TestCase):
         ])
 
         self.assertEqual(len(agui_content), 1)
-        self.assertIsInstance(agui_content[0], DocumentInputContent)
-        self.assertIsInstance(agui_content[0].source, InputContentDataSource)
+        self.assertIsInstance(agui_content[0], DocumentPart)
+        self.assertIsInstance(agui_content[0].source, DataSource)
         self.assertEqual(agui_content[0].source.value, "JVBERi0xLjQK")
         self.assertEqual(agui_content[0].source.mime_type, "application/pdf")
         self.assertEqual(agui_content[0].metadata, {"filename": "invoice-q2.pdf"})
@@ -2310,8 +2315,8 @@ class TestCrossRuntimeWireShape(unittest.TestCase):
         ])
 
         self.assertEqual(len(agui_content), 1)
-        self.assertIsInstance(agui_content[0], VideoInputContent)
-        self.assertIsInstance(agui_content[0].source, InputContentUrlSource)
+        self.assertIsInstance(agui_content[0], VideoPart)
+        self.assertIsInstance(agui_content[0].source, UrlSource)
         self.assertEqual(agui_content[0].source.value, "https://example.com/demo.mp4")
         self.assertEqual(agui_content[0].source.mime_type, "video/mp4")
         self.assertEqual(agui_content[0].metadata, {"filename": "demo.mp4"})
@@ -2333,8 +2338,8 @@ class TestCrossRuntimeWireShape(unittest.TestCase):
         ])
 
         self.assertEqual(len(agui_content), 1)
-        self.assertIsInstance(agui_content[0], DocumentInputContent)
-        self.assertIsInstance(agui_content[0].source, InputContentUrlSource)
+        self.assertIsInstance(agui_content[0], DocumentPart)
+        self.assertIsInstance(agui_content[0].source, UrlSource)
         self.assertEqual(
             agui_content[0].source.value, "https://example.com/invoice-q2.pdf"
         )
@@ -2437,9 +2442,9 @@ class TestCrossRuntimeWireShape(unittest.TestCase):
         refuses it, but that Python does not RECOGNIZE it.
         """
         [emitted] = convert_agui_multimodal_to_langchain([
-            DocumentInputContent(
+            DocumentPart(
                 type="document",
-                source=InputContentDataSource(
+                source=DataSource(
                     type="data", value="JVBERi0xLjQK", mime_type="application/pdf"
                 ),
                 metadata={"filename": "invoice-q2.pdf"},
@@ -2497,15 +2502,15 @@ class TestOutboundDispatchAdmitsAndResolvesByTheSameRule(unittest.TestCase):
     def test_subclassed_media_item_keeps_its_own_modality(self):
         """A subclass gets the block its BASE class would have got."""
 
-        class TenantAudioInputContent(AudioInputContent):
+        class TenantAudioPart(AudioPart):
             pass
 
-        class TenantDocumentInputContent(DocumentInputContent):
+        class TenantDocumentPart(DocumentPart):
             pass
 
         audio = self._emit(
-            TenantAudioInputContent(
-                source=InputContentDataSource(
+            TenantAudioPart(
+                source=DataSource(
                     type="data", value="SGVsbG8=", mime_type="audio/wav"
                 ),
             )
@@ -2517,8 +2522,8 @@ class TestOutboundDispatchAdmitsAndResolvesByTheSameRule(unittest.TestCase):
         self.assertTrue(is_data_content_block(audio))
 
         document = self._emit(
-            TenantDocumentInputContent(
-                source=InputContentDataSource(
+            TenantDocumentPart(
+                source=DataSource(
                     type="data", value="JVBERi0xLjQK", mime_type="application/pdf"
                 ),
                 metadata={"filename": "report.pdf"},
@@ -2544,16 +2549,16 @@ class TestOutboundDispatchAdmitsAndResolvesByTheSameRule(unittest.TestCase):
         subclass fix must not turn "no row" into "some row".
         """
 
-        class TenantImageInputContent(ImageInputContent):
+        class TenantImagePart(ImagePart):
             pass
 
-        class TenantVideoInputContent(VideoInputContent):
+        class TenantVideoPart(VideoPart):
             pass
 
         self.assertEqual(
             self._emit(
-                TenantImageInputContent(
-                    source=InputContentDataSource(
+                TenantImagePart(
+                    source=DataSource(
                         type="data", value="iVBOR", mime_type="image/png"
                     ),
                 )
@@ -2562,8 +2567,8 @@ class TestOutboundDispatchAdmitsAndResolvesByTheSameRule(unittest.TestCase):
         )
         self.assertEqual(
             self._emit(
-                TenantVideoInputContent(
-                    source=InputContentDataSource(
+                TenantVideoPart(
+                    source=DataSource(
                         type="data", value="AAA=", mime_type="video/mp4"
                     ),
                 )
@@ -2575,13 +2580,13 @@ class TestOutboundDispatchAdmitsAndResolvesByTheSameRule(unittest.TestCase):
         """The MIME gate applies to a subclass too: `audio/ogg` has no `format`
         enum value, so it keeps `image_url` rather than killing the run."""
 
-        class TenantAudioInputContent(AudioInputContent):
+        class TenantAudioPart(AudioPart):
             pass
 
         self.assertEqual(
             self._emit(
-                TenantAudioInputContent(
-                    source=InputContentDataSource(
+                TenantAudioPart(
+                    source=DataSource(
                         type="data", value="T2dn", mime_type="audio/ogg"
                     ),
                 )
@@ -2598,27 +2603,27 @@ class TestOutboundDispatchAdmitsAndResolvesByTheSameRule(unittest.TestCase):
         content, so the label is the only description of the attachment it gets.
         """
 
-        class TenantAudioInputContent(AudioInputContent):
+        class TenantAudioPart(AudioPart):
             pass
 
-        class TenantDocumentInputContent(DocumentInputContent):
+        class TenantDocumentPart(DocumentPart):
             pass
 
-        source = InputContentDataSource(
+        source = DataSource(
             type="data", value="SGVsbG8=", mime_type="audio/wav"
         )
         self.assertEqual(
-            flatten_user_content([TenantAudioInputContent(source=source)]),
-            flatten_user_content([AudioInputContent(source=source)]),
+            flatten_user_content([TenantAudioPart(source=source)]),
+            flatten_user_content([AudioPart(source=source)]),
         )
         self.assertEqual(
-            flatten_user_content([TenantAudioInputContent(source=source)]),
+            flatten_user_content([TenantAudioPart(source=source)]),
             "[Audio: audio/wav]",
         )
 
-        pdf = InputContentUrlSource(type="url", value="https://example.com/d.pdf")
+        pdf = UrlSource(type="url", value="https://example.com/d.pdf")
         self.assertEqual(
-            flatten_user_content([TenantDocumentInputContent(source=pdf)]),
+            flatten_user_content([TenantDocumentPart(source=pdf)]),
             "[Document: https://example.com/d.pdf]",
         )
 
@@ -2635,7 +2640,7 @@ class TestOutboundDispatchAdmitsAndResolvesByTheSameRule(unittest.TestCase):
 
         with self.assertLogs("ag_ui_langgraph.utils", level="WARNING") as captured:
             emitted = convert_agui_multimodal_to_langchain(
-                [TextInputContent(text="hello"), SomeFutureContent()]
+                [TextPart(text="hello"), SomeFutureContent()]
             )
 
         self.assertEqual(emitted, [{"type": "text", "text": "hello"}])
@@ -2666,7 +2671,7 @@ class TestMalformedGraphContentDegrades(unittest.TestCase):
         ``TypeError: imageUrl.startsWith is not a function`` out of the whole
         message-list conversion. Not skipped: the client got no messages at all.
       * ``{"type": "text", "text": {...}}`` — TypeScript emitted it VERBATIM into
-        ``TextInputContent.text``, where it failed schema validation downstream.
+        ``TextPart.text``, where it failed schema validation downstream.
         Not skipped either.
       * the other eleven — TypeScript did skip them, but SILENTLY: zero warnings,
         where this runtime logged one. Skipping and announcing a drop are two
@@ -2709,7 +2714,7 @@ class TestMalformedGraphContentDegrades(unittest.TestCase):
 
     def test_payload_yielding_an_empty_url_is_dropped_not_emitted(self):
         """The quiet half of the defect. These did not raise — they minted an
-        `ImageInputContent` whose url is `""`, i.e. an attachment pointing at
+        `ImagePart` whose url is `""`, i.e. an attachment pointing at
         nothing, with no warning that anything was wrong."""
         for payload in ({}, {"url": None}, {"url": ""}, {"url": 42}, ""):
             with self.subTest(payload=payload):
@@ -2774,7 +2779,7 @@ class TestMalformedGraphContentDegrades(unittest.TestCase):
     # ── the same defect elsewhere on the return leg ──────────────────────
 
     def test_non_string_text_block_is_dropped(self):
-        """`TextInputContent.text` is a `str`; a block whose `text` is not one
+        """`TextPart.text` is a `str`; a block whose `text` is not one
         raised a ValidationError out of the whole list."""
         with self.assertLogs("ag_ui_langgraph.utils", level="WARNING") as logs:
             agui_content = convert_langchain_multimodal_to_agui([
@@ -2979,7 +2984,7 @@ class TestMalformedInputContract(unittest.TestCase):
 
     def test_every_unusable_image_url_payload_logs_exactly_one_drop(self):
         """The QUIET half of the same defect: these never raised, they minted an
-        ``ImageInputContent`` whose url is ``""`` — an attachment pointing at
+        ``ImagePart`` whose url is ``""`` — an attachment pointing at
         nothing — or dropped the block with nothing said."""
         payloads = [
             ("a non-string url", {"url": 42}),
@@ -3042,7 +3047,7 @@ class TestMalformedInputContract(unittest.TestCase):
 
     # ── rule 1 + 2: the inbound text branch ──────────────────────────────
     def test_non_string_text_blocks_are_dropped_and_logged(self):
-        """``TextInputContent.text`` is a ``str``; anything else raised a
+        """``TextPart.text`` is a ``str``; anything else raised a
         ValidationError that aborted the whole message list. The mirrored
         TypeScript branch was gated on TRUTHINESS instead, which emitted a truthy
         non-string VERBATIM and failed schema validation downstream."""
@@ -3213,20 +3218,20 @@ class TestMalformedInputContract(unittest.TestCase):
         that is not ``major/subtype`` carries no modality at all.
         """
         cases = [
-            ("an uppercase major type", "VIDEO/MP4", VideoInputContent, "VIDEO/MP4"),
-            ("a mixed-case major type", "Audio/WAV", AudioInputContent, "Audio/WAV"),
-            ("a padded major type", " video/mp4", VideoInputContent, " video/mp4"),
+            ("an uppercase major type", "VIDEO/MP4", VideoPart, "VIDEO/MP4"),
+            ("a mixed-case major type", "Audio/WAV", AudioPart, "Audio/WAV"),
+            ("a padded major type", " video/mp4", VideoPart, " video/mp4"),
             # The data URL's own `;` separator takes the parameters off before the
             # MIME type is ever read, so the recorded type is the bare one.
-            ("parameters", "video/mp4;codecs=avc1", VideoInputContent, "video/mp4"),
-            ("an unknown major type", "application/pdf", DocumentInputContent, "application/pdf"),
-            ("no slash at all", "noslash", ImageInputContent, "noslash"),
-            ("an empty subtype", "video/", ImageInputContent, "video/"),
-            ("an empty major type", "/mp4", ImageInputContent, "/mp4"),
-            ("nothing but a slash", "/", ImageInputContent, "/"),
+            ("parameters", "video/mp4;codecs=avc1", VideoPart, "video/mp4"),
+            ("an unknown major type", "application/pdf", DocumentPart, "application/pdf"),
+            ("no slash at all", "noslash", ImagePart, "noslash"),
+            ("an empty subtype", "video/", ImagePart, "video/"),
+            ("an empty major type", "/mp4", ImagePart, "/mp4"),
+            ("nothing but a slash", "/", ImagePart, "/"),
             # Everything after the FIRST slash is the subtype, so `a/b/c` IS
             # major/subtype and takes the lookup, unlike the four above.
-            ("a third segment", "a/b/c", DocumentInputContent, "a/b/c"),
+            ("a third segment", "a/b/c", DocumentPart, "a/b/c"),
         ]
         for name, mime, expected_class, recorded in cases:
             with self.subTest(mime=name):
@@ -3262,7 +3267,7 @@ class TestMalformedInputContract(unittest.TestCase):
                 )
 
     def test_a_non_string_text_item_is_dropped_not_forwarded(self):
-        """``TextInputContent`` cannot hold a non-string ``text`` — pydantic
+        """``TextPart`` cannot hold a non-string ``text`` — pydantic
         rejects it — so such an item reaches this converter as a raw dict and is
         dropped by the terminal ``else``. The mirrored TypeScript converter has no
         validation in front of it and needs an explicit guard on the same value,
@@ -3270,7 +3275,7 @@ class TestMalformedInputContract(unittest.TestCase):
         for text in (42, {"a": 1}, None):
             with self.subTest(text=type(text).__name__):
                 with self.assertRaises(Exception):
-                    TextInputContent(type="text", text=text)
+                    TextPart(type="text", text=text)
 
                 outcome = self._outbound([{"type": "text", "text": text}])
                 self.assertEqual(outcome.content, [])
@@ -3278,9 +3283,9 @@ class TestMalformedInputContract(unittest.TestCase):
 
     def test_items_on_either_side_of_an_unconvertible_outbound_item_survive(self):
         outcome = self._outbound([
-            TextInputContent(type="text", text="before"),
+            TextPart(type="text", text="before"),
             {"type": "totally_unknown"},
-            TextInputContent(type="text", text="after"),
+            TextPart(type="text", text="after"),
         ])
 
         self.assertEqual(
@@ -3294,10 +3299,10 @@ class TestMalformedInputContract(unittest.TestCase):
         and must do it SILENTLY. A guard that logs on good input is a guard that
         trains an operator to ignore the log."""
         outcome = self._outbound([
-            TextInputContent(type="text", text="hello"),
-            ImageInputContent(
+            TextPart(type="text", text="hello"),
+            ImagePart(
                 type="image",
-                source=InputContentUrlSource(type="url", value="https://example.com/a.png"),
+                source=UrlSource(type="url", value="https://example.com/a.png"),
             ),
         ])
 
@@ -3316,19 +3321,19 @@ class TestMalformedInputContract(unittest.TestCase):
         nothing on the provider request; the caller's truthiness check is what
         stops it, and the TypeScript ``if (url)`` is the line that must agree.
 
-        ``InputContentUrlSource(value="")`` passes validation — ``value`` is a
+        ``UrlSource(value="")`` passes validation — ``value`` is a
         required ``str``, and the empty string is one — so this is reachable from
         a real client, not a constructed impossibility."""
         outcome = self._outbound([
-            ImageInputContent(
-                type="image", source=InputContentUrlSource(type="url", value="")
+            ImagePart(
+                type="image", source=UrlSource(type="url", value="")
             )
         ])
 
         self.assertEqual(outcome.content, [])
         self.assertEqual(
             outcome.warnings,
-            ["Dropping ImageInputContent content: source could not be converted to URL"],
+            ["Dropping image content: source could not be converted to URL"],
         )
 
     # ── one metadata key, outbound ───────────────────────────────────────
@@ -3340,9 +3345,9 @@ class TestMalformedInputContract(unittest.TestCase):
         wire that the AG-UI item never claimed was a filename. The TypeScript
         ``filenameFromMetadata`` reads the same single key."""
         outcome = self._outbound([
-            DocumentInputContent(
+            DocumentPart(
                 type="document",
-                source=InputContentDataSource(
+                source=DataSource(
                     type="data", value="aGk=", mime_type="application/pdf"
                 ),
                 metadata={"name": "from-name.pdf", "title": "from-title.pdf"},
@@ -3379,7 +3384,7 @@ class TestMalformedInputContract(unittest.TestCase):
     def _unvalidated_media(self, cls, kind, mime_type, value="QUJD"):
         return cls.model_construct(
             type=kind,
-            source=InputContentDataSource.model_construct(
+            source=DataSource.model_construct(
                 type="data", value=value, mime_type=mime_type
             ),
             metadata=None,
@@ -3395,7 +3400,7 @@ class TestMalformedInputContract(unittest.TestCase):
         ]:
             with self.subTest(label):
                 outcome = self._outbound(
-                    [self._unvalidated_media(AudioInputContent, "audio", mime_type)]
+                    [self._unvalidated_media(AudioPart, "audio", mime_type)]
                 )
 
                 # An unusable MIME type is an absent one: no audio format is
@@ -3416,7 +3421,7 @@ class TestMalformedInputContract(unittest.TestCase):
         unidentified bytes, and `attachment.bin` is the name that agrees with
         it — which is what the TypeScript adapter already produced."""
         outcome = self._outbound(
-            [self._unvalidated_media(DocumentInputContent, "document", 42)]
+            [self._unvalidated_media(DocumentPart, "document", 42)]
         )
 
         self.assertEqual(
@@ -3449,9 +3454,9 @@ class TestMalformedInputContract(unittest.TestCase):
     def test_items_beside_a_typed_audio_item_with_a_non_string_mime_survive(self):
         """Rule 3. The raise cost both neighbours, not just the attachment."""
         outcome = self._outbound([
-            TextInputContent(type="text", text="before"),
-            self._unvalidated_media(AudioInputContent, "audio", 42),
-            TextInputContent(type="text", text="after"),
+            TextPart(type="text", text="before"),
+            self._unvalidated_media(AudioPart, "audio", 42),
+            TextPart(type="text", text="after"),
         ])
 
         self.assertEqual(
@@ -3543,10 +3548,10 @@ class TestMalformedInputContract(unittest.TestCase):
     ]
 
     _MEDIA_EMISSION_POINTS = [
-        (DocumentInputContent, "document", "application/pdf", "the file standard block"),
-        (AudioInputContent, "audio", "audio/wav", "the audio standard block"),
-        (ImageInputContent, "image", "image/png", "the image_url data URL"),
-        (VideoInputContent, "video", "video/mp4", "the image_url data URL"),
+        (DocumentPart, "document", "application/pdf", "the file standard block"),
+        (AudioPart, "audio", "audio/wav", "the audio standard block"),
+        (ImagePart, "image", "image/png", "the image_url data URL"),
+        (VideoPart, "video", "video/mp4", "the image_url data URL"),
     ]
 
     def test_an_unusable_data_payload_is_dropped_and_logged_once(self):
@@ -3561,7 +3566,7 @@ class TestMalformedInputContract(unittest.TestCase):
                     self.assertEqual(
                         outcome.warnings,
                         [
-                            f"Dropping {cls.__name__} content: source could not "
+                            f"Dropping {kind} content: source could not "
                             "be converted to URL"
                         ],
                     )
@@ -3573,9 +3578,9 @@ class TestMalformedInputContract(unittest.TestCase):
         for label, value in self._UNUSABLE_PAYLOADS:
             with self.subTest(payload=label):
                 outcome = self._outbound([
-                    ImageInputContent.model_construct(
+                    ImagePart.model_construct(
                         type="image",
-                        source=InputContentUrlSource.model_construct(type="url", value=value),
+                        source=UrlSource.model_construct(type="url", value=value),
                         metadata=None,
                     )
                 ])
@@ -3584,7 +3589,7 @@ class TestMalformedInputContract(unittest.TestCase):
                 self.assertEqual(
                     outcome.warnings,
                     [
-                        "Dropping ImageInputContent content: source could not be "
+                        "Dropping image content: source could not be "
                         "converted to URL"
                     ],
                 )
@@ -3689,12 +3694,12 @@ class TestMalformedInputContract(unittest.TestCase):
                     id="m2",
                     role="user",
                     content=[
-                        TextInputContent(type="text", text="before"),
+                        TextPart(type="text", text="before"),
                         BinaryInputContent.model_construct(type="binary"),
                         BinaryInputContent(
                             type="binary", mime_type="application/pdf", data="aGk="
                         ),
-                        TextInputContent(type="text", text="after"),
+                        TextPart(type="text", text="after"),
                     ],
                 ),
                 UserMessage(id="m3", role="user", content="after message"),
@@ -3744,14 +3749,14 @@ class TestMalformedInputContract(unittest.TestCase):
         a guard that only covered it would be a guard written to its test. Plain
         attribute assignment and ``model_copy(update=…)`` are named by the
         contract and both were measured to reach this converter."""
-        good = InputContentDataSource(
+        good = DataSource(
             type="data", value="aGk=", mime_type="application/pdf"
         )
 
-        assigned = DocumentInputContent(type="document", source=good.model_copy())
+        assigned = DocumentPart(type="document", source=good.model_copy())
         assigned.source.value = None
 
-        copied = DocumentInputContent(type="document", source=good).model_copy(
+        copied = DocumentPart(type="document", source=good).model_copy(
             update={"source": good.model_copy(update={"value": 42})}
         )
 
@@ -3763,7 +3768,7 @@ class TestMalformedInputContract(unittest.TestCase):
                 self.assertEqual(
                     outcome.warnings,
                     [
-                        "Dropping DocumentInputContent content: source could not "
+                        "Dropping document content: source could not "
                         "be converted to URL"
                     ],
                 )
@@ -3780,17 +3785,17 @@ class TestMalformedInputContract(unittest.TestCase):
                     id="m2",
                     role="user",
                     content=[
-                        TextInputContent(type="text", text="before"),
+                        TextPart(type="text", text="before"),
                         self._unvalidated_media(
-                            DocumentInputContent, "document", "application/pdf", value=None
+                            DocumentPart, "document", "application/pdf", value=None
                         ),
-                        DocumentInputContent(
+                        DocumentPart(
                             type="document",
-                            source=InputContentDataSource(
+                            source=DataSource(
                                 type="data", value="aGk=", mime_type="application/pdf"
                             ),
                         ),
-                        TextInputContent(type="text", text="after"),
+                        TextPart(type="text", text="after"),
                     ],
                 ),
                 UserMessage(id="m3", role="user", content="after message"),
@@ -3814,7 +3819,7 @@ class TestMalformedInputContract(unittest.TestCase):
         )
         self.assertEqual(len(logs.output), 1)
         self.assertIn(
-            "Dropping DocumentInputContent content: source could not be converted to URL",
+            "Dropping document content: source could not be converted to URL",
             logs.output[0],
         )
 
@@ -3825,15 +3830,15 @@ class TestMalformedInputContract(unittest.TestCase):
         push every data-URL-sourced attachment back onto ``image_url``, which is
         the defect that rule exists to remove."""
         outcome = self._outbound([
-            DocumentInputContent(
+            DocumentPart(
                 type="document",
-                source=InputContentUrlSource(
+                source=UrlSource(
                     type="url", value="data:application/pdf;base64,JVBERi0="
                 ),
             ),
-            AudioInputContent(
+            AudioPart(
                 type="audio",
-                source=InputContentUrlSource(type="url", value="data:audio/wav;base64,QUJD"),
+                source=UrlSource(type="url", value="data:audio/wav;base64,QUJD"),
             ),
             BinaryInputContent(
                 type="binary",
@@ -3872,9 +3877,9 @@ class TestMalformedInputContract(unittest.TestCase):
         re-normalizes to itself, so every later send carries the identical MIME
         type and the modality survives. This test is that property."""
         first = self._outbound([
-            AudioInputContent(
+            AudioPart(
                 type="audio",
-                source=InputContentDataSource(
+                source=DataSource(
                     type="data", value="QUJD", mime_type="audio/mpeg"
                 ),
             )
@@ -3886,7 +3891,7 @@ class TestMalformedInputContract(unittest.TestCase):
 
         read_back = self._inbound(first.content)
         self.assertEqual(len(read_back.content), 1)
-        self.assertIsInstance(read_back.content[0], AudioInputContent)
+        self.assertIsInstance(read_back.content[0], AudioPart)
         self.assertEqual(read_back.content[0].source.mime_type, "audio/mp3")
 
         second = self._outbound(read_back.content)
@@ -3928,7 +3933,7 @@ class TestOverridableCallsOnOffWireValues(unittest.TestCase):
         ])
 
         self.assertEqual(len(agui_content), 1)
-        self.assertIsInstance(agui_content[0].source, InputContentDataSource)
+        self.assertIsInstance(agui_content[0].source, DataSource)
         self.assertEqual(agui_content[0].source.value, "QUJD")
         self.assertEqual(agui_content[0].source.mime_type, "image/png")
 
@@ -4001,12 +4006,12 @@ class TestCrossRuntimeParityTable(unittest.TestCase):
         cls.table = json.loads(cls.TABLE_PATH.read_text())
 
     _CLASS_BY_TYPE = {
-        "text": TextInputContent,
+        "text": TextPart,
         "binary": BinaryInputContent,
-        "image": ImageInputContent,
-        "audio": AudioInputContent,
-        "video": VideoInputContent,
-        "document": DocumentInputContent,
+        "image": ImagePart,
+        "audio": AudioPart,
+        "video": VideoPart,
+        "document": DocumentPart,
     }
 
     @classmethod
@@ -4042,9 +4047,9 @@ class TestCrossRuntimeParityTable(unittest.TestCase):
         source = kwargs.get("source")
         if isinstance(source, dict):
             source_class = (
-                InputContentDataSource
+                DataSource
                 if source.get("type") == "data"
-                else InputContentUrlSource
+                else UrlSource
             )
             if unvalidated:
                 kwargs["source"] = source_class.model_construct(**source)
@@ -4094,20 +4099,25 @@ class TestCrossRuntimeParityTable(unittest.TestCase):
         marker.
         """
         if direction == "inbound":
+            # Keyed by CLASS, not by ``type(item).__name__``: the part classes
+            # answer to two names and which one they report depends on the
+            # installed SDK, so a name key raises ``KeyError`` on whichever lane
+            # the dict was not written for. See THE CONTENT-PART NAMES in
+            # `_helpers`.
             kinds = {
-                "ImageInputContent": "image",
-                "AudioInputContent": "audio",
-                "VideoInputContent": "video",
-                "DocumentInputContent": "document",
+                ImagePart: "image",
+                AudioPart: "audio",
+                VideoPart: "video",
+                DocumentPart: "document",
             }
             canonical = []
             for item in items:
-                if isinstance(item, TextInputContent):
+                if isinstance(item, TextPart):
                     canonical.append({"kind": "text", "text": item.text})
                     continue
                 metadata = item.metadata if isinstance(item.metadata, dict) else {}
                 canonical.append({
-                    "kind": kinds[type(item).__name__],
+                    "kind": kinds[type(item)],
                     "source": item.source.type,
                     "value": item.source.value,
                     "mimeType": getattr(item.source, "mime_type", None) or None,
@@ -4242,7 +4252,7 @@ class TestCrossRuntimeParityTable(unittest.TestCase):
         outbound malformed cases failed pydantic validation and collapsed onto the
         single terminal ``else``, so a case named after a text guard or a media
         guard was not exercising one here at all, and nothing said so. Recording
-        what the harness builds each item into — a content class, or ``dict`` /
+        what the harness builds each item into — a part LABEL, or ``dict`` /
         ``NoneType`` for an item no class accepts — makes that visible, and
         asserting it means a schema change that silently moves a case onto a
         different branch fails instead of hiding behind an unchanged outcome.
@@ -4260,7 +4270,7 @@ class TestCrossRuntimeParityTable(unittest.TestCase):
                 )
                 self.assertEqual(
                     case["pythonBuilds"],
-                    [type(item).__name__ for item in self._build_outbound_content(case)],
+                    [part_label(item) for item in self._build_outbound_content(case)],
                     f'{self._report(case)}'
                     "  `pythonBuilds` in the shared table no longer matches what this\n"
                     "  runtime builds. A content class changed what it accepts, so this\n"
@@ -4337,7 +4347,7 @@ class TestCrossRuntimeParityTable(unittest.TestCase):
         onto the terminal ``else`` and assert nothing about the branch in its name.
 
         The reverse matters just as much. A case whose value the schema ACCEPTS —
-        an empty-string payload is one, measured: ``InputContentDataSource(type=
+        an empty-string payload is one, measured: ``DataSource(type=
         "data", value="", mime_type="application/pdf")`` constructs — must NOT
         carry the marker, because the ordinary validated route already reaches the
         branch and bypassing validation there would hide the fact that production
