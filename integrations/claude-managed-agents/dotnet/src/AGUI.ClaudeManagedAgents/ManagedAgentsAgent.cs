@@ -700,7 +700,7 @@ public sealed class ManagedAgentsAgent
     /// <summary>A tool message's payload: its content plus any error text, matching the other ports.</summary>
     private static string ToolResultText(AGUIToolMessage message)
     {
-        return string.Join("\n", new[] { message.Content, message.Error }.Where(static part => !string.IsNullOrEmpty(part)));
+        return string.Join("\n", new[] { message.Content.ToString(), message.Error }.Where(static part => !string.IsNullOrEmpty(part)));
     }
 
     /// <summary>Formats a timeout for the RUN_ERROR message without rounding sub-second values to "0s".</summary>
