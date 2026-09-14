@@ -22,7 +22,7 @@ import { compareVersions } from "compare-versions";
 import { catchError, map, tap } from "rxjs/operators";
 import { finalize } from "rxjs/operators";
 import { takeUntil } from "rxjs/operators";
-import { pipe, Observable, from, of, EMPTY, Subject, defer } from "rxjs";
+import { pipe, Observable, from, of, EMPTY, ReplaySubject, Subject, defer } from "rxjs";
 import { verifyEvents } from "@/verify";
 import { convertToLegacyEvents } from "@/legacy/convert";
 import { LegacyRuntimeProtocolEvent } from "@/legacy/types";
@@ -66,7 +66,9 @@ export abstract class AbstractAgent {
    *  Cleared when a subsequent run completes successfully. */
   public pendingInterrupts: Interrupt[] = [];
   private middlewares: Middleware[] = [];
-  // Emits to immediately detach from the active run (stop processing its stream)
+  // Emits to immediately detach from the active run (stop processing its stream).
+  // A ReplaySubject, so a detach signalled before the run's pipeline subscribes is
+  // replayed to `takeUntil` rather than dropped.
   private activeRunDetach$?: Subject<void>;
   private activeRunCompletionPromise?: Promise<void>;
 
@@ -165,6 +167,8 @@ export abstract class AbstractAgent {
     parameters?: RunAgentParameters,
     subscriber?: AgentSubscriber,
   ): Promise<RunAgentResult> {
+    const activeRun = this.beginActiveRun();
+
     try {
       this.isRunning = true;
       this.agentId = this.agentId ?? uuidv4();
@@ -192,13 +196,6 @@ export abstract class AbstractAgent {
 
       await this.onInitialize(input, subscribers);
 
-      // Per-run detachment signal + completion promise
-      this.activeRunDetach$ = new Subject<void>();
-      let resolveActiveRunCompletion: (() => void) | undefined;
-      this.activeRunCompletionPromise = new Promise<void>((resolve) => {
-        resolveActiveRunCompletion = resolve;
-      });
-
       const pipeline = pipe(
         () => {
           // Build middleware chain using reduceRight so middlewares can intercept runs.
@@ -225,7 +222,7 @@ export abstract class AbstractAgent {
         transformChunks(this.debugLogger),
         verifyEvents(this.debugLogger),
         // Stop processing immediately when this run is detached
-        (source$) => source$.pipe(takeUntil(this.activeRunDetach$!)),
+        (source$) => source$.pipe(takeUntil(activeRun.detach$)),
         (source$) => this.apply(input, source$, subscribers),
         (source$) => this.processApplyEvents(input, source$, subscribers),
         catchError((error) => {
@@ -243,10 +240,7 @@ export abstract class AbstractAgent {
           });
           this.isRunning = false;
           void this.onFinalize(input, subscribers);
-          resolveActiveRunCompletion?.();
-          resolveActiveRunCompletion = undefined;
-          this.activeRunCompletionPromise = undefined;
-          this.activeRunDetach$ = undefined;
+          activeRun.release();
         }),
       );
 
@@ -257,6 +251,9 @@ export abstract class AbstractAgent {
       return { result, newMessages };
     } finally {
       this.isRunning = false;
+      // No-op once the pipeline's `finalize` has released. This covers the paths
+      // that never reach the pipeline at all, such as `onInitialize` throwing.
+      activeRun.release();
     }
   }
 
@@ -270,6 +267,8 @@ export abstract class AbstractAgent {
     parameters?: RunAgentParameters,
     subscriber?: AgentSubscriber,
   ): Promise<RunAgentResult> {
+    const activeRun = this.beginActiveRun();
+
     try {
       this.isRunning = true;
       this.agentId = this.agentId ?? uuidv4();
@@ -291,19 +290,12 @@ export abstract class AbstractAgent {
 
       await this.onInitialize(input, subscribers);
 
-      // Per-run detachment signal + completion promise
-      this.activeRunDetach$ = new Subject<void>();
-      let resolveActiveRunCompletion: (() => void) | undefined;
-      this.activeRunCompletionPromise = new Promise<void>((resolve) => {
-        resolveActiveRunCompletion = resolve;
-      });
-
       const pipeline = pipe(
         () => defer(() => this.connect(input)),
         transformChunks(this.debugLogger),
         verifyEvents(this.debugLogger),
         // Stop processing immediately when this run is detached
-        (source$) => source$.pipe(takeUntil(this.activeRunDetach$!)),
+        (source$) => source$.pipe(takeUntil(activeRun.detach$)),
         (source$) => this.apply(input, source$, subscribers),
         (source$) => this.processApplyEvents(input, source$, subscribers),
         catchError((error) => {
@@ -316,10 +308,7 @@ export abstract class AbstractAgent {
         finalize(() => {
           this.isRunning = false;
           void this.onFinalize(input, subscribers);
-          resolveActiveRunCompletion?.();
-          resolveActiveRunCompletion = undefined;
-          this.activeRunCompletionPromise = undefined;
-          this.activeRunDetach$ = undefined;
+          activeRun.release();
         }),
       );
 
@@ -332,10 +321,49 @@ export abstract class AbstractAgent {
       return { result, newMessages };
     } finally {
       this.isRunning = false;
+      // No-op once the pipeline's `finalize` has released. This covers the paths
+      // that never reach the pipeline at all, such as `onInitialize` throwing.
+      activeRun.release();
     }
   }
 
   public abortRun() {}
+
+  /**
+   * Creates this run's detachment signal and completion promise and installs them
+   * as the agent's active-run handles.
+   *
+   * Callers must invoke this synchronously, before their first `await`. Otherwise
+   * `isRunning` is already true while both handles are still undefined, and every
+   * consumer guard reading them — including `detachActiveRun` — fails open, letting
+   * a second run pre-empt one that is still initializing.
+   *
+   * The returned `release` is idempotent and only clears handles this run still
+   * owns, so a run settling late cannot clear a newer run's handles.
+   */
+  private beginActiveRun(): { detach$: ReplaySubject<void>; release: () => void } {
+    const detach$ = new ReplaySubject<void>(1);
+    let resolveCompletion: (() => void) | undefined;
+    const completion = new Promise<void>((resolve) => {
+      resolveCompletion = resolve;
+    });
+
+    this.activeRunDetach$ = detach$;
+    this.activeRunCompletionPromise = completion;
+
+    const release = () => {
+      resolveCompletion?.();
+      resolveCompletion = undefined;
+      if (this.activeRunDetach$ === detach$) {
+        this.activeRunDetach$ = undefined;
+      }
+      if (this.activeRunCompletionPromise === completion) {
+        this.activeRunCompletionPromise = undefined;
+      }
+    };
+
+    return { detach$, release };
+  }
 
   public async detachActiveRun(): Promise<void> {
     if (!this.activeRunDetach$) {
