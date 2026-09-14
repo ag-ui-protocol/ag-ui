@@ -151,10 +151,13 @@ const HAND_BUILT = {
     0x65, 0x72, 0x42, 0x02, 0x12, 0x00,
   ]),
   // The same snapshot whose one image part carries a source kind from a later
-  // protocol — the future arm is one level deeper than the part itself.
+  // protocol — the future arm is one level deeper than the part itself. The
+  // arm has to be one this build genuinely does not know: slots 1-3 of
+  // InputContentSource are data, url and file, so the future arm is 4 (tag
+  // 0x22). It was 3 (0x1a) until the file source claimed that slot.
   futureContentSource: new Uint8Array([
     0x4a, 0x17, 0x0a, 0x02, 0x08, 0x08, 0x12, 0x11, 0x0a, 0x01, 0x6d, 0x12, 0x04, 0x75, 0x73,
-    0x65, 0x72, 0x42, 0x06, 0x12, 0x04, 0x0a, 0x02, 0x1a, 0x00,
+    0x65, 0x72, 0x42, 0x06, 0x12, 0x04, 0x0a, 0x02, 0x22, 0x00,
   ]),
   // RUN_FINISHED whose flattened outcome is "success" while the sibling
   // interrupts array is populated — a pairing the encoder never writes. This

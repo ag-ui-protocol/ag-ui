@@ -4,6 +4,7 @@ from pydantic import ValidationError
 from pydantic import TypeAdapter
 
 from ag_ui.core.types import (
+    FileSource,
     FunctionCall,
     ToolCall,
     DeveloperMessage,
@@ -212,6 +213,33 @@ class TestBaseTypes(unittest.TestCase):
         self.assertEqual(serialized["content"][0]["type"], "audio")
         self.assertEqual(serialized["content"][0]["source"]["type"], "data")
         self.assertEqual(serialized["content"][0]["source"]["mimeType"], "audio/wav")
+
+    def test_user_message_multimodal_file_source(self):
+        """Test provider-handle source serialization for multimodal parts"""
+        msg = UserMessage(
+            id="user_multi_file",
+            content=[
+                DocumentInputPart(
+                    source=FileSource(
+                        value="file-abc123",
+                        provider="openai",
+                        mime_type="application/pdf",
+                    )
+                )
+            ],
+        )
+
+        serialized = msg.model_dump(by_alias=True, exclude_none=True)
+        self.assertEqual(serialized["content"][0]["type"], "document")
+        self.assertEqual(
+            serialized["content"][0]["source"],
+            {
+                "type": "file",
+                "value": "file-abc123",
+                "provider": "openai",
+                "mimeType": "application/pdf",
+            },
+        )
 
     def test_document_part_with_metadata(self):
         """Test document parts accept provider metadata"""

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using Xunit;
@@ -229,5 +230,99 @@ public sealed class AGUIContentTest
         Assert.Equal("ab", content.ToString());
         Assert.Equal("plain", new AGUIContent("plain").ToString());
         Assert.Equal(string.Empty, default(AGUIContent).ToString());
+    }
+
+    [Fact]
+    public void UserMessage_FileSourceWithEveryField_RoundTrips()
+    {
+        AGUIMessage message = new AGUIUserMessage
+        {
+            Id = "u1",
+            Content =
+            [
+                new AGUIDocumentInputContent
+                {
+                    Source = new AGUIInputContentFileSource
+                    {
+                        Value = "file-abc123",
+                        Provider = "openai",
+                        MimeType = "application/pdf",
+                    },
+                },
+            ],
+        };
+
+        var json = JsonSerializer.Serialize(message, AGUIJsonSerializerContext.Default.AGUIMessage);
+        using var doc = JsonDocument.Parse(json);
+        var source = doc.RootElement.GetProperty("content")[0].GetProperty("source");
+        Assert.Equal("file", source.GetProperty("type").GetString());
+        Assert.Equal("file-abc123", source.GetProperty("value").GetString());
+        Assert.Equal("openai", source.GetProperty("provider").GetString());
+        Assert.Equal("application/pdf", source.GetProperty("mimeType").GetString());
+
+        var user = Assert.IsType<AGUIUserMessage>(JsonSerializer.Deserialize(json, AGUIJsonSerializerContext.Default.AGUIMessage));
+        var part = Assert.IsType<AGUIDocumentInputContent>(Assert.Single(user.Content));
+        var roundTripped = Assert.IsType<AGUIInputContentFileSource>(part.Source);
+        Assert.Equal("file-abc123", roundTripped.Value);
+        Assert.Equal("openai", roundTripped.Provider);
+        Assert.Equal("application/pdf", roundTripped.MimeType);
+    }
+
+    [Fact]
+    public void UserMessage_FileSourceWithoutOptionals_OmitsThemAndRoundTrips()
+    {
+        AGUIMessage message = new AGUIUserMessage
+        {
+            Id = "u1",
+            Content = [new AGUIDocumentInputContent { Source = new AGUIInputContentFileSource { Value = "file-abc123" } }],
+        };
+
+        var json = JsonSerializer.Serialize(message, AGUIJsonSerializerContext.Default.AGUIMessage);
+        using var doc = JsonDocument.Parse(json);
+        var source = doc.RootElement.GetProperty("content")[0].GetProperty("source");
+        Assert.Equal("file", source.GetProperty("type").GetString());
+        Assert.Equal("file-abc123", source.GetProperty("value").GetString());
+        Assert.False(source.TryGetProperty("provider", out _), $"Expected provider to be omitted from {source}.");
+        Assert.False(source.TryGetProperty("mimeType", out _), $"Expected mimeType to be omitted from {source}.");
+
+        var user = Assert.IsType<AGUIUserMessage>(JsonSerializer.Deserialize(json, AGUIJsonSerializerContext.Default.AGUIMessage));
+        var roundTripped = Assert.IsType<AGUIInputContentFileSource>(
+            Assert.IsType<AGUIDocumentInputContent>(Assert.Single(user.Content)).Source);
+        Assert.Equal("file-abc123", roundTripped.Value);
+        Assert.Null(roundTripped.Provider);
+        Assert.Null(roundTripped.MimeType);
+    }
+
+    // The generated source arms carry no [JsonRequired], so a missing `value` is not a
+    // deserialization error for `data` or `url` either — it reads back as the empty string.
+    // The file arm must be exactly as lenient, not stricter.
+    [Theory]
+    [InlineData("""{ "type": "file" }""", typeof(AGUIInputContentFileSource))]
+    [InlineData("""{ "type": "url" }""", typeof(AGUIInputContentUrlSource))]
+    [InlineData("""{ "type": "data" }""", typeof(AGUIInputContentDataSource))]
+    public void Source_WithoutValue_DeserializesToTheArmWithAnEmptyValue(string sourceJson, Type expectedType)
+    {
+        var json = $$"""{ "id": "u1", "role": "user", "content": [{ "type": "document", "source": {{sourceJson}} }] }""";
+
+        var user = Assert.IsType<AGUIUserMessage>(JsonSerializer.Deserialize(json, AGUIJsonSerializerContext.Default.AGUIMessage));
+        var source = Assert.IsType<AGUIDocumentInputContent>(Assert.Single(user.Content)).Source;
+
+        Assert.IsType(expectedType, source);
+        Assert.Equal(string.Empty, source switch
+        {
+            AGUIInputContentFileSource file => file.Value,
+            AGUIInputContentUrlSource url => url.Value,
+            AGUIInputContentDataSource data => data.Value,
+            _ => "unexpected",
+        });
+    }
+
+    [Fact]
+    public void Source_WithUnknownDiscriminator_Throws()
+    {
+        var json = """{ "id": "u1", "role": "user", "content": [{ "type": "document", "source": { "type": "handle", "value": "x" } }] }""";
+
+        Assert.Throws<JsonException>(
+            () => JsonSerializer.Deserialize(json, AGUIJsonSerializerContext.Default.AGUIMessage));
     }
 }

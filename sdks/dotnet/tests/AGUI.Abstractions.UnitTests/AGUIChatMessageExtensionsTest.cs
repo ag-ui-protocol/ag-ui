@@ -846,6 +846,90 @@ public sealed class AGUIChatMessageExtensionsTest
         Assert.All(assistantMessages, m => Assert.Single(m.Contents.OfType<FunctionCallContent>()));
     }
 
+    [Fact]
+    public void AsChatMessages_FileSource_MapsToHostedFileContent()
+    {
+        var message = new AGUIUserMessage
+        {
+            Id = "message-1",
+            Content =
+            [
+                new AGUIDocumentInputContent
+                {
+                    Source = new AGUIInputContentFileSource
+                    {
+                        Value = "file-abc123",
+                        Provider = "openai",
+                        MimeType = "application/pdf"
+                    }
+                }
+            ]
+        };
+
+        var chatMessage = Assert.Single(new[] { message }.AsChatMessages());
+        var hostedFile = Assert.IsType<HostedFileContent>(Assert.Single(chatMessage.Contents));
+
+        Assert.Equal("file-abc123", hostedFile.FileId);
+        Assert.Equal("application/pdf", hostedFile.MediaType);
+    }
+
+    [Fact]
+    public void AsChatMessages_FileSourceWithoutMimeType_LeavesMediaTypeUnset()
+    {
+        var message = new AGUIUserMessage
+        {
+            Id = "message-1",
+            Content = [new AGUIDocumentInputContent { Source = new AGUIInputContentFileSource { Value = "file-abc123" } }]
+        };
+
+        var chatMessage = Assert.Single(new[] { message }.AsChatMessages());
+        var hostedFile = Assert.IsType<HostedFileContent>(Assert.Single(chatMessage.Contents));
+
+        Assert.Equal("file-abc123", hostedFile.FileId);
+        Assert.Null(hostedFile.MediaType);
+    }
+
+    [Theory]
+    [InlineData("image/png", typeof(AGUIImageInputContent))]
+    [InlineData("audio/wav", typeof(AGUIAudioInputContent))]
+    [InlineData("video/mp4", typeof(AGUIVideoInputContent))]
+    [InlineData("application/pdf", typeof(AGUIDocumentInputContent))]
+    [InlineData(null, typeof(AGUIDocumentInputContent))]
+    public void AsAGUIMessages_HostedFileContent_MapsToFileSource(string? mediaType, Type expectedContentType)
+    {
+        var content = new HostedFileContent("file-abc123")
+        {
+            MediaType = mediaType,
+            AdditionalProperties = new AdditionalPropertiesDictionary { ["detail"] = "high" }
+        };
+        var message = new ChatMessage(ChatRole.User, [content]);
+
+        var aguiMessage = Assert.IsType<AGUIUserMessage>(
+            Assert.Single(new[] { message }.AsAGUIMessages(AGUIJsonSerializerContext.Default.Options)));
+        var media = Assert.IsAssignableFrom<AGUIMediaInputContent>(Assert.Single(aguiMessage.Content));
+
+        Assert.IsType(expectedContentType, media);
+        var source = Assert.IsType<AGUIInputContentFileSource>(media.Source);
+        Assert.Equal("file-abc123", source.Value);
+        Assert.Equal(mediaType, source.MimeType);
+        Assert.Equal("high", media.Metadata?.GetProperty("detail").GetString());
+    }
+
+    [Fact]
+    public void HostedFileContent_RoundTripsThroughAGUIAndBack()
+    {
+        var message = new ChatMessage(
+            ChatRole.User,
+            [new HostedFileContent("file-abc123") { MediaType = "application/pdf" }]);
+
+        var aguiMessages = new[] { message }.AsAGUIMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+        var roundTripped = Assert.Single(aguiMessages.AsChatMessages());
+        var hostedFile = Assert.IsType<HostedFileContent>(Assert.Single(roundTripped.Contents));
+
+        Assert.Equal("file-abc123", hostedFile.FileId);
+        Assert.Equal("application/pdf", hostedFile.MediaType);
+    }
+
     private static AGUIMediaInputContent CreateMediaInputContent(
         string mediaType,
         AGUIInputContentSource source)

@@ -86,6 +86,7 @@ namespace AGUI.Abstractions;
 [JsonSerializable(typeof(AGUIInputContentSource))]
 [JsonSerializable(typeof(AGUIInputContentDataSource))]
 [JsonSerializable(typeof(AGUIInputContentUrlSource))]
+[JsonSerializable(typeof(AGUIInputContentFileSource))]
 [JsonSerializable(typeof(ToolCallStartEvent))]
 [JsonSerializable(typeof(ToolCallArgsEvent))]
 [JsonSerializable(typeof(ToolCallEndEvent))]

@@ -73,6 +73,10 @@ TOLERATED_INVALID = {
     "AgentCapabilities/invalid/metadata-null.json": "null-means-absent",
     "AgentCapabilities/invalid/streaming-not-boolean.json": "lax-coercion",
     "MultiAgentCapabilities/invalid/old-subagents-key.json": "unknown-keys",
+    # The rejected multi-provider `reference` record (one handle per vendor in
+    # a single source) is an unknown key here, not a second shape: it survives
+    # the parse as an extra and never becomes a second handle.
+    "FileSource/invalid/reference-record.json": "unknown-keys",
     "MessagesSnapshotEvent/invalid/message-metadata-null.json": "null-means-absent",
     "ReasoningMessageStartEvent/invalid/role-missing.json": "const-fills-in",
     "RunFinishedEvent/invalid/outcome-null.json": "null-means-absent",

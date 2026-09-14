@@ -439,6 +439,19 @@ public sealed class EventRoundTripTest
                         {
                             Source = new AGUIInputContentDataSource { Value = "base64data", MimeType = "audio/mpeg" },
                         },
+                        new AGUIDocumentInputContent
+                        {
+                            Source = new AGUIInputContentFileSource
+                            {
+                                Value = "file-abc123",
+                                Provider = "openai",
+                                MimeType = "application/pdf",
+                            },
+                        },
+                        new AGUIDocumentInputContent
+                        {
+                            Source = new AGUIInputContentFileSource { Value = "file-bare" },
+                        },
                     },
                 },
             },
@@ -448,7 +461,7 @@ public sealed class EventRoundTripTest
 
         var user = Assert.IsType<AGUIUserMessage>(Assert.Single(result.Messages));
         var parts = Assert.IsType<List<AGUIInputContent>>(user.Content.Value);
-        Assert.Equal(3, parts.Count);
+        Assert.Equal(5, parts.Count);
 
         Assert.Equal("look at this", Assert.IsType<AGUITextInputContent>(parts[0]).Text);
 
@@ -462,6 +475,18 @@ public sealed class EventRoundTripTest
         var audioSource = Assert.IsType<AGUIInputContentDataSource>(audio.Source);
         Assert.Equal("base64data", audioSource.Value);
         Assert.Equal("audio/mpeg", audioSource.MimeType);
+
+        var document = Assert.IsType<AGUIDocumentInputContent>(parts[3]);
+        var fileSource = Assert.IsType<AGUIInputContentFileSource>(document.Source);
+        Assert.Equal("file-abc123", fileSource.Value);
+        Assert.Equal("openai", fileSource.Provider);
+        Assert.Equal("application/pdf", fileSource.MimeType);
+
+        var bareDocument = Assert.IsType<AGUIDocumentInputContent>(parts[4]);
+        var bareFileSource = Assert.IsType<AGUIInputContentFileSource>(bareDocument.Source);
+        Assert.Equal("file-bare", bareFileSource.Value);
+        Assert.Null(bareFileSource.Provider);
+        Assert.Null(bareFileSource.MimeType);
     }
 
     [Fact]

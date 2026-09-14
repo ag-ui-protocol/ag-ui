@@ -21,6 +21,7 @@ import {
   PartSourceSchema,
   DataSourceSchema,
   UrlSourceSchema,
+  FileSourceSchema,
 } from "../schemas";
 import { contentHasMedia, contentToText, EventType } from "../index";
 import type { ContentPart, InputContent, TextInputContent, ToolMessage } from "../index";
@@ -77,6 +78,87 @@ describe("tool result content", () => {
       content: parts,
     });
     expect(event.content).toEqual(parts);
+  });
+
+  it("accepts a part whose bytes sit at the provider, under a handle", () => {
+    const fileParts: ContentPart[] = [
+      { type: "text", text: "Uploaded the invoice." },
+      {
+        type: "document",
+        id: "p2",
+        source: {
+          type: "file",
+          value: "file-abc123",
+          provider: "openai",
+          mimeType: "application/pdf",
+        },
+        metadata: { title: "INV-2291" },
+      },
+    ];
+
+    const message = ToolMessageSchema.parse({
+      id: "m1",
+      role: "tool",
+      toolCallId: "c1",
+      content: fileParts,
+    });
+    expect(message.content).toEqual(fileParts);
+
+    const event = ToolCallResultEventSchema.parse({
+      type: EventType.TOOL_CALL_RESULT,
+      messageId: "m2",
+      toolCallId: "c1",
+      content: fileParts,
+    });
+    expect(event.content).toEqual(fileParts);
+  });
+
+  it("keeps a minimal file source minimal: provider and mimeType stay absent", () => {
+    const message = ToolMessageSchema.parse({
+      id: "m1",
+      role: "tool",
+      toolCallId: "c1",
+      content: [{ type: "document", source: { type: "file", value: "files/abc123" } }],
+    });
+
+    expect(Array.isArray(message.content)).toBe(true);
+    if (Array.isArray(message.content)) {
+      const part = message.content[0];
+      if (part.type === "document" && part.source.type === "file") {
+        expect(part.source.provider).toBeUndefined();
+        expect(part.source.mimeType).toBeUndefined();
+        expect(part.source).toEqual({ type: "file", value: "files/abc123" });
+      }
+    }
+  });
+
+  it("rejects a file source with no handle on a tool result", () => {
+    expect(() =>
+      ToolMessageSchema.parse({
+        id: "m1",
+        role: "tool",
+        toolCallId: "c1",
+        content: [{ type: "document", source: { type: "file", provider: "openai" } }],
+      }),
+    ).toThrow();
+    expect(
+      ToolCallResultEventSchema.safeParse({
+        type: EventType.TOOL_CALL_RESULT,
+        messageId: "m2",
+        toolCallId: "c1",
+        content: [{ type: "document", source: { type: "file", provider: "openai" } }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("routes a file source through the source union, as data and url do", () => {
+    expect(PartSourceSchema.parse({ type: "file", value: "file-abc123" })).toEqual({
+      type: "file",
+      value: "file-abc123",
+    });
+    expect(FileSourceSchema.safeParse({ type: "file", value: "file-abc123" }).success).toBe(true);
+    // A source arm the union does not model is still rejected.
+    expect(PartSourceSchema.safeParse({ type: "blob", value: "x" }).success).toBe(false);
   });
 
   it("rejects a part whose type the protocol does not model", () => {

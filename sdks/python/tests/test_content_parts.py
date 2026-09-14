@@ -8,11 +8,13 @@ from ag_ui.core import (
     ContentPart,
     DataSource,
     DocumentPart,
+    FileSource,
     Message,
     TextPart,
     ToolCallResultEvent,
     ToolMessage,
     UrlSource,
+    UserMessage,
 )
 from ag_ui.core import types as core_types
 
@@ -102,6 +104,80 @@ class TestTextPart(unittest.TestCase):
         self.assertEqual(part.metadata, {"title": "t"})
         bare = TextPart(text="hi")
         self.assertEqual(bare.model_dump(by_alias=True, exclude_none=True), {"type": "text", "text": "hi"})
+
+
+class TestFileSource(unittest.TestCase):
+    """The third source arm: bytes already at the provider, named by a handle."""
+
+    def test_user_message_document_part_round_trips(self):
+        source = {
+            "type": "file",
+            "value": "file-abc123",
+            "provider": "openai",
+            "mimeType": "application/pdf",
+        }
+        message = UserMessage.model_validate(
+            {
+                "id": "m1",
+                "role": "user",
+                "content": [{"type": "document", "source": source}],
+            }
+        )
+        part = message.content[0]
+        self.assertIsInstance(part, DocumentPart)
+        self.assertIsInstance(part.source, FileSource)
+        self.assertEqual(part.source.value, "file-abc123")
+        self.assertEqual(part.source.provider, "openai")
+        self.assertEqual(part.source.mime_type, "application/pdf")
+        self.assertEqual(
+            message.model_dump(by_alias=True, exclude_none=True)["content"][0]["source"],
+            source,
+        )
+
+    def test_minimal_file_source_omits_the_optional_keys(self):
+        part = TypeAdapter(ContentPart).validate_python(
+            {"type": "document", "source": {"type": "file", "value": "x"}}
+        )
+        self.assertIsInstance(part.source, FileSource)
+        self.assertEqual(
+            part.model_dump(by_alias=True, exclude_none=True),
+            {"type": "document", "source": {"type": "file", "value": "x"}},
+        )
+
+    def test_file_source_without_a_value_is_rejected(self):
+        with self.assertRaises(ValidationError):
+            TypeAdapter(ContentPart).validate_python(
+                {"type": "document", "source": {"type": "file", "provider": "openai"}}
+            )
+
+    def test_tool_message_carries_a_file_source_part(self):
+        message = ToolMessage.model_validate(
+            {
+                "id": "m1",
+                "role": "tool",
+                "toolCallId": "c1",
+                "content": [
+                    {
+                        "type": "document",
+                        "source": {"type": "file", "value": "files/xyz", "provider": "google"},
+                    }
+                ],
+            }
+        )
+        self.assertIsInstance(message.content[0], DocumentPart)
+        self.assertIsInstance(message.content[0].source, FileSource)
+        self.assertEqual(message.content[0].source.value, "files/xyz")
+
+    def test_file_source_is_exported_from_ag_ui_core(self):
+        import ag_ui.core as core
+
+        self.assertIs(core.FileSource, core_types.FileSource)
+        self.assertIn("FileSource", core.__all__)
+        self.assertIn("FileSource", core_types.__all__)
+
+    def test_no_legacy_input_content_alias(self):
+        """The legacy InputContent*Source spellings are 0.x; the new arm has none."""
+        self.assertFalse(hasattr(core_types, "InputContentFileSource"))
 
 
 class TestPre10Names(unittest.TestCase):

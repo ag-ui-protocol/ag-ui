@@ -61,6 +61,14 @@ AGUI.Abstractions.AGUIInputContentDataSource.MimeType.get -> string!
 AGUI.Abstractions.AGUIInputContentDataSource.MimeType.set -> void
 AGUI.Abstractions.AGUIInputContentDataSource.Value.get -> string!
 AGUI.Abstractions.AGUIInputContentDataSource.Value.set -> void
+AGUI.Abstractions.AGUIInputContentFileSource
+AGUI.Abstractions.AGUIInputContentFileSource.AGUIInputContentFileSource() -> void
+AGUI.Abstractions.AGUIInputContentFileSource.MimeType.get -> string?
+AGUI.Abstractions.AGUIInputContentFileSource.MimeType.set -> void
+AGUI.Abstractions.AGUIInputContentFileSource.Provider.get -> string?
+AGUI.Abstractions.AGUIInputContentFileSource.Provider.set -> void
+AGUI.Abstractions.AGUIInputContentFileSource.Value.get -> string!
+AGUI.Abstractions.AGUIInputContentFileSource.Value.set -> void
 AGUI.Abstractions.AGUIInputContentJsonConverter
 AGUI.Abstractions.AGUIInputContentJsonConverter.AGUIInputContentJsonConverter() -> void
 AGUI.Abstractions.AGUIInputContentSource
@@ -772,6 +780,7 @@ const AGUI.Abstractions.AGUIEventTypes.ToolCallEnd = "TOOL_CALL_END" -> string!
 const AGUI.Abstractions.AGUIEventTypes.ToolCallResult = "TOOL_CALL_RESULT" -> string!
 const AGUI.Abstractions.AGUIEventTypes.ToolCallStart = "TOOL_CALL_START" -> string!
 const AGUI.Abstractions.AGUIInputContentSourceTypes.Data = "data" -> string!
+const AGUI.Abstractions.AGUIInputContentSourceTypes.File = "file" -> string!
 const AGUI.Abstractions.AGUIInputContentSourceTypes.Url = "url" -> string!
 const AGUI.Abstractions.AGUIInputContentTypes.Audio = "audio" -> string!
 const AGUI.Abstractions.AGUIInputContentTypes.Document = "document" -> string!
@@ -806,6 +815,7 @@ override AGUI.Abstractions.AGUIDeveloperMessage.Role.get -> string!
 override AGUI.Abstractions.AGUIDocumentInputContent.Type.get -> string!
 override AGUI.Abstractions.AGUIImageInputContent.Type.get -> string!
 override AGUI.Abstractions.AGUIInputContentDataSource.Type.get -> string!
+override AGUI.Abstractions.AGUIInputContentFileSource.Type.get -> string!
 override AGUI.Abstractions.AGUIInputContentJsonConverter.CanConvert(System.Type! typeToConvert) -> bool
 override AGUI.Abstractions.AGUIInputContentJsonConverter.Read(ref System.Text.Json.Utf8JsonReader reader, System.Type! typeToConvert, System.Text.Json.JsonSerializerOptions! options) -> AGUI.Abstractions.AGUIInputContent!
 override AGUI.Abstractions.AGUIInputContentJsonConverter.Write(System.Text.Json.Utf8JsonWriter! writer, AGUI.Abstractions.AGUIInputContent! value, System.Text.Json.JsonSerializerOptions! options) -> void
@@ -891,6 +901,7 @@ static AGUI.Abstractions.AGUIToolExtensions.AsAITools(this System.Collections.Ge
 ~AGUI.Abstractions.AGUIJsonSerializerContext.AGUIImageInputContent.get -> System.Text.Json.Serialization.Metadata.JsonTypeInfo<AGUI.Abstractions.AGUIImageInputContent>
 ~AGUI.Abstractions.AGUIJsonSerializerContext.AGUIInputContent.get -> System.Text.Json.Serialization.Metadata.JsonTypeInfo<AGUI.Abstractions.AGUIInputContent>
 ~AGUI.Abstractions.AGUIJsonSerializerContext.AGUIInputContentDataSource.get -> System.Text.Json.Serialization.Metadata.JsonTypeInfo<AGUI.Abstractions.AGUIInputContentDataSource>
+~AGUI.Abstractions.AGUIJsonSerializerContext.AGUIInputContentFileSource.get -> System.Text.Json.Serialization.Metadata.JsonTypeInfo<AGUI.Abstractions.AGUIInputContentFileSource>
 ~AGUI.Abstractions.AGUIJsonSerializerContext.AGUIInputContentSource.get -> System.Text.Json.Serialization.Metadata.JsonTypeInfo<AGUI.Abstractions.AGUIInputContentSource>
 ~AGUI.Abstractions.AGUIJsonSerializerContext.AGUIInputContentUrlSource.get -> System.Text.Json.Serialization.Metadata.JsonTypeInfo<AGUI.Abstractions.AGUIInputContentUrlSource>
 ~AGUI.Abstractions.AGUIJsonSerializerContext.AGUIInterrupt.get -> System.Text.Json.Serialization.Metadata.JsonTypeInfo<AGUI.Abstractions.AGUIInterrupt>
