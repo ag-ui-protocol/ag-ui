@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+
+- Verify app visibility from fresh MCP tool metadata before iframe-proxied tool calls and fail closed without executing unavailable tools.
+
 ## 0.1.1 — 2026-09-11
 
 - Advertise the standard HTML MIME type for served content.
