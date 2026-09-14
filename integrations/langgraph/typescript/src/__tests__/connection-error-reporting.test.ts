@@ -78,6 +78,37 @@ describe("connection failures name their reason", () => {
     );
   });
 
+  it("reports the origin only, so a credential in the URL never reaches the browser", async () => {
+    // The message below is put on RUN_ERROR, which the frontend renders.
+    const agent = agentWithFailingClient(fetchFailed("connect ECONNREFUSED"));
+    (agent as any).config = {
+      graphId: "sample_agent",
+      deploymentUrl: "https://user:s3cret@lg.example.com/base?api_key=s3cret",
+    };
+
+    const message = await agent.getAssistant().then(
+      () => "",
+      (error: Error) => error.message,
+    );
+
+    expect(message).toContain("from https://lg.example.com");
+    expect(message).not.toContain("s3cret");
+    expect(message).not.toContain("api_key");
+  });
+
+  it("names the deployment URL generically when it has no origin", async () => {
+    // `new URL("localhost:8123")` parses, but its origin is the string "null".
+    const agent = agentWithFailingClient(fetchFailed("connect ECONNREFUSED"));
+    (agent as any).config = {
+      graphId: "sample_agent",
+      deploymentUrl: "localhost:8123",
+    };
+
+    await expect(agent.getAssistant()).rejects.toThrow(
+      "from the configured deployment URL",
+    );
+  });
+
   it("names the deployment URL generically when the caller omitted it", async () => {
     const agent = agentWithFailingClient(fetchFailed("getaddrinfo ENOTFOUND"));
     (agent as any).config = { graphId: "sample_agent" };
