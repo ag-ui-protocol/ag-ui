@@ -1587,7 +1587,19 @@ def convert_agui_multimodal_to_langchain(content: List[AGUIContentItem]) -> List
                     "image_url": {"url": url}
                 })
             else:
-                logger.warning("Dropping %s content: source could not be converted to URL", type(item).__name__)
+                # Named by its WIRE TYPE (`image`, `audio`, `video`,
+                # `document`), not by `type(item).__name__`. The class answers to
+                # two names — 1.0 renamed these parts and kept the old names as
+                # aliases of the same classes — so the class name in this line
+                # reported which ag-ui-protocol the operator happened to have
+                # installed, and an operator grepping for the part they sent
+                # found nothing. The wire type is the name they used. It is also
+                # what the mirrored TypeScript branch already logs, so the two
+                # runtimes now emit the same line.
+                logger.warning(
+                    "Dropping %s content: source could not be converted to URL",
+                    getattr(item, "type", type(item).__name__),
+                )
         elif isinstance(item, BinaryInputContent):
             # Legacy BinaryInputContent — backwards compatibility.
             #
