@@ -1466,6 +1466,114 @@ describe("MCPAppsMiddleware", () => {
       url: "http://localhost:3000",
     };
 
+    it.each(["http", "sse"] as const)(
+      "rejects proxied host logging before %s connection construction",
+      async (type) => {
+        const serverConfig: MCPClientConfig = {
+          type,
+          url: `https://private.example.test/${type}`,
+          headers: { Authorization: "Bearer synthetic-private-token" },
+        };
+        const middleware = new MCPAppsMiddleware({
+          mcpServers: [serverConfig],
+        });
+        const agent = new MockAgent([]);
+        const runId = `host-log-${type}`;
+
+        const events = await collectEvents(
+          middleware.run(
+            createRunAgentInput({
+              runId,
+              forwardedProps: {
+                __proxiedMCPRequest: {
+                  serverHash: getServerHash(serverConfig),
+                  method: "notifications/message",
+                  params: { level: "info", data: "private-log-payload" },
+                },
+              },
+            }),
+            agent,
+          ),
+        );
+
+        expect(events).toEqual([
+          { type: EventType.RUN_STARTED, runId, threadId: runId },
+          {
+            type: EventType.RUN_FINISHED,
+            runId,
+            threadId: runId,
+            result: {
+              error:
+                "Error: notifications/message is host logging and is not forwarded to MCP servers",
+            },
+          },
+        ]);
+        expect(mockHTTPTransportCalls).toEqual([]);
+        expect(mockSSETransportCalls).toEqual([]);
+        expect(mockClientConstructorCalls).toEqual([]);
+        expect(mockConnect).not.toHaveBeenCalled();
+        expect(mockNotification).not.toHaveBeenCalled();
+        expect(mockClose).not.toHaveBeenCalled();
+        expect(agent.runCalls).toEqual([]);
+      },
+    );
+
+    it.each([
+      {
+        method: "tools/call",
+        params: { name: "card", arguments: { city: "Paris" } },
+        mock: mockCallTool,
+        result: { content: [] },
+      },
+      {
+        method: "resources/read",
+        params: { uri: "ui://card" },
+        mock: mockReadResource,
+        result: { contents: [] },
+      },
+      {
+        method: "ping",
+        params: undefined,
+        mock: mockPing,
+        result: {},
+      },
+    ])(
+      "proxies supported $method requests",
+      async ({ method, params, mock, result }) => {
+        const middleware = new MCPAppsMiddleware({
+          mcpServers: [httpServerConfig],
+        });
+        const agent = new MockAgent([]);
+
+        const events = await collectEvents(
+          middleware.run(
+            createRunAgentInput({
+              forwardedProps: {
+                __proxiedMCPRequest: {
+                  serverHash: getServerHash(httpServerConfig),
+                  method,
+                  params,
+                },
+              },
+            }),
+            agent,
+          ),
+        );
+
+        if (params === undefined) {
+          expect(mock).toHaveBeenCalledWith();
+        } else {
+          expect(mock).toHaveBeenCalledWith(params);
+        }
+        expect(mockConnect).toHaveBeenCalledTimes(1);
+        expect(events.at(-1)).toMatchObject({
+          type: EventType.RUN_FINISHED,
+          result,
+        });
+        expect((events.at(-1) as any).result).toEqual(result);
+      },
+    );
+
     it("detects proxied request in forwardedProps", async () => {
       const middleware = new MCPAppsMiddleware({
         mcpServers: [httpServerConfig],

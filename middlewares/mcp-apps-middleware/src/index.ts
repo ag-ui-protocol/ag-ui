@@ -387,15 +387,14 @@ export class MCPAppsMiddleware extends Middleware {
     method: string,
     params?: Record<string, unknown>,
   ): Promise<unknown> {
+    // Host logs are handled by the host, outside the upstream MCP proxy.
+    if (method === "notifications/message") {
+      throw new Error(
+        "notifications/message is host logging and is not forwarded to MCP servers",
+      );
+    }
     // Reject iframe methods before creating a credentialed MCP connection.
-    if (
-      ![
-        "tools/call",
-        "resources/read",
-        "notifications/message",
-        "ping",
-      ].includes(method)
-    ) {
+    if (!["tools/call", "resources/read", "ping"].includes(method)) {
       throw new Error(`MCP method not allowed for UI proxy: ${method}`);
     }
     const transport = await buildMCPTransport(serverConfig);
@@ -424,13 +423,6 @@ export class MCPAppsMiddleware extends Middleware {
           );
         case "resources/read":
           return await client.readResource(params as { uri: string });
-        case "notifications/message":
-          // notifications/message is a one-way notification (no response expected)
-          await client.notification({
-            method: "notifications/message",
-            params,
-          });
-          return { success: true };
         case "ping":
           return await client.ping();
         default:

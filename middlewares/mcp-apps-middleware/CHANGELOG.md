@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.2 — 2026-09-14
+
+- Reject proxied `notifications/message` before connection creation with a clear host-logging error.
+- Preserve proxy support for `tools/call`, `resources/read`, and `ping`.
+
+### Compatibility
+
+Consumers that previously forwarded `notifications/message` must handle logging in the host.
+
 ## 0.1.1 — 2026-09-11
 
 - Advertise the standard HTML MIME type for served content.

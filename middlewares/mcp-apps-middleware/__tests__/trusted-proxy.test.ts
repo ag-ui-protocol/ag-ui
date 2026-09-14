@@ -227,6 +227,29 @@ test("blocked proxy methods do not initialize an MCP session", async () => {
   }
 });
 
+test("host logging does not send any HTTP requests", async () => {
+  const { run, requests, agent, teardown } = await setup();
+  try {
+    const events = await run("notifications/message");
+    expect(events).toEqual([
+      { type: "RUN_STARTED", runId: "test-run", threadId: "test-run" },
+      {
+        type: "RUN_FINISHED",
+        runId: "test-run",
+        threadId: "test-run",
+        result: {
+          error:
+            "Error: notifications/message is host logging and is not forwarded to MCP servers",
+        },
+      },
+    ]);
+    expect(requests).toEqual([]);
+    expect(agent.runCalls).toEqual([]);
+  } finally {
+    await teardown();
+  }
+});
+
 test("successful HTTP proxy requests delete their authenticated MCP session", async () => {
   const { run, requests, teardown } = await setup();
   try {
