@@ -1,14 +1,5 @@
 # Changelog
 
-## 0.1.2 — 2026-09-14
-
-- Consume proxied `notifications/message` locally as host logging with normal `{ success: true }` completion and no upstream request.
-- Preserve upstream proxy support for `tools/call`, `resources/read`, and `ping`.
-
-### Compatibility
-
-Consumers that previously forwarded `notifications/message` now receive normal completion after the host consumes the log locally.
-
 ## 0.1.1 — 2026-09-11
 
 - Advertise the standard HTML MIME type for served content.
