@@ -643,6 +643,15 @@ as optional.
 | type     | required   | required           | —    | required |
 | value    | required   | required           | —    | required |
 
+## FileSource
+
+| field    | TypeScript | Python             | .NET | schema   |
+| -------- | ---------- | ------------------ | ---- | -------- |
+| mimeType | optional   | optional, nullable | —    | optional |
+| provider | optional   | optional, nullable | —    | optional |
+| type     | required   | required           | —    | required |
+| value    | required   | required           | —    | required |
+
 ## Context
 
 | field       | TypeScript | Python   | .NET     | schema   |

@@ -493,6 +493,12 @@ const MAPPED_FIELDS: Record<string, Record<string, string>> = {
     value: "required string",
     mimeType: "optional string",
   },
+  FileSource: {
+    type: "required literal(file)",
+    value: "required string",
+    provider: "optional string",
+    mimeType: "optional string",
+  },
   ToolCall: {
     id: "required string",
     type: "required literal(function)",
@@ -2413,6 +2419,21 @@ internal static class ProtoMessageMapper
 
                 return new Proto.InputContentSource { Url = urlSource };
             }
+            case AGUIInputContentFileSource file:
+            {
+                var fileSource = new Proto.InputContentFileSource { Value = file.Value };
+                if (file.Provider is not null)
+                {
+                    fileSource.Provider = file.Provider;
+                }
+
+                if (file.MimeType is not null)
+                {
+                    fileSource.MimeType = file.MimeType;
+                }
+
+                return new Proto.InputContentSource { File = fileSource };
+            }
             default:
                 throw new NotSupportedException(
                     $"Input content source type '{source.Type}' is not supported by the AG-UI protobuf wire format.");
@@ -2439,6 +2460,13 @@ internal static class ProtoMessageMapper
                 {
                     Value = source.Url.Value,
                     MimeType = source.Url.HasMimeType ? source.Url.MimeType : null,
+                };
+            case Proto.InputContentSource.SourceOneofCase.File:
+                return new AGUIInputContentFileSource
+                {
+                    Value = source.File.Value,
+                    Provider = source.File.HasProvider ? source.File.Provider : null,
+                    MimeType = source.File.HasMimeType ? source.File.MimeType : null,
                 };
             case Proto.InputContentSource.SourceOneofCase.None:
             default:

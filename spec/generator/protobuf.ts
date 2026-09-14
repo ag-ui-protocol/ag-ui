@@ -60,6 +60,7 @@ const PROTO_NAME: Record<string, string> = {
   PartSource: "InputContentSource",
   DataSource: "InputContentDataSource",
   UrlSource: "InputContentUrlSource",
+  FileSource: "InputContentFileSource",
 };
 
 function protoName(definitionName: string): string {

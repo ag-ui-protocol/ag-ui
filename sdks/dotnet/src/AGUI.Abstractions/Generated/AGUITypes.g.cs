@@ -740,7 +740,10 @@ public sealed class MultimodalInputCapabilities
     public bool? Pdf { get; set; }
 
     /// <summary>
-    /// Set true if the agent can process arbitrary file uploads.
+    /// Set true if the agent can process arbitrary file uploads: files of a
+    /// kind the image, audio, video and document parts do not cover. Says
+    /// nothing about how a file arrives; a part's source (inline, URL or
+    /// provider handle) is a separate question.
     /// </summary>
     [JsonPropertyName("file")]
     public bool? File { get; set; }

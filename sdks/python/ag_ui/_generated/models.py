@@ -635,11 +635,45 @@ class UrlSource(GeneratedBaseModel):
     """
 
 
+class FileSource(GeneratedBaseModel):
+    """
+    Bytes already at the provider, named by a handle the provider issued: an
+    OpenAI or Anthropic file id, a Gemini file URI, a storage URL only that
+    provider can read. No bytes travel and nothing is fetched. Only the
+    provider that minted the handle can resolve it; a peer that cannot drops
+    the part as it drops any part it cannot use.
+    """
+
+    type: Literal["file"] = "file"
+    """Discriminator."""
+    value: str
+    """
+    The handle, exactly as the provider issued it. Opaque: a consumer MUST
+    NOT fetch it, parse it or read a scheme out of it.
+    """
+    provider: Optional[str] = Field(default=None)
+    """
+    Who issued the handle, when the producer knows. Optional: an agent
+    already knows which provider it talks to. When present, SHOULD be the
+    lowercase vendor id (openai, anthropic, google) that TokenUsage.provider
+    uses, so a peer can tell before sending whether a handle is one it can
+    use.
+    """
+    mime_type: Optional[str] = Field(default=None)
+    """
+    What the file is, when the producer knows. Optional, because the
+    provider that holds the bytes knows.
+    """
+
+
 PartSource = Annotated[
-    Union[DataSource, UrlSource],
+    Union[DataSource, UrlSource, FileSource],
     Field(discriminator="type"),
 ]
-"""Where a media part's bytes come from: carried inline, or referenced by URL."""
+"""
+Where a media part's bytes come from: carried inline, referenced by URL, or
+already at the provider under a handle it issued.
+"""
 
 
 class ImagePart(GeneratedBaseModel):
@@ -2644,7 +2678,12 @@ class MultimodalInputCapabilities(GeneratedBaseModel):
     pdf: Optional[bool] = Field(default=None)
     """Set true if the agent can process PDF documents."""
     file: Optional[bool] = Field(default=None)
-    """Set true if the agent can process arbitrary file uploads."""
+    """
+    Set true if the agent can process arbitrary file uploads: files of a
+    kind the image, audio, video and document parts do not cover. Says
+    nothing about how a file arrives; a part's source (inline, URL or
+    provider handle) is a separate question.
+    """
 
 
 class MultimodalOutputCapabilities(GeneratedBaseModel):

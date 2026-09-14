@@ -55,11 +55,13 @@ public static class AGUIInputContentTypes
 }
 
 /// <summary>
-/// Where a media part's bytes come from: carried inline, or referenced by URL.
+/// Where a media part's bytes come from: carried inline, referenced by URL, or
+/// already at the provider under a handle it issued.
 /// </summary>
 public static class AGUIInputContentSourceTypes
 {
     public const string Data = "data";
     public const string Url = "url";
+    public const string File = "file";
 }
 

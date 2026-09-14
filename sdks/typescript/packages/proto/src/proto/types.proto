@@ -61,11 +61,32 @@ message InputContentUrlSource {
   optional string mime_type = 2;
 }
 
-// Where a media part's bytes come from: carried inline, or referenced by URL.
+// Bytes already at the provider, named by a handle the provider issued: an
+// OpenAI or Anthropic file id, a Gemini file URI, a storage URL only that
+// provider can read. No bytes travel and nothing is fetched. Only the provider
+// that minted the handle can resolve it; a peer that cannot drops the part as it
+// drops any part it cannot use.
+message InputContentFileSource {
+  // The handle, exactly as the provider issued it. Opaque: a consumer MUST NOT
+  // fetch it, parse it or read a scheme out of it.
+  string value = 1;
+  // Who issued the handle, when the producer knows. Optional: an agent already
+  // knows which provider it talks to. When present, SHOULD be the lowercase
+  // vendor id (openai, anthropic, google) that TokenUsage.provider uses, so a
+  // peer can tell before sending whether a handle is one it can use.
+  optional string provider = 2;
+  // What the file is, when the producer knows. Optional, because the provider
+  // that holds the bytes knows.
+  optional string mime_type = 3;
+}
+
+// Where a media part's bytes come from: carried inline, referenced by URL, or
+// already at the provider under a handle it issued.
 message InputContentSource {
   oneof source {
     InputContentDataSource data = 1;
     InputContentUrlSource url = 2;
+    InputContentFileSource file = 3;
   }
 }
 

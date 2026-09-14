@@ -1661,7 +1661,7 @@ internal static class WireGuards
                     if (groupDepth == 0)
                     {
 
-                        if (field == 1 || field == 2)
+                        if (field == 1 || field == 2 || field == 3)
                         {
                             if (seenArm != 0 && seenArm != field)
                             {

@@ -64,7 +64,11 @@ const shapes: Record<string, Shape> = {
   TextPart: { optional: ["id", "metadata"], fields: {} },
   DataSource: { optional: [], fields: {} },
   UrlSource: { optional: ["mimeType"], fields: {} },
-  PartSource: { discriminator: "type", variants: { data: "DataSource", url: "UrlSource" } },
+  FileSource: { optional: ["provider", "mimeType"], fields: {} },
+  PartSource: {
+    discriminator: "type",
+    variants: { data: "DataSource", url: "UrlSource", file: "FileSource" },
+  },
   ImagePart: { optional: ["id", "metadata"], fields: { source: "PartSource" } },
   AudioPart: { optional: ["id", "metadata"], fields: { source: "PartSource" } },
   VideoPart: { optional: ["id", "metadata"], fields: { source: "PartSource" } },

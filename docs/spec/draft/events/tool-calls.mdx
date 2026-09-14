@@ -103,8 +103,10 @@ the producer as a tool message in the next run's input instead.
 [`ContentPart`](/spec/draft/schema#contentpart)s — the same parts a
 [user message](/spec/draft/basic/run-input#messages) carries: `text`, `image`,
 `audio`, `video` and `document`, each media part with a `source` that is inline
-data or a URL. The tool message the event mints has the identical shape, so a
-result travels into the next run's `messages` unchanged.
+data, a URL or a
+[provider file handle](/spec/draft/basic/run-input#provider-file-handles). The
+tool message the event mints has the identical shape, so a result travels into
+the next run's `messages` unchanged.
 
 ```json
 {
@@ -131,8 +133,14 @@ result travels into the next run's `messages` unchanged.
   define provider-specific result blocks (a citation-enabled search result, a
   browser state); a producer that needs one maps it onto these parts or
   carries it as passthrough.
+- A tool that uploaded its output to the model provider — a generated report
+  now sitting in the provider's file store — returns the handle as a `file`
+  source rather than re-sending the bytes; the
+  [same rules](/spec/draft/basic/run-input#provider-file-handles) apply as on
+  input, and a consumer that renders the result treats the handle as opaque.
 - A producer handed a part its model cannot take — an image to a text-only
-  model, audio to a provider that accepts none in a tool result — MUST NOT fail
+  model, audio to a provider that accepts none in a tool result, a file handle
+  another provider issued — MUST NOT fail
   the run because of it. It drops the part and continues, as the
   [run input rules](/spec/draft/basic/run-input#messages) already say of user
   content, and it MUST still answer the call: a result whose every part was

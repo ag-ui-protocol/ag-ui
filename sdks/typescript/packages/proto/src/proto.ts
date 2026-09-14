@@ -158,6 +158,9 @@ const toProtoSource = (source: unknown): unknown => {
   if (rec.type === "url") {
     return { url: { value: rec.value, mimeType: rec.mimeType } };
   }
+  if (rec.type === "file") {
+    return { file: { value: rec.value, provider: rec.provider, mimeType: rec.mimeType } };
+  }
   return undefined;
 };
 
@@ -166,7 +169,7 @@ const fromProtoSource = (source: unknown): unknown => {
   if (!rec) return undefined;
   // Exactly one populated arm: a source carrying several is malformed, and
   // picking one would silently discard the rest.
-  if ([rec.data, rec.url].filter(Boolean).length > 1) {
+  if ([rec.data, rec.url, rec.file].filter(Boolean).length > 1) {
     throw new Error("Invalid event: source carries more than one arm");
   }
   if (rec.data) {
@@ -176,6 +179,10 @@ const fromProtoSource = (source: unknown): unknown => {
   if (rec.url) {
     const wire = rec.url as LooseRecord;
     return { type: "url", value: wire.value, mimeType: wire.mimeType };
+  }
+  if (rec.file) {
+    const wire = rec.file as LooseRecord;
+    return { type: "file", value: wire.value, provider: wire.provider, mimeType: wire.mimeType };
   }
   return undefined;
 };
@@ -675,7 +682,7 @@ const SCAN_SPECS: Record<string, ScanSpec | undefined> = {
     descend: { 1: "InputContentSource" },
     google: { 2: "google.protobuf.Value" },
   },
-  InputContentSource: { singular: new Set([1, 2]), descend: {}, arms: new Set([1, 2]) },
+  InputContentSource: { singular: new Set([1, 2, 3]), descend: {}, arms: new Set([1, 2, 3]) },
   AudioInputPart: {
     singular: new Set([1, 2]),
     descend: { 1: "InputContentSource" },

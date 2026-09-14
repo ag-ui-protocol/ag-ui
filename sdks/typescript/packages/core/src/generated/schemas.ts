@@ -208,9 +208,28 @@ export const UrlSourceSchema = z.looseObject({
 });
 
 /**
- * Where a media part's bytes come from: carried inline, or referenced by URL.
+ * Bytes already at the provider, named by a handle the provider issued: an
+ * OpenAI or Anthropic file id, a Gemini file URI, a storage URL only that
+ * provider can read. No bytes travel and nothing is fetched. Only the provider
+ * that minted the handle can resolve it; a peer that cannot drops the part as
+ * it drops any part it cannot use.
  */
-export const PartSourceSchema = z.discriminatedUnion("type", [DataSourceSchema, UrlSourceSchema]);
+export const FileSourceSchema = z.looseObject({
+  type: z.literal("file"),
+  value: z.string(),
+  provider: z.string().optional(),
+  mimeType: z.string().optional(),
+});
+
+/**
+ * Where a media part's bytes come from: carried inline, referenced by URL, or
+ * already at the provider under a handle it issued.
+ */
+export const PartSourceSchema = z.discriminatedUnion("type", [
+  DataSourceSchema,
+  UrlSourceSchema,
+  FileSourceSchema,
+]);
 
 /**
  * An image part.

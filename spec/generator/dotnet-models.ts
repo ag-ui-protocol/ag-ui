@@ -63,6 +63,7 @@ const TYPE_NAME: Record<string, string> = {
   PartSource: "AGUIInputContentSource",
   DataSource: "AGUIInputContentDataSource",
   UrlSource: "AGUIInputContentUrlSource",
+  FileSource: "AGUIInputContentFileSource",
 };
 
 // PROP_NAME, NULLABLE_REQUIRED_STRINGS and NULLABLE_REQUIRED_ANY live in

@@ -80,10 +80,43 @@ export interface InputContentUrlSource {
   mimeType?: string | undefined;
 }
 
-/** Where a media part's bytes come from: carried inline, or referenced by URL. */
+/**
+ * Bytes already at the provider, named by a handle the provider issued: an
+ * OpenAI or Anthropic file id, a Gemini file URI, a storage URL only that
+ * provider can read. No bytes travel and nothing is fetched. Only the provider
+ * that minted the handle can resolve it; a peer that cannot drops the part as it
+ * drops any part it cannot use.
+ */
+export interface InputContentFileSource {
+  /**
+   * The handle, exactly as the provider issued it. Opaque: a consumer MUST NOT
+   * fetch it, parse it or read a scheme out of it.
+   */
+  value: string;
+  /**
+   * Who issued the handle, when the producer knows. Optional: an agent already
+   * knows which provider it talks to. When present, SHOULD be the lowercase
+   * vendor id (openai, anthropic, google) that TokenUsage.provider uses, so a
+   * peer can tell before sending whether a handle is one it can use.
+   */
+  provider?:
+    | string
+    | undefined;
+  /**
+   * What the file is, when the producer knows. Optional, because the provider
+   * that holds the bytes knows.
+   */
+  mimeType?: string | undefined;
+}
+
+/**
+ * Where a media part's bytes come from: carried inline, referenced by URL, or
+ * already at the provider under a handle it issued.
+ */
 export interface InputContentSource {
   data?: InputContentDataSource | undefined;
   url?: InputContentUrlSource | undefined;
+  file?: InputContentFileSource | undefined;
 }
 
 /** An audio part. */
@@ -677,8 +710,78 @@ export const InputContentUrlSource: MessageFns<InputContentUrlSource> = {
   },
 };
 
+function createBaseInputContentFileSource(): InputContentFileSource {
+  return { value: "", provider: undefined, mimeType: undefined };
+}
+
+export const InputContentFileSource: MessageFns<InputContentFileSource> = {
+  encode(message: InputContentFileSource, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.value !== "") {
+      writer.uint32(10).string(message.value);
+    }
+    if (message.provider !== undefined) {
+      writer.uint32(18).string(message.provider);
+    }
+    if (message.mimeType !== undefined) {
+      writer.uint32(26).string(message.mimeType);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): InputContentFileSource {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseInputContentFileSource();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 10) {
+            break;
+          }
+
+          message.value = reader.string();
+          continue;
+        }
+        case 2: {
+          if (tag !== 18) {
+            break;
+          }
+
+          message.provider = reader.string();
+          continue;
+        }
+        case 3: {
+          if (tag !== 26) {
+            break;
+          }
+
+          message.mimeType = reader.string();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create<I extends Exact<DeepPartial<InputContentFileSource>, I>>(base?: I): InputContentFileSource {
+    return InputContentFileSource.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<InputContentFileSource>, I>>(object: I): InputContentFileSource {
+    const message = createBaseInputContentFileSource();
+    message.value = object.value ?? "";
+    message.provider = object.provider ?? undefined;
+    message.mimeType = object.mimeType ?? undefined;
+    return message;
+  },
+};
+
 function createBaseInputContentSource(): InputContentSource {
-  return { data: undefined, url: undefined };
+  return { data: undefined, url: undefined, file: undefined };
 }
 
 export const InputContentSource: MessageFns<InputContentSource> = {
@@ -688,6 +791,9 @@ export const InputContentSource: MessageFns<InputContentSource> = {
     }
     if (message.url !== undefined) {
       InputContentUrlSource.encode(message.url, writer.uint32(18).fork()).join();
+    }
+    if (message.file !== undefined) {
+      InputContentFileSource.encode(message.file, writer.uint32(26).fork()).join();
     }
     return writer;
   },
@@ -715,6 +821,14 @@ export const InputContentSource: MessageFns<InputContentSource> = {
           message.url = InputContentUrlSource.decode(reader, reader.uint32());
           continue;
         }
+        case 3: {
+          if (tag !== 26) {
+            break;
+          }
+
+          message.file = InputContentFileSource.decode(reader, reader.uint32());
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -734,6 +848,9 @@ export const InputContentSource: MessageFns<InputContentSource> = {
       : undefined;
     message.url = (object.url !== undefined && object.url !== null)
       ? InputContentUrlSource.fromPartial(object.url)
+      : undefined;
+    message.file = (object.file !== undefined && object.file !== null)
+      ? InputContentFileSource.fromPartial(object.file)
       : undefined;
     return message;
   },

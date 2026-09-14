@@ -43,6 +43,12 @@ ExecutionCapabilities/invalid/max-iterations-over-maximum.json
 ExecutionCapabilities/invalid/negative-max-execution-time.expect.json
 ExecutionCapabilities/invalid/negative-max-execution-time.json
 ExecutionCapabilities/valid/limits-at-maximum.json
+FileSource/invalid/reference-record.expect.json
+FileSource/invalid/reference-record.json
+FileSource/invalid/value-missing.expect.json
+FileSource/invalid/value-missing.json
+FileSource/valid/full.json
+FileSource/valid/minimal.json
 Interrupt/invalid/reason-missing.expect.json
 Interrupt/invalid/reason-missing.json
 Interrupt/valid/attributed.json
@@ -271,6 +277,7 @@ ToolCallResultEvent/invalid/content-part-unknown-type.expect.json
 ToolCallResultEvent/invalid/content-part-unknown-type.json
 ToolCallResultEvent/invalid/role-not-tool.expect.json
 ToolCallResultEvent/invalid/role-not-tool.json
+ToolCallResultEvent/valid/file-source-part.json
 ToolCallResultEvent/valid/minimal.json
 ToolCallResultEvent/valid/parts-content.json
 ToolCallStartEvent/invalid/parent-message-id-null.expect.json
@@ -283,6 +290,7 @@ ToolMessage/invalid/content-part-unknown-type.json
 ToolMessage/invalid/tool-call-id-missing.expect.json
 ToolMessage/invalid/tool-call-id-missing.json
 ToolMessage/valid/empty-parts-content.json
+ToolMessage/valid/file-source-part.json
 ToolMessage/valid/minimal.json
 ToolMessage/valid/parts-content.json
 UserMessage/invalid/content-missing.expect.json
@@ -291,11 +299,14 @@ UserMessage/invalid/content-number.expect.json
 UserMessage/invalid/content-number.json
 UserMessage/invalid/content-part-not-an-object.expect.json
 UserMessage/invalid/content-part-not-an-object.json
+UserMessage/invalid/file-source-value-missing.expect.json
+UserMessage/invalid/file-source-value-missing.json
 UserMessage/invalid/legacy-binary-part.expect.json
 UserMessage/invalid/legacy-binary-part.json
 UserMessage/invalid/part-shaped-like-media-with-unknown-type.expect.json
 UserMessage/invalid/part-shaped-like-media-with-unknown-type.json
 UserMessage/invalid/part-shaped-like-text-with-unknown-type.expect.json
 UserMessage/invalid/part-shaped-like-text-with-unknown-type.json
+UserMessage/valid/file-source-content.json
 UserMessage/valid/multimodal-content.json
 UserMessage/valid/text-content.json
