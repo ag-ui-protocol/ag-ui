@@ -262,6 +262,7 @@ test("host logging does not send any HTTP requests", async () => {
     expect(requests).toEqual([]);
     expect(agent.runCalls).toEqual([]);
   } finally {
+    warnSpy.mockRestore();
     await teardown();
   }
 });
