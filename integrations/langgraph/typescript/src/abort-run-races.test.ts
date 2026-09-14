@@ -161,6 +161,63 @@ describe("abortRun races", () => {
     }
   });
 
+  it("does not retry the cancel until LangGraph's own run id is known", async () => {
+    const cancel = cancelSpy();
+    const agent = createAgent(cancel);
+
+    async function* chunks() {
+      agent.abortRun();
+      // Six chunks before the stream ever reports metadata.run_id. A cancel
+      // addressed to the client id 404s every time, so retrying per chunk is a
+      // burst of requests that cannot succeed.
+      for (let i = 0; i < 6; i++) {
+        yield eventChunk({ langgraph_node: "agent" });
+      }
+      yield eventChunk({ langgraph_node: "agent", run_id: SERVER_RUN_ID });
+    }
+
+    await settle(agent, chunks);
+
+    const doomed = cancel.mock.calls.filter(
+      ([, runId]) => runId !== SERVER_RUN_ID,
+    );
+    // At most the single attempt abortRun() itself makes, never one per chunk.
+    expect(doomed.length).toBeLessThanOrEqual(1);
+    expect(cancel.accepted).toContain(SERVER_RUN_ID);
+  });
+
+  it("does not carry a pre-stream stop into the next run", async () => {
+    const cancel = cancelSpy();
+    const agent = createAgent(cancel);
+    agent.threadId = THREAD_ID;
+
+    // First run: stopped before the stream opens, then it fails before
+    // runAgentStream is ever reached, so nothing consumes the pending stop.
+    const failing = vi
+      .spyOn(agent as any, "onInitialize")
+      .mockImplementation(async () => {
+        agent.abortRun();
+        throw new Error("initialization failed");
+      });
+    await agent.runAgent({ runId: "client-run-doomed" }).catch(() => {});
+    failing.mockRestore();
+
+    // Second run: a fresh, un-stopped run. It must stream normally.
+    async function* chunks() {
+      yield eventChunk({ langgraph_node: "agent", run_id: SERVER_RUN_ID });
+      yield eventChunk({ langgraph_node: "agent", run_id: SERVER_RUN_ID });
+    }
+    vi.spyOn(agent, "prepareStream").mockResolvedValue({
+      streamResponse: chunks(),
+      state: threadState(),
+    } as any);
+
+    await agent.runAgent({ runId: CLIENT_RUN_ID }).catch(() => {});
+
+    expect((agent as any).cancelRequested).toBe(false);
+    expect(cancel.accepted).toEqual([]);
+  });
+
   it("keeps a stop that arrives before the LangGraph stream opens", async () => {
     const cancel = cancelSpy();
     const agent = createAgent(cancel);

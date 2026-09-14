@@ -922,8 +922,14 @@ export class LangGraphAgent extends AbstractAgent {
       for await (let streamResponseChunk of streamResponse) {
         // If a cancel was requested and we haven't sent it yet, try now.
         if (this.cancelRequested) {
+          // Only retry once LangGraph's own run id is in hand. Until the stream
+          // reports metadata.run_id, activeRun.id is the client-generated id,
+          // which LangGraph does not know: retrying it here would fire one
+          // guaranteed-404 request per chunk. The cancel for this run is sent
+          // at the metadata.run_id site below; this is its retry.
           if (
             !this.cancelSent &&
+            this.activeRun?.serverRunIdKnown &&
             this.activeRun?.threadId &&
             this.activeRun?.id
           ) {
@@ -934,12 +940,8 @@ export class LangGraphAgent extends AbstractAgent {
               );
               this.cancelSent = true;
             } catch (_) {
-              // Until the stream reports metadata.run_id, activeRun.id is still
-              // the client-generated run id, which LangGraph does not know, so
-              // this call 404s. Leave cancelSent false: marking it sent here
-              // would both skip the retry that fires once the server id is
-              // known and break out of the stream below, leaving the run to
-              // complete server-side while the caller is told it stopped.
+              // Leave cancelSent false rather than reporting a stop that never
+              // reached LangGraph. The next chunk retries.
             }
           }
           if (this.cancelSent) {
@@ -2005,6 +2007,30 @@ export class LangGraphAgent extends AbstractAgent {
     _ctx: { openInterrupts: AGUIInterrupt[] },
   ): unknown {
     return buildLgCommandResumeFromAgui(entries);
+  }
+
+  public async runAgent(
+    ...args: Parameters<AbstractAgent["runAgent"]>
+  ): ReturnType<AbstractAgent["runAgent"]> {
+    try {
+      return await super.runAgent(...args);
+    } finally {
+      // runAgentStream consumes a pre-stream stop, but it is only reached once
+      // the run gets that far. A run that fails earlier (a throwing
+      // onInitialize or middleware) would otherwise leave the flag set and
+      // cancel the next run.
+      this.abortBeforeStreamOpen = false;
+    }
+  }
+
+  public async connectAgent(
+    ...args: Parameters<AbstractAgent["connectAgent"]>
+  ): ReturnType<AbstractAgent["connectAgent"]> {
+    try {
+      return await super.connectAgent(...args);
+    } finally {
+      this.abortBeforeStreamOpen = false;
+    }
   }
 
   // Request cancellation of the current run via LangGraph Platform SDK
