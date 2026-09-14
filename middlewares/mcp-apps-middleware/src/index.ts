@@ -320,6 +320,39 @@ export class MCPAppsMiddleware extends Middleware {
     request: ProxiedMCPRequest,
   ): Observable<BaseEvent> {
     return new Observable<BaseEvent>((subscriber) => {
+      // Emit RunStarted
+      const runStartedEvent: RunStartedEvent = {
+        type: EventType.RUN_STARTED,
+        runId,
+        threadId: runId,
+      };
+      subscriber.next(runStartedEvent);
+
+      if (request.method === "notifications/message") {
+        try {
+          console.warn(
+            "MCP host log consumed locally; not forwarded to MCP server",
+            {
+              serverId: request.serverId,
+              serverHash: request.serverHash,
+              params: request.params,
+            },
+          );
+        } catch {
+          // Warning delivery must not change the proxy completion contract.
+        }
+
+        const runFinishedEvent: RunFinishedEvent = {
+          type: EventType.RUN_FINISHED,
+          runId,
+          threadId: runId,
+          result: { success: true },
+        };
+        subscriber.next(runFinishedEvent);
+        subscriber.complete();
+        return;
+      }
+
       // Look up server config - prefer serverId, fallback to serverHash
       let serverConfig: MCPClientConfig | undefined;
       if (request.serverId) {
@@ -328,14 +361,6 @@ export class MCPAppsMiddleware extends Middleware {
       if (!serverConfig) {
         serverConfig = this.serverConfigMapByHash.get(request.serverHash);
       }
-
-      // Emit RunStarted
-      const runStartedEvent: RunStartedEvent = {
-        type: EventType.RUN_STARTED,
-        runId,
-        threadId: runId,
-      };
-      subscriber.next(runStartedEvent);
 
       // Handle unknown server
       if (!serverConfig) {
@@ -387,12 +412,6 @@ export class MCPAppsMiddleware extends Middleware {
     method: string,
     params?: Record<string, unknown>,
   ): Promise<unknown> {
-    // Host logs are handled by the host, outside the upstream MCP proxy.
-    if (method === "notifications/message") {
-      throw new Error(
-        "notifications/message is host logging and is not forwarded to MCP servers",
-      );
-    }
     // Reject iframe methods before creating a credentialed MCP connection.
     if (!["tools/call", "resources/read", "ping"].includes(method)) {
       throw new Error(`MCP method not allowed for UI proxy: ${method}`);

@@ -100,6 +100,22 @@ vi.mock("crypto", async () => {
 });
 
 describe("MCPAppsMiddleware", () => {
+  const hostLogWarning =
+    "MCP host log consumed locally; not forwarded to MCP server";
+
+  function expectNoProxyActivity(agent: MockAgent) {
+    expect(mockHTTPTransportCalls).toEqual([]);
+    expect(mockSSETransportCalls).toEqual([]);
+    expect(mockClientConstructorCalls).toEqual([]);
+    expect(mockConnect).not.toHaveBeenCalled();
+    expect(mockCallTool).not.toHaveBeenCalled();
+    expect(mockReadResource).not.toHaveBeenCalled();
+    expect(mockPing).not.toHaveBeenCalled();
+    expect(mockNotification).not.toHaveBeenCalled();
+    expect(mockClose).not.toHaveBeenCalled();
+    expect(agent.runCalls).toEqual([]);
+  }
+
   beforeEach(() => {
     // Reset all mocks before each test
     vi.clearAllMocks();
@@ -1467,8 +1483,9 @@ describe("MCPAppsMiddleware", () => {
     };
 
     it.each(["http", "sse"] as const)(
-      "rejects proxied host logging before %s connection construction",
+      "consumes proxied host logging locally before %s connection construction",
       async (type) => {
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
         const serverConfig: MCPClientConfig = {
           type,
           url: `https://private.example.test/${type}`,
@@ -1502,21 +1519,106 @@ describe("MCPAppsMiddleware", () => {
             type: EventType.RUN_FINISHED,
             runId,
             threadId: runId,
-            result: {
-              error:
-                "Error: notifications/message is host logging and is not forwarded to MCP servers",
-            },
+            result: { success: true },
           },
         ]);
-        expect(mockHTTPTransportCalls).toEqual([]);
-        expect(mockSSETransportCalls).toEqual([]);
-        expect(mockClientConstructorCalls).toEqual([]);
-        expect(mockConnect).not.toHaveBeenCalled();
-        expect(mockNotification).not.toHaveBeenCalled();
-        expect(mockClose).not.toHaveBeenCalled();
-        expect(agent.runCalls).toEqual([]);
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+        expect(warnSpy).toHaveBeenCalledWith(hostLogWarning, {
+          serverId: undefined,
+          serverHash: getServerHash(serverConfig),
+          params: { level: "info", data: "private-log-payload" },
+        });
+        expectNoProxyActivity(agent);
       },
     );
+
+    it.each([
+      {
+        name: "unknown server hash",
+        request: {
+          serverHash: "stale-server-hash",
+          method: "notifications/message",
+          params: { level: "warning", data: "stale-log" },
+        },
+      },
+      {
+        name: "no configured servers",
+        request: {
+          serverHash: "unconfigured-server-hash",
+          serverId: "missing-server",
+          method: "notifications/message",
+          params: { level: "debug", data: "unconfigured-log" },
+        },
+        emptyConfig: true,
+      },
+    ])(
+      "consumes proxied host logging with $name",
+      async ({ request, emptyConfig }) => {
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const middleware = new MCPAppsMiddleware({
+          mcpServers: emptyConfig ? [] : [httpServerConfig],
+        });
+        const agent = new MockAgent([]);
+        const runId = `host-log-${request.serverHash}`;
+
+        const events = await collectEvents(
+          middleware.run(
+            createRunAgentInput({
+              runId,
+              forwardedProps: { __proxiedMCPRequest: request },
+            }),
+            agent,
+          ),
+        );
+
+        expect(events).toEqual([
+          { type: EventType.RUN_STARTED, runId, threadId: runId },
+          {
+            type: EventType.RUN_FINISHED,
+            runId,
+            threadId: runId,
+            result: { success: true },
+          },
+        ]);
+        expect(warnSpy).toHaveBeenCalledWith(hostLogWarning, {
+          serverId: request.serverId,
+          serverHash: request.serverHash,
+          params: request.params,
+        });
+        expectNoProxyActivity(agent);
+      },
+    );
+
+    it("still completes proxied host logging when the warning sink throws", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {
+        throw new Error("warning sink failed");
+      });
+      const middleware = new MCPAppsMiddleware({
+        mcpServers: [httpServerConfig],
+      });
+      const agent = new MockAgent([]);
+
+      const events = await collectEvents(
+        middleware.run(
+          createRunAgentInput({
+            forwardedProps: {
+              __proxiedMCPRequest: {
+                serverHash: getServerHash(httpServerConfig),
+                method: "notifications/message",
+                params: { level: "error", data: "diagnostic-log" },
+              },
+            },
+          }),
+          agent,
+        ),
+      );
+
+      expect(events.at(-1)).toMatchObject({
+        type: EventType.RUN_FINISHED,
+        result: { success: true },
+      });
+      expectNoProxyActivity(agent);
+    });
 
     it.each([
       {

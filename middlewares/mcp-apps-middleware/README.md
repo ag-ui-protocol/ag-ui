@@ -120,11 +120,10 @@ with custom `fetch` support in both HTTP and SSE client transports, and it inclu
 HTTP `terminateSession()`. These APIs enforce the origin guard and session cleanup.
 The lockfile pins this package's SDK to 1.15.0 so CI tests the minimum supported version.
 
-The middleware accepts only `tools/call`, `resources/read`, and `ping` from an iframe proxy request.
-It rejects other methods before transport or client construction.
-This middleware treats `notifications/message` as host logging, returns a clear host-logging error in
-`RUN_FINISHED.result.error`, and sends no request upstream. Consumers that previously forwarded logs
-through the proxy must handle them in the host.
+The middleware forwards only `tools/call`, `resources/read`, and `ping` upstream from an iframe proxy request.
+It rejects other upstream methods before transport or client construction.
+This middleware consumes `notifications/message` locally as host logging, emits a host warning,
+returns `{ success: true }`, sends no request upstream, and does not require a resolvable MCP server.
 HTTP discovery, tool calls, and proxy requests delete their MCP sessions before closing the client.
 Session deletion uses its own three-second abort signal so cleanup can run after a failed handshake aborts the SDK signal.
 If a server rejects session deletion or does not respond within three seconds, the client still closes and preserves the original operation result.

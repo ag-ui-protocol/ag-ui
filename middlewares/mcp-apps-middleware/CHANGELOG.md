@@ -2,12 +2,12 @@
 
 ## 0.1.2 — 2026-09-14
 
-- Reject proxied `notifications/message` before connection creation with a clear host-logging error.
-- Preserve proxy support for `tools/call`, `resources/read`, and `ping`.
+- Consume proxied `notifications/message` locally as host logging with normal `{ success: true }` completion and no upstream request.
+- Preserve upstream proxy support for `tools/call`, `resources/read`, and `ping`.
 
 ### Compatibility
 
-Consumers that previously forwarded `notifications/message` must handle logging in the host.
+Consumers that previously forwarded `notifications/message` now receive normal completion after the host consumes the log locally.
 
 ## 0.1.1 — 2026-09-11
 
