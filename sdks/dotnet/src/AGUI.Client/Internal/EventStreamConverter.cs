@@ -1317,11 +1317,19 @@ internal static class EventStreamConverter
                 $"Cannot send '{eventType}': subagentRunId '{subagentRunId}' does not match the {entityKind} '{entityId}' opener's subagent '{owner}'.");
         }
     }
-    // Inverse of the AGUI.Server mapping. Every AG-UI count has a first-class MEAI
-    // equivalent, and null stays null on both sides so a count the provider never
-    // reported is not reported as zero.
-    private static UsageDetails ToUsageDetails(TokenUsage usage) =>
-        new()
+    // The AdditionalCounts key that carries AG-UI's cache-write count, which MEAI has
+    // no first-class property for. The same key AGUI.Server reads, so a count survives a
+    // .NET-to-.NET hop through the abstraction unchanged.
+    internal const string CacheWriteInputTokensCountKey = "CacheWriteInputTokens";
+
+    // Inverse of the AGUI.Server mapping. Every AG-UI count but one has a first-class
+    // MEAI equivalent, and null stays null on both sides so a count the provider never
+    // reported is not reported as zero. The cache-write count rides in AdditionalCounts
+    // under the key above, and only when it was reported — an empty dictionary would
+    // read as "reported nothing" to a consumer that checks for the key.
+    private static UsageDetails ToUsageDetails(TokenUsage usage)
+    {
+        var details = new UsageDetails
         {
             InputTokenCount = usage.InputTokens,
             OutputTokenCount = usage.OutputTokens,
@@ -1329,4 +1337,12 @@ internal static class EventStreamConverter
             ReasoningTokenCount = usage.ReasoningTokens,
             CachedInputTokenCount = usage.CachedInputTokens,
         };
+
+        if (usage.CacheWriteInputTokens is { } cacheWriteInputTokens)
+        {
+            details.AdditionalCounts = new() { [CacheWriteInputTokensCountKey] = cacheWriteInputTokens };
+        }
+
+        return details;
+    }
 }

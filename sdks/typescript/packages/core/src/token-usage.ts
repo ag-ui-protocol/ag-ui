@@ -1,12 +1,13 @@
 import type { TokenUsage } from "./generated/types";
 
-/** The AG-UI names of the five token counts, in the order an entry lists them. */
+/** The AG-UI names of the six token counts, in the order an entry lists them. */
 const COUNT_KEYS = [
   "inputTokens",
   "outputTokens",
   "totalTokens",
   "reasoningTokens",
   "cachedInputTokens",
+  "cacheWriteInputTokens",
 ] as const;
 
 /**
@@ -96,9 +97,12 @@ function buildEntry(
  * Map a LangChain-family `usage_metadata` object into an AG-UI {@link TokenUsage}.
  *
  * LangChain and LangGraph both attach usage as `{ input_tokens, output_tokens,
- * total_tokens, input_token_details: { cache_read }, output_token_details:
- * { reasoning } }`. This maps only those numeric counts plus optional
- * provider/model labels — never prompt/completion content. A count the provider
+ * total_tokens, input_token_details: { cache_read, cache_creation },
+ * output_token_details: { reasoning } }`. LangChain's accounting is the
+ * protocol's — `input_tokens` already includes the cache details and
+ * `output_tokens` the reasoning detail — so every count passes through as is.
+ * This maps only those numeric counts plus optional provider/model labels —
+ * never prompt/completion content. A count the provider
  * did not return is simply absent from `usage_metadata` and reads as
  * `undefined` here; that is not a defect and draws no warning. Returns
  * `undefined` when no usable count is present, so callers can omit usage rather
@@ -120,18 +124,24 @@ export function tokenUsageFromLangChainMetadata(
       totalTokens: num(prop(usageMetadata, "total_tokens"), "totalTokens"),
       reasoningTokens: num(prop(outputDetails, "reasoning"), "reasoningTokens"),
       cachedInputTokens: num(prop(inputDetails, "cache_read"), "cachedInputTokens"),
+      cacheWriteInputTokens: num(prop(inputDetails, "cache_creation"), "cacheWriteInputTokens"),
     },
     { provider, model },
   );
 }
 
 /**
- * Map an AI-SDK (v5) `LanguageModelUsage` object into an AG-UI {@link TokenUsage}.
+ * Map an AI-SDK `LanguageModelUsage` object into an AG-UI {@link TokenUsage}.
  *
- * AI-SDK's keys already match: `inputTokens`, `outputTokens`, `totalTokens`,
- * `reasoningTokens`, `cachedInputTokens`. AI-SDK reports `NaN`/`undefined` for
- * counts a provider didn't return, so only finite numbers are copied. Returns
- * `undefined` when no finite count is present (so callers omit empty usage).
+ * AI-SDK's v5 keys already match — `inputTokens`, `outputTokens`,
+ * `totalTokens`, `reasoningTokens`, `cachedInputTokens` — with the totals
+ * inclusive the way the protocol counts them. v6 adds `inputTokenDetails:
+ * { cacheReadTokens, cacheWriteTokens }` and `outputTokenDetails:
+ * { reasoningTokens }`; the cache-write count exists only there, and the two
+ * counts present in both forms are read from the top level first. AI-SDK
+ * reports `NaN`/`undefined` for counts a provider didn't return, so only finite
+ * numbers are copied. Returns `undefined` when no finite count is present (so
+ * callers omit empty usage).
  */
 export function tokenUsageFromAiSdkUsage(
   usage: unknown,
@@ -139,13 +149,21 @@ export function tokenUsageFromAiSdkUsage(
 ): TokenUsage | undefined {
   if (!usage) return undefined;
 
+  const inputDetails = prop(usage, "inputTokenDetails");
+  const outputDetails = prop(usage, "outputTokenDetails");
+
   return buildEntry(
     {
       inputTokens: num(prop(usage, "inputTokens"), "inputTokens"),
       outputTokens: num(prop(usage, "outputTokens"), "outputTokens"),
       totalTokens: num(prop(usage, "totalTokens"), "totalTokens"),
-      reasoningTokens: num(prop(usage, "reasoningTokens"), "reasoningTokens"),
-      cachedInputTokens: num(prop(usage, "cachedInputTokens"), "cachedInputTokens"),
+      reasoningTokens:
+        num(prop(usage, "reasoningTokens"), "reasoningTokens") ??
+        num(prop(outputDetails, "reasoningTokens"), "reasoningTokens"),
+      cachedInputTokens:
+        num(prop(usage, "cachedInputTokens"), "cachedInputTokens") ??
+        num(prop(inputDetails, "cacheReadTokens"), "cachedInputTokens"),
+      cacheWriteInputTokens: num(prop(inputDetails, "cacheWriteTokens"), "cacheWriteInputTokens"),
     },
     { provider, model },
   );

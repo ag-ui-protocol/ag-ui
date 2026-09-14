@@ -70,6 +70,10 @@ The run that continues carries its answers in the input's `resume` list, one
   same `threadId`, the accumulated messages, and the state the interrupted run
   left behind, exactly as any [sequential run](/spec/draft/events/lifecycle)
   does.
+- Token usage does not carry across the gap: the resuming run's `usage`
+  [covers](/spec/draft/events/lifecycle#token-usage) only the model calls it
+  made itself. The interrupted run already reported its own on the
+  `RUN_FINISHED` that interrupted it.
 
 A producer receiving resume entries treats them as the answers it stopped for.
 An entry naming an interrupt the producer does not recognise violates the

@@ -1209,6 +1209,11 @@ internal static class ProtoEventMapper
                 proto.CachedInputTokens = cachedInputTokens;
             }
 
+            if (entry.CacheWriteInputTokens is { } cacheWriteInputTokens)
+            {
+                proto.CacheWriteInputTokens = cacheWriteInputTokens;
+            }
+
             target.Add(proto);
         }
     }
@@ -1232,6 +1237,7 @@ internal static class ProtoEventMapper
                 TotalTokens = entry.HasTotalTokens ? entry.TotalTokens : null,
                 ReasoningTokens = entry.HasReasoningTokens ? entry.ReasoningTokens : null,
                 CachedInputTokens = entry.HasCachedInputTokens ? entry.CachedInputTokens : null,
+                CacheWriteInputTokens = entry.HasCacheWriteInputTokens ? entry.CacheWriteInputTokens : null,
             });
         }
 

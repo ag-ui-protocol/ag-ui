@@ -599,6 +599,7 @@ const MAPPED_FIELDS: Record<string, Record<string, string>> = {
     totalTokens: "optional integer",
     reasoningTokens: "optional integer",
     cachedInputTokens: "optional integer",
+    cacheWriteInputTokens: "optional integer",
   },
 };
 
@@ -1159,6 +1160,11 @@ ${decodeCases}
                 proto.CachedInputTokens = cachedInputTokens;
             }
 
+            if (entry.CacheWriteInputTokens is { } cacheWriteInputTokens)
+            {
+                proto.CacheWriteInputTokens = cacheWriteInputTokens;
+            }
+
             target.Add(proto);
         }
     }
@@ -1182,6 +1188,7 @@ ${decodeCases}
                 TotalTokens = entry.HasTotalTokens ? entry.TotalTokens : null,
                 ReasoningTokens = entry.HasReasoningTokens ? entry.ReasoningTokens : null,
                 CachedInputTokens = entry.HasCachedInputTokens ? entry.CachedInputTokens : null,
+                CacheWriteInputTokens = entry.HasCacheWriteInputTokens ? entry.CacheWriteInputTokens : null,
             });
         }
 

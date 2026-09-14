@@ -258,8 +258,13 @@ public sealed class AGUIResume
 }
 
 /// <summary>
-/// Token counts for one provider and model. Every field is a label or a number
-/// — nothing content-bearing or identifying, no prompts, completions, messages,
+/// Token counts for one provider and model, in the protocol's own accounting:
+/// every count is either a total or a named part of one, so entries from
+/// different providers add up without double-counting. inputTokens and
+/// outputTokens are the totals; reasoningTokens, cachedInputTokens and
+/// cacheWriteInputTokens are parts of them, never additions to them;
+/// totalTokens is the two totals summed. Every field is a label or a number —
+/// nothing content-bearing or identifying, no prompts, completions, messages,
 /// or thread, run and user identifiers.
 /// </summary>
 public sealed class TokenUsage
@@ -277,38 +282,60 @@ public sealed class TokenUsage
     public string? Model { get; set; }
 
     /// <summary>
-    /// Prompt tokens consumed. Bounded like timestamp and for the same reason:
-    /// a count above the JSON safe-integer range does not survive a round trip,
-    /// so a consumer would silently read a different number than the producer
-    /// wrote.
+    /// Every prompt token the call was charged for: tokens read from a provider
+    /// cache, tokens written to one, and audio or other non-text input all
+    /// count here. cachedInputTokens and cacheWriteInputTokens break this
+    /// number down and are never added to it — a provider that reports its
+    /// cache counts beside a smaller input count has them added in by the
+    /// producer before the entry leaves. Bounded like timestamp and for the
+    /// same reason: a count above the JSON safe-integer range does not survive
+    /// a round trip, so a consumer would silently read a different number than
+    /// the producer wrote.
     /// </summary>
     [JsonPropertyName("inputTokens")]
     public long? InputTokens { get; set; }
 
     /// <summary>
-    /// Completion tokens produced.
+    /// Every generated token, reasoning included where the provider
+    /// distinguishes it. reasoningTokens breaks this number down and is never
+    /// added to it — a provider that reports reasoning tokens beside a smaller
+    /// completion count has them added in by the producer.
     /// </summary>
     [JsonPropertyName("outputTokens")]
     public long? OutputTokens { get; set; }
 
     /// <summary>
-    /// Total tokens, as the provider reports it rather than as a sum the
-    /// protocol computes.
+    /// inputTokens plus outputTokens, under the accounting above. A producer
+    /// MAY compute it rather than copy a provider's total, and copies a
+    /// provider's total only when that total counts the same way, so a consumer
+    /// can read this field as the sum of the other two.
     /// </summary>
     [JsonPropertyName("totalTokens")]
     public long? TotalTokens { get; set; }
 
     /// <summary>
-    /// Tokens spent on reasoning, where the provider distinguishes them.
+    /// Output tokens spent on reasoning, where the provider distinguishes them.
+    /// Part of outputTokens, not in addition to it.
     /// </summary>
     [JsonPropertyName("reasoningTokens")]
     public long? ReasoningTokens { get; set; }
 
     /// <summary>
-    /// Prompt tokens served from a provider cache.
+    /// Input tokens read from a provider cache. Part of inputTokens, not in
+    /// addition to it, and disjoint from cacheWriteInputTokens.
     /// </summary>
     [JsonPropertyName("cachedInputTokens")]
     public long? CachedInputTokens { get; set; }
+
+    /// <summary>
+    /// Input tokens written to a provider cache on this call, where the
+    /// provider distinguishes them. Part of inputTokens, not in addition to it,
+    /// and disjoint from cachedInputTokens. Its own field because providers
+    /// price a cache write differently from a cache read, so a consumer
+    /// computing cost cannot do without it.
+    /// </summary>
+    [JsonPropertyName("cacheWriteInputTokens")]
+    public long? CacheWriteInputTokens { get; set; }
 }
 
 /// <summary>

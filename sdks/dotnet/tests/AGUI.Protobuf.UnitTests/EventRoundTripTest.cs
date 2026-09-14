@@ -129,7 +129,8 @@ public sealed class EventRoundTripTest
                     OutputTokens = 22,
                     TotalTokens = 33,
                     ReasoningTokens = 44,
-                    CachedInputTokens = 55
+                    CachedInputTokens = 55,
+                    CacheWriteInputTokens = 66
                 },
                 new TokenUsage { Provider = "anthropic", Model = "claude-opus-4", InputTokens = 1 }
             ],
@@ -145,6 +146,7 @@ public sealed class EventRoundTripTest
         Assert.Equal(33, first.TotalTokens);
         Assert.Equal(44, first.ReasoningTokens);
         Assert.Equal(55, first.CachedInputTokens);
+        Assert.Equal(66, first.CacheWriteInputTokens);
 
         var second = result.Usage[1];
         Assert.Equal("anthropic", second.Provider);
@@ -181,12 +183,13 @@ public sealed class EventRoundTripTest
         {
             ThreadId = "thread-1",
             RunId = "run-1",
-            Usage = [new TokenUsage { InputTokens = 0, CachedInputTokens = 0, ReasoningTokens = 0 }],
+            Usage = [new TokenUsage { InputTokens = 0, CachedInputTokens = 0, CacheWriteInputTokens = 0, ReasoningTokens = 0 }],
         });
 
         var entry = Assert.Single(result.Usage!);
         Assert.Equal(0, entry.InputTokens);
         Assert.Equal(0, entry.CachedInputTokens);
+        Assert.Equal(0, entry.CacheWriteInputTokens);
         Assert.Equal(0, entry.ReasoningTokens);
         // Never set at all — must stay null, proving zero and absent are distinguishable.
         Assert.Null(entry.OutputTokens);

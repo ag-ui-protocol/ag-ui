@@ -582,7 +582,8 @@ public sealed class AGUIChatClientTest
                         OutputTokens = 22,
                         TotalTokens = 33,
                         ReasoningTokens = 44,
-                        CachedInputTokens = 55
+                        CachedInputTokens = 55,
+                        CacheWriteInputTokens = 66
                     }
                 ]
             });
@@ -604,6 +605,9 @@ public sealed class AGUIChatClientTest
         Assert.Equal(33, usage.TotalTokenCount);
         Assert.Equal(44, usage.ReasoningTokenCount);
         Assert.Equal(55, usage.CachedInputTokenCount);
+        // MEAI has no first-class cache-write count, so it rides in AdditionalCounts
+        // under the key AGUI.Server reads back.
+        Assert.Equal(66, usage.AdditionalCounts!["CacheWriteInputTokens"]);
     }
 
     [Fact]

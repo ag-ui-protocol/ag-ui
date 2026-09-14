@@ -1826,6 +1826,9 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
                         TotalTokenCount = 33,
                         ReasoningTokenCount = 44,
                         CachedInputTokenCount = 55,
+                        // MEAI has no first-class cache-write count; the adapter convention
+                        // is this AdditionalCounts key, the one AGUI.Client writes.
+                        AdditionalCounts = new() { ["CacheWriteInputTokens"] = 66 },
                     })
                 ]
             });
@@ -1840,6 +1843,7 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
         Assert.Equal(33, entry.TotalTokens);
         Assert.Equal(44, entry.ReasoningTokens);
         Assert.Equal(55, entry.CachedInputTokens);
+        Assert.Equal(66, entry.CacheWriteInputTokens);
     }
 
     [Fact]
@@ -1873,6 +1877,7 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
         Assert.Null(entry.TotalTokens);
         Assert.Null(entry.ReasoningTokens);
         Assert.Null(entry.CachedInputTokens);
+        Assert.Null(entry.CacheWriteInputTokens);
     }
 
     [Fact]

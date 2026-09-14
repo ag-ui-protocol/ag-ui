@@ -51,6 +51,7 @@ const ALLOWED_USAGE_KEYS = new Set([
   "totalTokens",
   "reasoningTokens",
   "cachedInputTokens",
+  "cacheWriteInputTokens",
 ]);
 
 /** A provider metadata frame, as Strands yields it after the message stops. */
@@ -101,21 +102,23 @@ describe("terminal-event token usage", () => {
     expect(RunFinishedEventSchema.safeParse(finish).success).toBe(true);
   });
 
-  it("maps the cache-read count and drops the cache-write one", async () => {
+  it("maps both cache counts, reads and writes", async () => {
     const { agent } = realStrandsAgent([
       textTurn("done", {
         inputTokens: 100,
         outputTokens: 10,
         totalTokens: 110,
         cacheReadInputTokens: 80,
-        // No AG-UI slot. Folding it into another count would overstate that
-        // count, so it is dropped.
         cacheWriteInputTokens: 20,
       }),
     ]);
 
     const usage = usageOf(terminal(await collect(agent)));
     expect(usage?.[0]?.cachedInputTokens).toBe(80);
+    expect(usage?.[0]?.cacheWriteInputTokens).toBe(20);
+    // `ScriptedModel` carries no provider label, so the input count is taken
+    // as already inclusive and passes through untouched.
+    expect(usage?.[0]?.inputTokens).toBe(100);
     // Strands reports no reasoning-token count, so the field is never set.
     expect(usage?.[0]).not.toHaveProperty("reasoningTokens");
   });
@@ -521,6 +524,80 @@ describe("Strands model labelling", () => {
     expect(strandsModelIdentity(undefined)).toEqual({});
     expect(strandsModelIdentity(null)).toEqual({});
     expect(strandsModelIdentity("bedrock")).toEqual({});
+  });
+});
+
+/**
+ * AG-UI counts `inputTokens` inclusive of the cache breakdown. Strands passes
+ * each provider's own accounting through, and two of them count the other way.
+ */
+describe("Strands usage accounting", () => {
+  const besideInput = {
+    inputTokens: 5,
+    outputTokens: 7,
+    totalTokens: 12,
+    cacheReadInputTokens: 100,
+    cacheWriteInputTokens: 20,
+  };
+
+  it.each(["anthropic", "bedrock"])(
+    "adds the cache counts into the input count for %s, which reports them beside it",
+    (provider) => {
+      expect(tokenUsageFromStrandsUsage(besideInput, { provider, model: "m" })).toEqual({
+        provider,
+        model: "m",
+        inputTokens: 125,
+        outputTokens: 7,
+        // Recomputed from the adjusted input rather than copied: the provider's
+        // total was the sum of the counts it reported, not of the ones AG-UI does.
+        totalTokens: 132,
+        cachedInputTokens: 100,
+        cacheWriteInputTokens: 20,
+      });
+    },
+  );
+
+  it.each(["openai", "google", "vercel"])(
+    "passes %s through, whose input count already includes the cache reads",
+    (provider) => {
+      const inclusive = { inputTokens: 105, outputTokens: 7, totalTokens: 112, cacheReadInputTokens: 100 };
+      expect(tokenUsageFromStrandsUsage(inclusive, { provider, model: "m" })).toEqual({
+        provider,
+        model: "m",
+        inputTokens: 105,
+        outputTokens: 7,
+        totalTokens: 112,
+        cachedInputTokens: 100,
+      });
+    },
+  );
+
+  it("leaves an unlabelled entry alone, since nothing says which way it counts", () => {
+    expect(tokenUsageFromStrandsUsage(besideInput)).toEqual({
+      inputTokens: 5,
+      outputTokens: 7,
+      totalTokens: 12,
+      cachedInputTokens: 100,
+      cacheWriteInputTokens: 20,
+    });
+  });
+
+  it("changes nothing when a beside-input provider reports no cache counts", () => {
+    expect(
+      tokenUsageFromStrandsUsage(
+        { inputTokens: 5, outputTokens: 7, totalTokens: 12 },
+        { provider: "anthropic" },
+      ),
+    ).toEqual({ provider: "anthropic", inputTokens: 5, outputTokens: 7, totalTokens: 12 });
+  });
+
+  it("drops an adjusted input that leaves the wire range, and the total with it", () => {
+    expect(
+      tokenUsageFromStrandsUsage(
+        { inputTokens: Number.MAX_SAFE_INTEGER, outputTokens: 1, totalTokens: 1, cacheReadInputTokens: 1 },
+        { provider: "anthropic" },
+      ),
+    ).toEqual({ provider: "anthropic", outputTokens: 1, cachedInputTokens: 1 });
   });
 });
 
