@@ -2187,12 +2187,32 @@ export class LangGraphAgent extends AbstractAgent {
   }
 
   /**
-   * The deployment URL to name in a connection-failure message. A JS caller can
-   * omit `deploymentUrl` (it is required only in the types) when it passes its
-   * own `client`, and "from undefined" is worse than no URL at all.
+   * The deployment URL to name in a connection-failure message.
+   *
+   * Origin only, deliberately. This string is put on the RUN_ERROR event, which
+   * the frontend renders to end users, and a deployment URL can carry a
+   * credential in its userinfo or its query string. For a failure to connect,
+   * the host and port ARE the diagnostic; the rest of the URL is not worth
+   * shipping to a browser.
+   *
+   * Falls back to a generic phrase for a URL that has no origin, and for the
+   * missing `deploymentUrl` that a JS caller can still pass when it supplies
+   * its own `client` (the field is required only in the types). "from
+   * undefined" is worse than no URL at all.
    */
   private deploymentUrlLabel(): string {
-    return this.config?.deploymentUrl ?? "the configured deployment URL";
+    const configured = this.config?.deploymentUrl;
+    const generic = "the configured deployment URL";
+    if (!configured) return generic;
+
+    try {
+      const { origin } = new URL(configured);
+      // `origin` is the string "null" for a scheme with no host, e.g. the
+      // `new URL("localhost:8123")` that a missing `http://` produces.
+      return origin && origin !== "null" ? origin : generic;
+    } catch {
+      return generic;
+    }
   }
 
   async getAssistant(): Promise<Assistant> {
