@@ -1,9 +1,4 @@
-import type {
-  InputContent,
-  InputContentDataSource,
-  InputContentUrlSource,
-  Message,
-} from "@ag-ui/client";
+import type { InputContent, Message, PartSource } from "@ag-ui/client";
 import { AbstractAgent } from "@ag-ui/client";
 import { MastraClient } from "@mastra/client-js";
 import type { Mastra } from "@mastra/core";
@@ -58,13 +53,37 @@ interface LegacyBinaryInputContent {
   filename?: string;
 }
 
-function mediaSourceToUrl(
-  source: InputContentDataSource | InputContentUrlSource,
-): string {
+/**
+ * The URL form of a media part's source, or `null` when this adapter has no way
+ * to express it.
+ *
+ * A `file` source names bytes that already sit at a model provider, under a
+ * handle only that provider can resolve. It is NOT a URL, and returning it as
+ * one put an opaque handle into `image`/`file.data` on the provider request —
+ * a fetch of a nonsense address, or a silently wrong attachment. This adapter
+ * has no provider-handle path in 1.0, so an unusable source is an ABSENT
+ * source: `null` here, and the caller drops the one part with one warning,
+ * which is what the specification asks of a producer that cannot use a content
+ * part ("it skips the part and continues, and SHOULD warn").
+ */
+function mediaSourceToUrl(source: PartSource): string | null {
   if (source.type === "data") {
     return `data:${source.mimeType};base64,${source.value}`;
   }
-  return source.value;
+  if (source.type === "url") {
+    return source.value;
+  }
+  return null;
+}
+
+/**
+ * Announce the one part this adapter drops, so an operator sees a missing
+ * attachment instead of a request that merely fails to mention it.
+ */
+function warnUnusableSource(partType: string): void {
+  console.warn(
+    `[toMastraContent] Dropping ${partType} content: a provider file handle cannot be forwarded by this adapter`,
+  );
 }
 
 const toMastraTextContent = (content: Message["content"]): string => {
@@ -110,18 +129,30 @@ const toMastraContent = (content: Message["content"]): string | any[] => {
       case "text":
         parts.push({ type: "text", text: part.text });
         break;
-      case "image":
-        parts.push({ type: "image", image: mediaSourceToUrl(part.source) });
+      case "image": {
+        const image = mediaSourceToUrl(part.source);
+        if (image === null) {
+          warnUnusableSource(part.type);
+          break;
+        }
+        parts.push({ type: "image", image });
         break;
+      }
       case "audio":
       case "video":
-      case "document":
+      case "document": {
+        const data = mediaSourceToUrl(part.source);
+        if (data === null) {
+          warnUnusableSource(part.type);
+          break;
+        }
         parts.push({
           type: "file",
-          data: mediaSourceToUrl(part.source),
+          data,
           mimeType: part.source.mimeType ?? "application/octet-stream",
         });
         break;
+      }
       case "binary": {
         // Deprecated BinaryInputContent
         const binaryPart = part as unknown as LegacyBinaryInputContent;

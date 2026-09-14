@@ -250,6 +250,19 @@ function legacyBinaryBlock(
   );
 }
 
+/**
+ * Whether a media part's source is the `file` arm: a handle the model provider
+ * issued for bytes it already holds. Read defensively, because the source
+ * arrives off the wire and nothing validates it at this boundary.
+ */
+function isFileSource(source: unknown): boolean {
+  return (
+    !!source &&
+    typeof source === "object" &&
+    (source as { type?: unknown }).type === "file"
+  );
+}
+
 function convertContentBlock(
   block: InputContent | LegacyBinaryContent,
   index: number,
@@ -270,9 +283,26 @@ function convertContentBlock(
       };
     }
     case "image":
-      return imageBlock(block.source, `content[${index}].source`);
-    case "document":
-      return documentBlock(block.source, `content[${index}].source`);
+    case "document": {
+      // A `file` source names bytes already held by a model provider, under a
+      // handle only that provider can resolve — it is NOT a URL and MUST NOT be
+      // fetched or parsed. This adapter has no provider-handle path in 1.0, and
+      // the specification's rule for a part a producer cannot use is to skip it
+      // and continue: "A producer that cannot use a content part MUST NOT fail
+      // the run because of it; it skips the part and continues, and SHOULD
+      // warn." Caught HERE rather than inside the block builders, so their
+      // `must be data or url` throws keep meaning what they say — a source that
+      // is genuinely malformed, not one this adapter simply cannot carry.
+      if (isFileSource(block.source)) {
+        console.warn(
+          `[ClaudeAdapter] Dropping content[${index}] of type ${block.type}: a provider file handle cannot be forwarded by this adapter`,
+        );
+        return undefined;
+      }
+      return block.type === "image"
+        ? imageBlock(block.source, `content[${index}].source`)
+        : documentBlock(block.source, `content[${index}].source`);
+    }
     case "binary":
       return legacyBinaryBlock(block, index);
     case "audio":

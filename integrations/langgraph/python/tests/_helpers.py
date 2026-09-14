@@ -52,6 +52,32 @@ DocumentPart = _part_class("DocumentPart", "DocumentInputContent")
 DataSource = _part_class("DataSource", "InputContentDataSource")
 UrlSource = _part_class("UrlSource", "InputContentUrlSource")
 
+# ── THE `file` PART SOURCE ───────────────────────────────────────────────────
+#
+# 1.0 gave `PartSource` a THIRD arm after the rename above: `{"type": "file",
+# "value", provider?, mimeType?}` — bytes that ALREADY LIVE AT A MODEL PROVIDER,
+# named by a handle that provider issued (an OpenAI/Anthropic file id, a Gemini
+# file URI). No bytes travel with one and nothing may fetch it: `value` is
+# opaque and is expressly NOT a URL.
+#
+# Unlike the classes above this one has no older name to fall back to — it is
+# new, not renamed — and the published floor the
+# `langgraph-python-declared-floor` lane installs predates it. So the fallback
+# is a local stand-in of the same SHAPE rather than another alias. The adapter
+# matches this source by its `type` discriminator rather than by class, so both
+# lanes exercise the same branch, and the binding flips to the real class as
+# soon as the SDK carrying it is released.
+FileSource = getattr(ag_ui.core, "FileSource", None)
+
+if FileSource is None:  # pragma: no cover - depends on the installed SDK
+    from pydantic import BaseModel
+
+    class FileSource(BaseModel):  # type: ignore[no-redef]
+        type: str = "file"
+        value: str
+        provider: Optional[str] = None
+        mime_type: Optional[str] = None
+
 # The label a part carries in `../../cross-runtime-parity-cases.json`, keyed by
 # CLASS IDENTITY rather than by ``type(part).__name__``.
 #

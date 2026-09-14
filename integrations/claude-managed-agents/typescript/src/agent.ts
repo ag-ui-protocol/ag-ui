@@ -61,7 +61,9 @@ const hasUserText = (messages: Message[]): boolean =>
  * its own line as before. A list of parts (AG-UI 1.0) maps each part onto its
  * block: text to a text block, an image or document to the matching block with
  * a base64 or URL source. Audio and video have no place in a Claude tool
- * result and are dropped, as the specification says a producer does with a
+ * result, and neither does a `file` source — a handle only the provider that
+ * minted it can resolve, which this adapter has no way to forward. All three
+ * are dropped with a warning, as the specification says a producer does with a
  * part its model cannot take; the call is still answered, with an empty text
  * block if nothing else remains.
  */
@@ -79,17 +81,34 @@ const toolResultBlocks = (
     if (part.type === "text") {
       blocks.push({ type: "text", text: part.text });
     } else if (part.type === "image" || part.type === "document") {
-      blocks.push({
-        type: part.type,
-        source:
-          part.source.type === "data"
-            ? {
-                type: "base64",
-                media_type: part.source.mimeType,
-                data: part.source.value,
-              }
-            : { type: "url", url: part.source.value },
-      } as ToolResultBlock);
+      if (part.source.type === "data") {
+        blocks.push({
+          type: part.type,
+          source: {
+            type: "base64",
+            media_type: part.source.mimeType,
+            data: part.source.value,
+          },
+        } as ToolResultBlock);
+      } else if (part.source.type === "url") {
+        blocks.push({
+          type: part.type,
+          source: { type: "url", url: part.source.value },
+        } as ToolResultBlock);
+      } else {
+        // A `file` source names bytes already held by a model provider, under a
+        // handle only that provider can resolve. It is NOT a URL, and the
+        // else-branch that used to catch it put the opaque handle into
+        // `source.url` — a fetch of a nonsense address, or silently the wrong
+        // attachment. This adapter has no provider-handle path in 1.0, so the
+        // part is dropped and announced, exactly as the audio and video parts
+        // below it are: "A producer that cannot use a content part MUST NOT
+        // fail the run because of it; it skips the part and continues, and
+        // SHOULD warn."
+        console.warn(
+          `[claude-managed-agents] Dropping ${part.type} tool-result content: a provider file handle cannot be forwarded by this adapter`,
+        );
+      }
     }
   }
   if (error) blocks.push({ type: "text", text: error });

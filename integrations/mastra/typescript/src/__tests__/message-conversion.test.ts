@@ -727,3 +727,82 @@ describe("convertAGUIMessagesToMastra", () => {
     });
   });
 });
+
+describe("file-sourced media parts", () => {
+  // A `file` source names bytes that already sit at a model provider, under a
+  // handle only that provider can resolve. This adapter has no way to hand such
+  // a handle to Mastra, and the value is NOT a URL — shipping it as one is the
+  // bug this pins. The spec's rule for a part a producer cannot use is: drop it,
+  // warn, and keep the run alive.
+  it("drops a document part with a file source, keeps the text, and warns", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const messages: Message[] = [
+        {
+          id: "1",
+          role: "user",
+          content: [
+            { type: "text", text: "read this" },
+            {
+              type: "document",
+              source: {
+                type: "file",
+                value: "file-abc123",
+                provider: "openai",
+                mimeType: "application/pdf",
+              },
+            },
+          ] as any,
+        },
+      ];
+
+      const result = convertAGUIMessagesToMastra(messages);
+
+      expect(result).toEqual([
+        {
+          id: "1",
+          role: "user",
+          content: [{ type: "text", text: "read this" }],
+        },
+      ]);
+
+      const warned = warn.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(warned).toContain("document");
+      expect(warned).toMatch(/file handle/i);
+      // The handle must never reach the provider request, as a URL or otherwise.
+      expect(JSON.stringify(result)).not.toContain("file-abc123");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("drops an image part with a file source rather than sending it as a URL", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const messages: Message[] = [
+        {
+          id: "1",
+          role: "user",
+          content: [
+            { type: "text", text: "look" },
+            {
+              type: "image",
+              source: { type: "file", value: "file-img", mimeType: "image/png" },
+            },
+          ] as any,
+        },
+      ];
+
+      const result = convertAGUIMessagesToMastra(messages);
+
+      expect(result).toEqual([
+        { id: "1", role: "user", content: [{ type: "text", text: "look" }] },
+      ]);
+      expect(warn.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
+        "image",
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});

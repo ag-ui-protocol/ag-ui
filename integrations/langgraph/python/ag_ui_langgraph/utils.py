@@ -7,7 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, TypeAdapter, model_validator
 from pydantic.alias_generators import to_camel
 from pydantic_core import PydanticSerializationError
-from typing import List, Any, Dict, Literal, NamedTuple, Optional, Union
+from typing import TYPE_CHECKING, List, Any, Dict, Literal, NamedTuple, Optional, Union
 from collections.abc import Mapping
 from dataclasses import is_dataclass, asdict, fields
 from datetime import date, datetime
@@ -31,6 +31,15 @@ from ag_ui.core import (
     InputContentUrlSource,
 )
 from .types import State, SchemaKeys, LangGraphReasoning
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    # `PartSource` is 1.0's name for a media part's source union, and since the
+    # `file` arm landed it is WIDER than the two classes imported above.
+    # Imported under TYPE_CHECKING rather than at runtime for the same reason
+    # `BinaryInputContent` below is guarded: the published floor this package
+    # declares does not export it yet, and a runtime import would make the
+    # module uncollectable there.
+    from ag_ui.core import PartSource
 
 logger = logging.getLogger(__name__)
 
@@ -1081,9 +1090,24 @@ def _parse_base64_data_url(value: Any) -> tuple[str | None, str] | None:
     return (_first_non_empty_string(parameters[0].strip()), data)
 
 
-def _inline_media_data(
-    source: Union[InputContentDataSource, InputContentUrlSource],
-) -> tuple[str, Any] | None:
+def _is_provider_file_source(source: Any) -> bool:
+    """True for AG-UI's ``file`` part source.
+
+    ``PartSource``'s third arm names bytes that ALREADY LIVE AT A PROVIDER,
+    under a handle that provider issued (an OpenAI/Anthropic file id, a Gemini
+    file URI). No bytes travel with one and nothing may fetch it: ``value`` is
+    opaque and is expressly NOT a URL, so it must never reach ``image_url``.
+
+    Matched by its ``type`` DISCRIMINATOR rather than by ``isinstance`` against
+    ``ag_ui.core.FileSource``, for the reason the TYPE_CHECKING import at the
+    top gives: that class is absent from the published floor this package
+    declares, and the declared-floor lane installs exactly that. The
+    discriminator is the part of the shape the spec fixes.
+    """
+    return getattr(source, "type", None) == "file"
+
+
+def _inline_media_data(source: "PartSource") -> tuple[str, Any] | None:
     """The inline bytes an AG-UI media source carries, as ``(value, mime_type)``.
 
     ``None`` when it carries none.
@@ -1226,7 +1250,7 @@ def _standard_block_for(block_type: str | None, mime_type: Any) -> tuple[str, st
     return (block_type, _first_non_empty_string(mime_type) or "application/octet-stream")
 
 
-def _media_source_to_url(source: Union[InputContentDataSource, InputContentUrlSource]) -> str | None:
+def _media_source_to_url(source: "PartSource") -> str | None:
     """Convert an InputContentDataSource or InputContentUrlSource to a URL string.
 
     For data sources, constructs a ``data:<mime>;base64,<value>`` URL.
@@ -1552,6 +1576,25 @@ def convert_agui_multimodal_to_langchain(content: List[AGUIContentItem]) -> List
                 "text": item.text
             })
         elif isinstance(item, _MEDIA_CONTENT_TYPES):
+            # A provider file handle is dropped, not forwarded and not raised
+            # on. Neither leg below can carry one: a standard block wants inline
+            # base64, and `image_url` wants an address the provider can fetch —
+            # a handle is neither, and routing it to a provider-specific file
+            # block is a separate decision 1.0 does not make. The spec's rule
+            # for a part a producer cannot use is to skip it and warn.
+            #
+            # Announced on its own line rather than through the generic drop
+            # below, whose "could not be converted to URL" would read as a
+            # malformed source when this one is perfectly well formed and simply
+            # not ours to resolve. Named by WIRE TYPE for the reason that branch
+            # gives.
+            if _is_provider_file_source(item.source):
+                logger.warning(
+                    "Dropping %s content: a provider file handle cannot be "
+                    "forwarded by the LangGraph adapter",
+                    getattr(item, "type", type(item).__name__),
+                )
+                continue
             block_type = _by_content_class(_STANDARD_BLOCK_TYPES, item)
             # Only inline data converts. Measured 2026-08-25: for the two
             # modalities that reach here with a `block_type` — audio and file — a

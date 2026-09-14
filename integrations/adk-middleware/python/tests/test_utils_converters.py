@@ -4,6 +4,8 @@
 import pytest
 import json
 import base64
+import logging
+from typing import Optional
 from unittest.mock import MagicMock, patch, PropertyMock
 from pydantic import BaseModel, Field
 
@@ -37,6 +39,31 @@ from ag_ui_adk.utils.converters import (
     extract_text_from_content,
     create_error_message
 )
+
+
+# ── THE `file` PART SOURCE ───────────────────────────────────────────────────
+#
+# AG-UI 1.0 gave `PartSource` a third arm: `{"type": "file", "value", provider?,
+# mimeType?}` — bytes that ALREADY LIVE AT A MODEL PROVIDER, named by a handle
+# that provider issued (an OpenAI/Anthropic file id, a Gemini file URI). No
+# bytes travel with one and nothing may fetch it: `value` is opaque and is
+# expressly NOT a URL.
+#
+# `ag_ui.core.FileSource` is the class for it, but this package floors at
+# `ag-ui-protocol>=0.1.18` and the published wheels do not export it yet, so
+# importing it unconditionally would make this module uncollectable on the very
+# SDK CI installs. A local stand-in of the same SHAPE keeps the converter under
+# test on both vintages — it recognizes a source by its `type` discriminator,
+# not by class — and the binding flips to the real class as soon as the SDK
+# carrying it is released.
+try:  # pragma: no cover - depends on the installed SDK
+    from ag_ui.core import FileSource  # type: ignore[attr-defined]
+except ImportError:  # pragma: no cover - published floor predates PartSource.file
+    class FileSource(BaseModel):
+        type: str = "file"
+        value: str
+        provider: Optional[str] = None
+        mime_type: Optional[str] = None
 
 
 class LegacyBinaryInputContent(BaseModel):
@@ -356,6 +383,55 @@ class TestConvertAGUIMessagesToADK:
 
         assert len(event.content.parts) == 1
         assert event.content.parts[0].text == "Check this."
+
+    def test_convert_user_message_file_source_is_dropped_with_a_warning(self, caplog):
+        """A `file` source is SKIPPED; it never becomes a Gemini `file_uri`.
+
+        The handle is opaque and belongs to whichever provider minted it. Gemini
+        does have a `file_data.file_uri` that LOOKS like a home for one, but a
+        handle from OpenAI or Anthropic is not a Gemini file URI, and mapping
+        the ones that are is a separate decision 1.0 does not make. So the part
+        is dropped with a warning, which is what the spec requires of a producer
+        that cannot use a content part — never a failed run, and never a
+        fabricated URI.
+
+        Built with `model_construct` because under the published floor this
+        package declares, a part's `source` is a DISCRIMINATED union of `data`
+        and `url` only: a validated `file` source is refused at the boundary
+        there, before the converter runs.
+        """
+        user_msg = UserMessage.model_construct(
+            id="user_file_source",
+            role="user",
+            content=[
+                TextInputContent(type="text", text="summarize this"),
+                DocumentInputContent.model_construct(
+                    type="document",
+                    source=FileSource(
+                        type="file",
+                        value="file-abc123",
+                        provider="openai",
+                        mime_type="application/pdf",
+                    ),
+                    metadata=None,
+                ),
+            ],
+        )
+
+        with caplog.at_level(logging.WARNING, logger="ag_ui_adk.utils.converters"):
+            adk_events = convert_ag_ui_messages_to_adk([user_msg])
+
+        parts = adk_events[0].content.parts
+        assert len(parts) == 1
+        assert parts[0].text == "summarize this"
+        assert all(part.file_data is None for part in parts)
+        assert all(part.inline_data is None for part in parts)
+        assert "file-abc123" not in str(parts)
+
+        warnings = [
+            r for r in caplog.records if r.name == "ag_ui_adk.utils.converters"
+        ]
+        assert len(warnings) == 1
 
     def test_convert_user_message_mixed_media_types(self):
         """Test converting a message with multiple different media types."""

@@ -23,6 +23,7 @@ from tests._helpers import (
     DocumentPart,
     DataSource,
     UrlSource,
+    FileSource,
     part_label,
 )
 from ag_ui_langgraph.utils import BinaryInputContent
@@ -2646,6 +2647,71 @@ class TestOutboundDispatchAdmitsAndResolvesByTheSameRule(unittest.TestCase):
         self.assertEqual(emitted, [{"type": "text", "text": "hello"}])
         self.assertIn("Dropping", captured.output[0])
         self.assertIn("SomeFutureContent", captured.output[0])
+
+
+class TestProviderFileHandleIsDroppedNotForwarded(unittest.TestCase):
+    """`PartSource`'s third arm names bytes ALREADY AT A MODEL PROVIDER.
+
+    A `file` source carries a handle that provider issued — an OpenAI or
+    Anthropic file id, a Gemini file URI — and nothing else. No bytes travel
+    with it, nothing may fetch it, and `value` is expressly NOT a URL.
+
+    This adapter has no mapping for one in 1.0: LangChain's standard blocks want
+    either inline base64 or a URL, and routing a handle to a provider-specific
+    file block is a separate decision that is deliberately not made here. So the
+    part is SKIPPED with a warning, which is what the spec requires of a
+    producer that cannot use a content part — never a failed run, and never the
+    handle smuggled through as `image_url`, which would hand the provider a URL
+    it cannot resolve (or, worse, one belonging to somebody else).
+
+    Built with `model_construct` because the `langgraph-python-declared-floor`
+    lane installs an SDK whose `PartSource` is a DISCRIMINATED union of `data`
+    and `url` only: a validated `file` source is refused at the boundary there,
+    before any adapter code runs. The adapter's own behaviour is what this pins.
+    """
+
+    @staticmethod
+    def _file_sourced_document():
+        return DocumentPart.model_construct(
+            type="document",
+            source=FileSource(
+                type="file",
+                value="file-abc123",
+                provider="openai",
+                mime_type="application/pdf",
+            ),
+            metadata=None,
+        )
+
+    def test_file_sourced_document_is_dropped_and_the_text_survives(self):
+        with self.assertLogs("ag_ui_langgraph.utils", level="WARNING") as captured:
+            emitted = convert_agui_multimodal_to_langchain(
+                [TextPart(text="summarize this"), self._file_sourced_document()]
+            )
+
+        self.assertEqual(emitted, [{"type": "text", "text": "summarize this"}])
+        self.assertEqual(len(captured.output), 1)
+        self.assertIn("document", captured.output[0])
+        self.assertIn("provider file handle", captured.output[0])
+
+    def test_the_handle_reaches_no_part_of_the_provider_request(self):
+        """Not as a URL, not as a data URL, not anywhere."""
+        agui_message = UserMessage.model_construct(
+            id="file-1",
+            role="user",
+            content=[
+                TextPart(text="summarize this"),
+                self._file_sourced_document(),
+            ],
+        )
+
+        with self.assertLogs("ag_ui_langgraph.utils", level="WARNING"):
+            [lc_message] = agui_messages_to_langchain([agui_message])
+
+        self.assertEqual(
+            lc_message.content, [{"type": "text", "text": "summarize this"}]
+        )
+        self.assertNotIn("file-abc123", json.dumps(lc_message.content))
 
 
 class TestMalformedGraphContentDegrades(unittest.TestCase):

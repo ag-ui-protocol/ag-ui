@@ -1883,6 +1883,41 @@ describe("Multimodal Message Conversion", () => {
       ]);
     });
 
+    // ── the `file` source arm ──────────────────────────────────────────────
+    // A `file` source names bytes ALREADY HELD BY A MODEL PROVIDER, under a
+    // handle only that provider can resolve. It is not a URL, must not be
+    // fetched, and this converter has no provider-handle path — so it is the
+    // same "source I cannot use" every case above is, and takes the same exit:
+    // the one item is dropped with the one warning, and the rest of the message
+    // survives. Pinned per modality because the standard-block path and the
+    // `image_url` path reach the drop through different helpers.
+    it.each([
+      ["document", "application/pdf"],
+      ["image", "image/png"],
+      ["audio", "audio/wav"],
+      ["video", "video/mp4"],
+    ])("drops a %s part carrying a provider file handle", (type, mimeType) => {
+      const { content, warnings } = outbound([
+        { type: "text", text: "read this" },
+        {
+          type,
+          source: {
+            type: "file",
+            value: "file-abc123",
+            provider: "openai",
+            mimeType,
+          },
+        },
+      ]);
+
+      expect(content).toEqual([{ type: "text", text: "read this" }]);
+      // The handle never leaves as a URL, a data URL, or anything else.
+      expect(JSON.stringify(content)).not.toContain("file-abc123");
+      expect(warnings).toEqual([
+        `[convertAguiMultimodalToLangchain] Dropping ${type} content: source could not be converted to URL`,
+      ]);
+    });
+
     it.each([
       ["data", "application/pdf", { data: 42 }],
       ["data", "audio/wav", { data: null }],

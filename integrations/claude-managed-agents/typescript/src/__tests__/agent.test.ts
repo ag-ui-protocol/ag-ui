@@ -1,7 +1,7 @@
 import { EventType } from "@ag-ui/client";
 import type { BaseEvent, RunAgentInput } from "@ag-ui/client";
 import { lastValueFrom, toArray } from "rxjs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ManagedAgentsAgent } from "../agent";
 import { InMemorySessionStore } from "../sessions";
 import type {
@@ -1982,5 +1982,68 @@ describe("ManagedAgentsAgent", () => {
     expect(reported.map((error) => (error as Error).message)).toContain(
       sensitive,
     );
+  });
+  // A `file` source names bytes that already sit at a model provider, under a
+  // handle only that provider can resolve. It is NOT a URL: shipping it as one
+  // put an opaque handle into Anthropic's `source.url`. This adapter has no
+  // provider-handle path in 1.0, so the part is dropped and announced, and the
+  // tool call is still answered with what remains.
+  it("drops a file-sourced tool-result part, keeps the text, and warns", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fake = createFakeClient({ streams: [[idleEndTurn]] });
+    const store = new InMemorySessionStore();
+    await store.set(SESSION_KEY, {
+      sessionId: "sesn_1",
+      toolNames: [],
+      pendingClientToolUseIds: ["ctu_1"],
+      lastUserMessageId: "u1",
+    });
+
+    try {
+      const events = await collect(
+        newAgent(fake, store),
+        baseInput({
+          messages: [
+            { id: "u1", role: "user", content: "Hello" },
+            {
+              id: "t1",
+              role: "tool",
+              toolCallId: "ctu_1",
+              content: [
+                { type: "text", text: "Invoice attached." },
+                {
+                  type: "document",
+                  source: {
+                    type: "file",
+                    value: "file_abc123",
+                    provider: "anthropic",
+                    mimeType: "application/pdf",
+                  },
+                },
+              ],
+            },
+          ],
+        }),
+      );
+
+      expect(fake.sent[0].events).toEqual([
+        {
+          type: "user.custom_tool_result",
+          custom_tool_use_id: "ctu_1",
+          content: [{ type: "text", text: "Invoice attached." }],
+          is_error: false,
+        },
+      ]);
+      // The handle never reaches the provider, as a url block or otherwise.
+      expect(JSON.stringify(fake.sent[0].events)).not.toContain("file_abc123");
+      const warned = warn.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(warned).toContain("document");
+      expect(warned).toMatch(/file handle/i);
+      // The run survives the part it could not use.
+      expect(types(events)).not.toContain(EventType.RUN_ERROR);
+      expect(events.at(-1)?.type).toBe(EventType.RUN_FINISHED);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

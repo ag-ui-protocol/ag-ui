@@ -9,8 +9,7 @@ import {
   AudioInputContent,
   VideoInputContent,
   DocumentInputContent,
-  InputContentDataSource,
-  InputContentUrlSource,
+  PartSource,
   InputContent,
   UserMessage,
   contentHasMedia,
@@ -298,7 +297,7 @@ function parseBase64DataUrl(
  * Mirrors `_inline_media_data` in the Python adapter.
  */
 function inlineMediaData(
-  source: InputContentDataSource | InputContentUrlSource | null | undefined
+  source: PartSource | null | undefined
 ): { value: string; mimeType: unknown } | null {
   // Read optionally for the reason {@link mediaSourceToUrl} gives: `source` is
   // declared required but arrives off the wire, and the two functions must not
@@ -311,6 +310,11 @@ function inlineMediaData(
     const parsed = parseBase64DataUrl(source.value);
     if (parsed) return { value: parsed.data, mimeType: parsed.mimeType ?? source.mimeType };
   }
+  // Everything else — a `file` source included — carries no bytes this adapter
+  // can reach. A `file` source names bytes ALREADY HELD BY A MODEL PROVIDER,
+  // under a handle only that provider can resolve; it is not a URL and must not
+  // be fetched or parsed. LangChain has no provider-handle block here, so it
+  // takes the same exit as every other unusable source.
   return null;
 }
 
@@ -813,7 +817,7 @@ type LangchainContentBlock =
  * to announce.
  */
 function mediaSourceToUrl(
-  source: InputContentDataSource | InputContentUrlSource | null | undefined
+  source: PartSource | null | undefined
 ): string | null {
   if (source?.type === "data") {
     // `mimeType` is declared required, but this source arrives off the wire and
@@ -838,6 +842,10 @@ function mediaSourceToUrl(
   } else if (source?.type === "url") {
     return firstNonEmptyString(source.value) ?? null;
   }
+  // A `file` source lands here. Its `value` is a provider-issued HANDLE, not a
+  // URL — emitting it under `image_url.url` would put an opaque token on the
+  // provider request — so it collapses onto the same `null` the caller already
+  // knows how to announce, and the one part is dropped with the one warning.
   return null;
 }
 
