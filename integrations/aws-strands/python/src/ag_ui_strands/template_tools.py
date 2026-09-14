@@ -25,6 +25,11 @@ from strands.tools.registry import ToolRegistry
 
 from .a2ui_tool import is_auto_injected_a2ui_tool
 from .client_proxy_tool import _is_proxy
+from .interrupt_checkpoint import (
+    NO_PARKED_BATCH,
+    UNREADABLE_CHECKPOINT,
+    parked_assistant_message,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -166,32 +171,35 @@ def parked_batch_tool_names(agent: Any) -> "Set[str] | _ExemptEveryTemplateTool"
     through the approval hook, through an interrupt of its own, or not at all,
     and the batch answers all three at once.
 
+    Where the batch lives on the checkpoint differs by Strands release, so it is
+    read through :mod:`~ag_ui_strands.interrupt_checkpoint` rather than off a
+    key this function names itself.
+
     Returns:
         The names to hold registered; an empty set when nothing is parked; or
         :data:`EXEMPT_EVERY_TEMPLATE_TOOL` for a checkpoint that is carrying a
         tool batch this function cannot read, where holding everything costs
         one unfiltered turn and the alternative breaks a resume. An activated
-        checkpoint with no ``tool_use_message`` at all is not that case: an
+        checkpoint carrying no parked batch at all is not that case: an
         interrupt raised before any tool ran parks exactly that way, and it has
         no batch to protect.
     """
     state = getattr(agent, "_interrupt_state", None)
     if state is None or getattr(state, "activated", False) is not True:
         return set()
-    context = getattr(state, "context", None)
-    if not isinstance(context, Mapping):
+    message = parked_assistant_message(state)
+    if message is UNREADABLE_CHECKPOINT:
         logger.warning(
             "An activated interrupt checkpoint carries no readable context; "
             "holding every template tool registered rather than risk removing "
             "one this thread's resume is about to re-dispatch."
         )
         return EXEMPT_EVERY_TEMPLATE_TOOL
-    if "tool_use_message" not in context:
+    if message is NO_PARKED_BATCH:
         # A pause raised before any tool ran. Nothing is mid-dispatch, so
         # nothing needs holding.
         return set()
 
-    message = context["tool_use_message"]
     names: Set[str] = set()
     if isinstance(message, Mapping):
         for block in message.get("content") or []:

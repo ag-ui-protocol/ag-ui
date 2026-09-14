@@ -73,10 +73,14 @@ import {
   A2UI_STREAM_KEY,
 } from "./a2ui-tool";
 import {
+  describeModelBoundHistory,
   ensureTransientContextHook,
   formatAguiContext,
   installOrchestratorContextHooks,
+  isToolResultBlock,
+  latestQuestionIndex,
   normalizeAguiContext,
+  placeUserText,
   pullWithModelContext,
   restoreOrchestratorContext,
   restoreTransientModelContext,
@@ -1609,7 +1613,9 @@ export function buildSnapshotMessages(
       const user: AguiUserMessage = {
         id: msgId,
         role: "user",
-        content: _coerceText(msg.content),
+        content: Array.isArray(msg.content)
+          ? msg.content
+          : _coerceText(msg.content),
       };
       const userMetadata = _carriedMetadata(msg);
       if (userMetadata) user.metadata = userMetadata;
@@ -3794,58 +3800,50 @@ export class StrandsAgent {
         }
       }
 
-      // Replay disabled, cold agent, continuation run: the seed already ends
-      // with the user-role toolResult turn, so handing the synthetic
-      // continuation prompt to `stream()` would have Strands append a SECOND
-      // user message. The provider-bound roles become user -> assistant ->
-      // user -> user, which Bedrock refuses for failing role alternation.
-      // Folding the prompt into the turn that is already there keeps the
-      // continuation as one user turn carrying both the toolResult block and
-      // the prompt. Only reached on the opt-out; the documented default
-      // returns above with `invokeArgs = undefined`.
+      // A cold, replay-disabled agent can already carry these exact answers
+      // in its seed. Omit only the duplicate synthetic prompt: mixing it into
+      // a tool-result turn breaks OpenAI, while appending it breaks Bedrock
+      // role alternation. Preserve new questions, builder additions, and any
+      // answer the native history does not actually carry.
+      const continuationHistory = strandsAgent.messages ?? [];
+      const continuationTail =
+        continuationHistory[continuationHistory.length - 1];
       if (
-        !replayHistory &&
+        this.config.replayHistoryIntoStrands === false &&
+        !sessionManager &&
         !resumeSubmitted &&
-        typeof invokeArgs === "string"
+        !hasNewerUserMessage &&
+        frontendResults.length > 0 &&
+        trailingPromptLines.length > 0 &&
+        typeof invokeArgs === "string" &&
+        invokeArgs === trailingPromptLines.map(({ line }) => line).join("\n") &&
+        continuationTail?.role === "user" &&
+        continuationTail.content.some(isToolResultBlock)
       ) {
-        const seeded = (strandsAgent as { messages?: unknown[] }).messages;
-        const tail = seeded?.[seeded.length - 1] as
-          | { role?: string; content?: unknown[] }
-          | undefined;
-        const tailCarriesToolResult =
-          tail?.role === "user" &&
-          Array.isArray(tail.content) &&
-          tail.content.some((b) => {
-            // Seeded history arrives as ContentBlock INSTANCES, which carry a
-            // `type` discriminant; the plain-object form carries the key
-            // itself. Both shapes reach here depending on the path.
-            const block = b as { toolResult?: unknown; type?: string };
-            return (
-              block?.toolResult !== undefined ||
-              block?.type === "toolResultBlock"
-            );
-          });
-        if (tailCarriesToolResult) {
-          // Rebuilt from the serialized form so the appended text block is a
-          // real instance like the ones already there; Bedrock's formatter
-          // dispatches on `block.type`, which only instances carry.
-          const tailData = (
-            tail as unknown as { toJSON?: () => { content?: unknown[] } }
-          ).toJSON?.() ?? { content: tail!.content };
-          (strandsAgent as { messages: unknown[] }).messages = [
-            ...seeded!.slice(0, -1),
-            StrandsMessage.fromMessageData({
-              role: "user",
-              content: [
-                ...((tailData.content ?? []) as never[]),
-                { text: invokeArgs } as never,
-              ] as never,
-            }),
-          ];
-          invokeArgs = undefined;
-        }
+        const seededResults = new Map(
+          continuationHistory.flatMap((message) =>
+            message.content
+              .filter(
+                (block): block is ToolResultBlock =>
+                  block instanceof ToolResultBlock,
+              )
+              .map(
+                (block) =>
+                  [block.toolUseId, block.toJSON().toolResult] as const,
+              ),
+          ),
+        );
+        const carriesEveryAnswer = frontendResults.every((answer) => {
+          const actual = seededResults.get(answer.toolCallId!);
+          const expected = clientResultFields(answer.result);
+          return (
+            actual?.status === expected.status &&
+            JSON.stringify(actual.content) ===
+              JSON.stringify([expected.content])
+          );
+        });
+        if (carriesEveryAnswer) invokeArgs = undefined;
       }
-
       // Native ids already in this thread's history, captured after any history
       // replacement above and before the stream appends this run's own calls.
       // A frontend call landing on one of these cannot be told apart from the

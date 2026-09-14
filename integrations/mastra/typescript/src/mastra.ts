@@ -889,6 +889,18 @@ export class MastraAgent extends AbstractAgent {
             };
           }
 
+          const resumeReplay =
+            interruptEvent.toolCallId != null
+              ? {
+                  toolCallId: String(interruptEvent.toolCallId),
+                  toolName:
+                    typeof interruptEvent.toolName === "string"
+                      ? interruptEvent.toolName
+                      : undefined,
+                  args: interruptEvent.args,
+                }
+              : null;
+
           const callbacks = this.makeStreamCallbacks(
             subscriber,
             () => messageId,
@@ -949,6 +961,9 @@ export class MastraAgent extends AbstractAgent {
                   },
                 },
                 abortController.signal,
+                new Set(),
+                {},
+                resumeReplay,
               );
 
               // Cancelled resumes are settled by the abort listener in run();
@@ -997,12 +1012,17 @@ export class MastraAgent extends AbstractAgent {
 
               let stopped = false;
               const { handleChunk, flush, getUsage } =
-                this.createChunkProcessor({
-                  ...callbacks,
-                  onError: (error) => {
-                    subscriber.error(error);
+                this.createChunkProcessor(
+                  {
+                    ...callbacks,
+                    onError: (error) => {
+                      subscriber.error(error);
+                    },
                   },
-                });
+                  new Set(),
+                  {},
+                  resumeReplay,
+                );
 
               await response.processDataStream({
                 onChunk: async (chunk: any) => {
@@ -1636,6 +1656,11 @@ export class MastraAgent extends AbstractAgent {
     callbacks: MastraAgentStreamOptions,
     clientToolNames: Set<string> = new Set(),
     initialState: Record<string, any> = {},
+    replaySuspendedToolCall?: {
+      toolCallId: string;
+      toolName?: string;
+      args?: any;
+    } | null,
   ) {
     // Remote processDataStream responses report token usage on the terminal
     // `finish` chunk rather than on the response object. Keep only that
@@ -1766,6 +1791,8 @@ export class MastraAgent extends AbstractAgent {
           argsTextDelta: JSON.stringify(args ?? {}),
         });
         callbacks.onToolCallEnd?.({ toolCallId });
+        streamedStarted.add(toolCallId);
+        streamedEnded.add(toolCallId);
       }
     };
 
@@ -2307,6 +2334,35 @@ export class MastraAgent extends AbstractAgent {
             break;
           }
           flush();
+          // Resume of a tool that suspended on the previous run: that run
+          // discarded TOOL_CALL_START/ARGS/END (by design), so CopilotKit
+          // never registered the id. Emit the triple now from the interrupt
+          // snapshot before TOOL_CALL_RESULT, otherwise the result is
+          // orphaned (#2668). Skip when START was already emitted (buffered
+          // flush or live deltas). Do not emit on the first-run suspend path
+          // (replay is unset). Standard input.resume does not round-trip
+          // args; Mastra puts them on tool-result instead.
+          if (
+            replaySuspendedToolCall &&
+            replaySuspendedToolCall.toolCallId === chunk.payload.toolCallId &&
+            !streamedStarted.has(chunk.payload.toolCallId)
+          ) {
+            const toolCallId = replaySuspendedToolCall.toolCallId;
+            const toolName =
+              replaySuspendedToolCall.toolName ||
+              chunk.payload.toolName ||
+              "tool";
+            callbacks.onToolCallStart?.({ toolCallId, toolName });
+            callbacks.onToolCallArgs?.({
+              toolCallId,
+              argsTextDelta: JSON.stringify(
+                replaySuspendedToolCall.args ?? chunk.payload.args ?? {},
+              ),
+            });
+            callbacks.onToolCallEnd?.({ toolCallId });
+            streamedStarted.add(toolCallId);
+            streamedEnded.add(toolCallId);
+          }
           callbacks.onToolResultPart?.({
             toolCallId: chunk.payload.toolCallId,
             result: chunk.payload.result,
@@ -2616,11 +2672,17 @@ export class MastraAgent extends AbstractAgent {
     abortSignal: AbortSignal,
     clientToolNames: Set<string> = new Set(),
     initialState: Record<string, any> = {},
+    replaySuspendedToolCall?: {
+      toolCallId: string;
+      toolName?: string;
+      args?: any;
+    } | null,
   ): Promise<"completed" | "cancelled" | "error"> {
     const { handleChunk, flush } = this.createChunkProcessor(
       callbacks,
       clientToolNames,
       initialState,
+      replaySuspendedToolCall,
     );
     for await (const chunk of stream) {
       // Cancelled (unsubscribe or abortRun): stop pulling from the source

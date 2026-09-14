@@ -84,7 +84,11 @@ def _mime_to_format(mime_type: Optional[str], allowed: Set[str]) -> Optional[str
         logger.warning("No MIME type provided, cannot determine format")
         return None
     # Strip MIME parameters (e.g. "; charset=utf-8") before parsing the subtype
-    fmt = mime_type.split(";", 1)[0].strip().rsplit("/", 1)[-1].lower()
+    parts = mime_type.split(";", 1)[0].strip().lower().split("/")
+    if len(parts) != 2 or not all(part.strip() for part in parts):
+        logger.warning("Malformed MIME type, cannot determine format")
+        return None
+    fmt = parts[1]
     # Resolve well-known aliases before checking the allowed set
     fmt = _MIME_FORMAT_ALIASES.get(fmt, fmt)
     if fmt in allowed:
@@ -744,6 +748,7 @@ def convert_agui_content_to_strands(
     budget: Optional[_FetchBudget] = None,
     *,
     message_id: Optional[str] = None,
+    dropped: Optional[List[Dict[str, str]]] = None,
 ) -> List[Dict[str, Any]]:
     """Convert an AG-UI ``InputContent`` list to Strands ``ContentBlock`` dicts.
 
@@ -765,23 +770,42 @@ def convert_agui_content_to_strands(
     ``message_id`` should be the stable AG-UI message id when the content is
     part of conversation history. Direct callers may omit it and receive a
     deterministic source-based fallback.
+
+    When supplied, ``dropped`` receives one safe, client-visible reason per
+    skipped attachment. It never includes source URLs or payload bytes.
     """
     blocks: List[Dict[str, Any]] = []
     if budget is None:
         budget = _FetchBudget(policy)
     document_index = 0
 
+    def drop(kind: str, reason: str) -> None:
+        if dropped is not None:
+            dropped.append({"type": kind, "reason": reason})
+
+    def resolve(item: Any, allowed: Set[str]) -> Optional[tuple[bytes, str]]:
+        fmt = _mime_to_format(_get_mime_type(item.source), allowed)
+        if fmt is None:
+            drop(item.type, "unsupported media type")
+            return None
+        raw = _resolve_source_bytes(item.source, policy, budget)
+        if raw is None:
+            drop(item.type, "content could not be resolved")
+            return None
+        if not raw:
+            drop(item.type, "content was empty")
+            return None
+        return raw, fmt
+
     for item in content:
         if isinstance(item, TextInputContent):
             blocks.append({"text": item.text})
 
         elif isinstance(item, ImageInputContent):
-            raw = _resolve_source_bytes(item.source, policy, budget)
-            if raw is None:
+            resolved = resolve(item, _IMAGE_FORMATS)
+            if resolved is None:
                 continue
-            fmt = _mime_to_format(_get_mime_type(item.source), _IMAGE_FORMATS)
-            if fmt is None:
-                continue
+            raw, fmt = resolved
             blocks.append({
                 "image": {
                     "format": fmt,
@@ -792,12 +816,10 @@ def convert_agui_content_to_strands(
         elif isinstance(item, DocumentInputContent):
             current_document_index = document_index
             document_index += 1
-            raw = _resolve_source_bytes(item.source, policy, budget)
-            if raw is None:
+            resolved = resolve(item, _DOCUMENT_FORMATS)
+            if resolved is None:
                 continue
-            fmt = _mime_to_format(_get_mime_type(item.source), _DOCUMENT_FORMATS)
-            if fmt is None:
-                continue
+            raw, fmt = resolved
             blocks.append({
                 "document": {
                     "format": fmt,
@@ -812,12 +834,10 @@ def convert_agui_content_to_strands(
             })
 
         elif isinstance(item, VideoInputContent):
-            raw = _resolve_source_bytes(item.source, policy, budget)
-            if raw is None:
+            resolved = resolve(item, _VIDEO_FORMATS)
+            if resolved is None:
                 continue
-            fmt = _mime_to_format(_get_mime_type(item.source), _VIDEO_FORMATS)
-            if fmt is None:
-                continue
+            raw, fmt = resolved
             blocks.append({
                 "video": {
                     "format": fmt,
@@ -826,6 +846,7 @@ def convert_agui_content_to_strands(
             })
 
         elif isinstance(item, AudioInputContent):
+            drop("audio", "Strands has no audio support")
             logger.warning(
                 "Skipping audio content block: Strands does not support audio input."
             )
@@ -838,15 +859,21 @@ def convert_agui_content_to_strands(
                     raw_bytes = base64.b64decode(item.data)
                 except Exception:
                     logger.warning("Skipping binary content: invalid base64 data")
+                    drop("binary", "content could not be resolved")
                     continue
             elif item.url:
                 raw_bytes = _fetch_url_bytes(item.url, policy, budget)
             if raw_bytes is None:
                 logger.warning("Skipping binary content: could not resolve bytes")
+                drop("binary", "content could not be resolved")
+                continue
+            if not raw_bytes:
+                drop("binary", "content was empty")
                 continue
             fmt = _mime_to_format(item.mime_type, _IMAGE_FORMATS)
             if fmt is None:
                 logger.warning("Skipping binary content: unsupported MIME type '%s'", item.mime_type)
+                drop("binary", "unsupported media type")
                 continue
             blocks.append({
                 "image": {
