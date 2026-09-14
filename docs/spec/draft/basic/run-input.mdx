@@ -44,8 +44,10 @@ complete history it is being shown — the protocol has no side channel through
 which earlier turns arrive.
 
 The message types and their content shapes — including multimodal
-`InputContent` parts carrying text, images, audio, video and documents by URL
-or inline data — are the schema's business. Two behavioural rules attach:
+[`ContentPart`](/spec/draft/schema#contentpart)s carrying text, images, audio,
+video and documents by URL or inline data, on user messages and on the tool
+messages that answer [frontend tool calls](/spec/draft/events/tool-calls#frontend-tools) —
+are the schema's business. Two behavioural rules attach:
 
 - A producer that cannot use a content part — a model without vision handed an
   image — MUST NOT fail the run because of it. Skipping what it cannot use and

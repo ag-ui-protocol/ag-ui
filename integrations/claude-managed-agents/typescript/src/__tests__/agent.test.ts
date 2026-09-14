@@ -4,11 +4,19 @@ import { lastValueFrom, toArray } from "rxjs";
 import { describe, expect, it } from "vitest";
 import { ManagedAgentsAgent } from "../agent";
 import { InMemorySessionStore } from "../sessions";
-import type { BackendCustomTool, ManagedAgentsAgentConfig, SessionStore } from "../types";
+import type {
+  BackendCustomTool,
+  ManagedAgentsAgentConfig,
+  SessionStore,
+} from "../types";
 import { createFakeClient } from "./fake-client";
 import { RecordingSessionStore } from "./fake-store";
 
-const idleEndTurn = { type: "session.status_idle", id: "idle_1", stop_reason: { type: "end_turn" } };
+const idleEndTurn = {
+  type: "session.status_idle",
+  id: "idle_1",
+  stop_reason: { type: "end_turn" },
+};
 
 /**
  * The key the store and the busy gate share: scoped to the managed agent, not
@@ -27,7 +35,10 @@ const baseInput = (overrides: Partial<RunAgentInput> = {}): RunAgentInput => ({
   ...overrides,
 });
 
-const collect = async (agent: ManagedAgentsAgent, input: RunAgentInput): Promise<BaseEvent[]> =>
+const collect = async (
+  agent: ManagedAgentsAgent,
+  input: RunAgentInput,
+): Promise<BaseEvent[]> =>
   (await lastValueFrom(agent.run(input).pipe(toArray()))) as BaseEvent[];
 
 const types = (events: BaseEvent[]) => events.map((event) => event.type);
@@ -52,7 +63,8 @@ const gate = () => {
   return { promise, release };
 };
 
-const allSentEvents = (fake: ReturnType<typeof createFakeClient>) => fake.sent.flatMap((send) => send.events);
+const allSentEvents = (fake: ReturnType<typeof createFakeClient>) =>
+  fake.sent.flatMap((send) => send.events);
 
 /** Let a run in flight advance a few microtask/macrotask turns. */
 const settle = () => new Promise((resolve) => setTimeout(resolve, 10));
@@ -60,7 +72,16 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 10));
 describe("ManagedAgentsAgent", () => {
   it("creates a session for a new thread and streams a reply", async () => {
     const fake = createFakeClient({
-      streams: [[{ type: "agent.message", id: "msg_1", content: [{ type: "text", text: "Hi!" }] }, idleEndTurn]],
+      streams: [
+        [
+          {
+            type: "agent.message",
+            id: "msg_1",
+            content: [{ type: "text", text: "Hi!" }],
+          },
+          idleEndTurn,
+        ],
+      ],
     });
     const events = await collect(newAgent(fake), baseInput());
 
@@ -78,13 +99,24 @@ describe("ManagedAgentsAgent", () => {
       EventType.TEXT_MESSAGE_END,
       EventType.RUN_FINISHED,
     ]);
-    expect(events[2]).toMatchObject({ name: "managed_agents.session", value: { sessionId: "sesn_1", threadId: "thread_1" } });
-    expect(fake.sent[0].events).toEqual([{ type: "user.message", content: [{ type: "text", text: "Hello" }] }]);
+    expect(events[2]).toMatchObject({
+      name: "managed_agents.session",
+      value: { sessionId: "sesn_1", threadId: "thread_1" },
+    });
+    expect(fake.sent[0].events).toEqual([
+      { type: "user.message", content: [{ type: "text", text: "Hello" }] },
+    ]);
   });
 
   it("pins the agent version and applies a custom title when configured", async () => {
     const fake = createFakeClient({ streams: [[idleEndTurn]] });
-    await collect(newAgent(fake, undefined, { agentVersion: 3, sessionTitle: (id) => `Chat ${id}` }), baseInput());
+    await collect(
+      newAgent(fake, undefined, {
+        agentVersion: 3,
+        sessionTitle: (id) => `Chat ${id}`,
+      }),
+      baseInput(),
+    );
 
     expect(fake.spies.create.mock.calls[0]![0]).toEqual({
       agent: { type: "agent", id: "agent_1", version: 3 },
@@ -96,8 +128,13 @@ describe("ManagedAgentsAgent", () => {
 
   it("attaches configured vault ids when creating a session", async () => {
     const fake = createFakeClient({ streams: [[idleEndTurn], [idleEndTurn]] });
-    await collect(newAgent(fake, undefined, { vaultIds: ["vlt_1", "vlt_2"] }), baseInput());
-    expect(fake.spies.create.mock.calls[0]![0]).toMatchObject({ vault_ids: ["vlt_1", "vlt_2"] });
+    await collect(
+      newAgent(fake, undefined, { vaultIds: ["vlt_1", "vlt_2"] }),
+      baseInput(),
+    );
+    expect(fake.spies.create.mock.calls[0]![0]).toMatchObject({
+      vault_ids: ["vlt_1", "vlt_2"],
+    });
 
     // Omitted entirely when none are configured, so the field is not sent empty.
     await collect(newAgent(fake), baseInput());
@@ -107,8 +144,22 @@ describe("ManagedAgentsAgent", () => {
   it("reuses the session on the thread's next run and sends only the new message", async () => {
     const fake = createFakeClient({
       streams: [
-        [{ type: "agent.message", id: "msg_1", content: [{ type: "text", text: "one" }] }, idleEndTurn],
-        [{ type: "agent.message", id: "msg_2", content: [{ type: "text", text: "two" }] }, idleEndTurn],
+        [
+          {
+            type: "agent.message",
+            id: "msg_1",
+            content: [{ type: "text", text: "one" }],
+          },
+          idleEndTurn,
+        ],
+        [
+          {
+            type: "agent.message",
+            id: "msg_2",
+            content: [{ type: "text", text: "two" }],
+          },
+          idleEndTurn,
+        ],
       ],
     });
     const store = new InMemorySessionStore();
@@ -126,18 +177,31 @@ describe("ManagedAgentsAgent", () => {
     );
 
     expect(fake.spies.create).toHaveBeenCalledTimes(1);
-    expect(fake.sent[1].events).toEqual([{ type: "user.message", content: [{ type: "text", text: "Follow-up" }] }]);
+    expect(fake.sent[1].events).toEqual([
+      { type: "user.message", content: [{ type: "text", text: "Follow-up" }] },
+    ]);
   });
 
   it("registers frontend tools as custom tools when creating the session", async () => {
     const fake = createFakeClient({
       streams: [[idleEndTurn]],
-      agentTools: [{ type: "agent_toolset_20260401", configs: [], default_config: {} }],
+      agentTools: [
+        { type: "agent_toolset_20260401", configs: [], default_config: {} },
+      ],
     });
     await collect(
       newAgent(fake),
       baseInput({
-        tools: [{ name: "show_chart", description: "Render a chart", parameters: { type: "object", properties: { title: { type: "string" } } } }],
+        tools: [
+          {
+            name: "show_chart",
+            description: "Render a chart",
+            parameters: {
+              type: "object",
+              properties: { title: { type: "string" } },
+            },
+          },
+        ],
       }),
     );
 
@@ -152,7 +216,10 @@ describe("ManagedAgentsAgent", () => {
               type: "custom",
               name: "show_chart",
               description: "Render a chart",
-              input_schema: { type: "object", properties: { title: { type: "string" } } },
+              input_schema: {
+                type: "object",
+                properties: { title: { type: "string" } },
+              },
             },
           ],
         },
@@ -162,14 +229,32 @@ describe("ManagedAgentsAgent", () => {
 
   it("registers backend and frontend tools by normalized name with the frontend winning a collision", async () => {
     const fake = createFakeClient({ streams: [[idleEndTurn]], agentTools: [] });
-    const backend: BackendCustomTool = { name: "lookup docs", description: "Backend lookup", parameters: {}, handler: () => "x" };
+    const backend: BackendCustomTool = {
+      name: "lookup docs",
+      description: "Backend lookup",
+      parameters: {},
+      handler: () => "x",
+    };
     await collect(
       newAgent(fake, undefined, { backendTools: [backend] }),
-      baseInput({ tools: [{ name: "lookup docs", description: "Frontend lookup", parameters: { type: "object" } }] }),
+      baseInput({
+        tools: [
+          {
+            name: "lookup docs",
+            description: "Frontend lookup",
+            parameters: { type: "object" },
+          },
+        ],
+      }),
     );
 
     expect(fake.spies.create.mock.calls[0]![0].agent.tools).toEqual([
-      { type: "custom", name: "lookup_docs", description: "Frontend lookup", input_schema: { type: "object" } },
+      {
+        type: "custom",
+        name: "lookup_docs",
+        description: "Frontend lookup",
+        input_schema: { type: "object" },
+      },
     ]);
   });
 
@@ -179,15 +264,28 @@ describe("ManagedAgentsAgent", () => {
       newAgent(fake),
       baseInput({
         tools: [
-          { name: "search web", description: "first", parameters: { type: "object" } },
-          { name: "search.web", description: "second", parameters: { type: "object" } },
+          {
+            name: "search web",
+            description: "first",
+            parameters: { type: "object" },
+          },
+          {
+            name: "search.web",
+            description: "second",
+            parameters: { type: "object" },
+          },
         ],
       }),
     );
 
     expect(events.at(-1)?.type).toBe(EventType.RUN_FINISHED);
     expect(fake.spies.create.mock.calls[0]![0].agent.tools).toEqual([
-      { type: "custom", name: "search_web", description: "second", input_schema: { type: "object" } },
+      {
+        type: "custom",
+        name: "search_web",
+        description: "second",
+        input_schema: { type: "object" },
+      },
     ]);
   });
 
@@ -196,18 +294,36 @@ describe("ManagedAgentsAgent", () => {
       streams: [[idleEndTurn]],
       agentTools: [
         { type: "agent_toolset_20260401", configs: [], default_config: {} },
-        { type: "custom", name: "show_chart", description: "Agent's own copy", input_schema: { type: "object", properties: {} } },
+        {
+          type: "custom",
+          name: "show_chart",
+          description: "Agent's own copy",
+          input_schema: { type: "object", properties: {} },
+        },
       ],
     });
     await collect(
       newAgent(fake),
-      baseInput({ tools: [{ name: "show_chart", description: "Render a chart", parameters: { type: "object" } }] }),
+      baseInput({
+        tools: [
+          {
+            name: "show_chart",
+            description: "Render a chart",
+            parameters: { type: "object" },
+          },
+        ],
+      }),
     );
 
     // The frontend tool replaces the agent's same-named custom tool rather than duplicating it.
     expect(fake.spies.create.mock.calls[0]![0].agent.tools).toEqual([
       { type: "agent_toolset_20260401", configs: [], default_config: {} },
-      { type: "custom", name: "show_chart", description: "Render a chart", input_schema: { type: "object" } },
+      {
+        type: "custom",
+        name: "show_chart",
+        description: "Render a chart",
+        input_schema: { type: "object" },
+      },
     ]);
   });
 
@@ -215,14 +331,36 @@ describe("ManagedAgentsAgent", () => {
     const fake = createFakeClient({
       streams: [
         [
-          { type: "agent.custom_tool_use", id: "ctu_1", name: "show_chart", input: { title: "Sales" } },
-          { type: "session.status_idle", id: "idle_1", stop_reason: { type: "requires_action", event_ids: ["ctu_1"] } },
+          {
+            type: "agent.custom_tool_use",
+            id: "ctu_1",
+            name: "show_chart",
+            input: { title: "Sales" },
+          },
+          {
+            type: "session.status_idle",
+            id: "idle_1",
+            stop_reason: { type: "requires_action", event_ids: ["ctu_1"] },
+          },
         ],
-        [{ type: "agent.message", id: "msg_1", content: [{ type: "text", text: "Chart shown." }] }, idleEndTurn],
+        [
+          {
+            type: "agent.message",
+            id: "msg_1",
+            content: [{ type: "text", text: "Chart shown." }],
+          },
+          idleEndTurn,
+        ],
       ],
     });
     const store = new InMemorySessionStore();
-    const tools = [{ name: "show_chart", description: "Render a chart", parameters: { type: "object" } }];
+    const tools = [
+      {
+        name: "show_chart",
+        description: "Render a chart",
+        parameters: { type: "object" },
+      },
+    ];
 
     const first = await collect(newAgent(fake, store), baseInput({ tools }));
     expect(types(first)).toEqual([
@@ -234,7 +372,9 @@ describe("ManagedAgentsAgent", () => {
       EventType.TOOL_CALL_END,
       EventType.RUN_FINISHED,
     ]);
-    expect(await store.get(SESSION_KEY)).toMatchObject({ pendingClientToolUseIds: ["ctu_1"] });
+    expect(await store.get(SESSION_KEY)).toMatchObject({
+      pendingClientToolUseIds: ["ctu_1"],
+    });
 
     const second = await collect(
       newAgent(fake, store),
@@ -249,37 +389,134 @@ describe("ManagedAgentsAgent", () => {
     );
 
     expect(fake.sent[1].events).toEqual([
-      { type: "user.custom_tool_result", custom_tool_use_id: "ctu_1", content: [{ type: "text", text: "rendered" }], is_error: false },
+      {
+        type: "user.custom_tool_result",
+        custom_tool_use_id: "ctu_1",
+        content: [{ type: "text", text: "rendered" }],
+        is_error: false,
+      },
     ]);
     expect(types(second)).toContain(EventType.TEXT_MESSAGE_CONTENT);
     expect(second.at(-1)?.type).toBe(EventType.RUN_FINISHED);
-    expect(await store.get(SESSION_KEY)).toMatchObject({ pendingClientToolUseIds: [] });
+    expect(await store.get(SESSION_KEY)).toMatchObject({
+      pendingClientToolUseIds: [],
+    });
   });
 
-  it("forwards a tool message's error flag and error text", async () => {
+  it("posts a parts-shaped tool result as the content blocks Claude accepts", async () => {
     const fake = createFakeClient({ streams: [[idleEndTurn]] });
     const store = new InMemorySessionStore();
-    await store.set(SESSION_KEY, { sessionId: "sesn_1", toolNames: [], pendingClientToolUseIds: ["ctu_1"], lastUserMessageId: "u1" });
+    await store.set(SESSION_KEY, {
+      sessionId: "sesn_1",
+      toolNames: [],
+      pendingClientToolUseIds: ["ctu_1"],
+      lastUserMessageId: "u1",
+    });
 
     await collect(
       newAgent(fake, store),
       baseInput({
         messages: [
           { id: "u1", role: "user", content: "Hello" },
-          { id: "t1", role: "tool", toolCallId: "ctu_1", content: "boom", error: "failed" },
+          {
+            id: "t1",
+            role: "tool",
+            toolCallId: "ctu_1",
+            content: [
+              { type: "text", text: "Invoice attached." },
+              {
+                type: "document",
+                source: {
+                  type: "data",
+                  value: "JVBERi0x",
+                  mimeType: "application/pdf",
+                },
+              },
+              {
+                type: "image",
+                source: { type: "url", value: "https://example.com/scan.png" },
+              },
+              {
+                type: "audio",
+                source: { type: "url", value: "https://example.com/a.wav" },
+              },
+            ],
+          },
+        ],
+      }),
+    );
+
+    // Text and the media Claude accepts become blocks; the audio part, which a
+    // Claude tool result cannot carry, is dropped rather than failing the run.
+    expect(fake.sent[0].events).toEqual([
+      {
+        type: "user.custom_tool_result",
+        custom_tool_use_id: "ctu_1",
+        content: [
+          { type: "text", text: "Invoice attached." },
+          {
+            type: "document",
+            source: {
+              type: "base64",
+              media_type: "application/pdf",
+              data: "JVBERi0x",
+            },
+          },
+          {
+            type: "image",
+            source: { type: "url", url: "https://example.com/scan.png" },
+          },
+        ],
+        is_error: false,
+      },
+    ]);
+  });
+
+  it("forwards a tool message's error flag and error text", async () => {
+    const fake = createFakeClient({ streams: [[idleEndTurn]] });
+    const store = new InMemorySessionStore();
+    await store.set(SESSION_KEY, {
+      sessionId: "sesn_1",
+      toolNames: [],
+      pendingClientToolUseIds: ["ctu_1"],
+      lastUserMessageId: "u1",
+    });
+
+    await collect(
+      newAgent(fake, store),
+      baseInput({
+        messages: [
+          { id: "u1", role: "user", content: "Hello" },
+          {
+            id: "t1",
+            role: "tool",
+            toolCallId: "ctu_1",
+            content: "boom",
+            error: "failed",
+          },
         ],
       }),
     );
 
     expect(fake.sent[0].events).toEqual([
-      { type: "user.custom_tool_result", custom_tool_use_id: "ctu_1", content: [{ type: "text", text: "boom\nfailed" }], is_error: true },
+      {
+        type: "user.custom_tool_result",
+        custom_tool_use_id: "ctu_1",
+        content: [{ type: "text", text: "boom\nfailed" }],
+        is_error: true,
+      },
     ]);
   });
 
   it("stays parked when only some pending tool calls are answered", async () => {
     const fake = createFakeClient({ streams: [] });
     const store = new InMemorySessionStore();
-    await store.set(SESSION_KEY, { sessionId: "sesn_1", toolNames: [], pendingClientToolUseIds: ["ctu_1", "ctu_2"], lastUserMessageId: "u1" });
+    await store.set(SESSION_KEY, {
+      sessionId: "sesn_1",
+      toolNames: [],
+      pendingClientToolUseIds: ["ctu_1", "ctu_2"],
+      lastUserMessageId: "u1",
+    });
 
     const events = await collect(
       newAgent(fake, store),
@@ -294,11 +531,18 @@ describe("ManagedAgentsAgent", () => {
     // The answered call is posted, the run finishes without streaming, and
     // the unanswered call stays pending.
     expect(fake.sent[0].events).toEqual([
-      { type: "user.custom_tool_result", custom_tool_use_id: "ctu_1", content: [{ type: "text", text: "done" }], is_error: false },
+      {
+        type: "user.custom_tool_result",
+        custom_tool_use_id: "ctu_1",
+        content: [{ type: "text", text: "done" }],
+        is_error: false,
+      },
     ]);
     expect(fake.spies.stream).not.toHaveBeenCalled();
     expect(events.at(-1)?.type).toBe(EventType.RUN_FINISHED);
-    expect(await store.get(SESSION_KEY)).toMatchObject({ pendingClientToolUseIds: ["ctu_2"] });
+    expect(await store.get(SESSION_KEY)).toMatchObject({
+      pendingClientToolUseIds: ["ctu_2"],
+    });
   });
 
   it("clone() carries the AbstractAgent state and keeps the client and store shared", () => {
@@ -307,7 +551,10 @@ describe("ManagedAgentsAgent", () => {
     // silently reset on the copy.
     const fake = createFakeClient({ streams: [[idleEndTurn]] });
     const store = new InMemorySessionStore();
-    const agent = newAgent(fake, store, { agentId: "agent_ui", description: "Managed" });
+    const agent = newAgent(fake, store, {
+      agentId: "agent_ui",
+      description: "Managed",
+    });
     agent.threadId = "thread_carried";
     agent.messages = [{ id: "m1", role: "user", content: "carried" }];
     agent.state = { count: 1 };
@@ -327,7 +574,8 @@ describe("ManagedAgentsAgent", () => {
     cloned.messages.push({ id: "m2", role: "user", content: "only mine" });
     expect(agent.messages).toHaveLength(1);
     // The client and store stay shared so the clone resumes the same sessions.
-    const fields = (instance: ManagedAgentsAgent) => instance as unknown as { client: unknown; store: unknown };
+    const fields = (instance: ManagedAgentsAgent) =>
+      instance as unknown as { client: unknown; store: unknown };
     expect(fields(cloned).client).toBe(fields(agent).client);
     expect(fields(cloned).store).toBe(fields(agent).store);
     // And a clone of a clone keeps them.
@@ -338,15 +586,41 @@ describe("ManagedAgentsAgent", () => {
     const fake = createFakeClient({
       streams: [
         [
-          { type: "agent.custom_tool_use", id: "ctu_1", name: "show_chart", input: {} },
-          { type: "session.status_idle", id: "idle_1", stop_reason: { type: "requires_action", event_ids: ["ctu_1"] } },
+          {
+            type: "agent.custom_tool_use",
+            id: "ctu_1",
+            name: "show_chart",
+            input: {},
+          },
+          {
+            type: "session.status_idle",
+            id: "idle_1",
+            stop_reason: { type: "requires_action", event_ids: ["ctu_1"] },
+          },
         ],
-        [{ type: "agent.message", id: "msg_1", content: [{ type: "text", text: "Done." }] }, idleEndTurn],
+        [
+          {
+            type: "agent.message",
+            id: "msg_1",
+            content: [{ type: "text", text: "Done." }],
+          },
+          idleEndTurn,
+        ],
       ],
     });
     // No sessionStore passed: the default in-memory store must be shared by clones.
-    const parent = new ManagedAgentsAgent({ managedAgentId: "agent_1", environmentId: "env_1", client: fake.client });
-    const tools = [{ name: "show_chart", description: "Render a chart", parameters: { type: "object" } }];
+    const parent = new ManagedAgentsAgent({
+      managedAgentId: "agent_1",
+      environmentId: "env_1",
+      client: fake.client,
+    });
+    const tools = [
+      {
+        name: "show_chart",
+        description: "Render a chart",
+        parameters: { type: "object" },
+      },
+    ];
 
     await collect(parent.clone(), baseInput({ tools }));
     await collect(
@@ -363,14 +637,24 @@ describe("ManagedAgentsAgent", () => {
 
     expect(fake.spies.create).toHaveBeenCalledTimes(1);
     expect(fake.sent[1].events).toEqual([
-      { type: "user.custom_tool_result", custom_tool_use_id: "ctu_1", content: [{ type: "text", text: "rendered" }], is_error: false },
+      {
+        type: "user.custom_tool_result",
+        custom_tool_use_id: "ctu_1",
+        content: [{ type: "text", text: "rendered" }],
+        is_error: false,
+      },
     ]);
   });
 
   it("forwards every undelivered user message in order", async () => {
     const fake = createFakeClient({ streams: [[idleEndTurn]] });
     const store = new InMemorySessionStore();
-    await store.set(SESSION_KEY, { sessionId: "sesn_1", toolNames: [], pendingClientToolUseIds: [], lastUserMessageId: "u1" });
+    await store.set(SESSION_KEY, {
+      sessionId: "sesn_1",
+      toolNames: [],
+      pendingClientToolUseIds: [],
+      lastUserMessageId: "u1",
+    });
 
     await collect(
       newAgent(fake, store),
@@ -387,17 +671,29 @@ describe("ManagedAgentsAgent", () => {
       { type: "user.message", content: [{ type: "text", text: "second" }] },
       { type: "user.message", content: [{ type: "text", text: "third" }] },
     ]);
-    expect(await store.get(SESSION_KEY)).toMatchObject({ lastUserMessageId: "u3" });
+    expect(await store.get(SESSION_KEY)).toMatchObject({
+      lastUserMessageId: "u3",
+    });
   });
 
   it("extracts the text of multimodal user content", async () => {
     const fake = createFakeClient({ streams: [[idleEndTurn]] });
     await collect(
       newAgent(fake),
-      baseInput({ messages: [{ id: "u1", role: "user", content: [{ type: "text", text: "Look here" }] as never }] }),
+      baseInput({
+        messages: [
+          {
+            id: "u1",
+            role: "user",
+            content: [{ type: "text", text: "Look here" }] as never,
+          },
+        ],
+      }),
     );
 
-    expect(fake.sent[0].events).toEqual([{ type: "user.message", content: [{ type: "text", text: "Look here" }] }]);
+    expect(fake.sent[0].events).toEqual([
+      { type: "user.message", content: [{ type: "text", text: "Look here" }] },
+    ]);
   });
 
   it("errors with empty_run for an image-only user message and creates no session", async () => {
@@ -405,20 +701,48 @@ describe("ManagedAgentsAgent", () => {
     const events = await collect(
       newAgent(fake),
       baseInput({
-        messages: [{ id: "u1", role: "user", content: [{ type: "image", source: { type: "url", value: "https://x/y.png" } }] as never }],
+        messages: [
+          {
+            id: "u1",
+            role: "user",
+            content: [
+              {
+                type: "image",
+                source: { type: "url", value: "https://x/y.png" },
+              },
+            ] as never,
+          },
+        ],
       }),
     );
 
-    expect(events.at(-1)).toMatchObject({ type: EventType.RUN_ERROR, code: "empty_run" });
+    expect(events.at(-1)).toMatchObject({
+      type: EventType.RUN_ERROR,
+      code: "empty_run",
+    });
     expect(fake.spies.create).not.toHaveBeenCalled();
   });
 
   it("abandons parked tool calls when the user sends a new message instead", async () => {
     const fake = createFakeClient({
-      streams: [[{ type: "agent.message", id: "msg_1", content: [{ type: "text", text: "Moving on." }] }, idleEndTurn]],
+      streams: [
+        [
+          {
+            type: "agent.message",
+            id: "msg_1",
+            content: [{ type: "text", text: "Moving on." }],
+          },
+          idleEndTurn,
+        ],
+      ],
     });
     const store = new InMemorySessionStore();
-    await store.set(SESSION_KEY, { sessionId: "sesn_1", toolNames: [], pendingClientToolUseIds: ["ctu_1"], lastUserMessageId: "u1" });
+    await store.set(SESSION_KEY, {
+      sessionId: "sesn_1",
+      toolNames: [],
+      pendingClientToolUseIds: ["ctu_1"],
+      lastUserMessageId: "u1",
+    });
 
     const events = await collect(
       newAgent(fake, store),
@@ -437,13 +761,23 @@ describe("ManagedAgentsAgent", () => {
       {
         type: "user.custom_tool_result",
         custom_tool_use_id: "ctu_1",
-        content: [{ type: "text", text: "The user did not provide a result for this tool call." }],
+        content: [
+          {
+            type: "text",
+            text: "The user did not provide a result for this tool call.",
+          },
+        ],
         is_error: true,
       },
     ]);
-    expect(fake.sent[1].events).toEqual([{ type: "user.message", content: [{ type: "text", text: "never mind" }] }]);
+    expect(fake.sent[1].events).toEqual([
+      { type: "user.message", content: [{ type: "text", text: "never mind" }] },
+    ]);
     expect(events.at(-1)?.type).toBe(EventType.RUN_FINISHED);
-    expect(await store.get(SESSION_KEY)).toMatchObject({ pendingClientToolUseIds: [], lastUserMessageId: "u2" });
+    expect(await store.get(SESSION_KEY)).toMatchObject({
+      pendingClientToolUseIds: [],
+      lastUserMessageId: "u2",
+    });
   });
 
   it("keeps a parked tool id when a later session event fails the turn", async () => {
@@ -453,36 +787,76 @@ describe("ManagedAgentsAgent", () => {
     const fake = createFakeClient({
       streams: [
         [
-          { type: "agent.custom_tool_use", id: "ctu_1", name: "show_chart", input: {} },
-          { type: "session.error", id: "err_1", error: { type: "overloaded_error", message: "upstream is busy", retry_status: { type: "exhausted" } } },
+          {
+            type: "agent.custom_tool_use",
+            id: "ctu_1",
+            name: "show_chart",
+            input: {},
+          },
+          {
+            type: "session.error",
+            id: "err_1",
+            error: {
+              type: "overloaded_error",
+              message: "upstream is busy",
+              retry_status: { type: "exhausted" },
+            },
+          },
         ],
       ],
     });
     const store = new RecordingSessionStore();
-    const tools = [{ name: "show_chart", description: "Render a chart", parameters: { type: "object" } }];
+    const tools = [
+      {
+        name: "show_chart",
+        description: "Render a chart",
+        parameters: { type: "object" },
+      },
+    ];
 
     const events = await collect(newAgent(fake, store), baseInput({ tools }));
 
-    expect(events.at(-1)).toMatchObject({ type: EventType.RUN_ERROR, code: "overloaded_error" });
-    expect(await store.get(SESSION_KEY)).toMatchObject({ pendingClientToolUseIds: ["ctu_1"] });
+    expect(events.at(-1)).toMatchObject({
+      type: EventType.RUN_ERROR,
+      code: "overloaded_error",
+    });
+    expect(await store.get(SESSION_KEY)).toMatchObject({
+      pendingClientToolUseIds: ["ctu_1"],
+    });
   });
 
   it("keeps a parked tool id when the stream throws after the park", async () => {
     const fake = createFakeClient({
       streams: [
         [
-          { type: "agent.custom_tool_use", id: "ctu_1", name: "show_chart", input: {} },
+          {
+            type: "agent.custom_tool_use",
+            id: "ctu_1",
+            name: "show_chart",
+            input: {},
+          },
           new Error("connection reset"),
         ],
       ],
     });
     const store = new RecordingSessionStore();
-    const tools = [{ name: "show_chart", description: "Render a chart", parameters: { type: "object" } }];
+    const tools = [
+      {
+        name: "show_chart",
+        description: "Render a chart",
+        parameters: { type: "object" },
+      },
+    ];
 
     const events = await collect(newAgent(fake, store), baseInput({ tools }));
 
-    expect(events.at(-1)).toMatchObject({ type: EventType.RUN_ERROR, code: "run_failed" });
-    expect(await store.get(SESSION_KEY)).toMatchObject({ pendingClientToolUseIds: ["ctu_1"] });
+    expect(events.at(-1)).toMatchObject({
+      type: EventType.RUN_ERROR,
+      code: "run_failed",
+    });
+    expect(await store.get(SESSION_KEY)).toMatchObject({
+      pendingClientToolUseIds: ["ctu_1"],
+    });
   });
 
   it("forgets a parked call once the turn's interrupt has landed", async () => {
@@ -493,20 +867,43 @@ describe("ManagedAgentsAgent", () => {
     const fake = createFakeClient({
       streams: [
         [
-          { type: "agent.custom_tool_use", id: "ctu_1", name: "show_chart", input: {} },
+          {
+            type: "agent.custom_tool_use",
+            id: "ctu_1",
+            name: "show_chart",
+            input: {},
+          },
           // Blocked on something this integration cannot answer: interrupt + fail.
-          { type: "session.status_idle", id: "idle_1", stop_reason: { type: "requires_action", event_ids: ["ctu_1", "mystery_1"] } },
+          {
+            type: "session.status_idle",
+            id: "idle_1",
+            stop_reason: {
+              type: "requires_action",
+              event_ids: ["ctu_1", "mystery_1"],
+            },
+          },
         ],
       ],
     });
     const store = new RecordingSessionStore();
-    const tools = [{ name: "show_chart", description: "Render a chart", parameters: { type: "object" } }];
+    const tools = [
+      {
+        name: "show_chart",
+        description: "Render a chart",
+        parameters: { type: "object" },
+      },
+    ];
 
     const events = await collect(newAgent(fake, store), baseInput({ tools }));
 
-    expect(events.at(-1)).toMatchObject({ type: EventType.RUN_ERROR, code: "unsupported_action" });
+    expect(events.at(-1)).toMatchObject({
+      type: EventType.RUN_ERROR,
+      code: "unsupported_action",
+    });
     expect(allSentEvents(fake)).toContainEqual({ type: "user.interrupt" });
-    expect(await store.get(SESSION_KEY)).toMatchObject({ pendingClientToolUseIds: [] });
+    expect(await store.get(SESSION_KEY)).toMatchObject({
+      pendingClientToolUseIds: [],
+    });
   });
 
   it("keeps a parked call when the turn's interrupt could not be delivered", async () => {
@@ -515,20 +912,43 @@ describe("ManagedAgentsAgent", () => {
     const fake = createFakeClient({
       streams: [
         [
-          { type: "agent.custom_tool_use", id: "ctu_1", name: "show_chart", input: {} },
-          { type: "session.status_idle", id: "idle_1", stop_reason: { type: "requires_action", event_ids: ["ctu_1", "mystery_1"] } },
+          {
+            type: "agent.custom_tool_use",
+            id: "ctu_1",
+            name: "show_chart",
+            input: {},
+          },
+          {
+            type: "session.status_idle",
+            id: "idle_1",
+            stop_reason: {
+              type: "requires_action",
+              event_ids: ["ctu_1", "mystery_1"],
+            },
+          },
         ],
       ],
       // Send 1 is the user message; send 2 is the interrupt.
       sendResults: [undefined, new Error("interrupt rejected")],
     });
     const store = new RecordingSessionStore();
-    const tools = [{ name: "show_chart", description: "Render a chart", parameters: { type: "object" } }];
+    const tools = [
+      {
+        name: "show_chart",
+        description: "Render a chart",
+        parameters: { type: "object" },
+      },
+    ];
 
     const events = await collect(newAgent(fake, store), baseInput({ tools }));
 
-    expect(events.at(-1)).toMatchObject({ type: EventType.RUN_ERROR, code: "unsupported_action" });
-    expect(await store.get(SESSION_KEY)).toMatchObject({ pendingClientToolUseIds: ["ctu_1"] });
+    expect(events.at(-1)).toMatchObject({
+      type: EventType.RUN_ERROR,
+      code: "unsupported_action",
+    });
+    expect(await store.get(SESSION_KEY)).toMatchObject({
+      pendingClientToolUseIds: ["ctu_1"],
+    });
   });
 
   it("forgets a parked call once the teardown interrupt has landed", async () => {
@@ -537,38 +957,76 @@ describe("ManagedAgentsAgent", () => {
     const fake = createFakeClient({
       streams: [
         [
-          { type: "agent.custom_tool_use", id: "ctu_1", name: "show_chart", input: {} },
+          {
+            type: "agent.custom_tool_use",
+            id: "ctu_1",
+            name: "show_chart",
+            input: {},
+          },
           new Promise<void>(() => {}), // hang until the turn times out
         ],
       ],
     });
     const store = new RecordingSessionStore();
-    const tools = [{ name: "show_chart", description: "Render a chart", parameters: { type: "object" } }];
+    const tools = [
+      {
+        name: "show_chart",
+        description: "Render a chart",
+        parameters: { type: "object" },
+      },
+    ];
 
-    const events = await collect(newAgent(fake, store, { turnTimeoutMs: 30 }), baseInput({ tools }));
+    const events = await collect(
+      newAgent(fake, store, { turnTimeoutMs: 30 }),
+      baseInput({ tools }),
+    );
 
-    expect(events.at(-1)).toMatchObject({ type: EventType.RUN_ERROR, code: "turn_timeout" });
+    expect(events.at(-1)).toMatchObject({
+      type: EventType.RUN_ERROR,
+      code: "turn_timeout",
+    });
     expect(allSentEvents(fake)).toContainEqual({ type: "user.interrupt" });
-    expect(await store.get(SESSION_KEY)).toMatchObject({ pendingClientToolUseIds: [] });
+    expect(await store.get(SESSION_KEY)).toMatchObject({
+      pendingClientToolUseIds: [],
+    });
   });
 
   it("keeps a parked call when the teardown interrupt could not be delivered", async () => {
     const fake = createFakeClient({
       streams: [
         [
-          { type: "agent.custom_tool_use", id: "ctu_1", name: "show_chart", input: {} },
+          {
+            type: "agent.custom_tool_use",
+            id: "ctu_1",
+            name: "show_chart",
+            input: {},
+          },
           new Promise<void>(() => {}),
         ],
       ],
       sendResults: [undefined, new Error("interrupt rejected")],
     });
     const store = new RecordingSessionStore();
-    const tools = [{ name: "show_chart", description: "Render a chart", parameters: { type: "object" } }];
+    const tools = [
+      {
+        name: "show_chart",
+        description: "Render a chart",
+        parameters: { type: "object" },
+      },
+    ];
 
-    const events = await collect(newAgent(fake, store, { turnTimeoutMs: 30 }), baseInput({ tools }));
+    const events = await collect(
+      newAgent(fake, store, { turnTimeoutMs: 30 }),
+      baseInput({ tools }),
+    );
 
-    expect(events.at(-1)).toMatchObject({ type: EventType.RUN_ERROR, code: "turn_timeout" });
-    expect(await store.get(SESSION_KEY)).toMatchObject({ pendingClientToolUseIds: ["ctu_1"] });
+    expect(events.at(-1)).toMatchObject({
+      type: EventType.RUN_ERROR,
+      code: "turn_timeout",
+    });
+    expect(await store.get(SESSION_KEY)).toMatchObject({
+      pendingClientToolUseIds: ["ctu_1"],
+    });
   });
 
   it("clears a stale parked id when the session goes idle on end_turn", async () => {
@@ -576,7 +1034,12 @@ describe("ManagedAgentsAgent", () => {
     // survive into the next run and be answered against a resumed session.
     const fake = createFakeClient({ streams: [[idleEndTurn]] });
     const store = new RecordingSessionStore();
-    await store.set(SESSION_KEY, { sessionId: "sesn_1", toolNames: [], pendingClientToolUseIds: ["ctu_stale"], lastUserMessageId: "u1" });
+    await store.set(SESSION_KEY, {
+      sessionId: "sesn_1",
+      toolNames: [],
+      pendingClientToolUseIds: ["ctu_stale"],
+      lastUserMessageId: "u1",
+    });
 
     await collect(
       newAgent(fake, store),
@@ -588,32 +1051,50 @@ describe("ManagedAgentsAgent", () => {
       }),
     );
 
-    expect(await store.get(SESSION_KEY)).toMatchObject({ pendingClientToolUseIds: [] });
+    expect(await store.get(SESSION_KEY)).toMatchObject({
+      pendingClientToolUseIds: [],
+    });
   });
 
   it("emits one terminal event when the store rejects the closing write after a run error", async () => {
     // Regression: the turn already emitted RUN_ERROR, then persisting the
     // outcome failed and the outer catch appended a second terminal event.
-    const fake = createFakeClient({ streams: [[{ type: "session.status_terminated", id: "term_1" }]] });
-    const store = new RecordingSessionStore();
-    const failing = Object.assign(Object.create(Object.getPrototypeOf(store)) as RecordingSessionStore, store, {
-      delete: async () => {
-        throw new Error("store is down");
-      },
+    const fake = createFakeClient({
+      streams: [[{ type: "session.status_terminated", id: "term_1" }]],
     });
+    const store = new RecordingSessionStore();
+    const failing = Object.assign(
+      Object.create(Object.getPrototypeOf(store)) as RecordingSessionStore,
+      store,
+      {
+        delete: async () => {
+          throw new Error("store is down");
+        },
+      },
+    );
     const errors: { operation: string }[] = [];
 
     const events = await collect(
-      newAgent(fake, failing, { onError: (_error, context) => void errors.push(context) }),
+      newAgent(fake, failing, {
+        onError: (_error, context) => void errors.push(context),
+      }),
       baseInput(),
     );
 
-    expect(types(events).filter((type) => type === EventType.RUN_ERROR || type === EventType.RUN_FINISHED)).toEqual([
-      EventType.RUN_ERROR,
-    ]);
-    expect(events.at(-1)).toMatchObject({ type: EventType.RUN_ERROR, code: "session_ended" });
+    expect(
+      types(events).filter(
+        (type) =>
+          type === EventType.RUN_ERROR || type === EventType.RUN_FINISHED,
+      ),
+    ).toEqual([EventType.RUN_ERROR]);
+    expect(events.at(-1)).toMatchObject({
+      type: EventType.RUN_ERROR,
+      code: "session_ended",
+    });
     // The dropped error is not lost: it reaches the hook.
-    expect(errors.map((context) => context.operation)).toContain("dropped_terminal_event");
+    expect(errors.map((context) => context.operation)).toContain(
+      "dropped_terminal_event",
+    );
   });
 
   // Guard rather than regression: this path already emitted one terminal event,
@@ -622,8 +1103,17 @@ describe("ManagedAgentsAgent", () => {
     const fake = createFakeClient({
       streams: [
         [
-          { type: "agent.custom_tool_use", id: "ctu_1", name: "show_chart", input: {} },
-          { type: "session.status_idle", id: "idle_1", stop_reason: { type: "requires_action", event_ids: ["ctu_1"] } },
+          {
+            type: "agent.custom_tool_use",
+            id: "ctu_1",
+            name: "show_chart",
+            input: {},
+          },
+          {
+            type: "session.status_idle",
+            id: "idle_1",
+            stop_reason: { type: "requires_action", event_ids: ["ctu_1"] },
+          },
         ],
       ],
     });
@@ -641,12 +1131,23 @@ describe("ManagedAgentsAgent", () => {
 
     const events = await collect(
       newAgent(fake, failing),
-      baseInput({ tools: [{ name: "show_chart", description: "Render a chart", parameters: { type: "object" } }] }),
+      baseInput({
+        tools: [
+          {
+            name: "show_chart",
+            description: "Render a chart",
+            parameters: { type: "object" },
+          },
+        ],
+      }),
     );
 
-    expect(types(events).filter((type) => type === EventType.RUN_ERROR || type === EventType.RUN_FINISHED)).toEqual([
-      EventType.RUN_ERROR,
-    ]);
+    expect(
+      types(events).filter(
+        (type) =>
+          type === EventType.RUN_ERROR || type === EventType.RUN_FINISHED,
+      ),
+    ).toEqual([EventType.RUN_ERROR]);
   });
 
   it("clears pending tool ids even when the follow-up send then fails", async () => {
@@ -661,7 +1162,12 @@ describe("ManagedAgentsAgent", () => {
       sendResults: [undefined, new Error("server exploded")],
     });
     const store = new RecordingSessionStore();
-    await store.set(SESSION_KEY, { sessionId: "sesn_1", toolNames: [], pendingClientToolUseIds: ["ctu_1"], lastUserMessageId: "u1" });
+    await store.set(SESSION_KEY, {
+      sessionId: "sesn_1",
+      toolNames: [],
+      pendingClientToolUseIds: ["ctu_1"],
+      lastUserMessageId: "u1",
+    });
 
     const events = await collect(
       newAgent(fake, store),
@@ -674,17 +1180,32 @@ describe("ManagedAgentsAgent", () => {
       }),
     );
 
-    expect(events.at(-1)).toMatchObject({ type: EventType.RUN_ERROR, message: "The run failed.", code: "run_failed" });
+    expect(events.at(-1)).toMatchObject({
+      type: EventType.RUN_ERROR,
+      message: "The run failed.",
+      code: "run_failed",
+    });
     // The results were persisted as delivered; the follow-up never landed, so
     // the user message stays undelivered and is retried next run.
-    expect(await store.get(SESSION_KEY)).toMatchObject({ pendingClientToolUseIds: [], lastUserMessageId: "u1" });
-    expect(store.writes.at(-1)?.record).toMatchObject({ pendingClientToolUseIds: [], lastUserMessageId: "u1" });
+    expect(await store.get(SESSION_KEY)).toMatchObject({
+      pendingClientToolUseIds: [],
+      lastUserMessageId: "u1",
+    });
+    expect(store.writes.at(-1)?.record).toMatchObject({
+      pendingClientToolUseIds: [],
+      lastUserMessageId: "u1",
+    });
   });
 
   it("records the follow-up delivery separately from the tool results", async () => {
     const fake = createFakeClient({ streams: [[idleEndTurn]] });
     const store = new RecordingSessionStore();
-    await store.set(SESSION_KEY, { sessionId: "sesn_1", toolNames: [], pendingClientToolUseIds: ["ctu_1"], lastUserMessageId: "u1" });
+    await store.set(SESSION_KEY, {
+      sessionId: "sesn_1",
+      toolNames: [],
+      pendingClientToolUseIds: ["ctu_1"],
+      lastUserMessageId: "u1",
+    });
     store.writes.length = 0;
 
     await collect(
@@ -725,25 +1246,41 @@ describe("ManagedAgentsAgent", () => {
       }),
     );
 
-    expect(fake.sent[0].events.map((event) => (event as { custom_tool_use_id: string }).custom_tool_use_id)).toEqual([
-      "ctu_1",
-      "ctu_2",
-      "ctu_3",
-    ]);
+    expect(
+      fake.sent[0].events.map(
+        (event) => (event as { custom_tool_use_id: string }).custom_tool_use_id,
+      ),
+    ).toEqual(["ctu_1", "ctu_2", "ctu_3"]);
     expect(fake.sent[0].events).toEqual(
       ["ctu_1", "ctu_2", "ctu_3"].map((id) => ({
         type: "user.custom_tool_result",
         custom_tool_use_id: id,
-        content: [{ type: "text", text: "The user did not provide a result for this tool call." }],
+        content: [
+          {
+            type: "text",
+            text: "The user did not provide a result for this tool call.",
+          },
+        ],
         is_error: true,
       })),
     );
-    expect(fake.sent[1].events).toEqual([{ type: "user.message", content: [{ type: "text", text: "never mind" }] }]);
+    expect(fake.sent[1].events).toEqual([
+      { type: "user.message", content: [{ type: "text", text: "never mind" }] },
+    ]);
   });
 
   it("keys the session store by managed agent and thread id", async () => {
     const fake = createFakeClient({
-      streams: [[{ type: "agent.message", id: "msg_1", content: [{ type: "text", text: "a" }] }, idleEndTurn]],
+      streams: [
+        [
+          {
+            type: "agent.message",
+            id: "msg_1",
+            content: [{ type: "text", text: "a" }],
+          },
+          idleEndTurn,
+        ],
+      ],
     });
     const store = new RecordingSessionStore();
 
@@ -761,16 +1298,33 @@ describe("ManagedAgentsAgent", () => {
     // only by managed agent let a staging and a production agent on one store
     // share a session: every prod turn would then execute in staging, against
     // staging vaults, with nothing surfaced to say so.
-    const staging = createFakeClient({ streams: [[idleEndTurn]], sessionId: "sesn_staging" });
-    const prod = createFakeClient({ streams: [[idleEndTurn]], sessionId: "sesn_prod" });
+    const staging = createFakeClient({
+      streams: [[idleEndTurn]],
+      sessionId: "sesn_staging",
+    });
+    const prod = createFakeClient({
+      streams: [[idleEndTurn]],
+      sessionId: "sesn_prod",
+    });
     const store = new RecordingSessionStore();
 
-    await collect(newAgent(staging, store, { environmentId: "env_staging" }), baseInput());
-    await collect(newAgent(prod, store, { environmentId: "env_prod" }), baseInput({ runId: "run_2" }));
+    await collect(
+      newAgent(staging, store, { environmentId: "env_staging" }),
+      baseInput(),
+    );
+    await collect(
+      newAgent(prod, store, { environmentId: "env_prod" }),
+      baseInput({ runId: "run_2" }),
+    );
 
     expect(staging.spies.create).toHaveBeenCalledTimes(1);
     expect(prod.spies.create).toHaveBeenCalledTimes(1);
-    expect(store.keys().sort()).toEqual(["7:agent_1|0:|8:env_prod|0:|thread_1", "7:agent_1|0:|11:env_staging|0:|thread_1"].sort());
+    expect(store.keys().sort()).toEqual(
+      [
+        "7:agent_1|0:|8:env_prod|0:|thread_1",
+        "7:agent_1|0:|11:env_staging|0:|thread_1",
+      ].sort(),
+    );
   });
 
   it("does not let two agents sharing a store adopt each other's session", async () => {
@@ -778,19 +1332,38 @@ describe("ManagedAgentsAgent", () => {
     // keyed by the bare thread id, so a second agent on the same thread id read
     // the first agent's session — a session created against a different managed
     // agent — without ever serializing against its runs.
-    const first = createFakeClient({ streams: [[idleEndTurn]], sessionId: "sesn_first" });
-    const second = createFakeClient({ streams: [[idleEndTurn]], sessionId: "sesn_second" });
+    const first = createFakeClient({
+      streams: [[idleEndTurn]],
+      sessionId: "sesn_first",
+    });
+    const second = createFakeClient({
+      streams: [[idleEndTurn]],
+      sessionId: "sesn_second",
+    });
     const store = new RecordingSessionStore();
 
-    await collect(newAgent(first, store, { managedAgentId: "agent_a" }), baseInput());
-    await collect(newAgent(second, store, { managedAgentId: "agent_b" }), baseInput({ runId: "run_2" }));
+    await collect(
+      newAgent(first, store, { managedAgentId: "agent_a" }),
+      baseInput(),
+    );
+    await collect(
+      newAgent(second, store, { managedAgentId: "agent_b" }),
+      baseInput({ runId: "run_2" }),
+    );
 
     // Each agent created and kept its own session.
     expect(first.spies.create).toHaveBeenCalledTimes(1);
     expect(second.spies.create).toHaveBeenCalledTimes(1);
-    expect(store.keys().sort()).toEqual(["7:agent_a|0:|5:env_1|0:|thread_1", "7:agent_b|0:|5:env_1|0:|thread_1"]);
-    expect(await store.get("7:agent_a|0:|5:env_1|0:|thread_1")).toMatchObject({ sessionId: "sesn_first" });
-    expect(await store.get("7:agent_b|0:|5:env_1|0:|thread_1")).toMatchObject({ sessionId: "sesn_second" });
+    expect(store.keys().sort()).toEqual([
+      "7:agent_a|0:|5:env_1|0:|thread_1",
+      "7:agent_b|0:|5:env_1|0:|thread_1",
+    ]);
+    expect(await store.get("7:agent_a|0:|5:env_1|0:|thread_1")).toMatchObject({
+      sessionId: "sesn_first",
+    });
+    expect(await store.get("7:agent_b|0:|5:env_1|0:|thread_1")).toMatchObject({
+      sessionId: "sesn_second",
+    });
   });
 
   it("serializes runs on the same key that the store uses", async () => {
@@ -801,8 +1374,11 @@ describe("ManagedAgentsAgent", () => {
 
     const first = collect(agent, baseInput());
     await settle();
-    const busy = (ManagedAgentsAgent as unknown as { busyThreadsByStore: WeakMap<object, Set<string>> })
-      .busyThreadsByStore.get(store);
+    const busy = (
+      ManagedAgentsAgent as unknown as {
+        busyThreadsByStore: WeakMap<object, Set<string>>;
+      }
+    ).busyThreadsByStore.get(store);
     expect([...(busy ?? [])]).toEqual([SESSION_KEY]);
     expect(store.keys()).toEqual([SESSION_KEY]);
 
@@ -814,10 +1390,22 @@ describe("ManagedAgentsAgent", () => {
     const fake = createFakeClient({ streams: [[idleEndTurn]] });
     const events = await collect(
       newAgent(fake),
-      baseInput({ messages: [{ id: "t1", role: "tool", toolCallId: "ctu_ghost", content: "late result" }] }),
+      baseInput({
+        messages: [
+          {
+            id: "t1",
+            role: "tool",
+            toolCallId: "ctu_ghost",
+            content: "late result",
+          },
+        ],
+      }),
     );
     expect(fake.spies.create).not.toHaveBeenCalled();
-    expect(events.at(-1)).toMatchObject({ type: EventType.RUN_ERROR, code: "tool_result_without_session" });
+    expect(events.at(-1)).toMatchObject({
+      type: EventType.RUN_ERROR,
+      code: "tool_result_without_session",
+    });
   });
 
   it("rejects a blank thread id instead of sharing one session across callers", async () => {
@@ -825,8 +1413,14 @@ describe("ManagedAgentsAgent", () => {
     const store = new RecordingSessionStore();
 
     for (const threadId of ["", "   "]) {
-      const events = await collect(newAgent(fake, store), baseInput({ threadId }));
-      expect(events.at(-1)).toMatchObject({ type: EventType.RUN_ERROR, code: "invalid_thread_id" });
+      const events = await collect(
+        newAgent(fake, store),
+        baseInput({ threadId }),
+      );
+      expect(events.at(-1)).toMatchObject({
+        type: EventType.RUN_ERROR,
+        code: "invalid_thread_id",
+      });
     }
 
     expect(fake.spies.create).not.toHaveBeenCalled();
@@ -835,8 +1429,14 @@ describe("ManagedAgentsAgent", () => {
 
   it("errors with empty_run before creating a session when nothing is sendable", async () => {
     const fake = createFakeClient({ streams: [[idleEndTurn]] });
-    const events = await collect(newAgent(fake), baseInput({ messages: [{ id: "a1", role: "assistant", content: "hi" }] }));
-    expect(events.at(-1)).toMatchObject({ type: EventType.RUN_ERROR, code: "empty_run" });
+    const events = await collect(
+      newAgent(fake),
+      baseInput({ messages: [{ id: "a1", role: "assistant", content: "hi" }] }),
+    );
+    expect(events.at(-1)).toMatchObject({
+      type: EventType.RUN_ERROR,
+      code: "empty_run",
+    });
     expect(fake.spies.create).not.toHaveBeenCalled();
   });
 
@@ -847,17 +1447,28 @@ describe("ManagedAgentsAgent", () => {
     delete input.tools;
 
     const events = await collect(newAgent(fake), input as never);
-    expect(events.at(-1)).toMatchObject({ type: EventType.RUN_ERROR, code: "empty_run" });
+    expect(events.at(-1)).toMatchObject({
+      type: EventType.RUN_ERROR,
+      code: "empty_run",
+    });
     expect(fake.spies.create).not.toHaveBeenCalled();
   });
 
   it("errors with nothing_to_send when a run has nothing new", async () => {
     const fake = createFakeClient({ streams: [[idleEndTurn]] });
     const store = new InMemorySessionStore();
-    await store.set(SESSION_KEY, { sessionId: "sesn_1", toolNames: [], pendingClientToolUseIds: [], lastUserMessageId: "u1" });
+    await store.set(SESSION_KEY, {
+      sessionId: "sesn_1",
+      toolNames: [],
+      pendingClientToolUseIds: [],
+      lastUserMessageId: "u1",
+    });
 
     const events = await collect(newAgent(fake, store), baseInput());
-    expect(events.at(-1)).toMatchObject({ type: EventType.RUN_ERROR, code: "nothing_to_send" });
+    expect(events.at(-1)).toMatchObject({
+      type: EventType.RUN_ERROR,
+      code: "nothing_to_send",
+    });
     expect(fake.sent).toEqual([]);
   });
 
@@ -875,7 +1486,13 @@ describe("ManagedAgentsAgent", () => {
           { id: "u1", role: "user", content: "Hello" },
           { id: "u2", role: "user", content: "Show me a chart" },
         ],
-        tools: [{ name: "show_chart", description: "Render a chart", parameters: { type: "object" } }],
+        tools: [
+          {
+            name: "show_chart",
+            description: "Render a chart",
+            parameters: { type: "object" },
+          },
+        ],
       }),
     );
 
@@ -885,7 +1502,12 @@ describe("ManagedAgentsAgent", () => {
         agent: {
           tools: [
             { type: "agent_toolset_20260401", configs: [], default_config: {} },
-            { type: "custom", name: "show_chart", description: "Render a chart", input_schema: { type: "object" } },
+            {
+              type: "custom",
+              name: "show_chart",
+              description: "Render a chart",
+              input_schema: { type: "object" },
+            },
           ],
         },
       },
@@ -893,11 +1515,19 @@ describe("ManagedAgentsAgent", () => {
   });
 
   it("deletes the thread record when the session ends and starts fresh next run", async () => {
-    const fake = createFakeClient({ streams: [[{ type: "session.status_terminated", id: "term_1" }], [idleEndTurn]] });
+    const fake = createFakeClient({
+      streams: [
+        [{ type: "session.status_terminated", id: "term_1" }],
+        [idleEndTurn],
+      ],
+    });
     const store = new InMemorySessionStore();
 
     const events = await collect(newAgent(fake, store), baseInput());
-    expect(events.at(-1)).toMatchObject({ type: EventType.RUN_ERROR, code: "session_ended" });
+    expect(events.at(-1)).toMatchObject({
+      type: EventType.RUN_ERROR,
+      code: "session_ended",
+    });
     expect(await store.get(SESSION_KEY)).toBeUndefined();
 
     // The next run creates a fresh session.
@@ -906,11 +1536,16 @@ describe("ManagedAgentsAgent", () => {
   });
 
   it("deletes the thread record when the session is deleted", async () => {
-    const fake = createFakeClient({ streams: [[{ type: "session.deleted", id: "del_1" }]] });
+    const fake = createFakeClient({
+      streams: [[{ type: "session.deleted", id: "del_1" }]],
+    });
     const store = new InMemorySessionStore();
 
     const events = await collect(newAgent(fake, store), baseInput());
-    expect(events.at(-1)).toMatchObject({ type: EventType.RUN_ERROR, code: "session_ended" });
+    expect(events.at(-1)).toMatchObject({
+      type: EventType.RUN_ERROR,
+      code: "session_ended",
+    });
     expect(await store.get(SESSION_KEY)).toBeUndefined();
   });
 
@@ -922,7 +1557,10 @@ describe("ManagedAgentsAgent", () => {
     const first = collect(newAgent(fake, store), baseInput());
     await settle(); // let the first run enter the busy section and open its stream
 
-    const second = await collect(newAgent(fake, store), baseInput({ runId: "run_2" }));
+    const second = await collect(
+      newAgent(fake, store),
+      baseInput({ runId: "run_2" }),
+    );
     expect(second.at(-1)).toMatchObject({
       type: EventType.RUN_ERROR,
       message: "A run is already in progress on this thread.",
@@ -938,15 +1576,32 @@ describe("ManagedAgentsAgent", () => {
     // tenants, so one caller's slow run cannot block another's thread of the
     // same (client-supplied) id.
     const hold = gate();
-    const slowFake = createFakeClient({ streams: [[hold.promise, idleEndTurn]] });
+    const slowFake = createFakeClient({
+      streams: [[hold.promise, idleEndTurn]],
+    });
     const otherFake = createFakeClient({
-      streams: [[{ type: "agent.message", id: "msg_1", content: [{ type: "text", text: "b" }] }, idleEndTurn]],
+      streams: [
+        [
+          {
+            type: "agent.message",
+            id: "msg_1",
+            content: [{ type: "text", text: "b" }],
+          },
+          idleEndTurn,
+        ],
+      ],
     });
 
-    const first = collect(newAgent(slowFake, new InMemorySessionStore()), baseInput());
+    const first = collect(
+      newAgent(slowFake, new InMemorySessionStore()),
+      baseInput(),
+    );
     await settle();
 
-    const second = await collect(newAgent(otherFake, new InMemorySessionStore()), baseInput({ runId: "run_2" }));
+    const second = await collect(
+      newAgent(otherFake, new InMemorySessionStore()),
+      baseInput({ runId: "run_2" }),
+    );
     expect(second.at(-1)?.type).toBe(EventType.RUN_FINISHED);
 
     hold.release();
@@ -957,7 +1612,9 @@ describe("ManagedAgentsAgent", () => {
     const fake = createFakeClient({ streams: [[new Promise<void>(() => {})]] });
     const received: BaseEvent[] = [];
 
-    const subscription = newAgent(fake).run(baseInput()).subscribe({ next: (event) => received.push(event) });
+    const subscription = newAgent(fake)
+      .run(baseInput())
+      .subscribe({ next: (event) => received.push(event) });
     await settle(); // stream open, user message posted
     expect(fake.sent).toHaveLength(1);
 
@@ -967,7 +1624,11 @@ describe("ManagedAgentsAgent", () => {
     expect(allSentEvents(fake)).toContainEqual({ type: "user.interrupt" });
     // No RUN_ERROR reaches a client that already left, and nothing after the abort.
     expect(types(received)).not.toContain(EventType.RUN_ERROR);
-    expect(types(received)).toEqual([EventType.RUN_STARTED, EventType.STATE_SNAPSHOT, EventType.CUSTOM]);
+    expect(types(received)).toEqual([
+      EventType.RUN_STARTED,
+      EventType.STATE_SNAPSHOT,
+      EventType.CUSTOM,
+    ]);
   });
 
   it("posts the interrupt before releasing the busy gate on disconnect", async () => {
@@ -979,10 +1640,20 @@ describe("ManagedAgentsAgent", () => {
     const agent = newAgent(fake, store);
     const busyWhenInterrupted: boolean[] = [];
     const originalSend = fake.client.beta.sessions.events.send;
-    fake.client.beta.sessions.events.send = (async (sessionId: string, params: { events: unknown[] }) => {
-      if (params.events.some((event) => (event as { type?: string }).type === "user.interrupt")) {
-        const busy = (ManagedAgentsAgent as unknown as { busyThreadsByStore: WeakMap<object, Set<string>> })
-          .busyThreadsByStore.get(store);
+    fake.client.beta.sessions.events.send = (async (
+      sessionId: string,
+      params: { events: unknown[] },
+    ) => {
+      if (
+        params.events.some(
+          (event) => (event as { type?: string }).type === "user.interrupt",
+        )
+      ) {
+        const busy = (
+          ManagedAgentsAgent as unknown as {
+            busyThreadsByStore: WeakMap<object, Set<string>>;
+          }
+        ).busyThreadsByStore.get(store);
         busyWhenInterrupted.push(busy?.has(SESSION_KEY) ?? false);
       }
       return originalSend(sessionId, params);
@@ -994,14 +1665,20 @@ describe("ManagedAgentsAgent", () => {
     await settle();
 
     expect(busyWhenInterrupted).toEqual([true]);
-    const busyAfter = (ManagedAgentsAgent as unknown as { busyThreadsByStore: WeakMap<object, Set<string>> })
-      .busyThreadsByStore.get(store);
+    const busyAfter = (
+      ManagedAgentsAgent as unknown as {
+        busyThreadsByStore: WeakMap<object, Set<string>>;
+      }
+    ).busyThreadsByStore.get(store);
     expect(busyAfter?.has(SESSION_KEY) ?? false).toBe(false);
   });
 
   it("interrupts the session and errors when the turn times out", async () => {
     const fake = createFakeClient({ streams: [[new Promise<void>(() => {})]] });
-    const events = await collect(newAgent(fake, undefined, { turnTimeoutMs: 30 }), baseInput());
+    const events = await collect(
+      newAgent(fake, undefined, { turnTimeoutMs: 30 }),
+      baseInput(),
+    );
 
     expect(events.at(-1)).toMatchObject({
       type: EventType.RUN_ERROR,
@@ -1014,12 +1691,27 @@ describe("ManagedAgentsAgent", () => {
   it("interrupts a backend tool that runs past the timeout instead of hanging", async () => {
     const handler = () => new Promise<string>(() => {}); // never resolves
     const fake = createFakeClient({
-      streams: [[{ type: "agent.custom_tool_use", id: "ctu_1", name: "slow_tool", input: {} }, new Promise<void>(() => {})]],
+      streams: [
+        [
+          {
+            type: "agent.custom_tool_use",
+            id: "ctu_1",
+            name: "slow_tool",
+            input: {},
+          },
+          new Promise<void>(() => {}),
+        ],
+      ],
     });
     const store = new InMemorySessionStore();
-    const backendTools: BackendCustomTool[] = [{ name: "slow_tool", description: "", parameters: {}, handler }];
+    const backendTools: BackendCustomTool[] = [
+      { name: "slow_tool", description: "", parameters: {}, handler },
+    ];
 
-    const events = await collect(newAgent(fake, store, { backendTools, turnTimeoutMs: 30 }), baseInput());
+    const events = await collect(
+      newAgent(fake, store, { backendTools, turnTimeoutMs: 30 }),
+      baseInput(),
+    );
 
     // The run ends with a timeout error rather than hanging forever...
     expect(events.at(-1)).toMatchObject({
@@ -1052,9 +1744,21 @@ describe("ManagedAgentsAgent", () => {
   it("interrupts a running backend tool when the client disconnects", async () => {
     const handler = () => new Promise<string>(() => {});
     const fake = createFakeClient({
-      streams: [[{ type: "agent.custom_tool_use", id: "ctu_1", name: "slow_tool", input: {} }, new Promise<void>(() => {})]],
+      streams: [
+        [
+          {
+            type: "agent.custom_tool_use",
+            id: "ctu_1",
+            name: "slow_tool",
+            input: {},
+          },
+          new Promise<void>(() => {}),
+        ],
+      ],
     });
-    const backendTools: BackendCustomTool[] = [{ name: "slow_tool", description: "", parameters: {}, handler }];
+    const backendTools: BackendCustomTool[] = [
+      { name: "slow_tool", description: "", parameters: {}, handler },
+    ];
     const received: BaseEvent[] = [];
 
     const subscription = newAgent(fake, undefined, { backendTools })
@@ -1076,12 +1780,17 @@ describe("ManagedAgentsAgent", () => {
 
   it("requests no previews when streamDeltas is false", async () => {
     const fake = createFakeClient({ streams: [[idleEndTurn]] });
-    await collect(newAgent(fake, undefined, { streamDeltas: false }), baseInput());
+    await collect(
+      newAgent(fake, undefined, { streamDeltas: false }),
+      baseInput(),
+    );
     expect(fake.spies.stream.mock.calls[0]![1]).toEqual({});
 
     const withDeltas = createFakeClient({ streams: [[idleEndTurn]] });
     await collect(newAgent(withDeltas), baseInput());
-    expect(withDeltas.spies.stream.mock.calls[0]![1]).toEqual({ event_deltas: ["agent.message", "agent.thinking"] });
+    expect(withDeltas.spies.stream.mock.calls[0]![1]).toEqual({
+      event_deltas: ["agent.message", "agent.thinking"],
+    });
   });
 
   it("makes turnTimeoutMs a real bound on every call it holds the gate for", async () => {
@@ -1089,22 +1798,51 @@ describe("ManagedAgentsAgent", () => {
     // outbound sends were issued without the run's signal, so a stalled API call
     // held the thread's run gate open forever and turnTimeoutMs meant nothing.
     const store = new InMemorySessionStore();
-    const created = createFakeClient({ streams: [[idleEndTurn]], createGate: new Promise<void>(() => {}) });
-    const createEvents = await collect(newAgent(created, store, { turnTimeoutMs: 30 }), baseInput());
-    expect(createEvents.at(-1)).toMatchObject({ type: EventType.RUN_ERROR, code: "turn_timeout" });
+    const created = createFakeClient({
+      streams: [[idleEndTurn]],
+      createGate: new Promise<void>(() => {}),
+    });
+    const createEvents = await collect(
+      newAgent(created, store, { turnTimeoutMs: 30 }),
+      baseInput(),
+    );
+    expect(createEvents.at(-1)).toMatchObject({
+      type: EventType.RUN_ERROR,
+      code: "turn_timeout",
+    });
 
-    const retrieved = createFakeClient({ streams: [[idleEndTurn]], retrieveGate: new Promise<void>(() => {}) });
+    const retrieved = createFakeClient({
+      streams: [[idleEndTurn]],
+      retrieveGate: new Promise<void>(() => {}),
+    });
     const retrieveEvents = await collect(
       newAgent(retrieved, new InMemorySessionStore(), { turnTimeoutMs: 30 }),
-      baseInput({ tools: [{ name: "show_chart", description: "Render a chart", parameters: { type: "object" } }] }),
+      baseInput({
+        tools: [
+          {
+            name: "show_chart",
+            description: "Render a chart",
+            parameters: { type: "object" },
+          },
+        ],
+      }),
     );
-    expect(retrieveEvents.at(-1)).toMatchObject({ type: EventType.RUN_ERROR, code: "turn_timeout" });
+    expect(retrieveEvents.at(-1)).toMatchObject({
+      type: EventType.RUN_ERROR,
+      code: "turn_timeout",
+    });
   });
 
   it("passes the run signal to every session and agent call", async () => {
     const fake = createFakeClient({ streams: [[idleEndTurn], [idleEndTurn]] });
     const store = new InMemorySessionStore();
-    const tools = [{ name: "show_chart", description: "Render a chart", parameters: { type: "object" } }];
+    const tools = [
+      {
+        name: "show_chart",
+        description: "Render a chart",
+        parameters: { type: "object" },
+      },
+    ];
 
     await collect(newAgent(fake, store), baseInput());
     // A second run whose tool list changed, so sessions.update runs too.
@@ -1125,22 +1863,37 @@ describe("ManagedAgentsAgent", () => {
       "agents.retrieve",
       "sessions.update",
     ]);
-    for (const call of fake.callSignals) expect(call.signal, call.call).toBeInstanceOf(AbortSignal);
+    for (const call of fake.callSignals)
+      expect(call.signal, call.call).toBeInstanceOf(AbortSignal);
     // Every outbound send is bound too: either to the run or to its own timeout.
-    for (const send of fake.sendOptions) expect(send.signal).toBeInstanceOf(AbortSignal);
+    for (const send of fake.sendOptions)
+      expect(send.signal).toBeInstanceOf(AbortSignal);
   });
 
   it("bounds the turn's best-effort interrupt", async () => {
     // The interrupt runs while the gate is still held, so it must not reuse the
     // run's (already aborted) signal, and must not be unbounded either.
     const fake = createFakeClient({
-      streams: [[{ type: "session.status_idle", id: "idle_1", stop_reason: { type: "requires_action", event_ids: ["mystery_1"] } }]],
+      streams: [
+        [
+          {
+            type: "session.status_idle",
+            id: "idle_1",
+            stop_reason: { type: "requires_action", event_ids: ["mystery_1"] },
+          },
+        ],
+      ],
     });
     const events = await collect(newAgent(fake), baseInput());
 
-    expect(events.at(-1)).toMatchObject({ type: EventType.RUN_ERROR, code: "unsupported_action" });
+    expect(events.at(-1)).toMatchObject({
+      type: EventType.RUN_ERROR,
+      code: "unsupported_action",
+    });
     const interrupt = fake.sendOptions.find((send) =>
-      send.events.some((event) => (event as { type?: string }).type === "user.interrupt"),
+      send.events.some(
+        (event) => (event as { type?: string }).type === "user.interrupt",
+      ),
     );
     expect(interrupt?.signal).toBeInstanceOf(AbortSignal);
     expect(interrupt?.signal?.aborted).toBe(false);
@@ -1150,29 +1903,48 @@ describe("ManagedAgentsAgent", () => {
     // The exception can carry session ids, request paths or credentials, and the
     // client is not necessarily a trusted operator surface: the cause belongs to
     // the hook, the client gets the code.
-    const sensitive = "401 from https://internal.example/v1/sessions (key sk-ant-SECRET, session sesn_private)";
+    const sensitive =
+      "401 from https://internal.example/v1/sessions (key sk-ant-SECRET, session sesn_private)";
     const fake = createFakeClient({ createError: new Error(sensitive) });
-    const reported: { error: unknown; context: { operation: string; threadId?: string } }[] = [];
+    const reported: {
+      error: unknown;
+      context: { operation: string; threadId?: string };
+    }[] = [];
 
     const events = await collect(
-      newAgent(fake, undefined, { onError: (error, context) => void reported.push({ error, context }) }),
+      newAgent(fake, undefined, {
+        onError: (error, context) => void reported.push({ error, context }),
+      }),
       baseInput(),
     );
 
-    expect(events.at(-1)).toMatchObject({ type: EventType.RUN_ERROR, message: "The run failed.", code: "run_failed" });
-    for (const event of events) expect(JSON.stringify(event)).not.toContain("sk-ant-SECRET");
+    expect(events.at(-1)).toMatchObject({
+      type: EventType.RUN_ERROR,
+      message: "The run failed.",
+      code: "run_failed",
+    });
+    for (const event of events)
+      expect(JSON.stringify(event)).not.toContain("sk-ant-SECRET");
 
-    const reportedRun = reported.find((entry) => entry.context.operation === "run_failed");
+    const reportedRun = reported.find(
+      (entry) => entry.context.operation === "run_failed",
+    );
     expect((reportedRun?.error as Error).message).toBe(sensitive);
     expect(reportedRun?.context.threadId).toBe("thread_1");
   });
 
   it("does not relay a failed delivery's exception text to the client", async () => {
-    const sensitive = "500 from https://internal.example/v1/sessions/sesn_private/events (token sk-ant-SECRET)";
+    const sensitive =
+      "500 from https://internal.example/v1/sessions/sesn_private/events (token sk-ant-SECRET)";
     const fake = createFakeClient({
       streams: [
         [
-          { type: "agent.custom_tool_use", id: "ctu_1", name: "get_time", input: {} },
+          {
+            type: "agent.custom_tool_use",
+            id: "ctu_1",
+            name: "get_time",
+            input: {},
+          },
           idleEndTurn,
         ],
       ],
@@ -1181,22 +1953,34 @@ describe("ManagedAgentsAgent", () => {
     });
     const reported: unknown[] = [];
     const backendTools: BackendCustomTool[] = [
-      { name: "get_time", description: "", parameters: {}, handler: () => "noon" },
+      {
+        name: "get_time",
+        description: "",
+        parameters: {},
+        handler: () => "noon",
+      },
     ];
 
     const events = await collect(
-      newAgent(fake, undefined, { backendTools, onError: (error) => void reported.push(error) }),
+      newAgent(fake, undefined, {
+        backendTools,
+        onError: (error) => void reported.push(error),
+      }),
       baseInput(),
     );
 
     expect(events.at(-1)).toMatchObject({
       type: EventType.RUN_ERROR,
-      message: "The result of tool call ctu_1 could not be delivered to the session.",
+      message:
+        "The result of tool call ctu_1 could not be delivered to the session.",
       code: "tool_result_delivery_failed",
     });
     // Not in the RUN_ERROR, and no TOOL_CALL_RESULT was emitted at all.
-    for (const event of events) expect(JSON.stringify(event)).not.toContain("sk-ant-SECRET");
+    for (const event of events)
+      expect(JSON.stringify(event)).not.toContain("sk-ant-SECRET");
     expect(types(events)).not.toContain(EventType.TOOL_CALL_RESULT);
-    expect(reported.map((error) => (error as Error).message)).toContain(sensitive);
+    expect(reported.map((error) => (error as Error).message)).toContain(
+      sensitive,
+    );
   });
 });

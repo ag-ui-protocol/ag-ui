@@ -445,6 +445,184 @@ export type ToolCallChunkEvent = {
 };
 
 /**
+ * A text part.
+ */
+export type TextPart = {
+  /**
+   * Discriminator.
+   */
+  type: "text";
+  /**
+   * Identifies this part within its message. Optional, and nothing reads it
+   * yet: reserved so that a streamed part can be matched to its entry in
+   * history once assistant messages carry parts too.
+   */
+  id?: string;
+  /**
+   * The text.
+   */
+  text: string;
+  /**
+   * Extra information about this part. Unconstrained, as on the media parts.
+   * This is where a text search hit carries its source and title, rather than
+   * the protocol modelling a search-result part of its own.
+   */
+  metadata?: any;
+};
+
+/**
+ * Bytes carried inline.
+ */
+export type DataSource = {
+  /**
+   * Discriminator.
+   */
+  type: "data";
+  /**
+   * The bytes, base64-encoded. contentEncoding is an annotation rather than a
+   * constraint in 2020-12, so a malformed string still validates here;
+   * rejecting one is the decoder's job.
+   * @contentEncoding base64
+   */
+  value: string;
+  /**
+   * What the bytes are. Required here, unlike on a URL source, because nothing
+   * else can tell a consumer how to read them.
+   */
+  mimeType: string;
+};
+
+/**
+ * Bytes referenced by URL, fetched by whoever needs them.
+ */
+export type UrlSource = {
+  /**
+   * Discriminator.
+   */
+  type: "url";
+  /**
+   * The URL. Deliberately not constrained to a URI format, so a scheme a
+   * producer already uses is not rejected here.
+   */
+  value: string;
+  /**
+   * What the resource is, when the producer knows. Optional, because the
+   * response can say.
+   */
+  mimeType?: string;
+};
+
+/**
+ * Where a media part's bytes come from: carried inline, or referenced by URL.
+ */
+export type PartSource = DataSource | UrlSource;
+
+/**
+ * An image part.
+ */
+export type ImagePart = {
+  /**
+   * Discriminator.
+   */
+  type: "image";
+  /**
+   * Identifies this part within its message. Optional, and nothing reads it
+   * yet: reserved as on the text part.
+   */
+  id?: string;
+  /**
+   * Where the image comes from.
+   */
+  source: PartSource;
+  /**
+   * Extra information about this part. Unconstrained rather than an object:
+   * inherited from the SDKs, which declare it unknown rather than a record;
+   * listed under known divergences in the README rather than resolved here.
+   */
+  metadata?: any;
+};
+
+/**
+ * An audio part.
+ */
+export type AudioPart = {
+  /**
+   * Discriminator.
+   */
+  type: "audio";
+  /**
+   * Identifies this part within its message. Optional, and nothing reads it
+   * yet: reserved as on the text part.
+   */
+  id?: string;
+  /**
+   * Where the audio comes from.
+   */
+  source: PartSource;
+  /**
+   * Extra information about this part. Unconstrained, as on the other media
+   * parts.
+   */
+  metadata?: any;
+};
+
+/**
+ * A video part.
+ */
+export type VideoPart = {
+  /**
+   * Discriminator.
+   */
+  type: "video";
+  /**
+   * Identifies this part within its message. Optional, and nothing reads it
+   * yet: reserved as on the text part.
+   */
+  id?: string;
+  /**
+   * Where the video comes from.
+   */
+  source: PartSource;
+  /**
+   * Extra information about this part. Unconstrained, as on the other media
+   * parts.
+   */
+  metadata?: any;
+};
+
+/**
+ * A document part.
+ */
+export type DocumentPart = {
+  /**
+   * Discriminator.
+   */
+  type: "document";
+  /**
+   * Identifies this part within its message. Optional, and nothing reads it
+   * yet: reserved as on the text part.
+   */
+  id?: string;
+  /**
+   * Where the document comes from.
+   */
+  source: PartSource;
+  /**
+   * Extra information about this part. Unconstrained, as on the other media
+   * parts.
+   */
+  metadata?: any;
+};
+
+/**
+ * One part of a message body: what a person sends in a user message, or what a
+ * tool returns in a tool message. Discriminated by type. Named by what the
+ * part is rather than by direction, because the same part travels into the
+ * model inside a user message and back out of the stream inside a tool result.
+ */
+export type ContentPart = TextPart | ImagePart | AudioPart | VideoPart | DocumentPart;
+
+/**
  * Carries what a tool returned. Mints a tool message rather than appending to
  * an existing one, which is why it has its own messageId.
  */
@@ -487,10 +665,12 @@ export type ToolCallResultEvent = {
    */
   toolCallId: string;
   /**
-   * What the tool returned, as a string. A tool returning structured data
-   * serialises it.
+   * What the tool returned: either plain text, or an ordered list of parts,
+   * exactly as on the tool message this event mints. A tool returning
+   * structured data serialises it into text; media travel as parts of their
+   * own.
    */
-  content: string;
+  content: string | ContentPart[];
   /**
    * Present only for symmetry with the message it mints; the value is fixed,
    * so a producer may leave it out.
@@ -893,154 +1073,6 @@ export type AssistantMessage = {
 };
 
 /**
- * A text part.
- */
-export type TextInputContent = {
-  /**
-   * Discriminator.
-   */
-  type: "text";
-  /**
-   * The text.
-   */
-  text: string;
-};
-
-/**
- * Bytes carried inline.
- */
-export type InputContentDataSource = {
-  /**
-   * Discriminator.
-   */
-  type: "data";
-  /**
-   * The bytes, base64-encoded. contentEncoding is an annotation rather than a
-   * constraint in 2020-12, so a malformed string still validates here;
-   * rejecting one is the decoder's job.
-   * @contentEncoding base64
-   */
-  value: string;
-  /**
-   * What the bytes are. Required here, unlike on a URL source, because nothing
-   * else can tell a consumer how to read them.
-   */
-  mimeType: string;
-};
-
-/**
- * Bytes referenced by URL, fetched by whoever needs them.
- */
-export type InputContentUrlSource = {
-  /**
-   * Discriminator.
-   */
-  type: "url";
-  /**
-   * The URL. Deliberately not constrained to a URI format, so a scheme a
-   * producer already uses is not rejected here.
-   */
-  value: string;
-  /**
-   * What the resource is, when the producer knows. Optional, because the
-   * response can say.
-   */
-  mimeType?: string;
-};
-
-/**
- * Where a media part's bytes come from: carried inline, or referenced by URL.
- */
-export type InputContentSource = InputContentDataSource | InputContentUrlSource;
-
-/**
- * An image part.
- */
-export type ImageInputContent = {
-  /**
-   * Discriminator.
-   */
-  type: "image";
-  /**
-   * Where the image comes from.
-   */
-  source: InputContentSource;
-  /**
-   * Extra information about this part. Unconstrained rather than an object:
-   * inherited from the SDKs, which declare it unknown rather than a record;
-   * listed under known divergences in the README rather than resolved here.
-   */
-  metadata?: any;
-};
-
-/**
- * An audio part.
- */
-export type AudioInputContent = {
-  /**
-   * Discriminator.
-   */
-  type: "audio";
-  /**
-   * Where the audio comes from.
-   */
-  source: InputContentSource;
-  /**
-   * Extra information about this part. Unconstrained, as on the other media
-   * parts.
-   */
-  metadata?: any;
-};
-
-/**
- * A video part.
- */
-export type VideoInputContent = {
-  /**
-   * Discriminator.
-   */
-  type: "video";
-  /**
-   * Where the video comes from.
-   */
-  source: InputContentSource;
-  /**
-   * Extra information about this part. Unconstrained, as on the other media
-   * parts.
-   */
-  metadata?: any;
-};
-
-/**
- * A document part.
- */
-export type DocumentInputContent = {
-  /**
-   * Discriminator.
-   */
-  type: "document";
-  /**
-   * Where the document comes from.
-   */
-  source: InputContentSource;
-  /**
-   * Extra information about this part. Unconstrained, as on the other media
-   * parts.
-   */
-  metadata?: any;
-};
-
-/**
- * One part of a multimodal user message. Discriminated by type.
- */
-export type InputContent =
-  | TextInputContent
-  | ImageInputContent
-  | AudioInputContent
-  | VideoInputContent
-  | DocumentInputContent;
-
-/**
  * A message from the person using the application.
  */
 export type UserMessage = {
@@ -1075,7 +1107,7 @@ export type UserMessage = {
    * What the person sent: either plain text, or an ordered list of parts for a
    * multimodal message.
    */
-  content: string | InputContent[];
+  content: string | ContentPart[];
 };
 
 /**
@@ -1098,9 +1130,11 @@ export type ToolMessage = {
    */
   role: "tool";
   /**
-   * What the tool returned.
+   * What the tool returned: either plain text, or an ordered list of parts. A
+   * tool returning structured data serialises it into text; media travel as
+   * parts of their own.
    */
-  content: string;
+  content: string | ContentPart[];
   /**
    * The call this answers.
    */

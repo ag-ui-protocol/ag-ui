@@ -353,12 +353,10 @@ public sealed class ToolCallResultEvent : BaseEvent
     [JsonPropertyName("toolCallId")]
     public string ToolCallId { get; set; } = string.Empty;
 
-    /// <summary>
-    /// What the tool returned, as a string. A tool returning structured data
-    /// serialises it.
-    /// </summary>
+    // Wire format (string | ContentPart[]), exactly as on the tool message this event mints.
     [JsonPropertyName("content")]
-    public string Content { get; set; } = string.Empty;
+    [JsonConverter(typeof(AGUIContentJsonConverter))]
+    public AGUIContent Content { get; set; }
 
     /// <summary>
     /// Present only for symmetry with the message it mints; the value is fixed,

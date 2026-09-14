@@ -97,6 +97,57 @@ A result MAY arrive in the same run as its call — an agent-executed tool — o
 never arrive in the stream at all: a client-executed tool's result returns to
 the producer as a tool message in the next run's input instead.
 
+#### Result content
+
+`content` MUST be either a string or an ordered list of
+[`ContentPart`](/spec/draft/schema#contentpart)s — the same parts a
+[user message](/spec/draft/basic/run-input#messages) carries: `text`, `image`,
+`audio`, `video` and `document`, each media part with a `source` that is inline
+data or a URL. The tool message the event mints has the identical shape, so a
+result travels into the next run's `messages` unchanged.
+
+```json
+{
+  "type": "TOOL_CALL_RESULT",
+  "messageId": "msg-2",
+  "toolCallId": "call-1",
+  "content": [
+    { "type": "text", "text": "Invoice INV-2291 attached." },
+    {
+      "type": "document",
+      "source": { "type": "url", "value": "https://example.com/INV-2291.pdf", "mimeType": "application/pdf" },
+      "metadata": { "title": "INV-2291" }
+    }
+  ]
+}
+```
+
+- A tool returning structured data — a JSON object, say — serialises it into
+  the string form or into a `text` part. The protocol has no JSON part: every
+  provider accepts a tool result as text, and a typed object would have to
+  become text at the provider boundary anyway.
+- Anything a part does not model — a search hit's source and title, a
+  document's filename — rides in the part's `metadata`. The protocol does not
+  define provider-specific result blocks (a citation-enabled search result, a
+  browser state); a producer that needs one maps it onto these parts or
+  carries it as passthrough.
+- A producer handed a part its model cannot take — an image to a text-only
+  model, audio to a provider that accepts none in a tool result — MUST NOT fail
+  the run because of it. It drops the part and continues, as the
+  [run input rules](/spec/draft/basic/run-input#messages) already say of user
+  content, and it MUST still answer the call: a result whose every part was
+  dropped is answered with the empty string, because a tool call left
+  unanswered is one most models reject outright.
+- A consumer that can only hold a string — a renderer, a store, a legacy
+  bridge — renders a list of parts as its `text` parts concatenated in order
+  and ignores the rest. Doing so is lossy and SHOULD be announced, the way any
+  downgrade is ([Versioning](/spec/draft/basic/versioning)).
+- A peer from before content parts existed sends no `protocolVersion`; a
+  producer that knows it is talking to one MAY flatten a result the same way
+  before emitting it, and MUST warn when the flattening dropped a part. It
+  MUST NOT put a placeholder in the dropped part's place: a downgrade
+  reshapes, it does not invent.
+
 ## Frontend tools
 
 The `tools` list in [run input](/spec/draft/basic/run-input#tools) is the
@@ -117,7 +168,11 @@ cross a run boundary — which gives the round-trip its shape:
   first: the next
   run's `messages` carry a tool message per call, keyed by `toolCallId` — a
   failure is still an answer, as a tool message with `error` set, and a call
-  the user declined is answered by saying so. An unanswered call leaves the
+  the user declined is answered by saying so. The tool message's `content` is a
+  string or a list of parts, exactly as on
+  [`TOOL_CALL_RESULT`](#result-content): a frontend tool that produced a
+  screenshot or picked a file answers with a media part rather than a
+  description of one. An unanswered call leaves the
   agent mid-thought, and a history with a dangling call is one many models
   reject outright. Abandoning the thread answers nothing and violates
   nothing — the rule binds continuation, the same way resume coverage does.
@@ -156,7 +211,15 @@ The event shapes are defined by the [schema reference](/spec/draft/schema):
 [`ToolCallStartEvent`](/spec/draft/schema#toolcallstartevent), [`ToolCallArgsEvent`](/spec/draft/schema#toolcallargsevent), [`ToolCallEndEvent`](/spec/draft/schema#toolcallendevent),
 [`ToolCallChunkEvent`](/spec/draft/schema#toolcallchunkevent), [`ToolCallResultEvent`](/spec/draft/schema#toolcallresultevent). In conversation history a call
 appears as a [`ToolCall`](/spec/draft/schema#toolcall) on an [`AssistantMessage`](/spec/draft/schema#assistantmessage), and a result as a
-[`ToolMessage`](/spec/draft/schema#toolmessage). The advertised tools are [`Tool`](/spec/draft/schema#tool) objects on [`RunAgentInput`](/spec/draft/schema#runagentinput).
+[`ToolMessage`](/spec/draft/schema#toolmessage) whose content is a string or a list of
+[`ContentPart`](/spec/draft/schema#contentpart)s. The advertised tools are [`Tool`](/spec/draft/schema#tool) objects on [`RunAgentInput`](/spec/draft/schema#runagentinput).
+
+The parts are named by what they are — `TextPart`, `ImagePart` — rather than by
+the direction they travel, because the same part goes into the model inside a
+user message and comes out of the stream inside a tool result. The names
+`ReasoningPart`, `ToolCallPart` and `AssistantPart` are reserved for a later
+minor version, when assistant messages carry parts too; nothing defines them
+yet, and a producer MUST NOT emit them.
 
 ## Error Handling
 

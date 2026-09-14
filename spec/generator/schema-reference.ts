@@ -188,23 +188,28 @@ const sectionize = (model: ProtocolModel): Section[] => {
     "TextMessageRole",
     ...union("Message"),
   ]);
-  const input = new Set(
-    ["RunAgentInput", "Tool", "Context", "ResumeEntry"].concat(
-      model.definitions
-        .map((d) => d.name)
-        .filter((name) => name.includes("InputContent")),
-    ),
-  );
+  // The content parts sit with the run input: a user message is where they
+  // first appeared, and a tool message in `messages` carries the same parts.
+  const input = new Set([
+    "RunAgentInput",
+    "Tool",
+    "Context",
+    "ResumeEntry",
+    "ContentPart",
+    ...union("ContentPart"),
+    "PartSource",
+    ...union("PartSource"),
+  ]);
   const outcomes = new Set(
     model.definitions
       .map((d) => d.name)
       .filter((name) => name.includes("Outcome") || name === "Interrupt"),
   );
 
-  // Two of the four sets are computed by substring, so nothing stops a name
-  // from matching both — and a definition in two sets is rendered twice, under
-  // two headings, with the same anchor. The last section takes whatever is
-  // left over, so it cannot overlap; these four can.
+  // The outcome set is computed by substring and the others by membership, so
+  // nothing stops a name from landing in two — and a definition in two sets is
+  // rendered twice, under two headings, with the same anchor. The last section
+  // takes whatever is left over, so it cannot overlap; these four can.
   const named: Array<[string, Set<string>]> = [
     ["Events", events],
     ["Messages", messages],

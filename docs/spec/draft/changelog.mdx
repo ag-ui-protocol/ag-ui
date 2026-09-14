@@ -73,6 +73,21 @@ specification.
    spelled `subagents`, matching `subagentRunId`; the earlier `subAgents`
    key is not read.
 
+10. **Tool results carry content parts.** `TOOL_CALL_RESULT.content` and the
+    tool message it mints accept a string or an ordered list of the same
+    parts a user message carries, so a tool can return a document, an image
+    or a search hit without encoding it into a string
+    ([Tool calls](/spec/draft/events/tool-calls#result-content)). The parts
+    are renamed for it — `InputContent` → `ContentPart`, `TextInputContent` →
+    `TextPart`, `ImageInputContent` → `ImagePart` and so on, `InputContentSource`
+    → `PartSource` with `DataSource` and `UrlSource` — because a part named by
+    direction is misnamed the moment it travels the other way. The wire is
+    unchanged: every `type` value is the same, only the definition names and
+    anchors move, and the SDKs keep the old names as aliases. Every part gains
+    an optional `id`, and the text part gains the `metadata` the media parts
+    already had. `ReasoningPart`, `ToolCallPart` and `AssistantPart` are
+    reserved for the release in which assistant messages carry parts too.
+
 ## Minor changes
 
 1. `tools` and `context` on the run input are optional: absent and empty mean

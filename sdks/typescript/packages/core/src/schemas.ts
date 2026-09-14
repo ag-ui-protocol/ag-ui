@@ -14,15 +14,36 @@ export { PROTOCOL_VERSION } from "./generated/version";
 export { EventSchema as EventSchemas } from "./generated/schemas";
 
 /**
- * Historic aliases for the media input part validators: the schema names them
- * ...InputContent, and this package has always also exported them as
- * ...InputPart.
+ * The names the content part validators carried before 1.0 renamed the parts
+ * (InputContent -> ContentPart, TextInputContent -> TextPart, and so on): the
+ * same parts now sit on tool messages as well as user messages, so they are
+ * named by what they are rather than by direction. The wire is unchanged —
+ * every `type` value is the same — and so is every validator behind these
+ * names; only the spelling moved. Kept for one release, see DEPRECATIONS.md.
+ *
+ * @deprecated Use the ...Part names.
  */
 export {
-  ImageInputContentSchema as ImageInputPartSchema,
-  AudioInputContentSchema as AudioInputPartSchema,
-  VideoInputContentSchema as VideoInputPartSchema,
-  DocumentInputContentSchema as DocumentInputPartSchema,
+  ContentPartSchema as InputContentSchema,
+  TextPartSchema as TextInputContentSchema,
+  ImagePartSchema as ImageInputContentSchema,
+  AudioPartSchema as AudioInputContentSchema,
+  VideoPartSchema as VideoInputContentSchema,
+  DocumentPartSchema as DocumentInputContentSchema,
+  PartSourceSchema as InputContentSourceSchema,
+  DataSourceSchema as InputContentDataSourceSchema,
+  UrlSourceSchema as InputContentUrlSourceSchema,
+} from "./generated/schemas";
+
+/**
+ * Historic aliases for the media part validators: this package has always
+ * also exported them as ...InputPart.
+ */
+export {
+  ImagePartSchema as ImageInputPartSchema,
+  AudioPartSchema as AudioInputPartSchema,
+  VideoPartSchema as VideoInputPartSchema,
+  DocumentPartSchema as DocumentInputPartSchema,
 } from "./generated/schemas";
 
 /**

@@ -579,6 +579,158 @@ class ToolCallChunkEvent(BaseEvent):
     """A fragment of the arguments. May be the empty string."""
 
 
+class TextPart(GeneratedBaseModel):
+    """A text part."""
+
+    type: Literal["text"] = "text"
+    """Discriminator."""
+    id: Optional[str] = Field(default=None)
+    """
+    Identifies this part within its message. Optional, and nothing reads it
+    yet: reserved so that a streamed part can be matched to its entry in
+    history once assistant messages carry parts too.
+    """
+    text: str
+    """The text."""
+    metadata: Optional[Any] = Field(default=None)
+    """
+    Extra information about this part. Unconstrained, as on the media parts.
+    This is where a text search hit carries its source and title, rather
+    than the protocol modelling a search-result part of its own.
+    """
+
+
+class DataSource(GeneratedBaseModel):
+    """Bytes carried inline."""
+
+    type: Literal["data"] = "data"
+    """Discriminator."""
+    value: str
+    """
+    The bytes, base64-encoded. contentEncoding is an annotation rather than
+    a constraint in 2020-12, so a malformed string still validates here;
+    rejecting one is the decoder's job.
+    """
+    mime_type: str
+    """
+    What the bytes are. Required here, unlike on a URL source, because
+    nothing else can tell a consumer how to read them.
+    """
+
+
+class UrlSource(GeneratedBaseModel):
+    """Bytes referenced by URL, fetched by whoever needs them."""
+
+    type: Literal["url"] = "url"
+    """Discriminator."""
+    value: str
+    """
+    The URL. Deliberately not constrained to a URI format, so a scheme a
+    producer already uses is not rejected here.
+    """
+    mime_type: Optional[str] = Field(default=None)
+    """
+    What the resource is, when the producer knows. Optional, because the
+    response can say.
+    """
+
+
+PartSource = Annotated[
+    Union[DataSource, UrlSource],
+    Field(discriminator="type"),
+]
+"""Where a media part's bytes come from: carried inline, or referenced by URL."""
+
+
+class ImagePart(GeneratedBaseModel):
+    """An image part."""
+
+    type: Literal["image"] = "image"
+    """Discriminator."""
+    id: Optional[str] = Field(default=None)
+    """
+    Identifies this part within its message. Optional, and nothing reads it
+    yet: reserved as on the text part.
+    """
+    source: PartSource
+    """Where the image comes from."""
+    metadata: Optional[Any] = Field(default=None)
+    """
+    Extra information about this part. Unconstrained rather than an object:
+    inherited from the SDKs, which declare it unknown rather than a record;
+    listed under known divergences in the README rather than resolved here.
+    """
+
+
+class AudioPart(GeneratedBaseModel):
+    """An audio part."""
+
+    type: Literal["audio"] = "audio"
+    """Discriminator."""
+    id: Optional[str] = Field(default=None)
+    """
+    Identifies this part within its message. Optional, and nothing reads it
+    yet: reserved as on the text part.
+    """
+    source: PartSource
+    """Where the audio comes from."""
+    metadata: Optional[Any] = Field(default=None)
+    """
+    Extra information about this part. Unconstrained, as on the other media
+    parts.
+    """
+
+
+class VideoPart(GeneratedBaseModel):
+    """A video part."""
+
+    type: Literal["video"] = "video"
+    """Discriminator."""
+    id: Optional[str] = Field(default=None)
+    """
+    Identifies this part within its message. Optional, and nothing reads it
+    yet: reserved as on the text part.
+    """
+    source: PartSource
+    """Where the video comes from."""
+    metadata: Optional[Any] = Field(default=None)
+    """
+    Extra information about this part. Unconstrained, as on the other media
+    parts.
+    """
+
+
+class DocumentPart(GeneratedBaseModel):
+    """A document part."""
+
+    type: Literal["document"] = "document"
+    """Discriminator."""
+    id: Optional[str] = Field(default=None)
+    """
+    Identifies this part within its message. Optional, and nothing reads it
+    yet: reserved as on the text part.
+    """
+    source: PartSource
+    """Where the document comes from."""
+    metadata: Optional[Any] = Field(default=None)
+    """
+    Extra information about this part. Unconstrained, as on the other media
+    parts.
+    """
+
+
+ContentPart = Annotated[
+    Union[TextPart, ImagePart, AudioPart, VideoPart, DocumentPart],
+    Field(discriminator="type"),
+]
+"""
+One part of a message body: what a person sends in a user message, or what a
+tool returns in a tool message. Discriminated by type. Named by what the
+part is rather than by direction, because the same part travels into the
+model inside a user message and back out of the stream inside a tool result.
+"""
+
+
 class ToolCallResultEvent(BaseEvent):
     """
     Carries what a tool returned. Mints a tool message rather than appending
@@ -617,10 +769,12 @@ class ToolCallResultEvent(BaseEvent):
     """The tool message this result becomes."""
     tool_call_id: str
     """The call being answered."""
-    content: str
+    content: Union[str, List[ContentPart]]
     """
-    What the tool returned, as a string. A tool returning structured data
-    serialises it.
+    What the tool returned: either plain text, or an ordered list of parts,
+    exactly as on the tool message this event mints. A tool returning
+    structured data serialises it into text; media travel as parts of their
+    own.
     """
     role: Optional[Literal["tool"]] = Field(default=None)
     """
@@ -954,121 +1108,6 @@ class AssistantMessage(BaseMessage):
     """The tool calls this turn made."""
 
 
-class TextInputContent(GeneratedBaseModel):
-    """A text part."""
-
-    type: Literal["text"] = "text"
-    """Discriminator."""
-    text: str
-    """The text."""
-
-
-class InputContentDataSource(GeneratedBaseModel):
-    """Bytes carried inline."""
-
-    type: Literal["data"] = "data"
-    """Discriminator."""
-    value: str
-    """
-    The bytes, base64-encoded. contentEncoding is an annotation rather than
-    a constraint in 2020-12, so a malformed string still validates here;
-    rejecting one is the decoder's job.
-    """
-    mime_type: str
-    """
-    What the bytes are. Required here, unlike on a URL source, because
-    nothing else can tell a consumer how to read them.
-    """
-
-
-class InputContentUrlSource(GeneratedBaseModel):
-    """Bytes referenced by URL, fetched by whoever needs them."""
-
-    type: Literal["url"] = "url"
-    """Discriminator."""
-    value: str
-    """
-    The URL. Deliberately not constrained to a URI format, so a scheme a
-    producer already uses is not rejected here.
-    """
-    mime_type: Optional[str] = Field(default=None)
-    """
-    What the resource is, when the producer knows. Optional, because the
-    response can say.
-    """
-
-
-InputContentSource = Annotated[
-    Union[InputContentDataSource, InputContentUrlSource],
-    Field(discriminator="type"),
-]
-"""Where a media part's bytes come from: carried inline, or referenced by URL."""
-
-
-class ImageInputContent(GeneratedBaseModel):
-    """An image part."""
-
-    type: Literal["image"] = "image"
-    """Discriminator."""
-    source: InputContentSource
-    """Where the image comes from."""
-    metadata: Optional[Any] = Field(default=None)
-    """
-    Extra information about this part. Unconstrained rather than an object:
-    inherited from the SDKs, which declare it unknown rather than a record;
-    listed under known divergences in the README rather than resolved here.
-    """
-
-
-class AudioInputContent(GeneratedBaseModel):
-    """An audio part."""
-
-    type: Literal["audio"] = "audio"
-    """Discriminator."""
-    source: InputContentSource
-    """Where the audio comes from."""
-    metadata: Optional[Any] = Field(default=None)
-    """
-    Extra information about this part. Unconstrained, as on the other media
-    parts.
-    """
-
-
-class VideoInputContent(GeneratedBaseModel):
-    """A video part."""
-
-    type: Literal["video"] = "video"
-    """Discriminator."""
-    source: InputContentSource
-    """Where the video comes from."""
-    metadata: Optional[Any] = Field(default=None)
-    """
-    Extra information about this part. Unconstrained, as on the other media
-    parts.
-    """
-
-
-class DocumentInputContent(GeneratedBaseModel):
-    """A document part."""
-
-    type: Literal["document"] = "document"
-    """Discriminator."""
-    source: InputContentSource
-    """Where the document comes from."""
-    metadata: Optional[Any] = Field(default=None)
-    """
-    Extra information about this part. Unconstrained, as on the other media
-    parts.
-    """
-
-
-InputContent = Annotated[
-    Union[TextInputContent, ImageInputContent, AudioInputContent, VideoInputContent, DocumentInputContent],
-    Field(discriminator="type"),
-]
-"""One part of a multimodal user message. Discriminated by type."""
-
-
 class UserMessage(BaseMessage):
     """A message from the person using the application."""
 
@@ -1093,7 +1132,7 @@ class UserMessage(BaseMessage):
     """
     metadata: Optional[Metadata] = Field(default=None)
     """Extra information attached to this message."""
-    content: Union[str, List[InputContent]]
+    content: Union[str, List[ContentPart]]
     """
     What the person sent: either plain text, or an ordered list of parts for
     a multimodal message.
@@ -1118,8 +1157,12 @@ class ToolMessage(GeneratedBaseModel):
     Fixed. Declared here rather than inherited, because this message does
     not compose BaseMessage.
     """
-    content: str
-    """What the tool returned."""
+    content: Union[str, List[ContentPart]]
+    """
+    What the tool returned: either plain text, or an ordered list of parts.
+    A tool returning structured data serialises it into text; media travel
+    as parts of their own.
+    """
     tool_call_id: str
     """The call this answers."""
     error: Optional[str] = Field(default=None)

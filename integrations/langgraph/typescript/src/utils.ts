@@ -13,6 +13,8 @@ import {
   InputContentUrlSource,
   InputContent,
   UserMessage,
+  contentHasMedia,
+  contentToText,
 } from "@ag-ui/client";
 
 export const DEFAULT_SCHEMA_KEYS = ["messages", "tools"];
@@ -1833,10 +1835,22 @@ export function aguiMessagesToLangChain(messages: Message[]): LangGraphMessage[]
           type: "system",
         } as LangGraphMessage);
         break;
-      case "tool":
+      case "tool": {
         pendingReasoning = [];
+        // A tool result is a string or a list of content parts. A LangChain
+        // tool message takes a string or LangChain content blocks, never the
+        // AG-UI parts themselves: a text-only result is its text, and one
+        // carrying media goes through the same conversion a user message gets.
+        // Which providers accept media in a tool message is then LangChain's
+        // concern, as it already is for user content.
+        const toolContent =
+          typeof message.content === "string"
+            ? message.content
+            : contentHasMedia(message.content)
+              ? (convertAguiMultimodalToLangchain(message.content) as any)
+              : contentToText(message.content);
         out.push({
-          content: message.content,
+          content: toolContent,
           role: message.role,
           type: message.role,
           tool_call_id: message.toolCallId,
@@ -1846,6 +1860,7 @@ export function aguiMessagesToLangChain(messages: Message[]): LangGraphMessage[]
           status: message.error ? "error" : "success",
         } as LangGraphMessage);
         break;
+      }
       default:
         console.error(`Message role ${(message as { role: string }).role} is not implemented`);
         throw new Error("message role is not supported.");

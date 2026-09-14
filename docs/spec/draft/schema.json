@@ -364,8 +364,11 @@
           "description": "The call being answered."
         },
         "content": {
-          "type": "string",
-          "description": "What the tool returned, as a string. A tool returning structured data serialises it."
+          "description": "What the tool returned: either plain text, or an ordered list of parts, exactly as on the tool message this event mints. A tool returning structured data serialises it into text; media travel as parts of their own.",
+          "oneOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "$ref": "#/$defs/ContentPart" } }
+          ]
         },
         "role": {
           "const": "tool",
@@ -1156,7 +1159,7 @@
           "description": "What the person sent: either plain text, or an ordered list of parts for a multimodal message.",
           "oneOf": [
             { "type": "string" },
-            { "type": "array", "items": { "$ref": "#/$defs/InputContent" } }
+            { "type": "array", "items": { "$ref": "#/$defs/ContentPart" } }
           ]
         }
       },
@@ -1175,8 +1178,11 @@
           "description": "Fixed. Declared here rather than inherited, because this message does not compose BaseMessage."
         },
         "content": {
-          "type": "string",
-          "description": "What the tool returned."
+          "description": "What the tool returned: either plain text, or an ordered list of parts. A tool returning structured data serialises it into text; media travel as parts of their own.",
+          "oneOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "$ref": "#/$defs/ContentPart" } }
+          ]
         },
         "toolCallId": {
           "type": "string",
@@ -1296,36 +1302,48 @@
       "required": ["name", "arguments"],
       "unevaluatedProperties": false
     },
-    "InputContent": {
-      "$anchor": "InputContent",
-      "description": "One part of a multimodal user message. Discriminated by type.",
+    "ContentPart": {
+      "$anchor": "ContentPart",
+      "description": "One part of a message body: what a person sends in a user message, or what a tool returns in a tool message. Discriminated by type. Named by what the part is rather than by direction, because the same part travels into the model inside a user message and back out of the stream inside a tool result.",
       "oneOf": [
-        { "$ref": "#/$defs/TextInputContent" },
-        { "$ref": "#/$defs/ImageInputContent" },
-        { "$ref": "#/$defs/AudioInputContent" },
-        { "$ref": "#/$defs/VideoInputContent" },
-        { "$ref": "#/$defs/DocumentInputContent" }
+        { "$ref": "#/$defs/TextPart" },
+        { "$ref": "#/$defs/ImagePart" },
+        { "$ref": "#/$defs/AudioPart" },
+        { "$ref": "#/$defs/VideoPart" },
+        { "$ref": "#/$defs/DocumentPart" }
       ]
     },
-    "TextInputContent": {
-      "$anchor": "TextInputContent",
+    "TextPart": {
+      "$anchor": "TextPart",
       "type": "object",
       "description": "A text part.",
       "properties": {
         "type": { "const": "text", "description": "Discriminator." },
-        "text": { "type": "string", "description": "The text." }
+        "id": {
+          "type": "string",
+          "description": "Identifies this part within its message. Optional, and nothing reads it yet: reserved so that a streamed part can be matched to its entry in history once assistant messages carry parts too."
+        },
+        "text": { "type": "string", "description": "The text." },
+        "metadata": {
+          "not": { "type": "null" },
+          "description": "Extra information about this part. Unconstrained, as on the media parts. This is where a text search hit carries its source and title, rather than the protocol modelling a search-result part of its own."
+        }
       },
       "required": ["type", "text"],
       "unevaluatedProperties": false
     },
-    "ImageInputContent": {
-      "$anchor": "ImageInputContent",
+    "ImagePart": {
+      "$anchor": "ImagePart",
       "type": "object",
       "description": "An image part.",
       "properties": {
         "type": { "const": "image", "description": "Discriminator." },
+        "id": {
+          "type": "string",
+          "description": "Identifies this part within its message. Optional, and nothing reads it yet: reserved as on the text part."
+        },
         "source": {
-          "$ref": "#/$defs/InputContentSource",
+          "$ref": "#/$defs/PartSource",
           "description": "Where the image comes from."
         },
         "metadata": {
@@ -1336,14 +1354,18 @@
       "required": ["type", "source"],
       "unevaluatedProperties": false
     },
-    "AudioInputContent": {
-      "$anchor": "AudioInputContent",
+    "AudioPart": {
+      "$anchor": "AudioPart",
       "type": "object",
       "description": "An audio part.",
       "properties": {
         "type": { "const": "audio", "description": "Discriminator." },
+        "id": {
+          "type": "string",
+          "description": "Identifies this part within its message. Optional, and nothing reads it yet: reserved as on the text part."
+        },
         "source": {
-          "$ref": "#/$defs/InputContentSource",
+          "$ref": "#/$defs/PartSource",
           "description": "Where the audio comes from."
         },
         "metadata": {
@@ -1354,14 +1376,18 @@
       "required": ["type", "source"],
       "unevaluatedProperties": false
     },
-    "VideoInputContent": {
-      "$anchor": "VideoInputContent",
+    "VideoPart": {
+      "$anchor": "VideoPart",
       "type": "object",
       "description": "A video part.",
       "properties": {
         "type": { "const": "video", "description": "Discriminator." },
+        "id": {
+          "type": "string",
+          "description": "Identifies this part within its message. Optional, and nothing reads it yet: reserved as on the text part."
+        },
         "source": {
-          "$ref": "#/$defs/InputContentSource",
+          "$ref": "#/$defs/PartSource",
           "description": "Where the video comes from."
         },
         "metadata": {
@@ -1372,14 +1398,18 @@
       "required": ["type", "source"],
       "unevaluatedProperties": false
     },
-    "DocumentInputContent": {
-      "$anchor": "DocumentInputContent",
+    "DocumentPart": {
+      "$anchor": "DocumentPart",
       "type": "object",
       "description": "A document part.",
       "properties": {
         "type": { "const": "document", "description": "Discriminator." },
+        "id": {
+          "type": "string",
+          "description": "Identifies this part within its message. Optional, and nothing reads it yet: reserved as on the text part."
+        },
         "source": {
-          "$ref": "#/$defs/InputContentSource",
+          "$ref": "#/$defs/PartSource",
           "description": "Where the document comes from."
         },
         "metadata": {
@@ -1390,16 +1420,16 @@
       "required": ["type", "source"],
       "unevaluatedProperties": false
     },
-    "InputContentSource": {
-      "$anchor": "InputContentSource",
+    "PartSource": {
+      "$anchor": "PartSource",
       "description": "Where a media part's bytes come from: carried inline, or referenced by URL.",
       "oneOf": [
-        { "$ref": "#/$defs/InputContentDataSource" },
-        { "$ref": "#/$defs/InputContentUrlSource" }
+        { "$ref": "#/$defs/DataSource" },
+        { "$ref": "#/$defs/UrlSource" }
       ]
     },
-    "InputContentDataSource": {
-      "$anchor": "InputContentDataSource",
+    "DataSource": {
+      "$anchor": "DataSource",
       "type": "object",
       "description": "Bytes carried inline.",
       "properties": {
@@ -1417,8 +1447,8 @@
       "required": ["type", "value", "mimeType"],
       "unevaluatedProperties": false
     },
-    "InputContentUrlSource": {
-      "$anchor": "InputContentUrlSource",
+    "UrlSource": {
+      "$anchor": "UrlSource",
       "type": "object",
       "description": "Bytes referenced by URL, fetched by whoever needs them.",
       "properties": {

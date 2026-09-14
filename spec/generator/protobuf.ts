@@ -45,11 +45,21 @@ export function snakeCase(name: string): string {
 /** How a definition is named on the wire, where it differs from the schema. */
 const PROTO_NAME: Record<string, string> = {
   TokenUsage: "Usage",
-  TextInputContent: "TextInputPart",
-  ImageInputContent: "ImageInputPart",
-  AudioInputContent: "AudioInputPart",
-  VideoInputContent: "VideoInputPart",
-  DocumentInputContent: "DocumentInputPart",
+  // The content parts were renamed in the schema (InputContent -> ContentPart
+  // and so on, PNI-427) once tool results started carrying them: a part is
+  // named by what it is, not by the direction it travels. The wire keeps the
+  // message names it shipped under. A proto message name is not on the wire,
+  // so nothing would break either way — but every generated proto type in
+  // TypeScript and .NET is spelled after it, and the freeze is keyed by it.
+  ContentPart: "InputContent",
+  TextPart: "TextInputPart",
+  ImagePart: "ImageInputPart",
+  AudioPart: "AudioInputPart",
+  VideoPart: "VideoInputPart",
+  DocumentPart: "DocumentInputPart",
+  PartSource: "InputContentSource",
+  DataSource: "InputContentDataSource",
+  UrlSource: "InputContentUrlSource",
 };
 
 function protoName(definitionName: string): string {
@@ -74,8 +84,8 @@ function protoName(definitionName: string): string {
 export const UNION_STRATEGY: Record<string, string> = {
   Event: "envelope",
   Message: "merge",
-  InputContent: "oneof",
-  InputContentSource: "oneof",
+  ContentPart: "oneof",
+  PartSource: "oneof",
   RunFinishedOutcome: "flatten",
   SubagentFinishedOutcome: "flatten",
   JsonPatchOperation: "tagged",
@@ -383,8 +393,8 @@ function fieldWireType(
     }
   }
   if (type.kind === "union") {
-    // The one inline union (user content: string | parts) is handled by the
-    // merge strategy before this is reached.
+    // Inline unions (content: string | parts) are split by the merge strategy
+    // and by messageFields before this is reached.
     throw new WireError(`inline union on field ${field.name}`);
   }
   return protoType(defs, type, where);
@@ -424,6 +434,32 @@ function messageFields(
   const out: WireField[] = [];
   for (const field of fields) {
     if (exclude.has(field.name)) continue;
+    if (field.type.kind === "union") {
+      // An inline union on a field — a tool result's `content`, which is a
+      // string or a parts array — rides the way the same field does on the
+      // merged Message: the string variant keeps the field's name, the array
+      // variant takes the MERGE_SPLIT bucket of its own, and neither can be
+      // required because only one of them is ever present. Reading the same
+      // table is what keeps the event that mints a tool message and the
+      // message it mints spelling the split identically.
+      for (const variant of mergeVariants(field)) {
+        const wire = protoType(defs, variant.type, `${scope}.${field.name}`);
+        if ("flatten" in wire) {
+          throw new WireError(
+            `inline union on field ${field.name} has a flatten variant`,
+          );
+        }
+        out.push(
+          makeField(freeze, scope, variant.wireName, wire.type, {
+            repeated: wire.repeated,
+            optional: !wire.repeated,
+            comment: field.description,
+            jsonName: field.name,
+          }),
+        );
+      }
+      continue;
+    }
     const wire = fieldWireType(defs, field, `${scope}.${field.name}`);
     if ("flatten" in wire) {
       // The union dissolves: a string discriminator named after the field,
@@ -857,7 +893,7 @@ export function buildWireModel(
         }
         if (strategy === "oneof") {
           const scope = protoName(name);
-          const oneofName = name === "InputContentSource" ? "source" : "part";
+          const oneofName = name === "PartSource" ? "source" : "part";
           const entries: WireField[] = [];
           for (const memberName of definition.members) {
             const member = defOf(defs, memberName);

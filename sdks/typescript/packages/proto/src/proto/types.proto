@@ -13,39 +13,18 @@ option csharp_namespace = "AGUI.ProtocolBuffers";
 
 import "google/protobuf/struct.proto";
 
-// A call an assistant message made. Carries no subagent attribution of its own
-// and inherits its containing message's, since several calls can share one
-// parent.
-message ToolCall {
-  // The name and arguments of a tool call.
-  message Function {
-    // Which tool is being called.
-    string name = 1;
-    // The arguments as a JSON string, not as parsed JSON. Kept as written
-    // because a model can emit arguments that are not valid JSON, and losing
-    // them at the protocol boundary would hide the fault from the consumer that
-    // has to handle it.
-    string arguments = 2;
-  }
-  // Identifies the call. The answering tool message carries this as its
-  // toolCallId.
-  string id = 1;
-  // The only kind of call the protocol models.
-  string type = 2;
-  // What is being called, and with what.
-  Function function = 3;
-  // Extra information attached to this call. Carried here rather than folded
-  // into the containing message, because several calls can share one parent and
-  // merging them would make the result depend on their order.
-  optional google.protobuf.Struct metadata = 4;
-  // A provider's opaque artefact belonging to this call.
-  optional string encrypted_value = 5;
-}
-
 // A text part.
 message TextInputPart {
   // The text.
   string text = 1;
+  // Identifies this part within its message. Optional, and nothing reads it yet:
+  // reserved so that a streamed part can be matched to its entry in history once
+  // assistant messages carry parts too.
+  optional string id = 2;
+  // Extra information about this part. Unconstrained, as on the media parts.
+  // This is where a text search hit carries its source and title, rather than
+  // the protocol modelling a search-result part of its own.
+  optional google.protobuf.Value metadata = 3;
 }
 
 // An image part.
@@ -56,6 +35,9 @@ message ImageInputPart {
   // inherited from the SDKs, which declare it unknown rather than a record;
   // listed under known divergences in the README rather than resolved here.
   optional google.protobuf.Value metadata = 2;
+  // Identifies this part within its message. Optional, and nothing reads it yet:
+  // reserved as on the text part.
+  optional string id = 3;
 }
 
 // Bytes carried inline.
@@ -94,6 +76,9 @@ message AudioInputPart {
   // Extra information about this part. Unconstrained, as on the other media
   // parts.
   optional google.protobuf.Value metadata = 2;
+  // Identifies this part within its message. Optional, and nothing reads it yet:
+  // reserved as on the text part.
+  optional string id = 3;
 }
 
 // A video part.
@@ -103,6 +88,9 @@ message VideoInputPart {
   // Extra information about this part. Unconstrained, as on the other media
   // parts.
   optional google.protobuf.Value metadata = 2;
+  // Identifies this part within its message. Optional, and nothing reads it yet:
+  // reserved as on the text part.
+  optional string id = 3;
 }
 
 // A document part.
@@ -112,9 +100,15 @@ message DocumentInputPart {
   // Extra information about this part. Unconstrained, as on the other media
   // parts.
   optional google.protobuf.Value metadata = 2;
+  // Identifies this part within its message. Optional, and nothing reads it yet:
+  // reserved as on the text part.
+  optional string id = 3;
 }
 
-// One part of a multimodal user message. Discriminated by type.
+// One part of a message body: what a person sends in a user message, or what a
+// tool returns in a tool message. Discriminated by type. Named by what the part
+// is rather than by direction, because the same part travels into the model
+// inside a user message and back out of the stream inside a tool result.
 message InputContent {
   oneof part {
     TextInputPart text = 1;
@@ -123,6 +117,35 @@ message InputContent {
     VideoInputPart video = 4;
     DocumentInputPart document = 5;
   }
+}
+
+// A call an assistant message made. Carries no subagent attribution of its own
+// and inherits its containing message's, since several calls can share one
+// parent.
+message ToolCall {
+  // The name and arguments of a tool call.
+  message Function {
+    // Which tool is being called.
+    string name = 1;
+    // The arguments as a JSON string, not as parsed JSON. Kept as written
+    // because a model can emit arguments that are not valid JSON, and losing
+    // them at the protocol boundary would hide the fault from the consumer that
+    // has to handle it.
+    string arguments = 2;
+  }
+  // Identifies the call. The answering tool message carries this as its
+  // toolCallId.
+  string id = 1;
+  // The only kind of call the protocol models.
+  string type = 2;
+  // What is being called, and with what.
+  Function function = 3;
+  // Extra information attached to this call. Carried here rather than folded
+  // into the containing message, because several calls can share one parent and
+  // merging them would make the result depend on their order.
+  optional google.protobuf.Struct metadata = 4;
+  // A provider's opaque artefact belonging to this call.
+  optional string encrypted_value = 5;
 }
 
 // Any message in a conversation. Discriminated by role.

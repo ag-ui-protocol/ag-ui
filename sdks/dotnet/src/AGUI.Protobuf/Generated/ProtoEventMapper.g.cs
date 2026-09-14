@@ -184,7 +184,17 @@ internal static class ProtoEventMapper
                 }
                 proto.MessageId = e.MessageId;
                 proto.ToolCallId = e.ToolCallId;
-                proto.Content = e.Content;
+                if (e.Content.Value is IList<AGUIInputContent> contentParts)
+                {
+                    foreach (var part in contentParts)
+                    {
+                        proto.ContentParts.Add(ProtoMessageMapper.ToProtoContentPart(part));
+                    }
+                }
+                else
+                {
+                    proto.Content = e.Content.Value as string ?? string.Empty;
+                }
                 if (e.Role is not null)
                 {
                     proto.Role = e.Role;
@@ -703,7 +713,7 @@ internal static class ProtoEventMapper
                     SubagentRunId = e.HasSubagentRunId ? e.SubagentRunId : null,
                     MessageId = e.MessageId,
                     ToolCallId = e.ToolCallId,
-                    Content = e.Content,
+                    Content = ProtoMessageMapper.FromProtoContent(e.HasContent, e.Content, e.ContentParts),
                     Role = e.HasRole ? AssertOneOf(e.Role, "role", "tool") : null,
                 };
                 ApplyBaseEvent(result, e.BaseEvent, Proto.EventType.ToolCallResult);

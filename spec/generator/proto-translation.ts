@@ -104,8 +104,8 @@ export function emitProtoTranslation(wire: WireModel): string {
 
   /* ---------------- content parts ---------------- */
 
-  const contentUnion = defs.get("InputContent");
-  if (contentUnion?.kind !== "union") throw new Error("InputContent missing");
+  const contentUnion = defs.get("ContentPart");
+  if (contentUnion?.kind !== "union") throw new Error("ContentPart missing");
   const partEntries = contentUnion.members.map((memberName) => {
     const member = objectDef(memberName);
     const discriminator = member.fields.find(
@@ -119,9 +119,8 @@ export function emitProtoTranslation(wire: WireModel): string {
     return { entry: discriminator.type.value, payload };
   });
 
-  const sourceUnion = defs.get("InputContentSource");
-  if (sourceUnion?.kind !== "union")
-    throw new Error("InputContentSource missing");
+  const sourceUnion = defs.get("PartSource");
+  if (sourceUnion?.kind !== "union") throw new Error("PartSource missing");
   const sourceEntries = sourceUnion.members.map((memberName) => {
     const member = objectDef(memberName);
     const discriminator = member.fields.find(
@@ -139,7 +138,7 @@ export function emitProtoTranslation(wire: WireModel): string {
     const fields = entry.payload
       .map((field) => {
         const resolved = resolveAlias(defs, field.type);
-        if (resolved.kind === "ref" && resolved.name === "InputContentSource") {
+        if (resolved.kind === "ref" && resolved.name === "PartSource") {
           return `${field.name}: toProtoSource(rec.${field.name})`;
         }
         return `${field.name}: rec.${field.name}`;
@@ -151,12 +150,12 @@ export function emitProtoTranslation(wire: WireModel): string {
   const fromPartCase = (entry: { entry: string; payload: Field[] }): string => {
     const sources = entry.payload.filter((field) => {
       const resolved = resolveAlias(defs, field.type);
-      return resolved.kind === "ref" && resolved.name === "InputContentSource";
+      return resolved.kind === "ref" && resolved.name === "PartSource";
     });
     const fields = entry.payload
       .map((field) => {
         const resolved = resolveAlias(defs, field.type);
-        if (resolved.kind === "ref" && resolved.name === "InputContentSource") {
+        if (resolved.kind === "ref" && resolved.name === "PartSource") {
           return `${field.name}: fromProtoSource(part.${field.name})`;
         }
         return `${field.name}: part.${field.name}`;
@@ -295,10 +294,48 @@ export function emitProtoTranslation(wire: WireModel): string {
     def: string;
   }> = [];
 
+  /**
+   * Event fields that are a string or a parts array inline — a tool result's
+   * `content`. protobuf.ts splits such a field the way it splits the merged
+   * Message's: the string keeps the field's name, the array takes the
+   * MERGE_SPLIT bucket. The mapper below reads the same table, so the event
+   * that mints a tool message and the message it mints spell the split alike.
+   */
+  const contentFields: Array<{
+    eventType: string;
+    jsonField: string;
+    wireParts: string;
+  }> = [];
+
   for (const event of events) {
     const type = eventTypeOf(event);
     for (const field of event.fields) {
       if (baseNames.has(field.name)) continue;
+      if (field.type.kind === "union") {
+        const variants = field.type.members;
+        const isStringOrParts =
+          variants.length === 2 &&
+          variants.some((variant) => variant.kind === "string") &&
+          variants.some(
+            (variant) =>
+              variant.kind === "array" &&
+              variant.items.kind === "ref" &&
+              variant.items.name === contentUnion.name,
+          );
+        if (!isStringOrParts) {
+          throw new Error(
+            `${event.name}.${field.name} is an inline union that is not ` +
+              `string | ${contentUnion.name}[] — this emitter maps only that ` +
+              "shape in a direct field position; add the mapper before regenerating",
+          );
+        }
+        contentFields.push({
+          eventType: type,
+          jsonField: field.name,
+          wireParts: camelCase(MERGE_SPLIT.array(snakeCase(field.name))),
+        });
+        continue;
+      }
       const resolved =
         field.type.kind === "ref" ? defs.get(field.type.name) : undefined;
       // Only a FLATTEN union dissolves into the event carrying it. protobuf.ts
@@ -671,6 +708,55 @@ ${rebuild}
     if (Array.isArray(decoded.${entry.jsonField}) && decoded.${entry.jsonField}.length === 0) {
       delete decoded.${entry.jsonField};
     }
+  }`);
+  }
+
+  for (const entry of contentFields) {
+    encodeCases.push(`  if (type === ${JSON.stringify(entry.eventType)}) {
+    // ${entry.jsonField} is a string or a parts array: a string keeps the field,
+    // parts take ${entry.wireParts} — the same split as on the merged Message.
+    if (Array.isArray(rest.${entry.jsonField})) {
+      rest.${entry.wireParts} = rest.${entry.jsonField}
+        .map((part: unknown, index: number) => {
+          const mapped = toProtoContentPart(part);
+          if (mapped === undefined) {
+            warnUnencodableContentPart(${JSON.stringify(`${entry.eventType}.${entry.jsonField}`)}, index);
+          }
+          return mapped;
+        })
+        .filter((part: unknown) => part !== undefined);
+      rest.${entry.jsonField} = undefined;
+    } else {
+      rest.${entry.wireParts} = [];
+    }
+  }`);
+    decodeCases.push(`  if (decoded.type === ${JSON.stringify(entry.eventType)}) {
+    const record = decoded as LooseRecord;
+    if (
+      record.${entry.jsonField} !== undefined &&
+      asArray(record.${entry.wireParts}).length > 0
+    ) {
+      // String content and parts together is a contradiction the encoder never
+      // writes; resolving it either way would silently discard the other half.
+      throw new Error(
+        "Invalid event: ${entry.jsonField} carries both string content and content parts",
+      );
+    }
+    if (record.${entry.jsonField} === undefined) {
+      // String content rides the field; anything else is the parts array —
+      // including an empty one, which is valid content of its own. A part
+      // naming no arm this build knows is dropped with a warning, as on the
+      // merged Message and for the same reason: the JSON path strips an
+      // unrecognised union member rather than failing the event.
+      record.${entry.jsonField} = asArray(record.${entry.wireParts})
+        .map((part: unknown) => {
+          const mapped = fromProtoContentPart(part);
+          if (mapped === undefined) warnDroppedContentPart();
+          return mapped;
+        })
+        .filter((part: unknown) => part !== undefined);
+    }
+    delete record.${entry.wireParts};
   }`);
   }
 

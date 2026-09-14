@@ -177,9 +177,9 @@ public sealed class AGUIUserMessage : AGUIMessage
     [JsonPropertyName("encryptedValue")]
     public string? EncryptedValue { get; set; }
 
-    // Wire format (string | InputContent[]) is owned by AGUIMessageJsonConverter.
+    // Wire format (string | ContentPart[]) is owned by AGUIMessageJsonConverter.
     [JsonIgnore]
-    public AGUIUserContent Content { get; set; }
+    public AGUIContent Content { get; set; }
 }
 
 /// <summary>
@@ -195,11 +195,10 @@ public sealed class AGUIToolMessage : AGUIMessage
     [JsonPropertyName("role")]
     public override string Role => AGUIRoles.Tool;
 
-    /// <summary>
-    /// What the tool returned.
-    /// </summary>
+    // Wire format (string | ContentPart[]): a string, or an ordered list of parts.
     [JsonPropertyName("content")]
-    public string Content { get; set; } = string.Empty;
+    [JsonConverter(typeof(AGUIContentJsonConverter))]
+    public AGUIContent Content { get; set; }
 
     /// <summary>
     /// The call this answers.
@@ -277,7 +276,10 @@ public sealed class AGUIReasoningMessage : AGUIMessage
 }
 
 /// <summary>
-/// One part of a multimodal user message. Discriminated by type.
+/// One part of a message body: what a person sends in a user message, or what a
+/// tool returns in a tool message. Discriminated by type. Named by what the
+/// part is rather than by direction, because the same part travels into the
+/// model inside a user message and back out of the stream inside a tool result.
 /// </summary>
 [JsonConverter(typeof(AGUIInputContentJsonConverter))]
 public abstract class AGUIInputContent
@@ -315,10 +317,30 @@ public sealed class AGUITextInputContent : AGUIInputContent
     public override string Type => AGUIInputContentTypes.Text;
 
     /// <summary>
+    /// Identifies this part within its message. Optional, and nothing reads it
+    /// yet: reserved so that a streamed part can be matched to its entry in
+    /// history once assistant messages carry parts too.
+    /// </summary>
+    [JsonPropertyName("id")]
+    public string? Id { get; set; }
+
+    /// <summary>
     /// The text.
     /// </summary>
     [JsonPropertyName("text")]
     public string Text { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Extra information about this part. Unconstrained, as on the media parts.
+    /// This is where a text search hit carries its source and title, rather
+    /// than the protocol modelling a search-result part of its own.
+    /// </summary>
+    [JsonPropertyName("metadata")]
+    public JsonElement? Metadata
+    {
+        get;
+        set => field = value is { ValueKind: JsonValueKind.Null or JsonValueKind.Undefined } ? null : value;
+    }
 }
 
 /// <summary>
@@ -331,6 +353,13 @@ public sealed class AGUIImageInputContent : AGUIMediaInputContent
     /// </summary>
     [JsonPropertyName("type")]
     public override string Type => AGUIInputContentTypes.Image;
+
+    /// <summary>
+    /// Identifies this part within its message. Optional, and nothing reads it
+    /// yet: reserved as on the text part.
+    /// </summary>
+    [JsonPropertyName("id")]
+    public string? Id { get; set; }
 }
 
 /// <summary>
@@ -343,6 +372,13 @@ public sealed class AGUIAudioInputContent : AGUIMediaInputContent
     /// </summary>
     [JsonPropertyName("type")]
     public override string Type => AGUIInputContentTypes.Audio;
+
+    /// <summary>
+    /// Identifies this part within its message. Optional, and nothing reads it
+    /// yet: reserved as on the text part.
+    /// </summary>
+    [JsonPropertyName("id")]
+    public string? Id { get; set; }
 }
 
 /// <summary>
@@ -355,6 +391,13 @@ public sealed class AGUIVideoInputContent : AGUIMediaInputContent
     /// </summary>
     [JsonPropertyName("type")]
     public override string Type => AGUIInputContentTypes.Video;
+
+    /// <summary>
+    /// Identifies this part within its message. Optional, and nothing reads it
+    /// yet: reserved as on the text part.
+    /// </summary>
+    [JsonPropertyName("id")]
+    public string? Id { get; set; }
 }
 
 /// <summary>
@@ -367,6 +410,13 @@ public sealed class AGUIDocumentInputContent : AGUIMediaInputContent
     /// </summary>
     [JsonPropertyName("type")]
     public override string Type => AGUIInputContentTypes.Document;
+
+    /// <summary>
+    /// Identifies this part within its message. Optional, and nothing reads it
+    /// yet: reserved as on the text part.
+    /// </summary>
+    [JsonPropertyName("id")]
+    public string? Id { get; set; }
 }
 
 /// <summary>

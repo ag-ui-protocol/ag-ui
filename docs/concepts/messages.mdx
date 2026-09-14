@@ -56,57 +56,57 @@ Messages from the end user to the agent:
 interface UserMessage {
   id: string
   role: "user"
-  content: string | InputContent[] // Text or multimodal input from the user
+  content: string | ContentPart[] // Text or multimodal input from the user
   name?: string // Optional user identifier
 }
 
-type InputContent =
-  | TextInputContent
-  | ImageInputContent
-  | AudioInputContent
-  | VideoInputContent
-  | DocumentInputContent
+type ContentPart =
+  | TextPart
+  | ImagePart
+  | AudioPart
+  | VideoPart
+  | DocumentPart
 
-interface InputContentDataSource {
+interface DataSource {
   type: "data"
   value: string
   mimeType: string
 }
 
-interface InputContentUrlSource {
+interface UrlSource {
   type: "url"
   value: string
   mimeType?: string
 }
 
-type InputContentSource = InputContentDataSource | InputContentUrlSource
+type PartSource = DataSource | UrlSource
 
-interface TextInputContent {
+interface TextPart {
   type: "text"
   text: string
 }
 
-interface ImageInputContent {
+interface ImagePart {
   type: "image"
-  source: InputContentSource
+  source: PartSource
   metadata?: Record<string, unknown>
 }
 
-interface AudioInputContent {
+interface AudioPart {
   type: "audio"
-  source: InputContentSource
+  source: PartSource
   metadata?: Record<string, unknown>
 }
 
-interface VideoInputContent {
+interface VideoPart {
   type: "video"
-  source: InputContentSource
+  source: PartSource
   metadata?: Record<string, unknown>
 }
 
-interface DocumentInputContent {
+interface DocumentPart {
   type: "document"
-  source: InputContentSource
+  source: PartSource
   metadata?: Record<string, unknown>
 }
 ```

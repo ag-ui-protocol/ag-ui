@@ -48,6 +48,7 @@ conversions.
 | `metadata: null` on a `document` content part | omit the field                                                          | inbound boundary (events)                                             | 2027-09-08 |
 | `parameters: null` on a tool                  | omit the field                                                          | inbound boundary (events)                                             | 2027-09-08 |
 | `forwardedProps: null` on `RunAgentInput`     | omit the field                                                          | inbound boundary (events)                                             | 2027-09-08 |
+| `InputContent` and the `...InputContent` / `InputContent...Source` type and validator names | `ContentPart`, `TextPart`, `ImagePart`, `AudioPart`, `VideoPart`, `DocumentPart`, `PartSource`, `DataSource`, `UrlSource` | exported aliases of the same types in `@ag-ui/core` and `ag_ui.core` | 2027-09-11 |
 
 The optional-null conversions preserve compatibility with shapes the previous
 SDK accepted. They run before validation on incoming events, including nested

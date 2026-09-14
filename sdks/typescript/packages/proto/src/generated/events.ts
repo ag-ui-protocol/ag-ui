@@ -8,7 +8,7 @@
 import { BinaryReader, BinaryWriter } from "@bufbuild/protobuf/wire";
 import { Struct, Value } from "./google/protobuf/struct";
 import { JsonPatchOperation } from "./patch";
-import { Interrupt, Message, RunAgentInput } from "./types";
+import { InputContent, Interrupt, Message, RunAgentInput } from "./types";
 
 export const protobufPackage = "ag_ui";
 
@@ -306,15 +306,26 @@ export interface ToolCallResultEvent {
   /** The call being answered. */
   toolCallId: string;
   /**
-   * What the tool returned, as a string. A tool returning structured data
-   * serialises it.
+   * What the tool returned: either plain text, or an ordered list of parts,
+   * exactly as on the tool message this event mints. A tool returning structured
+   * data serialises it into text; media travel as parts of their own.
    */
-  content: string;
+  content?:
+    | string
+    | undefined;
   /**
    * Present only for symmetry with the message it mints; the value is fixed, so
    * a producer may leave it out.
    */
-  role?: string | undefined;
+  role?:
+    | string
+    | undefined;
+  /**
+   * What the tool returned: either plain text, or an ordered list of parts,
+   * exactly as on the tool message this event mints. A tool returning structured
+   * data serialises it into text; media travel as parts of their own.
+   */
+  contentParts: InputContent[];
 }
 
 /**
@@ -1758,8 +1769,9 @@ function createBaseToolCallResultEvent(): ToolCallResultEvent {
     subagentRunId: undefined,
     messageId: "",
     toolCallId: "",
-    content: "",
+    content: undefined,
     role: undefined,
+    contentParts: [],
   };
 }
 
@@ -1777,11 +1789,14 @@ export const ToolCallResultEvent: MessageFns<ToolCallResultEvent> = {
     if (message.toolCallId !== "") {
       writer.uint32(34).string(message.toolCallId);
     }
-    if (message.content !== "") {
+    if (message.content !== undefined) {
       writer.uint32(42).string(message.content);
     }
     if (message.role !== undefined) {
       writer.uint32(50).string(message.role);
+    }
+    for (const v of message.contentParts) {
+      InputContent.encode(v!, writer.uint32(58).fork()).join();
     }
     return writer;
   },
@@ -1841,6 +1856,14 @@ export const ToolCallResultEvent: MessageFns<ToolCallResultEvent> = {
           message.role = reader.string();
           continue;
         }
+        case 7: {
+          if (tag !== 58) {
+            break;
+          }
+
+          message.contentParts.push(InputContent.decode(reader, reader.uint32()));
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -1861,8 +1884,9 @@ export const ToolCallResultEvent: MessageFns<ToolCallResultEvent> = {
     message.subagentRunId = object.subagentRunId ?? undefined;
     message.messageId = object.messageId ?? "";
     message.toolCallId = object.toolCallId ?? "";
-    message.content = object.content ?? "";
+    message.content = object.content ?? undefined;
     message.role = object.role ?? undefined;
+    message.contentParts = object.contentParts?.map((e) => InputContent.fromPartial(e)) || [];
     return message;
   },
 };

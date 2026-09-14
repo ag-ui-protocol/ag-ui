@@ -551,19 +551,23 @@ describe("closure", () => {
         "the answer to an interrupt, shaped by that interrupt's responseSchema",
       ],
       [
-        "/$defs/ImageInputContent/properties/metadata",
+        "/$defs/TextPart/properties/metadata",
+        "producer metadata about the part — a search hit's source and title, say; not protocol vocabulary",
+      ],
+      [
+        "/$defs/ImagePart/properties/metadata",
         "producer metadata about the attachment; not protocol vocabulary",
       ],
       [
-        "/$defs/AudioInputContent/properties/metadata",
+        "/$defs/AudioPart/properties/metadata",
         "producer metadata about the attachment; not protocol vocabulary",
       ],
       [
-        "/$defs/VideoInputContent/properties/metadata",
+        "/$defs/VideoPart/properties/metadata",
         "producer metadata about the attachment; not protocol vocabulary",
       ],
       [
-        "/$defs/DocumentInputContent/properties/metadata",
+        "/$defs/DocumentPart/properties/metadata",
         "producer metadata about the attachment; not protocol vocabulary",
       ],
       [

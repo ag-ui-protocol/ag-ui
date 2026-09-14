@@ -49,15 +49,20 @@ const TYPE_NAME: Record<string, string> = {
   ResumeEntry: "AGUIResume",
   ToolCall: "AGUIToolCall",
   FunctionCall: "AGUIToolCallFunction",
-  InputContent: "AGUIInputContent",
-  TextInputContent: "AGUITextInputContent",
-  ImageInputContent: "AGUIImageInputContent",
-  AudioInputContent: "AGUIAudioInputContent",
-  VideoInputContent: "AGUIVideoInputContent",
-  DocumentInputContent: "AGUIDocumentInputContent",
-  InputContentSource: "AGUIInputContentSource",
-  InputContentDataSource: "AGUIInputContentDataSource",
-  InputContentUrlSource: "AGUIInputContentUrlSource",
+  // The schema renamed the parts (InputContent -> ContentPart and so on,
+  // PNI-427) when tool results started carrying them. The .NET classes keep
+  // the names this SDK shipped its converters, tests and docs under; the
+  // schema name is the key, the C# name the value, so the rename is visible
+  // here rather than silently reverting to a default spelling.
+  ContentPart: "AGUIInputContent",
+  TextPart: "AGUITextInputContent",
+  ImagePart: "AGUIImageInputContent",
+  AudioPart: "AGUIAudioInputContent",
+  VideoPart: "AGUIVideoInputContent",
+  DocumentPart: "AGUIDocumentInputContent",
+  PartSource: "AGUIInputContentSource",
+  DataSource: "AGUIInputContentDataSource",
+  UrlSource: "AGUIInputContentUrlSource",
 };
 
 // PROP_NAME, NULLABLE_REQUIRED_STRINGS and NULLABLE_REQUIRED_ANY live in
@@ -99,14 +104,28 @@ const DEFAULT_OMISSION_TYPES = new Set([
 
 /**
  * Fields whose representation is a hand-written shim; emitted verbatim.
- * AGUIUserContent owns the string|parts wire union, and its JSON is written
- * by AGUIMessageJsonConverter rather than by an attribute.
+ * AGUIContent owns the string|parts wire union. The user message's JSON is
+ * written by AGUIMessageJsonConverter rather than by an attribute; the tool
+ * message and the event that mints one are attribute-serialised, so theirs
+ * goes through AGUIContentJsonConverter.
  */
 const BESPOKE_PROPERTY: Record<string, string[]> = {
   "UserMessage.content": [
-    "    // Wire format (string | InputContent[]) is owned by AGUIMessageJsonConverter.",
+    "    // Wire format (string | ContentPart[]) is owned by AGUIMessageJsonConverter.",
     "    [JsonIgnore]",
-    "    public AGUIUserContent Content { get; set; }",
+    "    public AGUIContent Content { get; set; }",
+  ],
+  "ToolMessage.content": [
+    "    // Wire format (string | ContentPart[]): a string, or an ordered list of parts.",
+    '    [JsonPropertyName("content")]',
+    "    [JsonConverter(typeof(AGUIContentJsonConverter))]",
+    "    public AGUIContent Content { get; set; }",
+  ],
+  "ToolCallResultEvent.content": [
+    "    // Wire format (string | ContentPart[]), exactly as on the tool message this event mints.",
+    '    [JsonPropertyName("content")]',
+    "    [JsonConverter(typeof(AGUIContentJsonConverter))]",
+    "    public AGUIContent Content { get; set; }",
   ],
 };
 
@@ -116,8 +135,8 @@ const UNION_BASES: Record<
   { discriminator: string; constClass: string }
 > = {
   Message: { discriminator: "role", constClass: "AGUIRoles" },
-  InputContent: { discriminator: "type", constClass: "AGUIInputContentTypes" },
-  InputContentSource: {
+  ContentPart: { discriminator: "type", constClass: "AGUIInputContentTypes" },
+  PartSource: {
     discriminator: "type",
     constClass: "AGUIInputContentSourceTypes",
   },
@@ -190,10 +209,10 @@ function assertUnionsAreModelled(defs: Map<string, Definition>): void {
  * carrying the shared source/metadata pair. An idiom, not a schema shape.
  */
 const MEDIA_PARTS = new Set([
-  "ImageInputContent",
-  "AudioInputContent",
-  "VideoInputContent",
-  "DocumentInputContent",
+  "ImagePart",
+  "AudioPart",
+  "VideoPart",
+  "DocumentPart",
 ]);
 
 /**
@@ -327,10 +346,10 @@ function assertMediaPartsShareTheirBase(members: ObjectDefinition[]): void {
     if (
       source?.required !== true ||
       source.type.kind !== "ref" ||
-      source.type.name !== "InputContentSource"
+      source.type.name !== "PartSource"
     ) {
       throw new Error(
-        `${member.name}.source is not the required InputContentSource ref that ` +
+        `${member.name}.source is not the required PartSource ref that ` +
           "AGUIMediaInputContent hoists — update the base or stop hoisting it",
       );
     }
@@ -921,13 +940,13 @@ export function emitDotnetModels(
   );
   const inputContentTypes = emitConstClass(
     "AGUIInputContentTypes",
-    unionDef("InputContent").description,
-    unionConstMembers("InputContent"),
+    unionDef("ContentPart").description,
+    unionConstMembers("ContentPart"),
   );
   const sourceTypes = emitConstClass(
     "AGUIInputContentSourceTypes",
-    unionDef("InputContentSource").description,
-    unionConstMembers("InputContentSource"),
+    unionDef("PartSource").description,
+    unionConstMembers("PartSource"),
   );
 
   /* ---- events ---- */
@@ -1023,8 +1042,8 @@ export function emitDotnetModels(
 
   /* ---- input content ---- */
   const inputContentBase = emitUnionBase(
-    "InputContent",
-    unionDef("InputContent").description,
+    "ContentPart",
+    unionDef("ContentPart").description,
     "type",
     "AGUIInputContentJsonConverter",
   );
@@ -1052,7 +1071,7 @@ export function emitDotnetModels(
     ].join("\n\n"),
     "}",
   ].join("\n");
-  const contentClasses = unionDef("InputContent").members.map((member) =>
+  const contentClasses = unionDef("ContentPart").members.map((member) =>
     emitClass(context, objectDef(member), {
       base: MEDIA_PARTS.has(member)
         ? "AGUIMediaInputContent"
@@ -1063,12 +1082,12 @@ export function emitDotnetModels(
     }),
   );
   const sourceBase = emitUnionBase(
-    "InputContentSource",
-    unionDef("InputContentSource").description,
+    "PartSource",
+    unionDef("PartSource").description,
     "type",
     "AGUIInputContentSourceJsonConverter",
   );
-  const sourceClasses = unionDef("InputContentSource").members.map((member) =>
+  const sourceClasses = unionDef("PartSource").members.map((member) =>
     emitClass(context, objectDef(member), { base: "AGUIInputContentSource" }),
   );
 
@@ -1131,8 +1150,8 @@ export function emitDotnetModels(
   const emittedUnions = [
     "Event",
     "Message",
-    "InputContent",
-    "InputContentSource",
+    "ContentPart",
+    "PartSource",
     "RunFinishedOutcome",
     "SubagentFinishedOutcome",
   ];

@@ -76,44 +76,9 @@ public sealed class AGUIMessageJsonConverter : JsonConverter<AGUIMessage>
 
         if (jsonElement.TryGetProperty("content", out var contentProp))
         {
-            if (contentProp.ValueKind == JsonValueKind.String)
-            {
-                userMessage.Content = contentProp.GetString() ?? string.Empty;
-            }
-            else if (contentProp.ValueKind == JsonValueKind.Array)
-            {
-                var contents = new List<AGUIInputContent>();
-                foreach (var element in contentProp.EnumerateArray())
-                {
-                    if (!element.TryGetProperty("type", out var typeProp))
-                    {
-                        throw new JsonException("Missing 'type' discriminator in InputContent");
-                    }
-
-                    var contentType = typeProp.GetString();
-                    AGUIInputContent? inputContent = contentType switch
-                    {
-                        AGUIInputContentTypes.Text => element.Deserialize(
-                            options.GetTypeInfo(typeof(AGUITextInputContent))) as AGUITextInputContent,
-                        AGUIInputContentTypes.Image => element.Deserialize(
-                            options.GetTypeInfo(typeof(AGUIImageInputContent))) as AGUIImageInputContent,
-                        AGUIInputContentTypes.Audio => element.Deserialize(
-                            options.GetTypeInfo(typeof(AGUIAudioInputContent))) as AGUIAudioInputContent,
-                        AGUIInputContentTypes.Video => element.Deserialize(
-                            options.GetTypeInfo(typeof(AGUIVideoInputContent))) as AGUIVideoInputContent,
-                        AGUIInputContentTypes.Document => element.Deserialize(
-                            options.GetTypeInfo(typeof(AGUIDocumentInputContent))) as AGUIDocumentInputContent,
-                        _ => throw new JsonException($"Unknown InputContent type: '{contentType}'")
-                    };
-
-                    if (inputContent is not null)
-                    {
-                        contents.Add(inputContent);
-                    }
-                }
-
-                userMessage.Content = contents;
-            }
+            // The same string-or-parts reading the tool message and the tool
+            // result event get through AGUIContentJsonConverter's attribute.
+            userMessage.Content = AGUIContentJsonConverter.ReadContent(contentProp, options);
         }
 
         return userMessage;
@@ -187,27 +152,7 @@ public sealed class AGUIMessageJsonConverter : JsonConverter<AGUIMessage>
             metadata.WriteTo(writer);
         }
 
-        switch (user.Content.Value)
-        {
-            case string text:
-                writer.WriteString("content", text);
-                break;
-            case IList<AGUIInputContent> parts when parts.Count == 1 && parts[0] is AGUITextInputContent singleTextContent:
-                writer.WriteString("content", singleTextContent.Text);
-                break;
-            case IList<AGUIInputContent> parts when parts.Count > 0:
-                writer.WritePropertyName("content");
-                writer.WriteStartArray();
-                foreach (var content in parts)
-                {
-                    JsonSerializer.Serialize(writer, content, options.GetTypeInfo(typeof(AGUIInputContent)));
-                }
-                writer.WriteEndArray();
-                break;
-            default:
-                writer.WriteString("content", string.Empty);
-                break;
-        }
+        AGUIContentJsonConverter.WriteContent(writer, "content", user.Content, options);
 
         writer.WriteEndObject();
     }

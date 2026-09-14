@@ -7,9 +7,10 @@ using System.Runtime.CompilerServices;
 namespace AGUI.Abstractions;
 
 /// <summary>
-/// Represents the content of an <see cref="AGUIUserMessage"/>, which the spec models as a
-/// union of a plain string or a list of <see cref="AGUIInputContent"/> parts
-/// (<c>content: string | InputContent[]</c>).
+/// Represents string-or-parts message content: what an <see cref="AGUIUserMessage"/> sends
+/// and what an <see cref="AGUIToolMessage"/> (or the <see cref="ToolCallResultEvent"/> that
+/// mints one) returns. The spec models it as a union of a plain string or a list of
+/// <see cref="AGUIInputContent"/> parts (<c>content: string | ContentPart[]</c>).
 /// </summary>
 /// <remarks>
 /// This is a hand-rolled union following the C# 15 "basic union pattern": it is marked with
@@ -21,20 +22,20 @@ namespace AGUI.Abstractions;
 /// uniform regardless of which case is stored.
 /// </remarks>
 [Union]
-[CollectionBuilder(typeof(AGUIUserContent), nameof(Create))]
-public readonly struct AGUIUserContent : IReadOnlyList<AGUIInputContent>
+[CollectionBuilder(typeof(AGUIContent), nameof(Create))]
+public readonly struct AGUIContent : IReadOnlyList<AGUIInputContent>
 {
     /// <summary>
-    /// Initializes a new instance of the <see cref="AGUIUserContent"/> struct holding plain text.
+    /// Initializes a new instance of the <see cref="AGUIContent"/> struct holding plain text.
     /// </summary>
-    /// <param name="text">The user text.</param>
-    public AGUIUserContent(string text) => Value = text;
+    /// <param name="text">The text.</param>
+    public AGUIContent(string text) => Value = text;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="AGUIUserContent"/> struct holding a list of input parts.
+    /// Initializes a new instance of the <see cref="AGUIContent"/> struct holding a list of input parts.
     /// </summary>
-    /// <param name="parts">The input content parts.</param>
-    public AGUIUserContent(IList<AGUIInputContent> parts) => Value = parts;
+    /// <param name="parts">The content parts.</param>
+    public AGUIContent(IList<AGUIInputContent> parts) => Value = parts;
 
     /// <summary>
     /// Gets the underlying value, which is either a <see cref="string"/> or an
@@ -48,31 +49,44 @@ public readonly struct AGUIUserContent : IReadOnlyList<AGUIInputContent>
     public bool IsText => Value is string;
 
     /// <summary>
-    /// Creates an <see cref="AGUIUserContent"/> from a span of input parts. This is the
+    /// Returns the content as text: a string as it is, a list of parts as its text parts
+    /// concatenated in order. Media parts are dropped, so this is lossy for anything but
+    /// text — it is the flattening the specification permits for a consumer that can only
+    /// hold a string, and it adds no placeholder for what it drops.
+    /// </summary>
+    public override string ToString() => Value switch
+    {
+        string text => text,
+        IList<AGUIInputContent> parts => string.Concat(parts.OfType<AGUITextInputContent>().Select(part => part.Text)),
+        _ => string.Empty,
+    };
+
+    /// <summary>
+    /// Creates an <see cref="AGUIContent"/> from a span of input parts. This is the
     /// collection-builder entry point that enables C# collection-expression initialization.
     /// </summary>
-    /// <param name="parts">The input content parts.</param>
+    /// <param name="parts">The content parts.</param>
     /// <returns>The created content.</returns>
-    public static AGUIUserContent Create(ReadOnlySpan<AGUIInputContent> parts) =>
+    public static AGUIContent Create(ReadOnlySpan<AGUIInputContent> parts) =>
         new((IList<AGUIInputContent>)parts.ToArray());
 
     /// <summary>
-    /// Converts a string to an <see cref="AGUIUserContent"/>.
+    /// Converts a string to an <see cref="AGUIContent"/>.
     /// </summary>
-    /// <param name="text">The user text.</param>
-    public static implicit operator AGUIUserContent(string text) => new(text);
+    /// <param name="text">The text.</param>
+    public static implicit operator AGUIContent(string text) => new(text);
 
     /// <summary>
-    /// Converts a list of input parts to an <see cref="AGUIUserContent"/>.
+    /// Converts a list of input parts to an <see cref="AGUIContent"/>.
     /// </summary>
-    /// <param name="parts">The input content parts.</param>
-    public static implicit operator AGUIUserContent(List<AGUIInputContent> parts) => new(parts);
+    /// <param name="parts">The content parts.</param>
+    public static implicit operator AGUIContent(List<AGUIInputContent> parts) => new(parts);
 
     /// <summary>
-    /// Converts an array of input parts to an <see cref="AGUIUserContent"/>.
+    /// Converts an array of input parts to an <see cref="AGUIContent"/>.
     /// </summary>
-    /// <param name="parts">The input content parts.</param>
-    public static implicit operator AGUIUserContent(AGUIInputContent[] parts) => new(parts);
+    /// <param name="parts">The content parts.</param>
+    public static implicit operator AGUIContent(AGUIInputContent[] parts) => new(parts);
 
     private IReadOnlyList<AGUIInputContent> Parts => Value switch
     {
