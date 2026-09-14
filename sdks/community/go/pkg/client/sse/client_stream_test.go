@@ -750,3 +750,152 @@ func BenchmarkReadStream(b *testing.B) {
 		}
 	}
 }
+
+// holdingReader serves data and then blocks instead of reporting EOF, the way a
+// server that keeps a connection open but stops sending does. Nothing about the
+// stream tells the reader to stop, so a reader that only stops at EOF never
+// stops here.
+type holdingReader struct {
+	data    []byte
+	pos     int
+	release chan struct{}
+}
+
+func newHoldingReader(t *testing.T, data []byte) *holdingReader {
+	t.Helper()
+	r := &holdingReader{data: data, release: make(chan struct{})}
+	t.Cleanup(func() { close(r.release) })
+	return r
+}
+
+func (r *holdingReader) Read(p []byte) (int, error) {
+	if r.pos >= len(r.data) {
+		<-r.release
+		return 0, io.EOF
+	}
+	n := copy(p, r.data[r.pos:])
+	r.pos += n
+	return n, nil
+}
+
+// collectReadStream runs readStream over body and reports the frames it
+// dispatched and the error it ended with. It fails the test if readStream never
+// returns, which is what an unbounded accumulator looks like from the outside.
+func collectReadStream(t *testing.T, client *Client, body io.Reader) ([]Frame, error) {
+	t.Helper()
+
+	resp := &http.Response{Body: io.NopCloser(body)}
+	frames := make(chan Frame, 16)
+	errCh := make(chan error, 1)
+
+	go client.readStream(context.Background(), resp, frames, errCh)
+
+	var collected []Frame
+	deadline := time.After(10 * time.Second)
+loop:
+	for {
+		select {
+		case frame, ok := <-frames:
+			if !ok {
+				break loop
+			}
+			collected = append(collected, frame)
+		case <-deadline:
+			require.FailNow(t, "readStream never returned; the reader is still accumulating")
+		}
+	}
+
+	var err error
+	select {
+	case err = <-errCh:
+	default:
+	}
+	return collected, err
+}
+
+// dataLines returns count `data:` lines of payload bytes each, with no blank
+// line, so they accumulate into one frame that is never dispatched.
+func dataLines(count, payload int) []byte {
+	var b bytes.Buffer
+	for i := 0; i < count; i++ {
+		b.WriteString("data: ")
+		b.Write(bytes.Repeat([]byte("x"), payload))
+		b.WriteByte('\n')
+	}
+	return b.Bytes()
+}
+
+func TestReadStreamBounds(t *testing.T) {
+	const cap = 4096
+
+	newCappedClient := func() *Client {
+		return NewClient(Config{MaxFrameBytes: cap, BufferSize: 16})
+	}
+
+	t.Run("refuses a line that never ends", func(t *testing.T) {
+		// No delimiter anywhere. bufio.Reader.ReadBytes grows its buffer until it
+		// finds one, so before the per-line limit this read never returned.
+		body := newHoldingReader(t, append([]byte("data: "), bytes.Repeat([]byte("x"), 8*cap)...))
+
+		frames, err := collectReadStream(t, newCappedClient(), body)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "exceeded")
+		assert.Empty(t, frames, "an unterminated line must not be dispatched")
+	})
+
+	t.Run("refuses a frame accumulated across many lines", func(t *testing.T) {
+		// Every line is well under the per-line limit, so only a cap on the
+		// accumulated frame stops this one.
+		body := newHoldingReader(t, dataLines(200, 100))
+
+		frames, err := collectReadStream(t, newCappedClient(), body)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "exceeded")
+		assert.Empty(t, frames, "a frame over the cap must not be dispatched")
+	})
+
+	t.Run("dispatches nothing after an overflow", func(t *testing.T) {
+		/*
+		 * There is no offset after a refused frame that is known to be a frame
+		 * boundary. Resetting the buffer and carrying on reads the tail of the
+		 * refused frame as a frame of its own, which lets a sender put anything it
+		 * likes past the cap and have it dispatched.
+		 */
+		var body bytes.Buffer
+		body.WriteString("data: good\n\n")
+		body.Write(dataLines(200, 100))
+		body.WriteString("\n")
+		body.WriteString("data: forged\n\n")
+
+		frames, err := collectReadStream(t, newCappedClient(), newHoldingReader(t, body.Bytes()))
+
+		require.Error(t, err)
+		require.Len(t, frames, 1, "only the frame that completed before the overflow may be dispatched")
+		assert.Equal(t, "good", string(frames[0].Data))
+	})
+
+	t.Run("still dispatches a frame at the cap", func(t *testing.T) {
+		// The boundary is inclusive: a frame whose data is exactly MaxFrameBytes
+		// long is legitimate and has to get through.
+		payload := bytes.Repeat([]byte("y"), cap)
+		body := append(append([]byte("data: "), payload...), '\n', '\n')
+
+		frames, err := collectReadStream(t, newCappedClient(), bytes.NewReader(body))
+
+		assert.NoError(t, err)
+		require.Len(t, frames, 1)
+		assert.Equal(t, payload, frames[0].Data)
+	})
+
+	t.Run("defaults to the cap the Dart SDK uses", func(t *testing.T) {
+		// kSseDefaultMaxDataCodeUnits in sdks/community/dart/lib/src/internal/
+		// sse_constants.dart. Kept equal so the community SDKs bound an
+		// unterminated stream at the same point.
+		assert.Equal(t, 8*1024*1024, DefaultMaxFrameBytes)
+		assert.Equal(t, DefaultMaxFrameBytes, NewClient(Config{}).config.MaxFrameBytes)
+		// A negative cap would otherwise reach the reader and refuse every frame.
+		assert.Equal(t, DefaultMaxFrameBytes, NewClient(Config{MaxFrameBytes: -1}).config.MaxFrameBytes)
+	})
+}
