@@ -28,7 +28,7 @@ export const MCPAppsActivityType = "mcp-apps";
  */
 export interface ProxiedMCPRequest {
   /** Server hash (MD5 hash of config) */
-  serverHash: string;
+  serverHash?: string;
   /** Server name (optional, for lookup by name) */
   serverId?: string;
   /** The JSON-RPC method to call */
@@ -358,7 +358,7 @@ export class MCPAppsMiddleware extends Middleware {
       if (request.serverId) {
         serverConfig = this.serverConfigMapById.get(request.serverId);
       }
-      if (!serverConfig) {
+      if (!serverConfig && request.serverHash) {
         serverConfig = this.serverConfigMapByHash.get(request.serverHash);
       }
 

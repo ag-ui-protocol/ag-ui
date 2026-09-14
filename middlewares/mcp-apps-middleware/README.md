@@ -95,7 +95,7 @@ The middleware supports proxied MCP requests from the frontend. Pass a `ProxiedM
 
 ```typescript
 interface ProxiedMCPRequest {
-  serverHash: string; // MD5 hash of transport type and URL only
+  serverHash?: string; // MD5 hash of transport type and URL only
   serverId?: string; // Optional server ID for lookup
   method: string; // MCP method (e.g., "resources/read", "tools/call")
   params?: Record<string, unknown>;
