@@ -78,6 +78,7 @@ TOLERATED_INVALID = {
     "RunFinishedEvent/invalid/outcome-null.json": "null-means-absent",
     "RunFinishedEvent/invalid/outcome-success-carrying-interrupts.json": "unknown-keys",
     "RunFinishedEvent/invalid/outcome-cancelled-carrying-interrupts.json": "unknown-keys",
+    "RunFinishedEvent/invalid/outcome-interrupt-carrying-pending-tool-call-ids.json": "unknown-keys",
     "SubagentErrorEvent/invalid/code-null.json": "null-means-absent",
     "SubagentFinishedEvent/invalid/outcome-null.json": "null-means-absent",
     "SubagentFinishedEvent/invalid/outcome-success-carrying-interrupt-ids.json": "unknown-keys",

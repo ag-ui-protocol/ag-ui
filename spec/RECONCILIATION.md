@@ -415,9 +415,10 @@ as optional.
 
 ## RunFinishedSuccessOutcome
 
-| field | TypeScript | Python   | .NET     | schema   |
-| ----- | ---------- | -------- | -------- | -------- |
-| type  | required   | required | required | required |
+| field              | TypeScript | Python             | .NET               | schema   |
+| ------------------ | ---------- | ------------------ | ------------------ | -------- |
+| pendingToolCallIds | optional   | optional, nullable | optional, nullable | optional |
+| type               | required   | required           | required           | required |
 
 ## RunFinishedInterruptOutcome
 

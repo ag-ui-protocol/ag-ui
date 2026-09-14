@@ -137,6 +137,35 @@ public sealed class WireGuardTest
     }
 
     [Fact]
+    public void InterruptOutcomeCarryingPendingToolCallIds_Throws()
+    {
+        var proto = new Proto.RunFinishedEvent
+        {
+            BaseEvent = new Proto.BaseEvent { Type = Proto.EventType.RunFinished },
+            ThreadId = "t1",
+            RunId = "r1",
+            Outcome = "interrupt",
+        };
+        proto.Interrupts.Add(new Proto.Interrupt { Id = "i1", Reason = "r" });
+        proto.PendingToolCallIds.Add("tc-1");
+        Assert.Throws<InvalidDataException>(() => AGUIProtobuf.Decode(Wrap(new Proto.Event { RunFinished = proto })));
+    }
+
+    [Fact]
+    public void AbsentOutcomeCarryingPendingToolCallIds_Throws()
+    {
+        var proto = new Proto.RunFinishedEvent
+        {
+            BaseEvent = new Proto.BaseEvent { Type = Proto.EventType.RunFinished },
+            ThreadId = "t1",
+            RunId = "r1",
+            Outcome = string.Empty,
+        };
+        proto.PendingToolCallIds.Add("tc-1");
+        Assert.Throws<InvalidDataException>(() => AGUIProtobuf.Decode(Wrap(new Proto.Event { RunFinished = proto })));
+    }
+
+    [Fact]
     public void UnknownPatchOperation_Throws()
     {
         var stateDelta = new Proto.StateDeltaEvent

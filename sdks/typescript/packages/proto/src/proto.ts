@@ -520,11 +520,13 @@ export function encode(event: BaseEvent): Uint8Array {
   }
   if (type === "RUN_FINISHED") {
     const outcomeRecord = asRecord(rest.outcome);
+    rest.pendingToolCallIds = [];
     rest.interrupts = [];
     if (rest.outcome === undefined) {
       rest.outcome = "";
     } else if (outcomeRecord?.type === "success") {
       rest.outcome = "success";
+      rest.pendingToolCallIds = asArray(outcomeRecord?.pendingToolCallIds);
     } else if (outcomeRecord?.type === "interrupt") {
       rest.outcome = "interrupt";
       rest.interrupts = asArray(outcomeRecord?.interrupts);
@@ -1291,10 +1293,15 @@ export function decode(data: Uint8Array): BaseEvent {
         ? (record.outcome as string)
         : undefined;
     const payload: LooseRecord = {};
+    payload.pendingToolCallIds = record.pendingToolCallIds;
+    delete record.pendingToolCallIds;
     payload.interrupts = record.interrupts;
     delete record.interrupts;
     delete record.outcome;
     if (wireOutcome === undefined) {
+      if (asArray(payload.pendingToolCallIds).length > 0) {
+        record.pendingToolCallIds = payload.pendingToolCallIds;
+      }
       if (asArray(payload.interrupts).length > 0) {
         record.interrupts = payload.interrupts;
       }
@@ -1302,15 +1309,27 @@ export function decode(data: Uint8Array): BaseEvent {
     if (wireOutcome === "success") {
       record.outcome = {
         type: "success",
+        ...(asArray(payload.pendingToolCallIds).length > 0
+          ? { pendingToolCallIds: payload.pendingToolCallIds }
+          : {}),
         ...(asArray(payload.interrupts).length > 0 ? { interrupts: payload.interrupts } : {}),
       };
     }
     if (wireOutcome === "interrupt") {
-      record.outcome = { type: "interrupt", interrupts: asArray(payload.interrupts) };
+      record.outcome = {
+        type: "interrupt",
+        interrupts: asArray(payload.interrupts),
+        ...(asArray(payload.pendingToolCallIds).length > 0
+          ? { pendingToolCallIds: payload.pendingToolCallIds }
+          : {}),
+      };
     }
     if (wireOutcome === "cancelled") {
       record.outcome = {
         type: "cancelled",
+        ...(asArray(payload.pendingToolCallIds).length > 0
+          ? { pendingToolCallIds: payload.pendingToolCallIds }
+          : {}),
         ...(asArray(payload.interrupts).length > 0 ? { interrupts: payload.interrupts } : {}),
       };
     }
@@ -1324,6 +1343,9 @@ export function decode(data: Uint8Array): BaseEvent {
     if (wireOutcome !== undefined && !["success", "interrupt", "cancelled"].includes(wireOutcome)) {
       record.outcome = {
         type: wireOutcome,
+        ...(asArray(payload.pendingToolCallIds).length > 0
+          ? { pendingToolCallIds: payload.pendingToolCallIds }
+          : {}),
         ...(asArray(payload.interrupts).length > 0 ? { interrupts: payload.interrupts } : {}),
       };
     }

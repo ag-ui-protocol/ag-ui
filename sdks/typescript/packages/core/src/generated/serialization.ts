@@ -182,7 +182,7 @@ const shapes: Record<string, Shape> = {
     optional: ["timestamp", "rawEvent", "metadata", "protocolVersion", "parentRunId", "input"],
     fields: { input: "RunAgentInput" },
   },
-  RunFinishedSuccessOutcome: { optional: [], fields: {} },
+  RunFinishedSuccessOutcome: { optional: ["pendingToolCallIds"], fields: {} },
   Interrupt: {
     optional: ["subagentRunId", "message", "toolCallId", "responseSchema", "expiresAt", "metadata"],
     fields: {},
