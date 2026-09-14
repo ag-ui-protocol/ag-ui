@@ -2016,3 +2016,35 @@ export function resolveMessageContent(content?: LangGraphMessage['content']): st
 
   return null
 }
+
+/**
+ * Flatten an error and its `cause` chain into one message.
+ *
+ * `fetch failed` is undici's generic message for every transport failure: the
+ * actual reason (`connect ECONNREFUSED ::1:8123`, a DNS failure, a TLS error)
+ * only exists on `error.cause`. Reporting `error.message` alone tells the user
+ * that something failed but never what, which is the difference between "the
+ * agent server is not listening on the address you configured" and no lead at
+ * all.
+ */
+export function describeErrorChain(error: unknown): string {
+  const parts: string[] = [];
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+
+  // A cause chain can be cyclic (`a.cause = b; b.cause = a`), so track visited
+  // links rather than trusting it to terminate.
+  while (current instanceof Error && !seen.has(current)) {
+    seen.add(current);
+    if (current.message) {
+      parts.push(current.message);
+    }
+    current = (current as Error & { cause?: unknown }).cause;
+  }
+
+  if (parts.length > 0) {
+    return parts.join(": ");
+  }
+
+  return typeof error === "string" && error ? error : String(error);
+}
