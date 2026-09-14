@@ -119,8 +119,10 @@ async function runExample() {
           onRunFinishedEvent: (params) => {
             if (params.outcome === "success") {
               console.log("Run finished result:", params.result);
-            } else {
+            } else if (params.outcome === "interrupt") {
               console.log("Run finished with interrupts:", params.interrupts);
+            } else {
+              console.log("Run was cancelled");
             }
           },
         },

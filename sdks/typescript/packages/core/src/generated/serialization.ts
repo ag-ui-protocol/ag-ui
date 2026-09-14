@@ -188,9 +188,14 @@ const shapes: Record<string, Shape> = {
     fields: {},
   },
   RunFinishedInterruptOutcome: { optional: [], fields: { interrupts: { array: "Interrupt" } } },
+  RunFinishedCancelledOutcome: { optional: [], fields: {} },
   RunFinishedOutcome: {
     discriminator: "type",
-    variants: { success: "RunFinishedSuccessOutcome", interrupt: "RunFinishedInterruptOutcome" },
+    variants: {
+      success: "RunFinishedSuccessOutcome",
+      interrupt: "RunFinishedInterruptOutcome",
+      cancelled: "RunFinishedCancelledOutcome",
+    },
   },
   TokenUsage: {
     optional: [

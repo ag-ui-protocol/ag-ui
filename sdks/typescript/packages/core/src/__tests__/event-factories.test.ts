@@ -5,6 +5,7 @@ import {
   createMessagesSnapshotEvent,
   createRawEvent,
   createRunErrorEvent,
+  createRunFinishedCancelledEvent,
   createRunFinishedEvent,
   createRunFinishedInterruptEvent,
   createRunFinishedSuccessEvent,
@@ -249,6 +250,25 @@ describe("createRunFinishedInterruptEvent", () => {
         interrupts: [],
       }),
     ).toThrow();
+  });
+});
+
+describe("createRunFinishedCancelledEvent", () => {
+  it("produces a RUN_FINISHED event with outcome={ type: 'cancelled' }", () => {
+    const e = createRunFinishedCancelledEvent({ threadId: "t-1", runId: "r-1" });
+    expect(e.type).toBe(EventType.RUN_FINISHED);
+    expect(e.outcome).toEqual({ type: "cancelled" });
+    expect(e.result).toBeUndefined();
+  });
+
+  it("carries usage accrued before the stop", () => {
+    const e = createRunFinishedCancelledEvent({
+      threadId: "t-1",
+      runId: "r-1",
+      usage: [{ provider: "openai", model: "gpt-4o", inputTokens: 3, outputTokens: 1 }],
+    });
+    expect(e.outcome).toEqual({ type: "cancelled" });
+    expect(e.usage).toHaveLength(1);
   });
 });
 

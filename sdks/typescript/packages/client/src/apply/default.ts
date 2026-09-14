@@ -1062,6 +1062,8 @@ export const defaultApplyEvents = (
 
         case EventType.RUN_FINISHED: {
           const e = event as RunFinishedEvent;
+          // Absent means success; a cancelled run carries neither a result nor
+          // anything to answer, so its params are the bare event.
           const finishedParams =
             e.outcome?.type === "interrupt"
               ? ({
@@ -1069,7 +1071,9 @@ export const defaultApplyEvents = (
                   outcome: "interrupt" as const,
                   interrupts: e.outcome.interrupts,
                 } as const)
-              : ({ event: e, outcome: "success" as const, result: e.result } as const);
+              : e.outcome?.type === "cancelled"
+                ? ({ event: e, outcome: "cancelled" as const } as const)
+                : ({ event: e, outcome: "success" as const, result: e.result } as const);
           const mutation = await runSubscribersWithMutation(
             subscribers,
             messages,

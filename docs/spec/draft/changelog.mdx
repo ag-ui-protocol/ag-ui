@@ -22,9 +22,11 @@ specification.
    document authoritative for behaviour.
 
 2. **Runs report how they ended.** `RUN_FINISHED` carries an optional
-   `outcome`: absent or success means success, and the interrupt outcome
-   carries what the run is waiting for. With it come `Interrupt`, resume
-   entries on the [run input](/spec/draft/basic/run-input), and the
+   `outcome`: absent or success means success, the interrupt outcome carries
+   what the run is waiting for, and the
+   [cancelled outcome](/spec/draft/events/lifecycle#cancelled-runs) marks a
+   run stopped on purpose before it completed. With it come `Interrupt`,
+   resume entries on the [run input](/spec/draft/basic/run-input), and the
    [interrupt–resume pattern](/spec/draft/basic/patterns/interrupt-resume).
    Every producer written before outcomes existed is already conformant.
 

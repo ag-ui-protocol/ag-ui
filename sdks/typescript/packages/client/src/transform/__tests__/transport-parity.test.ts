@@ -181,7 +181,7 @@ describe("transport parity", () => {
   it("agrees on an outcome neither build recognises", async () => {
     const { sse, binary } = await bothTransports([
       RUN_STARTED,
-      { type: "RUN_FINISHED", threadId: "t1", runId: "r1", outcome: { type: "cancelled" } },
+      { type: "RUN_FINISHED", threadId: "t1", runId: "r1", outcome: { type: "expired" } },
     ]);
 
     expect(binary).toEqual(sse);

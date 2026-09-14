@@ -118,6 +118,8 @@ RunErrorEvent/invalid/usage-item-not-a-token-usage.expect.json
 RunErrorEvent/invalid/usage-item-not-a-token-usage.json
 RunErrorEvent/valid/minimal.json
 RunErrorEvent/valid/usage-cache-breakdown.json
+RunFinishedEvent/invalid/outcome-cancelled-carrying-interrupts.expect.json
+RunFinishedEvent/invalid/outcome-cancelled-carrying-interrupts.json
 RunFinishedEvent/invalid/outcome-interrupt-item-not-an-interrupt.expect.json
 RunFinishedEvent/invalid/outcome-interrupt-item-not-an-interrupt.json
 RunFinishedEvent/invalid/outcome-interrupt-with-no-interrupts.expect.json
@@ -134,6 +136,7 @@ RunFinishedEvent/invalid/usage-negative-token-count.expect.json
 RunFinishedEvent/invalid/usage-negative-token-count.json
 RunFinishedEvent/valid/minimal.json
 RunFinishedEvent/valid/outcome-absent.json
+RunFinishedEvent/valid/outcome-cancelled.json
 RunFinishedEvent/valid/outcome-interrupt-full.json
 RunFinishedEvent/valid/outcome-interrupt.json
 RunFinishedEvent/valid/outcome-success.json

@@ -426,6 +426,12 @@ as optional.
 | interrupts | required   | required | optional | required |
 | type       | required   | required | required | required |
 
+## RunFinishedCancelledOutcome
+
+| field | TypeScript | Python   | .NET     | schema   |
+| ----- | ---------- | -------- | -------- | -------- |
+| type  | required   | required | required | required |
+
 ## SubagentFinishedSuccessOutcome
 
 | field | TypeScript | Python   | .NET     | schema   |

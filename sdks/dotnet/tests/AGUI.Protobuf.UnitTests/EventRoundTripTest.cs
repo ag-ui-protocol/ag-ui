@@ -50,6 +50,21 @@ public sealed class EventRoundTripTest
     }
 
     [Fact]
+    public void RunFinished_Cancelled_RoundTrips()
+    {
+        var result = RoundTrip(new RunFinishedEvent
+        {
+            ThreadId = "thread-1",
+            RunId = "run-1",
+            Outcome = new RunFinishedCancelledOutcome(),
+        });
+
+        Assert.Equal("thread-1", result.ThreadId);
+        Assert.Equal("run-1", result.RunId);
+        Assert.IsType<RunFinishedCancelledOutcome>(result.Outcome);
+    }
+
+    [Fact]
     public void RunFinished_Interrupt_RoundTrips()
     {
         var result = RoundTrip(new RunFinishedEvent

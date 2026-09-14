@@ -25,7 +25,9 @@ with nothing to do.
   it. A run that stopped by calling a
   [frontend tool](/spec/draft/events/tool-calls#frontend-tools) is the other,
   ordinary path: it finishes as success and the answer rides the next input's
-  messages.
+  messages. A run that stopped because it was *told to* is neither: it ends
+  with the [cancelled outcome](/spec/draft/events/lifecycle#cancelled-runs)
+  and asks for nothing.
 - Each interrupt's `id` MUST be unique within the run; a resume entry answers
   it by this id.
 - An interrupt's `reason` is an open string — the protocol does not attempt to
