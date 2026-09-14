@@ -158,6 +158,28 @@ env:
   # this file needs no frozen-mode exemption.
   UV_VERSION: "0.12.1"
   PYTHON_VERSION: "3.12"
+  # Budget for the post-publish registry visibility check, shared by the stable
+  # and canary TypeScript publish loops.
+  #
+  # npm's CDN can take minutes to serve a freshly published version back, and
+  # npm says so itself on every publish: "Your package is being processed and
+  # may take a few minutes to become available." The check has to outlast that,
+  # because timing out here fails the release AFTER the packages are already
+  # live and immutable on the registry -- no git tags, no GitHub Releases, and
+  # publish-dotnet / publish-maven (which `needs: publish`) never run at all.
+  #
+  # This has now been tuned upward twice from real false positives: 15s, then
+  # 60s. Run 33068467612 is the 60s case -- all four @ag-ui packages published
+  # fine, then each timed out at exactly 60s in turn, taking NuGet and Maven
+  # Central down with them and leaving npm/PyPI published but untagged.
+  #
+  # The asymmetry is what sets the value: a false positive breaks a release
+  # that already shipped and needs hand recovery, while a slow true negative
+  # only delays the error report in a rare failure mode (silent OIDC fallback).
+  # So this is deliberately generous. The fast path is unaffected -- the loop
+  # breaks as soon as the version is visible, usually on the first attempt.
+  NPM_VISIBILITY_ATTEMPTS: "30"
+  NPM_VISIBILITY_INTERVAL_SECONDS: "10"
 
 permissions:
   contents: read
@@ -228,7 +250,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86  # v6.0.10
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413  # v6.1.0
         with:
           version: "10.33.4"
 
@@ -237,17 +259,24 @@ jobs:
         with:
           node-version-file: ".node-version"
 
-      - name: Install protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b  # v3.0.0
-        with:
-          version: "25.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Install uv
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9  # v9.0.0
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4  # v10.1.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
+          # The publish job's copy of this step documents the same post-step
+          # failure and turns caching off, because `uv publish` never writes the
+          # cache. Here uv DOES write it — `uv build` runs for every Python
+          # scope — so the cache stays on and we only stop the post step from
+          # treating "nothing to cache" as an error.
+          #
+          # Without this, a scope with no Python packages (every sdk-ts,
+          # integration-*-ts and middleware-* canary) never invokes uv, so the
+          # cache dir is never created and the post step fails the `build` job
+          # after a completely green build. `publish` needs `build`, so it is
+          # skipped and nothing ships — while the logs show every package
+          # building fine.
+          ignore-nothing-to-cache: true
 
       - name: Setup Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
@@ -531,7 +560,7 @@ jobs:
       # of this file.
       - name: Set up JDK 17 (stable)
         if: steps.meta.outputs.mode == 'stable' && steps.detect_java.outputs.count != '0'
-        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961  # v5.7.0
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6  # v6.0.1
         with:
           java-version: "17"
           distribution: "temurin"
@@ -771,7 +800,7 @@ jobs:
       # --- TypeScript publish ---
       - name: Setup pnpm
         if: needs.build.outputs.ts_count != '0' || needs.build.outputs.pre_ts_count != '0'
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86  # v6.0.10
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413  # v6.1.0
         with:
           version: "10.33.4"
 
@@ -905,12 +934,12 @@ jobs:
                 # Verify publish actually landed on the registry. Catches the
                 # silent-OIDC-fallback failure mode (npm returns 0 but the
                 # version never propagated) and transient registry/CDN issues.
-                # 6 attempts × 10s = up to 60s of CDN propagation tolerance. npm CDN can lag 30-60s
-                # during peak hours; 15s was too aggressive and produced false-positive failures.
+                # Budget comes from NPM_VISIBILITY_ATTEMPTS × NPM_VISIBILITY_INTERVAL_SECONDS
+                # (see the workflow-level env block for why it is set where it is).
                 PUBLISH_VERIFIED=0
                 VIEW_STDERR=$(mktemp)
                 VIEW_STDOUT=$(mktemp)
-                for ATTEMPT in 1 2 3 4 5 6; do
+                for ATTEMPT in $(seq 1 "$NPM_VISIBILITY_ATTEMPTS"); do
                   # exit 0 alone is not sufficient — npm view can return 0 with
                   # empty stdout (e.g. when the registry serves a stale doc that
                   # lacks the new version under a dist-tag) or with a different
@@ -921,14 +950,14 @@ jobs:
                     PUBLISH_VERIFIED=1
                     break
                   fi
-                  if [ "$ATTEMPT" -lt 6 ]; then
-                    sleep 10
+                  if [ "$ATTEMPT" -lt "$NPM_VISIBILITY_ATTEMPTS" ]; then
+                    sleep "$NPM_VISIBILITY_INTERVAL_SECONDS"
                   fi
                 done
                 if [ "$PUBLISH_VERIFIED" -eq 1 ]; then
                   echo "::notice::PUBLISHED: ${PROJECT}@${PKG_VERSION}"
                 else
-                  echo "::error::Publish returned 0 but ${PROJECT}@${PKG_VERSION} not visible on registry after 6 attempts (60s)"
+                  echo "::error::Publish returned 0 but ${PROJECT}@${PKG_VERSION} not visible on registry after ${NPM_VISIBILITY_ATTEMPTS} attempts ($((NPM_VISIBILITY_ATTEMPTS * NPM_VISIBILITY_INTERVAL_SECONDS))s)"
                   echo "::error::Last npm view stderr (may be empty if npm routed error to stdout):"
                   if [ -s "$VIEW_STDERR" ]; then cat "$VIEW_STDERR"; else echo "  (empty)"; fi
                   echo "::error::Last npm view stdout:"
@@ -1019,11 +1048,11 @@ jobs:
               # propagated) and transient registry/CDN issues. Without this, a
               # green workflow run can hide a publish that never actually
               # reached the canary dist-tag.
-              # 6 attempts × 10s = up to 60s of CDN propagation tolerance.
+              # Same budget as the stable loop -- see the workflow-level env block.
               PUBLISH_VERIFIED=0
               VIEW_STDERR=$(mktemp)
               VIEW_STDOUT=$(mktemp)
-              for ATTEMPT in 1 2 3 4 5 6; do
+              for ATTEMPT in $(seq 1 "$NPM_VISIBILITY_ATTEMPTS"); do
                 # exit 0 alone is not sufficient — npm view can return 0 with
                 # empty stdout (e.g. when the registry serves a stale doc that
                 # lacks the new version under a dist-tag) or with a different
@@ -1034,14 +1063,14 @@ jobs:
                   PUBLISH_VERIFIED=1
                   break
                 fi
-                if [ "$ATTEMPT" -lt 6 ]; then
-                  sleep 10
+                if [ "$ATTEMPT" -lt "$NPM_VISIBILITY_ATTEMPTS" ]; then
+                  sleep "$NPM_VISIBILITY_INTERVAL_SECONDS"
                 fi
               done
               if [ "$PUBLISH_VERIFIED" -eq 1 ]; then
                 echo "::notice::PUBLISHED: ${PROJECT}@${PKG_VERSION} (canary)"
               else
-                echo "::error::Canary publish returned 0 but ${PROJECT}@${PKG_VERSION} not visible on registry after 6 attempts (60s)"
+                echo "::error::Canary publish returned 0 but ${PROJECT}@${PKG_VERSION} not visible on registry after ${NPM_VISIBILITY_ATTEMPTS} attempts ($((NPM_VISIBILITY_ATTEMPTS * NPM_VISIBILITY_INTERVAL_SECONDS))s)"
                 echo "::error::Last npm view stderr (may be empty if npm routed error to stdout):"
                 if [ -s "$VIEW_STDERR" ]; then cat "$VIEW_STDERR"; else echo "  (empty)"; fi
                 echo "::error::Last npm view stdout:"
@@ -1068,10 +1097,27 @@ jobs:
       # --- Python publish ---
       - name: Install uv
         if: needs.build.outputs.py_count != '0' || needs.build.outputs.pre_has_py_packages == 'true'
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9  # v9.0.0
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4  # v10.1.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
+          # The only uv command in this job is `uv publish`, which uploads
+          # already-built artifacts and never writes to the uv cache. With
+          # caching left on (setup-uv defaults to `enable-cache: auto`,
+          # `ignore-nothing-to-cache: false`), the post step tries to save a
+          # cache directory that was never created and errors:
+          #
+          #   Cache path /home/runner/work/_temp/setup-uv-cache does not exist
+          #
+          # That error fails the whole `publish` job after every package has
+          # already shipped. It only surfaces when the cache key misses, so it
+          # hid behind key hits until run 31929982725 (2026-08-16), where the
+          # release's own pyproject.toml bump changed the key. The damage is
+          # not cosmetic: `publish-dotnet` gates on this job's result, and
+          # `publish-maven` chains off that, so a release carrying both a
+          # Python package and a .NET or Java package would ship npm + PyPI
+          # and then skip the NuGet and Maven lanes.
+          enable-cache: false
 
       - name: Download Python build artifacts (stable)
         if: needs.build.outputs.mode == 'stable' && needs.build.outputs.py_count != '0'
@@ -1476,7 +1522,7 @@ jobs:
       # long-lived client secret is stored.
       - name: Azure login (OIDC)
         if: vars.SIGNING_PROVIDER == 'keyvault'
-        uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca  # v3.0.1
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906  # v3.1.0
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -1713,7 +1759,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up JDK 17
-        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961  # v5.7.0
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6  # v6.0.1
         with:
           java-version: "17"
           distribution: "temurin"
@@ -2071,7 +2117,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           version: "10.33.4"
 

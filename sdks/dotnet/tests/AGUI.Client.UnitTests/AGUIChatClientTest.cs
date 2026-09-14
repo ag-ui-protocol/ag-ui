@@ -144,6 +144,88 @@ public sealed class AGUIChatClientTest
         Assert.Equal(3, transport.LastInput!.Messages.Count);
     }
 
+    [Fact]
+    public async Task GetStreamingResponse_MultimodalContent_MapsAdditionalPropertiesToMetadata()
+    {
+        var transport = new CapturingTransport();
+        using var client = new AGUIChatClient(new() { Transport = transport });
+        var dataContent = new DataContent(new byte[] { 1, 2, 3, 4 }, "image/png")
+        {
+            AdditionalProperties = new AdditionalPropertiesDictionary
+            {
+                ["detail"] = "high"
+            }
+        };
+
+        await DrainAsync(client.GetStreamingResponseAsync(
+            [new ChatMessage(ChatRole.User, [dataContent])],
+            new ChatOptions()));
+
+        var userMessage = Assert.IsType<AGUIUserMessage>(Assert.Single(transport.LastInput!.Messages));
+        var image = Assert.IsType<AGUIImageInputContent>(Assert.Single(userMessage.Content));
+        Assert.Equal("high", image.Metadata?.GetProperty("detail").GetString());
+    }
+
+    [Fact]
+    public async Task GetStreamingResponse_MultimodalContent_UsesConfiguredSerializerOptionsForMetadata()
+    {
+        var transport = new CapturingTransport();
+        using var client = new AGUIChatClient(new()
+        {
+            Transport = transport,
+            JsonSerializerOptions = AGUIChatClientTestJsonSerializerContext.Default.Options
+        });
+        var dataContent = new DataContent(new byte[] { 1, 2, 3, 4 }, "image/png")
+        {
+            AdditionalProperties = new AdditionalPropertiesDictionary
+            {
+                ["provider"] = new CustomMetadata { QualityLevel = "high" }
+            }
+        };
+
+        await DrainAsync(client.GetStreamingResponseAsync(
+            [new ChatMessage(ChatRole.User, [dataContent])],
+            new ChatOptions()));
+
+        var userMessage = Assert.IsType<AGUIUserMessage>(Assert.Single(transport.LastInput!.Messages));
+        var image = Assert.IsType<AGUIImageInputContent>(Assert.Single(userMessage.Content));
+        Assert.Equal("high", image.Metadata?.GetProperty("provider").GetProperty("quality_level").GetString());
+    }
+
+    [Fact]
+    public async Task GetStreamingResponse_MultimodalContent_PreservesSerializedMetadataKeysWhenAddingFilename()
+    {
+        var transport = new CapturingTransport();
+        var jsonSerializerOptions = new JsonSerializerOptions(AGUIChatClientTestJsonSerializerContext.Default.Options)
+        {
+            DictionaryKeyPolicy = JsonNamingPolicy.SnakeCaseLower
+        };
+        using var client = new AGUIChatClient(new()
+        {
+            Transport = transport,
+            JsonSerializerOptions = jsonSerializerOptions
+        });
+        using var metadataDocument = JsonDocument.Parse("""{"providerHint":"high"}""");
+        var dataContent = new DataContent(new byte[] { 1, 2, 3, 4 }, "image/png")
+        {
+            Name = "pixel.png",
+            AdditionalProperties = new AdditionalPropertiesDictionary
+            {
+                ["metadata"] = metadataDocument.RootElement
+            }
+        };
+
+        await DrainAsync(client.GetStreamingResponseAsync(
+            [new ChatMessage(ChatRole.User, [dataContent])],
+            new ChatOptions()));
+
+        var userMessage = Assert.IsType<AGUIUserMessage>(Assert.Single(transport.LastInput!.Messages));
+        var image = Assert.IsType<AGUIImageInputContent>(Assert.Single(userMessage.Content));
+        Assert.Equal("high", image.Metadata?.GetProperty("providerHint").GetString());
+        Assert.False(image.Metadata?.TryGetProperty("provider_hint", out _) ?? true);
+        Assert.Equal("pixel.png", image.Metadata?.GetProperty("filename").GetString());
+    }
+
     // https://github.com/ag-ui-protocol/ag-ui/issues/2151
     // A caller-supplied RunAgentInput (via RawRepresentationFactory) must forward
     // Context and ForwardedProperties onto the request actually sent, alongside
@@ -276,6 +358,58 @@ public sealed class AGUIChatClientTest
         Assert.NotNull(resume);
         var entry = Assert.Single(resume!);
         Assert.Equal("caller-interrupt", entry.InterruptId);
+    }
+
+    // Metadata set on an InterruptResponseContent travels onto the resume entry the
+    // client sends, alongside the payload — envelope data (signatures, routing keys)
+    // as opposed to the answer itself.
+    [Fact]
+    public async Task GetStreamingResponse_InterruptResponseMetadata_ReachesTheResumeEntry()
+    {
+        var transport = new CapturingTransport();
+        using var client = new AGUIChatClient(new() { Transport = transport });
+
+        var history = new List<ChatMessage>
+        {
+            new(ChatRole.User,
+            [
+                new InterruptResponseContent("req-interrupt")
+                {
+                    Payload = JsonDocument.Parse("""{"approved":true}""").RootElement,
+                    Metadata = JsonDocument.Parse(
+                        """{"definitionId":"review-plan","key":"afterModel-review"}""").RootElement,
+                },
+            ]),
+        };
+
+        await DrainAsync(client.GetStreamingResponseAsync(history));
+
+        var resume = transport.LastInput!.Resume;
+        Assert.NotNull(resume);
+        var entry = Assert.Single(resume!);
+        Assert.Equal("req-interrupt", entry.InterruptId);
+        Assert.True(entry.Payload!.Value.GetProperty("approved").GetBoolean());
+        Assert.NotNull(entry.Metadata);
+        Assert.Equal("review-plan", entry.Metadata!.Value.GetProperty("definitionId").GetString());
+        Assert.Equal("afterModel-review", entry.Metadata!.Value.GetProperty("key").GetString());
+    }
+
+    // An InterruptResponseContent without metadata produces a resume entry without it.
+    [Fact]
+    public async Task GetStreamingResponse_InterruptResponseWithoutMetadata_OmitsIt()
+    {
+        var transport = new CapturingTransport();
+        using var client = new AGUIChatClient(new() { Transport = transport });
+
+        var history = new List<ChatMessage>
+        {
+            new(ChatRole.User, [new InterruptResponseContent("req-interrupt")]),
+        };
+
+        await DrainAsync(client.GetStreamingResponseAsync(history));
+
+        var entry = Assert.Single(transport.LastInput!.Resume!);
+        Assert.Null(entry.Metadata);
     }
 
     // https://github.com/microsoft/agent-framework/issues/5587
@@ -423,6 +557,167 @@ public sealed class AGUIChatClientTest
 
             await Task.CompletedTask.ConfigureAwait(false);
         }
+    }
+
+    [Fact]
+    public async Task GetStreamingResponse_SurfacesRunFinishedUsageAsUsageContent()
+    {
+        var transport = new StaticTransport(
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new TextMessageStartEvent { MessageId = "m1", Role = "assistant" },
+            new TextMessageContentEvent { MessageId = "m1", Delta = "hi" },
+            new TextMessageEndEvent { MessageId = "m1" },
+            new RunFinishedEvent
+            {
+                ThreadId = "t1",
+                RunId = "r1",
+                Usage =
+                [
+                    new TokenUsage
+                    {
+                        Provider = "openai",
+                        Model = "gpt-4o",
+                        InputTokens = 11,
+                        OutputTokens = 22,
+                        TotalTokens = 33,
+                        ReasoningTokens = 44,
+                        CachedInputTokens = 55
+                    }
+                ]
+            });
+        using var client = new AGUIChatClient(new() { Transport = transport });
+
+        var updates = new List<ChatResponseUpdate>();
+        await foreach (var u in client.GetStreamingResponseAsync(
+            new[] { new ChatMessage(ChatRole.User, "hi") }))
+        {
+            updates.Add(u);
+        }
+
+        // ToChatResponse aggregates UsageContent across updates — this is how a caller of
+        // the IChatClient abstraction actually reads usage.
+        var usage = updates.ToChatResponse().Usage;
+        Assert.NotNull(usage);
+        Assert.Equal(11, usage.InputTokenCount);
+        Assert.Equal(22, usage.OutputTokenCount);
+        Assert.Equal(33, usage.TotalTokenCount);
+        Assert.Equal(44, usage.ReasoningTokenCount);
+        Assert.Equal(55, usage.CachedInputTokenCount);
+    }
+
+    [Fact]
+    public async Task GetStreamingResponse_SurfacesRunErrorUsageAsUsageContent()
+    {
+        var errorEvent = new RunErrorEvent
+        {
+            Message = "failed",
+            Code = "ERR",
+            Usage =
+            [
+                new TokenUsage
+                {
+                    Provider = "openai",
+                    Model = "gpt-4o",
+                    InputTokens = 11,
+                    OutputTokens = 22,
+                    TotalTokens = 33,
+                }
+            ]
+        };
+        var transport = new StaticTransport(
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            errorEvent);
+        using var client = new AGUIChatClient(new() { Transport = transport });
+
+        var updates = new List<ChatResponseUpdate>();
+        await foreach (var update in client.GetStreamingResponseAsync(
+            new[] { new ChatMessage(ChatRole.User, "hi") }))
+        {
+            updates.Add(update);
+        }
+
+        Assert.Collection(updates,
+            update =>
+            {
+                Assert.IsType<RunStartedEvent>(update.RawRepresentation);
+            },
+            update =>
+            {
+                var error = Assert.IsType<ErrorContent>(Assert.Single(update.Contents));
+                Assert.Equal("failed", error.Message);
+                Assert.Equal("ERR", error.ErrorCode);
+                Assert.Same(errorEvent, update.RawRepresentation);
+            },
+            update =>
+            {
+                var usage = Assert.IsType<UsageContent>(Assert.Single(update.Contents));
+                Assert.Equal("gpt-4o", update.ModelId);
+                Assert.Equal(11, usage.Details.InputTokenCount);
+                Assert.Equal(22, usage.Details.OutputTokenCount);
+                Assert.Equal(33, usage.Details.TotalTokenCount);
+                Assert.Same(errorEvent, update.RawRepresentation);
+            });
+
+        var aggregated = updates.ToChatResponse().Usage;
+        Assert.NotNull(aggregated);
+        Assert.Equal(11, aggregated.InputTokenCount);
+        Assert.Equal(22, aggregated.OutputTokenCount);
+        Assert.Equal(33, aggregated.TotalTokenCount);
+    }
+
+    [Fact]
+    public async Task GetStreamingResponse_UsageContentCarriesModelId()
+    {
+        var transport = new StaticTransport(
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new RunFinishedEvent
+            {
+                ThreadId = "t1",
+                RunId = "r1",
+                Usage =
+                [
+                    new TokenUsage { Model = "gpt-4o", InputTokens = 10 },
+                    new TokenUsage { Model = "gpt-4o-mini", InputTokens = 5 }
+                ]
+            });
+        using var client = new AGUIChatClient(new() { Transport = transport });
+
+        var updates = new List<ChatResponseUpdate>();
+        await foreach (var u in client.GetStreamingResponseAsync(
+            new[] { new ChatMessage(ChatRole.User, "hi") }))
+        {
+            updates.Add(u);
+        }
+
+        // Per-model attribution must survive: one UsageContent per entry, each labelled.
+        var usageUpdates = updates
+            .Where(u => u.Contents.OfType<UsageContent>().Any())
+            .ToList();
+
+        Assert.Equal(2, usageUpdates.Count);
+        Assert.Equal("gpt-4o", usageUpdates[0].ModelId);
+        Assert.Equal(10, usageUpdates[0].Contents.OfType<UsageContent>().Single().Details.InputTokenCount);
+        Assert.Equal("gpt-4o-mini", usageUpdates[1].ModelId);
+        Assert.Equal(5, usageUpdates[1].Contents.OfType<UsageContent>().Single().Details.InputTokenCount);
+    }
+
+    [Fact]
+    public async Task GetStreamingResponse_NoUsage_EmitsNoUsageContent()
+    {
+        var transport = new StaticTransport(
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new RunFinishedEvent { ThreadId = "t1", RunId = "r1" });
+        using var client = new AGUIChatClient(new() { Transport = transport });
+
+        var updates = new List<ChatResponseUpdate>();
+        await foreach (var u in client.GetStreamingResponseAsync(
+            new[] { new ChatMessage(ChatRole.User, "hi") }))
+        {
+            updates.Add(u);
+        }
+
+        Assert.DoesNotContain(updates, u => u.Contents.OfType<UsageContent>().Any());
+        Assert.Null(updates.ToChatResponse().Usage);
     }
 
     private sealed class CapturingTransport(params BaseEvent[] middleEvents) : IAGUITransport

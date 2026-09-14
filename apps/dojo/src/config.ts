@@ -89,6 +89,13 @@ export const featureConfig: FeatureConfig[] = [
     tags: ["Chat", "Tools", "Streaming", "Reasoning"],
   }),
   createFeatureConfig({
+    id: "agentic_chat_citations",
+    name: "Agentic Chat Citations",
+    description:
+      "Chat with a Copilot whose answers carry the sources they came from",
+    tags: ["Chat", "Streaming", "Citations"],
+  }),
+  createFeatureConfig({
     id: "agentic_chat_multimodal",
     name: "Agentic Chat Multimodal",
     description: "Chat with a Copilot using images and other media",
@@ -121,6 +128,19 @@ export const featureConfig: FeatureConfig[] = [
     description:
       "Reply language picked from the AG-UI context channel, baked fresh into the system prompt every turn",
     tags: ["Context", "Dynamic System Prompt"],
+  }),
+  createFeatureConfig({
+    id: "deepagents_subagents",
+    name: "Deepagents Subagents",
+    description:
+      "A deepagents supervisor delegates to a research subagent that pauses for your approval mid-task; its messages group under one card keyed by subagentRunId",
+    tags: ["Chat", "Multi-agent architecture", "Streaming", "Subagents"],
+  }),
+  createFeatureConfig({
+    id: "multi_agent",
+    name: "Multi-Agent",
+    description: "Watch a graph of specialist agents hand work down a pipeline",
+    tags: ["Chat", "Multi-agent architecture", "Streaming"],
   }),
   createFeatureConfig({
     id: "a2a_chat",
