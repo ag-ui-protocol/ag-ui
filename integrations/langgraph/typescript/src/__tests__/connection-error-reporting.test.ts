@@ -137,8 +137,52 @@ describe("connection failures name their reason", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
 
     await expect(agent.getAssistant()).rejects.toThrow(
-      "No agent found with graph ID sample_agent",
+      "No agent found with graph ID `sample_agent` on http://localhost:8123. The server returned: [other_agent (ID: asst-2)]",
     );
+  });
+  it("does not promise a list of available agents when the search came back empty", async () => {
+    // The search is filtered by graphId, so a miss usually returns nothing at
+    // all. The old message printed "These are the available agents: []".
+    const agent = new LangGraphAgent({
+      graphId: "sample_agent",
+      deploymentUrl: "http://localhost:8123",
+    });
+    (agent as any).client = {
+      assistants: { search: vi.fn().mockResolvedValue([]) },
+    };
+    (agent as any).subscriber = { next: vi.fn(), error: vi.fn() };
+    (agent as any).dispatchEvent = () => true;
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const message = await agent.getAssistant().then(
+      () => "",
+      (error: Error) => error.message,
+    );
+
+    expect(message).toBe(
+      "No agent found with graph ID `sample_agent` on http://localhost:8123.",
+    );
+    expect(message).not.toContain("available agents");
+  });
+
+  it("does not prefix a not-found message with the wrapper", async () => {
+    const agent = new LangGraphAgent({
+      graphId: "sample_agent",
+      deploymentUrl: "http://localhost:8123",
+    });
+    (agent as any).client = {
+      assistants: { search: vi.fn().mockResolvedValue([]) },
+    };
+    (agent as any).subscriber = { next: vi.fn(), error: vi.fn() };
+    (agent as any).dispatchEvent = () => true;
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const message = await agent.getAssistant().then(
+      () => "",
+      (error: Error) => error.message,
+    );
+
+    expect(message).not.toContain("Failed to retrieve assistant");
   });
 });
 

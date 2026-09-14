@@ -200,6 +200,14 @@ const ROOT_SUBGRAPH_NAME = "root";
 const ASYNC_BOUNDARY_CHECKPOINT_ATTEMPTS = 3;
 const ASYNC_BOUNDARY_CHECKPOINT_RETRY_DELAY_MS = 25;
 
+/**
+ * The graph ID is not served by this deployment. Distinguished from a transport
+ * failure so `getAssistant` does not prefix an already-complete message.
+ * Module-local on purpose: it is thrown and caught inside one method and is not
+ * part of the package's public surface.
+ */
+class GraphNotFoundError extends Error {}
+
 export class LangGraphAgent extends AbstractAgent {
   client: LangGraphClient;
   assistantConfig?: LangGraphConfig;
@@ -2255,21 +2263,29 @@ export class LangGraphAgent extends AbstractAgent {
         (searchResult) => searchResult.graph_id === this.graphId,
       );
       if (!retrievedAssistant) {
-        const notFoundMessage = `
-      No agent found with graph ID ${this.graphId} found..\n
-
-      These are the available agents: [${assistants.map((a) => `${a.graph_id} (ID: ${a.assistant_id})`).join(", ")}]
-      `;
+        // The search is already filtered by `graphId`, so a miss usually comes
+        // back empty. Promising "these are the available agents" and then
+        // printing `[]` reads like the server has no agents at all.
+        const returned = assistants
+          .map((a) => `${a.graph_id} (ID: ${a.assistant_id})`)
+          .join(", ");
+        const notFoundMessage =
+          `No agent found with graph ID \`${this.graphId}\` on ${this.deploymentUrlLabel()}.` +
+          (returned ? ` The server returned: [${returned}]` : "");
         console.error(notFoundMessage);
-        throw new Error(notFoundMessage);
+        throw new GraphNotFoundError(notFoundMessage);
       }
 
       return retrievedAssistant;
     } catch (error) {
-      const redefinedError = new Error(
-        `Failed to retrieve assistant \`${this.graphId}\` from ${this.deploymentUrlLabel()}: ${describeErrorChain(error)}`,
-        { cause: error },
-      );
+      // A not-found error already names the graph ID and the origin. Wrapping
+      // it again would read "Failed to retrieve assistant `x` from URL: No
+      // agent found with graph ID `x` on URL".
+      const message =
+        error instanceof GraphNotFoundError
+          ? error.message
+          : `Failed to retrieve assistant \`${this.graphId}\` from ${this.deploymentUrlLabel()}: ${describeErrorChain(error)}`;
+      const redefinedError = new Error(message, { cause: error });
       this.dispatchEvent({
         type: EventType.RUN_ERROR,
         message: redefinedError.message,
