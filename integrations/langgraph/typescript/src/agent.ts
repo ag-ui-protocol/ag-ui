@@ -76,6 +76,7 @@ import type {
 import {
   aguiMessagesToLangChain,
   DEFAULT_SCHEMA_KEYS,
+  describeErrorChain,
   filterObjectBySchemaKeys,
   getStreamPayloadInput,
   langchainMessagesToAgui,
@@ -2100,7 +2101,10 @@ export class LangGraphAgent extends AbstractAgent {
         });
       }
     } catch (error: unknown) {
-      throw new Error(`Failed to create thread: ${(error as Error).message}`);
+      throw new Error(
+        `Failed to create thread on ${this.deploymentUrlLabel()}: ${describeErrorChain(error)}`,
+        { cause: error },
+      );
     }
 
     return thread;
@@ -2182,6 +2186,15 @@ export class LangGraphAgent extends AbstractAgent {
     };
   }
 
+  /**
+   * The deployment URL to name in a connection-failure message. A JS caller can
+   * omit `deploymentUrl` (it is required only in the types) when it passes its
+   * own `client`, and "from undefined" is worse than no URL at all.
+   */
+  private deploymentUrlLabel(): string {
+    return this.config?.deploymentUrl ?? "the configured deployment URL";
+  }
+
   async getAssistant(): Promise<Assistant> {
     try {
       const assistants = await this.client.assistants.search({
@@ -2204,7 +2217,8 @@ export class LangGraphAgent extends AbstractAgent {
       return retrievedAssistant;
     } catch (error) {
       const redefinedError = new Error(
-        `Failed to retrieve assistant: ${(error as Error).message}`,
+        `Failed to retrieve assistant \`${this.graphId}\` from ${this.deploymentUrlLabel()}: ${describeErrorChain(error)}`,
+        { cause: error },
       );
       this.dispatchEvent({
         type: EventType.RUN_ERROR,
