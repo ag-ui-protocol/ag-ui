@@ -232,6 +232,16 @@ export function convertAGUIMessagesToMastra(
         role: "user",
         content: userContent,
       } as CoreMessage);
+    } else if (message.role === "developer") {
+      // Mastra has no developer role. Preserve app-injected instructions as
+      // system messages, separate from user input and persisted chat history.
+      result.push({
+        ...(message.id !== undefined
+          ? { id: toModelSafeMessageId(message.id) }
+          : {}),
+        role: "system",
+        content: message.content,
+      } as CoreMessage);
     } else if (message.role === "tool") {
       let toolName = "unknown";
       for (const msg of lookupMessages) {

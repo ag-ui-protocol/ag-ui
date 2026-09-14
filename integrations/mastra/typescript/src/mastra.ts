@@ -413,6 +413,29 @@ export interface MastraAgentConfig extends AgentConfig {
    */
   emitInterruptOutcome?: boolean;
   /**
+   * Also open the tool-call family live (TOOL_CALL_START / ARGS / END as the
+   * args stream) for SERVER tools, not only for client generative-UI tools.
+   *
+   * Default **false** — today's behavior. A server tool's call is buffered in
+   * `pendingToolCall` and flushed by the NEXT chunk, which for an ordinary
+   * sequential tool is its own `tool-result`: the subscriber then receives
+   * START / ARGS / END / RESULT in one flush after the tool has already
+   * finished, so a long-running server tool paints no "running" step at all.
+   * Turn this on when your UI renders tool activity and you want that step to
+   * appear while the tool runs.
+   *
+   * The reason it is opt-in: a live-streamed call cannot be retracted. The
+   * buffer is what lets a following `tool-call-suspended` /
+   * `background-task-started` suppress the normal tool render, and a call that
+   * already emitted TOOL_CALL_START can only be CLOSED (TOOL_CALL_END), not
+   * un-emitted. Under this option those two paths therefore close the streamed
+   * call instead of suppressing it, and the consumer sees a tool call with no
+   * TOOL_CALL_RESULT (the interrupt / activity carries the outcome, and the
+   * activity retains the assembled tool arguments). If your server tools
+   * suspend or run as background tasks, leave this off.
+   */
+  streamServerToolCalls?: boolean;
+  /**
    * A2UI auto-injection config (local agents). When the runtime/middleware
    * forwards `injectA2UITool`, the bridge injects a backend-owned `generate_a2ui`
    * tool (recovery + subagent) per run so the developer wires nothing — the
@@ -580,6 +603,8 @@ export class MastraAgent extends AbstractAgent {
   public headers?: Record<string, string>;
   /** See MastraAgentConfig.emitInterruptOutcome. Default true. */
   emitInterruptOutcome: boolean;
+  /** See MastraAgentConfig.streamServerToolCalls. Default false. */
+  streamServerToolCalls: boolean;
   /** See MastraAgentConfig.a2ui — A2UI auto-injection config. */
   a2ui?: A2UIInjectConfig;
   /** See MastraAgentConfig.remoteClient. Set for remote agents only. */
@@ -655,6 +680,7 @@ export class MastraAgent extends AbstractAgent {
       untilIdle,
       tracingOptions,
       emitInterruptOutcome,
+      streamServerToolCalls,
       a2ui,
       remoteClient,
       useProcessedFinalText,
@@ -663,6 +689,7 @@ export class MastraAgent extends AbstractAgent {
     } = config;
     super(rest);
     this.emitInterruptOutcome = emitInterruptOutcome ?? true;
+    this.streamServerToolCalls = streamServerToolCalls ?? false;
     this.agent = agent;
     this.resourceId = resourceId;
     this.requestContext = requestContext ?? new RequestContext();
@@ -859,6 +886,24 @@ export class MastraAgent extends AbstractAgent {
           // with "No snapshot found for this workflow run". The remote instance
           // loads that snapshot from configured storage, so `memory` must point
           // at the same thread/resource the suspended run used.
+          //
+          // The resumed run has to be offered the same tools as the run it
+          // continues (#2667): the frontend tools from `RunAgentInput.tools`,
+          // and — local only — the auto-injected A2UI toolset. Without them
+          // the model sees no frontend tool after the suspended tool returns,
+          // so an agent that answers exclusively through frontend tools ends
+          // the resumed run with nothing on the wire. Both `clientTools` and
+          // `toolsets` are part of the resume option surface: local
+          // `Agent.resumeStream` takes `AgentExecutionOptionsBase`, and
+          // @mastra/client-js `resumeStream` runs `clientTools` through
+          // `processClientTools` like its `stream` does.
+          const clientTools = this.buildClientTools(input.tools);
+          const a2uiToolsets = await this.planA2UIToolsets(
+            input,
+            clientTools,
+            resumeRequestContext,
+          );
+
           const resumeOptions: Record<string, unknown> = {
             toolCallId: interruptEvent.toolCallId,
             runId: interruptEvent.runId,
@@ -867,8 +912,16 @@ export class MastraAgent extends AbstractAgent {
               resource: this.resourceId ?? input.threadId,
             },
             requestContext: resumeRequestContext,
+            clientTools,
+            ...(a2uiToolsets ? { toolsets: a2uiToolsets } : {}),
           };
           if (this.isLocalMastraAgent(this.agent)) {
+            // LOCAL ONLY, mirroring the initial stream path: `untilIdle` pipes
+            // the background-task lifecycle into this run's stream, which only
+            // the in-process agent can do.
+            if (this.untilIdle) {
+              resumeOptions.untilIdle = this.untilIdle;
+            }
             // LOCAL ONLY (#2288). @mastra/client-js excludes `abortSignal`
             // from its stream params (StreamParamsBase Omits it) and takes the
             // fetch signal from construction-time ClientOptions.abortSignal,
@@ -1737,6 +1790,14 @@ export class MastraAgent extends AbstractAgent {
     const isClientTool = (toolName?: string) =>
       !!toolName && clientToolNames.has(toolName);
 
+    // Opt-in (MastraAgentConfig.streamServerToolCalls): stream SERVER tools
+    // live too, so a long-running one paints a "running" step instead of
+    // appearing only once it has finished. The suspend / background arms below
+    // close such a call rather than suppressing it — an emitted START cannot be
+    // retracted.
+    const streamsLive = (toolName?: string) =>
+      isClientTool(toolName) || (this.streamServerToolCalls && !!toolName);
+
     // Floor / fall-back path: a final `tool-call` with no preceding client
     // delta stream is buffered here so a following tool-call-suspended /
     // background-task-started can suppress it (and reuse its args). Tool calls
@@ -1750,6 +1811,9 @@ export class MastraAgent extends AbstractAgent {
     // (delta) path, and (separately) for which we have emitted TOOL_CALL_END.
     const streamedStarted = new Set<string>();
     const streamedEnded = new Set<string>();
+    // Keep final arguments independently of the render buffer: a streamed
+    // call may still become a background activity after its args have ended.
+    const streamedToolCallArgs = new Map<string, unknown>();
 
     // Skipped / unrecognized chunk types warn at most once each. Mastra 1.31+
     // custom-data streams (e.g. `data-*` via context.writer.custom) can emit
@@ -2221,10 +2285,7 @@ export class MastraAgent extends AbstractAgent {
             workingMemoryToolCalls.add(chunk.payload.toolCallId);
             break;
           }
-          if (
-            chunk.payload.toolCallId &&
-            isClientTool(chunk.payload.toolName)
-          ) {
+          if (chunk.payload.toolCallId && streamsLive(chunk.payload.toolName)) {
             startStreamedToolCall(
               chunk.payload.toolCallId,
               chunk.payload.toolName,
@@ -2249,9 +2310,10 @@ export class MastraAgent extends AbstractAgent {
             }
             break;
           }
-          // Only forward deltas for a call we opened as a live (client) stream.
-          // Server-tool deltas are ignored; their args ride the final
-          // `tool-call` chunk into the buffered path.
+          // Only forward deltas for a call we opened as a live stream (client
+          // tools, plus server tools under streamServerToolCalls). Deltas for a
+          // buffered call are ignored; its args ride the final `tool-call`
+          // chunk into the buffered path.
           if (
             toolCallId &&
             streamedStarted.has(toolCallId) &&
@@ -2299,9 +2361,10 @@ export class MastraAgent extends AbstractAgent {
             break;
           }
           if (toolCallId && streamedStarted.has(toolCallId)) {
-            // Client tool: args were already streamed live via deltas — close
+            // Args were already streamed live via deltas — close
             // the call (the streaming-end chunk may have been absent) and don't
-            // re-emit.
+            // re-emit. Retain the assembled args for a background handoff.
+            streamedToolCallArgs.set(toolCallId, args);
             endStreamedToolCall(toolCallId);
             break;
           }
@@ -2313,6 +2376,7 @@ export class MastraAgent extends AbstractAgent {
           break;
         }
         case "tool-result": {
+          streamedToolCallArgs.delete(chunk.payload.toolCallId);
           // Swallow the `{ success: true }` result of a working-memory update —
           // its tool-call was mapped to STATE_DELTA and never rendered, so a
           // TOOL_CALL_RESULT here would have no matching call (and is internal
@@ -2436,11 +2500,21 @@ export class MastraAgent extends AbstractAgent {
           break;
         }
         case "tool-call-suspended": {
+          streamedToolCallArgs.delete(chunk.payload.toolCallId);
           // Always discard the pending tool-call: if it matches, the tool
           // was suspended before execution; if it doesn't match, the pending
           // call is orphaned (never executed) so emitting TOOL_CALL_START/
           // ARGS/END without a TOOL_CALL_RESULT would violate the protocol.
           pendingToolCall = null;
+          // Under streamServerToolCalls the call may already be OPEN rather
+          // than buffered, and an emitted TOOL_CALL_START cannot be retracted —
+          // close it so the suspend does not leave a start without a terminal.
+          if (
+            chunk.payload.toolCallId &&
+            streamedStarted.has(chunk.payload.toolCallId)
+          ) {
+            endStreamedToolCall(chunk.payload.toolCallId);
+          }
           if (!chunk.payload.toolCallId || !chunk.payload.toolName) {
             callbacks.onError(
               new Error(
@@ -2513,15 +2587,23 @@ export class MastraAgent extends AbstractAgent {
         // first-write and updates.
         case "background-task-started": {
           const { taskId, toolName, toolCallId } = chunk.payload;
-          // The agent loop emits `tool-call` immediately before this; the
-          // bridge has it buffered in pendingToolCall. Suppress that normal
-          // tool render (the work is now an activity) but reuse its args for
-          // the snapshot. Mirrors the tool-call-suspended suppression.
+          // The final `tool-call` supplies the authoritative args. Buffered
+          // calls are still suppressible, while streamed calls keep
+          // their final args separately. Reuse either source for the activity
+          // without emitting another tool-call family.
           const args =
             pendingToolCall && pendingToolCall.toolCallId === toolCallId
               ? pendingToolCall.args
-              : undefined;
+              : streamedToolCallArgs.get(toolCallId);
+          streamedToolCallArgs.delete(toolCallId);
           pendingToolCall = null;
+          // Under streamServerToolCalls the call may already be OPEN rather
+          // than buffered (same reasoning as tool-call-suspended above): close
+          // it, because the work continues as an activity and no
+          // TOOL_CALL_RESULT will follow.
+          if (toolCallId && streamedStarted.has(toolCallId)) {
+            endStreamedToolCall(toolCallId);
+          }
           if (taskId && toolCallId) {
             backgroundToolCalls.set(toolCallId, { taskId, toolName });
           }
@@ -2742,7 +2824,11 @@ export class MastraAgent extends AbstractAgent {
         const base = MastraAgent.continuationBaseId(id);
         return base !== null && storedIds.has(base);
       };
-      const fresh = messages.filter((m) => !(m.id && isStored(m.id)));
+      // Developer messages become system instructions and must be supplied on
+      // every run, even if their id appears in recalled conversation history.
+      const fresh = messages.filter(
+        (m) => m.role === "developer" || !(m.id && isStored(m.id)),
+      );
       // Never send an empty turn (a no-op run). If everything was already
       // stored, fall back to forwarding the full list.
       if (fresh.length === 0) return messages;
@@ -2773,11 +2859,38 @@ export class MastraAgent extends AbstractAgent {
       const keep = new Set([...fresh, ...pairedCalls]);
       return messages.filter((m) => keep.has(m));
     } catch (error) {
+      // recall() throws for a thread that does not exist yet. That is every
+      // first turn, not a failure: nothing is stored, so the full list is the
+      // right thing to send. Only warn when the thread exists (or the lookup
+      // itself fails).
+      if (await this.threadIsMissing(threadId, resourceId)) return messages;
       console.warn(
         `[MastraAgent] Failed to compute new-message diff for thread ${threadId}; sending full history:`,
         error,
       );
       return messages;
+    }
+  }
+
+  private async threadIsMissing(
+    threadId: string,
+    resourceId: string,
+  ): Promise<boolean> {
+    if (!this.isLocalMastraAgent(this.agent)) return false;
+    try {
+      const memory = await this.agent.getMemory({
+        requestContext: this.requestContext,
+      });
+      if (!memory) return false;
+      // Concrete Memory implementations check thread ownership and want the
+      // resourceId alongside the threadId; the abstract signature omits it.
+      const thread = await memory.getThreadById({
+        threadId,
+        resourceId,
+      } as { threadId: string });
+      return thread == null;
+    } catch {
+      return false;
     }
   }
 
@@ -2872,12 +2985,29 @@ export class MastraAgent extends AbstractAgent {
         // No/invalid existing working memory — start from the client state.
       }
 
-      await memory.updateWorkingMemory({
-        resourceId,
-        threadId: input.threadId,
-        workingMemory: JSON.stringify({ ...existing, ...rest }),
-        memoryConfig,
-      });
+      const write = () =>
+        memory.updateWorkingMemory({
+          resourceId,
+          threadId: input.threadId,
+          workingMemory: JSON.stringify({ ...existing, ...rest }),
+          memoryConfig,
+        });
+
+      try {
+        await write();
+      } catch (error) {
+        // Thread-scoped working memory lives in thread.metadata, so Mastra
+        // refuses the update until the thread exists — and on the first turn
+        // it does not yet (the stream creates it). Create it and retry once;
+        // anything else is a real failure and still fails the run.
+        if (await memory.getThreadById(
+          { threadId: input.threadId, resourceId } as { threadId: string },
+        )) {
+          throw error;
+        }
+        await memory.createThread({ threadId: input.threadId, resourceId });
+        await write();
+      }
       return;
     }
 
@@ -2913,10 +3043,9 @@ export class MastraAgent extends AbstractAgent {
       await write();
     } catch {
       // The remote working-memory HTTP route requires the thread to exist. On
-      // the first turn it may not yet (unlike local Memory, which upserts). So
-      // create the thread and retry once. Best-effort: if it still fails, skip
-      // rather than fail the run — the stream creates the thread, and later
-      // turns will sync.
+      // the first turn it may not yet. So create the thread and retry once.
+      // Best-effort: if it still fails, skip rather than fail the run — the
+      // stream creates the thread, and later turns will sync.
       try {
         await client.createMemoryThread({
           agentId,
@@ -2961,6 +3090,75 @@ export class MastraAgent extends AbstractAgent {
   }
 
   /**
+   * The frontend tools from `RunAgentInput.tools`, in the `clientTools` shape
+   * Mastra expects. Shared by the initial `agent.stream(...)` and the resumed
+   * `agent.resumeStream(...)` call so a resumed run is offered the same tools
+   * as the run it continues (#2667) — without it, an agent that answers only
+   * through frontend tools ends the resumed run with nothing on the wire.
+   */
+  private buildClientTools(tools: RunAgentInput["tools"]): Record<string, any> {
+    return (tools ?? []).reduce(
+      (acc, tool) => {
+        acc[tool.name as string] = {
+          id: tool.name,
+          description: tool.description,
+          inputSchema: tool.parameters,
+        };
+        return acc;
+      },
+      {} as Record<string, any>,
+    );
+  }
+
+  /**
+   * Auto-inject the backend-owned `generate_a2ui` tool (pillar 1: easy devex)
+   * when the runtime/middleware forwarded `injectA2UITool`. The dev wires NO
+   * tool; recovery + subagent ride along. Injected per-run as a server toolset
+   * so its execute runs in-process (where the loop lives); the
+   * middleware-injected `render_a2ui` client tool is dropped from
+   * `clientTools` (mutated in place) so the model calls `generate_a2ui`. Opt
+   * out via `injectA2UITool:false`; customize via the `a2ui` config.
+   * USER-PREVAILS if the agent already wires `generate_a2ui`. Best-effort: a
+   * failure degrades to no A2UI, the turn still runs.
+   *
+   * LOCAL ONLY — the injected tool carries an in-process `execute`, so it
+   * cannot cross the @mastra/client-js wire. Callers gate on
+   * `isLocalMastraAgent`.
+   *
+   * Shared by the initial stream and the resume path, so a resumed run keeps
+   * the A2UI toolset the interrupted run had (#2667).
+   */
+  private async planA2UIToolsets(
+    input: RunAgentInput,
+    clientTools: Record<string, any>,
+    requestContext: RequestContext,
+  ): Promise<Record<string, unknown> | undefined> {
+    if (!this.isLocalMastraAgent(this.agent)) return undefined;
+    try {
+      const existing = await this.agent.listTools({ requestContext });
+      const existingToolNames = [
+        ...Object.keys(existing ?? {}),
+        ...Object.keys(clientTools),
+      ];
+      const plan = planA2UIInjection({
+        model: this.a2ui?.model ?? (this.agent as { model?: unknown }).model,
+        input,
+        existingToolNames,
+        config: this.a2ui,
+      });
+      if (!plan) return undefined;
+      for (const drop of plan.dropToolNames) delete clientTools[drop];
+      return { a2ui: { [plan.toolName]: plan.tool } };
+    } catch (error) {
+      console.warn(
+        "[MastraAgent] A2UI auto-injection skipped (continuing without A2UI):",
+        error,
+      );
+      return undefined;
+    }
+  }
+
+  /**
    * Streams a local or remote Mastra agent, emitting AG-UI events via callbacks.
    * For local agents, iterates fullStream with processFullStream.
    * For remote agents, uses processDataStream with createChunkProcessor.
@@ -2999,17 +3197,7 @@ export class MastraAgent extends AbstractAgent {
     }: MastraAgentStreamOptions,
     abortSignal: AbortSignal,
   ): Promise<void> {
-    const clientTools = tools.reduce(
-      (acc, tool) => {
-        acc[tool.name as string] = {
-          id: tool.name,
-          description: tool.description,
-          inputSchema: tool.parameters,
-        };
-        return acc;
-      },
-      {} as Record<string, any>,
-    );
+    const clientTools = this.buildClientTools(tools);
     // Names of the frontend tools — only these stream their args live (see
     // createChunkProcessor). Server tools (on the Mastra agent) are absent here.
     const clientToolNames = new Set<string>(
@@ -3047,46 +3235,18 @@ export class MastraAgent extends AbstractAgent {
 
     if (this.isLocalMastraAgent(this.agent)) {
       try {
-        // Auto-inject the backend-owned `generate_a2ui` tool (pillar 1: easy
-        // devex) when the runtime/middleware forwarded `injectA2UITool`. The dev
-        // wires NO tool; recovery + subagent ride along. Injected per-run as a
-        // server toolset so its execute runs in-process (where the loop lives);
-        // the middleware-injected `render_a2ui` client tool is dropped so the
-        // model calls `generate_a2ui`. Opt out via `injectA2UITool:false`;
-        // customize via the `a2ui` config. USER-PREVAILS if the agent already
-        // wires `generate_a2ui`. Best-effort: a failure degrades to no A2UI, the
-        // turn still runs.
-        let a2uiToolsets: Record<string, unknown> | undefined;
-        try {
-          const existing = await this.agent.listTools({ requestContext });
-          const existingToolNames = [
-            ...Object.keys(existing ?? {}),
-            ...clientToolNames,
-          ];
-          const plan = planA2UIInjection({
-            model:
-              this.a2ui?.model ?? (this.agent as { model?: unknown }).model,
-            input: {
-              forwardedProps,
-              context: inputContext,
-              messages,
-              threadId,
-              runId,
-              tools,
-            } satisfies RunAgentInput,
-            existingToolNames,
-            config: this.a2ui,
-          });
-          if (plan) {
-            a2uiToolsets = { a2ui: { [plan.toolName]: plan.tool } };
-            for (const drop of plan.dropToolNames) delete clientTools[drop];
-          }
-        } catch (error) {
-          console.warn(
-            "[MastraAgent] A2UI auto-injection skipped (continuing without A2UI):",
-            error,
-          );
-        }
+        const a2uiToolsets = await this.planA2UIToolsets(
+          {
+            forwardedProps,
+            context: inputContext,
+            messages,
+            threadId,
+            runId,
+            tools,
+          } satisfies RunAgentInput,
+          clientTools,
+          requestContext,
+        );
 
         const streamOptions: Record<string, unknown> = {
           memory: {
