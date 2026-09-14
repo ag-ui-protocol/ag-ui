@@ -127,13 +127,16 @@ var image = new AGUIImageInputContent
 | ----------- | ---------- | ---- | ----------- |
 | `Type` | `type` | `"image"`, `"audio"`, `"video"`, or `"document"` | Content discriminator |
 | `Id` | `id` | `string?` | Optional part identifier |
-| `Source` | `source` | `AGUIInputContentSource` | Data or URL source |
+| `Source` | `source` | `AGUIInputContentSource` | Data, URL or provider file source |
 | `Metadata` | `metadata` | `JsonElement?` | Optional modality-specific metadata |
 
 When a server adapts an AG-UI request to Microsoft.Extensions.AI,
-`AGUIChatMessageExtensions.AsChatMessages()` maps data sources to `DataContent`
-and URL sources to `UriContent`. The source MIME type is preserved; when a URL
-source omits `mimeType`, `UriContent` infers it from the URL. If the URL does
+`AGUIChatMessageExtensions.AsChatMessages()` maps data sources to `DataContent`,
+URL sources to `UriContent` and file sources to `HostedFileContent` (the handle
+becomes `FileId`; `Provider` has no counterpart there and is dropped on that
+hop, though it round-trips through JSON and protobuf). The source MIME type is
+preserved; when a URL source omits `mimeType`, `UriContent` infers it from the
+URL. If the URL does
 not have a recognized extension, the canonical discriminator supplies
 `image/*`, `audio/*`, or `video/*` so the modality is not lost.
 
@@ -211,6 +214,29 @@ var source = new AGUIInputContentUrlSource
 | ----------- | ---------- | ---- | ----------- |
 | `Type` | `type` | `"url"` | Source discriminator |
 | `Value` | `value` | `string` | URL or data URL |
+| `MimeType` | `mimeType` | `string?` | Optional MIME type |
+
+### File Source
+
+Use `AGUIInputContentFileSource` for bytes that already live at the model
+provider — an OpenAI or Anthropic file id, a Gemini file URI. Nothing is
+fetched and `Value` is opaque: hand it to the provider that issued it, or drop
+the part. `provider` and `mimeType` are optional.
+
+```csharp
+var source = new AGUIInputContentFileSource
+{
+    Value = "file-abc123",
+    Provider = "openai",
+    MimeType = "application/pdf"
+};
+```
+
+| C# property | JSON field | Type | Description |
+| ----------- | ---------- | ---- | ----------- |
+| `Type` | `type` | `"file"` | Source discriminator |
+| `Value` | `value` | `string` | The provider's handle, exactly as issued |
+| `Provider` | `provider` | `string?` | Who issued it, e.g. `"openai"`, `"anthropic"`, `"google"` |
 | `MimeType` | `mimeType` | `string?` | Optional MIME type |
 
 ## Common Use Cases

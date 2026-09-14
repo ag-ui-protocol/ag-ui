@@ -79,7 +79,14 @@ interface UrlSource {
   mimeType?: string
 }
 
-type PartSource = DataSource | UrlSource
+interface FileSource {
+  type: "file"
+  value: string // a handle the provider issued; opaque, never fetched
+  provider?: string // who issued it, e.g. "openai"
+  mimeType?: string
+}
+
+type PartSource = DataSource | UrlSource | FileSource
 
 interface TextPart {
   type: "text"

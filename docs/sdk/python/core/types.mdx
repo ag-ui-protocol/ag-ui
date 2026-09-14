@@ -185,7 +185,7 @@ Represents how a non-text part is supplied.
 
 ```python
 PartSource = Annotated[
-    Union[DataSource, UrlSource],
+    Union[DataSource, UrlSource, FileSource],
     Field(discriminator="type"),
 ]
 
@@ -198,7 +198,18 @@ class UrlSource(ConfiguredBaseModel):
     type: Literal["url"]
     value: str
     mime_type: Optional[str] = None
+
+class FileSource(ConfiguredBaseModel):
+    type: Literal["file"]
+    value: str  # the handle, exactly as the provider issued it
+    provider: Optional[str] = None  # who issued it, e.g. "openai", "anthropic", "google"
+    mime_type: Optional[str] = None
 ```
+
+A `FileSource` names bytes that already live at the model provider — an
+OpenAI or Anthropic file id, a Gemini file URI. Nothing is fetched and `value`
+is opaque: an agent hands it to its provider or drops the part, and never
+treats it as a URL.
 
 ### TextPart
 

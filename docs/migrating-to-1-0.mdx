@@ -183,6 +183,11 @@ own `onRunErrorEvent` subscriber; the client will not do it for you.
   `...Schema` validators. The old names are exported as deprecated aliases of
   the same types and validators, so nothing breaks; the wire `type` values are
   unchanged.
+- `PartSource` has a third arm, `FileSource` (`type: "file"`): a handle the
+  model provider issued for bytes already uploaded to it. Code that switches
+  exhaustively on `source.type` needs a case for it. Never treat its `value`
+  as a URL; if your agent cannot hand the handle to its provider, skip the
+  part with a warning, as for any part the model cannot take.
 - `ToolMessage.content` and `ToolCallResultEvent.content` are
   `string | ContentPart[]`, as `UserMessage.content` already was. Code that
   passed a tool result straight into a string slot narrows it first;
@@ -296,6 +301,11 @@ is a model.
   `InputContentSource` → `PartSource`, `InputContentDataSource` →
   `DataSource`, `InputContentUrlSource` → `UrlSource`. The old names remain
   exported from `ag_ui.core` as aliases of the same classes.
+- `PartSource` has a third arm, `FileSource` (`type="file"`): a handle the
+  model provider issued for bytes already uploaded to it. Code that branches on
+  the source class needs a case for it. Never treat its `value` as a URL; if
+  your agent cannot hand the handle to its provider, skip the part with a
+  warning, as for any part the model cannot take.
 - `ToolMessage.content` and `ToolCallResultEvent.content` are
   `Union[str, List[ContentPart]]`, as `UserMessage.content` already was. Code
   that treated a tool result as `str` narrows it first. Every part has an
@@ -363,6 +373,13 @@ with it.
   their `AGUI...InputContent` names even though the schema renamed them to
   `...Part`. Every part has an optional `Id`, and `AGUITextInputContent` has
   the optional `Metadata` the media parts already had.
+- `AGUIInputContentSource` has a third subclass, `AGUIInputContentFileSource`
+  (`type: "file"`, constant `AGUIInputContentSourceTypes.File`): a handle the
+  model provider issued for bytes already uploaded to it, with optional
+  `Provider` and `MimeType`. A `switch` over the source hierarchy needs a case
+  for it. Never treat its `Value` as a URL; if your agent cannot hand the
+  handle to its provider, skip the part with a warning, as for any part the
+  model cannot take.
 
 ### AOT
 
