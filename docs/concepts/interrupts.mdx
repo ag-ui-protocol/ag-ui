@@ -48,7 +48,8 @@ the variant-specific data nested inside:
 
 ```typescript
 type RunFinishedOutcome =
-  { type: "success" } | { type: "interrupt"; interrupts: Interrupt[] }
+  | { type: "success" }
+  | { type: "interrupt"; interrupts: Interrupt[] }
 
 type RunFinishedEvent = {
   type: "RUN_FINISHED"
@@ -79,16 +80,16 @@ type Interrupt = {
 }
 ```
 
-| Field | Purpose |
-| --- | --- |
-| `id` | Correlation key across interrupt, resume, idempotency, and audit. |
-| `reason` | Categorical routing hint — see [Reason taxonomy](#reason-taxonomy). |
-| `message` | Human-readable prompt. Universal fallback UI content. |
-| `toolCallId` | Binds the interrupt to a prior `ToolCall*` sequence. |
-| `responseSchema` | JSON Schema for the expected `resume.payload`. |
-| `expiresAt` | Optional ISO-8601 TTL. Stale resumes produce `RunError`. |
-| `metadata` | Free-form framework-specific data. |
-| `subagentRunId` | The subagent whose work raised this interrupt — absent for a root-raised one. Attribution lives per interrupt because one run can carry interrupts from several subagents. A producer that emits the subagent lifecycle events also closes the subagent with `outcome: { type: "suspended" }` — lifecycle events remain optional, so attribution here is valid on its own (see [Subagents](/concepts/subagents#suspension)). |
+| Field            | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`             | Correlation key across interrupt, resume, idempotency, and audit.                                                                                                                                                                                                                                                                                                                                                            |
+| `reason`         | Categorical routing hint — see [Reason taxonomy](#reason-taxonomy).                                                                                                                                                                                                                                                                                                                                                          |
+| `message`        | Human-readable prompt. Universal fallback UI content.                                                                                                                                                                                                                                                                                                                                                                        |
+| `toolCallId`     | Binds the interrupt to a prior `ToolCall*` sequence.                                                                                                                                                                                                                                                                                                                                                                         |
+| `responseSchema` | JSON Schema for the expected `resume.payload`.                                                                                                                                                                                                                                                                                                                                                                               |
+| `expiresAt`      | Optional ISO-8601 TTL. Stale resumes produce `RunError`.                                                                                                                                                                                                                                                                                                                                                                     |
+| `metadata`       | Free-form framework-specific data.                                                                                                                                                                                                                                                                                                                                                                                           |
+| `subagentRunId`  | The subagent whose work raised this interrupt — absent for a root-raised one. Attribution lives per interrupt because one run can carry interrupts from several subagents. A producer that emits the subagent lifecycle events also closes the subagent with `outcome: { type: "suspended" }` — lifecycle events remain optional, so attribution here is valid on its own (see [Subagents](/concepts/subagents#suspension)). |
 
 ## Resuming a run
 
@@ -109,14 +110,14 @@ type RunAgentInput = {
 - `resolved` — the user responded. `payload` carries the response, validated
   against the interrupt's `responseSchema`. Denials are expressed inside the
   payload (for example, `{ approved: false }`), not as a separate status.
-- `cancelled` — the user abandoned without providing meaningful input.
-  `payload` should be omitted.
+- `cancelled` — the user abandoned without providing meaningful input. `payload`
+  should be omitted.
 - `metadata` — optional envelope data about the response (for example a
-  signature proving the human decision was not tampered with, or routing
-  keys), as opposed to `payload`, which is the answer the agent asked for and
-  will act on. Open by key; any JSON value is allowed under a key, including
-  `null`. The object itself is either absent or an object, never `null`. The
-  `ag-ui` key is reserved for AG-UI's own use. Allowed on either status.
+  signature proving the human decision was not tampered with, or routing keys),
+  as opposed to `payload`, which is the answer the agent asked for and will act
+  on. Open by key; any JSON value is allowed under a key, including `null`. The
+  object itself is either absent or an object, never `null`. The `ag-ui` key is
+  reserved for AG-UI's own use. Allowed on either status.
 
 ## Contract rules
 
