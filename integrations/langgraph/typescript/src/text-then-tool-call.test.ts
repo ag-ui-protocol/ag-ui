@@ -21,6 +21,9 @@ function createAgent() {
     id: "run-1",
     threadId: "thread-1",
     hasFunctionStreaming: false,
+    textBlockMessageIds: new Map(),
+    toolBlocks: new Map(),
+    reasoningBlocks: new Map(),
   };
   return { agent, events };
 }
@@ -94,7 +97,7 @@ describe("LangGraphAgent text followed by a tool call in one message", () => {
       ),
       streamChunk([]),
     ];
-    for (const chunk of chunks) agent.handleSingleEvent(chunk);
+    for (const chunk of chunks) agent.handleSingleEventV2(chunk);
 
     expect(events.map((e) => e.type)).toEqual([
       EventType.TEXT_MESSAGE_START,
@@ -120,19 +123,19 @@ describe("LangGraphAgent text followed by a tool call in one message", () => {
     ["an initial argument fragment", '{"surfaceId":', '"x"}'],
   ])("preserves %s on the first named tool chunk", (_label, initial, rest) => {
     const { agent, events } = createAgent();
-    agent.handleSingleEvent(
+    agent.handleSingleEventV2(
       streamChunk([{ type: "text", text: "Building the dashboard." }]),
     );
-    agent.handleSingleEvent(
+    agent.handleSingleEventV2(
       streamChunk(
         [],
         [{ id: "call-1", name: "render_ui", args: initial, index: 0 }],
       ),
     );
     if (rest) {
-      agent.handleSingleEvent(streamChunk([], [{ args: rest, index: 0 }]));
+      agent.handleSingleEventV2(streamChunk([], [{ args: rest, index: 0 }]));
     }
-    agent.handleSingleEvent({ event: "on_chat_model_end" });
+    agent.handleSingleEventV2({ event: "on_chat_model_end" });
 
     const toolEvents = events.filter(
       (event) =>
@@ -158,7 +161,7 @@ describe("LangGraphAgent text followed by a tool call in one message", () => {
     ).toBe('{"surfaceId":"x"}');
 
     const eventCount = events.length;
-    agent.handleSingleEvent({
+    agent.handleSingleEventV2({
       event: "on_tool_end",
       data: {
         input: { surfaceId: "x" },
@@ -175,12 +178,12 @@ describe("LangGraphAgent text followed by a tool call in one message", () => {
     "keeps consecutive tool blocks separate (initial args: %s) without replaying them",
     (initialArgs) => {
       const { agent, events } = createAgent();
-      agent.handleSingleEvent(
+      agent.handleSingleEventV2(
         streamChunk([{ type: "text", text: "Building two dashboards." }]),
       );
       for (const [index, surfaceId] of ["x", "y"].entries()) {
         const id = `call-${index + 1}`;
-        agent.handleSingleEvent(
+        agent.handleSingleEventV2(
           streamChunk(
             [{ type: "tool_use", id, name: "render_ui", input: {}, index }],
             [
@@ -194,12 +197,12 @@ describe("LangGraphAgent text followed by a tool call in one message", () => {
           ),
         );
         if (!initialArgs) {
-          agent.handleSingleEvent(
+          agent.handleSingleEventV2(
             streamChunk([], [{ args: JSON.stringify({ surfaceId }), index }]),
           );
         }
       }
-      agent.handleSingleEvent({ event: "on_chat_model_end" });
+      agent.handleSingleEventV2({ event: "on_chat_model_end" });
 
       const toolEvents = events.filter(
         (event) =>
@@ -222,7 +225,7 @@ describe("LangGraphAgent text followed by a tool call in one message", () => {
 
       const eventCount = events.length;
       for (const [index, surfaceId] of ["x", "y"].entries()) {
-        agent.handleSingleEvent({
+        agent.handleSingleEventV2({
           event: "on_tool_end",
           data: {
             input: { surfaceId },
@@ -243,13 +246,15 @@ describe("LangGraphAgent text followed by a tool call in one message", () => {
   );
   it("appends arguments when a chunk repeats the same tool ID and name", () => {
     const { agent, events } = createAgent();
-    agent.handleSingleEvent(streamChunk([{ type: "text", text: "Building." }]));
+    agent.handleSingleEventV2(
+      streamChunk([{ type: "text", text: "Building." }]),
+    );
     for (const args of ['{"surfaceId":', '"x"}']) {
-      agent.handleSingleEvent(
+      agent.handleSingleEventV2(
         streamChunk([], [{ id: "call-1", name: "render_ui", args, index: 0 }]),
       );
     }
-    agent.handleSingleEvent({ event: "on_chat_model_end" });
+    agent.handleSingleEventV2({ event: "on_chat_model_end" });
 
     expect(events.slice(3)).toMatchObject([
       { type: EventType.TOOL_CALL_START, toolCallId: "call-1" },
@@ -265,20 +270,20 @@ describe("LangGraphAgent text followed by a tool call in one message", () => {
 
   it("ends text without emitting suppressed tool calls", () => {
     const { agent, events } = createAgent();
-    agent.handleSingleEvent(
+    agent.handleSingleEventV2(
       streamChunk([{ type: "text", text: "Building." }], [], false),
     );
-    agent.handleSingleEvent(
+    agent.handleSingleEventV2(
       streamChunk(
         [],
         [{ id: "call-1", name: "render_ui", args: '{"surfaceId":', index: 0 }],
         false,
       ),
     );
-    agent.handleSingleEvent(
+    agent.handleSingleEventV2(
       streamChunk([], [{ args: '"x"}', index: 0 }], false),
     );
-    agent.handleSingleEvent({ event: "on_chat_model_end" });
+    agent.handleSingleEventV2({ event: "on_chat_model_end" });
 
     expect(events.map((event) => event.type)).toEqual([
       EventType.TEXT_MESSAGE_START,
@@ -291,9 +296,9 @@ describe("LangGraphAgent text followed by a tool call in one message", () => {
   it("preserves a text-only stream", () => {
     const { agent, events } = createAgent();
     for (const text of ["Hello", " world"]) {
-      agent.handleSingleEvent(streamChunk([{ type: "text", text }]));
+      agent.handleSingleEventV2(streamChunk([{ type: "text", text }]));
     }
-    agent.handleSingleEvent({ event: "on_chat_model_end" });
+    agent.handleSingleEventV2({ event: "on_chat_model_end" });
 
     expect(events).toMatchObject([
       { type: EventType.TEXT_MESSAGE_START, messageId: "msg-1" },
