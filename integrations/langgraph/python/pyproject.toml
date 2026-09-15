@@ -1,6 +1,6 @@
 [project]
 name = "ag-ui-langgraph"
-version = "0.0.44"
+version = "0.0.45"
 description = "Implementation of the AG-UI protocol for LangGraph."
 license = "MIT"
 license-files = ["LICENSE"]
@@ -40,6 +40,9 @@ dependencies = [
 # exist there yet. See OSS-886.
 [tool.uv.sources]
 ag-ui-protocol = { path = "../../../sdks/python" }
+
+[project.urls]
+Changelog = "https://github.com/ag-ui-protocol/ag-ui/releases"
 
 [project.optional-dependencies]
 fastapi = ["fastapi>=0.115.12"]

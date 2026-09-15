@@ -44,8 +44,10 @@ complete history it is being shown — the protocol has no side channel through
 which earlier turns arrive.
 
 The message types and their content shapes — including multimodal
-`InputContent` parts carrying text, images, audio, video and documents by URL
-or inline data — are the schema's business. Two behavioural rules attach:
+[`ContentPart`](/spec/draft/schema#contentpart)s carrying text, images, audio,
+video and documents by URL or inline data, on user messages and on the tool
+messages that answer [frontend tool calls](/spec/draft/events/tool-calls#frontend-tools) —
+are the schema's business. Two behavioural rules attach:
 
 - A producer that cannot use a content part — a model without vision handed an
   image — MUST NOT fail the run because of it. Skipping what it cannot use and
@@ -90,9 +92,10 @@ them against this value until its own first snapshot replaces it.
 
 ## `forwardedProps`
 
-OPTIONAL. An application-specific channel passed through to the agent
-untouched. Any JSON value. The protocol attaches no meaning to it, and
-intermediaries MUST NOT alter it.
+OPTIONAL. An application-specific channel passed through to the agent untouched.
+Any JSON value except a whole `null`, which means the field is omitted. Null
+values inside the payload are preserved. The protocol attaches no meaning to the
+payload, and intermediaries MUST NOT alter it.
 
 ## `resume`
 
