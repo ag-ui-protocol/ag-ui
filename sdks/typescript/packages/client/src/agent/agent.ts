@@ -63,7 +63,8 @@ export abstract class AbstractAgent {
   public isRunning: boolean = false;
   /** Interrupts emitted by the most recent run that have not yet been resolved.
    *  Populated when RUN_FINISHED arrives with outcome.type === "interrupt".
-   *  Cleared when a subsequent run completes successfully. */
+   *  An entry is cleared when a run that carried a `resume` for it completes
+   *  without a further interrupt; interrupts no run has answered stay put. */
   public pendingInterrupts: Interrupt[] = [];
   private middlewares: Middleware[] = [];
   // Emits to immediately detach from the active run (stop processing its stream)
