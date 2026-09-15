@@ -21,6 +21,7 @@ function messageWithContent(content: unknown): Message {
 }
 
 class ValidatingAgent extends AbstractAgent {
+  transportInput?: RunAgentInput;
   receivedInput?: RunAgentInput;
 
   constructor(private responseMessages?: Message[]) {
@@ -28,6 +29,7 @@ class ValidatingAgent extends AbstractAgent {
   }
 
   run(input: RunAgentInput) {
+    this.transportInput = input;
     this.receivedInput = RunAgentInputSchema.parse(input);
     const ids = { threadId: input.threadId, runId: input.runId };
     return of(
@@ -67,6 +69,27 @@ afterEach(() => {
 });
 
 describe("always-on request attachment compatibility", () => {
+  it("preserves the lifecycle input identity through transport validation", async () => {
+    const agent = new ValidatingAgent();
+    const messages = [messageWithContent([image, binary])];
+    const originalMessages = structuredClone(messages);
+    let initializedInput: RunAgentInput | undefined;
+
+    await agent.runAgent(
+      {},
+      {
+        onRunInitialized: ({ input }) => {
+          initializedInput = input;
+          return { messages };
+        },
+      },
+    );
+
+    expect(agent.transportInput).toBe(initializedInput);
+    expect(agent.receivedInput?.messages[0]?.content).toEqual([image]);
+    expect(messages).toEqual(originalMessages);
+  });
+
   it("converts legacy input added at initialization before transport validation", async () => {
     await expect(send([binary])).resolves.toEqual([{ type: "image", source: image.source }]);
   });

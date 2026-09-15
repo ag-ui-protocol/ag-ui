@@ -172,11 +172,10 @@ export class CompatibilityBoundary extends Middleware {
     // RAW stream — a legacy null on a TOOL_CALL_CHUNK has to be converted
     // before chunk expansion discards or propagates it. The pipeline's own
     // chunk transformation still runs after the whole middleware chain.
-    const upgradedInput = {
-      ...input,
-      messages: input.messages.map(upgradeMessageContent),
-    };
-    return next.run(upgradedInput).pipe(map((event) => this.transformEvent(event)));
+    // Continuation handoffs can be bound to the lifecycle input's identity.
+    // Replace its message list without mutating the original message content.
+    input.messages = input.messages.map(upgradeMessageContent);
+    return next.run(input).pipe(map((event) => this.transformEvent(event)));
   }
 
   private transformEvent(event: BaseEvent): BaseEvent {
