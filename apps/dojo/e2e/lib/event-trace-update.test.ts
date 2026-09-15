@@ -44,6 +44,111 @@ test("creates an update candidate from invisible golden metadata", () => {
   );
 });
 
+test("canonicalizes update candidates to the contractual event trace", () => {
+  const golden = defineEventTrace(
+    "file:///repo/agenticChatPage.event-trace.ts",
+    {
+      sendsAndReceivesMessage: [],
+    },
+  );
+  const snapshot = { type: "STATE_SNAPSHOT", snapshot: { count: 1 } };
+
+  assert.deepEqual(
+    createEventTraceUpdateCandidate({
+      lane: "typescript",
+      expected: golden.sendsAndReceivesMessage,
+      actual: [
+        { ...snapshot, rawEvent: { transportOnly: "first" } },
+        { type: "STEP_STARTED", stepName: "model" },
+        { ...snapshot, rawEvent: { transportOnly: "second" } },
+      ],
+    }).events,
+    [snapshot, { type: "STEP_STARTED", stepName: "model" }],
+  );
+});
+
+test("compares the contractual trace instead of transport rawEvent payloads", () => {
+  const expected = defineEventTrace(
+    "file:///repo/apps/dojo/e2e/tests/langgraphTypescriptTests/agenticChatPage.event-trace.ts",
+    {
+      sendsAndReceivesMessage: [
+        {
+          type: "STATE_SNAPSHOT",
+          snapshot: { count: 1 },
+          rawEvent: { protocol: "v2" },
+        },
+      ],
+    },
+  );
+
+  assert.doesNotThrow(() =>
+    assertEventTraceMatches(
+      [
+        {
+          type: "STATE_SNAPSHOT",
+          snapshot: { count: 1 },
+          rawEvent: { protocol: "v3" },
+        },
+        {
+          type: "STATE_SNAPSHOT",
+          snapshot: { count: 1 },
+          rawEvent: { protocol: "v3-repeated" },
+        },
+      ],
+      expected.sendsAndReceivesMessage,
+    ),
+  );
+});
+
+test("rejects traces whose normalized identities have different relationships", () => {
+  const expected = defineEventTrace(
+    "file:///repo/apps/dojo/e2e/tests/langgraphTypescriptTests/subagentsPage.event-trace.ts",
+    {
+      delegatesWork: [
+        {
+          type: "TOOL_CALL_START",
+          toolCallId: "id-1",
+          toolCallName: "task",
+        },
+        {
+          type: "SUBAGENT_STARTED",
+          subagentRunId: "tools:id-2",
+          parentToolCallId: "id-1",
+        },
+        {
+          type: "SUBAGENT_FINISHED",
+          subagentRunId: "tools:id-2",
+          outcome: { interruptIds: ["id-3"] },
+        },
+      ],
+    },
+  );
+  const sharedRuntimeId = "fdecf438-f47b-2e18-3753-b24a141985c2";
+
+  assert.throws(() =>
+    assertEventTraceMatches(
+      [
+        {
+          type: "TOOL_CALL_START",
+          toolCallId: "call-generated-at-runtime",
+          toolCallName: "task",
+        },
+        {
+          type: "SUBAGENT_STARTED",
+          subagentRunId: `tools:${sharedRuntimeId}`,
+          parentToolCallId: "call-generated-at-runtime",
+        },
+        {
+          type: "SUBAGENT_FINISHED",
+          subagentRunId: `tools:${sharedRuntimeId}`,
+          outcome: { interruptIds: [sharedRuntimeId] },
+        },
+      ],
+      expected.delegatesWork,
+    ),
+  );
+});
+
 test("writes update candidates only to the requested staging directory", async () => {
   const stagingDirectory = await mkdtemp(
     join(tmpdir(), "event-trace-update-test-"),

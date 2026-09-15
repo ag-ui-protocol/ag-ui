@@ -15,6 +15,7 @@ import {
 } from "@/agents";
 import { IntegrationId } from "@/menu";
 import { getPostHogClient } from "@/lib/posthog-server";
+import { ensureSseUtf8 } from "@/lib/ensure-sse-utf8";
 
 type RouteParams = {
   params: Promise<{
@@ -121,5 +122,5 @@ export async function POST(request: NextRequest, context: RouteParams) {
       integration_id: integrationId,
     },
   });
-  return handler(request);
+  return ensureSseUtf8(await handler(request));
 }
