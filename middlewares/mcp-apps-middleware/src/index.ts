@@ -26,16 +26,29 @@ export const MCPAppsActivityType = "mcp-apps";
 /**
  * Proxied MCP request structure from the frontend iframe
  */
-export interface ProxiedMCPRequest {
-  /** Server hash (MD5 hash of config) */
-  serverHash: string;
-  /** Server name (optional, for lookup by name) */
-  serverId?: string;
+type ProxiedMCPRequestBase = {
   /** The JSON-RPC method to call */
   method: string;
   /** The JSON-RPC params */
   params?: Record<string, unknown>;
-}
+};
+
+type ProxiedMCPRequestIdentifier =
+  | {
+      /** Server hash (MD5 hash of transport type and URL only) */
+      serverHash: string;
+      /** Server name (optional, for lookup by name) */
+      serverId?: string;
+    }
+  | {
+      /** Server hash (MD5 hash of transport type and URL only) */
+      serverHash?: string;
+      /** Server name (for lookup by name) */
+      serverId: string;
+    };
+
+export type ProxiedMCPRequest = ProxiedMCPRequestBase &
+  ProxiedMCPRequestIdentifier;
 
 /**
  * Extract EventWithState type from Middleware.runNextWithState return type
@@ -93,6 +106,8 @@ export function getServerHash(config: MCPClientConfig): string {
   });
   return createHash("md5").update(serialized).digest("hex");
 }
+
+const APP_TOOL_UNAVAILABLE_ERROR = "MCP tool unavailable to this app";
 
 /**
  * Build the MCP client transport for a server config, forwarding any configured
@@ -182,6 +197,39 @@ function isModelVisibleUITool(tool: {
     getUIResourceUri(tool) !== undefined &&
     (visibility === undefined ||
       (Array.isArray(visibility) && visibility.includes("model")))
+  );
+}
+
+function isValidVisibility(value: unknown): value is Array<"model" | "app"> {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((entry) => entry === "model" || entry === "app")
+  );
+}
+
+function getVisibility(tool: { _meta?: Record<string, unknown> }): unknown {
+  const ui = tool._meta?.ui;
+  return ui && typeof ui === "object" && "visibility" in ui
+    ? ui.visibility
+    : undefined;
+}
+
+function hasMalformedAppMetadata(tool: {
+  _meta?: Record<string, unknown>;
+}): boolean {
+  const ui = tool._meta?.ui;
+  return ui !== undefined && (ui === null || typeof ui !== "object");
+}
+
+function isAppVisibleTool(tool: { _meta?: Record<string, unknown> }): boolean {
+  if (hasMalformedAppMetadata(tool)) {
+    return false;
+  }
+  const visibility = getVisibility(tool);
+  return (
+    visibility === undefined ||
+    (isValidVisibility(visibility) && visibility.includes("app"))
   );
 }
 
@@ -325,7 +373,7 @@ export class MCPAppsMiddleware extends Middleware {
       if (request.serverId) {
         serverConfig = this.serverConfigMapById.get(request.serverId);
       }
-      if (!serverConfig) {
+      if (!serverConfig && request.serverHash) {
         serverConfig = this.serverConfigMapByHash.get(request.serverHash);
       }
 
@@ -418,10 +466,19 @@ export class MCPAppsMiddleware extends Middleware {
 
       // Dispatch only methods admitted by the UI proxy allowlist.
       switch (method) {
-        case "tools/call":
-          return await client.callTool(
-            params as { name: string; arguments?: Record<string, unknown> },
-          );
+        case "tools/call": {
+          const toolParams = params as
+            | { name?: unknown; arguments?: Record<string, unknown> }
+            | undefined;
+          if (typeof toolParams?.name !== "string") {
+            throw new Error(APP_TOOL_UNAVAILABLE_ERROR);
+          }
+          await this.ensureToolAvailableToApp(client, toolParams.name);
+          return await client.callTool({
+            name: toolParams.name,
+            arguments: toolParams.arguments,
+          });
+        }
         case "resources/read":
           return await client.readResource(params as { uri: string });
         case "notifications/message":
@@ -438,6 +495,12 @@ export class MCPAppsMiddleware extends Middleware {
           throw new Error(`MCP method not allowed for UI proxy: ${method}`);
       }
     } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message === APP_TOOL_UNAVAILABLE_ERROR
+      ) {
+        throw error;
+      }
       console.error(
         "MCP proxy request failed",
         {
@@ -461,6 +524,39 @@ export class MCPAppsMiddleware extends Middleware {
           error,
         );
       }
+    }
+  }
+
+  private async ensureToolAvailableToApp(
+    client: Client,
+    toolName: string,
+  ): Promise<void> {
+    const seenCursors = new Set<string>();
+    let cursor: string | undefined;
+    let matches = 0;
+    let appVisible = false;
+
+    do {
+      if (cursor) {
+        if (seenCursors.has(cursor)) {
+          throw new Error("MCP tools/list repeated pagination cursor");
+        }
+        seenCursors.add(cursor);
+      }
+
+      const response = await client.listTools(cursor ? { cursor } : undefined);
+      for (const tool of response.tools) {
+        if (tool.name !== toolName) continue;
+        matches += 1;
+        if (isAppVisibleTool(tool)) {
+          appVisible = true;
+        }
+      }
+      cursor = response.nextCursor;
+    } while (cursor);
+
+    if (matches !== 1 || !appVisible) {
+      throw new Error(APP_TOOL_UNAVAILABLE_ERROR);
     }
   }
 
