@@ -406,7 +406,7 @@ export class MCPAppsMiddleware extends Middleware {
         capabilities: {
           extensions: {
             "io.modelcontextprotocol/ui": {
-              mimeTypes: ["text/html+mcp"],
+              mimeTypes: ["text/html;profile=mcp-app"],
             },
           },
         },
@@ -599,7 +599,7 @@ export class MCPAppsMiddleware extends Middleware {
         capabilities: {
           extensions: {
             "io.modelcontextprotocol/ui": {
-              mimeTypes: ["text/html+mcp"],
+              mimeTypes: ["text/html;profile=mcp-app"],
             },
           },
         },
@@ -712,7 +712,7 @@ export class MCPAppsMiddleware extends Middleware {
           // Advertise MCP Apps UI support per SEP-1865
           extensions: {
             "io.modelcontextprotocol/ui": {
-              mimeTypes: ["text/html+mcp"],
+              mimeTypes: ["text/html;profile=mcp-app"],
             },
           },
         },

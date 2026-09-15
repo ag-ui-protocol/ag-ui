@@ -5,20 +5,26 @@ import { MastraLanguageModelV2Mock } from "@mastra/core/test-utils/llm-mock";
 import { MastraAgent } from "../mastra";
 import { makeInput, collectEvents } from "./helpers";
 
-function createStreamModel(chunks: any[]) {
+function createStreamModel(
+  chunks: any[],
+  onPrompt?: (prompt: unknown) => void,
+) {
   return new MastraLanguageModelV2Mock({
-    doStream: async () => ({
-      stream: new ReadableStream({
-        start(controller) {
-          for (const chunk of chunks) {
-            controller.enqueue(chunk);
-          }
-          controller.close();
-        },
-      }),
-      request: { body: {} },
-      response: undefined,
-    }),
+    doStream: async ({ prompt }: { prompt: unknown }) => {
+      onPrompt?.(prompt);
+      return {
+        stream: new ReadableStream({
+          start(controller) {
+            for (const chunk of chunks) {
+              controller.enqueue(chunk);
+            }
+            controller.close();
+          },
+        }),
+        request: { body: {} },
+        response: undefined,
+      };
+    },
   });
 }
 
@@ -103,6 +109,50 @@ function wrapAgent(agent: Agent, opts?: { resourceId?: string }) {
 }
 
 describe("integration with real Mastra Agent", () => {
+  it("forwards developer instructions as system messages on successive runs", async () => {
+    const prompts: unknown[] = [];
+    const model = createStreamModel(
+      [
+        { type: "text-delta", id: "t1", delta: "Hallo" },
+        {
+          type: "finish",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          finishReason: "stop",
+        },
+      ],
+      (prompt) => prompts.push(prompt),
+    );
+    const agent = wrapAgent(createTestAgent(model));
+    const developer = {
+      id: "d1",
+      role: "developer" as const,
+      content: "Answer in German.",
+    };
+
+    for (const messages of [
+      [developer],
+      [developer, { id: "u2", role: "user" as const, content: "Hi" }],
+    ]) {
+      const events = await collectEvents(agent, makeInput({ messages }));
+      expect(events.some((event) => event.type === EventType.RUN_ERROR)).toBe(
+        false,
+      );
+      expect(
+        events.some((event) => event.type === EventType.TEXT_MESSAGE_CHUNK),
+      ).toBe(true);
+    }
+
+    expect(prompts).toHaveLength(2);
+    for (const prompt of prompts) {
+      expect(prompt).toEqual(
+        expect.arrayContaining([
+          { role: "system", content: "Test" },
+          { role: "system", content: developer.content },
+        ]),
+      );
+    }
+  });
+
   describe("text streaming", () => {
     it("emits RUN_STARTED, TEXT_MESSAGE_CHUNK, RUN_FINISHED for a simple text response", async () => {
       const agent = createTestAgent(createTextStreamModel("Hello world"));

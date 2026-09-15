@@ -317,7 +317,7 @@ describe("MCPAppsMiddleware", () => {
         capabilities: {
           extensions: {
             "io.modelcontextprotocol/ui": {
-              mimeTypes: ["text/html+mcp"],
+              mimeTypes: ["text/html;profile=mcp-app"],
             },
           },
         },

@@ -15,6 +15,7 @@ import {
 } from "@/agents";
 import { IntegrationId } from "@/menu";
 import { getPostHogClient } from "@/lib/posthog-server";
+import { ensureSseUtf8 } from "@/lib/ensure-sse-utf8";
 
 type RouteParams = {
   params: Promise<{
@@ -121,17 +122,5 @@ export async function POST(request: NextRequest, context: RouteParams) {
       integration_id: integrationId,
     },
   });
-  const response = await handler(request);
-  if (response.headers.get("content-type")?.startsWith("text/event-stream")) {
-    // SSE is UTF-8. Declare it explicitly so Chromium's response-body capture
-    // uses the same decoding as the browser's streaming consumer.
-    const headers = new Headers(response.headers);
-    headers.set("content-type", "text/event-stream; charset=utf-8");
-    return new Response(response.body, {
-      status: response.status,
-      statusText: response.statusText,
-      headers,
-    });
-  }
-  return response;
+  return ensureSseUtf8(await handler(request));
 }

@@ -1,6 +1,6 @@
 [project]
 name = "ag-ui-crewai"
-version = "0.3.0"
+version = "0.3.1"
 description = "Implementation of the AG-UI protocol for CrewAI"
 license = "MIT"
 license-files = ["LICENSE"]

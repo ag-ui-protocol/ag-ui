@@ -2002,7 +2002,12 @@ export class LangGraphAgent extends AbstractAgent {
             predictStateTool.tool === toolCallData?.name,
         );
 
-        const isToolCallStartEvent = !hasCurrentStream && toolCallData?.name;
+        let isToolCallStartEvent =
+          toolCallData?.name &&
+          (!hasCurrentStream ||
+            (currentStream?.toolCallId &&
+              toolCallData.id &&
+              toolCallData.id !== currentStream.toolCallId));
         const isToolCallArgsEvent =
           hasCurrentStream && currentStream?.toolCallId && toolCallData?.args;
         const isToolCallEndEvent =
@@ -2091,10 +2096,27 @@ export class LangGraphAgent extends AbstractAgent {
           if (resolved) {
             this.messagesInProcess[this.activeRun!.id] = null;
           }
-          break;
+          // The chunk that ends streamed text can also open a tool call: Anthropic
+          // streams the `tool_use` block of a message right after its text block.
+          // Fall through to the tool-call start below instead of dropping the call
+          // and every argument chunk that follows it (the Python adapter already
+          // handles this transition).
+          if (!toolCallData?.name) break;
+          isToolCallStartEvent = true;
+          this.activeRun!.hasFunctionStreaming = true;
         }
 
         if (isToolCallStartEvent && shouldEmitToolCalls) {
+          if (currentStream?.toolCallId) {
+            const resolved = this.dispatchEvent({
+              type: EventType.TOOL_CALL_END,
+              toolCallId: currentStream.toolCallId,
+              rawEvent: event,
+            });
+            if (resolved) {
+              this.messagesInProcess[this.activeRun!.id] = null;
+            }
+          }
           const resolved = this.dispatchEvent({
             type: EventType.TOOL_CALL_START,
             toolCallId: toolCallData.id,
@@ -2109,6 +2131,14 @@ export class LangGraphAgent extends AbstractAgent {
               toolCallId: toolCallData.id,
               toolCallName: toolCallData.name,
             });
+            if (toolCallData.args) {
+              this.dispatchEvent({
+                type: EventType.TOOL_CALL_ARGS,
+                toolCallId: toolCallData.id,
+                delta: toolCallData.args,
+                rawEvent: event,
+              });
+            }
           }
           break;
         }
