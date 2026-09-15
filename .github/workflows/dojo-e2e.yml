@@ -145,6 +145,11 @@ jobs:
         with:
           version: 10.33.4
 
+      # The harness imports the dojo's pinned, patched @copilotkit/aimock.
+      # Install the workspace before the standalone e2e package so it can resolve it.
+      - name: Install event trace workspace dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
       - name: Install event trace test dependencies
         working-directory: apps/dojo/e2e
         run: pnpm install --frozen-lockfile --ignore-scripts

@@ -8,6 +8,10 @@ import {
   registerA2UICrewAIFixtures,
 } from "./a2ui-crewai-fixtures";
 import { registerInterruptCrewAIFixtures } from "./interrupt-crewai-fixtures";
+import {
+  registerStrandsWeatherFixtures,
+  strandsWeatherResponse,
+} from "./strands-weather-fixtures";
 import { registerMultiAgentStrandsFixtures } from "./multi-agent-strands-fixtures";
 import {
   registerStrandsFixtures,
@@ -19,7 +23,11 @@ import {
 } from "./deepagents-subagents-fixtures";
 
 // Configurable so parallel worktrees / runs don't collide on one aimock port.
-const MOCK_PORT = Number(process.env.AIMOCK_PORT) || 5555;
+const configuredPort = process.env.AIMOCK_PORT;
+const MOCK_PORT = configuredPort === undefined ? 5555 : Number(configuredPort);
+if (!Number.isInteger(MOCK_PORT) || MOCK_PORT < 1 || MOCK_PORT > 65535) {
+  throw new Error("AIMOCK_PORT must be an integer from 1 to 65535");
+}
 const FIXTURES_DIR = path.join(import.meta.dirname, "fixtures", "openai");
 
 let mockServer: LLMock | null = null;
@@ -38,6 +46,18 @@ export async function setupLLMock(): Promise<void> {
     latency: Number(process.env.AIMOCK_LATENCY) || 5,
   });
 
+  registerLLMockFixtures(mockServer);
+
+  const url = await mockServer.start();
+  console.log(`✅ aimock server running at ${url}`);
+  console.log(`   Fixtures loaded from: ${FIXTURES_DIR}`);
+
+  // Export the URL for child processes to use
+  process.env.LLMOCK_URL = `${url}/v1`;
+}
+
+// Shared by the server and registration-precedence regression tests.
+export function registerLLMockFixtures(mockServer: LLMock): void {
   // OSS-158 ADK A2UI fixtures (Gemini-shaped, scoped to gemini models). MUST
   // precede the OpenAI LangGraph recovery fixtures so a Gemini request matches
   // here first; gpt-4o requests fall through to the LangGraph fixtures.
@@ -66,6 +86,7 @@ export async function setupLLMock(): Promise<void> {
   // AWS Strands interrupt + predictive-state fixtures. Scoped to those demos'
   // own system prompts, before the generic loader.
   registerStrandsFixtures(mockServer);
+  registerStrandsWeatherFixtures(mockServer);
 
   // Extract text from message content — handles both string and array-of-parts
   // (Strands SDK sends content as [{type: "text", text: "..."}])
@@ -1534,7 +1555,9 @@ export async function setupLLMock(): Promise<void> {
         // intercept them (first match wins).
         return (
           hasImagePart &&
-          textOf(lastUser?.content).toLowerCase().includes("llamaindex-mm-check")
+          textOf(lastUser?.content)
+            .toLowerCase()
+            .includes("llamaindex-mm-check")
         );
       },
     },
@@ -1589,6 +1612,8 @@ export async function setupLLMock(): Promise<void> {
         // confirmed or refused, and whether the document edit was re-proposed.
         // Scoped to those demos' own system prompts.
         if (strandsAnswersToolResultTurn(req)) return false;
+        // Preserve the city-specific summary for the scoped Strands weather demo.
+        if (strandsWeatherResponse(req) !== undefined) return false;
         // Don't match the deepagents_subagents demo's own tool-result turns:
         // the subagent's post-approval answer and the supervisor's relay. A
         // generic acknowledgment here would make the approve and reject
@@ -1650,13 +1675,6 @@ export async function setupLLMock(): Promise<void> {
       );
     }
   });
-
-  const url = await mockServer.start();
-  console.log(`✅ aimock server running at ${url}`);
-  console.log(`   Fixtures loaded from: ${FIXTURES_DIR}`);
-
-  // Export the URL for child processes to use
-  process.env.LLMOCK_URL = `${url}/v1`;
 }
 
 export async function teardownLLMock(): Promise<void> {
