@@ -110,8 +110,9 @@ specification.
    in `pendingToolCallIds`
    ([Tool calls](/spec/draft/events/tool-calls#frontend-tools)).
 6. Input messages MAY carry multimodal content parts (text, image, audio,
-   video, document), by URL or inline data
-   ([Run input](/spec/draft/basic/run-input)).
+   video, document), by URL, as inline data or as a provider file handle —
+   the `file` source, new in 1.0, for bytes already uploaded to the model
+   provider ([Run input](/spec/draft/basic/run-input#provider-file-handles)).
 7. `TOOL_CALL_RESULT` is a message in its own right and does not reopen the
    call it answers ([Tool calls](/spec/draft/events/tool-calls)).
 8. A late `RUN_ERROR` after `RUN_FINISHED` is admitted, reporting a failure
