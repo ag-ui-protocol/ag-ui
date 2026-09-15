@@ -53,6 +53,10 @@ the events that happen to arrive.
 `SUBAGENT_ERROR` ends the invocation, not the run. A parent agent MAY handle a
 failed subagent and continue; that is why it is not `RUN_ERROR`.
 
+A subagent's model calls are the run's: no subagent event carries token usage,
+and the run's terminal event [reports](/spec/draft/events/lifecycle#token-usage)
+the whole run's usage, subagents included.
+
 `SUBAGENT_FINISHED` reports why the segment ended. An absent outcome means
 success. A suspended outcome means the invocation is paused awaiting outside
 input — terminal for this stream but not for the invocation, which a later run

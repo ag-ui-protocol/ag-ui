@@ -1,6 +1,6 @@
 [project]
 name = "ag-ui-crewai"
-version = "0.3.0"
+version = "0.3.1"
 description = "Implementation of the AG-UI protocol for CrewAI"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -79,6 +79,9 @@ dependencies = [
     # CrewAI glue over it. Floor matches the aws-strands adapter.
     "ag-ui-a2ui-toolkit>=0.0.4",
 ]
+
+[project.urls]
+Changelog = "https://github.com/ag-ui-protocol/ag-ui/releases"
 
 [project.optional-dependencies]
 # Opt-in: the crewai-tools package and its heavy transitive tree. The bridge

@@ -19,6 +19,7 @@ from __future__ import annotations
 from typing import Any, Iterable, Mapping, Tuple
 
 from .client_proxy_tool import PROXY_RESULT_PLACEHOLDER
+from .interrupt_checkpoint import parked_tool_results, publish_parked_tool_results
 
 # Key under which the adapter stores the ids of the frontend tool calls it has
 # emitted, as a JSON list on the Strands agent's session state. Namespaced to
@@ -138,9 +139,17 @@ def reconcile_frontend_tool_results(
     # reach the adapter so it can stop before Strands consumes the checkpoint.
     interrupt_state = getattr(agent, "_interrupt_state", None)
     if interrupt_state is not None and getattr(interrupt_state, "activated", False):
-        tool_results = interrupt_state.context.get("tool_results")
+        tool_results = parked_tool_results(interrupt_state)
         if tool_results:
-            corrected |= _correct_all_tools(tool_results, pending_results)
+            mutated: set[str] = set()
+            corrected |= _correct_all_tools(
+                tool_results, pending_results, mutated_ids=mutated
+            )
+            if mutated:
+                # The edit above already reaches the run in flight. This is
+                # what makes it reach the next process: see the writer's own
+                # note on the session manager's version check.
+                publish_parked_tool_results(interrupt_state, tool_results)
 
     return corrected
 
@@ -179,11 +188,8 @@ def active_proxy_placeholder_ids(agent: Any) -> set[str]:
     interrupt_state = getattr(agent, "_interrupt_state", None)
     if interrupt_state is None or not getattr(interrupt_state, "activated", False):
         return set()
-    context = getattr(interrupt_state, "context", None)
-    if not isinstance(context, Mapping):
-        return set()
-    tool_results = context.get("tool_results")
-    if not isinstance(tool_results, list):
+    tool_results = parked_tool_results(interrupt_state)
+    if tool_results is None:
         return set()
 
     return {
@@ -229,12 +235,23 @@ def _correct_single_tool(
 
 
 def _correct_all_tools(
-    tool_results, pending_results: Mapping[str, Tuple[str, bool]]
+    tool_results,
+    pending_results: Mapping[str, Tuple[str, bool]],
+    *,
+    mutated_ids: set[str] | None = None,
 ) -> set[str]:
-    """Reconcile matching ToolResult dicts in *tool_results* in place."""
+    """Reconcile matching ToolResult dicts in *tool_results* in place.
+
+    Returns every id that is now carrying its real result. ``mutated_ids``, when
+    given, collects the narrower set this call actually rewrote, so a caller can
+    tell "corrected here" from "already correct" and skip republishing a batch
+    nothing changed.
+    """
     changed: set[str] = set()
     for tool_result in tool_results:
-        tool_use_id = _correct_single_tool(tool_result, pending_results)
+        tool_use_id = _correct_single_tool(
+            tool_result, pending_results, mutated_ids=mutated_ids
+        )
         if tool_use_id:
             changed.add(tool_use_id)
     return changed

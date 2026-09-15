@@ -19,7 +19,7 @@ wheels = [
 
 [[package]]
 name = "ag-ui-crewai"
-version = "0.3.0"
+version = "0.3.1"
 source = { editable = "." }
 dependencies = [
     { name = "ag-ui-a2ui-toolkit" },

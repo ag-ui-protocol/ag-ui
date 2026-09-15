@@ -135,6 +135,88 @@ const toMastraContent = (content: Message["content"]): string | any[] => {
   return parts;
 };
 
+function parseReplayToolCallArguments(
+  raw: string | undefined,
+): { args: unknown; recovered: boolean } | undefined {
+  const trimmed = (raw ?? "").trim();
+  if (trimmed === "") {
+    return { args: {}, recovered: false };
+  }
+
+  try {
+    return { args: JSON.parse(trimmed), recovered: false };
+  } catch {
+    const recovered = recoverFirstJsonValue(trimmed);
+    if (recovered !== undefined) {
+      return { args: recovered, recovered: true };
+    }
+    return undefined;
+  }
+}
+
+function recoverFirstJsonValue(text: string): unknown | undefined {
+  const end = endOfFirstJsonContainer(text);
+  if (end <= 0 || end >= text.length) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(text.slice(0, end));
+  } catch {
+    return undefined;
+  }
+}
+
+function endOfFirstJsonContainer(text: string): number {
+  const open = text[0];
+  if (open !== "{" && open !== "[") {
+    return -1;
+  }
+
+  let objectDepth = 0;
+  let arrayDepth = 0;
+  let inString = false;
+  let escape = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escape = true;
+        continue;
+      }
+      if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === "{") {
+      objectDepth += 1;
+    } else if (ch === "}") {
+      objectDepth -= 1;
+    } else if (ch === "[") {
+      arrayDepth += 1;
+    } else if (ch === "]") {
+      arrayDepth -= 1;
+    }
+    if (objectDepth < 0 || arrayDepth < 0) {
+      return -1;
+    }
+    if (objectDepth === 0 && arrayDepth === 0) {
+      return i + 1;
+    }
+  }
+
+  return -1;
+}
+
 export function convertAGUIMessagesToMastra(
   messages: Message[],
   // Messages to resolve a tool message's toolName against. Defaults to
@@ -155,6 +237,9 @@ export function convertAGUIMessagesToMastra(
   // API when it is replayed as `input[].id` on later turns (deterministic, so
   // dedup is unaffected).
   const result: CoreMessageWithId[] = [];
+  // Track only calls skipped from this conversion. Calls in lookupMessages
+  // alone may already be stored in Mastra and still need their new results.
+  const skippedToolCallIds = new Set<string>();
 
   for (const message of messages) {
     if (message.role === "assistant") {
@@ -164,12 +249,30 @@ export function convertAGUIMessagesToMastra(
         parts.push({ type: "text", text: assistantContent });
       }
       for (const toolCall of message.toolCalls ?? []) {
+        const parsed = parseReplayToolCallArguments(
+          toolCall.function.arguments,
+        );
+        if (parsed === undefined) {
+          skippedToolCallIds.add(toolCall.id);
+          console.warn(
+            `[convertAGUIMessagesToMastra] Skipping tool-call ${toolCall.function.name} (${toolCall.id}): arguments are not valid JSON`,
+          );
+          continue;
+        }
+        if (parsed.recovered) {
+          console.warn(
+            `[convertAGUIMessagesToMastra] Recovered first JSON value from concatenated tool-call arguments for ${toolCall.function.name} (${toolCall.id})`,
+          );
+        }
         parts.push({
           type: "tool-call",
           toolCallId: toolCall.id,
           toolName: toolCall.function.name,
-          args: JSON.parse(toolCall.function.arguments),
+          args: parsed.args,
         });
+      }
+      if (parts.length === 0 && message.toolCalls?.length) {
+        continue;
       }
       result.push({
         ...(message.id !== undefined
@@ -186,6 +289,16 @@ export function convertAGUIMessagesToMastra(
           : {}),
         role: "user",
         content: userContent,
+      } as CoreMessage);
+    } else if (message.role === "developer") {
+      // Mastra has no developer role. Preserve app-injected instructions as
+      // system messages, separate from user input and persisted chat history.
+      result.push({
+        ...(message.id !== undefined
+          ? { id: toModelSafeMessageId(message.id) }
+          : {}),
+        role: "system",
+        content: message.content,
       } as CoreMessage);
     } else if (message.role === "tool") {
       let toolName = "unknown";
@@ -219,7 +332,18 @@ export function convertAGUIMessagesToMastra(
     }
   }
 
-  return result;
+  // Mastra reconstructs a call with {} arguments for an orphaned result.
+  // Remove results of skipped calls too, including results encountered before
+  // their calls, so malformed history cannot invent a successful invocation.
+  return result.filter(
+    (message) =>
+      message.role !== "tool" ||
+      message.content.every(
+        (part) =>
+          part.type !== "tool-result" ||
+          !skippedToolCallIds.has(part.toolCallId),
+      ),
+  );
 }
 
 export interface GetRemoteAgentsOptions {
