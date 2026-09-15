@@ -5,7 +5,7 @@ import { EventType } from "@ag-ui/core";
 import { defer, type Observable } from "rxjs";
 import { map } from "rxjs/operators";
 import { randomUUID } from "@/utils";
-import { upgradeMessageContent } from "./backward-compatibility-0-0-47";
+import { upgradeMessageContent } from "./legacy-content";
 
 // Deprecated inbound shapes, retired from the 1.0 contract. Each entry here
 // has a row in the repo-root DEPRECATIONS.md — not this package's own
@@ -88,16 +88,17 @@ export function normalizeLegacyRunAgentInput(input: unknown): unknown {
 }
 
 /**
- * The always-on inbound half of the pre-1.0 compatibility boundary.
+ * The always-on pre-1.0 compatibility boundary.
  *
  * With enforcement running AFTER middleware (PNI-205), anything nobody
  * translates is stripped with a warning. This middleware is the translator:
  * it upgrades every retired-but-understood inbound shape into its 1.0
  * equivalent, so no data an old peer sends is lost. It is deliberately NOT
  * version-gated — a legacy-shaped event arriving is itself the proof the
- * peer is old, and on a modern stream every branch below is a no-op. (The
- * outbound direction stays version-gated in the 0.0.39/0.0.47 middlewares,
- * because what to SEND must be decided before the server has said anything.)
+ * peer is old, and on a modern stream every branch below is a no-op.
+ * Outgoing legacy binary attachments are also upgraded before the transport
+ * validates or sends them. Their shape identifies the conversion regardless
+ * of the peer ceiling; actual downgrades remain version-gated separately.
  *
  * Inbound conversions, each warned once per occurrence with a pointer to
  * the repo-root DEPRECATIONS.md:
@@ -171,7 +172,11 @@ export class CompatibilityBoundary extends Middleware {
     // RAW stream — a legacy null on a TOOL_CALL_CHUNK has to be converted
     // before chunk expansion discards or propagates it. The pipeline's own
     // chunk transformation still runs after the whole middleware chain.
-    return next.run(input).pipe(map((event) => this.transformEvent(event)));
+    const upgradedInput = {
+      ...input,
+      messages: input.messages.map(upgradeMessageContent),
+    };
+    return next.run(upgradedInput).pipe(map((event) => this.transformEvent(event)));
   }
 
   private transformEvent(event: BaseEvent): BaseEvent {

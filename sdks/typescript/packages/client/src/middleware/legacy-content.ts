@@ -1,7 +1,4 @@
-import { Middleware } from "./middleware";
-import { AbstractAgent } from "@/agent";
-import type { RunAgentInput, BaseEvent } from "@ag-ui/core";
-import type { Observable } from "rxjs";
+import type { RunAgentInput } from "@ag-ui/core";
 
 type InputMessage = RunAgentInput["messages"][number];
 
@@ -76,6 +73,35 @@ export function convertBinaryToNewFormat(
   return binary;
 }
 
+function matchesModernPart(
+  part: unknown,
+  converted: NewContentPart,
+  filename: string | undefined,
+): boolean {
+  if (typeof part !== "object" || part === null || !("type" in part)) return false;
+  if (part.type !== converted.type || !("source" in part)) return false;
+  const source = part.source;
+  if (typeof source !== "object" || source === null) return false;
+  if (
+    !("type" in source) ||
+    source.type !== converted.source.type ||
+    !("value" in source) ||
+    source.value !== converted.source.value ||
+    !("mimeType" in source) ||
+    source.mimeType !== converted.source.mimeType
+  )
+    return false;
+  // A legacy filename is data too: only discard it if the modern part retains it.
+  return (
+    !filename ||
+    ("metadata" in part &&
+      typeof part.metadata === "object" &&
+      part.metadata !== null &&
+      "filename" in part.metadata &&
+      part.metadata.filename === filename)
+  );
+}
+
 export function upgradeMessageContent(message: InputMessage): InputMessage {
   const rawContent = (message as { content?: unknown }).content;
 
@@ -83,38 +109,20 @@ export function upgradeMessageContent(message: InputMessage): InputMessage {
     return message;
   }
 
-  const upgraded = rawContent.map((part: unknown) => {
+  const upgraded = rawContent.flatMap((part: unknown) => {
     if (isLegacyBinaryContent(part)) {
-      return convertBinaryToNewFormat(part);
+      const converted = convertBinaryToNewFormat(part);
+      // Match against ORIGINAL modern parts, so repeated modern or legacy-only
+      // attachments remain intentional repeats. A mirror can precede its original.
+      if (
+        converted.type !== "binary" &&
+        rawContent.some((other: unknown) => matchesModernPart(other, converted, part.filename))
+      )
+        return [];
+      return [converted];
     }
-    return part;
+    return [part];
   });
 
   return { ...message, content: upgraded } as InputMessage;
-}
-
-/**
- * Middleware that converts legacy BinaryInputContent entries (type: "binary")
- * to the new dedicated content types (image, audio, video, document) with
- * source discriminator.
- *
- * Old format (v0.0.47 and below):
- *   { type: "binary", mimeType: "image/png", data: "base64..." }
- *
- * New format (v0.0.48+):
- *   { type: "image", source: { type: "data", value: "base64...", mimeType: "image/png" } }
- *
- * Plain string content and TextInputContent pass through unchanged.
- * BinaryInputContent entries that only have `id` (no data/url) are left as-is
- * since they can't be mapped to the new source format.
- */
-export class BackwardCompatibility_0_0_47 extends Middleware {
-  override run(input: RunAgentInput, next: AbstractAgent): Observable<BaseEvent> {
-    const upgradedInput: RunAgentInput = {
-      ...input,
-      messages: input.messages.map(upgradeMessageContent),
-    };
-
-    return this.runNext(upgradedInput, next);
-  }
 }

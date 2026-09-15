@@ -496,7 +496,10 @@ describe("the conformance fixture corpus", () => {
       "a retired event is translated by something, not dropped",
       "era-0-0-45-thinking-translated",
     ],
-    ["the 0.0.47 era shim has a fixture", "era-0-0-47-upgrades-binary-content"],
+    [
+      "the always-on binary upgrade preserves content for a pinned old peer",
+      "era-0-0-47-upgrades-binary-content",
+    ],
     // Also formerly listed twice, as "a downgrade that loses content warns"
     // and as "the 0.0.57 era shim has a fixture". Same file, same protection.
     [
@@ -504,13 +507,13 @@ describe("the conformance fixture corpus", () => {
       "era-0-0-57-subagent-dropped-with-warning",
     ],
     ["a conformant 1.0 stream stays quiet", "conformant-run-is-quiet"],
-    // The 0.0.39 and 0.0.47 fixtures delegate their version-gate coverage
-    // here, so deleting this one removes those two checks entirely. The
-    // 0.0.57 gate is also covered incidentally elsewhere — an unpinned
-    // subagent fixture fails if that shim installs unconditionally — so this
-    // entry protects two gates, not three.
+    // The 0.0.39 fixture delegates its version-gate coverage here. The 0.0.57
+    // gate is also covered elsewhere: an unpinned subagent fixture fails if
+    // that shim installs unconditionally. This fixture also proves the binary
+    // upgrade runs for current peers; the historical 0.0.47 fixture alone
+    // would not detect an upgrade still gated on an old peer.
     [
-      "the era version gates are killable",
+      "current peers retain modern capabilities and receive binary upgrades",
       "era-current-peer-keeps-modern-content",
     ],
     // The RUN_ERROR contract, in three fixtures: the event is DELIVERED and the

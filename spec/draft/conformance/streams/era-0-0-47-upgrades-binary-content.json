@@ -1,9 +1,9 @@
 {
   "name": "era-0-0-47-upgrades-binary-content",
   "area": "compatibility",
-  "description": "a legacy binary content part is upgraded to a typed media part before it reaches the agent",
+  "description": "the always-on outgoing upgrade preserves a legacy binary content part as typed media for a peer pinned to 0.0.47",
   "specPage": "/spec/draft/basic/versioning",
-  "kill": "remove the {type:binary} upgrade from BackwardCompatibility_0_0_47. NOT the version gate: this fixture pins an eligible peer, so making the shim unconditional changes nothing here \u2014 the gate is killed by era-current-peer-keeps-modern-content instead",
+  "kill": "remove the always-on outgoing {type:binary} upgrade: outgoing enforcement then strips the legacy part, losing its image payload. This fixture retains its historical 0.0.47 peer pin; era-current-peer-keeps-modern-content separately proves the upgrade also runs for a current peer",
   "client": {
     "maxProtocolVersion": "0.0.47"
   },

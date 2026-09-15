@@ -11,11 +11,12 @@ removed in the next release, and the deprecated shape stops working entirely.
 The canonical 1.0 contract (spec/draft/schema.json) excludes these shapes.
 Compatibility conversions live in the TypeScript client boundary and
 middleware layer: the
-always-on inbound boundary (`CompatibilityBoundary`) upgrades what arrives,
-and four version-gated middlewares are inserted when the peer ceiling is at or
+always-on boundary (`CompatibilityBoundary`) upgrades what arrives and converts
+legacy binary attachments in outgoing requests before the transport runs.
+Three version-gated middlewares are inserted when the peer ceiling is at or
 below their version. They do not all work in the same direction.
-`BackwardCompatibility_0_0_39` and `_0_0_47` rewrite the `RunAgentInput` on its
-way out and leave the returned stream alone; `_0_0_57` does both, sanitising
+`BackwardCompatibility_0_0_39` rewrites the `RunAgentInput` on its
+way out; `_0_0_57` does both, sanitising
 the input and then filtering and rewriting the stream (it drops the `SUBAGENT_*`
 events and strips `subagentRunId` from the survivors — `MESSAGES_SNAPSHOT`
 messages, `RUN_STARTED.input` messages, `RUN_FINISHED` interrupt outcomes);
@@ -27,28 +28,37 @@ non-lossy binary upgrade for a modern peer is silent).
 `SUPPRESS_TRANSFORMATION_WARNINGS=true` silences the warnings, not the
 conversions.
 
-| Deprecated shape                              | Replacement                                                             | Shim                                                                  | Expires    |
-| --------------------------------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------- | ---------- |
-| `THINKING_START` event                        | `REASONING_START`                                                       | inbound boundary (and `BackwardCompatibility_0_0_45` for gated flows) | 2027-08-24 |
-| `THINKING_END` event                          | `REASONING_END`                                                         | inbound boundary (and `BackwardCompatibility_0_0_45`)                 | 2027-08-24 |
-| `THINKING_TEXT_MESSAGE_START` event           | `REASONING_MESSAGE_START`                                               | inbound boundary (and `BackwardCompatibility_0_0_45`)                 | 2027-08-24 |
-| `THINKING_TEXT_MESSAGE_CONTENT` event         | `REASONING_MESSAGE_CONTENT`                                             | inbound boundary (and `BackwardCompatibility_0_0_45`)                 | 2027-08-24 |
-| `THINKING_TEXT_MESSAGE_END` event             | `REASONING_MESSAGE_END`                                                 | inbound boundary (and `BackwardCompatibility_0_0_45`)                 | 2027-08-24 |
-| `{ type: "binary" }` input content part       | the media parts (`image`, `audio`, `video`, `document`) with a `source` | inbound boundary; outbound `BackwardCompatibility_0_0_47`             | 2027-08-24 |
-| `parentMessageId: null` on `TOOL_CALL_START`  | omit the field                                                          | inbound boundary                                                      | 2027-08-24 |
-| `parentMessageId: null` on `TOOL_CALL_CHUNK`  | omit the field                                                          | inbound boundary                                                      | 2027-08-24 |
-| `outcome: null` on `RUN_FINISHED`             | omit the field                                                          | inbound boundary                                                      | 2027-08-24 |
-| `rawEvent: null` on an event                  | omit the field                                                          | inbound boundary                                                      | 2027-09-08 |
-| `result: null` on `RUN_FINISHED`              | omit the field                                                          | inbound boundary                                                      | 2027-09-08 |
-| `result: null` on `SUBAGENT_FINISHED`         | omit the field                                                          | inbound boundary                                                      | 2027-09-08 |
-| `payload: null` on a resume entry             | omit the field                                                          | inbound boundary (events)                                             | 2027-09-08 |
-| `metadata: null` on an `image` content part   | omit the field                                                          | inbound boundary (events)                                             | 2027-09-08 |
-| `metadata: null` on an `audio` content part   | omit the field                                                          | inbound boundary (events)                                             | 2027-09-08 |
-| `metadata: null` on a `video` content part    | omit the field                                                          | inbound boundary (events)                                             | 2027-09-08 |
-| `metadata: null` on a `document` content part | omit the field                                                          | inbound boundary (events)                                             | 2027-09-08 |
-| `parameters: null` on a tool                  | omit the field                                                          | inbound boundary (events)                                             | 2027-09-08 |
-| `forwardedProps: null` on `RunAgentInput`     | omit the field                                                          | inbound boundary (events)                                             | 2027-09-08 |
-| `InputContent` and the `...InputContent` / `InputContent...Source` type and validator names | `ContentPart`, `TextPart`, `ImagePart`, `AudioPart`, `VideoPart`, `DocumentPart`, `PartSource`, `DataSource`, `UrlSource` | exported aliases of the same types in `@ag-ui/core` and `ag_ui.core` | 2027-09-11 |
+| Deprecated shape                                                                            | Replacement                                                                                                               | Shim                                                                  | Expires    |
+| ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | ---------- |
+| `THINKING_START` event                                                                      | `REASONING_START`                                                                                                         | inbound boundary (and `BackwardCompatibility_0_0_45` for gated flows) | 2027-08-24 |
+| `THINKING_END` event                                                                        | `REASONING_END`                                                                                                           | inbound boundary (and `BackwardCompatibility_0_0_45`)                 | 2027-08-24 |
+| `THINKING_TEXT_MESSAGE_START` event                                                         | `REASONING_MESSAGE_START`                                                                                                 | inbound boundary (and `BackwardCompatibility_0_0_45`)                 | 2027-08-24 |
+| `THINKING_TEXT_MESSAGE_CONTENT` event                                                       | `REASONING_MESSAGE_CONTENT`                                                                                               | inbound boundary (and `BackwardCompatibility_0_0_45`)                 | 2027-08-24 |
+| `THINKING_TEXT_MESSAGE_END` event                                                           | `REASONING_MESSAGE_END`                                                                                                   | inbound boundary (and `BackwardCompatibility_0_0_45`)                 | 2027-08-24 |
+| `{ type: "binary" }` input content part                                                     | the media parts (`image`, `audio`, `video`, `document`) with a `source`                                                   | always-on boundary, on requests and response events                   | 2027-08-24 |
+| `parentMessageId: null` on `TOOL_CALL_START`                                                | omit the field                                                                                                            | inbound boundary                                                      | 2027-08-24 |
+| `parentMessageId: null` on `TOOL_CALL_CHUNK`                                                | omit the field                                                                                                            | inbound boundary                                                      | 2027-08-24 |
+| `outcome: null` on `RUN_FINISHED`                                                           | omit the field                                                                                                            | inbound boundary                                                      | 2027-08-24 |
+| `rawEvent: null` on an event                                                                | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-08 |
+| `result: null` on `RUN_FINISHED`                                                            | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-08 |
+| `result: null` on `SUBAGENT_FINISHED`                                                       | omit the field                                                                                                            | inbound boundary                                                      | 2027-09-08 |
+| `payload: null` on a resume entry                                                           | omit the field                                                                                                            | inbound boundary (events)                                             | 2027-09-08 |
+| `metadata: null` on an `image` content part                                                 | omit the field                                                                                                            | inbound boundary (events)                                             | 2027-09-08 |
+| `metadata: null` on an `audio` content part                                                 | omit the field                                                                                                            | inbound boundary (events)                                             | 2027-09-08 |
+| `metadata: null` on a `video` content part                                                  | omit the field                                                                                                            | inbound boundary (events)                                             | 2027-09-08 |
+| `metadata: null` on a `document` content part                                               | omit the field                                                                                                            | inbound boundary (events)                                             | 2027-09-08 |
+| `parameters: null` on a tool                                                                | omit the field                                                                                                            | inbound boundary (events)                                             | 2027-09-08 |
+| `forwardedProps: null` on `RunAgentInput`                                                   | omit the field                                                                                                            | inbound boundary (events)                                             | 2027-09-08 |
+| `InputContent` and the `...InputContent` / `InputContent...Source` type and validator names | `ContentPart`, `TextPart`, `ImagePart`, `AudioPart`, `VideoPart`, `DocumentPart`, `PartSource`, `DataSource`, `UrlSource` | exported aliases of the same types in `@ag-ui/core` and `ag_ui.core`  | 2027-09-11 |
+
+The `BackwardCompatibility_0_0_47` class and public export have been removed.
+Its binary conversion now runs in `CompatibilityBoundary` regardless of the
+peer ceiling. Remove explicit imports and registrations of that old class.
+When a message includes a modern attachment and its legacy binary mirror, the
+boundary retains the modern part and its metadata. It only removes a legacy
+mirror with matching media type, source kind, MIME type and payload or URL;
+any legacy filename must also be retained by the modern part. Repeated modern
+attachments and legacy-only attachments remain separate entries.
 
 The optional-null conversions preserve compatibility with shapes the previous
 SDK accepted. They run before validation on incoming events, including nested

@@ -1,9 +1,9 @@
 {
   "name": "era-current-peer-keeps-modern-content",
   "area": "compatibility",
-  "description": "a current peer gets no era shim at all: modern content and subagent attribution reach it untouched, the subagent lifecycle reaches the consumer, and a retired part is refused by outgoing enforcement rather than quietly upgraded",
+  "description": "a current peer keeps modern content and subagent attribution untouched, the subagent lifecycle reaches the consumer, and a legacy binary part is upgraded to a modern image with its payload intact and no warning",
   "specPage": "/spec/draft/basic/versioning",
-  "kill": "make the 0.0.39, 0.0.47 or 0.0.57 era shim install unconditionally (drop its compareVersions gate). Each has material of its own here: 0.0.39 flattens the first message's parts to a bare string, 0.0.47 rewrites the second message's retired {type:binary} part into a media part instead of letting enforcement refuse it (so both the request and the warning change), and 0.0.57 strips subagentRunId from the third message as well as dropping the SUBAGENT_* events. The 0.0.45 gate is NOT covered by this fixture, or by any other: that shim only translates THINKING_* events, and the always-on CompatibilityBoundary runs innermost and converts every one of them before a version-gated shim can see it, so installing 0.0.45 unconditionally is a no-op on every possible stream",
+  "kill": "make the 0.0.39 or 0.0.57 era shim install unconditionally (drop its compareVersions gate): 0.0.39 flattens the first message's parts to a bare string, and 0.0.57 strips subagentRunId from the third message as well as dropping the SUBAGENT_* events. Also remove the always-on outgoing binary upgrade or gate it on an old peer: enforcement then strips the second message's legacy part instead of preserving its image payload. The 0.0.45 gate is NOT covered by this fixture, or by any other: that shim only translates THINKING_* events, and the always-on CompatibilityBoundary runs innermost and converts every one of them before a version-gated shim can see it, so installing 0.0.45 unconditionally is a no-op on every possible stream",
   "input": {
     "messages": [
       {
@@ -72,9 +72,8 @@
       "SUBAGENT_FINISHED",
       "RUN_FINISHED"
     ],
-    "warnings": [
-      "Removed unrecognised material at '/messages/1/content/0'"
-    ],
+    "warnings": [],
+    "noWarnings": true,
     "request": {
       "messages": [
         {
@@ -98,7 +97,16 @@
         {
           "id": "eracur-u2",
           "role": "user",
-          "content": []
+          "content": [
+            {
+              "type": "image",
+              "source": {
+                "type": "url",
+                "value": "https://example.com/legacy.png",
+                "mimeType": "image/png"
+              }
+            }
+          ]
         },
         {
           "id": "eracur-a1",

@@ -249,13 +249,29 @@ equivalent.
   shared corpus in `sdks/typescript/packages/proto/__tests__/__fixtures__/bytes`.
 - **Python.** There is no Python client to hold to this.
 
-## A shim with no fixture
+## Remaining version gates
 
-There are four version-gated compatibility shims and only three of them can be
-tested here. The 0.0.45 shim translates the retired `THINKING_*` shapes — but
-so does the always-on compatibility boundary, which runs innermost and handles
-exactly the same five event types with the same output. In the shipped
-pipeline the shim never sees one. Disabling either translator alone leaves
+There are three version-gated compatibility shims: 0.0.39 downgrades content
+for old peers, 0.0.45 translates retired `THINKING_*` shapes, and 0.0.57
+downgrades subagent events and attribution. Only the 0.0.39 and 0.0.57 gates
+can be tested here.
+
+Legacy binary content is upgraded on every outgoing run before enforcement,
+regardless of the peer's protocol version. There is no 0.0.47 era shim or gate.
+`era-0-0-47-upgrades-binary-content` retains its historical fixture name and
+peer pin to check payload preservation for an old peer;
+`era-current-peer-keeps-modern-content` checks the same upgrade for a current
+peer while protecting the 0.0.39 and 0.0.57 gates. The current-peer fixture
+requires the upgraded image payload to arrive intact without a stripping
+warning. Existing .NET overrides continue to pin that client's intentional
+differences.
+
+### A shim with no fixture
+
+The 0.0.45 shim translates the retired `THINKING_*` shapes — but so does the
+always-on compatibility boundary, which runs innermost and handles exactly
+the same five event types with the same output. In the shipped pipeline the
+shim never sees one. Disabling either translator alone leaves
 `era-0-0-45-thinking-translated` green; only disabling both fails it.
 
 So that fixture pins the translation, not the shim. The shim is unreachable
