@@ -1,0 +1,21 @@
+{
+  "id": "1",
+  "role": "tool",
+  "toolCallId": "c1",
+  "content": [
+    {
+      "type": "text",
+      "id": "p1",
+      "text": "Proration rules: when a plan changes mid-cycle...",
+      "metadata": { "source": "https://docs.internal/billing/proration", "title": "Proration rules" }
+    },
+    {
+      "type": "document",
+      "source": {
+        "type": "data",
+        "value": "JVBERi0x",
+        "mimeType": "application/pdf"
+      }
+    }
+  ]
+}

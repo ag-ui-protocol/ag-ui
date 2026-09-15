@@ -653,7 +653,7 @@ public class ManagedAgentsTurnTest
         var result = Assert.IsType<ToolCallResultEvent>(run.Emitted[0]);
         Assert.Equal(
             "Caf&eacute; &amp; &#39;more&#39; &lt;b&gt;\n[search result] Docs & guides — https://example.com\nbody text\n[image]",
-            result.Content);
+            result.Content.Value);
     }
 
     [Fact]
@@ -698,7 +698,7 @@ public class ManagedAgentsTurnTest
             """{"type":"user.custom_tool_result","custom_tool_use_id":"ctu_1","content":[{"type":"text","text":"clock offline"}],"is_error":true}""",
             run.Fake.Sent[1].Single());
         var result = run.Emitted.OfType<ToolCallResultEvent>().Single();
-        Assert.Equal("clock offline", result.Content);
+        Assert.Equal("clock offline", result.Content.Value);
     }
 
     [Fact]

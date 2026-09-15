@@ -9,10 +9,11 @@ import {
   AudioInputContent,
   VideoInputContent,
   DocumentInputContent,
-  InputContentDataSource,
-  InputContentUrlSource,
+  PartSource,
   InputContent,
   UserMessage,
+  contentHasMedia,
+  contentToText,
 } from "@ag-ui/client";
 
 export const DEFAULT_SCHEMA_KEYS = ["messages", "tools"];
@@ -296,7 +297,7 @@ function parseBase64DataUrl(
  * Mirrors `_inline_media_data` in the Python adapter.
  */
 function inlineMediaData(
-  source: InputContentDataSource | InputContentUrlSource | null | undefined
+  source: PartSource | null | undefined
 ): { value: string; mimeType: unknown } | null {
   // Read optionally for the reason {@link mediaSourceToUrl} gives: `source` is
   // declared required but arrives off the wire, and the two functions must not
@@ -309,6 +310,11 @@ function inlineMediaData(
     const parsed = parseBase64DataUrl(source.value);
     if (parsed) return { value: parsed.data, mimeType: parsed.mimeType ?? source.mimeType };
   }
+  // Everything else — a `file` source included — carries no bytes this adapter
+  // can reach. A `file` source names bytes ALREADY HELD BY A MODEL PROVIDER,
+  // under a handle only that provider can resolve; it is not a URL and must not
+  // be fetched or parsed. LangChain has no provider-handle block here, so it
+  // takes the same exit as every other unusable source.
   return null;
 }
 
@@ -811,7 +817,7 @@ type LangchainContentBlock =
  * to announce.
  */
 function mediaSourceToUrl(
-  source: InputContentDataSource | InputContentUrlSource | null | undefined
+  source: PartSource | null | undefined
 ): string | null {
   if (source?.type === "data") {
     // `mimeType` is declared required, but this source arrives off the wire and
@@ -836,6 +842,10 @@ function mediaSourceToUrl(
   } else if (source?.type === "url") {
     return firstNonEmptyString(source.value) ?? null;
   }
+  // A `file` source lands here. Its `value` is a provider-issued HANDLE, not a
+  // URL — emitting it under `image_url.url` would put an opaque token on the
+  // provider request — so it collapses onto the same `null` the caller already
+  // knows how to announce, and the one part is dropped with the one warning.
   return null;
 }
 
@@ -1342,6 +1352,21 @@ function convertLangchainMultimodalToAgui(content: (IncomingMediaBlock | string)
 }
 
 /**
+ * The legacy binary content part, which left `@ag-ui/core` in 1.0 (the
+ * 0.0.47 client middleware converts it on modern pipelines). Old producers
+ * still send it straight to servers, so this boundary keeps reading it —
+ * typed locally, because the protocol no longer knows the shape.
+ */
+interface LegacyBinaryInputContent {
+  type: "binary";
+  mimeType: string;
+  id?: string;
+  url?: string;
+  data?: string;
+  filename?: string;
+}
+
+/**
  * Convert AG-UI multimodal content to LangChain's format.
  *
  * Malformed input is handled per THE MALFORMED-INPUT CONTRACT, documented above
@@ -1378,7 +1403,9 @@ function convertLangchainMultimodalToAgui(content: (IncomingMediaBlock | string)
  * as the `audio/mp3` spelling the provider's enum actually lists. See
  * {@link OPENAI_AUDIO_MIME_TYPES}.
  */
-function convertAguiMultimodalToLangchain(content: InputContent[]): LangchainContentBlock[] {
+function convertAguiMultimodalToLangchain(
+  content: Array<InputContent | LegacyBinaryInputContent>,
+): LangchainContentBlock[] {
   const langchainContent: LangchainContentBlock[] = [];
 
   for (const item of content) {
@@ -1816,10 +1843,22 @@ export function aguiMessagesToLangChain(messages: Message[]): LangGraphMessage[]
           type: "system",
         } as LangGraphMessage);
         break;
-      case "tool":
+      case "tool": {
         pendingReasoning = [];
+        // A tool result is a string or a list of content parts. A LangChain
+        // tool message takes a string or LangChain content blocks, never the
+        // AG-UI parts themselves: a text-only result is its text, and one
+        // carrying media goes through the same conversion a user message gets.
+        // Which providers accept media in a tool message is then LangChain's
+        // concern, as it already is for user content.
+        const toolContent =
+          typeof message.content === "string"
+            ? message.content
+            : contentHasMedia(message.content)
+              ? (convertAguiMultimodalToLangchain(message.content) as any)
+              : contentToText(message.content);
         out.push({
-          content: message.content,
+          content: toolContent,
           role: message.role,
           type: message.role,
           tool_call_id: message.toolCallId,
@@ -1829,6 +1868,7 @@ export function aguiMessagesToLangChain(messages: Message[]): LangGraphMessage[]
           status: message.error ? "error" : "success",
         } as LangGraphMessage);
         break;
+      }
       default:
         console.error(`Message role ${(message as { role: string }).role} is not implemented`);
         throw new Error("message role is not supported.");

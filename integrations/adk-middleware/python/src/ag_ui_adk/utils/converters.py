@@ -8,12 +8,31 @@ import base64
 import binascii
 import logging
 
+from typing import Optional as _Optional
+
+from pydantic import BaseModel as _BaseModel
+
 from ag_ui.core import (
     Message, UserMessage, AssistantMessage, SystemMessage, ToolMessage,
-    ToolCall, FunctionCall, TextInputContent, BinaryInputContent, InputContent,
+    ToolCall, FunctionCall, TextInputContent, InputContent,
     ImageInputContent, AudioInputContent, VideoInputContent, DocumentInputContent,
     InputContentDataSource, InputContentUrlSource,
 )
+
+
+class BinaryInputContent(_BaseModel):
+    """The legacy binary content part, which left ag_ui.core in 1.0 (see
+    DEPRECATIONS.md). Old callers still hand this shape to the boundary, so it
+    is read here — typed locally, because the protocol no longer knows it."""
+
+    type: str = "binary"
+    mime_type: _Optional[str] = None
+    data: _Optional[str] = None
+    url: _Optional[str] = None
+    id: _Optional[str] = None
+    filename: _Optional[str] = None
+
+    model_config = {"populate_by_name": True, "extra": "allow"}
 from google.adk.events import Event as ADKEvent
 from google.genai import types
 
@@ -180,6 +199,14 @@ def convert_message_content_to_parts(content: Optional[Union[str, List[Any]]]) -
 
     parts: List[types.Part] = []
     for item in content:
+        # Older SDK models are a different class from our local fallback.
+        # Read their existing wire shape through the same legacy dict path.
+        if (
+            isinstance(item, _BaseModel)
+            and not isinstance(item, BinaryInputContent)
+            and getattr(item, "type", None) == "binary"
+        ):
+            item = item.model_dump(by_alias=True)
         if _is_text_content(item):
             text_value = _get_text_value(item)
             part = _to_text_part(text_value)
@@ -418,6 +445,12 @@ def convert_json_patch_to_state(patches: List[Dict[str, Any]]) -> Dict[str, Any]
     state_delta = {}
     
     for patch in patches:
+        # This package resolves ag-ui-protocol from PyPI, where a patch entry
+        # is a plain dict; the repo's own 1.0 SDK types them as operation
+        # models. Reading both keeps this working across that gap rather than
+        # pinning which SDK is installed.
+        if not isinstance(patch, dict):
+            patch = patch.model_dump()
         op = patch.get("op")
         path = patch.get("path", "")
         

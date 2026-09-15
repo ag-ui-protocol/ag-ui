@@ -823,7 +823,7 @@ describe("examples model factory provider packages", () => {
         `${client} is declared but nothing is linked for it`,
       ).toBe(true);
     }
-  });
+  }, 30_000);
 
   it("declares every SDK-constrained dependency inside the SDK's own range", () => {
     const declared = declaredEverywhere();

@@ -1471,6 +1471,77 @@ describe("convertAguiContentToStrandsDetailed", () => {
   });
 });
 
+/**
+ * A `file` source names bytes ALREADY HELD BY A MODEL PROVIDER, under a handle
+ * only that provider issued and only that provider can resolve. No bytes
+ * travel, nothing is fetched, and the handle is NOT a URL. This adapter resolves
+ * every attachment to bytes it can put in a Bedrock block, so there is nothing
+ * it can do with a handle — and the specification's rule for a part a producer
+ * cannot use is to skip it and carry on: "A producer that cannot use a content
+ * part MUST NOT fail the run because of it; it skips the part and continues,
+ * and SHOULD warn."
+ */
+describe("a media part carrying a provider file handle", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("drops the document, keeps the text, warns, and fetches nothing", async () => {
+    const log = makeLog();
+    // Spied so the assertion below is a real observation, not an inference from
+    // the absence of a network error: `value` must never be treated as a URL.
+    const fetchMock = vi.spyOn(urlFetchTransport, "request");
+
+    const { blocks, dropped } = await convertAguiContentToStrandsDetailed(
+      [
+        { type: "text", text: "read this" },
+        {
+          type: "document",
+          source: {
+            type: "file",
+            value: "file-abc123",
+            provider: "openai",
+            mimeType: "application/pdf",
+          },
+        },
+      ] as unknown as InputContent[],
+      log,
+    );
+
+    expect(blocks).toHaveLength(1);
+    expect((blocks[0] as { type: string }).type).toBe("textBlock");
+    expect((blocks[0] as unknown as { text: string }).text).toBe("read this");
+    expect(dropped).toEqual([
+      { type: "document", reason: "content could not be resolved" },
+    ]);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(messages(log)).toContain("content source type");
+    // The handle itself never reaches a provider block.
+    expect(JSON.stringify(blocks)).not.toContain("file-abc123");
+  });
+
+  it("drops a file-sourced image without failing the conversion", async () => {
+    const log = makeLog();
+    const fetchMock = vi.spyOn(urlFetchTransport, "request");
+
+    const blocks = await convertAguiContentToStrands(
+      [
+        { type: "text", text: "look" },
+        {
+          type: "image",
+          source: { type: "file", value: "file-img", mimeType: "image/png" },
+        },
+      ] as unknown as InputContent[],
+      log,
+    );
+
+    expect(blocks).toHaveLength(1);
+    expect((blocks[0] as { type: string }).type).toBe("textBlock");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(messages(log)).toContain("content source type");
+  });
+});
+
 describe("flattenContentToText", () => {
   it("reads Strands textBlock content, which agent.ts feeds it directly", () => {
     expect(

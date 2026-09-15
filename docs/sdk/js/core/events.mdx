@@ -104,7 +104,10 @@ type RunStartedEvent = BaseEvent & {
 
 A reusable, numeric-only token usage summary carried on terminal run events.
 It intentionally contains **only** provider/model labels and token counts — no
-prompts, completions, messages, or identifiers.
+prompts, completions, messages, or identifiers. The counts follow the
+protocol's [accounting](/spec/draft/events/lifecycle#token-usage): the input
+and output counts are totals, and the cache and reasoning counts are parts of
+them, never additions.
 
 ```typescript
 type TokenUsage = {
@@ -115,18 +118,20 @@ type TokenUsage = {
   totalTokens?: number
   reasoningTokens?: number
   cachedInputTokens?: number
+  cacheWriteInputTokens?: number
 }
 ```
 
-| Property            | Type                | Description                                    |
-| ------------------- | ------------------- | ---------------------------------------------- |
-| `provider`          | `string` (optional) | Provider that reported the usage (e.g. `openai`) |
-| `model`             | `string` (optional) | Model that produced the usage                  |
-| `inputTokens`       | `number` (optional) | Prompt/input tokens                            |
-| `outputTokens`      | `number` (optional) | Completion/output tokens                       |
-| `totalTokens`       | `number` (optional) | Total tokens for the entry                     |
-| `reasoningTokens`   | `number` (optional) | Reasoning tokens, when the model reports them  |
-| `cachedInputTokens` | `number` (optional) | Cached (prompt-cache read) input tokens        |
+| Property                | Type                | Description                                                    |
+| ----------------------- | ------------------- | -------------------------------------------------------------- |
+| `provider`              | `string` (optional) | Provider that reported the usage (e.g. `openai`)               |
+| `model`                 | `string` (optional) | Model that produced the usage                                  |
+| `inputTokens`           | `number` (optional) | All input tokens, cache reads and writes included              |
+| `outputTokens`          | `number` (optional) | All output tokens, reasoning included                          |
+| `totalTokens`           | `number` (optional) | `inputTokens` plus `outputTokens`                              |
+| `reasoningTokens`       | `number` (optional) | Output tokens spent on reasoning; part of `outputTokens`       |
+| `cachedInputTokens`     | `number` (optional) | Input tokens read from a prompt cache; part of `inputTokens`   |
+| `cacheWriteInputTokens` | `number` (optional) | Input tokens written to a prompt cache; part of `inputTokens`  |
 
 ### RunFinishedEvent
 
