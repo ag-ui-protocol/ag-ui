@@ -805,25 +805,31 @@ describe("examples model factory provider packages", () => {
     ).toEqual(branches);
   });
 
-  it("declares every provider client the SDK needs, as a dependency", () => {
-    const clients = [...providerClients()].sort();
-    expect(clients).toEqual(expect.arrayContaining(PROVIDER_CLIENT_FLOOR));
+  // Walking and parsing the installed SDK import graph can exceed Vitest's
+  // 5-second default when CI runs the workspace suites in parallel.
+  it(
+    "declares every provider client the SDK needs, as a dependency",
+    { timeout: 30_000 },
+    () => {
+      const clients = [...providerClients()].sort();
+      expect(clients).toEqual(expect.arrayContaining(PROVIDER_CLIENT_FLOOR));
 
-    const runtime = Object.keys(declaredDependencies());
-    for (const client of clients) {
-      expect(
-        runtime,
-        `${client} is needed to run a demo, so it belongs in dependencies`,
-      ).toContain(client);
+      const runtime = Object.keys(declaredDependencies());
+      for (const client of clients) {
+        expect(
+          runtime,
+          `${client} is needed to run a demo, so it belongs in dependencies`,
+        ).toContain(client);
 
-      // A declared dependency is linked into this package's own node_modules; a
-      // client that only resolves because an unrelated package hoisted it is not.
-      expect(
-        fs.existsSync(path.join(PACKAGE_ROOT, "node_modules", client)),
-        `${client} is declared but nothing is linked for it`,
-      ).toBe(true);
-    }
-  });
+        // A declared dependency is linked into this package's own node_modules; a
+        // client that only resolves because an unrelated package hoisted it is not.
+        expect(
+          fs.existsSync(path.join(PACKAGE_ROOT, "node_modules", client)),
+          `${client} is declared but nothing is linked for it`,
+        ).toBe(true);
+      }
+    },
+  );
 
   it("declares every SDK-constrained dependency inside the SDK's own range", () => {
     const declared = declaredEverywhere();

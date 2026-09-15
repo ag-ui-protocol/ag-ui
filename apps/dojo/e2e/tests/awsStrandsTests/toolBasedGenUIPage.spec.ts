@@ -1,4 +1,5 @@
-import { test, expect } from "../../test-isolation-helper";
+import { toolBasedGenUIPageEventTrace } from "./toolBasedGenUIPage.event-trace";
+import { test, expect } from "../../event-trace-test";
 import { ToolBaseGenUIPage } from "../../featurePages/ToolBaseGenUIPage";
 
 // Port of the TypeScript spec. `generate_haiku` is a frontend tool, so the
@@ -8,8 +9,9 @@ const pageURL = "/aws-strands/feature/tool_based_generative_ui";
 
 test("[Strands] Haiku generation and display verification", async ({
   page,
+  eventTrace,
 }) => {
-  await page.goto(pageURL);
+  await page.goto(pageURL, { waitUntil: "networkidle" });
 
   const genAIAgent = new ToolBaseGenUIPage(page);
 
@@ -17,12 +19,23 @@ test("[Strands] Haiku generation and display verification", async ({
   await genAIAgent.generateHaiku('Generate Haiku for "I will always win"');
   await genAIAgent.checkGeneratedHaiku();
   await genAIAgent.checkHaikuDisplay(page);
+
+  await eventTrace.expectJourney(
+    toolBasedGenUIPageEventTrace.haikuGenerationAndDisplayVerification,
+    (events) => {
+      const toolArgs = events.filter(
+        (event) => event.type === "TOOL_CALL_ARGS",
+      );
+      expect(JSON.stringify(toolArgs)).toContain("勝利の道を");
+    },
+  );
 });
 
 test("[Strands] Haiku generation and UI consistency for two different prompts", async ({
   page,
+  eventTrace,
 }) => {
-  await page.goto(pageURL);
+  await page.goto(pageURL, { waitUntil: "networkidle" });
 
   const genAIAgent = new ToolBaseGenUIPage(page);
 
@@ -40,4 +53,8 @@ test("[Strands] Haiku generation and UI consistency for two different prompts", 
   await genAIAgent.checkLaterHaikuArrived(page, afterFirst);
   await genAIAgent.checkGeneratedHaiku();
   await genAIAgent.checkHaikuDisplay(page);
+
+  await eventTrace.expectJourney(
+    toolBasedGenUIPageEventTrace.haikuGenerationAndUIConsistencyForTwoDifferentPrompts,
+  );
 });
