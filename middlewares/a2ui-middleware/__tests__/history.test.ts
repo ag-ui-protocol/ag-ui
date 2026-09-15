@@ -674,8 +674,107 @@ describe("A2UIMiddleware tool result metadata", () => {
 });
 
 describe("activity snapshot authority", () => {
+  it.each([
+    null,
+    false,
+    [],
+    { authoritativeActivityTypes: ["other", 5] },
+    { authoritativeActivityTypes: undefined },
+  ])(
+    "does not promote invalid namespace or scope %j to full authority",
+    (namespace) => {
+      const foreign: Message = {
+        id: "foreign",
+        role: "activity",
+        activityType: "other",
+        content: {},
+      };
+      const source = {
+        ...snapshot([assistant, result, foreign]),
+        metadata: { unrelated: { keep: true }, "@ag-ui/client": namespace },
+      };
+      const before = structuredClone(source);
+      const projected = projectA2UIHistory(source);
+      expect(projected.metadata).toEqual({
+        unrelated: { keep: true },
+        "@ag-ui/client": { authoritativeActivityTypes: ["a2ui-surface"] },
+      });
+      expect(projected.messages).toContainEqual(foreign);
+      expect(source).toEqual(before);
+      expect(projectA2UIHistory(projected)).toEqual(projected);
+    },
+  );
+
+  it("treats a valid namespace without a scope as absent before adding projected activity", () => {
+    const source = {
+      ...snapshot([assistant, result]),
+      metadata: { "@ag-ui/client": { trace: "keep" } },
+    };
+    expect(projectA2UIHistory(source).metadata).toEqual({
+      "@ag-ui/client": {
+        trace: "keep",
+        authoritativeActivityTypes: ["a2ui-surface"],
+      },
+    });
+    const withForeign = {
+      ...source,
+      messages: [
+        ...source.messages,
+        {
+          id: "foreign",
+          role: "activity" as const,
+          activityType: "other",
+          content: {},
+        },
+      ],
+    };
+    expect(projectA2UIHistory(withForeign).metadata).toEqual({
+      "@ag-ui/client": { trace: "keep", authoritativeActivityTypes: null },
+    });
+  });
+
+  it("preserves unknown own activity without claiming its incomplete type", () => {
+    const orphan: Message = {
+      id: "subagent-surface",
+      role: "activity",
+      activityType: "a2ui-surface",
+      content: { saved: true },
+      subagentRunId: "sub",
+    };
+    const source = {
+      ...snapshot([assistant, result, orphan]),
+      metadata: { "@ag-ui/client": { authoritativeActivityTypes: [] } },
+    };
+    const projected = projectA2UIHistory(source);
+    expect(projected.messages).toContainEqual(orphan);
+    expect(activities(projected.messages)).toHaveLength(2);
+    expect(projected.metadata).toEqual(source.metadata);
+    expect(projectA2UIHistory(projected)).toEqual(projected);
+  });
+
+  it("replaces prior surfaces linked to a reconstructed call without retaining stale IDs", () => {
+    const stale: Message = {
+      id: "a2ui-surface-previous-render",
+      role: "activity",
+      activityType: "a2ui-surface",
+      content: { old: true },
+      metadata: { [A2UI_HISTORY_METADATA]: { toolCallId: call.id } },
+    };
+    const source = {
+      ...snapshot([assistant, stale, result]),
+      metadata: { "@ag-ui/client": { authoritativeActivityTypes: [] } },
+    };
+    const projected = projectA2UIHistory(source);
+    expect(activities(projected.messages).map((message) => message.id)).toEqual(
+      ["a2ui-surface-render"],
+    );
+    expect(projected.metadata).toEqual({
+      "@ag-ui/client": { authoritativeActivityTypes: ["a2ui-surface"] },
+    });
+  });
+
   it.each([undefined, null])(
-    "preserves full authority when the last activity is removed (%s)",
+    "preserves a full snapshot's activity without a reconstructible call (%s)",
     (scope) => {
       const source = snapshot([
         {
@@ -690,7 +789,7 @@ describe("activity snapshot authority", () => {
           "@ag-ui/client": { authoritativeActivityTypes: null },
         };
       const projected = projectA2UIHistory(source);
-      expect(projected.messages).toEqual([]);
+      expect(projected.messages).toEqual(source.messages);
       expect(projected.metadata?.["@ag-ui/client"]).toEqual({
         authoritativeActivityTypes: null,
       });
