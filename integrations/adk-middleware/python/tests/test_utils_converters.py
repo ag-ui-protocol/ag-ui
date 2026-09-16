@@ -7,7 +7,7 @@ import base64
 import logging
 from typing import Optional
 from unittest.mock import MagicMock, patch, PropertyMock
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from ag_ui.core import (
     UserMessage,
@@ -23,10 +23,8 @@ from ag_ui.core import (
     DocumentInputContent,
     InputContentDataSource,
     InputContentUrlSource,
+    BinaryInputContent,
 )
-# The legacy binary part left ag_ui.core in 1.0; the boundary-local type in
-# the converters module is what this middleware still reads.
-from ag_ui_adk.utils.converters import BinaryInputContent
 from google.adk.events import Event as ADKEvent
 from google.genai import types
 
@@ -64,17 +62,6 @@ except ImportError:  # pragma: no cover - published floor predates PartSource.fi
         value: str
         provider: Optional[str] = None
         mime_type: Optional[str] = None
-
-
-class LegacyBinaryInputContent(BaseModel):
-    """An older SDK object, distinct from the adapter's local fallback class."""
-
-    type: str = "binary"
-    mime_type: str = Field(alias="mimeType")
-    data: str | None = None
-    url: str | None = None
-    id: str | None = None
-    filename: str | None = None
 
 
 class TestConvertAGUIMessagesToADK:
@@ -125,8 +112,8 @@ class TestConvertAGUIMessagesToADK:
     @pytest.mark.parametrize("as_dict", [False, True])
     def test_convert_legacy_sdk_binary_content(self, as_dict):
         raw = b"legacy-image-bytes"
-        item = LegacyBinaryInputContent(
-            mimeType="image/png",
+        item = BinaryInputContent(
+            mime_type="image/png",
             data=base64.b64encode(raw).decode("ascii"),
             filename="legacy.png",
         )
@@ -153,7 +140,7 @@ class TestConvertAGUIMessagesToADK:
         {"data": "aW1hZ2U=", "id": "stored-image"},
     ])
     def test_legacy_sdk_binary_content_preserves_unsupported_inputs(self, fields, caplog):
-        item = LegacyBinaryInputContent(mimeType="image/png", **fields)
+        item = BinaryInputContent(mime_type="image/png", **fields)
 
         assert convert_message_content_to_parts([item]) == []
         assert caplog.records  # Existing validation still warns about invalid parts.
