@@ -472,6 +472,34 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         uses: ./.github/actions/assert-lockfiles-unchanged
 
+  # a2ui_toolkit is its own distribution under sdks/python/a2ui_toolkit. The
+  # `python` job above discovers tests from sdks/python/tests, so this suite
+  # never ran in CI even when the workflow fired on toolkit edits (#2743).
+  # No uv.lock: the package is the lockfiles job's known_missing exception
+  # (empty dependencies). unittest is what [tool.ag-ui.scripts] declares.
+  a2ui-toolkit-python:
+    name: a2ui-toolkit-python
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          # The unittest suite uses only the standard library, so there is no uv cache.
+          enable-cache: false
+
+      - name: Run tests
+        working-directory: sdks/python/a2ui_toolkit
+        run: python -m unittest discover tests -v
+
   adk-middleware-python:
     runs-on: ubuntu-latest
 

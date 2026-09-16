@@ -1702,7 +1702,7 @@ export class MastraAgent extends AbstractAgent {
    *
    * @returns An object with three methods:
    *   - `handleChunk`: processes a single chunk; returns `true` if processing should stop (error or malformed chunk).
-   *   - `flush`: emits any buffered tool-call (call at end of stream).
+   *   - `flush`: emits any buffered tool-call and unresolved retry reason (call at end of stream).
    *   - `getUsage`: returns usage reported by the terminal `finish` chunk.
    */
   private createChunkProcessor(
@@ -1867,6 +1867,9 @@ export class MastraAgent extends AbstractAgent {
     // this raw buffer on the terminal `finish`). All of this is inert when the
     // flag is off — bufferedText stays "" and the release helpers early-return.
     let bufferedText = "";
+    // A retry request can still be terminal (e.g. an input processor abort).
+    // Keep its reason until a new response arrives or the stream ends.
+    let pendingRetryReason: string | undefined;
     // The last text we emitted within the current message window. Mastra ends a
     // response with a `step-finish` immediately followed by a terminal `finish`,
     // and BOTH can carry the same `response.uiMessages`; without this guard the
@@ -1895,6 +1898,7 @@ export class MastraAgent extends AbstractAgent {
         chunkPayload?.response?.uiMessages,
       );
       if (processedText !== undefined) {
+        pendingRetryReason = undefined;
         bufferedText = "";
         emitProcessedText(processedText);
         return;
@@ -2254,6 +2258,7 @@ export class MastraAgent extends AbstractAgent {
         case "tool-output":
           break;
         case "text-delta": {
+          if (chunk.payload.text) pendingRetryReason = undefined;
           flush();
           if (this.useProcessedFinalText) {
             // Hold deltas until a finish boundary — the processor-modified text
@@ -2340,6 +2345,7 @@ export class MastraAgent extends AbstractAgent {
           break;
         }
         case "tool-call": {
+          pendingRetryReason = undefined;
           const { toolCallId, toolName, args } = chunk.payload;
           // Working-memory update: Mastra's built-in `updateWorkingMemory` tool.
           // The assembled args carry the final (authoritative) working memory —
@@ -2713,6 +2719,21 @@ export class MastraAgent extends AbstractAgent {
           ]);
           break;
         }
+        case "tripwire": {
+          // A rejected attempt must not be released by a later finish boundary.
+          // Text already streamed cannot be retracted, but held text can be dropped.
+          bufferedText = "";
+          pendingRetryReason = undefined;
+          const reason =
+            chunk.payload.reason || "The response was blocked by a processor.";
+          if (chunk.payload.retry) {
+            pendingRetryReason = reason;
+          } else {
+            flush();
+            callbacks.onTextPart?.(reason);
+          }
+          break;
+        }
         case "abort": {
           // @mastra/core emits a first-class `abort` chunk (payload `{}`) when
           // a run is cancelled via abortSignal, and closes the stream straight
@@ -2737,7 +2758,18 @@ export class MastraAgent extends AbstractAgent {
       return false;
     };
 
-    return { handleChunk, flush, getUsage: () => usage };
+    return {
+      handleChunk,
+      flush: () => {
+        flush();
+        if (pendingRetryReason !== undefined) {
+          const reason = pendingRetryReason;
+          pendingRetryReason = undefined;
+          callbacks.onTextPart?.(reason);
+        }
+      },
+      getUsage: () => usage,
+    };
   }
 
   /**

@@ -20,7 +20,14 @@ yarn add @ag-ui/mastra
 Install the required peer dependencies:
 
 ```bash
-npm install @mastra/client-js @mastra/core @ag-ui/core @ag-ui/client @copilotkit/runtime
+npm install @mastra/client-js @mastra/core @ag-ui/core @ag-ui/client
+```
+
+The optional CopilotKit integration is available from `@ag-ui/mastra/copilotkit`.
+Install its peer dependency only when using that entry point:
+
+```bash
+npm install @copilotkit/runtime
 ```
 
 ## Usage
