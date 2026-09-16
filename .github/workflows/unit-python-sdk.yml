@@ -911,12 +911,14 @@ jobs:
         # cancellation, and concurrency cancels supersede runs constantly here — each
         # one would otherwise spend a step re-checking a job nobody is waiting on.
         #
-        # The checkout gate is NOT redundant with !cancelled(). The self-repository
-        # action can be loaded with `$/...`, but its Git checks still require a
-        # successfully checked-out working tree. Without the gate, a checkout failure
-        # would be followed by a second, misleading guard failure.
+        # The checkout gate is NOT redundant with !cancelled(). !cancelled() is TRUE
+        # when an earlier step failed, including `Checkout code` — and this step is a
+        # local `uses:`, so with no repo on disk it dies with "Can't find 'action.yml'
+        # under .../assert-lockfiles-unchanged". That lands AFTER the real error and
+        # reads as though the guard itself is broken, which is precisely the misleading
+        # signal action.yml's header argues against.
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
-        uses: $/.github/actions/assert-lockfiles-unchanged
+        uses: ./.github/actions/assert-lockfiles-unchanged
 
   crewai-python:
     runs-on: ubuntu-latest
