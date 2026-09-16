@@ -1,0 +1,34 @@
+---
+source: crates/ag-ui-core/tests/snapshots.rs
+expression: "vec![Event::reasoning_start(\"msg-3\"), Event::reasoning_message_start(\"msg-3\"),\nEvent::reasoning_message_content(\"msg-3\", \"check the forecast first\"),\nEvent::reasoning_message_end(\"msg-3\"), Event::reasoning_end(\"msg-3\"),\nEvent::reasoning_encrypted_value(ReasoningEncryptedValueSubtype::Message,\n\"msg-3\", \"b64-blob\",),]"
+---
+[
+  {
+    "type": "REASONING_START",
+    "messageId": "msg-3"
+  },
+  {
+    "type": "REASONING_MESSAGE_START",
+    "messageId": "msg-3",
+    "role": "reasoning"
+  },
+  {
+    "type": "REASONING_MESSAGE_CONTENT",
+    "messageId": "msg-3",
+    "delta": "check the forecast first"
+  },
+  {
+    "type": "REASONING_MESSAGE_END",
+    "messageId": "msg-3"
+  },
+  {
+    "type": "REASONING_END",
+    "messageId": "msg-3"
+  },
+  {
+    "type": "REASONING_ENCRYPTED_VALUE",
+    "subtype": "message",
+    "entityId": "msg-3",
+    "encryptedValue": "b64-blob"
+  }
+]

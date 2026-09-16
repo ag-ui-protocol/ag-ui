@@ -1,0 +1,39 @@
+---
+source: crates/ag-ui-core/tests/snapshots.rs
+expression: "vec![Event::step_started(\"call_weather_tool\"),\nEvent::tool_call_start(\"call-1\", \"get_weather\"),\nEvent::tool_call_args(\"call-1\", r#\"{\"city\":\"#),\nEvent::tool_call_args(\"call-1\", r#\"\"Seoul\"}\"#),\nEvent::tool_call_end(\"call-1\"),\nEvent::tool_call_result(\"msg-2\", \"call-1\", \"18C and raining\"),\nEvent::step_finished(\"call_weather_tool\"),]"
+---
+[
+  {
+    "type": "STEP_STARTED",
+    "stepName": "call_weather_tool"
+  },
+  {
+    "type": "TOOL_CALL_START",
+    "toolCallId": "call-1",
+    "toolCallName": "get_weather"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call-1",
+    "delta": "{\"city\":"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call-1",
+    "delta": "\"Seoul\"}"
+  },
+  {
+    "type": "TOOL_CALL_END",
+    "toolCallId": "call-1"
+  },
+  {
+    "type": "TOOL_CALL_RESULT",
+    "messageId": "msg-2",
+    "toolCallId": "call-1",
+    "content": "18C and raining"
+  },
+  {
+    "type": "STEP_FINISHED",
+    "stepName": "call_weather_tool"
+  }
+]
