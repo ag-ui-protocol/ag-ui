@@ -21,9 +21,7 @@ the pre-0.0.48 way is the only place a legacy part can still enter, so the
 upgrade is installed for exactly those peers and skipped for everyone else.
 """
 
-from typing import Literal, Optional
-
-from pydantic import model_validator
+from typing import Literal
 
 from ag_ui._generated.models import (
     GeneratedBaseModel,
@@ -95,29 +93,9 @@ InputContentSource = PartSource
 InputContentDataSource = DataSource
 InputContentUrlSource = UrlSource
 
-# The legacy binary part. The protocol retired it in 1.0 — ``ContentPart`` has
-# no ``binary`` member, and a message carrying one is rejected at
-# ``RunAgentInput`` validation — but the class stays importable for one release
-# so an adapter written against 0.x still imports on the 1.0 SDK and its legacy
-# branch goes quietly dead instead of failing at import. Never constructed by
-# this SDK. Kept for one release, see the repo-root DEPRECATIONS.md.
-class BinaryInputContent(ConfiguredBaseModel):
-    """The pre-1.0 binary payload reference. Deprecated: use the media parts."""
-
-    type: Literal["binary"] = "binary"
-    mime_type: str
-    id: Optional[str] = None
-    url: Optional[str] = None
-    data: Optional[str] = None
-    filename: Optional[str] = None
-
-    @model_validator(mode="after")
-    def validate_source(self) -> "BinaryInputContent":
-        """Ensure at least one binary payload source is provided."""
-        if not any([self.id, self.url, self.data]):
-            raise ValueError("BinaryInputContent requires id, url, or data to be provided.")
-        return self
-
+# The legacy binary part, kept importable for one release. Not protocol
+# surface: it lives in ag_ui.core.deprecated and is only re-exported here.
+from ag_ui.core.deprecated import BinaryInputContent  # noqa: E402
 
 
 # Historic aliases for the media parts: this package has always also exported
