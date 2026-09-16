@@ -1,0 +1,157 @@
+{
+  "name": "era-current-peer-keeps-modern-content",
+  "area": "compatibility",
+  "description": "a current peer keeps modern content and subagent attribution untouched, the subagent lifecycle reaches the consumer, and a legacy binary part is upgraded to a modern image with its payload intact and no warning",
+  "specPage": "/spec/draft/basic/versioning",
+  "kill": "make the 0.0.39 or 0.0.57 era shim install unconditionally (drop its compareVersions gate): 0.0.39 flattens the first message's parts to a bare string, and 0.0.57 strips subagentRunId from the third message as well as dropping the SUBAGENT_* events. Also remove the always-on outgoing binary upgrade or gate it on an old peer: enforcement then strips the second message's legacy part instead of preserving its image payload. The 0.0.45 gate is NOT covered by this fixture, or by any other: that shim only translates THINKING_* events, and the always-on CompatibilityBoundary runs innermost and converts every one of them before a version-gated shim can see it, so installing 0.0.45 unconditionally is a no-op on every possible stream",
+  "input": {
+    "messages": [
+      {
+        "id": "eracur-u1",
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "What is in this picture?"
+          },
+          {
+            "type": "image",
+            "source": {
+              "type": "url",
+              "value": "https://example.com/cat.png",
+              "mimeType": "image/png"
+            }
+          }
+        ]
+      },
+      {
+        "id": "eracur-u2",
+        "role": "user",
+        "content": [
+          {
+            "type": "binary",
+            "mimeType": "image/png",
+            "url": "https://example.com/legacy.png"
+          }
+        ]
+      },
+      {
+        "id": "eracur-a1",
+        "role": "assistant",
+        "content": "Delegated.",
+        "subagentRunId": "eracur-s0"
+      }
+    ]
+  },
+  "stream": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-eracur",
+      "runId": "r-1"
+    },
+    {
+      "type": "SUBAGENT_STARTED",
+      "subagentRunId": "eracur-s1",
+      "name": "researcher"
+    },
+    {
+      "type": "SUBAGENT_FINISHED",
+      "subagentRunId": "eracur-s1"
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "t-eracur",
+      "runId": "r-1"
+    }
+  ],
+  "expect": {
+    "outcome": "completed",
+    "eventTypes": [
+      "RUN_STARTED",
+      "SUBAGENT_STARTED",
+      "SUBAGENT_FINISHED",
+      "RUN_FINISHED"
+    ],
+    "warnings": [],
+    "noWarnings": true,
+    "request": {
+      "messages": [
+        {
+          "id": "eracur-u1",
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "What is in this picture?"
+            },
+            {
+              "type": "image",
+              "source": {
+                "type": "url",
+                "value": "https://example.com/cat.png",
+                "mimeType": "image/png"
+              }
+            }
+          ]
+        },
+        {
+          "id": "eracur-u2",
+          "role": "user",
+          "content": [
+            {
+              "type": "image",
+              "source": {
+                "type": "url",
+                "value": "https://example.com/legacy.png",
+                "mimeType": "image/png"
+              }
+            }
+          ]
+        },
+        {
+          "id": "eracur-a1",
+          "role": "assistant",
+          "content": "Delegated.",
+          "subagentRunId": "eracur-s0"
+        }
+      ]
+    }
+  },
+  "expectOverrides": {
+    "dotnet": {
+      "intentional": "the .NET client has no era shims to gate; its input-content union is closed, so the retired binary part makes the whole message unrepresentable and it is left out while the modern message and the attributed assistant message survive intact \u2014 pinned here message by message, because asserting only the ids would pass just as happily if every message were dropped or mangled",
+      "warnings": [],
+      "noWarnings": true,
+      "request": {
+        "threadId": "t-eracur",
+        "runId": "r-1",
+        "messages": [
+          {
+            "id": "eracur-u1",
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "What is in this picture?"
+              },
+              {
+                "type": "image",
+                "source": {
+                  "type": "url",
+                  "value": "https://example.com/cat.png",
+                  "mimeType": "image/png"
+                }
+              }
+            ]
+          },
+          {
+            "id": "eracur-a1",
+            "role": "assistant",
+            "content": "Delegated.",
+            "subagentRunId": "eracur-s0"
+          }
+        ]
+      }
+    }
+  }
+}
