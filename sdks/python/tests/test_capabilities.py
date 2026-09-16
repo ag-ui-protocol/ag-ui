@@ -361,8 +361,9 @@ class TestNoneFieldsAreOmitted(unittest.TestCase):
 class TestSubagentRenameIsACleanBreak(unittest.TestCase):
     """
     The pre-1.0 `subAgents` wire key and `sub_agents` attribute are gone with
-    no alias. These tests state the resulting behaviour so nobody re-adds one
-    by accident.
+    no alias; only the class name keeps a deprecated alias (see
+    DEPRECATIONS.md). These tests state the resulting behaviour so nobody
+    re-adds a wire or attribute alias by accident.
     """
 
     def test_old_wire_key_does_not_populate_subagents(self):
@@ -394,14 +395,20 @@ class TestSubagentRenameIsACleanBreak(unittest.TestCase):
         model = MultiAgentCapabilities(subagents=[SubagentInfo(name="planner")])
         self.assertFalse(hasattr(model, "sub_agents"))
 
-    def test_old_class_name_is_not_exported(self):
+    def test_old_class_name_is_a_deprecated_alias_only(self):
+        """
+        `SubAgentInfo` is the one thing that keeps a name: an exported alias of
+        the same class, for one release, so an import written against 0.x
+        still works. It is an alias of the class, not of the wire key or the
+        attribute — those two stay a clean break, as the tests above pin.
+        """
         import ag_ui.core as core
         import ag_ui.core.capabilities as capabilities
 
-        self.assertFalse(hasattr(capabilities, "SubAgentInfo"))
-        self.assertFalse(hasattr(core, "SubAgentInfo"))
-        self.assertIn("SubagentInfo", core.__all__)
-        self.assertNotIn("SubAgentInfo", core.__all__)
+        self.assertIs(core.SubAgentInfo, SubagentInfo)
+        self.assertIs(capabilities.SubAgentInfo, SubagentInfo)
+        self.assertIn("SubAgentInfo", core.__all__)
+        self.assertIn("SubAgentInfo", capabilities.__all__)
 
     def test_generated_classes_are_the_exported_ones(self):
         """`ag_ui.core` re-exports the generated models; it does not copy them."""

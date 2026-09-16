@@ -285,14 +285,18 @@ is a model.
   `Optional` from `typing` and `Metadata` from `ag_ui.core`.
 - The `THINKING_*` events. Emit `REASONING_*`. There is no producer-side
   shim; the TypeScript client translates old streams on its side.
-- `BinaryInputContent`. Use the media parts. The ADK converter still accepts
-  legacy binary dictionaries and objects from older SDK versions using local
-  compatibility handling. Its existing inline-data-only restrictions remain.
+- `BinaryInputContent` as a *part*: `ContentPart` has no `binary` member, and
+  a message carrying one is rejected at `RunAgentInput` validation. The class
+  itself stays importable from `ag_ui.core` for one release (see
+  `DEPRECATIONS.md`), so an adapter written against 0.x still imports and its
+  legacy branch simply never runs; the SDK never constructs one. Use the
+  media parts.
 
 ### Renamed
 
 - `SubAgentInfo` → `SubagentInfo`; `MultiAgentCapabilities.sub_agents` →
-  `subagents` (wire key `subagents`). No alias.
+  `subagents` (wire key `subagents`). `SubAgentInfo` remains exported as an
+  alias of the same class for one release; the old field and wire key do not.
 - `ExecutionCapabilities.max_iterations` and `max_execution_time` now reject
   negative values.
 - The content parts are named by what they are, not by direction:

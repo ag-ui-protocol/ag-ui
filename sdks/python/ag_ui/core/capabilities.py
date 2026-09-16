@@ -40,8 +40,14 @@ from ag_ui._generated.models import (
     AgentCapabilities,
 )
 
+# The 0.x spelling. The class was renamed with the wire key (``subAgents`` →
+# ``subagents``); the alias keeps an import working, it does not accept the
+# old key. Kept for one release, see the repo-root DEPRECATIONS.md.
+SubAgentInfo = SubagentInfo
+
 __all__ = [
     "SubagentInfo",
+    "SubAgentInfo",
     "IdentityCapabilities",
     "TransportCapabilities",
     "ToolsCapabilities",

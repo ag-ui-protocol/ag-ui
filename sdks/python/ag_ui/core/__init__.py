@@ -84,6 +84,7 @@ from ag_ui.core.types import (
     TextInputContent,
     InputContentDataSource,
     InputContentUrlSource,
+    BinaryInputContent,
     InputContentSource,
     ImageInputContent,
     AudioInputContent,
@@ -104,6 +105,7 @@ from ag_ui.core.token_usage import (
 
 from ag_ui.core.capabilities import (
     SubagentInfo,
+    SubAgentInfo,
     IdentityCapabilities,
     TransportCapabilities,
     ToolsCapabilities,
@@ -203,6 +205,7 @@ __all__ = [
     "TextInputContent",
     "InputContentDataSource",
     "InputContentUrlSource",
+    "BinaryInputContent",
     "InputContentSource",
     "ImageInputContent",
     "AudioInputContent",
@@ -216,6 +219,7 @@ __all__ = [
     "InputContentPart",
     # Capabilities
     "SubagentInfo",
+    "SubAgentInfo",
     "IdentityCapabilities",
     "TransportCapabilities",
     "ToolsCapabilities",

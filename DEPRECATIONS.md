@@ -50,6 +50,8 @@ conversions.
 | `parameters: null` on a tool                                                                | omit the field                                                                                                            | inbound boundary (events)                                             | 2027-09-08 |
 | `forwardedProps: null` on `RunAgentInput`                                                   | omit the field                                                                                                            | inbound boundary (events)                                             | 2027-09-08 |
 | `InputContent` and the `...InputContent` / `InputContent...Source` type and validator names | `ContentPart`, `TextPart`, `ImagePart`, `AudioPart`, `VideoPart`, `DocumentPart`, `PartSource`, `DataSource`, `UrlSource` | exported aliases of the same types in `@ag-ui/core` and `ag_ui.core`  | 2027-09-11 |
+| `BinaryInputContent` (Python `ag_ui.core`) | the media parts (`ImagePart`, `AudioPart`, `VideoPart`, `DocumentPart`) with a `DataSource` or `UrlSource` | exported as a standalone class so an adapter written against 0.x still imports; no message shape carries it, and a `binary` part is rejected at `RunAgentInput` validation | 2027-09-11 |
+| `SubAgentInfo` (Python `ag_ui.core`) | `SubagentInfo` | exported alias of the same class; the wire key is `subagents` only | 2027-09-11 |
 
 The `BackwardCompatibility_0_0_47` class and public export have been removed.
 Its binary conversion now runs in `CompatibilityBoundary` regardless of the
