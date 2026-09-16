@@ -1,18 +1,20 @@
 # Rust SDK migration proposal
 
-This branch proposes adopting the feature-based `ag-ui` crate as the community
-Rust SDK. It is a review candidate, not an approved replacement or a new release.
-The existing `ag-ui-core` and `ag-ui-client` source and public APIs remain in place.
+This branch proposes replacing the community Rust implementation with the
+feature-based `ag-ui` crate. It is a review candidate, not an approved adoption
+or a new release. The old `ag-ui-core` and `ag-ui-client` source is removed from
+this branch; their published packages remain available and are not overwritten.
 
 | Package | Role |
 | --- | --- |
 | `ag-ui` | Proposed SDK: protocol types, server, client and Axum features |
-| `ag-ui-core`, `ag-ui-client` | Existing community SDK, retained during review |
 | `ag-ui-xtask` | Unpublished protocol drift checks |
 | `ag-ui-migration-tests` | Unpublished HTTP/SSE and documentation tests |
 
 See [MIGRATION.md](MIGRATION.md) for API differences and transition decisions,
 and [PROVENANCE.md](PROVENANCE.md) for the source revision and scope of this import.
+The [transition checklist](docs/transition.md) separates this source change from
+the ownership, final legacy releases, and upstream approval still to be agreed.
 
 ## Try the candidate
 
@@ -82,12 +84,19 @@ cargo run --locked -p ag-ui-xtask -- drift-check --local
 cargo clippy --locked -p ag-ui -p ag-ui-xtask -p ag-ui-migration-tests --all-targets --all-features -- -D warnings
 npm ci --ignore-scripts --prefix interop
 npm test --prefix interop
+npm ci --ignore-scripts --prefix e2e/interop
+npm test --prefix e2e/interop
 ```
 
 `--local` reads `sdks/typescript/packages/core/src/events.ts` from this checkout.
 It checks event names, payload field names and optionality, including inherited
 base fields. It fails when schemas cannot be compared. This is not a complete
 semantic conformance proof; the wire tests and cross-language checks complement it.
+The pinned semantic suite compares 44 boundary cases against the published
+`@ag-ui/core@0.0.59`, while `interop/` checks the same cases and all 36 event
+variants against the TypeScript source in this checkout.
+Two existing typed representation differences are explicit fixture expectations,
+not a claim of lossless equivalence. See [protocol boundaries](docs/protocol-boundary.md).
 
 The import excludes A2UI, live model tests, the standalone documentation site and
 publishing workflows. JSON/SSE is implemented; the `protobuf` feature only exposes

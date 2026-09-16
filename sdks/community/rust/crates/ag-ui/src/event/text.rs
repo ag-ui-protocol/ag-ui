@@ -1,26 +1,9 @@
 //! Streaming assistant text: `TEXT_MESSAGE_*`.
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
 use crate::event::BaseEvent;
 use crate::ids::{MessageId, SubagentRunId};
-
-/// Reads an omitted *or* explicitly null `role` as [`TextMessageRole`]'s
-/// default.
-///
-/// The field is optional on the wire, and a producer that models an optional
-/// field as *nullable* writes the absent case as `null` rather than by leaving
-/// the key out — the same case [`ToolCallStartEvent::parent_message_id`]
-/// documents. Without this, `"role": null` fails to deserialize and takes the
-/// whole event, and so usually the whole run, with it.
-///
-/// [`ToolCallStartEvent::parent_message_id`]: crate::event::ToolCallStartEvent::parent_message_id
-fn null_role_is_the_default<'de, D>(deserializer: D) -> Result<TextMessageRole, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    Ok(Option::<TextMessageRole>::deserialize(deserializer)?.unwrap_or_default())
-}
 
 /// The roles a streamed text message may carry.
 ///
@@ -66,9 +49,9 @@ pub struct TextMessageStartEvent {
     pub base: BaseEvent,
     /// Id of the message being opened.
     pub message_id: MessageId,
-    /// Who is speaking. Defaults to `assistant` when omitted, and a JSON `null`
-    /// reads as omitted.
-    #[serde(default, deserialize_with = "null_role_is_the_default")]
+    /// Who is speaking. Defaults to `assistant` only when omitted.
+    /// An explicit JSON `null` is invalid, matching the upstream role schema.
+    #[serde(default)]
     pub role: TextMessageRole,
     /// Display name for the author.
     #[serde(default, skip_serializing_if = "Option::is_none")]

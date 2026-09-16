@@ -28,7 +28,8 @@ pub struct RunAgentInput {
     pub parent_run_id: Option<RunId>,
     /// Shared state, mutated by the agent through `STATE_SNAPSHOT` and
     /// `STATE_DELTA`. Free-form JSON, opaque to the protocol.
-    #[serde(default)]
+    /// Null and absent state serialize as omitted, matching upstream normalization.
+    #[serde(default, skip_serializing_if = "Value::is_null")]
     pub state: Value,
     /// Conversation history, oldest first.
     pub messages: Vec<Message>,

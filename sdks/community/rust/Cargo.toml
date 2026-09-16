@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "e2e", "xtask"]
-default-members = ["crates/ag-ui-core", "crates/ag-ui-client", "crates/ag-ui"]
+members = ["crates/ag-ui", "e2e", "xtask"]
+default-members = ["crates/ag-ui"]
 
 [workspace.package]
 version = "0.4.2"
@@ -14,11 +14,11 @@ categories = ["web-programming", "asynchronous"]
 
 [workspace.dependencies]
 ag-ui = { path = "crates/ag-ui", version = "0.4.2" }
-uuid = { version = "1.17.0", features = ["v4", "serde"] }
 
 # ---- runtime: core (must stay minimal) ----
 serde = { version = "1.0.229", features = ["derive"] }
-serde_json = { version = "1.0.151", features = ["preserve_order"] }
+# JSON map ordering belongs to consumers; do not unify preserve_order into their graph.
+serde_json = "1.0.151"
 
 # ---- runtime: server / client (executor-agnostic) ----
 futures-core = "0.3.34"
@@ -39,7 +39,3 @@ utoipa = "5.5.0"
 # ---- compile-time only (proc-macro / dev) ----
 thiserror = "2.0.20"
 insta = { version = "1", features = ["json"] }
-
-[patch.crates-io]
-ag-ui-core = { path = "crates/ag-ui-core" }
-ag-ui-client = { path = "crates/ag-ui-client" }

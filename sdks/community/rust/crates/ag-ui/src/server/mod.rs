@@ -215,3 +215,6 @@ pub use transform::{
     FilterToolCalls, StreamTransformer, SubagentFilter, SubagentVisibility, ToolResultToState,
     TransformerChain,
 };
+
+#[cfg(feature = "verify")]
+pub use verify::EventVerifier;

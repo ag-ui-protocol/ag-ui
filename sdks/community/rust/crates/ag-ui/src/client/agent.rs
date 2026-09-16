@@ -148,7 +148,7 @@ impl From<RunAgentInput> for RunParams {
 ///
 /// # Not [`crate::server::Agent`]
 ///
-/// The two crates sit on opposite ends of the same wire, and the word "agent"
+/// The client and server APIs sit on opposite ends of the same wire, and the word "agent"
 /// means the opposite thing at each end, so they do not share a name.
 /// [`crate::server::Agent`] is a *trait you implement* to be an agent;
 /// `RemoteAgent` is a *handle you hold* onto someone else's. An agent that calls

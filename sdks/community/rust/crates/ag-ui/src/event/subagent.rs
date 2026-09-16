@@ -162,8 +162,8 @@ impl SubagentStartedEvent {
 /// field is optional on `SUBAGENT_FINISHED`, and absent reads as success —
 /// but an explicit `null` is rejected, because the field is newer than the
 /// fix that made every official producer omit valueless fields.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 pub enum SubagentOutcome {
@@ -190,6 +190,29 @@ pub enum SubagentOutcome {
         )]
         interrupt_ids: Option<Vec<String>>,
     },
+}
+
+// A struct-shaped success variant makes serde enforce unknown-field rejection;
+// derive treats an internally tagged unit variant as an ignored payload.
+impl<'de> Deserialize<'de> for SubagentOutcome {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
+        enum Wire {
+            Success {},
+            #[serde(rename_all = "camelCase")]
+            Suspended {
+                #[serde(default, deserialize_with = "crate::serde_util::reject_null")]
+                interrupt_ids: Option<Vec<String>>,
+            },
+        }
+        Ok(match Wire::deserialize(deserializer)? {
+            Wire::Success {} => Self::Success,
+            Wire::Suspended { interrupt_ids } => Self::Suspended { interrupt_ids },
+        })
+    }
 }
 
 impl SubagentOutcome {

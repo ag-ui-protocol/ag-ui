@@ -7,7 +7,7 @@
 //!
 //! Imported for review as a proposed unified community Rust SDK. The event
 //! surface is checked against the TypeScript definitions in this checkout.
-//! See the Rust workspace's migration guide for differences from the existing
+//! See the Rust workspace's migration guide for differences from the previously published
 //! `ag-ui-core` and `ag-ui-client` packages.
 //!
 //! # What is in the box

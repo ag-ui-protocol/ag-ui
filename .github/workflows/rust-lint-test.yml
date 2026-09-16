@@ -46,23 +46,13 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2.9.2
 
       - name: Build
-        run: cargo build --verbose
+        run: cargo build --locked --workspace --all-features
 
       - name: Check formatting
-        run: cargo fmt -- --check
+        run: cargo fmt --all -- --check
 
       - name: Check clippy
-        run: cargo clippy -- -D warnings
-
-      - name: Publish ag-ui-core dry-run
-        run: cargo publish -p ag-ui-core --dry-run
-
-      - name: Publish ag-ui-client dry-run
-        # Documented interim: packaging-only (--no-verify skips the compile-verify).
-        # cargo publish drops the workspace [patch.crates-io] override and would
-        # compile against the stale ag-ui-core 0.1.0 on crates.io. Drop --no-verify
-        # once ag-ui-core is republished to crates.io.
-        run: cargo publish -p ag-ui-client --dry-run --no-verify
+        run: cargo clippy --locked --workspace --all-features --all-targets -- -D warnings
 
       - name: Run tests
         run: cargo test --locked --workspace --all-features
@@ -87,7 +77,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for features in '' sse protobuf schemars utoipa server server,verify,sse client http axum; do
+          for features in '' sse verify protobuf schemars utoipa server server,verify,sse client http axum; do
             cargo check --locked -p ag-ui --all-targets --no-default-features --features "$features"
           done
           for features in sse,protobuf,schemars,utoipa server,verify,sse client,sse; do
@@ -110,6 +100,10 @@ jobs:
         run: npm ci --ignore-scripts --prefix interop
       - name: TypeScript and Rust wire compatibility
         run: npm test --prefix interop
+      - name: Install pinned official-schema suite
+        run: npm ci --ignore-scripts --prefix e2e/interop
+      - name: Official TypeScript schema semantics
+        run: npm test --prefix e2e/interop
 
   audit:
     name: Rust dependency security

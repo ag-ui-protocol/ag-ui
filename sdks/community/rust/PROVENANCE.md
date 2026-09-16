@@ -6,10 +6,17 @@ at commit `43089f4cbf8566887daa5895f13728b4006f8321` (v0.4.2), under the MIT lic
 The original copyright notice is retained in `crates/ag-ui/LICENSE` and
 `LICENSE-ag-ui` for the imported tooling and tests.
 
-The existing community SDK by @wdoppenberg and contributions by others remain
-unchanged in `crates/ag-ui-core` and `crates/ag-ui-client`. This proposal follows
-the coordination in issues #2256 and PR #972; it does not imply approval by those
-contributors or by the AG-UI team.
+The AG-UI changes from public [PR #11](https://github.com/KimSoungRyoul/ag-ui-rust/pull/11),
+commit `515586d47162663ffbb55b58e7877536151fba25`, are also included. That PR was
+merged publicly as `d228b0467a29f4e631b0f9b30628ab09d78765ed`; it is not a new
+crate release. The semantic probe, 44-case interoperability suite and AG-UI-only
+JSON ordering regression were brought over without the A2UI or website changes.
+
+The previous community SDK by @wdoppenberg and contributions by others remain
+available in Git history at `013905bba73f57509ff0f73bfdde61fd897a5deb` and in their
+published packages. This branch proposes removing its source from the workspace.
+It follows the coordination in upstream #2256/#972 and the standalone SDK's #10;
+it does not imply approval by those contributors or by the AG-UI team.
 
 The import excludes `ag-ui-a2ui`, model-provider test helpers, live model tests,
 personal skills, website assets and publishing workflows. Integration changes
@@ -22,4 +29,4 @@ displayed error only after reading the entire body.
 
 The combined lockfile updates vulnerable/yanked `bytes`, `h2`, `rustls`,
 `rustls-webpki`, `slab` and `zerovec` dependencies within the existing manifest
-constraints. The legacy package source remains unchanged.
+constraints. Dependencies used only by the removed legacy source are dropped.

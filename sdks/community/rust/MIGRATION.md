@@ -1,8 +1,10 @@
 # Proposed migration to `ag-ui`
 
-This proposal adds `ag-ui` alongside the current community packages for review.
-It does not remove packages, transfer ownership, publish versions, or deprecate
-the existing API. The team and existing maintainers must agree on those steps.
+This proposal replaces the Rust source tree with the single `ag-ui` SDK crate.
+The old `ag-ui-core` and `ag-ui-client` source and workspace overrides are removed
+from this branch. No crates.io versions are removed or overwritten, and no package
+ownership is transferred. Upstream adoption and the final legacy releases still
+require agreement with the team and existing maintainers.
 
 ## API changes
 
@@ -22,8 +24,9 @@ dependency name or re-exporting the new types does not preserve the old API.
 
 ### A complete client run
 
-The legacy example is `crates/ag-ui-client/examples/basic_agent.rs`. Its candidate
-equivalent keeps a caller-chosen thread ID across turns:
+The [legacy example at the pre-migration revision](https://github.com/ag-ui-protocol/ag-ui/blob/013905bba73f57509ff0f73bfdde61fd897a5deb/sdks/community/rust/crates/ag-ui-client/examples/basic_agent.rs)
+uses `run_agent(&params, subscribers)`. Its candidate equivalent keeps a
+caller-chosen thread ID across turns:
 
 ```rust,no_run
 use ag_ui::client::HttpAgent;
@@ -85,6 +88,18 @@ The proposal should be reviewed against the requirements in #2196 (string IDs),
 framing and overflow), and #972 (server, middleware and verification). The import
 does not automatically close those PRs or assume every proposed feature is covered.
 
+The public SDK's [PR #11](https://github.com/KimSoungRyoul/ag-ui-rust/pull/11) is
+included: explicit null text roles and unknown outcome fields are rejected,
+null input state is omitted on serialization, and JSON map ordering is chosen by
+consumers. `server::EventVerifier` exposes the existing ordering/attribution checks
+with `server` + `verify`. It is not an implementation of the proposed client
+middleware and does not make that remaining design work obsolete.
+
+Consumers that relied on insertion-ordered JSON must enable
+`serde_json/preserve_order` in their own dependency graph. Applications forwarding
+unknown event fields should retain raw JSON; the typed event representation
+discards those extensions. See [protocol boundaries](docs/protocol-boundary.md).
+
 ## Decisions before adoption or publishing
 
 - Confirm the implementation and review/maintenance responsibilities with the team.
@@ -94,9 +109,14 @@ does not automatically close those PRs or assume every proposed feature is cover
 - Agree on `ag-ui` ownership, release version, publishing access and any trusted
   publisher configuration. The imported 0.4.2 version records provenance and must
   not be republished as an upstream release.
-- Decide when legacy source may be removed. Its published versions remain available.
-- Keep the feature-based `ag-ui` layout for this review. A core/client/server split
-  is a separate decision; the `ag-ui-server` name currently belongs to a third party.
+- Review the legacy source removal in this branch. Its published versions and the
+  pre-migration Git revision remain available for a final informational release.
+- Keep `ag-ui` as the single SDK crate, with server/client/transport features.
+  This proposal does not require the `ag-ui-server` name or a package split.
+
+See the [transition checklist and proposed versioning policy](docs/transition.md)
+for the decisions to make together. No contributor is assigned release obligations
+by this branch.
 
 The standalone A2UI crate, website, personal skills and release automation are
 outside this proposal. They do not need to move for the AG-UI SDK to be reviewed.

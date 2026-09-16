@@ -329,14 +329,16 @@ fn metadata_is_absent_or_an_object_never_null() {
     assert!(!empty.base().is_empty());
 
     // A null *value* under a key is data, and the reserved key is just a key.
-    // The base is the payload's first field, so its keys serialize right after
-    // the tag — the same order every fixture in `upstream_payloads.rs` uses.
+    // Metadata object member order follows the consumer's serde_json policy.
     let text = r#"{"type":"TEXT_MESSAGE_END","metadata":{"finishReason":null,"ag-ui":{"usage":{"input":12}}},"messageId":"m"}"#;
     let with_null: Event = serde_json::from_str(text).unwrap();
     let metadata = with_null.metadata().unwrap();
     assert_eq!(metadata["finishReason"], Value::Null);
     assert_eq!(metadata[AGUI_METADATA_KEY]["usage"]["input"], 12);
-    assert_eq!(serde_json::to_string(&with_null).unwrap(), text);
+    assert_eq!(
+        serde_json::to_value(&with_null).unwrap(),
+        serde_json::from_str::<Value>(text).unwrap()
+    );
 
     let built = Event::text_message_end("m").with_metadata(object(json!({ "traceId": "abc" })));
     assert_eq!(

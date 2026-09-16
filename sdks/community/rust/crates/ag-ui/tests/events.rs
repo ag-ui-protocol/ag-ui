@@ -248,27 +248,15 @@ fn text_message_start_defaults_the_role_to_assistant() {
 }
 
 #[test]
-fn an_explicitly_null_role_reads_as_the_default_rather_than_failing() {
-    // A producer that models an optional field as nullable writes the absent
-    // case as `null`, not by omitting the key — the same case
-    // `TOOL_CALL_START.parentMessageId` already documents. Rejecting it would
-    // fail the first event of every message such a producer sends.
-    let event: Event =
-        serde_json::from_str(r#"{"type":"TEXT_MESSAGE_START","messageId":"m","role":null}"#)
-            .expect("a null role means the producer did not set one");
-
-    let Event::TextMessageStart(payload) = event else {
-        panic!("wrong variant");
-    };
-    assert_eq!(payload.role, TextMessageRole::Assistant);
-
-    // An unknown role is still rejected: that is a producer bug, not an absence.
-    assert!(
-        serde_json::from_str::<Event>(
-            r#"{"type":"TEXT_MESSAGE_START","messageId":"m","role":"critic"}"#
-        )
-        .is_err()
-    );
+fn an_explicitly_null_role_is_not_an_omitted_default() {
+    for role in [serde_json::Value::Null, serde_json::json!("critic")] {
+        assert!(
+            serde_json::from_value::<Event>(serde_json::json!({
+                "type": "TEXT_MESSAGE_START", "messageId": "m", "role": role
+            }))
+            .is_err()
+        );
+    }
 }
 
 #[test]

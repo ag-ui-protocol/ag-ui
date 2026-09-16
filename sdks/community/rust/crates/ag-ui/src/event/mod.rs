@@ -133,7 +133,8 @@ macro_rules! define_events {
         /// missing eight event types without anyone noticing.
         ///
         /// The consequence is that adding an event is a major version of this
-        /// crate. That is the intended price; see `docs/DESIGN.md`.
+        /// crate. New variants therefore require a compatibility-breaking release;
+        /// see the Rust workspace's `docs/transition.md` versioning proposal.
         #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
         #[serde(tag = "type")]
         #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]

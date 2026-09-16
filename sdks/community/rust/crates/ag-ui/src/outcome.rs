@@ -86,8 +86,8 @@ impl Interrupt {
 ///
 /// The field is optional on `RUN_FINISHED`: producers that predate the
 /// interrupt protocol omit it entirely, which consumers must read as success.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 pub enum RunOutcome {
@@ -99,6 +99,25 @@ pub enum RunOutcome {
         /// [`RunOutcome::validate`].
         interrupts: Vec<Interrupt>,
     },
+}
+
+// A struct-shaped success variant makes serde enforce unknown-field rejection;
+// derive treats an internally tagged unit variant as an ignored payload.
+impl<'de> Deserialize<'de> for RunOutcome {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
+        enum Wire {
+            Success {},
+            Interrupt { interrupts: Vec<Interrupt> },
+        }
+        Ok(match Wire::deserialize(deserializer)? {
+            Wire::Success {} => Self::Success,
+            Wire::Interrupt { interrupts } => Self::Interrupt { interrupts },
+        })
+    }
 }
 
 impl RunOutcome {

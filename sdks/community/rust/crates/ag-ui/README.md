@@ -7,8 +7,8 @@ AG-UI is the protocol between a user-facing application and an agent backend. A 
 stream of events: the agent opens messages, streams text and reasoning, calls tools,
 publishes state, reports subagent activity, and finishes — or pauses for human input.
 
-This is a proposed unified community SDK, imported for review alongside the existing
-`ag-ui-core` and `ag-ui-client` packages. Adoption and publishing are not finalized.
+This is a proposed unified community SDK, imported for review as the replacement for
+`ag-ui-core` and `ag-ui-client` in this source tree. Adoption and publishing are not finalized.
 See the [migration proposal](../../MIGRATION.md) and [provenance](../../PROVENANCE.md).
 
 To host an agent behind axum:
@@ -95,3 +95,29 @@ for the current typed view; `raw_state()` always exposes current raw JSON.
 
 A subagent event scope records work executed by the application. Finish, fail or
 suspend it explicitly. Drop restores attribution without inventing success.
+
+## Validate events from another runtime
+
+With `server` and `verify`, `EventVerifier` exposes the same ordering and
+attribution checks used by `RunContext`, without creating a transport queue.
+There is no no-op public verifier when `verify` is disabled.
+
+```rust
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
+# #[cfg(all(feature = "server", feature = "verify"))] {
+use ag_ui::{Event, TextMessageRole};
+use ag_ui::server::EventVerifier;
+let mut verifier = EventVerifier::new();
+verifier.observe(&Event::run_started("thread", "run"))?;
+verifier.observe(&Event::text_message_start("message", TextMessageRole::Assistant))?;
+verifier.observe(&Event::text_message_content("message", ""))?;
+verifier.observe(&Event::text_message_end("message"))?;
+verifier.observe(&Event::run_finished("thread", "run"))?;
+# }
+# Ok(())
+# }
+```
+
+Empty deltas are valid protocol data. Choosing to suppress them, requiring
+snapshots before approval, and deciding how to stop open subagents belong to
+the producer's publication policy, not additional wire validation rules.

@@ -1,5 +1,5 @@
 ---
-source: crates/ag-ui-core/tests/snapshots.rs
+source: crates/ag-ui/tests/snapshots.rs
 expression: "vec![Event::run_finished_interrupt(\"thread-1\", \"run-1\", vec![interrupt]),\nEvent::RunFinished(RunFinishedEvent::new(\"thread-1\",\n\"run-2\").with_result(json!({\n    \"sent\": true\n})).with_usage(vec![TokenUsage\n{\n    provider: Some(\"anthropic\".into()), model: Some(\"claude-opus-5\".into()),\n    input_tokens: Some(1200), output_tokens: Some(340), reasoning_tokens:\n    Some(64), ..Default::default()\n}]),),\nEvent::RunError(RunErrorEvent::new(\"upstream refused\").with_code(\"BAD_GATEWAY\")),]"
 ---
 [
@@ -16,12 +16,12 @@ expression: "vec![Event::run_finished_interrupt(\"thread-1\", \"run-1\", vec![in
           "message": "Send the email?",
           "toolCallId": "call-1",
           "responseSchema": {
-            "type": "object",
             "properties": {
               "approved": {
                 "type": "boolean"
               }
-            }
+            },
+            "type": "object"
           },
           "expiresAt": "2026-08-17T12:00:00Z"
         }

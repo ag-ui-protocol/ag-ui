@@ -74,6 +74,11 @@
 #[cfg(feature = "verify")]
 pub(crate) use enabled::Verifier;
 
+/// Standalone protocol ordering and attribution checks, without an event queue.
+/// Disabling verification does not expose a permissive no-op version of this API.
+#[cfg(feature = "verify")]
+pub use enabled::Verifier as EventVerifier;
+
 #[cfg(not(feature = "verify"))]
 pub(crate) use disabled::Verifier;
 
@@ -115,8 +120,8 @@ mod enabled {
 
     /// Tracks what is open, and who opened it, so misordered events can be
     /// named precisely.
-    #[derive(Debug, Default)]
-    pub(crate) struct Verifier {
+    #[derive(Debug, Default, Clone)]
+    pub struct Verifier {
         started: bool,
         ended: bool,
         messages: HashMap<MessageId, Owner>,
@@ -151,12 +156,13 @@ mod enabled {
     }
 
     impl Verifier {
-        pub(crate) fn new() -> Self {
+        /// Creates the ordering state for one run.
+        pub fn new() -> Self {
             Self::default()
         }
 
         /// Checks `event` against the state machine and folds it in.
-        pub(crate) fn observe(&mut self, event: &Event) -> Result<(), VerificationError> {
+        pub fn observe(&mut self, event: &Event) -> Result<(), VerificationError> {
             if self.ended {
                 return Err(self.fail(event, Rule::RunEnded, "the run already ended"));
             }

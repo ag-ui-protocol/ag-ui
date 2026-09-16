@@ -1,47 +1,34 @@
 ---
 title: "Rust SDK"
-description: "Overview of the AG‑UI Rust SDKs"
+description: "Proposed unified Rust SDK and migration from the legacy community packages"
 ---
 
 # Rust SDK
 
-A proposed unified `ag-ui` SDK is available for review alongside the existing
-packages. See the [migration proposal](/sdk/rust/migration-proposal) for its scope,
-local setup, and API differences. The existing packages below remain unchanged.
+This branch proposes a single `ag-ui` crate for the community Rust SDK. Adoption
+and publishing are still subject to the upstream team's decision. The old
+`ag-ui-core` and `ag-ui-client` source has been removed from this proposed tree;
+their existing published versions remain available.
 
-The Rust SDK consists of two crates:
+| Feature | Capability |
+| --- | --- |
+| Core types | Events, IDs, messages, run input and serialization |
+| `server` | Agent hosting and event emission |
+| `client` / `http` | Conversation state and HTTP/SSE consumption |
+| `axum` | Axum routing for a hosted agent |
+| `verify` | Ordering/attribution checks, including standalone `server::EventVerifier` when `server` is enabled |
 
-- ag-ui-core: shared types and events
-- ag-ui-client: client utilities and concrete agents like HttpAgent
+Use the [migration proposal](/sdk/rust/migration-proposal) to try the candidate
+from a checkout and compare APIs. Installing a published standalone `ag-ui` version
+does not select this branch or imply upstream adoption.
 
-## Getting started
+The [transition and versioning proposal](/sdk/rust/transition) describes the
+decisions still needed with the team and existing maintainers. The feature-based
+layout does not require acquiring a separate `ag-ui-server` package name.
 
-```bash
-# Core data types and events
-cargo add ag-ui-core
+## Legacy package documentation
 
-# Client crate with Agent trait, HttpAgent, subscribers
-cargo add ag-ui-client
-```
-
-## Packages
-
-<Card
-  title="Client"
-  icon="cube"
-  href="/sdk/rust/client/overview"
-  color="#3B82F6"
-  iconType="solid"
->
-  Agent trait, HttpAgent and subscriber system
-</Card>
-
-<Card
-  title="Core"
-  icon="bolt"
-  href="/sdk/rust/core/overview"
-  color="#3B82F6"
-  iconType="solid"
->
-  Shared types and event protocol
-</Card>
+The [legacy core](/sdk/rust/core/overview) and [legacy client](/sdk/rust/client/overview)
+pages are retained for users of the published 0.1.0 packages. They do not describe
+the new `ag-ui` API. Final legacy releases should preserve existing behavior and
+link to migration guidance; those releases are not performed by this proposal.
