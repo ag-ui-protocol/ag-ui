@@ -33,11 +33,11 @@ const DocsChat = () => {
     name: "read_ag_ui_openai_agents_docs",
     agentId: "ag_ui_docs_copilot",
     parameters: z.object({ heading: z.string().optional() }),
-    render: ({ status, args, result }: any) => (
+    render: ({ status, parameters, result }) => (
       <DocsLookupProgress
         source="AG-UI OpenAI Agents"
         status={status}
-        heading={args?.heading}
+        heading={parameters?.heading}
         result={result}
       />
     ),
@@ -46,11 +46,11 @@ const DocsChat = () => {
     name: "read_ag_ui_protocol_docs",
     agentId: "ag_ui_docs_copilot",
     parameters: z.object({ heading: z.string().optional() }),
-    render: ({ status, args, result }: any) => (
+    render: ({ status, parameters, result }) => (
       <DocsLookupProgress
         source="AG-UI Protocol"
         status={status}
-        heading={args?.heading}
+        heading={parameters?.heading}
         result={result}
       />
     ),

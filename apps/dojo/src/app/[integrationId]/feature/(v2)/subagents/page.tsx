@@ -86,12 +86,12 @@ const SubagentsView = () => {
     name: "research_topic",
     agentId: "subagents",
     parameters: z.object({ input: z.string().optional() }),
-    render: ({ toolCallId, status, args, result }: any) => (
+    render: ({ toolCallId, status, parameters, result }) => (
       <DelegationTracker
         role="research"
         toolCallId={toolCallId}
         status={status}
-        preview={args?.input}
+        preview={parameters?.input}
         result={result}
         onUpdate={track}
       />
@@ -102,12 +102,12 @@ const SubagentsView = () => {
     name: "write_prose",
     agentId: "subagents",
     parameters: z.object({ input: z.string().optional() }),
-    render: ({ toolCallId, status, args, result }: any) => (
+    render: ({ toolCallId, status, parameters, result }) => (
       <DelegationTracker
         role="writer"
         toolCallId={toolCallId}
         status={status}
-        preview={args?.input}
+        preview={parameters?.input}
         result={result}
         onUpdate={track}
       />
@@ -118,12 +118,12 @@ const SubagentsView = () => {
     name: "critique_draft",
     agentId: "subagents",
     parameters: z.object({ input: z.string().optional() }),
-    render: ({ toolCallId, status, args, result }: any) => (
+    render: ({ toolCallId, status, parameters, result }) => (
       <DelegationTracker
         role="critic"
         toolCallId={toolCallId}
         status={status}
-        preview={args?.input}
+        preview={parameters?.input}
         result={result}
         onUpdate={track}
       />
