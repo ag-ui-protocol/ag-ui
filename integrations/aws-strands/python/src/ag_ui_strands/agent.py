@@ -330,6 +330,28 @@ def _resolve_template_param(agent: Any, name: str, annotation: Any = None) -> An
     return fallback
 
 
+def _is_sdk_owned_plugin(value: Any) -> bool:
+    """Whether ``value`` is a plugin the SDK itself built and registered.
+
+    Strands resolves some constructor params into a plugin instance bound to
+    the agent that received them: since 1.56, ``context_manager="auto"``
+    becomes a ``ContextManager`` plugin carrying that agent's stash, hooks and
+    retrieval-tool bookkeeping, and the agent exposes the instance under the
+    param's own name. Reading it back and handing it to every per-thread agent
+    would make the threads share one stash, so such a value is the template's,
+    exactly as a ``session_manager`` is. Recognised by the SDK's own plugin
+    naming (``strands:...``) and the plugin protocol rather than by class, so a
+    manager the SDK adds next release is caught without naming it here; a
+    caller's own plugin instance is not affected, because its name is theirs.
+    """
+    name = getattr(value, "name", None)
+    return (
+        isinstance(name, str)
+        and name.startswith(_SDK_PLUGIN_NAME_PREFIX)
+        and callable(getattr(value, "init_agent", None))
+    )
+
+
 def _forwardable_parameters() -> List[Tuple[str, Any]]:
     """Constructor params this adapter is responsible for carrying, with types.
 
@@ -381,6 +403,8 @@ def _extract_agent_kwargs(
         if value is _MISSING:
             unreadable.append(name)
             continue
+        if _is_sdk_owned_plugin(value):
+            value = _AGENT_BOUND
         if value is _AGENT_BOUND:
             template_owned.append(name)
             continue
