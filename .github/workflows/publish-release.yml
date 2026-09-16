@@ -79,6 +79,8 @@ on:
       # authoritative trigger. Kept in step with release.config.json by
       # verify-release-scope-dropdowns.sh.
       - "sdks/community/java/ag-ui/pom.xml"
+      - "sdks/community/java/spring/spring-ai/pom.xml"
+      - "sdks/community/java/spring/spring-boot/pom.xml"
   workflow_dispatch:
     inputs:
       mode:
@@ -118,6 +120,8 @@ on:
           - integration-mastra
           - integration-pydantic-ai
           - integration-spring-ai
+          - integration-spring-ai-java
+          - integration-spring-boot-java
           - integration-watsonx-py
           - integration-watsonx-ts
           - middleware-a2a
@@ -573,11 +577,15 @@ jobs:
         run: |
           set -euo pipefail
           # One reactor per distinct versionSource, so a second Maven scope
-          # builds its own tree instead of silently riding on the first.
+          # builds its own tree instead of silently riding on the first. Dedupe
+          # PRESERVING config order (not jq `unique`, which sorts): a reactor may
+          # depend on an earlier one's artifacts (e.g. the spring-ai line consumes
+          # the spring-boot server modules), so the earlier reactor must install
+          # first for the later build to resolve it from the local repo.
           while read -r pom; do
             echo "=== Building and testing Maven reactor ${pom} ==="
             mvn -B -f "$pom" install
-          done < <(echo "$JAVA_PACKAGES" | jq -r '[.[].file] | unique | .[]')
+          done < <(echo "$JAVA_PACKAGES" | jq -r '[.[].file] | reduce .[] as $f ([]; if any(.[]; . == $f) then . else . + [$f] end) | .[]')
 
       # ===== Prerelease mode: validate suffix, bump in place, build/test, upload =====
       # Validate user-supplied suffix against npm-safe charset BEFORE invoking
@@ -1816,11 +1824,15 @@ jobs:
           MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: |
           set -euo pipefail
-          # One deploy per reactor, matching the build job's grouping.
+          # One deploy per reactor, matching the build job's grouping. Dedupe
+          # PRESERVING config order (not jq `unique`, which sorts): a later reactor
+          # may depend on an earlier one (the spring-ai line consumes the spring-boot
+          # server modules), and `deploy` installs locally before uploading, so the
+          # earlier reactor must deploy first for the later build to resolve it.
           while read -r pom; do
             echo "🚀 Deploying Maven reactor ${pom} to Maven Central..."
             mvn -B -f "$pom" -Prelease deploy -DskipTests
-          done < <(jq -r '[.[].file] | unique | .[]' maven-packages.json)
+          done < <(jq -r '[.[].file] | reduce .[] as $f ([]; if any(.[]; . == $f) then . else . + [$f] end) | .[]' maven-packages.json)
 
       # The central plugin's <waitUntil>published</waitUntil> returns once the
       # portal has published, but repo1 sync lags behind that by minutes. Verify
@@ -2006,7 +2018,7 @@ jobs:
               case "$SCOPE" in
                 integration-claude-managed-agents-dotnet|sdk-dotnet)
                   NUGET_INTENDED=true ;;
-                sdk-java)
+                integration-spring-ai-java|integration-spring-boot-java|sdk-java)
                   MAVEN_INTENDED=true ;;
                 integration-agent-spec|integration-langroid|sdk-py-a2ui-toolkit)
                   PY_INTENDED=true ;;
@@ -2093,7 +2105,7 @@ jobs:
                 # this a failed build on a Maven bump reads as "Maven Central was
                 # never intended" and the failure page is swallowed. Kept in step
                 # with release.config.json by verify-release-scope-dropdowns.sh.
-                MAVEN_VERSION_SOURCES="sdks/community/java/ag-ui/pom.xml"
+                MAVEN_VERSION_SOURCES="sdks/community/java/ag-ui/pom.xml sdks/community/java/spring/spring-boot/pom.xml sdks/community/java/spring/spring-ai/pom.xml"
                 for pom in $MAVEN_VERSION_SOURCES; do
                   if printf '%s\n' "$FILES" | grep -qxF "$pom"; then
                     MAVEN_INTENDED=true
