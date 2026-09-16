@@ -1004,7 +1004,7 @@ public class ManagedAgentsAgentTest
 
         Assert.Single(Assert.Single(fake.CreatedSessions).OverrideTools!);
         var result = Assert.Single(events.OfType<ToolCallResultEvent>());
-        Assert.Equal("second", result.Content);
+        Assert.Equal("second", result.Content.Value);
     }
 
     [Fact]
