@@ -1,0 +1,39 @@
+---
+source: crates/ag-ui-core/tests/snapshots.rs
+expression: "vec![Event::raw(json!({\n    \"provider\": \"openai\", \"chunk\": { \"index\": 0 }\n})).with_timestamp(1_700_000_000_001),\nEvent::custom(\"confetti\", json!({ \"count\": 100 })),\nEvent::text_message_chunk(Some(\"msg-5\".into()), Some(\"partial\".into())),\nEvent::tool_call_chunk(Some(\"call-2\".into()), Some(\"search\".into()),\nSome(r#\"{\"q\":\"x\"}\"#.into()),),\nEvent::reasoning_message_chunk(Some(\"msg-6\".into()), Some(\"hmm\".into())),]"
+---
+[
+  {
+    "type": "RAW",
+    "timestamp": 1700000000001,
+    "event": {
+      "provider": "openai",
+      "chunk": {
+        "index": 0
+      }
+    }
+  },
+  {
+    "type": "CUSTOM",
+    "name": "confetti",
+    "value": {
+      "count": 100
+    }
+  },
+  {
+    "type": "TEXT_MESSAGE_CHUNK",
+    "messageId": "msg-5",
+    "delta": "partial"
+  },
+  {
+    "type": "TOOL_CALL_CHUNK",
+    "toolCallId": "call-2",
+    "toolCallName": "search",
+    "delta": "{\"q\":\"x\"}"
+  },
+  {
+    "type": "REASONING_MESSAGE_CHUNK",
+    "messageId": "msg-6",
+    "delta": "hmm"
+  }
+]

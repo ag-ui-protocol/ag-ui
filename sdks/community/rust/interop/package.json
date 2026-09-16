@@ -1,0 +1,12 @@
+{
+  "name": "ag-ui-rust-migration-interop",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node verify.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "zod": "3.25.76"
+  }
+}

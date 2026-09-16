@@ -1,0 +1,91 @@
+---
+source: crates/ag-ui-core/tests/snapshots.rs
+expression: "RunAgentInput\n{\n    state: json!({ \"counter\": 1 }), messages:\n    vec![Message::system(\"msg-0\", \"You are helpful.\"),\n    Message::user(\"msg-1\",\n    vec![InputContent::text(\"what is in this image?\"),\n    InputContent::Image(MediaInputContent::new(InputContentSource::Data\n    { value: \"aGVsbG8=\".into(), mime_type: \"image/png\".into(), })),],),\n    Message::Assistant(AssistantMessage\n    {\n        id: MessageId::new(\"msg-2\"), tool_calls:\n        Some(vec![ToolCall::new(\"call-1\", \"get_weather\",\n        r#\"{\"city\":\"Seoul\"}\"#,)]), ..Default::default()\n    }), Message::tool(\"msg-3\", \"call-1\", \"18C\"),], tools:\n    vec![Tool::new(\"get_weather\", \"Look up the weather for a city\",\n    json!({\n        \"type\": \"object\", \"properties\": { \"city\": { \"type\": \"string\" } },\n        \"required\": [\"city\"],\n    }),)], context: vec![Context::new(\"current page\", \"/dashboard\")],\n    forwarded_props: json!({ \"locale\": \"ko-KR\" }), resume:\n    Some(vec![ResumeEntry::resolved(\"int-1\", json!({ \"approved\": true }),)]),\n    ..RunAgentInput::new(\"thread-1\", \"run-1\")\n}"
+---
+{
+  "threadId": "thread-1",
+  "runId": "run-1",
+  "state": {
+    "counter": 1
+  },
+  "messages": [
+    {
+      "role": "system",
+      "id": "msg-0",
+      "content": "You are helpful."
+    },
+    {
+      "role": "user",
+      "id": "msg-1",
+      "content": [
+        {
+          "type": "text",
+          "text": "what is in this image?"
+        },
+        {
+          "type": "image",
+          "source": {
+            "type": "data",
+            "value": "aGVsbG8=",
+            "mimeType": "image/png"
+          }
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "id": "msg-2",
+      "toolCalls": [
+        {
+          "id": "call-1",
+          "type": "function",
+          "function": {
+            "name": "get_weather",
+            "arguments": "{\"city\":\"Seoul\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "id": "msg-3",
+      "content": "18C",
+      "toolCallId": "call-1"
+    }
+  ],
+  "tools": [
+    {
+      "name": "get_weather",
+      "description": "Look up the weather for a city",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "city": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "city"
+        ]
+      }
+    }
+  ],
+  "context": [
+    {
+      "description": "current page",
+      "value": "/dashboard"
+    }
+  ],
+  "forwardedProps": {
+    "locale": "ko-KR"
+  },
+  "resume": [
+    {
+      "interruptId": "int-1",
+      "status": "resolved",
+      "payload": {
+        "approved": true
+      }
+    }
+  ]
+}

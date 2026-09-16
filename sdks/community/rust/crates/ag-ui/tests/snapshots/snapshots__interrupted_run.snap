@@ -1,0 +1,53 @@
+---
+source: crates/ag-ui-core/tests/snapshots.rs
+expression: "vec![Event::run_finished_interrupt(\"thread-1\", \"run-1\", vec![interrupt]),\nEvent::RunFinished(RunFinishedEvent::new(\"thread-1\",\n\"run-2\").with_result(json!({\n    \"sent\": true\n})).with_usage(vec![TokenUsage\n{\n    provider: Some(\"anthropic\".into()), model: Some(\"claude-opus-5\".into()),\n    input_tokens: Some(1200), output_tokens: Some(340), reasoning_tokens:\n    Some(64), ..Default::default()\n}]),),\nEvent::RunError(RunErrorEvent::new(\"upstream refused\").with_code(\"BAD_GATEWAY\")),]"
+---
+[
+  {
+    "type": "RUN_FINISHED",
+    "threadId": "thread-1",
+    "runId": "run-1",
+    "outcome": {
+      "type": "interrupt",
+      "interrupts": [
+        {
+          "id": "int-1",
+          "reason": "tool_approval",
+          "message": "Send the email?",
+          "toolCallId": "call-1",
+          "responseSchema": {
+            "type": "object",
+            "properties": {
+              "approved": {
+                "type": "boolean"
+              }
+            }
+          },
+          "expiresAt": "2026-08-17T12:00:00Z"
+        }
+      ]
+    }
+  },
+  {
+    "type": "RUN_FINISHED",
+    "threadId": "thread-1",
+    "runId": "run-2",
+    "result": {
+      "sent": true
+    },
+    "usage": [
+      {
+        "provider": "anthropic",
+        "model": "claude-opus-5",
+        "inputTokens": 1200,
+        "outputTokens": 340,
+        "reasoningTokens": 64
+      }
+    ]
+  },
+  {
+    "type": "RUN_ERROR",
+    "message": "upstream refused",
+    "code": "BAD_GATEWAY"
+  }
+]
