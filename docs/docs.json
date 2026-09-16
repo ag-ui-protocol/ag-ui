@@ -223,6 +223,25 @@
                 ]
               }
             ]
+          },
+          {
+            "group": "Rust (community)",
+            "pages": [
+              "sdk/rust/overview",
+              "sdk/rust/migration-proposal",
+              {
+                "group": "Existing SDK",
+                "pages": [
+                  "sdk/rust/core/overview",
+                  "sdk/rust/core/types",
+                  "sdk/rust/core/events",
+                  "sdk/rust/client/overview",
+                  "sdk/rust/client/agent-trait",
+                  "sdk/rust/client/http-agent",
+                  "sdk/rust/client/subscriber"
+                ]
+              }
+            ]
           }
         ]
       }
