@@ -390,6 +390,14 @@ with it.
 - `Tool.Parameters` and `RunAgentInput.ForwardedProperties` (wire key
   `forwardedProps`) are nullable `JsonElement?`, as the schema says; a
   message's `Id` is a non-nullable string that is always written.
+- `CustomEvent.Value` is a non-nullable `JsonElement`, like the other
+  required JSON payloads (`StateSnapshotEvent.Snapshot`, `RawEvent.Event`,
+  the patch arrays). `value` is required on the wire: an event that omits it
+  is rejected on read, and one built without it is refused on encode. An
+  explicit `null` is still a value — it deserializes as `JsonValueKind.Null`
+  and re-serializes as `null`. Code that read the payload through the
+  nullable, `evt.Value!.Value` or `evt.Value?.…`, reads `evt.Value` now; the
+  compiler finds every site.
 - `AGUIUserContent` → `AGUIContent`: the string-or-parts union is no longer
   the user message's alone. `AGUIToolMessage.Content` and
   `ToolCallResultEvent.Content` are `AGUIContent` rather than `string`; a
