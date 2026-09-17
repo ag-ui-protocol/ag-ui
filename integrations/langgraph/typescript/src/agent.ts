@@ -918,12 +918,12 @@ export class LangGraphAgent extends AbstractAgent {
           this.cancelRequested &&
           !this.cancelSent &&
           this.activeRun?.threadId &&
-          this.activeRun?.id
+          this.activeRun?.serverRunId
         ) {
           try {
             await this.client.runs.cancel(
               this.activeRun.threadId,
-              this.activeRun.id,
+              this.activeRun.serverRunId,
             );
           } catch (_) {
             // Ignore cancellation errors
@@ -1103,9 +1103,12 @@ export class LangGraphAgent extends AbstractAgent {
           }
         }
 
-        // Set server-assigned run id as soon as available
+        // Record the server-assigned run id as soon as it is available, for
+        // platform calls (cancel). It never replaces the AG-UI run id: that is
+        // the input's runId, already sent on RUN_STARTED, and RUN_FINISHED must
+        // name the same run — a consumer treats a mismatch as a malformed run.
         if (metadata.run_id) {
-          this.activeRun!.id = metadata.run_id;
+          this.activeRun!.serverRunId = metadata.run_id;
           this.activeRun!.serverRunIdKnown = true;
           // If cancel was requested earlier (before server id was known), send it now.
           if (
@@ -1116,7 +1119,7 @@ export class LangGraphAgent extends AbstractAgent {
             try {
               await this.client.runs.cancel(
                 this.activeRun.threadId!,
-                this.activeRun.id,
+                this.activeRun.serverRunId!,
               );
             } catch (_) {
               // Ignore cancellation errors
@@ -1996,7 +1999,10 @@ export class LangGraphAgent extends AbstractAgent {
   public abortRun() {
     this.cancelRequested = true;
     const threadId = this.activeRun?.threadId;
-    const runId = this.activeRun?.id;
+    // The platform cancels by its own run id, not the AG-UI one. When the
+    // server id is not known yet, the streaming loop sends the cancel as soon
+    // as the first chunk carries it.
+    const runId = this.activeRun?.serverRunId;
     if (threadId && runId && !this.cancelSent) {
       void this.client.runs
         .cancel(threadId, runId)

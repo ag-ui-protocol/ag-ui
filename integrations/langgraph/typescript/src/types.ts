@@ -76,6 +76,12 @@ export interface RunMetadata {
   hasFunctionStreaming?: boolean;
   // True once the platform-assigned run id is known (set from stream metadata)
   serverRunIdKnown?: boolean;
+  // The run id LangGraph Platform assigned to this run, for platform API calls
+  // such as cancellation. It is NOT the AG-UI run id: `id` above stays the
+  // input's runId for the whole run, because a run's boundary events (RUN_STARTED,
+  // RUN_FINISHED, RUN_ERROR) MUST agree on their runId (run-input rules), and the
+  // consumer rejects a RUN_FINISHED that names a run it never saw opened.
+  serverRunId?: string;
   // Per-LLM-call token usage accumulated across the run from provider-reported
   // numeric metadata; aggregated per (provider, model) and attached to the
   // terminal RUN_FINISHED event. Never holds prompt/completion content.
