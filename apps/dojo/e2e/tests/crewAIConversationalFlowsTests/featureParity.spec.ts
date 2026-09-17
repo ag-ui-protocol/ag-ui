@@ -16,6 +16,7 @@ import {
 } from "../../utils/copilot-actions";
 import { CopilotSelectors } from "../../utils/copilot-selectors";
 import { expectRenderedAfter } from "../../utils/rendering-order";
+import reasoningFixtures from "../../fixtures/openai/agentic-chat-reasoning.json" with { type: "json" };
 
 const integrationId = "crewai-conversational-flows";
 const testImage = path.join(
@@ -80,9 +81,15 @@ test.describe("CrewAI Conversational Flows feature parity", () => {
 
     const userMessage = CopilotSelectors.userMessages(page).last();
     const reasoningIndicator = page.getByText(/Thought for/i).last();
+    const fixture = reasoningFixtures.fixtures.find(
+      ({ match }) => match.userMessage === "best car to buy",
+    );
+    expect(fixture).toBeDefined();
+    // Check the response this shared fixture actually serves. Keep the
+    // assistant scope and ordering assertions independent of reasoning text.
     const answer = CopilotSelectors.assistantMessages(page)
       .last()
-      .getByText(/Based on my analysis/i);
+      .getByText(fixture!.response.content.split("\n\n")[0], { exact: true });
     await expect(reasoningIndicator).toBeVisible({ timeout: 10000 });
     await expect(answer).toBeVisible({ timeout: 10000 });
 
