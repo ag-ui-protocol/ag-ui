@@ -9,7 +9,8 @@ from ag_ui.core import (
     EventType,
     RunStartedEvent,
     RunFinishedEvent,
-    StateSnapshotEvent
+    StateSnapshotEvent,
+    WIRE_PROTOCOL_VERSION,
 )
 from ag_ui.encoder import EventEncoder
 
@@ -27,7 +28,9 @@ async def shared_state_endpoint(input_data: RunAgentInput, request: Request):
             RunStartedEvent(
                 type=EventType.RUN_STARTED,
                 thread_id=input_data.thread_id,
-                run_id=input_data.run_id
+                run_id=input_data.run_id,
+                # Every producer declares the protocol line it speaks.
+                protocol_version=WIRE_PROTOCOL_VERSION,
             ),
         )
 

@@ -91,6 +91,30 @@ from ag_ui.core import (
 )
 from .interrupts import lg_interrupts_to_agui, DEFAULT_RESUME_SENTINEL_CANCELLED, DEFAULT_RESUME_SENTINEL_MAP
 from ag_ui.encoder import EventEncoder
+
+# RUN_STARTED carries this producer's protocol declaration (spec:
+# basic/versioning — an implementation of this version MUST send it).
+#
+# Guarded because this package's declared floor is still
+# ``ag-ui-protocol>=0.1.22``, and on 0.1.x neither ``WIRE_PROTOCOL_VERSION``
+# nor ``RunStartedEvent.protocol_version`` exists — the declared-floor CI lane
+# installs exactly that wheel. The generated base sets ``extra="allow"``, so
+# passing the keyword to a 0.1.x model would not raise; it would quietly ship
+# a bogus ``protocol_version`` key on the wire. Hence both halves of the
+# check: the constant must be importable AND the model must really have the
+# field. Delete this guard and pass the constant directly once the floor moves
+# to ag-ui-protocol 1.0.
+try:
+    from ag_ui.core import WIRE_PROTOCOL_VERSION
+except ImportError:  # pragma: no cover - pre-1.0 ag-ui-protocol
+    WIRE_PROTOCOL_VERSION = None
+
+_PROTOCOL_DECLARATION = (
+    {"protocol_version": WIRE_PROTOCOL_VERSION}
+    if WIRE_PROTOCOL_VERSION is not None
+    and "protocol_version" in RunStartedEvent.model_fields
+    else {}
+)
 from ag_ui_a2ui_toolkit import split_a2ui_schema_context
 
 ProcessedEvents = Union[
@@ -1703,7 +1727,12 @@ class LangGraphAgent:
                 self.active_run["node_name"] = None
 
             yield self._dispatch_event(
-                RunStartedEvent(type=EventType.RUN_STARTED, thread_id=thread_id, run_id=self.active_run["id"])
+                RunStartedEvent(
+                    type=EventType.RUN_STARTED,
+                    thread_id=thread_id,
+                    run_id=self.active_run["id"],
+                    **_PROTOCOL_DECLARATION,
+                )
             )
             # handle_node_change is a generator; discarding the return value
             # silently dropped its STEP_STARTED/STEP_FINISHED events and
@@ -2327,6 +2356,7 @@ class LangGraphAgent:
                     type=EventType.RUN_STARTED,
                     thread_id=thread_id,
                     run_id=self.active_run["id"],
+                    **_PROTOCOL_DECLARATION,
                 )
             )
             events_to_dispatch.extend(
