@@ -3,7 +3,7 @@ name: test
 on:
   workflow_dispatch:
   push:
-    branches: [ "main" ]
+    # Validate fork branches before opening a pull request.
     paths:
       - "sdks/community/rust/**"
       - "sdks/typescript/packages/core/src/**"
@@ -23,6 +23,10 @@ defaults:
 
 permissions:
   contents: read
+
+concurrency:
+  group: rust-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   rust:

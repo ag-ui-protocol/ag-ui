@@ -23,9 +23,10 @@ personal skills, website assets and publishing workflows. Integration changes
 adapt the manifests and documentation to this workspace, add a local-source
 protocol check, and verify the migration path without publishing any package.
 
-One transport fix bounds HTTP error-body reads before buffering, with a regression
-test using a response that stays open. The original implementation truncated the
-displayed error only after reading the entire body.
+The bounded HTTP error-body reader and three regression tests now match the
+standalone SDK's [PR #12](https://github.com/KimSoungRyoul/ag-ui-rust/pull/12), commit
+`638b4407722d432dcdeb38ee2f7b9740b650002a`. The cases cover an open-ended error body,
+small HTTP errors and truncation across a UTF-8 boundary.
 
 The combined lockfile updates vulnerable/yanked `bytes`, `h2`, `rustls`,
 `rustls-webpki`, `slab` and `zerovec` dependencies within the existing manifest

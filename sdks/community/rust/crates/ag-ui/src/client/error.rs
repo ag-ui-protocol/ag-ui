@@ -74,7 +74,8 @@ pub enum Error {
     Http {
         /// The status code.
         status: u16,
-        /// The response body, truncated to a readable length.
+        /// Up to 2 KiB of response bytes, decoded as UTF-8 with invalid sequences
+        /// replaced. The response is dropped once the byte limit is reached.
         body: String,
     },
 

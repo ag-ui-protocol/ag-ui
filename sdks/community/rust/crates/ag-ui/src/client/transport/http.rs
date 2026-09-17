@@ -16,7 +16,7 @@ use crate::client::error::{Error, Result};
 use crate::client::transport::sse::decode_events;
 use crate::client::transport::{EventStream, Transport, TransportFuture};
 
-/// How much of a failing response body is kept in the error.
+/// Maximum number of response bytes retained before decoding an HTTP error body.
 const MAX_ERROR_BODY: usize = 2048;
 
 /// POSTs a run to an HTTP endpoint and streams the response.
