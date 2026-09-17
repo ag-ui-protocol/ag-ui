@@ -18,9 +18,13 @@ The proposal follows the coordination in upstream #2256/#972 and the standalone
 SDK's #10. It does not imply adoption, source removal, or package ownership changes.
 
 The import excludes `ag-ui-a2ui`, model-provider test helpers, live model tests,
-personal skills, website assets and publishing workflows. Integration changes
+personal skills, website assets and the standalone publishing workflows. Integration changes
 adapt the manifests and documentation to this workspace, add a local-source
 protocol check, and verify the migration path without publishing any package.
+
+A monorepo-specific `publish-rust.yml` is proposed separately. It defaults to a
+manual dry run; its publishing job is restricted to `ag-ui-protocol/ag-ui` main
+and only uploads the `ag-ui` crate.
 
 The bounded HTTP error-body reader and three regression tests now match the
 standalone SDK's [PR #12](https://github.com/KimSoungRyoul/ag-ui-rust/pull/12), commit

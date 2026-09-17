@@ -25,7 +25,7 @@ adoption decision. The upstream team makes that decision in
 | Existing source removal | Consider a separate follow-up after agreeing on adoption and migration | Upstream team and existing maintainers |
 | `ag-ui` ownership | Organization team plus at least two individual maintainers, as proposed in #10 | Upstream team and current crate owner; everyone must accept |
 | CODEOWNERS | Align review responsibility with the maintainers actually taking on the SDK | Upstream team; this branch changes no CODEOWNERS |
-| Publishing | Agree on the next version, release sign-off and registry publishing configuration | Agreed maintainers; no credentials or publishing action added here |
+| Publishing | Review the manual `publish-rust.yml`, then agree on the next version and release sign-off | Agreed maintainers; publishing is restricted to official `main` |
 | Official documentation | Mike offered to rewrite the Rust pages after a draft PR exists | Coordinate that work with the final API and migration plan |
 | Existing PRs | Map resolved requirements and retain still-useful client verifier/middleware work | Original contributors and upstream reviewers |
 | Captured fixtures | Mike offered 34 captured event JSON fixtures as a follow-up PR | Contributor review after the layout settles |
@@ -34,6 +34,10 @@ Any final legacy releases should be prepared from their existing implementation,
 not by re-exporting `ag-ui` under the old names: the Rust APIs are incompatible.
 Do not yank old versions solely to redirect users. This branch keeps both existing
 packages available for comparison and changes no installed crates.io package.
+
+The proposed [publishing workflow](publishing.md) defaults to verification only.
+It does not publish on a push or release event, and no package is uploaded as
+part of preparing this branch.
 
 The existing server `EventVerifier` is now public, but that does not decide whether
 a client-specific verifier or middleware is useful. Review those requirements

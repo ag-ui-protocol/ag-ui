@@ -9,6 +9,7 @@ on:
       - "sdks/typescript/packages/core/src/**"
       - "docs/sdk/rust/**"
       - ".github/workflows/rust-lint-test.yml"
+      - ".github/workflows/publish-rust.yml"
   pull_request:
     branches: [ "main" ]
     paths:
@@ -16,6 +17,7 @@ on:
       - "sdks/typescript/packages/core/src/**"
       - "docs/sdk/rust/**"
       - ".github/workflows/rust-lint-test.yml"
+      - ".github/workflows/publish-rust.yml"
 
 defaults:
   run:

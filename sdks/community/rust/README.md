@@ -103,3 +103,7 @@ not a claim of lossless equivalence. See [protocol boundaries](docs/protocol-bou
 The import excludes A2UI, live model tests, the standalone documentation site and
 publishing workflows. JSON/SSE is implemented; the `protobuf` feature only exposes
 an explicitly unsupported formatter and is not a working binary transport.
+
+The monorepo-specific [publishing workflow](docs/publishing.md) is proposed
+separately from the standalone release automation. It runs manually, defaults to
+verification only, and can publish `ag-ui` from the official repository's `main`.
