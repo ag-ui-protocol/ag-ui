@@ -30,6 +30,22 @@ has no basis to call it invalid. But `messageId` holding a number is not a newer
 protocol; it is a defect, and a consumer that quietly coerces it hides the defect
 until it surfaces as something harder to diagnose.
 
+<Note>
+  One exception to the last rule is sanctioned, and it is enumerated rather
+  than general. The whole-field `null`s earlier versions of this protocol
+  accepted in place of an absent optional field are converted to an absent
+  field at the [compatibility
+  boundary](/spec/draft/basic/versioning#retired-shapes), with a warning per
+  occurrence, until the expiry recorded against each one. The fields are
+  listed one by one in
+  [`DEPRECATIONS.md`](https://github.com/ag-ui-protocol/ag-ui/blob/main/DEPRECATIONS.md);
+  a `null` that list does not name is malformed like any other wrong value,
+  and so is one it does name once that row's expiry has passed. A `null` that
+  is itself a value — under a metadata key, in a JSON Patch `add`, as
+  `CUSTOM.value` — was never a deviation and is untouched. This is a closed,
+  time-boxed list, not a tolerance for `null`.
+</Note>
+
 ## Every transport answers the same way
 
 These rules bind the protocol, not a wire format. A consumer that supports more

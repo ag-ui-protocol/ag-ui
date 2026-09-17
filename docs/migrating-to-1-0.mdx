@@ -230,6 +230,16 @@ most likely to affect anything that parses an agent's output. A reader doing
 metadata key, inside a state snapshot, a JSON Patch `add` of `null` — is
 preserved exactly; only a `null` standing in for a whole absent field is gone.
 
+On the way in, the whole optional `null`s an older peer still sends are read
+as absent rather than rejected. Model validation converts the fields listed in
+[`DEPRECATIONS.md`](https://github.com/ag-ui-protocol/ag-ui/blob/main/DEPRECATIONS.md)
+— `rawEvent`, `RUN_FINISHED.result` and `outcome`, `SUBAGENT_FINISHED.result`,
+resume-entry `payload`, media-part `metadata`, tool `parameters`,
+`forwardedProps`, `TOOL_CALL_START`/`TOOL_CALL_CHUNK` `parentMessageId` — to an
+absent field and warns once per occurrence, until the expiry on each row;
+after that the `null` fails validation like any other wrong value. Nulls that
+are values are untouched by this, as above.
+
 ### Generated models replace the hand-written ones
 
 `ag_ui.core` keeps every name it exported except the ones retired and renamed
@@ -335,6 +345,17 @@ One behaviour is more tolerant than before: an event *type* the SDK has no
 model for is now skipped with a trace warning by both stream readers, rather
 than ending the stream. Decoding a single unknown event on its own still
 throws `AGUIUnknownEventTypeException`.
+
+The whole optional `null`s an older producer still sends are read as absent
+rather than as a value. The converters treat the fields listed in
+[`DEPRECATIONS.md`](https://github.com/ag-ui-protocol/ag-ui/blob/main/DEPRECATIONS.md)
+— `rawEvent`, `RUN_FINISHED.result` and `outcome`, `SUBAGENT_FINISHED.result`,
+resume-entry `payload`, media-part `metadata`, tool `parameters`,
+`forwardedProps`, `TOOL_CALL_START`/`TOOL_CALL_CHUNK` `parentMessageId` — as
+though the member were missing, with a deprecation warning per occurrence,
+until the expiry on each row; after that the `null` fails deserialisation like
+any other malformed value. A `null` that is a value — under a metadata key, in
+a JSON Patch `add`, as `CUSTOM.value` — is preserved.
 
 ### Subagents
 

@@ -94,6 +94,15 @@ carry it:
   component by component (so `1.10` is newer than `1.9`). A declaration a
   party cannot interpret is handled like a newer one: proceed, and SHOULD
   warn.
+- This document describes the `1.0` line, so an implementation of it declares
+  `1.0` — on `RunAgentInput.protocolVersion` and on
+  `RUN_STARTED.protocolVersion` alike. The declared value is the protocol's,
+  not the library's: it stays `1.0` across every `1.0.x` release of an
+  implementation and changes only when this specification publishes a new
+  `MAJOR.MINOR`. `draft` is not a version identifier — it names where these
+  pages are published while the version is unfrozen. A party MUST NOT declare
+  it, and one that meets it treats it like any other declaration it cannot
+  interpret.
 - A producer meeting a **newer minor of a line it implements** MUST serve the
   run — additions are safe, by the rules above — answer with its own version,
   and SHOULD warn. It MAY reject, before `RUN_STARTED`, only a declaration
