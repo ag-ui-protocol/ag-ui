@@ -38,8 +38,7 @@ public sealed class PassthroughEventTests
             .FirstOrDefault();
         Assert.NotNull(custom);
         Assert.Equal("ui.notify", custom!.Name);
-        Assert.NotNull(custom.Value);
-        Assert.Contains("test-marker", custom.Value!.Value.ToString());
+        Assert.Contains("test-marker", custom.Value.ToString());
 
         // The text payload alongside the custom event still flows through.
         string text = string.Concat(updates.Select(u => u.Text));

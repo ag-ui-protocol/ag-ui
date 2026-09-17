@@ -158,7 +158,7 @@ public sealed class SubagentRoundTripTest
         Assert.Equal("s1", RoundTrip(new ToolCallEndEvent { ToolCallId = "tc1", SubagentRunId = "s1" }).SubagentRunId);
         Assert.Equal("s1", RoundTrip(new StepStartedEvent { StepName = "step", SubagentRunId = "s1" }).SubagentRunId);
         Assert.Equal("s1", RoundTrip(new StepFinishedEvent { StepName = "step", SubagentRunId = "s1" }).SubagentRunId);
-        Assert.Equal("s1", RoundTrip(new CustomEvent { Name = "thing", SubagentRunId = "s1" }).SubagentRunId);
+        Assert.Equal("s1", RoundTrip(new CustomEvent { Name = "thing", Value = JsonTestHelpers.Parse("null"), SubagentRunId = "s1" }).SubagentRunId);
         Assert.Equal("s1", RoundTrip(new RawEvent { Event = JsonTestHelpers.Parse("{}"), SubagentRunId = "s1" }).SubagentRunId);
     }
 

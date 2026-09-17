@@ -53,6 +53,13 @@ public sealed class AGUIContentJsonConverter : JsonConverter<AGUIContent>
                     }
 
                     var partType = typeProp.GetString();
+
+                    // This path reads the concrete part types directly rather
+                    // than through AGUIInputContentJsonConverter, so the guard
+                    // has to be called here too — the two paths are exclusive,
+                    // so no part is ever judged twice.
+                    AGUIWireGuard.Inspect(partElement, AGUIWireGuard.ContentPartShape);
+
                     AGUIInputContent? part = partType switch
                     {
                         AGUIInputContentTypes.Text => partElement.Deserialize(

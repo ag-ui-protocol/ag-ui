@@ -572,19 +572,30 @@ public sealed class EventRoundTripTest
         var result = RoundTrip(new CustomEvent { Name = "ping", Value = value });
 
         Assert.Equal("ping", result.Name);
-        JsonTestHelpers.AssertEqual(value, result.Value!.Value);
+        JsonTestHelpers.AssertEqual(value, result.Value);
     }
 
     [Fact]
-    public void Custom_NoValue_RoundTripsAsExplicitNull()
+    public void Custom_ExplicitNullValue_RoundTrips()
     {
-        // The schema makes value required, so the wire always carries it: a
-        // C#-null model value crosses as a JSON null and comes back as a
-        // null-kind element, which the JSON serialiser collapses to absent.
-        var result = RoundTrip(new CustomEvent { Name = "ping" });
+        // The schema makes value required AND lets it be null, so the two are
+        // different events: a null crosses as a Value with null_value set and
+        // comes back as a null-kind element.
+        var result = RoundTrip(new CustomEvent { Name = "ping", Value = JsonTestHelpers.Parse("null") });
 
         Assert.Equal("ping", result.Name);
-        Assert.NotNull(result.Value);
-        Assert.Equal(JsonValueKind.Null, result.Value.Value.ValueKind);
+        Assert.Equal(JsonValueKind.Null, result.Value.ValueKind);
+    }
+
+    [Fact]
+    public void Custom_NoValue_CannotBeEncoded()
+    {
+        // An unset value is an undefined element — the models' spelling of
+        // "the producer never supplied it" — and the schema requires the field,
+        // so it is named rather than silently encoded as a null.
+        var error = Assert.Throws<InvalidOperationException>(
+            () => AGUIProtobuf.Encode(new CustomEvent { Name = "ping" }));
+
+        Assert.Contains("'value' is required", error.Message);
     }
 }

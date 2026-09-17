@@ -142,7 +142,7 @@ public sealed class DefaultSerializationOmissionTest
     {
         var jsonNull = JsonSerializer.Deserialize<JsonElement>("null");
         using var snapshot = Serialize(new StateSnapshotEvent { Snapshot = jsonNull }, serializer);
-        using var custom = Serialize(new CustomEvent { Name = "empty", Value = null }, serializer);
+        using var custom = Serialize(new CustomEvent { Name = "empty", Value = jsonNull }, serializer);
 
         Assert.Equal(JsonValueKind.Null, snapshot.RootElement.GetProperty("snapshot").ValueKind);
         Assert.Equal(JsonValueKind.Null, custom.RootElement.GetProperty("value").ValueKind);

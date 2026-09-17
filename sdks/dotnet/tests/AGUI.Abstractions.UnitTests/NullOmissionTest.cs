@@ -351,7 +351,7 @@ internal static class NullOmissionProbe
                 continue;
             }
 
-            var value = SampleFor(property.PropertyType);
+            var value = SampleFor(property);
             if (value is not null)
             {
                 property.SetValue(instance, value);
@@ -416,8 +416,9 @@ internal static class NullOmissionProbe
         return NullabilityContext.Create(property).WriteState == NullabilityState.Nullable;
     }
 
-    private static object? SampleFor(Type type)
+    private static object? SampleFor(PropertyInfo property)
     {
+        var type = property.PropertyType;
         if (type == typeof(string))
         {
             return "x";
@@ -425,7 +426,15 @@ internal static class NullOmissionProbe
 
         if (type == typeof(JsonElement))
         {
-            return JsonSerializer.Deserialize<JsonElement>("{}");
+            // The two patch payloads reject anything that is not an RFC 6902
+            // document, so the probe cannot hand them the generic empty object
+            // it hands every other arbitrary-JSON field.
+            var sample = property.Name is "Delta" or "Patch"
+                && property.DeclaringType is { } owner
+                && (owner == typeof(StateDeltaEvent) || owner == typeof(ActivityDeltaEvent))
+                    ? "[]"
+                    : "{}";
+            return JsonSerializer.Deserialize<JsonElement>(sample);
         }
 
         if (type.IsValueType)

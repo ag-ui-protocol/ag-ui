@@ -208,9 +208,10 @@ const NULL_MEANS_ABSENT = new Set(["RunAgentInput.state"]);
  * cannot tell an absent repeated field from an empty one — though that is a
  * per-field choice there rather than a rule: the same decoder deletes an empty
  * `usage` on RUN_FINISHED, going the other way under the same constraint. So
- * this aligns the JSON path with the binary one for TOOLS AND CONTEXT, and
- * only in TypeScript: Python and .NET keep both fields optional, because the
- * marker lives in this emitter alone.
+ * this aligns the JSON path with the binary one for TOOLS AND CONTEXT. Python
+ * reads the same two fields the same way (python.ts's ABSENT_MEANS_EMPTY,
+ * PNI-303); .NET keeps them optional, because its protobuf mappers already
+ * materialise them on decode and the models are read there, not iterated.
  *
  * Absent in, empty out — no meaning is invented, because absent and empty were
  * never different meanings. The default is a FACTORY, not a literal: zod stores

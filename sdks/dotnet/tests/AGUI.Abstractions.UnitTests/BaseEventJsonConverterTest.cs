@@ -83,7 +83,7 @@ public sealed class BaseEventJsonConverterTest
         var json = """{"type":"CUSTOM","name":"app.thing","value":null}""";
         var decoded = JsonSerializer.Deserialize(json, AGUIJsonSerializerContext.Default.BaseEvent);
         var custom = Assert.IsType<CustomEvent>(decoded);
-        Assert.Null(custom.Value);
+        Assert.Equal(JsonValueKind.Null, custom.Value.ValueKind);
         Assert.Equal(json, JsonSerializer.Serialize(custom, AGUIJsonSerializerContext.Default.BaseEvent));
     }
 
@@ -147,7 +147,7 @@ public sealed class BaseEventJsonConverterTest
                 AGUIJsonSerializerContext.Default.GetTypeInfo(member) is not null,
                 $"{member.Name} is not registered in AGUIJsonSerializerContext.");
 
-            var json = $"{{\"{discriminator}\":\"{value}\"}}";
+            var json = $"{{\"{discriminator}\":\"{value}\"{RequiredPayloadFor(member)}}}";
             var decoded = JsonSerializer.Deserialize(
                 json,
                 AGUIJsonSerializerContext.Default.GetTypeInfo(baseType)!);
@@ -190,7 +190,7 @@ public sealed class BaseEventJsonConverterTest
             var evt = (BaseEvent)Activator.CreateInstance(model)!;
 
             var decoded = JsonSerializer.Deserialize(
-                $$"""{"type":"{{evt.Type}}"}""",
+                $$"""{"type":"{{evt.Type}}"{{RequiredPayloadFor(model)}}}""",
                 AGUIJsonSerializerContext.Default.BaseEvent);
             Assert.IsType(model, decoded);
 
@@ -218,5 +218,23 @@ public sealed class BaseEventJsonConverterTest
             .Select(model => ((BaseEvent)Activator.CreateInstance(model)!).Type)
             .ToHashSet();
         Assert.Equal(declared, carried);
+    }
+
+    /// <summary>
+    /// The arbitrary-JSON payload a bare envelope has to carry to be a document
+    /// at all. These fields are required and hold any JSON value, so absence is
+    /// fatal (AGUIWireGuard) while an explicit null is not — a bare
+    /// <c>{"type":"CUSTOM"}</c> probe stopped being a probe of the converter.
+    /// </summary>
+    private static string RequiredPayloadFor(Type model)
+    {
+        if (model == typeof(StateSnapshotEvent)) return ""","snapshot":{}""";
+        if (model == typeof(StateDeltaEvent)) return ""","delta":[]""";
+        if (model == typeof(ActivitySnapshotEvent)) return ""","content":{}""";
+        if (model == typeof(ActivityDeltaEvent)) return ""","patch":[]""";
+        if (model == typeof(RawEvent)) return ""","event":{}""";
+        if (model == typeof(CustomEvent)) return ""","value":null""";
+        if (model == typeof(AGUIActivityMessage)) return ""","content":{}""";
+        return string.Empty;
     }
 }

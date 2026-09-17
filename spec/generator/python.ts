@@ -26,6 +26,32 @@ import { assertTableKeys } from "./tables";
 /** The one enum emitted as a Python Enum rather than a Literal alias. */
 const PY_ENUM = "EventType";
 
+/**
+ * Optional list fields this SDK materialises as an empty list rather than
+ * leaving as ``None``.
+ *
+ * The schema leaves them optional deliberately — run-input.mdx says an absent
+ * key and an empty array mean the same thing, so requiring them would catch
+ * nothing a producer could get wrong — and that stays true of the wire. It is a
+ * poor bargain for a CONSUMER, though: ``for tool in input.tools`` raises
+ * TypeError on the shape the protocol says means "none", and the docstring two
+ * lines above the field already told the reader the two were the same thing.
+ *
+ * So the model presents the one form every layer accepts, exactly as the
+ * TypeScript schemas do (``z.array(ToolSchema).default(() => [])``) and for the
+ * same reason. Absent in, empty out: no meaning is invented, because absent and
+ * empty were never different meanings. The default is a FACTORY, so one
+ * consumer's ``append`` cannot leak into every later parse in the process.
+ *
+ * The field stops being ``Optional``, which also means an explicit ``null`` is
+ * rejected here rather than read as absent — again matching TypeScript, where
+ * neither field is in the null-means-absent shim.
+ */
+const ABSENT_MEANS_EMPTY = new Set([
+  "RunAgentInput.tools",
+  "RunAgentInput.context",
+]);
+
 const PYTHON_KEYWORDS = new Set([
   "False",
   "None",
@@ -154,9 +180,13 @@ function pyType(type: TypeExpr): string {
 }
 
 /** The Field(...) arguments a field's constraints and wiring need. */
-function fieldArguments(field: Field, pyName: string): string[] {
+function fieldArguments(field: Field, pyName: string, key: string): string[] {
   const args: string[] = [];
-  if (!field.required) args.push("default=None");
+  if (!field.required) {
+    args.push(
+      ABSENT_MEANS_EMPTY.has(key) ? "default_factory=list" : "default=None",
+    );
+  }
   // The alias generator inverts snake_case back to the wire name; a keyword
   // dodge (from_) needs the alias spelled out.
   if (pyName !== snakeCase(field.name)) {
@@ -200,14 +230,22 @@ function emitObject(definition: ObjectDefinition): string {
 
   for (const field of definition.fields) {
     const pyName = pythonName(field.name);
-    const annotation = field.required
-      ? pyType(field.type)
-      : `Optional[${pyType(field.type)}]`;
-    const args = fieldArguments(field, pyName);
-    const description =
+    const key = `${definition.name}.${field.name}`;
+    const materialise = ABSENT_MEANS_EMPTY.has(key);
+    const annotation =
+      field.required || materialise
+        ? pyType(field.type)
+        : `Optional[${pyType(field.type)}]`;
+    const args = fieldArguments(field, pyName, key);
+    const base =
       field.type.kind === "array" && field.type.itemsDescription !== undefined
         ? `${field.description} Each item: ${field.type.itemsDescription}`
         : field.description;
+    // Same sentence the TypeScript types carry: requiredness above describes
+    // the wire, and this attribute additionally holds the materialised form.
+    const description = materialise
+      ? `${base} Optional on the wire; this SDK materialises an absent one as an empty list, so the attribute is always a list.`
+      : base;
     // A single-value literal is a const, not a schema default: the only
     // possible value is supplied so constructors never have to spell the
     // discriminator, exactly as the hand-written models always worked.
@@ -330,6 +368,15 @@ class GeneratedBaseModel(BaseModel):
     that carry meaning are untouched: a required field (CUSTOM.value, say), a
     \`\`None\`\` inside a \`\`dict\`\`/\`\`list\`\` value, and any extra field all
     serialize as \`\`null\`\`.
+
+    Reading is the mirror image, and is where the pre-1.0 shim lives. A whole
+    optional field that arrives as JSON \`\`null\`\` is read as absent — the
+    tolerance this SDK has always had — but it is no longer read SILENTLY:
+    each occurrence raises a \`\`DeprecationWarning\`\` naming the field, the way
+    TypeScript's \`\`CompatibilityBoundary\`\` announces the same conversion,
+    under the same rows of the repo-root DEPRECATIONS.md. Set
+    \`\`SUPPRESS_TRANSFORMATION_WARNINGS\`\` to silence the announcement; the
+    conversion stays either way.
     """
 
     model_config = ConfigDict(
@@ -360,6 +407,47 @@ class GeneratedBaseModel(BaseModel):
             cached = frozenset(keys)
             setattr(cls, _OMITTABLE_KEYS_CACHE_ATTR, cached)
         return cached
+
+    @model_validator(mode="before")
+    @classmethod
+    def _announce_deprecated_optional_nulls(cls, data: Any) -> Any:
+        """
+        Names each whole optional field that arrived as an explicit \`\`None\`\`.
+
+        What counts is exactly the omittable set: a field declared optional
+        whose default is \`\`None\`\`. A \`\`None\`\` that is a VALUE is not in it
+        and never warns — a required payload such as CUSTOM.value, a \`\`None\`\`
+        under an open metadata key, one a JSON Patch operation adds — because
+        none of those is a field standing in for its own absence.
+
+        **Which caller it was cannot be told apart, and the announcement covers
+        both.** Pydantic routes a model with any custom \`\`__init__\`\` through
+        that \`\`__init__\`\` for *every* validation, wire path included, so the
+        obvious "suppress while the constructor runs" flag suppresses
+        \`\`model_validate\`\` and every \`\`TypeAdapter\`\` with it — measured, not
+        assumed. Given the choice between missing the wire (the whole point of
+        the announcement) and also naming \`\`Model(field=None)\`\` written in
+        Python, this names both: the two say the same thing, and the same fix —
+        leave the field out — answers both. \`\`DeprecationWarning\`\` is silent
+        under Python's default filters, so this is a diagnostic for whoever goes
+        looking, not console noise on every run.
+        """
+        if not isinstance(data, dict):
+            return data
+        if os.environ.get("SUPPRESS_TRANSFORMATION_WARNINGS"):
+            return data
+        omittable = cls._omittable_keys()
+        for key, value in data.items():
+            if value is None and key in omittable:
+                warnings.warn(
+                    f"[ag-ui][compat] Converting deprecated {cls.__name__}.{key}: null "
+                    "to an absent field. The old shape leaves the protocol after its "
+                    "shim window — see the repo-root DEPRECATIONS.md. Set "
+                    "SUPPRESS_TRANSFORMATION_WARNINGS=true to silence.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+        return data
 
     @model_serializer(mode="wrap")
     def _omit_fields_without_value(self, handler: SerializerFunctionWrapHandler):
@@ -395,10 +483,12 @@ export function emitModels(model: ProtocolModel): string {
   }
 
   const imports = [
+    "import os",
+    "import warnings",
     "from enum import Enum",
     "from typing import Annotated, Any, Dict, FrozenSet, List, Literal, Optional, Union",
     "",
-    "from pydantic import BaseModel, ConfigDict, Field, model_serializer",
+    "from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator",
     "from pydantic.alias_generators import to_camel",
     "from pydantic.functional_serializers import SerializerFunctionWrapHandler",
   ].join("\n");

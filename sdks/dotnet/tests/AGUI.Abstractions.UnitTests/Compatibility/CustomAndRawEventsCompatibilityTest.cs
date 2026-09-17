@@ -15,19 +15,23 @@ public sealed class CustomAndRawEventsCompatibilityTest
         var typed = Assert.IsType<CustomEvent>(evt);
         Assert.Equal("user_preference_updated", typed.Name);
         Assert.Equal(1234567890, typed.Timestamp);
-        Assert.Equal("dark", typed.Value!.Value.GetProperty("theme").GetString());
-        Assert.Equal("medium", typed.Value!.Value.GetProperty("fontSize").GetString());
-        Assert.True(typed.Value!.Value.GetProperty("notifications").GetBoolean());
+        Assert.Equal("dark", typed.Value.GetProperty("theme").GetString());
+        Assert.Equal("medium", typed.Value.GetProperty("fontSize").GetString());
+        Assert.True(typed.Value.GetProperty("notifications").GetBoolean());
     }
 
     [Fact]
-    public void CustomEvent_WithoutValue_DeserializesFromTypeScriptPayload()
+    public void CustomEvent_WithNullValue_DeserializesFromTypeScriptPayload()
     {
+        // `value` is required and null is one of the values it may take, so a
+        // heartbeat with nothing to say writes the null rather than leaving the
+        // key out — which DEPRECATIONS.md pins as still valid, and which the
+        // model keeps as a null-kind element rather than collapsing to absent.
         var evt = FixtureLoader.DeserializeAsBaseEvent(_fixtures[1]);
 
         var typed = Assert.IsType<CustomEvent>(evt);
         Assert.Equal("heartbeat", typed.Name);
-        Assert.Null(typed.Value);
+        Assert.Equal(JsonValueKind.Null, typed.Value.ValueKind);
     }
 
     [Fact]

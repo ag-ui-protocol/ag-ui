@@ -228,7 +228,7 @@ as optional.
 | subagentRunId | optional   | optional, nullable | optional, nullable | optional |
 | timestamp     | optional   | optional, nullable | optional, nullable | optional |
 | type          | required   | required           | required           | required |
-| value         | required   | required           | optional, nullable | required |
+| value         | required   | required           | optional           | required |
 
 ## RunStartedEvent
 
@@ -672,7 +672,7 @@ as optional.
 
 | field           | TypeScript         | Python             | .NET               | schema   |
 | --------------- | ------------------ | ------------------ | ------------------ | -------- |
-| context         | optional           | optional, nullable | optional, nullable | optional |
+| context         | optional           | optional           | optional, nullable | optional |
 | forwardedProps  | optional           | optional, nullable | optional, nullable | optional |
 | messages        | required           | required           | optional           | required |
 | parentRunId     | optional           | optional, nullable | optional, nullable | optional |
@@ -681,7 +681,7 @@ as optional.
 | runId           | required           | required           | optional           | required |
 | state           | optional, nullable | optional, nullable | optional, nullable | optional |
 | threadId        | required           | required           | optional           | required |
-| tools           | optional           | optional, nullable | optional, nullable | optional |
+| tools           | optional           | optional           | optional, nullable | optional |
 
 ## SubagentInfo
 

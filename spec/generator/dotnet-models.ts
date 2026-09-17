@@ -22,11 +22,7 @@ import type {
   ProtocolModel,
   TypeExpr,
 } from "./ir";
-import {
-  NULLABLE_REQUIRED_ANY,
-  NULLABLE_REQUIRED_STRINGS,
-  PROP_NAME,
-} from "./dotnet-idioms";
+import { NULLABLE_REQUIRED_STRINGS, PROP_NAME } from "./dotnet-idioms";
 import { assertTableKeys } from "./tables";
 
 /* ------------------------------------------------------------------ */
@@ -66,7 +62,7 @@ const TYPE_NAME: Record<string, string> = {
   FileSource: "AGUIInputContentFileSource",
 };
 
-// PROP_NAME, NULLABLE_REQUIRED_STRINGS and NULLABLE_REQUIRED_ANY live in
+// PROP_NAME and NULLABLE_REQUIRED_STRINGS live in
 // dotnet-idioms.ts: this emitter declares those properties and the protobuf
 // mapper carries them, so the two have to read one table rather than two
 // copies that can drift apart.
@@ -512,6 +508,54 @@ function optionalJsonProperty(name: string): string[] {
   ];
 }
 
+/**
+ * The schema constraints a property rejects on assignment.
+ *
+ * A JSON-Schema keyword nobody emits is a rule the .NET SDK simply does not
+ * have: `-5` deserialises into a TokenUsage count with a `minimum: 0`, an empty
+ * interrupt list satisfies `minItems: 1`, and a delta that is not a patch at
+ * all lands in a bare JsonElement. The check rides on the SETTER rather than in
+ * a converter so it holds on every path a value can arrive by — JSON, the
+ * protobuf decoders, and a caller assigning the property — instead of only the
+ * one the converters see.
+ *
+ * It throws JsonException because that is what the rest of this SDK throws for
+ * a value the wire contract rejects (see BaseEventJsonConverter), and because
+ * these properties exist to carry wire values: a caller assigning one out of
+ * range has built an event that cannot be sent.
+ */
+function constraintChecks(
+  context: EmitContext,
+  definition: ObjectDefinition,
+  field: Field,
+): string[] {
+  const where = `"${definition.name}", "${field.name}"`;
+  // Patches ride as opaque JSON here, so nothing else would ever look at their
+  // structure: processing.mdx makes a malformed known value fatal, and
+  // state.mdx says a structurally malformed patch is exactly that.
+  if (namesAnOpaqueRef(context.defs, field.type)) {
+    return [`AGUIWireValidation.JsonPatch(${where}, value);`];
+  }
+  const resolved = resolveAlias(context.defs, field.type);
+  if (resolved.kind === "integer") {
+    if (resolved.minimum === undefined && resolved.maximum === undefined) {
+      return [];
+    }
+    const min = resolved.minimum === undefined ? "long.MinValue" : `${resolved.minimum}L`;
+    const max = resolved.maximum === undefined ? "long.MaxValue" : `${resolved.maximum}L`;
+    return [`AGUIWireValidation.Range(${where}, value, ${min}, ${max});`];
+  }
+  if (resolved.kind === "string" && resolved.pattern !== undefined) {
+    return [
+      `AGUIWireValidation.Pattern(${where}, value, ${JSON.stringify(resolved.pattern)});`,
+    ];
+  }
+  if (resolved.kind === "array" && resolved.minItems !== undefined) {
+    return [`AGUIWireValidation.MinItems(${where}, value, ${resolved.minItems});`];
+  }
+  return [];
+}
+
 function csProperty(
   context: EmitContext,
   definition: ObjectDefinition,
@@ -522,6 +566,22 @@ function csProperty(
   if (bespoke) return bespoke;
 
   const propName = PROP_NAME[key] ?? pascal(field.name);
+  const checks = constraintChecks(context, definition, field);
+  /** The property body, with the schema's constraints on the way in. */
+  const declare = (type: string, init = ""): string[] =>
+    checks.length === 0
+      ? [`    public ${type} ${propName} { get; set; }${init}`]
+      : [
+          `    public ${type} ${propName}`,
+          "    {",
+          "        get;",
+          "        set",
+          "        {",
+          ...checks.map((check) => `            ${check}`),
+          "            field = value;",
+          "        }",
+          `    }${init}`,
+        ];
   const lines = doc(field.description, "    ");
   const attr = (name: string) => lines.push(`    ${name}`);
   attr(`[JsonPropertyName("${field.name}")]`);
@@ -538,11 +598,17 @@ function csProperty(
   // JsonPatch alias would reach its array shape and emit a list of a class
   // this emitter never writes.
   if (namesAnOpaqueRef(context.defs, field.type)) {
-    if (field.required) {
-      lines.push(`    public JsonElement ${propName} { get; set; }`);
-    } else {
-      lines.push(...optionalJsonProperty(propName));
+    if (!field.required) {
+      // Both patch fields are required today. An optional one would need the
+      // null-means-absent setter AND the structural check in one body, which
+      // this emitter does not write.
+      throw new Error(
+        `${key} is an optional opaque-JSON field — the .NET emitter writes the ` +
+          "null-means-absent setter and the structural check as alternatives, " +
+          "not as one body; teach csProperty to combine them",
+      );
     }
+    lines.push(...declare("JsonElement"));
     return lines;
   }
 
@@ -575,8 +641,7 @@ function csProperty(
   // No per-property [JsonIgnore(WhenWritingNull)]: the omission rule lives once,
   // on the serializer context's DefaultIgnoreCondition, and a per-property
   // spelling would make a green omission sweep stop proving that setting works.
-  const prop = (type: string, init = "") =>
-    lines.push(`    public ${type} ${propName} { get; set; }${init}`);
+  const prop = (type: string, init = "") => lines.push(...declare(type, init));
 
   switch (resolved.kind) {
     case "string":
@@ -609,18 +674,13 @@ function csProperty(
       return lines;
     case "any":
       if (field.required) {
-        if (!NULLABLE_REQUIRED_ANY.has(key)) {
-          prop("JsonElement");
-          return lines;
-        }
-
-        // Required, and null is one of its legal values. The property is
-        // nullable so the model can hold that null, and it opts out of the
-        // serializer context's write-nothing-for-null default: omitting it
-        // would produce an event missing a field the schema requires, which
-        // the other SDKs' validators reject.
-        attr("[JsonIgnore(Condition = JsonIgnoreCondition.Never)]");
-        prop("JsonElement?");
+        // Required, and JSON null is one of its legal values, so nullness
+        // cannot stand for absence: the property is a bare JsonElement whose
+        // default ValueKind, Undefined, is what "the producer never sent it"
+        // looks like. AGUIWireGuard rejects that on the way in and
+        // RequirePayload on the way out; a null the producer did send is held
+        // as a Null-kind element and re-serialises as null.
+        prop("JsonElement");
         return lines;
       }
       lines.push(...optionalJsonProperty(propName));
@@ -770,6 +830,304 @@ function emitConstClass(
   return lines.join("\n");
 }
 
+
+/* ------------------------------------------------------------------ */
+/* Wire shapes                                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The unions that own a JSON converter of their own.
+ *
+ * AGUIWireGuard walks the raw JSON a converter just read. Descending into a
+ * value one of THESE unions covers would walk it twice, because System.Text.Json
+ * invokes their converters for the nested value and each of those calls the
+ * guard for itself. So they are the guard's entry points, never its children.
+ */
+const CONVERTER_OWNED_UNIONS = new Set([
+  "Event",
+  "Message",
+  "ContentPart",
+  "PartSource",
+  "RunFinishedOutcome",
+  "SubagentFinishedOutcome",
+]);
+
+/** A C# string literal. */
+function csString(value: string): string {
+  return JSON.stringify(value);
+}
+
+/**
+ * The shape a field's value carries, for the guard's descent: the definition
+ * name, or undefined when the field is a scalar, opaque JSON, or covered by a
+ * converter of its own.
+ */
+function childShape(
+  context: EmitContext,
+  emitted: Set<string>,
+  type: TypeExpr,
+): string | undefined {
+  if (type.kind === "array") return childShape(context, emitted, type.items);
+  if (type.kind !== "ref") return undefined;
+  if (namesAnOpaqueRef(context.defs, type)) return undefined;
+  const target = context.defs.get(type.name);
+  if (target?.kind === "alias") {
+    return childShape(context, emitted, target.type);
+  }
+  if (target?.kind === "union") {
+    return CONVERTER_OWNED_UNIONS.has(type.name) ? undefined : type.name;
+  }
+  if (target?.kind !== "object") return undefined;
+  return emitted.has(type.name) ? type.name : undefined;
+}
+
+/** Whether a field is emitted as a bare JsonElement, whose default is absence. */
+function isBarePayload(context: EmitContext, field: Field): boolean {
+  if (!field.required) return false;
+  if (namesAnOpaqueRef(context.defs, field.type)) return true;
+  const resolved = resolveAlias(context.defs, field.type);
+  return resolved.kind === "any" || resolved.kind === "openMap";
+}
+
+/**
+ * The switch bodies AGUIWireGuard reads, emitted from the schema so a field the
+ * schema gains is covered without anybody remembering to list it.
+ *
+ * Three questions, one per method, all keyed by DEFINITION name — the same
+ * spelling the schema uses, not the C# class name, because the guard is
+ * reasoning about the wire document and not about the objects it becomes.
+ */
+function emitWireShapes(
+  context: EmitContext,
+  shapes: ObjectDefinition[],
+  emitted: Set<string>,
+): string {
+  /* ---- optional fields ---- */
+  const optional: string[] = [];
+  for (const shape of shapes) {
+    const names = shape.fields
+      .filter((field) => !field.required)
+      .map((field) => csString(field.name));
+    if (names.length === 0) continue;
+    optional.push(
+      `        ${csString(shape.name)} => field is ${names.join(" or ")},`,
+    );
+  }
+
+  /* ---- children ---- */
+  const children: string[] = [];
+  for (const shape of shapes) {
+    const arms = shape.fields
+      .map((field): [string, string | undefined] => [
+        field.name,
+        childShape(context, emitted, field.type),
+      ])
+      .filter((entry): entry is [string, string] => entry[1] !== undefined)
+      .map(([name, child]) => `${csString(name)} => ${csString(child)}`);
+    if (arms.length === 0) continue;
+    children.push(
+      `        ${csString(shape.name)} => field switch`,
+      "        {",
+      ...arms.map((entry) => `            ${entry},`),
+      "            _ => null,",
+      "        },",
+    );
+  }
+
+  /* ---- required arbitrary-JSON payloads ---- */
+  const payloads: string[] = [];
+  for (const shape of shapes) {
+    const names = shape.fields
+      .filter((field) => isBarePayload(context, field))
+      .map((field) => field.name);
+    if (names.length === 0) continue;
+    payloads.push(`            case ${csString(shape.name)}:`);
+    for (const name of names) {
+      payloads.push(
+        `                Require(json, ${csString(shape.name)}, ${csString(name)});`,
+      );
+    }
+    payloads.push("                break;");
+  }
+
+  /* ---- union members ---- */
+  const unions: string[] = [];
+  for (const name of CONVERTER_OWNED_UNIONS) {
+    const definition = context.defs.get(name);
+    if (definition?.kind !== "union") {
+      throw new Error(`${name} is not a union, so the wire guard has no members for it`);
+    }
+    const discriminator = definition.discriminator;
+    if (discriminator === undefined) {
+      throw new Error(
+        `${name} has no discriminator, so AGUIWireGuard cannot tell its members apart`,
+      );
+    }
+    const members = definition.members.map((member) => {
+      const definitionOf = context.defs.get(member);
+      if (definitionOf?.kind !== "object") {
+        throw new Error(`${name} member ${member} is not an object`);
+      }
+      const field = definitionOf.fields.find(
+        (candidate) => candidate.name === discriminator,
+      );
+      if (field?.type.kind !== "literal") {
+        throw new Error(
+          `${member}.${discriminator} is not a literal, so the wire guard cannot ` +
+            `map a ${name} document onto it`,
+        );
+      }
+      return `${csString(field.type.value)} => ${csString(member)}`;
+    });
+    unions.push(
+      `        ${csString(name)} => Discriminated(json, ${csString(discriminator)}) switch`,
+      "        {",
+      ...members.map((entry) => `            ${entry},`),
+      "            _ => null,",
+      "        },",
+    );
+  }
+
+  /* ---- JSON Patch operations ---- */
+  const patchUnion = context.defs.get("JsonPatchOperation");
+  if (patchUnion?.kind !== "union") {
+    throw new Error("JsonPatchOperation is not a union");
+  }
+  const pointerAlias = context.defs.get("JsonPointer");
+  if (pointerAlias?.kind !== "alias" || pointerAlias.type.kind !== "string") {
+    throw new Error("JsonPointer is not a string alias");
+  }
+  const pointerPattern = pointerAlias.type.pattern;
+  if (pointerPattern === undefined) {
+    throw new Error("JsonPointer carries no pattern, so no pointer can be judged");
+  }
+  const patchArms: string[] = [];
+  for (const member of patchUnion.members) {
+    const definition = context.defs.get(member);
+    if (definition?.kind !== "object") {
+      throw new Error(`JsonPatchOperation member ${member} is not an object`);
+    }
+    const op = definition.fields.find((field) => field.name === "op");
+    if (op?.type.kind !== "literal") {
+      throw new Error(`${member}.op is not a literal`);
+    }
+    patchArms.push(`            case ${csString(op.type.value)}:`);
+    for (const field of definition.fields) {
+      if (!field.required || field.name === "op") continue;
+      const resolved = resolveAlias(context.defs, field.type);
+      if (resolved.kind === "string") {
+        patchArms.push(
+          `                AGUIWireValidation.RequirePointer(owner, name, operation, ${csString(field.name)});`,
+        );
+        continue;
+      }
+      if (resolved.kind === "any") {
+        patchArms.push(
+          `                AGUIWireValidation.RequireMember(owner, name, operation, ${csString(field.name)});`,
+        );
+        continue;
+      }
+      throw new Error(
+        `${member}.${field.name} is a required ${resolved.kind}, which the .NET patch ` +
+          "check has no rule for — teach emitWireShapes what to assert about it",
+      );
+    }
+    patchArms.push("                break;");
+  }
+
+  return [
+    "/// <summary>",
+    "/// What the wire document for each schema definition looks like, as the three",
+    "/// questions <c>AGUIWireGuard</c> asks while it walks one: which of a shape's",
+    "/// fields are optional, which of its fields carry another shape, and which of",
+    "/// its arbitrary-JSON payloads the schema requires. Keyed by the SCHEMA's own",
+    "/// definition names, because the guard reasons about the document rather than",
+    "/// about the classes it becomes.",
+    "/// </summary>",
+    "internal static class AGUIWireShapes",
+    "{",
+    "    /// <summary>The RFC 6901 pointer pattern, as the schema states it.</summary>",
+    `    internal const string JsonPointerPattern = ${csString(pointerPattern)};`,
+    "",
+    "    /// <summary>Whether the schema declares <paramref name=\"field\"/> optional on <paramref name=\"shape\"/>.</summary>",
+    "    internal static bool IsOptional(string shape, string field) => shape switch",
+    "    {",
+    ...optional,
+    "        _ => false,",
+    "    };",
+    "",
+    "    /// <summary>The shape the guard descends into, or null where it stops.</summary>",
+    "    internal static string? Child(string shape, string field) => shape switch",
+    "    {",
+    ...children,
+    "        _ => null,",
+    "    };",
+    "",
+    "    /// <summary>The member a union document selects, or null when it names none.</summary>",
+    "    internal static string? Member(string shape, JsonElement json) => shape switch",
+    "    {",
+    ...unions,
+    "        _ => null,",
+    "    };",
+    "",
+    "    /// <summary>",
+    "    /// Rejects a document missing an arbitrary-JSON field the schema requires.",
+    "    /// These properties are bare JsonElements: an absent one and an explicit",
+    "    /// null both read as no value once deserialised, and only the first is",
+    "    /// invalid, so presence has to be judged here on the document itself.",
+    "    /// </summary>",
+    "    internal static void RequirePayloads(string shape, JsonElement json)",
+    "    {",
+    "        switch (shape)",
+    "        {",
+    ...payloads,
+    "            default:",
+    "                break;",
+    "        }",
+    "    }",
+    "",
+    "    /// <summary>",
+    "    /// Rejects one RFC 6902 operation that is not the shape its op names.",
+    "    /// Open on purpose: RFC 6902 section 4 requires members an operation does",
+    "    /// not define to be ignored rather than rejected.",
+    "    /// </summary>",
+    "    internal static void ValidatePatchOperation(string owner, string name, JsonElement operation)",
+    "    {",
+    "        var op = AGUIWireValidation.RequireOp(owner, name, operation);",
+    "        switch (op)",
+    "        {",
+    ...patchArms,
+    "            default:",
+    "                // An op RFC 6902 does not define is an unrecognised union",
+    "                // member, not a malformed known one: TypeScript's strip stage",
+    "                // drops the operation and applies the rest of the patch",
+    "                // (conformance stream state-delta-unknown-op-dropped), so",
+    "                // rejecting the whole event here would be stricter than the",
+    "                // protocol. This SDK carries the patch as opaque JSON and has",
+    "                // no reducer to drop it from, so it passes it along unjudged.",
+    "                break;",
+    "        }",
+    "    }",
+    "",
+    "    private static void Require(JsonElement json, string shape, string field)",
+    "    {",
+    "        if (json.ValueKind == JsonValueKind.Object && !json.TryGetProperty(field, out _))",
+    "        {",
+    "            throw new JsonException(",
+    "                $\"Invalid {shape}: '{field}' is required, and the document does not carry it.\");",
+    "        }",
+    "    }",
+    "",
+    "    private static string? Discriminated(JsonElement json, string discriminator) =>",
+    "        json.ValueKind == JsonValueKind.Object",
+    "        && json.TryGetProperty(discriminator, out var value)",
+    "        && value.ValueKind == JsonValueKind.String",
+    "            ? value.GetString()",
+    "            : null;",
+    "}",
+  ].join("\n");
+}
+
 const FILE_USINGS = [
   "using System.Collections.Generic;",
   "using System.Text.Json;",
@@ -841,7 +1199,6 @@ export function emitDotnetModels(
     NULLABLE_REQUIRED_STRINGS,
     model,
   );
-  assertTableKeys("NULLABLE_REQUIRED_ANY", NULLABLE_REQUIRED_ANY, model);
   const defs = new Map(model.definitions.map((d) => [d.name, d]));
   const memberOf = new Map<string, string>();
   for (const definition of model.definitions) {
@@ -1175,6 +1532,12 @@ export function emitDotnetModels(
   // yet is invisible to a reference walk.
   assertEveryDefinitionIsEmitted(model, [...emittedObjects, ...emittedUnions]);
 
+  const wireShapes = emitWireShapes(
+    context,
+    emittedObjects.map(objectDef),
+    new Set(emittedObjects),
+  );
+
   return [
     file("AGUIEventTypes.g.cs", eventTypes),
     file("AGUIRoles.g.cs", roles),
@@ -1187,6 +1550,7 @@ export function emitDotnetModels(
       sourceTypes,
     ),
     file("BaseEvent.g.cs", baseEvent),
+    file("AGUIWireShapes.g.cs", wireShapes),
     file("AGUIEvents.g.cs", ...eventClasses),
     file(
       "AGUIMessages.g.cs",

@@ -31,7 +31,7 @@ public sealed class CustomAndRawEventIntegrationTest : IntegrationTestBase
         Assert.Equal(ChatRole.Assistant, customUpdate.Role);
         var custom = Assert.IsType<CustomEvent>(customUpdate.RawRepresentation);
         Assert.Equal("user_preference_updated", custom.Name);
-        Assert.Equal("dark", custom.Value!.Value.GetProperty("theme").GetString());
+        Assert.Equal("dark", custom.Value.GetProperty("theme").GetString());
     }
 
     [Theory]

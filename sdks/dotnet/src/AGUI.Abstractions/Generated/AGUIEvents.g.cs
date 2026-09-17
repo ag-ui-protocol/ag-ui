@@ -419,7 +419,15 @@ public sealed class StateDeltaEvent : BaseEvent
     /// applier.
     /// </summary>
     [JsonPropertyName("delta")]
-    public JsonElement Delta { get; set; }
+    public JsonElement Delta
+    {
+        get;
+        set
+        {
+            AGUIWireValidation.JsonPatch("StateDeltaEvent", "delta", value);
+            field = value;
+        }
+    }
 }
 
 /// <summary>
@@ -533,7 +541,15 @@ public sealed class ActivityDeltaEvent : BaseEvent
     /// The change, as an RFC 6902 patch against the activity's content.
     /// </summary>
     [JsonPropertyName("patch")]
-    public JsonElement Patch { get; set; }
+    public JsonElement Patch
+    {
+        get;
+        set
+        {
+            AGUIWireValidation.JsonPatch("ActivityDeltaEvent", "patch", value);
+            field = value;
+        }
+    }
 }
 
 /// <summary>
@@ -601,8 +617,7 @@ public sealed class CustomEvent : BaseEvent
     /// The payload. Any JSON value, and required.
     /// </summary>
     [JsonPropertyName("value")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
-    public JsonElement? Value { get; set; }
+    public JsonElement Value { get; set; }
 }
 
 /// <summary>

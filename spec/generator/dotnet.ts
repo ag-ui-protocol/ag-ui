@@ -13,7 +13,6 @@
 
 import type { Definition, Field, ObjectDefinition, TypeExpr } from "./ir";
 import {
-  NULLABLE_REQUIRED_ANY,
   NULLABLE_REQUIRED_STRINGS,
   PROP_NAME,
 } from "./dotnet-idioms";
@@ -24,7 +23,7 @@ import type { WireModel } from "./protobuf";
 /* .NET idiom tables                                                    */
 /* ------------------------------------------------------------------ */
 
-// PROP_NAME, NULLABLE_REQUIRED_STRINGS and NULLABLE_REQUIRED_ANY live in
+// PROP_NAME and NULLABLE_REQUIRED_STRINGS live in
 // dotnet-idioms.ts: the model emitter declares those properties and these
 // mappers carry them, so the two have to read one table rather than two copies
 // that can drift apart — a divergence here produces exactly the bare
@@ -71,7 +70,6 @@ type Kind =
   | "requiredBool"
   | "optionalBool"
   | "requiredAny"
-  | "nullableRequiredAny"
   | "optionalAny"
   | "openMap"
   | "patchArray"
@@ -142,10 +140,7 @@ function classify(
     case "boolean":
       return field.required ? "requiredBool" : "optionalBool";
     case "any":
-      if (!field.required) return "optionalAny";
-      return NULLABLE_REQUIRED_ANY.has(key)
-        ? "nullableRequiredAny"
-        : "requiredAny";
+      return field.required ? "requiredAny" : "optionalAny";
     case "openMap":
       return "openMap";
     case "union": {
@@ -245,15 +240,13 @@ function encodeField(
     case "optionalBool":
       return [`if (${m}.HasValue)`, `{`, `    ${p} = ${m}.Value;`, `}`];
     case "requiredAny":
-      return [`${p} = ProtoValueConverter.ToValue(${m});`];
-    case "nullableRequiredAny":
-      // Required on the wire: a C#-null model value still writes a JSON null,
-      // so a decoder that insists on the field's presence (the TypeScript
-      // validators do) can read it.
+      // Required on the wire, and the model says "absent" with an undefined
+      // JsonElement, so encoding one that was never set is the same mistake
+      // RequireProvided names for the required strings. An explicit JSON null
+      // is a legal value here and rides as a Value with null_value set.
       return [
-        `${p} = ${m} is null`,
-        `    ? new Google.Protobuf.WellKnownTypes.Value { NullValue = Google.Protobuf.WellKnownTypes.NullValue.NullValue }`,
-        `    : ProtoValueConverter.ToValue(${m}.Value);`,
+        `RequirePayload(${m}, "${plan.field.name}", ${eventTypeConstant});`,
+        `${p} = ProtoValueConverter.ToValue(${m});`,
       ];
     case "optionalAny":
       return [
@@ -339,7 +332,6 @@ function decodeField(plan: EventFieldPlan, proto: string): string | undefined {
     case "optionalBool":
       return `${plan.property} = ${proto}.Has${plan.wireProperty} ? ${p} : null,`;
     case "requiredAny":
-    case "nullableRequiredAny":
       // Required on the wire: an absent Value message is malformed (an
       // explicit JSON null rides as a non-null Value with null_value set).
       return `${plan.property} = ${p} is null ? throw MissingRequiredField("${plan.field.name}") : ProtoValueConverter.ToJsonElement(${p}),`;
@@ -978,6 +970,18 @@ ${decodeCases}
     private static void RequireProvided(string? value, string propertyName, string eventType)
     {
         if (value is null)
+        {
+            throw new InvalidOperationException(
+                $"Cannot encode '{eventType}': '{propertyName}' is required.");
+        }
+    }
+
+    // The arbitrary-JSON counterpart. These properties are bare JsonElements
+    // whose default ValueKind is Undefined, which is how the models say
+    // "absent"; JSON null is a value the schema allows here, not an absence.
+    private static void RequirePayload(JsonElement value, string propertyName, string eventType)
+    {
+        if (value.ValueKind == JsonValueKind.Undefined)
         {
             throw new InvalidOperationException(
                 $"Cannot encode '{eventType}': '{propertyName}' is required.");

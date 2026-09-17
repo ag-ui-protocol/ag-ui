@@ -4,10 +4,12 @@
 
 
 
+import os
+import warnings
 from enum import Enum
 from typing import Annotated, Any, Dict, FrozenSet, List, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, model_serializer
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 from pydantic.alias_generators import to_camel
 from pydantic.functional_serializers import SerializerFunctionWrapHandler
 
@@ -39,6 +41,15 @@ class GeneratedBaseModel(BaseModel):
     that carry meaning are untouched: a required field (CUSTOM.value, say), a
     ``None`` inside a ``dict``/``list`` value, and any extra field all
     serialize as ``null``.
+
+    Reading is the mirror image, and is where the pre-1.0 shim lives. A whole
+    optional field that arrives as JSON ``null`` is read as absent — the
+    tolerance this SDK has always had — but it is no longer read SILENTLY:
+    each occurrence raises a ``DeprecationWarning`` naming the field, the way
+    TypeScript's ``CompatibilityBoundary`` announces the same conversion,
+    under the same rows of the repo-root DEPRECATIONS.md. Set
+    ``SUPPRESS_TRANSFORMATION_WARNINGS`` to silence the announcement; the
+    conversion stays either way.
     """
 
     model_config = ConfigDict(
@@ -69,6 +80,47 @@ class GeneratedBaseModel(BaseModel):
             cached = frozenset(keys)
             setattr(cls, _OMITTABLE_KEYS_CACHE_ATTR, cached)
         return cached
+
+    @model_validator(mode="before")
+    @classmethod
+    def _announce_deprecated_optional_nulls(cls, data: Any) -> Any:
+        """
+        Names each whole optional field that arrived as an explicit ``None``.
+
+        What counts is exactly the omittable set: a field declared optional
+        whose default is ``None``. A ``None`` that is a VALUE is not in it
+        and never warns — a required payload such as CUSTOM.value, a ``None``
+        under an open metadata key, one a JSON Patch operation adds — because
+        none of those is a field standing in for its own absence.
+
+        **Which caller it was cannot be told apart, and the announcement covers
+        both.** Pydantic routes a model with any custom ``__init__`` through
+        that ``__init__`` for *every* validation, wire path included, so the
+        obvious "suppress while the constructor runs" flag suppresses
+        ``model_validate`` and every ``TypeAdapter`` with it — measured, not
+        assumed. Given the choice between missing the wire (the whole point of
+        the announcement) and also naming ``Model(field=None)`` written in
+        Python, this names both: the two say the same thing, and the same fix —
+        leave the field out — answers both. ``DeprecationWarning`` is silent
+        under Python's default filters, so this is a diagnostic for whoever goes
+        looking, not console noise on every run.
+        """
+        if not isinstance(data, dict):
+            return data
+        if os.environ.get("SUPPRESS_TRANSFORMATION_WARNINGS"):
+            return data
+        omittable = cls._omittable_keys()
+        for key, value in data.items():
+            if value is None and key in omittable:
+                warnings.warn(
+                    f"[ag-ui][compat] Converting deprecated {cls.__name__}.{key}: null "
+                    "to an absent field. The old shape leaves the protocol after its "
+                    "shim window — see the repo-root DEPRECATIONS.md. Set "
+                    "SUPPRESS_TRANSFORMATION_WARNINGS=true to silence.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+        return data
 
     @model_serializer(mode="wrap")
     def _omit_fields_without_value(self, handler: SerializerFunctionWrapHandler):
@@ -1568,10 +1620,18 @@ class RunAgentInput(GeneratedBaseModel):
     """The state the run starts from."""
     messages: List[Message]
     """The conversation so far, in order."""
-    tools: Optional[List[Tool]] = Field(default=None)
-    """The tools the agent may call. Absent means none."""
-    context: Optional[List[Context]] = Field(default=None)
-    """Ambient information for the run. Absent means none."""
+    tools: List[Tool] = Field(default_factory=list)
+    """
+    The tools the agent may call. Absent means none. Optional on the wire;
+    this SDK materialises an absent one as an empty list, so the attribute
+    is always a list.
+    """
+    context: List[Context] = Field(default_factory=list)
+    """
+    Ambient information for the run. Absent means none. Optional on the
+    wire; this SDK materialises an absent one as an empty list, so the
+    attribute is always a list.
+    """
     forwarded_props: Optional[Any] = Field(default=None)
     """
     Application-specific values passed through to the agent untouched. Any

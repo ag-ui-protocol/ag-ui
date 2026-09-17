@@ -32,7 +32,15 @@ public abstract class BaseEvent
     /// </summary>
     [JsonPropertyName("timestamp")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-    public long? Timestamp { get; set; }
+    public long? Timestamp
+    {
+        get;
+        set
+        {
+            AGUIWireValidation.Range("BaseEvent", "timestamp", value, -9007199254740991L, 9007199254740991L);
+            field = value;
+        }
+    }
 
     /// <summary>
     /// The provider-native event this one was translated from, carried verbatim

@@ -28,6 +28,8 @@ public sealed class SubagentFinishedOutcomeJsonConverter : JsonConverter<Subagen
 
         string? discriminator = discriminatorElement.GetString();
 
+        AGUIWireGuard.Inspect(jsonElement, AGUIWireGuard.SubagentFinishedOutcomeShape);
+
         SubagentFinishedOutcome? result = discriminator switch
         {
             SubagentFinishedOutcomeTypes.Success => jsonElement.Deserialize(

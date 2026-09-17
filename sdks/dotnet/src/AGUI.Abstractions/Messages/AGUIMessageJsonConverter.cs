@@ -28,6 +28,8 @@ public sealed class AGUIMessageJsonConverter : JsonConverter<AGUIMessage>
 
         string? discriminator = discriminatorElement.GetString();
 
+        AGUIWireGuard.Inspect(jsonElement, AGUIWireGuard.MessageShape);
+
         AGUIMessage? result = discriminator switch
         {
             AGUIRoles.User => DeserializeUserMessage(jsonElement, options),

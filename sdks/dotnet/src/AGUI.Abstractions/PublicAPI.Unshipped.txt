@@ -294,7 +294,7 @@ AGUI.Abstractions.CustomEvent.Name.get -> string!
 AGUI.Abstractions.CustomEvent.Name.set -> void
 AGUI.Abstractions.CustomEvent.SubagentRunId.get -> string?
 AGUI.Abstractions.CustomEvent.SubagentRunId.set -> void
-AGUI.Abstractions.CustomEvent.Value.get -> System.Text.Json.JsonElement?
+AGUI.Abstractions.CustomEvent.Value.get -> System.Text.Json.JsonElement
 AGUI.Abstractions.CustomEvent.Value.set -> void
 AGUI.Abstractions.ExecutionCapabilities
 AGUI.Abstractions.ExecutionCapabilities.CodeExecution.get -> bool?

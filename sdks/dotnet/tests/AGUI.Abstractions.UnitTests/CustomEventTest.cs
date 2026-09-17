@@ -38,8 +38,8 @@ public sealed class CustomEventTest
 
         Assert.NotNull(deserialized);
         Assert.Equal("analytics_event", deserialized.Name);
-        Assert.Equal("click", deserialized.Value!.Value.GetProperty("action").GetString());
-        Assert.Equal(5, deserialized.Value!.Value.GetProperty("count").GetInt32());
+        Assert.Equal("click", deserialized.Value.GetProperty("action").GetString());
+        Assert.Equal(5, deserialized.Value.GetProperty("count").GetInt32());
     }
 
     [Fact]
@@ -50,6 +50,6 @@ public sealed class CustomEventTest
 
         var custom = Assert.IsType<CustomEvent>(evt);
         Assert.Equal("test_event", custom.Name);
-        Assert.Equal("val", custom.Value!.Value.GetProperty("key").GetString());
+        Assert.Equal("val", custom.Value.GetProperty("key").GetString());
     }
 }

@@ -211,6 +211,7 @@ internal static class ProtoEventMapper
                 {
                     proto.SubagentRunId = e.SubagentRunId;
                 }
+                RequirePayload(e.Snapshot, "snapshot", AGUIEventTypes.StateSnapshot);
                 proto.Snapshot = ProtoValueConverter.ToValue(e.Snapshot);
                 return new Proto.Event { StateSnapshot = proto };
             }
@@ -295,6 +296,7 @@ internal static class ProtoEventMapper
                 {
                     proto.SubagentRunId = e.SubagentRunId;
                 }
+                RequirePayload(e.Event, "event", AGUIEventTypes.Raw);
                 proto.Event = ProtoValueConverter.ToValue(e.Event);
                 if (e.Source is not null)
                 {
@@ -313,9 +315,8 @@ internal static class ProtoEventMapper
                     proto.SubagentRunId = e.SubagentRunId;
                 }
                 proto.Name = e.Name;
-                proto.Value = e.Value is null
-                    ? new Google.Protobuf.WellKnownTypes.Value { NullValue = Google.Protobuf.WellKnownTypes.NullValue.NullValue }
-                    : ProtoValueConverter.ToValue(e.Value.Value);
+                RequirePayload(e.Value, "value", AGUIEventTypes.Custom);
+                proto.Value = ProtoValueConverter.ToValue(e.Value);
                 return new Proto.Event { Custom = proto };
             }
             case RunStartedEvent e:
@@ -1017,6 +1018,18 @@ internal static class ProtoEventMapper
     private static void RequireProvided(string? value, string propertyName, string eventType)
     {
         if (value is null)
+        {
+            throw new InvalidOperationException(
+                $"Cannot encode '{eventType}': '{propertyName}' is required.");
+        }
+    }
+
+    // The arbitrary-JSON counterpart. These properties are bare JsonElements
+    // whose default ValueKind is Undefined, which is how the models say
+    // "absent"; JSON null is a value the schema allows here, not an absence.
+    private static void RequirePayload(JsonElement value, string propertyName, string eventType)
+    {
+        if (value.ValueKind == JsonValueKind.Undefined)
         {
             throw new InvalidOperationException(
                 $"Cannot encode '{eventType}': '{propertyName}' is required.");

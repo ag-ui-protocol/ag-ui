@@ -11,7 +11,8 @@
   },
   {
     "type": "CUSTOM",
-    "name": "heartbeat"
+    "name": "heartbeat",
+    "value": null
   },
   {
     "type": "RAW",

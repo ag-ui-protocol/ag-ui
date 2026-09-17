@@ -27,6 +27,8 @@ public sealed class AGUIInputContentSourceJsonConverter : JsonConverter<AGUIInpu
 
         string? discriminator = discriminatorElement.GetString();
 
+        AGUIWireGuard.Inspect(jsonElement, AGUIWireGuard.PartSourceShape);
+
         AGUIInputContentSource? result = discriminator switch
         {
             AGUIInputContentSourceTypes.Data => jsonElement.Deserialize(

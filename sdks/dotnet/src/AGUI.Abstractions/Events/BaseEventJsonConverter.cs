@@ -32,6 +32,10 @@ public sealed class BaseEventJsonConverter : JsonConverter<BaseEvent>
 
         string? discriminator = discriminatorElement.GetString();
 
+        // Judged on the document, before it becomes an object that can no longer
+        // tell an absent required payload from a null one.
+        AGUIWireGuard.Inspect(jsonElement, AGUIWireGuard.EventShape);
+
         BaseEvent? result = discriminator switch
         {
             AGUIEventTypes.RunStarted => jsonElement.Deserialize(options.GetTypeInfo(typeof(RunStartedEvent))) as RunStartedEvent,

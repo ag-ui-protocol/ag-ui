@@ -34,9 +34,3 @@ export const NULLABLE_REQUIRED_STRINGS = new Set([
   "SubagentErrorEvent.subagentRunId",
   "SubagentErrorEvent.message",
 ]);
-
-/**
- * Required arbitrary-JSON fields whose .NET model property is nullable
- * (JsonElement?) rather than a bare JsonElement.
- */
-export const NULLABLE_REQUIRED_ANY = new Set(["CustomEvent.value"]);

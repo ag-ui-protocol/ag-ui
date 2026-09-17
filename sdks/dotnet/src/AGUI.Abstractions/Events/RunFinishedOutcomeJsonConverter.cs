@@ -26,6 +26,8 @@ public sealed class RunFinishedOutcomeJsonConverter : JsonConverter<RunFinishedO
 
         string? discriminator = discriminatorElement.GetString();
 
+        AGUIWireGuard.Inspect(jsonElement, AGUIWireGuard.RunFinishedOutcomeShape);
+
         RunFinishedOutcome? result = discriminator switch
         {
             RunFinishedOutcomeTypes.Success => jsonElement.Deserialize(

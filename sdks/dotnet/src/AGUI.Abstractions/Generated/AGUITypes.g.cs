@@ -293,7 +293,15 @@ public sealed class TokenUsage
     /// the producer wrote.
     /// </summary>
     [JsonPropertyName("inputTokens")]
-    public long? InputTokens { get; set; }
+    public long? InputTokens
+    {
+        get;
+        set
+        {
+            AGUIWireValidation.Range("TokenUsage", "inputTokens", value, 0L, 9007199254740991L);
+            field = value;
+        }
+    }
 
     /// <summary>
     /// Every generated token, reasoning included where the provider
@@ -302,7 +310,15 @@ public sealed class TokenUsage
     /// completion count has them added in by the producer.
     /// </summary>
     [JsonPropertyName("outputTokens")]
-    public long? OutputTokens { get; set; }
+    public long? OutputTokens
+    {
+        get;
+        set
+        {
+            AGUIWireValidation.Range("TokenUsage", "outputTokens", value, 0L, 9007199254740991L);
+            field = value;
+        }
+    }
 
     /// <summary>
     /// inputTokens plus outputTokens, under the accounting above. A producer
@@ -311,21 +327,45 @@ public sealed class TokenUsage
     /// can read this field as the sum of the other two.
     /// </summary>
     [JsonPropertyName("totalTokens")]
-    public long? TotalTokens { get; set; }
+    public long? TotalTokens
+    {
+        get;
+        set
+        {
+            AGUIWireValidation.Range("TokenUsage", "totalTokens", value, 0L, 9007199254740991L);
+            field = value;
+        }
+    }
 
     /// <summary>
     /// Output tokens spent on reasoning, where the provider distinguishes them.
     /// Part of outputTokens, not in addition to it.
     /// </summary>
     [JsonPropertyName("reasoningTokens")]
-    public long? ReasoningTokens { get; set; }
+    public long? ReasoningTokens
+    {
+        get;
+        set
+        {
+            AGUIWireValidation.Range("TokenUsage", "reasoningTokens", value, 0L, 9007199254740991L);
+            field = value;
+        }
+    }
 
     /// <summary>
     /// Input tokens read from a provider cache. Part of inputTokens, not in
     /// addition to it, and disjoint from cacheWriteInputTokens.
     /// </summary>
     [JsonPropertyName("cachedInputTokens")]
-    public long? CachedInputTokens { get; set; }
+    public long? CachedInputTokens
+    {
+        get;
+        set
+        {
+            AGUIWireValidation.Range("TokenUsage", "cachedInputTokens", value, 0L, 9007199254740991L);
+            field = value;
+        }
+    }
 
     /// <summary>
     /// Input tokens written to a provider cache on this call, where the
@@ -335,7 +375,15 @@ public sealed class TokenUsage
     /// computing cost cannot do without it.
     /// </summary>
     [JsonPropertyName("cacheWriteInputTokens")]
-    public long? CacheWriteInputTokens { get; set; }
+    public long? CacheWriteInputTokens
+    {
+        get;
+        set
+        {
+            AGUIWireValidation.Range("TokenUsage", "cacheWriteInputTokens", value, 0L, 9007199254740991L);
+            field = value;
+        }
+    }
 }
 
 /// <summary>
@@ -815,14 +863,30 @@ public sealed class ExecutionCapabilities
     /// per run. Helps clients display progress or set timeout expectations.
     /// </summary>
     [JsonPropertyName("maxIterations")]
-    public long? MaxIterations { get; set; }
+    public long? MaxIterations
+    {
+        get;
+        set
+        {
+            AGUIWireValidation.Range("ExecutionCapabilities", "maxIterations", value, 0L, 9007199254740991L);
+            field = value;
+        }
+    }
 
     /// <summary>
     /// Maximum wall-clock time (in milliseconds) the agent will run before
     /// timing out.
     /// </summary>
     [JsonPropertyName("maxExecutionTime")]
-    public long? MaxExecutionTime { get; set; }
+    public long? MaxExecutionTime
+    {
+        get;
+        set
+        {
+            AGUIWireValidation.Range("ExecutionCapabilities", "maxExecutionTime", value, 0L, 9007199254740991L);
+            field = value;
+        }
+    }
 }
 
 /// <summary>
@@ -1018,7 +1082,15 @@ public sealed class RunFinishedInterruptOutcome : RunFinishedOutcome
     /// nothing to answer would leave a consumer with nothing to do.
     /// </summary>
     [JsonPropertyName("interrupts")]
-    public IList<AGUIInterrupt> Interrupts { get; set; } = [];
+    public IList<AGUIInterrupt> Interrupts
+    {
+        get;
+        set
+        {
+            AGUIWireValidation.MinItems("RunFinishedInterruptOutcome", "interrupts", value, 1);
+            field = value;
+        }
+    } = [];
 }
 
 /// <summary>
