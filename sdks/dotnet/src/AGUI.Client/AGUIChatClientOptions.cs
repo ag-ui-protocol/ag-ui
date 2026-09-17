@@ -47,4 +47,19 @@ public sealed class AGUIChatClientOptions
     /// <see langword="null"/>, the AG-UI source-generated defaults are used.
     /// </summary>
     public JsonSerializerOptions? JsonSerializerOptions { get; init; }
+
+    /// <summary>
+    /// Gets the highest protocol version the peer is known to speak, when it is pinned
+    /// below this client. When <see langword="null"/> — the default — the peer is treated
+    /// as current.
+    /// </summary>
+    /// <remarks>
+    /// The only thing this gates today is the in-band version declaration: a peer pinned
+    /// below the line this client speaks predates <c>RunAgentInput.protocolVersion</c>
+    /// entirely, and an unrecognised input member is exactly what a strict old parser could
+    /// reject, so the field is left off for one. Mirrors the TypeScript client's
+    /// <c>maxProtocolVersion</c>. A value this client cannot read is treated as a current
+    /// peer, because silence about a peer is not evidence that it is old.
+    /// </remarks>
+    public string? MaxProtocolVersion { get; init; }
 }

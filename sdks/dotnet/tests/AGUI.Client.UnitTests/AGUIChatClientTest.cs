@@ -429,9 +429,12 @@ public sealed class AGUIChatClientTest
             new RunFinishedEvent { ThreadId = "thread-1", RunId = "run-1" }) });
 
         var updates = new List<ChatResponseUpdate>();
+        // The thread the request names: a run's boundary events carry the input's
+        // threadId, and the client rejects a stream that answers on another conversation.
         await foreach (var update in client.GetStreamingResponseAsync(
             [new ChatMessage(ChatRole.User, "start")],
-            cancellationToken: CancellationToken.None).ConfigureAwait(false))
+            new ChatOptions { ConversationId = "thread-1" },
+            CancellationToken.None).ConfigureAwait(false))
         {
             updates.Add(update);
         }
@@ -459,7 +462,8 @@ public sealed class AGUIChatClientTest
         var updates = new List<ChatResponseUpdate>();
         await foreach (var update in client.GetStreamingResponseAsync(
             [new ChatMessage(ChatRole.User, "approve ER-1")],
-            cancellationToken: CancellationToken.None).ConfigureAwait(false))
+            new ChatOptions { ConversationId = "thread-1" },
+            CancellationToken.None).ConfigureAwait(false))
         {
             updates.Add(update);
         }
@@ -591,7 +595,8 @@ public sealed class AGUIChatClientTest
 
         var updates = new List<ChatResponseUpdate>();
         await foreach (var u in client.GetStreamingResponseAsync(
-            new[] { new ChatMessage(ChatRole.User, "hi") }))
+            new[] { new ChatMessage(ChatRole.User, "hi") },
+            new ChatOptions { ConversationId = "t1" }))
         {
             updates.Add(u);
         }
@@ -636,7 +641,8 @@ public sealed class AGUIChatClientTest
 
         var updates = new List<ChatResponseUpdate>();
         await foreach (var update in client.GetStreamingResponseAsync(
-            new[] { new ChatMessage(ChatRole.User, "hi") }))
+            new[] { new ChatMessage(ChatRole.User, "hi") },
+            new ChatOptions { ConversationId = "t1" }))
         {
             updates.Add(update);
         }
@@ -689,7 +695,8 @@ public sealed class AGUIChatClientTest
 
         var updates = new List<ChatResponseUpdate>();
         await foreach (var u in client.GetStreamingResponseAsync(
-            new[] { new ChatMessage(ChatRole.User, "hi") }))
+            new[] { new ChatMessage(ChatRole.User, "hi") },
+            new ChatOptions { ConversationId = "t1" }))
         {
             updates.Add(u);
         }
@@ -716,7 +723,8 @@ public sealed class AGUIChatClientTest
 
         var updates = new List<ChatResponseUpdate>();
         await foreach (var u in client.GetStreamingResponseAsync(
-            new[] { new ChatMessage(ChatRole.User, "hi") }))
+            new[] { new ChatMessage(ChatRole.User, "hi") },
+            new ChatOptions { ConversationId = "t1" }))
         {
             updates.Add(u);
         }

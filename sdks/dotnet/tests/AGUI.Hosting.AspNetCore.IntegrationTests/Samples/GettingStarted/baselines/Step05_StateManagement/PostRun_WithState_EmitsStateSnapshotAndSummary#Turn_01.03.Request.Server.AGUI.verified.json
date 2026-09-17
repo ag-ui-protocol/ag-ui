@@ -1,6 +1,7 @@
 ﻿{
   "threadId": "thread_Id_1",
   "runId": "run_Id_1",
+  "protocolVersion": "1.0",
   "state": {
     "recipe": {
       "title": "",

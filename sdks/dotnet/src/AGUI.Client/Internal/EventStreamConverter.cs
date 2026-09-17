@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
@@ -28,9 +29,20 @@ internal static class EventStreamConverter
     /// those, so an opener-only stream (tagged START, untagged content and end) was never
     /// attributed.
     /// </remarks>
+    /// <param name="events">The producer's event stream.</param>
+    /// <param name="jsonSerializerOptions">Serialization options for tool-call arguments.</param>
+    /// <param name="requestThreadId">
+    /// The <c>threadId</c> of the input this stream answers, when the caller knows it.
+    /// Every run on the stream carries the input's <c>threadId</c> on its boundary events
+    /// (<c>docs/spec/draft/basic/run-input.mdx</c>, "Identity"), so a producer that names a
+    /// different conversation is rejected. Null means the caller cannot say — the
+    /// intra-stream agreement checks still apply.
+    /// </param>
+    /// <param name="cancellationToken">Cancels the enumeration.</param>
     internal static async IAsyncEnumerable<ChatResponseUpdate> AsChatResponseUpdates(
         IAsyncEnumerable<BaseEvent> events,
         JsonSerializerOptions jsonSerializerOptions,
+        string? requestThreadId = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // entityId -> owner, where an entity is a messageId or a toolCallId. Owned by the
@@ -38,7 +50,8 @@ internal static class EventStreamConverter
         // per-run state on a new RUN_STARTED.
         var owners = new Dictionary<string, string?>(StringComparer.Ordinal);
 
-        await foreach (var update in AsChatResponseUpdatesCore(events, jsonSerializerOptions, owners, cancellationToken)
+        await foreach (var update in AsChatResponseUpdatesCore(
+                events, jsonSerializerOptions, owners, requestThreadId, cancellationToken)
             .ConfigureAwait(false))
         {
             // The marker means this update was buffered and its owner already frozen at
@@ -186,6 +199,7 @@ internal static class EventStreamConverter
         IAsyncEnumerable<BaseEvent> events,
         JsonSerializerOptions jsonSerializerOptions,
         Dictionary<string, string?> owners,
+        string? requestThreadId,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         string? conversationId = null;
@@ -235,6 +249,14 @@ internal static class EventStreamConverter
         // first and accepts. Dictionary keys cannot be null, hence the parent's own field.
         string? parentReasoningChunkId = null;
         var subagentReasoningChunkIds = new Dictionary<string, string>(StringComparer.Ordinal);
+        // Reasoning bracketing, tracked exactly as verifyEvents tracks it: a reasoning
+        // message and the span around it are separate entities that may legitimately share
+        // an id (the canonical REASONING_START / REASONING_MESSAGE_START pair), so one set
+        // for both would reject the ordinary shape. A continuation must name something OPEN
+        // — the reducer is not left to invent a message for an orphaned fragment, nor to
+        // append to one that has closed — and a run may not finish over an unclosed one.
+        var activeReasoningMessages = new HashSet<string>(StringComparer.Ordinal);
+        var activeReasoningSpans = new HashSet<string>(StringComparer.Ordinal);
 
         // READS the owner map as it stands right now and writes the answer onto the update.
         // Buffered updates are flushed after later events have mutated the map, so resolving
@@ -370,6 +392,15 @@ internal static class EventStreamConverter
         var runFinished = false;
         var runError = false;
         var firstEventReceived = false;
+        // Identity of the run currently open, recorded at RUN_STARTED so its RUN_FINISHED
+        // can be held to it, plus the conversation the whole stream belongs to. Every run
+        // on the stream carries the input's threadId on its boundary events and a run's two
+        // boundary events must agree on their runId (run-input.mdx, "Identity"), so a
+        // second run that renames the conversation is a contradiction rather than a new
+        // topic. RUN_ERROR carries neither id and so is checked against neither.
+        string? openRunId = null;
+        string? openThreadId = null;
+        var streamThreadId = string.IsNullOrEmpty(requestThreadId) ? null : requestThreadId;
 
         await foreach (var evt in events.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
@@ -379,11 +410,17 @@ internal static class EventStreamConverter
             // maps, so without this the inferred owner never reached the consumer.
             string? inferredReasoningChunkOwner = null;
 
-            // Verify event ordering and lifecycle rules
-            if (runError)
+            // Verify event ordering and lifecycle rules.
+            //
+            // RUN_ERROR does not end the STREAM, only the run: "after RUN_ERROR a producer
+            // may emit only RUN_STARTED" (lifecycle.mdx), which begins a new run in the
+            // same stream. Everything else after it is still rejected — this latch is what
+            // stops a failed run from continuing to produce material — and the RUN_STARTED
+            // arm below resets the per-run state exactly as it does after a RUN_FINISHED.
+            if (runError && evt is not RunStartedEvent)
             {
                 throw new System.InvalidOperationException(
-                    $"Cannot send event type '{evt.Type}': The run has already errored with 'RUN_ERROR'. No further events can be sent.");
+                    $"Cannot send event type '{evt.Type}': The run has already errored with 'RUN_ERROR'. Only 'RUN_STARTED' may follow, beginning a new run.");
             }
 
             if (runFinished && evt is not RunErrorEvent && evt is not RunStartedEvent)
@@ -402,13 +439,13 @@ internal static class EventStreamConverter
             }
             else if (evt is RunStartedEvent)
             {
-                if (runStarted && !runFinished)
+                if (runStarted && !runFinished && !runError)
                 {
                     throw new System.InvalidOperationException(
                         "Cannot send 'RUN_STARTED' while a run is still active. The previous run must be finished with 'RUN_FINISHED' before starting a new run.");
                 }
 
-                if (runFinished)
+                if (runFinished || runError)
                 {
                     textMessageBuilder.Reset();
                     toolCallBuilder.Reset();
@@ -419,9 +456,13 @@ internal static class EventStreamConverter
                     toolCallOwners.Clear();
                     activityOwners.Clear();
                     reasoningOwners.Clear();
+                    activeReasoningMessages.Clear();
+                    activeReasoningSpans.Clear();
                     parentReasoningChunkId = null;
                     subagentReasoningChunkIds.Clear();
                     owners.Clear();
+                    openRunId = null;
+                    openThreadId = null;
                     runFinished = false;
                     runError = false;
                     runStarted = true;
@@ -671,6 +712,15 @@ internal static class EventStreamConverter
                 // so this converter's own state disagreed with itself. TypeScript
                 // rejects the same shape.
                 case ReasoningStartEvent outerReasoningStart:
+                    // Checked against the SPAN set, not a shared one: a span and the
+                    // message inside it may carry the same id — that is the canonical
+                    // shape — so one set for both would reject a conforming stream.
+                    if (!activeReasoningSpans.Add(outerReasoningStart.MessageId))
+                    {
+                        throw new System.InvalidOperationException(
+                            $"Cannot send 'REASONING_START' event: A reasoning span with ID '{outerReasoningStart.MessageId}' is already in progress. Complete it with 'REASONING_END' first.");
+                    }
+
                     if (!reasoningOwners.ContainsKey(outerReasoningStart.MessageId))
                     {
                         reasoningOwners[outerReasoningStart.MessageId] = outerReasoningStart.SubagentRunId;
@@ -686,6 +736,12 @@ internal static class EventStreamConverter
                     break;
 
                 case ReasoningMessageStartEvent reasoningStart:
+                    if (!activeReasoningMessages.Add(reasoningStart.MessageId))
+                    {
+                        throw new System.InvalidOperationException(
+                            $"Cannot send 'REASONING_MESSAGE_START' event: A reasoning message with ID '{reasoningStart.MessageId}' is already in progress. Complete it with 'REASONING_MESSAGE_END' first.");
+                    }
+
                     if (!reasoningOwners.ContainsKey(reasoningStart.MessageId))
                     {
                         reasoningOwners[reasoningStart.MessageId] = reasoningStart.SubagentRunId;
@@ -791,22 +847,39 @@ internal static class EventStreamConverter
 
                     break;
 
+                // A continuation or a close must name something that is OPEN, exactly as for
+                // text messages and tool calls. Without it the converter was left to invent
+                // a message for an orphaned fragment, or to append to one that had closed.
                 case ReasoningMessageContentEvent reasoningContent:
+                    RequireOpenReasoningMessage(activeReasoningMessages, reasoningContent.Type, reasoningContent.MessageId);
                     RejectOwnerMismatch(
                         reasoningContent.Type, reasoningContent.SubagentRunId, reasoningOwners,
                         reasoningContent.MessageId, "reasoning message");
                     break;
 
                 case ReasoningMessageEndEvent reasoningEnd:
+                    RequireOpenReasoningMessage(activeReasoningMessages, reasoningEnd.Type, reasoningEnd.MessageId);
                     RejectOwnerMismatch(
                         reasoningEnd.Type, reasoningEnd.SubagentRunId, reasoningOwners,
                         reasoningEnd.MessageId, "reasoning message");
+                    // Only the OPEN flag is dropped. reasoningOwners is retained for the
+                    // rest of the run, so a later REASONING_ENCRYPTED_VALUE naming this id
+                    // still has an owner to check and an untagged reopen cannot hand the id
+                    // back to the parent.
+                    activeReasoningMessages.Remove(reasoningEnd.MessageId);
                     break;
 
                 case ReasoningEndEvent outerReasoningEnd:
+                    if (!activeReasoningSpans.Contains(outerReasoningEnd.MessageId))
+                    {
+                        throw new System.InvalidOperationException(
+                            $"Cannot send 'REASONING_END' event: No active reasoning span found with ID '{outerReasoningEnd.MessageId}'. A 'REASONING_START' event must be sent first.");
+                    }
+
                     RejectOwnerMismatch(
                         outerReasoningEnd.Type, outerReasoningEnd.SubagentRunId, reasoningOwners,
                         outerReasoningEnd.MessageId, "reasoning message");
+                    activeReasoningSpans.Remove(outerReasoningEnd.MessageId);
                     break;
 
                 case ReasoningEncryptedValueEvent encrypted:
@@ -853,6 +926,20 @@ internal static class EventStreamConverter
                     break;
 
                 case ActivityDeltaEvent activityDelta:
+                    // "A delta naming a message that does not exist, or one that is not an
+                    // activity message, is skipped; the consumer SHOULD surface a warning,
+                    // and MUST NOT fail the run" (activity.mdx). Skipping is already what
+                    // happens — nothing here mints a message from a delta — so only the
+                    // warning was missing, and a silently dropped patch looked exactly like
+                    // an applied one.
+                    if (!activityOwners.ContainsKey(activityDelta.MessageId))
+                    {
+                        Trace.TraceWarning(
+                            "[ag-ui] Skipped an 'ACTIVITY_DELTA' for message '{0}': no activity message with that id exists on this run. The patch was not applied and no message was created.",
+                            activityDelta.MessageId);
+                        break;
+                    }
+
                     RejectOwnerMismatch(
                         activityDelta.Type, activityDelta.SubagentRunId, activityOwners, activityDelta.MessageId, "activity");
                     break;
@@ -878,6 +965,28 @@ internal static class EventStreamConverter
             switch (evt)
             {
                 case RunStartedEvent runStartedEvt:
+                    // The conversation is a property of the STREAM, not of each run: every
+                    // run on it carries the input's threadId (run-input.mdx, "Identity"),
+                    // so the first authority wins — the request's threadId when the caller
+                    // knows it, otherwise the first RUN_STARTED — and a later run that
+                    // names a different one is rejected rather than quietly re-homed.
+                    if (streamThreadId is null)
+                    {
+                        streamThreadId = runStartedEvt.ThreadId;
+                    }
+                    else if (!string.Equals(streamThreadId, runStartedEvt.ThreadId, StringComparison.Ordinal))
+                    {
+                        throw new System.InvalidOperationException(
+                            $"Cannot send 'RUN_STARTED' for thread '{runStartedEvt.ThreadId}': this stream belongs to thread '{streamThreadId}'. Every run on a stream carries the input's threadId.");
+                    }
+
+                    // The producer's own declaration, judged against the version this
+                    // client speaks. Absent is a peer from before the field and is silent;
+                    // newer or uninterpretable means material this client may be dropping.
+                    AGUIProtocolVersion.WarnOnProducerDeclaration(runStartedEvt.ProtocolVersion);
+
+                    openThreadId = runStartedEvt.ThreadId;
+                    openRunId = runStartedEvt.RunId;
                     runStarted = true;
                     conversationId = runStartedEvt.ThreadId;
                     responseId = runStartedEvt.RunId;
@@ -894,10 +1003,55 @@ internal static class EventStreamConverter
                     break;
 
                 case RunFinishedEvent runFinishedEvt:
+                    // A run's two boundary events MUST agree on their runId, and both carry
+                    // the input's threadId (run-input.mdx, "Identity"). Named in full on
+                    // both sides: a mismatch is usually a producer closing the wrong run,
+                    // and the reader needs to see which two ids disagree.
+                    if (!string.Equals(openRunId, runFinishedEvt.RunId, StringComparison.Ordinal))
+                    {
+                        throw new System.InvalidOperationException(
+                            $"Cannot send 'RUN_FINISHED' for run '{runFinishedEvt.RunId}': the run that is open is '{openRunId}'. A run's 'RUN_STARTED' and 'RUN_FINISHED' must agree on their runId.");
+                    }
+
+                    if (!string.Equals(openThreadId, runFinishedEvt.ThreadId, StringComparison.Ordinal))
+                    {
+                        throw new System.InvalidOperationException(
+                            $"Cannot send 'RUN_FINISHED' for thread '{runFinishedEvt.ThreadId}': run '{runFinishedEvt.RunId}' was started on thread '{openThreadId}'. A run's boundary events carry the input's threadId.");
+                    }
+
                     if (activeSteps.Count > 0)
                     {
                         throw new System.InvalidOperationException(
                             $"Cannot send 'RUN_FINISHED' while steps are still active: {DescribeSteps(activeSteps)}");
+                    }
+
+                    if (activeReasoningMessages.Count > 0)
+                    {
+                        throw new System.InvalidOperationException(
+                            $"Cannot send 'RUN_FINISHED' while reasoning messages are still active: {string.Join(", ", activeReasoningMessages)}");
+                    }
+
+                    if (activeReasoningSpans.Count > 0)
+                    {
+                        throw new System.InvalidOperationException(
+                            $"Cannot send 'RUN_FINISHED' while reasoning spans are still active: {string.Join(", ", activeReasoningSpans)}");
+                    }
+
+                    // Each interrupt's id MUST be unique within the run
+                    // (interrupt-resume.mdx): a resume entry answers an interrupt BY id, so
+                    // two interrupts sharing one leave a single entry standing in for both
+                    // — the silent skip the coverage rule exists to prevent.
+                    if (runFinishedEvt.Outcome is RunFinishedInterruptOutcome duplicateScan)
+                    {
+                        var interruptIds = new HashSet<string>(StringComparer.Ordinal);
+                        foreach (var interrupt in duplicateScan.Interrupts)
+                        {
+                            if (interrupt is not null && !interruptIds.Add(interrupt.Id))
+                            {
+                                throw new System.InvalidOperationException(
+                                    $"Cannot send 'RUN_FINISHED' with two interrupts carrying the id '{interrupt.Id}'. An interrupt id is unique within the run: a resume entry answers an interrupt by it.");
+                            }
+                        }
                     }
 
                     textMessageBuilder.EnsureCompleted();
@@ -1137,6 +1291,15 @@ internal static class EventStreamConverter
 
                 case ToolCallResultEvent toolResult:
                 {
+                    // A FunctionResultContent holds ONE result object, so a multimodal tool
+                    // result is projected to its text parts concatenated — the flattening
+                    // AGUIContent.ToString performs and AGUIContent documents. The
+                    // specification permits the lossy rendering but asks for it to be
+                    // announced (tool-calls.mdx, "Result content"), and a dropped document
+                    // or image is otherwise indistinguishable from one the producer never
+                    // sent. One warning per result, naming how much went missing.
+                    WarnOnFlattenedToolResult(toolResult);
+
                     var resultUpdate = new ChatResponseUpdate(ChatRole.Tool,
                         [new FunctionResultContent(toolResult.ToolCallId, toolResult.Content.ToString())])
                     {
@@ -1267,6 +1430,73 @@ internal static class EventStreamConverter
                     break;
                 }
             }
+        }
+
+        // The stream is over. A run that was opened and never closed is TRUNCATED: "A
+        // truncated run has no outcome. A consumer MUST NOT synthesize a RUN_FINISHED for
+        // it and MUST NOT report it as having succeeded" (transports/index.mdx,
+        // "Truncation"). Completing the enumeration normally is exactly reporting success
+        // to an IChatClient caller, which reads the run as finished with whatever arrived —
+        // so the failure is raised here instead, and everything delivered before the break
+        // stays delivered.
+        //
+        // Deliberately at the END of the iterator body rather than in a finally: a consumer
+        // that stops enumerating early — `break`, a `Take`, a cancellation — suspends the
+        // iterator at its yield and disposes it, and that is its own decision to stop, not a
+        // producer truncating the stream. Code after the loop does not run in that case,
+        // which is precisely the wanted behaviour.
+        if (runStarted && !runFinished && !runError)
+        {
+            throw new System.InvalidOperationException(
+                $"The event stream ended without a terminal event: run '{openRunId}' on thread '{openThreadId}' was started but never closed with 'RUN_FINISHED' or 'RUN_ERROR'. A truncated run must not be reported as successful.");
+        }
+
+        if (!runStarted && !runError)
+        {
+            throw new System.InvalidOperationException(
+                "The event stream ended without a terminal event: no 'RUN_STARTED' arrived, so no run was opened and none can be reported as successful.");
+        }
+    }
+
+    /// <summary>
+    /// Warns once for a tool result whose non-text parts the string projection drops.
+    /// </summary>
+    private static void WarnOnFlattenedToolResult(ToolCallResultEvent toolResult)
+    {
+        if (toolResult.Content.Value is not IList<AGUIInputContent> parts)
+        {
+            return;
+        }
+
+        var dropped = 0;
+        foreach (var part in parts)
+        {
+            if (part is not AGUITextInputContent)
+            {
+                dropped++;
+            }
+        }
+
+        if (dropped > 0)
+        {
+            Trace.TraceWarning(
+                "[ag-ui] The result of tool call '{0}' was flattened to text; {1} non-text part(s) were dropped.",
+                toolResult.ToolCallId,
+                dropped);
+        }
+    }
+
+    /// <summary>
+    /// Throws when a reasoning-message continuation or close names a message that is not
+    /// open. Mirrors verifyEvents: the reducer is never left to invent a message for an
+    /// orphaned fragment.
+    /// </summary>
+    private static void RequireOpenReasoningMessage(HashSet<string> open, string eventType, string messageId)
+    {
+        if (!open.Contains(messageId))
+        {
+            throw new System.InvalidOperationException(
+                $"Cannot send '{eventType}' event: No active reasoning message found with ID '{messageId}'. Start a reasoning message with 'REASONING_MESSAGE_START' first.");
         }
     }
 

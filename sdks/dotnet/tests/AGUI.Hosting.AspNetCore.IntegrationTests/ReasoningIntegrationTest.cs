@@ -36,31 +36,41 @@ public sealed class ReasoningIntegrationTest : IntegrationTestBase
         Assert.Equal("Thinking step 1", reasoning.Text);
     }
 
+    // Bracketed, because a reasoning span left open at RUN_FINISHED is a streaming-discipline
+    // violation the client now rejects: what this test is about is the properties the START
+    // carries, not an unclosed span.
     [Fact]
     public async Task PostRun_ReasoningStart_HasCorrectProperties()
     {
-        var client = CreateClient((messages, options, ct) => EmitSingleReasoningEvent(
-            new ReasoningStartEvent { MessageId = "rs-1" }, ct));
+        var client = CreateClient((messages, options, ct) => EmitReasoningEvents(
+            ct,
+            new ReasoningStartEvent { MessageId = "rs-1" },
+            new ReasoningEndEvent { MessageId = "rs-1" }));
 
         var updates = await CollectUpdates(client, [new ChatMessage(ChatRole.User, "Hi")]);
 
-        Assert.Equal(3, updates.Count);
+        Assert.Equal(4, updates.Count);
         var update = updates[1];
         Assert.Equal(ChatRole.Assistant, update.Role);
         var evt = Assert.IsType<ReasoningStartEvent>(update.RawRepresentation);
         Assert.Equal("rs-1", evt.MessageId);
     }
 
+    // Bracketed for the same reason: a reasoning fragment with no opener is rejected, and the
+    // content this test reads is what the CONTENT event carries inside a well-formed message.
     [Fact]
     public async Task PostRun_ReasoningMessageContent_HasTextReasoningContent()
     {
-        var client = CreateClient((messages, options, ct) => EmitSingleReasoningEvent(
-            new ReasoningMessageContentEvent { MessageId = "rmc-1", Delta = "Let me think..." }, ct));
+        var client = CreateClient((messages, options, ct) => EmitReasoningEvents(
+            ct,
+            new ReasoningMessageStartEvent { MessageId = "rmc-1" },
+            new ReasoningMessageContentEvent { MessageId = "rmc-1", Delta = "Let me think..." },
+            new ReasoningMessageEndEvent { MessageId = "rmc-1" }));
 
         var updates = await CollectUpdates(client, [new ChatMessage(ChatRole.User, "Hi")]);
 
-        Assert.Equal(3, updates.Count);
-        var reasoning = Assert.Single(updates[1].Contents.OfType<TextReasoningContent>());
+        Assert.Equal(5, updates.Count);
+        var reasoning = Assert.Single(updates[2].Contents.OfType<TextReasoningContent>());
         Assert.Equal("Let me think...", reasoning.Text);
         Assert.IsType<ReasoningMessageContentEvent>(reasoning.RawRepresentation);
     }
@@ -162,15 +172,24 @@ public sealed class ReasoningIntegrationTest : IntegrationTestBase
         await Task.CompletedTask.ConfigureAwait(false);
     }
 
-    private static async IAsyncEnumerable<ChatResponseUpdate> EmitSingleReasoningEvent(
+    private static IAsyncEnumerable<ChatResponseUpdate> EmitSingleReasoningEvent(
         BaseEvent evt,
-        [EnumeratorCancellation] CancellationToken ct = default)
+        CancellationToken ct = default) =>
+        EmitReasoningEvents(ct, evt);
+
+    private static async IAsyncEnumerable<ChatResponseUpdate> EmitReasoningEvents(
+        [EnumeratorCancellation] CancellationToken ct,
+        params BaseEvent[] events)
     {
-        yield return new ChatResponseUpdate
+        foreach (var evt in events)
         {
-            Role = ChatRole.Assistant,
-            RawRepresentation = evt
-        };
+            yield return new ChatResponseUpdate
+            {
+                Role = ChatRole.Assistant,
+                RawRepresentation = evt
+            };
+        }
+
         await Task.CompletedTask.ConfigureAwait(false);
     }
 }

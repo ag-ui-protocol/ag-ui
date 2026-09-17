@@ -518,7 +518,9 @@ public sealed class ProtocolRuleTest
             new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
             new CustomEvent { Name = "ui_hint", Value = customValue },
             new TextMessageStartEvent { MessageId = "m1", Role = "assistant" },
-            new CustomEvent { Name = "progress", Value = null },
+            // A JSON null value, not an absent one: `value` is required, and the models now
+            // keep the two apart (an absent value reads as JsonValueKind.Undefined).
+            new CustomEvent { Name = "progress", Value = JsonDocument.Parse("null").RootElement.Clone() },
             new TextMessageContentEvent { MessageId = "m1", Delta = "Hi" },
             new TextMessageEndEvent { MessageId = "m1" },
             new RunFinishedEvent { ThreadId = "t1", RunId = "r1" }
@@ -915,20 +917,68 @@ public sealed class ProtocolRuleTest
         Assert.Equal(3, result.Count(u => u.RawRepresentation is RunFinishedEvent));
     }
 
+    // RUN_ERROR ends the RUN, not the stream: "after RUN_ERROR a producer may emit only
+    // RUN_STARTED" (lifecycle.mdx), which begins a new run that is reduced normally. The
+    // .NET converter used to throw for the next event whatever it was, rejecting the
+    // in-stream restart TypeScript accepts.
     [Fact]
-    public async Task MultiRun_RunErrorBlocksAnotherRunInSameStream()
+    public async Task MultiRun_RunStartedAfterRunError_BeginsANewRun()
     {
-        // RunError emits an ErrorContent update and prevents another run from starting in the same stream.
         var events = new BaseEvent[]
         {
             new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
             new RunErrorEvent { Message = "boom" },
             new RunStartedEvent { ThreadId = "t1", RunId = "r2" },
+            new TextMessageStartEvent { MessageId = "m1", Role = "assistant" },
+            new TextMessageContentEvent { MessageId = "m1", Delta = "second run" },
+            new TextMessageEndEvent { MessageId = "m1" },
+            new RunFinishedEvent { ThreadId = "t1", RunId = "r2" },
+        };
+
+        var result = await ProcessEventsAsync(events);
+
+        Assert.Equal(2, result.Count(u => u.RawRepresentation is RunStartedEvent));
+        Assert.Contains(result, u => u.RawRepresentation is RunErrorEvent);
+        Assert.Contains(result, u => u.Text == "second run");
+        Assert.Contains(result, u => u.RawRepresentation is RunFinishedEvent);
+    }
+
+    // The restart is the ONLY thing RUN_ERROR admits: the latch still stops a failed run
+    // from going on producing material.
+    [Fact]
+    public async Task MultiRun_NonRunStartedAfterRunError_Throws()
+    {
+        var events = new BaseEvent[]
+        {
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new RunErrorEvent { Message = "boom" },
+            new TextMessageStartEvent { MessageId = "m1", Role = "assistant" },
         };
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => ProcessEventsAsync(events));
         Assert.Contains("already errored", ex.Message);
+    }
+
+    // A run reopened after RUN_ERROR starts from a clean slate: the failed run's open
+    // entities do not leak into it. Without the reset the first run's step would still be
+    // recorded and the second run's identically named STEP_STARTED would be rejected.
+    [Fact]
+    public async Task MultiRun_RunStartedAfterRunError_ResetsPerRunState()
+    {
+        var events = new BaseEvent[]
+        {
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new StepStartedEvent { StepName = "plan" },
+            new RunErrorEvent { Message = "boom" },
+            new RunStartedEvent { ThreadId = "t1", RunId = "r2" },
+            new StepStartedEvent { StepName = "plan" },
+            new StepFinishedEvent { StepName = "plan" },
+            new RunFinishedEvent { ThreadId = "t1", RunId = "r2" },
+        };
+
+        var result = await ProcessEventsAsync(events);
+        Assert.Single(result, u => u.RawRepresentation is RunFinishedEvent);
     }
 
     // ────────────────────────────────────────────────
@@ -2578,6 +2628,437 @@ public sealed class ProtocolRuleTest
         update.AdditionalProperties?.TryGetValue("agui.subagentRunId", out string? v) == true ? v : null;
 
     // ────────────────────────────────────────────────
+    // Truncation — a stream that ends without a terminal event
+    // ────────────────────────────────────────────────
+
+    // "A truncated run has no outcome. A consumer MUST NOT synthesize a RUN_FINISHED for it
+    // and MUST NOT report it as having succeeded" (transports/index.mdx, "Truncation").
+    // Completing the enumeration normally IS reporting success to an IChatClient caller, so
+    // the client raises the synthetic failure the page offers as the alternative.
+    [Fact]
+    public async Task Truncation_RunStartedButNeverClosed_Throws()
+    {
+        var events = new BaseEvent[]
+        {
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new TextMessageStartEvent { MessageId = "m1", Role = "assistant" },
+            new TextMessageContentEvent { MessageId = "m1", Delta = "cut off mid-" },
+        };
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => ProcessEventsAsync(events));
+        Assert.Contains("ended without a terminal event", ex.Message);
+        Assert.Contains("r1", ex.Message);
+        Assert.Contains("t1", ex.Message);
+    }
+
+    // The message the truncated run did deliver is still delivered: the rule is that the run
+    // must not be REPORTED as succeeded, not that its material is retracted.
+    [Fact]
+    public async Task Truncation_DeliversWhatArrivedBeforeTheBreak()
+    {
+        var events = new BaseEvent[]
+        {
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new TextMessageStartEvent { MessageId = "m1", Role = "assistant" },
+            new TextMessageContentEvent { MessageId = "m1", Delta = "partial" },
+        };
+
+        var delivered = new List<ChatResponseUpdate>();
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await foreach (var update in ProcessEventsLazyAsync(events).ConfigureAwait(false))
+            {
+                delivered.Add(update);
+            }
+        });
+
+        Assert.Contains(delivered, u => u.Text == "partial");
+    }
+
+    // An empty stream opened no run at all, which is the same rule seen from the other end:
+    // there is nothing to report as succeeded.
+    [Fact]
+    public async Task Truncation_EmptyStream_Throws()
+    {
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => ProcessEventsAsync([]));
+        Assert.Contains("no 'RUN_STARTED' arrived", ex.Message);
+    }
+
+    [Fact]
+    public async Task Truncation_ClosedRun_DoesNotThrow()
+    {
+        var events = new BaseEvent[]
+        {
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new RunFinishedEvent { ThreadId = "t1", RunId = "r1" },
+        };
+
+        await ProcessEventsAsync(events);
+    }
+
+    // RUN_ERROR closes the run too: a run that reported its own failure is not truncated.
+    [Fact]
+    public async Task Truncation_RunEndedWithRunError_DoesNotThrow()
+    {
+        var events = new BaseEvent[]
+        {
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new RunErrorEvent { Message = "boom" },
+        };
+
+        await ProcessEventsAsync(events);
+    }
+
+    // A consumer that stops reading is not a producer truncating the stream. The check sits
+    // at the end of the iterator body rather than in a finally precisely so that an early
+    // break — a cancellation, a Take — keeps its current behaviour and raises nothing.
+    [Fact]
+    public async Task Truncation_ConsumerStopsEarly_DoesNotThrow()
+    {
+        var events = new BaseEvent[]
+        {
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new TextMessageStartEvent { MessageId = "m1", Role = "assistant" },
+            new TextMessageContentEvent { MessageId = "m1", Delta = "enough" },
+        };
+
+        var delivered = new List<ChatResponseUpdate>();
+        await foreach (var update in ProcessEventsLazyAsync(events).ConfigureAwait(false))
+        {
+            delivered.Add(update);
+            break;
+        }
+
+        Assert.Single(delivered);
+    }
+
+    // ────────────────────────────────────────────────
+    // Thread and run identity
+    // ────────────────────────────────────────────────
+
+    // "each run's two boundary events MUST agree on their runId" (run-input.mdx, "Identity").
+    [Fact]
+    public async Task Identity_RunFinishedNamesADifferentRun_Throws()
+    {
+        var events = new BaseEvent[]
+        {
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new RunFinishedEvent { ThreadId = "t1", RunId = "r-other" },
+        };
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => ProcessEventsAsync(events));
+        Assert.Contains("r-other", ex.Message);
+        Assert.Contains("r1", ex.Message);
+    }
+
+    // "Every run on the stream carries the input's threadId on its boundary events."
+    [Fact]
+    public async Task Identity_RunFinishedNamesADifferentThread_Throws()
+    {
+        var events = new BaseEvent[]
+        {
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new RunFinishedEvent { ThreadId = "t-other", RunId = "r1" },
+        };
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => ProcessEventsAsync(events));
+        Assert.Contains("t-other", ex.Message);
+        Assert.Contains("t1", ex.Message);
+    }
+
+    // The conversation is a property of the stream: a second run on it cannot rename the
+    // thread the first one belonged to.
+    [Fact]
+    public async Task Identity_SecondRunRenamesTheThread_Throws()
+    {
+        var events = new BaseEvent[]
+        {
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new RunFinishedEvent { ThreadId = "t1", RunId = "r1" },
+            new RunStartedEvent { ThreadId = "t2", RunId = "r2" },
+        };
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => ProcessEventsAsync(events));
+        Assert.Contains("t2", ex.Message);
+        Assert.Contains("t1", ex.Message);
+    }
+
+    // Sequential runs that agree are the ordinary case and must stay accepted.
+    [Fact]
+    public async Task Identity_SequentialRunsOnOneThread_Succeed()
+    {
+        var events = new BaseEvent[]
+        {
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new RunFinishedEvent { ThreadId = "t1", RunId = "r1" },
+            new RunStartedEvent { ThreadId = "t1", RunId = "r2" },
+            new RunFinishedEvent { ThreadId = "t1", RunId = "r2" },
+        };
+
+        var result = await ProcessEventsAsync(events);
+        Assert.Equal(2, result.Count(u => u.RawRepresentation is RunFinishedEvent));
+    }
+
+    // The run answers a request, and the request names the conversation: a producer that
+    // opens on another thread is answering somebody else's question.
+    [Fact]
+    public async Task Identity_RunStartedDisagreesWithTheRequestThread_Throws()
+    {
+        var events = new BaseEvent[]
+        {
+            new RunStartedEvent { ThreadId = "t-producer", RunId = "r1" },
+            new RunFinishedEvent { ThreadId = "t-producer", RunId = "r1" },
+        };
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => ProcessEventsAsync(events, requestThreadId: "t-requested"));
+        Assert.Contains("t-producer", ex.Message);
+        Assert.Contains("t-requested", ex.Message);
+    }
+
+    [Fact]
+    public async Task Identity_RunStartedEchoesTheRequestThread_Succeeds()
+    {
+        var events = new BaseEvent[]
+        {
+            new RunStartedEvent { ThreadId = "t-requested", RunId = "r1" },
+            new RunFinishedEvent { ThreadId = "t-requested", RunId = "r1" },
+        };
+
+        await ProcessEventsAsync(events, requestThreadId: "t-requested");
+    }
+
+    // ────────────────────────────────────────────────
+    // Interrupt outcome
+    // ────────────────────────────────────────────────
+
+    // "Each interrupt's id MUST be unique within the run" (interrupt-resume.mdx): a resume
+    // entry answers an interrupt BY id, so two interrupts sharing one leave a single entry
+    // standing in for both — the silent skip the coverage rule exists to prevent.
+    [Fact]
+    public async Task Interrupts_DuplicateIdInTheOutcome_Throws()
+    {
+        var events = new BaseEvent[]
+        {
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new RunFinishedEvent
+            {
+                ThreadId = "t1",
+                RunId = "r1",
+                Outcome = new RunFinishedInterruptOutcome
+                {
+                    Interrupts =
+                    [
+                        new AGUIInterrupt { Id = "i1", Reason = "ask" },
+                        new AGUIInterrupt { Id = "i1", Reason = "ask again" },
+                    ],
+                },
+            },
+        };
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => ProcessEventsAsync(events));
+        Assert.Contains("two interrupts carrying the id 'i1'", ex.Message);
+    }
+
+    [Fact]
+    public async Task Interrupts_DistinctIdsInTheOutcome_Succeed()
+    {
+        var events = new BaseEvent[]
+        {
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new RunFinishedEvent
+            {
+                ThreadId = "t1",
+                RunId = "r1",
+                Outcome = new RunFinishedInterruptOutcome
+                {
+                    Interrupts =
+                    [
+                        new AGUIInterrupt { Id = "i1", Reason = "ask" },
+                        new AGUIInterrupt { Id = "i2", Reason = "ask" },
+                    ],
+                },
+            },
+        };
+
+        var result = await ProcessEventsAsync(events);
+        Assert.Equal(2, result.SelectMany(u => u.Contents).OfType<InterruptRequestContent>().Count());
+    }
+
+    // ────────────────────────────────────────────────
+    // Reasoning bracketing
+    // ────────────────────────────────────────────────
+
+    // A reasoning message is bracketed like every other streamed entity: the consumer does
+    // not invent the message an orphaned fragment names.
+    [Fact]
+    public async Task Reasoning_ContentWithoutAnOpener_Throws()
+    {
+        var events = new BaseEvent[]
+        {
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new ReasoningMessageContentEvent { MessageId = "rm-1", Delta = "orphaned thought" },
+        };
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => ProcessEventsAsync(events));
+        Assert.Contains("No active reasoning message found with ID 'rm-1'", ex.Message);
+    }
+
+    [Fact]
+    public async Task Reasoning_MessageEndWithoutAnOpener_Throws()
+    {
+        var events = new BaseEvent[]
+        {
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new ReasoningMessageEndEvent { MessageId = "nope" },
+        };
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => ProcessEventsAsync(events));
+        Assert.Contains("No active reasoning message found with ID 'nope'", ex.Message);
+    }
+
+    [Fact]
+    public async Task Reasoning_RepeatedMessageStart_Throws()
+    {
+        var events = new BaseEvent[]
+        {
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new ReasoningMessageStartEvent { MessageId = "rm-1", Role = AGUIRoles.Reasoning },
+            new ReasoningMessageStartEvent { MessageId = "rm-1", Role = AGUIRoles.Reasoning },
+        };
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => ProcessEventsAsync(events));
+        Assert.Contains("A reasoning message with ID 'rm-1' is already in progress", ex.Message);
+    }
+
+    [Fact]
+    public async Task Reasoning_RepeatedSpanStart_Throws()
+    {
+        var events = new BaseEvent[]
+        {
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new ReasoningStartEvent { MessageId = "span-1" },
+            new ReasoningStartEvent { MessageId = "span-1" },
+        };
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => ProcessEventsAsync(events));
+        Assert.Contains("A reasoning span with ID 'span-1' is already in progress", ex.Message);
+    }
+
+    [Fact]
+    public async Task Reasoning_SpanEndWithoutAnOpener_Throws()
+    {
+        var events = new BaseEvent[]
+        {
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new ReasoningEndEvent { MessageId = "span-1" },
+        };
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => ProcessEventsAsync(events));
+        Assert.Contains("No active reasoning span found with ID 'span-1'", ex.Message);
+    }
+
+    [Fact]
+    public async Task Reasoning_UnclosedMessageAtRunFinished_Throws()
+    {
+        var events = new BaseEvent[]
+        {
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new ReasoningMessageStartEvent { MessageId = "rm-1", Role = AGUIRoles.Reasoning },
+            new ReasoningMessageContentEvent { MessageId = "rm-1", Delta = "still going" },
+            new RunFinishedEvent { ThreadId = "t1", RunId = "r1" },
+        };
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => ProcessEventsAsync(events));
+        Assert.Contains("while reasoning messages are still active: rm-1", ex.Message);
+    }
+
+    [Fact]
+    public async Task Reasoning_UnclosedSpanAtRunFinished_Throws()
+    {
+        var events = new BaseEvent[]
+        {
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new ReasoningStartEvent { MessageId = "span-1" },
+            new RunFinishedEvent { ThreadId = "t1", RunId = "r1" },
+        };
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => ProcessEventsAsync(events));
+        Assert.Contains("while reasoning spans are still active: span-1", ex.Message);
+    }
+
+    // The span and the message inside it may carry the SAME id — that is the canonical
+    // shape — so the two open sets have to be separate. One set for both would reject this.
+    [Fact]
+    public async Task Reasoning_SpanAndMessageSharingAnId_Succeed()
+    {
+        var events = new BaseEvent[]
+        {
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new ReasoningStartEvent { MessageId = "rm-1" },
+            new ReasoningMessageStartEvent { MessageId = "rm-1", Role = AGUIRoles.Reasoning },
+            new ReasoningMessageContentEvent { MessageId = "rm-1", Delta = "weighing it" },
+            new ReasoningMessageEndEvent { MessageId = "rm-1" },
+            new ReasoningEndEvent { MessageId = "rm-1" },
+            new RunFinishedEvent { ThreadId = "t1", RunId = "r1" },
+        };
+
+        var result = await ProcessEventsAsync(events);
+        Assert.Contains(result, u => u.RawRepresentation is ReasoningMessageContentEvent);
+    }
+
+    // A closed reasoning message may be reopened — closing drops only the OPEN flag, not
+    // the recorded owner — and the reopened one is bracketed again from scratch.
+    [Fact]
+    public async Task Reasoning_ReopenedAfterEnd_Succeeds()
+    {
+        var events = new BaseEvent[]
+        {
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new ReasoningMessageStartEvent { MessageId = "rm-1", Role = AGUIRoles.Reasoning },
+            new ReasoningMessageEndEvent { MessageId = "rm-1" },
+            new ReasoningMessageStartEvent { MessageId = "rm-1", Role = AGUIRoles.Reasoning },
+            new ReasoningMessageContentEvent { MessageId = "rm-1", Delta = "more" },
+            new ReasoningMessageEndEvent { MessageId = "rm-1" },
+            new RunFinishedEvent { ThreadId = "t1", RunId = "r1" },
+        };
+
+        await ProcessEventsAsync(events);
+    }
+
+    // Per-run state: a reasoning message left open by a run that ERRORED does not block the
+    // run that restarts the stream.
+    [Fact]
+    public async Task Reasoning_OpenMessageDoesNotSurviveARunError()
+    {
+        var events = new BaseEvent[]
+        {
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new ReasoningMessageStartEvent { MessageId = "rm-1", Role = AGUIRoles.Reasoning },
+            new RunErrorEvent { Message = "boom" },
+            new RunStartedEvent { ThreadId = "t1", RunId = "r2" },
+            new ReasoningMessageStartEvent { MessageId = "rm-1", Role = AGUIRoles.Reasoning },
+            new ReasoningMessageEndEvent { MessageId = "rm-1" },
+            new RunFinishedEvent { ThreadId = "t1", RunId = "r2" },
+        };
+
+        await ProcessEventsAsync(events);
+    }
+
+    // ────────────────────────────────────────────────
     // Helpers — process events through EventStreamConverter.AsChatResponseUpdates
     // ────────────────────────────────────────────────
 
@@ -3050,21 +3531,40 @@ public sealed class ProtocolRuleTest
         Assert.Equal("s2", idless.AdditionalProperties?[EventStreamConverter.AGUISubagentRunIdKey]);
     }
 
-    private static async Task<List<ChatResponseUpdate>> ProcessEventsAsync(BaseEvent[] events)
+    private static async Task<List<ChatResponseUpdate>> ProcessEventsAsync(
+        BaseEvent[] events, string? requestThreadId = null)
     {
-        using var httpClient = CreateMockHttpClient(events);
-        var service = new AGUIHttpTransport(httpClient, "http://localhost/agent");
-        var input = new RunAgentInput { ThreadId = "t1", RunId = "r1" };
-
         var updates = new List<ChatResponseUpdate>();
 
-        await foreach (var update in EventStreamConverter.AsChatResponseUpdates(
-            service.SendAsync(input, CancellationToken.None), s_options).ConfigureAwait(false))
+        await foreach (var update in ProcessEventsLazyAsync(events, requestThreadId).ConfigureAwait(false))
         {
             updates.Add(update);
         }
 
         return updates;
+    }
+
+    /// <summary>
+    /// The same replay left lazy, for the tests that care about what reached the consumer
+    /// before a rule fired — or about what happens when the consumer stops reading.
+    /// </summary>
+    /// <remarks>
+    /// <paramref name="requestThreadId"/> is null by default, which is what the vast
+    /// majority of these tests want: they state a rule about the STREAM, and passing a
+    /// request thread would add a second rule to every one of them.
+    /// </remarks>
+    private static async IAsyncEnumerable<ChatResponseUpdate> ProcessEventsLazyAsync(
+        BaseEvent[] events, string? requestThreadId = null)
+    {
+        using var httpClient = CreateMockHttpClient(events);
+        var service = new AGUIHttpTransport(httpClient, "http://localhost/agent");
+        var input = new RunAgentInput { ThreadId = requestThreadId ?? "t1", RunId = "r1" };
+
+        await foreach (var update in EventStreamConverter.AsChatResponseUpdates(
+            service.SendAsync(input, CancellationToken.None), s_options, requestThreadId).ConfigureAwait(false))
+        {
+            yield return update;
+        }
     }
 
     private static HttpClient CreateMockHttpClient(BaseEvent[] events)

@@ -21,9 +21,24 @@ public sealed class AGUIChatClient : DelegatingChatClient
     /// </summary>
     /// <param name="options">The options that configure the transport and serialization.</param>
     public AGUIChatClient(AGUIChatClientOptions options)
-        : base(CreateInnerClient(GetTransport(options), CombineJsonSerializerOptions(options?.JsonSerializerOptions)))
+        : base(CreateInnerClient(
+            GetTransport(options),
+            CombineJsonSerializerOptions(options?.JsonSerializerOptions),
+            options?.MaxProtocolVersion))
     {
     }
+
+    /// <summary>
+    /// The protocol version this client declares on every <see cref="RunAgentInput"/> it
+    /// builds, and judges a producer's own declaration against.
+    /// </summary>
+    /// <remarks>
+    /// The protocol LINE, not the generated <c>PROTOCOL_VERSION</c> constant, which names
+    /// the spec revision the models were generated from and currently reads "draft": the
+    /// wire value names what the client speaks, and it has to be comparable. Mirrors the
+    /// TypeScript client's <c>WIRE_PROTOCOL_VERSION</c>.
+    /// </remarks>
+    public const string WireProtocolVersion = AGUIProtocolVersion.Wire;
 
     /// <inheritdoc />
     public override Task<ChatResponse> GetResponseAsync(
@@ -166,11 +181,12 @@ public sealed class AGUIChatClient : DelegatingChatClient
 
     private static FunctionInvokingChatClient CreateInnerClient(
         IAGUITransport transport,
-        JsonSerializerOptions jsonSerializerOptions)
+        JsonSerializerOptions jsonSerializerOptions,
+        string? maxProtocolVersion)
     {
         ArgumentNullThrowHelper.ThrowIfNull(transport);
 
-        var handler = new AGUIChatClientHandler(transport, jsonSerializerOptions);
+        var handler = new AGUIChatClientHandler(transport, jsonSerializerOptions, maxProtocolVersion);
         return new FunctionInvokingChatClient(handler);
     }
 
@@ -206,13 +222,32 @@ public sealed class AGUIChatClient : DelegatingChatClient
     {
         private readonly IAGUITransport _transport;
         private readonly JsonSerializerOptions _jsonSerializerOptions;
+        private readonly string? _maxProtocolVersion;
+
+        /// <summary>
+        /// The interrupts the last <c>RUN_FINISHED</c> on each thread left open, so the
+        /// next input's <c>resume</c> list can be held to them before anything is sent.
+        /// </summary>
+        /// <remarks>
+        /// The minimum state the consumer's coverage rule needs: "the consumer holds the
+        /// interrupts the closing RUN_FINISHED delivered and it assembles the resume list,
+        /// so it is the one participant that can always tell whether the list is complete"
+        /// (interrupt-resume.mdx). Keyed by thread because a client instance serves every
+        /// conversation its caller opens, and one thread's open interrupts say nothing
+        /// about another's. Replaced wholesale by each run's terminal: a run that finishes
+        /// without an interrupt outcome leaves the thread with nothing pending.
+        /// </remarks>
+        private readonly Dictionary<string, IReadOnlyList<AGUIInterrupt>> _pendingInterrupts =
+            new(StringComparer.Ordinal);
 
         public AGUIChatClientHandler(
             IAGUITransport transport,
-            JsonSerializerOptions jsonSerializerOptions)
+            JsonSerializerOptions jsonSerializerOptions,
+            string? maxProtocolVersion)
         {
             _transport = transport;
             _jsonSerializerOptions = jsonSerializerOptions;
+            _maxProtocolVersion = maxProtocolVersion;
 
             Metadata = new ChatClientMetadata("ag-ui");
         }
@@ -242,7 +277,16 @@ public sealed class AGUIChatClient : DelegatingChatClient
                 ?? ExtractThreadIdFromOptions(options)
                 ?? AGUIIdGenerator.NewThreadId();
 
-            var input = BuildRunAgentInput(messagesList, options, providedInput, threadId, _jsonSerializerOptions);
+            var input = BuildRunAgentInput(
+                messagesList, options, providedInput, threadId, _jsonSerializerOptions, _maxProtocolVersion);
+
+            // Before anything goes on the wire: the resume list must cover every interrupt
+            // the run being continued left open, name no other, repeat none, and resolve no
+            // expired one. The specification puts all four on the consumer and asks for them
+            // "before the run starts — before anything is sent".
+            AGUIResumeRules.Validate(
+                _pendingInterrupts.TryGetValue(threadId, out var pending) ? pending : [],
+                input.Resume);
 
             // Build set of client tool names for distinguishing client vs server tool calls
             var clientToolSet = new HashSet<string>();
@@ -252,8 +296,25 @@ public sealed class AGUIChatClient : DelegatingChatClient
             }
 
             await foreach (var update in EventStreamConverter.AsChatResponseUpdates(
-                _transport.SendAsync(input, cancellationToken), _jsonSerializerOptions, cancellationToken).ConfigureAwait(false))
+                _transport.SendAsync(input, cancellationToken), _jsonSerializerOptions, input.ThreadId, cancellationToken).ConfigureAwait(false))
             {
+                // What this thread is waiting for, as of the run that just closed. An
+                // interrupt outcome leaves those interrupts pending; any other terminal
+                // leaves the thread pending nothing, so the record is replaced either way
+                // rather than accumulated.
+                if (update.RawRepresentation is RunFinishedEvent runFinished)
+                {
+                    if (runFinished.Outcome is RunFinishedInterruptOutcome interruptOutcome
+                        && interruptOutcome.Interrupts is { Count: > 0 })
+                    {
+                        _pendingInterrupts[input.ThreadId] = [.. interruptOutcome.Interrupts];
+                    }
+                    else
+                    {
+                        _pendingInterrupts.Remove(input.ThreadId);
+                    }
+                }
+
                 // Add agui_thread_id to RunStarted updates
                 if (update.RawRepresentation is RunStartedEvent)
                 {
@@ -321,13 +382,21 @@ public sealed class AGUIChatClient : DelegatingChatClient
             ChatOptions? options,
             RunAgentInput? providedInput,
             string threadId,
-            JsonSerializerOptions jsonSerializerOptions)
+            JsonSerializerOptions jsonSerializerOptions,
+            string? maxProtocolVersion)
         {
             var input = new RunAgentInput
             {
                 ThreadId = threadId,
                 RunId = string.IsNullOrEmpty(providedInput?.RunId) ? AGUIIdGenerator.NewRunId() : providedInput!.RunId,
                 Messages = messagesList.AsAGUIMessages(jsonSerializerOptions).ToList(),
+                // "A consumer implementing this version MUST declare the version it speaks
+                // here, unless it knows its peer predates the field" (run-input.mdx,
+                // protocolVersion). The gate is MaxProtocolVersion; absent means a current
+                // peer and the declaration goes out.
+                ProtocolVersion = AGUIProtocolVersion.ShouldDeclare(maxProtocolVersion)
+                    ? AGUIProtocolVersion.Wire
+                    : null,
             };
 
             // Tracks whether the caller hand-supplied Resume via RawRepresentationFactory.
