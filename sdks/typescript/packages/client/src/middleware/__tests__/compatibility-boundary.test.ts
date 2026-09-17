@@ -10,7 +10,9 @@ import { AbstractAgent } from "@/agent";
 
 class MemoryAgent extends AbstractAgent {
   constructor(private events: BaseEvent[]) {
-    super({});
+    // The scripted streams open their run on "t1"; every run on a stream
+    // carries the input's threadId (run-input.mdx, "Identity").
+    super({ threadId: "t1" });
   }
   run(_input: RunAgentInput): Observable<BaseEvent> {
     return of(...this.events);
@@ -283,7 +285,10 @@ describe("the boundary on the connect/subscribe path", () => {
         );
       }
     }
-    const agent = new ConnectingAgent({});
+    // Same reason as the run-path agent above: the connected stream opens its
+    // run on "t1", and the connect pipeline verifies identity exactly as the
+    // run pipeline does.
+    const agent = new ConnectingAgent({ threadId: "t1" });
     const seen: BaseEvent[] = [];
     agent.subscribe({
       onEvent: ({ event }) => {

@@ -16,6 +16,7 @@ conformant-run-is-quiet.json
 content-without-start-fatal.json
 current-peer-declares-protocol-version.json
 custom-closes-chunk-stream-fatal.json
+duplicate-interrupt-id-fatal.json
 encrypted-value-unknown-entity-tolerated.json
 era-0-0-39-flattens-content.json
 era-0-0-45-thinking-translated.json
@@ -49,6 +50,9 @@ run-error-then-new-run-continues.json
 run-finished-cancelled-outcome-accepted.json
 run-finished-interrupt-outcome-accepted.json
 run-finished-with-active-subagent-fatal.json
+run-finished-wrong-run-id-fatal.json
+run-finished-wrong-thread-id-fatal.json
+second-run-on-another-thread-fatal.json
 state-delta-applies.json
 state-delta-unappliable-warns-and-keeps.json
 state-delta-unknown-op-dropped.json
@@ -66,6 +70,7 @@ tool-call-triad-assembles.json
 tool-result-file-source-passes-through.json
 tool-result-parts-mint-tool-message.json
 triad-assembles-message.json
+truncated-stream-fails-the-run.json
 two-sequential-runs-accumulate.json
 unknown-enum-value-role-fatal.json
 unknown-event-dropped.json

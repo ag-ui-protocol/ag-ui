@@ -169,7 +169,20 @@ async function replay(fixture: StreamFixture): Promise<ReplayResult> {
       return pinned ?? super.maxProtocolVersion;
     }
   }
-  const agent = new FixtureAgent({ url });
+  // The thread the replay ASKS about is the one the fixture's producer answers
+  // about. `run-input.mdx` obliges every run on a stream to carry the input's
+  // threadId on its boundary events, so a replay that kept the agent's own
+  // random threadId would be feeding every fixture a producer talking about
+  // someone else's conversation — a violation the fixtures never meant to
+  // express, and one the client now rejects. Fixtures whose stream opens no run
+  // (the empty stream, the first-event violations) keep the default.
+  const declaredThreadId = fixture.stream.find(
+    (event) => event.type === "RUN_STARTED" && typeof event.threadId === "string",
+  )?.threadId as string | undefined;
+  const agent = new FixtureAgent({
+    url,
+    ...(declaredThreadId !== undefined && { threadId: declaredThreadId }),
+  });
   // A producer reporting its own failure is a well-formed stream, so it does
   // not reject the run — it arrives as an event, and this is where a client
   // observes it.

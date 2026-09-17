@@ -144,8 +144,8 @@ describe("verifyEvents tool calls", () => {
     } as ToolCallEndEvent);
     source$.next({
       type: EventType.RUN_FINISHED,
-      threadId: "test",
-      runId: "test",
+      threadId: "test-thread-id",
+      runId: "test-run-id",
     } as RunFinishedEvent);
 
     // Complete the source
@@ -205,8 +205,8 @@ describe("verifyEvents tool calls", () => {
     } as ToolCallEndEvent);
     source$.next({
       type: EventType.RUN_FINISHED,
-      threadId: "test",
-      runId: "test",
+      threadId: "test-thread-id",
+      runId: "test-run-id",
     } as RunFinishedEvent);
 
     // Complete the source
@@ -261,8 +261,8 @@ describe("verifyEvents tool calls", () => {
     } as ToolCallEndEvent);
     source$.next({
       type: EventType.RUN_FINISHED,
-      threadId: "test",
-      runId: "test",
+      threadId: "test-thread-id",
+      runId: "test-run-id",
     } as RunFinishedEvent);
 
     // Complete the source
@@ -319,8 +319,8 @@ describe("verifyEvents tool calls", () => {
     } as ToolCallEndEvent);
     source$.next({
       type: EventType.RUN_FINISHED,
-      threadId: "test",
-      runId: "test",
+      threadId: "test-thread-id",
+      runId: "test-run-id",
     } as RunFinishedEvent);
 
     // Complete the source
@@ -374,8 +374,8 @@ describe("verifyEvents tool calls", () => {
     } as ToolCallEndEvent);
     source$.next({
       type: EventType.RUN_FINISHED,
-      threadId: "test",
-      runId: "test",
+      threadId: "test-thread-id",
+      runId: "test-run-id",
     } as RunFinishedEvent);
 
     // Complete the source
@@ -429,8 +429,8 @@ describe("verifyEvents tool calls", () => {
     } as ToolCallEndEvent);
     source$.next({
       type: EventType.RUN_FINISHED,
-      threadId: "test",
-      runId: "test",
+      threadId: "test-thread-id",
+      runId: "test-run-id",
     } as RunFinishedEvent);
 
     // Complete the source
@@ -488,8 +488,8 @@ describe("verifyEvents tool calls", () => {
     } as ToolCallEndEvent);
     source$.next({
       type: EventType.RUN_FINISHED,
-      threadId: "test",
-      runId: "test",
+      threadId: "test-thread-id",
+      runId: "test-run-id",
     } as RunFinishedEvent);
 
     // Complete the source
@@ -558,8 +558,8 @@ describe("verifyEvents tool calls", () => {
     } as ToolCallEndEvent);
     source$.next({
       type: EventType.RUN_FINISHED,
-      threadId: "test",
-      runId: "test",
+      threadId: "test-thread-id",
+      runId: "test-run-id",
     } as RunFinishedEvent);
 
     // Complete the source
@@ -630,8 +630,8 @@ describe("verifyEvents tool calls", () => {
 
     source$.next({
       type: EventType.RUN_FINISHED,
-      threadId: "test",
-      runId: "test",
+      threadId: "test-thread-id",
+      runId: "test-run-id",
     } as RunFinishedEvent);
 
     // Complete the source
@@ -686,8 +686,8 @@ describe("verifyEvents tool calls", () => {
     } as ToolCallEndEvent);
     source$.next({
       type: EventType.RUN_FINISHED,
-      threadId: "test",
-      runId: "test",
+      threadId: "test-thread-id",
+      runId: "test-run-id",
     } as RunFinishedEvent);
 
     // Complete the source

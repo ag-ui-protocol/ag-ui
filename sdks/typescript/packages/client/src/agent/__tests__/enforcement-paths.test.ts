@@ -97,7 +97,7 @@ afterEach(() => {
 
 async function runThroughHttpAgent(source: Observable<unknown>) {
   (runHttpRequest as Mock).mockReturnValue(source as never);
-  const agent = new HttpAgent({ url: "https://example.test/agent" });
+  const agent = new HttpAgent({ url: "https://example.test/agent", threadId: "t1" });
   const observer = new ObservingMiddleware();
   agent.use(observer);
   const subscriberSaw: string[] = [];
@@ -130,7 +130,7 @@ describe("the boundary on the streaming (SSE) path", () => {
         { type: EventType.STEP_STARTED, stepName: 42 },
       ]),
     );
-    const agent = new HttpAgent({ url: "https://example.test/agent" });
+    const agent = new HttpAgent({ url: "https://example.test/agent", threadId: "t1" });
     await expect(agent.runAgent({ runId: "r1" })).rejects.toThrow();
   });
 });
@@ -173,7 +173,7 @@ describe("the boundary on the binary (protobuf) path", () => {
         { type: EventType.RUN_FINISHED, ...run },
       ]) as never,
     );
-    const agent = new HttpAgent({ url: "https://example.test/agent" });
+    const agent = new HttpAgent({ url: "https://example.test/agent", threadId: "t1" });
     agent.use(new DecoratingMiddleware());
     const seen: BaseEvent[] = [];
     agent.subscribe({
@@ -205,7 +205,7 @@ describe("the boundary on the binary (protobuf) path", () => {
         asyncScheduler,
       ),
     );
-    const agent = new HttpAgent({ url: "https://example.test/agent" });
+    const agent = new HttpAgent({ url: "https://example.test/agent", threadId: "t1" });
     await expect(agent.runAgent({ runId: "r1" })).rejects.toThrow();
   });
 });

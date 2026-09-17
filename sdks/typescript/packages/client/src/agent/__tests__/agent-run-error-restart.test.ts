@@ -25,7 +25,9 @@ import type { RunAgentResult } from "../agent";
 /** Replays scripted frames through the real SSE transport, as the wire does. */
 class WireAgent extends AbstractAgent {
   constructor(private frames: unknown[]) {
-    super();
+    // The scripted streams open their run on "t"; every run on a stream
+    // carries the input's threadId (run-input.mdx, "Identity").
+    super({ threadId: "t" });
     this.debug = false;
   }
   run(_input: RunAgentInput): Observable<BaseEvent> {

@@ -39,7 +39,9 @@
       "type": "RUN_FINISHED",
       "threadId": "t-run-error-restart",
       "runId": "run-error-restart-r-2",
-      "outcome": { "type": "success" }
+      "outcome": {
+        "type": "success"
+      }
     }
   ],
   "expect": {
@@ -69,15 +71,14 @@
   },
   "expectOverrides": {
     "dotnet": {
-      "intentional": "The .NET converter forbids any event after RUN_ERROR — its `runError` latch throws for the next event whatever it is, with no RUN_STARTED exemption — where TypeScript resumes on RUN_STARTED and reduces the second run normally. A cross-SDK divergence, recorded here rather than resolved: closing it means giving EventStreamConverter the same reset-on-RUN_STARTED the TypeScript verifier has. The second run therefore never happens on this lane, so `messages`, `messageCount`, `eventTypes` and `eventPaths` are all restated for what it does deliver: the first RUN_STARTED and the RUN_ERROR, and no messages at all.",
-      "outcome": "failed",
-      "errorContains": "The run has already errored with 'RUN_ERROR'",
-      "eventTypes": ["RUN_STARTED", "RUN_ERROR"],
-      "eventPaths": {
-        "0.runId": "run-error-restart-r-1"
-      },
-      "messageCount": 0,
-      "messages": []
+      "intentional": "The .NET client's event surface is ChatResponseUpdate.RawRepresentation, and the builder-only events yield no update: TEXT_MESSAGE_START and TEXT_MESSAGE_END open and close the message being assembled and hand a consumer nothing, so they cannot appear in a delivered list however faithfully the client processed them. `eventTypes` is restated without them; everything else the base asserts — the restart itself, the second run's runId at the same index, the message it produced, the reported run failure and the silence — holds unchanged.",
+      "eventTypes": [
+        "RUN_STARTED",
+        "RUN_ERROR",
+        "RUN_STARTED",
+        "TEXT_MESSAGE_CONTENT",
+        "RUN_FINISHED"
+      ]
     }
   }
 }

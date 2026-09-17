@@ -36,24 +36,5 @@
   "expect": {
     "outcome": "failed",
     "errorContains": "No active reasoning message found with ID 'm-reasoning-discipline-1'"
-  },
-  "expectOverrides": {
-    "dotnet": {
-      "intentional": "The .NET client has no reasoning open/close verification: REASONING_MESSAGE_CONTENT yields a reasoning-content update whether or not an opener preceded it, so the stream is accepted and an extra message survives. `errorContains` is deliberately the empty string, which asserts nothing — it LIFTS the base's requirement rather than restating it, because this lane produces no rejection to match against; the outcome and message assertions below are what it is actually held to. Microsoft.Extensions.AI carries reasoning as TextReasoningContent, which AsAGUIMessages does not project into `content`. Closing this divergence means giving the .NET client the same bracketing check and deleting this override.",
-      "outcome": "completed",
-      "errorContains": "",
-      "messageCount": 2,
-      "messages": [
-        {
-          "id": "m-reasoning-discipline-1",
-          "role": "assistant"
-        },
-        {
-          "id": "m-reasoning-discipline-2",
-          "role": "assistant",
-          "content": "the answer"
-        }
-      ]
-    }
   }
 }

@@ -1,0 +1,24 @@
+{
+  "name": "run-finished-wrong-thread-id-fatal",
+  "area": "lifecycle",
+  "description": "a RUN_FINISHED naming a different threadId than the run's RUN_STARTED is fatal — both boundary events carry the input's threadId, so a close about another conversation cannot close this run",
+  "specPage": "/spec/draft/basic/run-input",
+  "kill": "stop recording the open run's threadId at RUN_STARTED, or stop comparing RUN_FINISHED.threadId against it, and the run closes under a conversation nobody asked about",
+  "stream": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-thread-id-mismatch",
+      "runId": "r-thread-id-mismatch"
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "t-thread-id-mismatch-other",
+      "runId": "r-thread-id-mismatch",
+      "outcome": { "type": "success" }
+    }
+  ],
+  "expect": {
+    "outcome": "failed",
+    "errorContains": "carry the input's threadId"
+  }
+}

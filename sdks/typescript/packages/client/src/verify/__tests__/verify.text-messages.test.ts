@@ -143,8 +143,8 @@ describe("verifyEvents text messages", () => {
     } as TextMessageEndEvent);
     source$.next({
       type: EventType.RUN_FINISHED,
-      threadId: "test",
-      runId: "test",
+      threadId: "test-thread-id",
+      runId: "test-run-id",
     } as RunFinishedEvent);
 
     // Complete the source
@@ -203,8 +203,8 @@ describe("verifyEvents text messages", () => {
     } as TextMessageEndEvent);
     source$.next({
       type: EventType.RUN_FINISHED,
-      threadId: "test",
-      runId: "test",
+      threadId: "test-thread-id",
+      runId: "test-run-id",
     } as RunFinishedEvent);
 
     // Complete the source
@@ -258,8 +258,8 @@ describe("verifyEvents text messages", () => {
     } as TextMessageEndEvent);
     source$.next({
       type: EventType.RUN_FINISHED,
-      threadId: "test",
-      runId: "test",
+      threadId: "test-thread-id",
+      runId: "test-run-id",
     } as RunFinishedEvent);
 
     // Complete the source
@@ -315,8 +315,8 @@ describe("verifyEvents text messages", () => {
     } as TextMessageEndEvent);
     source$.next({
       type: EventType.RUN_FINISHED,
-      threadId: "test",
-      runId: "test",
+      threadId: "test-thread-id",
+      runId: "test-run-id",
     } as RunFinishedEvent);
 
     // Complete the source
@@ -369,8 +369,8 @@ describe("verifyEvents text messages", () => {
     } as TextMessageEndEvent);
     source$.next({
       type: EventType.RUN_FINISHED,
-      threadId: "test",
-      runId: "test",
+      threadId: "test-thread-id",
+      runId: "test-run-id",
     } as RunFinishedEvent);
 
     // Complete the source
@@ -423,8 +423,8 @@ describe("verifyEvents text messages", () => {
     } as TextMessageEndEvent);
     source$.next({
       type: EventType.RUN_FINISHED,
-      threadId: "test",
-      runId: "test",
+      threadId: "test-thread-id",
+      runId: "test-run-id",
     } as RunFinishedEvent);
 
     // Complete the source
@@ -481,8 +481,8 @@ describe("verifyEvents text messages", () => {
     } as TextMessageEndEvent);
     source$.next({
       type: EventType.RUN_FINISHED,
-      threadId: "test",
-      runId: "test",
+      threadId: "test-thread-id",
+      runId: "test-run-id",
     } as RunFinishedEvent);
 
     // Complete the source
@@ -551,8 +551,8 @@ describe("verifyEvents text messages", () => {
     } as TextMessageEndEvent);
     source$.next({
       type: EventType.RUN_FINISHED,
-      threadId: "test",
-      runId: "test",
+      threadId: "test-thread-id",
+      runId: "test-run-id",
     } as RunFinishedEvent);
 
     // Complete the source
@@ -621,8 +621,8 @@ describe("verifyEvents text messages", () => {
 
     source$.next({
       type: EventType.RUN_FINISHED,
-      threadId: "test",
-      runId: "test",
+      threadId: "test-thread-id",
+      runId: "test-run-id",
     } as RunFinishedEvent);
 
     // Complete the source
@@ -676,8 +676,8 @@ describe("verifyEvents text messages", () => {
     } as TextMessageEndEvent);
     source$.next({
       type: EventType.RUN_FINISHED,
-      threadId: "test",
-      runId: "test",
+      threadId: "test-thread-id",
+      runId: "test-run-id",
     } as RunFinishedEvent);
 
     // Complete the source

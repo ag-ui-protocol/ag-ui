@@ -59,8 +59,24 @@ class TestAgent extends AbstractAgent {
     this.eventsToEmit = events;
   }
 
-  run(_input: RunAgentInput): Observable<BaseEvent> {
-    return of(...this.eventsToEmit);
+  run(input: RunAgentInput): Observable<BaseEvent> {
+    // Every test here scripts the events whose SUBSCRIBER callbacks it is about,
+    // not a complete run — most stop after a RUN_STARTED, several send no
+    // lifecycle event at all. A stream that ends without a terminal event is
+    // truncated, and the client now fails the run rather than reporting success
+    // (`transports/index.mdx`), so the scripted events are closed here instead
+    // of retrofitting a RUN_FINISHED onto two dozen test bodies that say nothing
+    // about run lifecycle. A script that closes its own run is left alone.
+    const closesItself = this.eventsToEmit.some(
+      (event) =>
+        event.type === EventType.RUN_FINISHED || event.type === EventType.RUN_ERROR,
+    );
+    if (closesItself) return of(...this.eventsToEmit);
+    return of(...this.eventsToEmit, {
+      type: EventType.RUN_FINISHED,
+      threadId: input.threadId,
+      runId: input.runId,
+    } as BaseEvent);
   }
 }
 
@@ -667,7 +683,10 @@ describe("AgentSubscriber", () => {
 
       await agent.runAgent({});
 
-      expect(genericSubscriber.onEvent).toHaveBeenCalledTimes(2);
+      // Three, not two: the run's own RUN_FINISHED is an event like any other,
+      // and TestAgent.run appends one because a stream that never closes its run
+      // is truncated (see the comment there).
+      expect(genericSubscriber.onEvent).toHaveBeenCalledTimes(3);
       expect(genericSubscriber.onEvent).toHaveBeenNthCalledWith(
         1,
         expect.objectContaining({

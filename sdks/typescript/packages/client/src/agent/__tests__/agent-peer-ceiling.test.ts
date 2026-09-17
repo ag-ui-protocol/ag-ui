@@ -4,13 +4,34 @@
  * Constructor version gates run before subclass instance fields exist.
  */
 import { AbstractAgent } from "@/agent";
-import { BaseEvent, Message, RunAgentInput } from "@ag-ui/core";
+import { BaseEvent, EventType, Message, RunAgentInput } from "@ag-ui/core";
 import { Observable } from "rxjs";
 import packageJson from "../../../package.json";
 
+/**
+ * Emits the smallest CONFORMING run: nothing but the two boundary events.
+ *
+ * It used to emit nothing at all, which is now a truncated stream and fails the
+ * run — a stream that ends without a terminal event must not be reported as
+ * having succeeded (`transports/index.mdx`). Nothing here is about the stream:
+ * these tests are about the ceiling gates and the INPUT-direction shims they
+ * install, so the run just has to complete.
+ */
 abstract class SilentAgent extends AbstractAgent {
-  run(_input: RunAgentInput): Observable<BaseEvent> {
-    return new Observable<BaseEvent>((subscriber) => subscriber.complete());
+  run(input: RunAgentInput): Observable<BaseEvent> {
+    return new Observable<BaseEvent>((subscriber) => {
+      subscriber.next({
+        type: EventType.RUN_STARTED,
+        threadId: input.threadId,
+        runId: input.runId,
+      } as BaseEvent);
+      subscriber.next({
+        type: EventType.RUN_FINISHED,
+        threadId: input.threadId,
+        runId: input.runId,
+      } as BaseEvent);
+      subscriber.complete();
+    });
   }
 }
 

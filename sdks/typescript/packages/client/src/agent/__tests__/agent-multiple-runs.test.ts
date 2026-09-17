@@ -56,7 +56,7 @@ describe("AbstractAgent multiple runs", () => {
       {
         type: EventType.RUN_FINISHED,
         threadId: "test-thread",
-        runId: "test-run",
+        runId: "run-1",
       } as RunFinishedEvent,
     ];
 
@@ -94,7 +94,7 @@ describe("AbstractAgent multiple runs", () => {
       {
         type: EventType.RUN_FINISHED,
         threadId: "test-thread",
-        runId: "test-run",
+        runId: "run-2",
       } as RunFinishedEvent,
     ];
 
@@ -144,7 +144,7 @@ describe("AbstractAgent multiple runs", () => {
         {
           type: EventType.RUN_FINISHED,
           threadId: "test-thread",
-          runId: "test-run",
+          runId: `run-${i + 1}`,
         } as RunFinishedEvent,
       ];
 
@@ -198,7 +198,7 @@ describe("AbstractAgent multiple runs", () => {
       {
         type: EventType.RUN_FINISHED,
         threadId: "test-thread",
-        runId: "test-run",
+        runId: "run-1",
       } as RunFinishedEvent,
       // Second run
       {
@@ -223,7 +223,7 @@ describe("AbstractAgent multiple runs", () => {
       {
         type: EventType.RUN_FINISHED,
         threadId: "test-thread",
-        runId: "test-run",
+        runId: "run-2",
       } as RunFinishedEvent,
     ];
 
@@ -280,7 +280,7 @@ describe("AbstractAgent multiple runs", () => {
       {
         type: EventType.RUN_FINISHED,
         threadId: "test-thread",
-        runId: "test-run",
+        runId: "run-1",
       } as RunFinishedEvent,
     ];
 
@@ -319,7 +319,7 @@ describe("AbstractAgent multiple runs", () => {
       {
         type: EventType.RUN_FINISHED,
         threadId: "test-thread",
-        runId: "test-run",
+        runId: "run-1",
       } as RunFinishedEvent,
     ];
 
@@ -352,7 +352,7 @@ describe("AbstractAgent multiple runs", () => {
       {
         type: EventType.RUN_FINISHED,
         threadId: "test-thread",
-        runId: "test-run",
+        runId: "run-2",
       } as RunFinishedEvent,
     ];
 

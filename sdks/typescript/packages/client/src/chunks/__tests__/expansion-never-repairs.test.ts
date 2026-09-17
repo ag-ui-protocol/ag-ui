@@ -30,7 +30,10 @@ function scripted(stream: Record<string, unknown>[], pinned?: string) {
       return of(...(stream as unknown as BaseEvent[]));
     }
   }
-  return new ScriptedHttpAgent({ url: "http://x.test/agent" });
+  // threadId "t": the scripted stream opens its run on that thread, and a
+  // producer answering about a thread the consumer did not ask about is now a
+  // protocol violation (run-input.mdx, "Identity").
+  return new ScriptedHttpAgent({ url: "http://x.test/agent", threadId: "t" });
 }
 
 /**

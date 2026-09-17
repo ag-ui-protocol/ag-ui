@@ -3,8 +3,24 @@ import { Observable, throwError, of } from "rxjs";
 import { mergeMap } from "rxjs/operators";
 import { type DebugLoggerInput, resolveDebugLogger } from "@/debug-logger";
 
+/** What the verifier knows about the run it is verifying, beyond the events. */
+export interface VerifyEventsOptions {
+  /**
+   * The `threadId` the consumer asked about, when the caller knows it.
+   *
+   * `run-input.mdx`: "Every run on the stream carries the input's `threadId` on
+   * its boundary events". Without it the verifier can only hold a stream to
+   * INTERNAL agreement — every run naming the same thread — and a producer
+   * answering about a conversation nobody asked about stays invisible. The
+   * pipelines in `agent.ts` do know the input and pass it; `verifyEvents()`
+   * called bare (unit tests, the transport-parity tests, in-process producers)
+   * keeps the internal-agreement check only.
+   */
+  threadId?: string;
+}
+
 export const verifyEvents =
-  (debugLogger?: DebugLoggerInput) =>
+  (debugLogger?: DebugLoggerInput, options?: VerifyEventsOptions) =>
   (source$: Observable<BaseEvent>): Observable<BaseEvent> => {
     const log = resolveDebugLogger(debugLogger);
     // Declare variables in closure to maintain state across events.
@@ -101,6 +117,27 @@ export const verifyEvents =
     // valid. Cleared per run, like every other map here.
     const closedSubagents = new Set<string>();
     let runStarted = false; // Track if a run has started
+
+    // Identity agreement (`run-input.mdx`: "Every run on the stream carries the
+    // input's threadId on its boundary events — RUN_STARTED and RUN_FINISHED,
+    // the two that carry identity — and each run's two boundary events MUST
+    // agree on their runId").
+    //
+    // STREAM-scoped, deliberately not reset with the run: the thread is the
+    // conversation the whole stream belongs to, so a second run naming a
+    // different thread is the violation, not a new baseline.
+    //
+    // The first authority wins: the input's threadId when the caller knows it,
+    // otherwise the first RUN_STARTED. Seeding it from the input is what makes
+    // the very FIRST RUN_STARTED answerable — without it a producer could
+    // answer about a conversation nobody asked about and the stream would still
+    // be internally consistent. The .NET client seeds the same way.
+    let streamThreadId: string | undefined = options?.threadId;
+    // RUN-scoped: the identity of the run currently open, cleared by whichever
+    // terminal event closes it. `undefined` means no run is open, which is why
+    // every comparison below is guarded on it rather than on `runStarted`.
+    let openRunId: string | undefined;
+    let openRunThreadId: string | undefined;
 
     // Function to reset state for a new run
     const resetRunState = () => {
@@ -357,6 +394,15 @@ export const verifyEvents =
             outcome?: { type?: string; interrupts?: Array<{ id?: string; subagentRunId?: unknown }> } | null;
           }).outcome;
           if (outcome?.type === "interrupt" && Array.isArray(outcome.interrupts)) {
+            // `interrupt-resume.mdx`: "Each interrupt's `id` MUST be unique
+            // within the run; a resume entry answers it by this id." Duplicates
+            // are not a cosmetic redundancy — the coverage check that makes a
+            // resuming input safe (agent.ts, onInitialize) asks whether every
+            // pending id is named by a resume entry, and it asks a Set. Two
+            // interrupts under one id therefore need only ONE answer to look
+            // fully answered, and the second question is silently dropped: the
+            // exact silent skip the coverage rule exists to prevent.
+            const interruptIds = new Set<string>();
             for (const interrupt of outcome.interrupts) {
               if (interrupt && interrupt.subagentRunId === null) {
                 return throwError(
@@ -365,6 +411,17 @@ export const verifyEvents =
                       `Cannot send 'RUN_FINISHED' with an interrupt (id '${interrupt.id}') carrying 'subagentRunId: null'. The field is optional — omit it entirely.`,
                     ),
                 );
+              }
+              if (interrupt && typeof interrupt.id === "string") {
+                if (interruptIds.has(interrupt.id)) {
+                  return throwError(
+                    () =>
+                      new AGUIError(
+                        `Cannot send 'RUN_FINISHED' with two interrupts carrying the id '${interrupt.id}'. An interrupt id is unique within the run: a resume entry answers an interrupt by it.`,
+                      ),
+                  );
+                }
+                interruptIds.add(interrupt.id);
               }
             }
           }
@@ -922,6 +979,27 @@ export const verifyEvents =
           case EventType.RUN_STARTED: {
             // We've already validated this above
             runStarted = true;
+
+            // Identity, recorded for this run and checked against the stream's
+            // thread. `typeof` guards rather than a cast: both fields are
+            // schema-required and enforcement runs ahead of this operator on
+            // every pipeline, but verifyEvents is also composed bare in tests
+            // and by in-process producers that never meet a schema.
+            const startedThreadId = (event as { threadId?: unknown }).threadId;
+            const startedRunId = (event as { runId?: unknown }).runId;
+            if (typeof startedThreadId === "string") {
+              if (streamThreadId !== undefined && startedThreadId !== streamThreadId) {
+                return throwError(
+                  () =>
+                    new AGUIError(
+                      `Cannot send 'RUN_STARTED' with threadId '${startedThreadId}': this stream belongs to thread '${streamThreadId}'. Every run on a stream carries the input's threadId.`,
+                    ),
+                );
+              }
+              streamThreadId = startedThreadId;
+              openRunThreadId = startedThreadId;
+            }
+            openRunId = typeof startedRunId === "string" ? startedRunId : undefined;
             // The input echo carries replayed history the reducer applies, so it
             // seeds ownership like a snapshot does (non-authoritatively — it is
             // history, not a rewrite). See seedOwnersFromMessages.
@@ -938,6 +1016,37 @@ export const verifyEvents =
           case EventType.RUN_FINISHED: {
             // Can't be the first event (already checked)
             // and can't happen after already being finished (already checked)
+
+            // Identity first: a boundary event naming a different run or a
+            // different thread is not a late or malformed close of THIS run,
+            // it is an event about something else entirely, and every check
+            // below reads state belonging to the run actually open.
+            const finishedRunId = (event as { runId?: unknown }).runId;
+            const finishedThreadId = (event as { threadId?: unknown }).threadId;
+            if (
+              openRunId !== undefined &&
+              typeof finishedRunId === "string" &&
+              finishedRunId !== openRunId
+            ) {
+              return throwError(
+                () =>
+                  new AGUIError(
+                    `Cannot send 'RUN_FINISHED' with runId '${finishedRunId}': the open run is '${openRunId}'. A run's two boundary events must agree on their runId.`,
+                  ),
+              );
+            }
+            if (
+              openRunThreadId !== undefined &&
+              typeof finishedThreadId === "string" &&
+              finishedThreadId !== openRunThreadId
+            ) {
+              return throwError(
+                () =>
+                  new AGUIError(
+                    `Cannot send 'RUN_FINISHED' with threadId '${finishedThreadId}': run '${openRunId ?? String(finishedRunId)}' was opened on thread '${openRunThreadId}'. A run's boundary events carry the input's threadId.`,
+                  ),
+              );
+            }
 
             // Check that all steps are finished before run ends
             if (anyStepsActive()) {
@@ -1011,12 +1120,51 @@ export const verifyEvents =
             }
 
             runFinished = true;
+            // The run is closed: nothing is open for a later boundary event to
+            // disagree with. The stream's thread stays on record.
+            openRunId = undefined;
+            openRunThreadId = undefined;
             return of(event);
           }
 
           case EventType.RUN_ERROR: {
-            // RUN_ERROR can happen at any time
+            // RUN_ERROR can happen at any time.
+            //
+            // It carries no identity in the schema — a failure ends whatever
+            // run is open — so these comparisons usually find nothing. They are
+            // here because the event objects are open: a producer MAY put ids
+            // on it, in-process producers hand this operator plain objects, and
+            // if the ids are there they must name the run being closed rather
+            // than some other one.
+            const erroredRunId = (event as { runId?: unknown }).runId;
+            const erroredThreadId = (event as { threadId?: unknown }).threadId;
+            if (
+              openRunId !== undefined &&
+              typeof erroredRunId === "string" &&
+              erroredRunId !== openRunId
+            ) {
+              return throwError(
+                () =>
+                  new AGUIError(
+                    `Cannot send 'RUN_ERROR' with runId '${erroredRunId}': the open run is '${openRunId}'. A run's two boundary events must agree on their runId.`,
+                  ),
+              );
+            }
+            if (
+              openRunThreadId !== undefined &&
+              typeof erroredThreadId === "string" &&
+              erroredThreadId !== openRunThreadId
+            ) {
+              return throwError(
+                () =>
+                  new AGUIError(
+                    `Cannot send 'RUN_ERROR' with threadId '${erroredThreadId}': run '${openRunId ?? String(erroredRunId)}' was opened on thread '${openRunThreadId}'. A run's boundary events carry the input's threadId.`,
+                  ),
+              );
+            }
             runError = true; // Set flag to prevent any further events
+            openRunId = undefined;
+            openRunThreadId = undefined;
             return of(event);
           }
 

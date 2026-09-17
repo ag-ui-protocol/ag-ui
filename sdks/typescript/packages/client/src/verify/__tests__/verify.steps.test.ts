@@ -172,8 +172,8 @@ describe("verifyEvents steps", () => {
     // Try to end the run with active steps
     source$.next({
       type: EventType.RUN_FINISHED,
-      threadId: "test",
-      runId: "test",
+      threadId: "test-thread-id",
+      runId: "test-run-id",
     } as RunFinishedEvent);
 
     // Complete the source and wait a bit for processing

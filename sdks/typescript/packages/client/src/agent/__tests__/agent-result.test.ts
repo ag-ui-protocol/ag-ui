@@ -79,6 +79,20 @@ class StreamingTestAgent extends AbstractAgent {
   }
 }
 
+/**
+ * The two boundary events a stream needs to be a complete run.
+ *
+ * A stream that ends without a terminal event is truncated, and the client
+ * refuses to report a truncated run as succeeded (`transports/index.mdx`), so
+ * the streams below close their run even where the rule under test is about
+ * something else entirely — message accumulation, mostly.
+ */
+const boundedRun = (threadId: string, events: BaseEvent[]): BaseEvent[] => [
+  { type: EventType.RUN_STARTED, threadId, runId: "test-run" } as RunStartedEvent,
+  ...events,
+  { type: EventType.RUN_FINISHED, threadId, runId: "test-run" } as RunFinishedEvent,
+];
+
 describe("Agent Result", () => {
   let agent: TestAgent;
 
@@ -105,12 +119,20 @@ describe("Agent Result", () => {
 
   describe("result handling", () => {
     it("should return undefined result when no result is set", async () => {
+      // A RUN_FINISHED carrying no result, rather than the lone RUN_STARTED this
+      // used to send: that stream never closed its run, and a truncated run is
+      // now a failure rather than a success with nothing in it.
       agent.setEventsToEmit([
         {
           type: EventType.RUN_STARTED,
           threadId: "test-thread",
           runId: "test-run",
         } as RunStartedEvent,
+        {
+          type: EventType.RUN_FINISHED,
+          threadId: "test-thread",
+          runId: "test-run",
+        } as RunFinishedEvent,
       ]);
 
       const result = await agent.runAgent();
@@ -304,12 +326,14 @@ describe("Agent Result", () => {
       // Include existing messages plus new one
       const allMessages = [...agent.messages, newMessage];
 
-      agent.setEventsToEmit([
-        {
-          type: EventType.MESSAGES_SNAPSHOT,
-          messages: allMessages,
-        } as MessagesSnapshotEvent,
-      ]);
+      agent.setEventsToEmit(
+        boundedRun("test-thread", [
+          {
+            type: EventType.MESSAGES_SNAPSHOT,
+            messages: allMessages,
+          } as MessagesSnapshotEvent,
+        ]),
+      );
 
       const result = await agent.runAgent();
 
@@ -320,12 +344,14 @@ describe("Agent Result", () => {
 
     it("should handle no new messages", async () => {
       // Keep same messages as initial
-      agent.setEventsToEmit([
-        {
-          type: EventType.MESSAGES_SNAPSHOT,
-          messages: agent.messages,
-        } as MessagesSnapshotEvent,
-      ]);
+      agent.setEventsToEmit(
+        boundedRun("test-thread", [
+          {
+            type: EventType.MESSAGES_SNAPSHOT,
+            messages: agent.messages,
+          } as MessagesSnapshotEvent,
+        ]),
+      );
 
       const result = await agent.runAgent();
 
@@ -399,12 +425,14 @@ describe("Agent Result", () => {
 
       const allMessages = [...agent.messages, ...newMessages];
 
-      agent.setEventsToEmit([
-        {
-          type: EventType.MESSAGES_SNAPSHOT,
-          messages: allMessages,
-        } as MessagesSnapshotEvent,
-      ]);
+      agent.setEventsToEmit(
+        boundedRun("test-thread", [
+          {
+            type: EventType.MESSAGES_SNAPSHOT,
+            messages: allMessages,
+          } as MessagesSnapshotEvent,
+        ]),
+      );
 
       const result = await agent.runAgent();
 
@@ -561,12 +589,14 @@ describe("Agent Result", () => {
 
       const allMessages = [...agent.messages, ...newMessages];
 
-      agent.setEventsToEmit([
-        {
-          type: EventType.MESSAGES_SNAPSHOT,
-          messages: allMessages,
-        } as MessagesSnapshotEvent,
-      ]);
+      agent.setEventsToEmit(
+        boundedRun("test-thread", [
+          {
+            type: EventType.MESSAGES_SNAPSHOT,
+            messages: allMessages,
+          } as MessagesSnapshotEvent,
+        ]),
+      );
 
       const result = await agent.runAgent();
 
@@ -614,12 +644,14 @@ describe("Agent Result", () => {
 
       const newMessages: Message[] = [{ id: "first-ever", role: "user", content: "First message" }];
 
-      emptyAgent.setEventsToEmit([
-        {
-          type: EventType.MESSAGES_SNAPSHOT,
-          messages: newMessages,
-        } as MessagesSnapshotEvent,
-      ]);
+      emptyAgent.setEventsToEmit(
+        boundedRun("empty-thread", [
+          {
+            type: EventType.MESSAGES_SNAPSHOT,
+            messages: newMessages,
+          } as MessagesSnapshotEvent,
+        ]),
+      );
 
       const result = await emptyAgent.runAgent();
 
@@ -637,12 +669,14 @@ describe("Agent Result", () => {
 
       const allMessages = [...agent.messages, messageWithSameId];
 
-      agent.setEventsToEmit([
-        {
-          type: EventType.MESSAGES_SNAPSHOT,
-          messages: allMessages,
-        } as MessagesSnapshotEvent,
-      ]);
+      agent.setEventsToEmit(
+        boundedRun("test-thread", [
+          {
+            type: EventType.MESSAGES_SNAPSHOT,
+            messages: allMessages,
+          } as MessagesSnapshotEvent,
+        ]),
+      );
 
       const result = await agent.runAgent();
 

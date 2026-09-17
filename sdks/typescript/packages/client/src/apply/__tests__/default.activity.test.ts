@@ -801,3 +801,50 @@ describe("REASONING_MESSAGE_* against an activity message's id", () => {
     expect(reasoning.content).toBe("thinking");
   });
 });
+
+describe("ACTIVITY_DELTA naming a message that does not exist", () => {
+  // `activity.mdx`: "A delta naming a message that does not exist, or one that
+  // is not an activity message, is skipped; the consumer SHOULD surface a
+  // warning, and MUST NOT fail the run." All three halves are asserted here —
+  // the warning, the survival of the run, and the absence of any message minted
+  // from the delta — because the skip was silent, and a silent skip is
+  // indistinguishable from a delta that was never sent.
+
+  const missingDelta = (events$: Subject<BaseEvent>) => {
+    events$.next({
+      type: EventType.ACTIVITY_DELTA,
+      messageId: "never-created",
+      activityType: "web_search",
+      patch: [{ op: "replace", path: "/found", value: 3 }],
+    });
+  };
+
+  it("warns, naming the message it could not find", async () => {
+    const warnings: string[] = [];
+    const warnSpy = vi
+      .spyOn(console, "warn")
+      .mockImplementation((...args: unknown[]) => warnings.push(args.map(String).join(" ")));
+    await emitAndCollect([], missingDelta);
+    warnSpy.mockRestore();
+
+    expect(warnings.some((warning) => warning.includes("ACTIVITY_DELTA"))).toBe(true);
+    expect(warnings.some((warning) => warning.includes("never-created"))).toBe(true);
+  });
+
+  it("invents no message from the delta, and does not fail the run", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const updates = await emitAndCollect(
+      [{ id: "m1", role: "assistant", content: "kept" } as Message],
+      missingDelta,
+    );
+    warnSpy.mockRestore();
+
+    const messages = updates[updates.length - 1]?.messages;
+    // No update carrying a new message: the only messages are the ones that
+    // were there before.
+    for (const update of updates) {
+      expect((update.messages ?? []).map((m) => m.id)).not.toContain("never-created");
+    }
+    expect((messages ?? []).map((m) => m.id)).not.toContain("never-created");
+  });
+});

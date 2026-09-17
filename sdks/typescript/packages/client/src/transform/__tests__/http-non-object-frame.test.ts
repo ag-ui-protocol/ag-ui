@@ -70,6 +70,9 @@ describe("a frame whose JSON is not an object", () => {
   for (const frame of ["null", "42", '"str"', "[]"]) {
     it(`fails the run rather than escaping the stream: ${frame}`, async () => {
       const agent = new HttpAgent({
+        // The scripted stream opens its run on "t-non-object"; every run on a
+        // stream carries the input's threadId (run-input.mdx, "Identity").
+        threadId: "t-non-object",
         url: "https://example.test/agent",
         fetch: sseFetch([START, frame, FINISH]) as never,
       });

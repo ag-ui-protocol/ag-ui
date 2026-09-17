@@ -23,7 +23,9 @@ class ConcurrentTestAgent extends AbstractAgent {
   public currentEventIndex = 0;
 
   constructor() {
-    super();
+    // The scripted streams open their run on "test"; every run on a stream
+    // carries the input's threadId (run-input.mdx, "Identity").
+    super({ threadId: "test" });
     this.debug = false;
   }
 

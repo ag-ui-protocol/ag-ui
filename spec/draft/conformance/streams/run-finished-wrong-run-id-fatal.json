@@ -1,0 +1,24 @@
+{
+  "name": "run-finished-wrong-run-id-fatal",
+  "area": "lifecycle",
+  "description": "a RUN_FINISHED naming a different runId than the RUN_STARTED it would close is fatal — a run's two boundary events carry one identity, and an outcome about another run is not this run's outcome",
+  "specPage": "/spec/draft/basic/run-input",
+  "kill": "stop recording the open run's runId at RUN_STARTED, or stop comparing RUN_FINISHED.runId against it, and the close is accepted with its result adopted as the open run's",
+  "stream": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-run-id-mismatch",
+      "runId": "r-run-id-mismatch-opened"
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "t-run-id-mismatch",
+      "runId": "r-run-id-mismatch-other",
+      "outcome": { "type": "success" }
+    }
+  ],
+  "expect": {
+    "outcome": "failed",
+    "errorContains": "must agree on their runId"
+  }
+}

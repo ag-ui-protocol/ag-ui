@@ -1,0 +1,35 @@
+{
+  "name": "second-run-on-another-thread-fatal",
+  "area": "lifecycle",
+  "description": "a stream may carry several runs, but they are runs on ONE conversation: a second RUN_STARTED naming a different threadId is fatal rather than quietly re-homing the stream",
+  "specPage": "/spec/draft/basic/run-input",
+  "kill": "let each RUN_STARTED replace the stream's threadId instead of being checked against the first authority, and the second run silently moves the stream to another conversation",
+  "stream": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-second-run-thread",
+      "runId": "r-second-run-thread-1"
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "t-second-run-thread",
+      "runId": "r-second-run-thread-1",
+      "outcome": { "type": "success" }
+    },
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-second-run-thread-other",
+      "runId": "r-second-run-thread-2"
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "t-second-run-thread-other",
+      "runId": "r-second-run-thread-2",
+      "outcome": { "type": "success" }
+    }
+  ],
+  "expect": {
+    "outcome": "failed",
+    "errorContains": "carries the input's threadId"
+  }
+}

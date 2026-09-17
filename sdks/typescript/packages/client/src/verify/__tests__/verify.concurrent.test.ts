@@ -78,8 +78,8 @@ describe("verifyEvents concurrent operations", () => {
 
     source$.next({
       type: EventType.RUN_FINISHED,
-      threadId: "test",
-      runId: "test",
+      threadId: "test-thread-id",
+      runId: "test-run-id",
     } as RunFinishedEvent);
 
     // Complete the source
@@ -157,8 +157,8 @@ describe("verifyEvents concurrent operations", () => {
 
     source$.next({
       type: EventType.RUN_FINISHED,
-      threadId: "test",
-      runId: "test",
+      threadId: "test-thread-id",
+      runId: "test-run-id",
     } as RunFinishedEvent);
 
     // Complete the source
@@ -252,8 +252,8 @@ describe("verifyEvents concurrent operations", () => {
 
     source$.next({
       type: EventType.RUN_FINISHED,
-      threadId: "test",
-      runId: "test",
+      threadId: "test-thread-id",
+      runId: "test-run-id",
     } as RunFinishedEvent);
 
     // Complete the source
@@ -347,8 +347,8 @@ describe("verifyEvents concurrent operations", () => {
 
     source$.next({
       type: EventType.RUN_FINISHED,
-      threadId: "test",
-      runId: "test",
+      threadId: "test-thread-id",
+      runId: "test-run-id",
     } as RunFinishedEvent);
 
     // Complete the source
@@ -561,8 +561,8 @@ describe("verifyEvents concurrent operations", () => {
     // Try to finish run while messages are still active
     source$.next({
       type: EventType.RUN_FINISHED,
-      threadId: "test",
-      runId: "test",
+      threadId: "test-thread-id",
+      runId: "test-run-id",
     } as RunFinishedEvent);
 
     // Complete the source and wait for processing
@@ -611,8 +611,8 @@ describe("verifyEvents concurrent operations", () => {
     // Try to finish run while tool calls are still active
     source$.next({
       type: EventType.RUN_FINISHED,
-      threadId: "test",
-      runId: "test",
+      threadId: "test-thread-id",
+      runId: "test-run-id",
     } as RunFinishedEvent);
 
     // Complete the source and wait for processing
@@ -700,8 +700,8 @@ describe("verifyEvents concurrent operations", () => {
 
     source$.next({
       type: EventType.RUN_FINISHED,
-      threadId: "test",
-      runId: "test",
+      threadId: "test-thread-id",
+      runId: "test-run-id",
     } as RunFinishedEvent);
 
     // Complete the source

@@ -923,6 +923,17 @@ export const defaultApplyEvents = (
           const activityEvent = event as ActivityDeltaEvent;
           const existingIndex = messages.findIndex((m) => m.id === activityEvent.messageId);
           if (existingIndex === -1) {
+            // `activity.mdx`: "A delta naming a message that does not exist, or
+            // one that is not an activity message, is skipped; the consumer
+            // SHOULD surface a warning, and MUST NOT fail the run." The MUST
+            // NOT half was already honoured — the delta is skipped and no
+            // message is invented from it — but skipping in silence made a
+            // producer that sends a delta before its snapshot, or misspells the
+            // id, look exactly like one that sent nothing. The sibling
+            // wrong-role branch below has always warned.
+            console.warn(
+              `ACTIVITY_DELTA: No message '${activityEvent.messageId}' to amend; the delta was skipped. An activity message must be created by ACTIVITY_SNAPSHOT before a delta can amend it.`,
+            );
             return emitUpdates();
           }
 

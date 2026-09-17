@@ -1,0 +1,29 @@
+{
+  "name": "truncated-stream-fails-the-run",
+  "area": "transports",
+  "description": "a stream that ends while a run is still open is truncated: the run has no outcome, and a client must not report it as having succeeded",
+  "specPage": "/spec/draft/basic/transports",
+  "kill": "stop judging the source's completion — drop the truncation verdict raised when the stream ends with a run still open, and the run resolves as an ordinary success carrying no result",
+  "stream": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-truncated",
+      "runId": "r-truncated"
+    },
+    {
+      "type": "TEXT_MESSAGE_START",
+      "messageId": "m-truncated-1",
+      "role": "assistant"
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "m-truncated-1",
+      "delta": "half an ans"
+    },
+    { "type": "TEXT_MESSAGE_END", "messageId": "m-truncated-1" }
+  ],
+  "expect": {
+    "outcome": "failed",
+    "errorContains": "ended without a terminal event"
+  }
+}

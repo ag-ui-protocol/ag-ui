@@ -28,7 +28,9 @@ import type { RunAgentResult } from "../agent";
 class ScriptedAgent extends AbstractAgent {
   public runs = 0;
   constructor(private scripts: BaseEvent[][]) {
-    super();
+    // The scripted streams open their run on "t"; every run on a stream
+    // carries the input's threadId (run-input.mdx, "Identity").
+    super({ threadId: "t" });
     this.debug = false;
   }
   run(_input: RunAgentInput): Observable<BaseEvent> {

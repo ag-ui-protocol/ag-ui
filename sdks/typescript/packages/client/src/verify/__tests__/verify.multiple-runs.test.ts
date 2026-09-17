@@ -567,7 +567,11 @@ describe("verifyEvents multiple runs", () => {
       type: EventType.TOOL_CALL_END,
       toolCallId: "tool-1",
     } as ToolCallEndEvent);
-    source$.next(runFinished("test-thread-1", "test-run-2"));
+    // "test-run-1": this used to close the FIRST run under the SECOND run's id,
+    // which the verifier now rejects — a run's two boundary events must agree
+    // on their runId (run-input.mdx). The typo was invisible while nothing
+    // compared the ids, and it is not what this test is about.
+    source$.next(runFinished("test-thread-1", "test-run-1"));
 
     // Second run: step + message
     source$.next({

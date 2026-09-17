@@ -4,6 +4,7 @@ import {
   State,
   RunAgentInput,
   BaseEvent,
+  EventType,
   AgentCapabilities,
   Interrupt,
 } from "@ag-ui/core";
@@ -98,6 +99,95 @@ const warnOnProducerDeclaration = (event: unknown): void => {
       return;
   }
 };
+
+/**
+ * Refuses to let a truncated stream look like a successful run.
+ *
+ * `transports/index.mdx`: "A consumer whose stream ends without a terminal
+ * event has a truncated run... A truncated run has no outcome. A consumer MUST
+ * NOT synthesize a `RUN_FINISHED` for it and MUST NOT report it as having
+ * succeeded... Whether and how to surface the truncation beyond that — leaving
+ * the run unresolved, or raising a synthetic failure — is the consumer's
+ * business."
+ *
+ * This client raises the synthetic failure, because the alternative — a promise
+ * that never settles — is indistinguishable from a hung client to the
+ * application awaiting it.
+ *
+ * An aborted request never reaches this verdict: `transform/http.ts` turns an
+ * AbortError into a RUN_ERROR event, which is a terminal event like any other.
+ * A DETACHED run does, because detaching completes the downstream — the caller
+ * records the detachment and suppresses the verdict.
+ */
+interface TruncationWatch {
+  /** Called for every verified event, in order. */
+  observe(event: BaseEvent): void;
+  /** The failure the stream earned by ending where it did, if any. */
+  truncation(): AGUIError | undefined;
+}
+
+const watchForTruncation = (): TruncationWatch => {
+  // The run opened by the most recent RUN_STARTED, if no terminal event has
+  // closed it yet. A stream may legitimately carry several runs, so this is
+  // about the LAST one; the earlier ones closed, or the verifier would have
+  // rejected the restart.
+  let openRunId: string | undefined;
+  let sawTerminal = false;
+  return {
+    observe(event: BaseEvent): void {
+      if (event.type === EventType.RUN_STARTED) {
+        openRunId = (event as { runId?: string }).runId ?? "";
+      } else if (event.type === EventType.RUN_FINISHED || event.type === EventType.RUN_ERROR) {
+        openRunId = undefined;
+        sawTerminal = true;
+      }
+    },
+    truncation(): AGUIError | undefined {
+      if (openRunId !== undefined) {
+        return new AGUIError(
+          `The stream ended without a terminal event: run '${openRunId}' is still open — no 'RUN_FINISHED' or 'RUN_ERROR' arrived. A truncated run has no outcome and must not be reported as succeeded.`,
+        );
+      }
+      // No terminal event at ALL, which is also how an empty stream arrives:
+      // nothing opened, so nothing is "still open", and the check above would
+      // wave it through as a run that never happened.
+      if (!sawTerminal) {
+        return new AGUIError(
+          `The stream ended without a terminal event: no 'RUN_STARTED' arrived. A truncated run has no outcome and must not be reported as succeeded.`,
+        );
+      }
+      return undefined;
+    },
+  };
+};
+
+/**
+ * Substitutes a failure for the source's `complete` when `truncation` names one.
+ *
+ * Applied to the END of the pipeline, after the reducer, deliberately. The
+ * reducer's stage is a `concatMap` over an ASYNC mapper: an error arriving from
+ * upstream cancels whatever it still has queued, so raising the truncation
+ * where it is DETECTED — at the event stream — threw away the messages the run
+ * had already delivered. The specification says the opposite: "everything the
+ * run delivered before the break remains delivered". Detection stays upstream
+ * (`observe`), the verdict is passed downstream, and the failure is raised only
+ * once the reducer has drained.
+ */
+const failOnTruncation =
+  <T,>(truncation: () => AGUIError | undefined) =>
+  (source$: Observable<T>): Observable<T> =>
+    new Observable<T>((subscriber) => {
+      const inner = source$.subscribe({
+        next: (value) => subscriber.next(value),
+        error: (error: unknown) => subscriber.error(error),
+        complete: () => {
+          const failure = truncation();
+          if (failure) subscriber.error(failure);
+          else subscriber.complete();
+        },
+      });
+      return () => inner.unsubscribe();
+    });
 
 export interface RunAgentResult {
   // DEFERRED (PNI-272): tightening this to `unknown` is a breaking change for
@@ -330,6 +420,19 @@ export abstract class AbstractAgent {
         resolveActiveRunCompletion = resolve;
       });
 
+      // Truncation is DETECTED on the event stream and RAISED after the
+      // reducer (see failOnTruncation). A detached run is not a truncated one:
+      // detaching is a deliberate stop, and `takeUntil` completes the
+      // downstream, which is indistinguishable at the tail from a stream that
+      // ended on its own — so the detachment is recorded here.
+      const truncation = watchForTruncation();
+      let runDetached = false;
+      // Same exemption for the consumer's own abort: see abortRun().
+      this.activeRunAborted = false;
+      const detachWatch = this.activeRunDetach$.subscribe(() => {
+        runDetached = true;
+      });
+
       const pipeline = pipe(
         () => {
           // Build middleware chain using reduceRight so middlewares can intercept runs.
@@ -364,11 +467,26 @@ export abstract class AbstractAgent {
         // exists once the chunk has become a start and a content event.
         enforceEvents(this.debugLogger),
         transformChunks(this.debugLogger),
-        verifyEvents(this.debugLogger),
+        // Composed into ONE stage rather than added as a tenth: rxjs `pipe()`
+        // runs out of typed arities beyond nine, the same reason the connect
+        // pipeline below folds the compatibility boundary into enforcement.
+        // Truncation is watched AFTER verification, on the events that survived
+        // it: a stream the verifier rejects has already failed the run, and a
+        // rejection is not a truncation. The verifier is also told which thread
+        // was requested, so a producer answering about a different conversation
+        // is caught at the first RUN_STARTED rather than only when two boundary
+        // events happen to disagree with each other.
+        (source$: Observable<BaseEvent>) =>
+          verifyEvents(this.debugLogger, { threadId: input.threadId })(source$).pipe(
+            tap((event) => truncation.observe(event)),
+          ),
         // Stop processing immediately when this run is detached
         (source$) => source$.pipe(takeUntil(this.activeRunDetach$!)),
         (source$) => this.apply(input, source$, subscribers),
-        (source$) => this.processApplyEvents(input, source$, subscribers),
+        (source$) =>
+          failOnTruncation<AgentStateMutation>(() =>
+            runDetached || this.activeRunAborted ? undefined : truncation.truncation(),
+          )(this.processApplyEvents(input, source$, subscribers)),
         catchError((error) => {
           this.debugLogger?.lifecycle("LIFECYCLE", "Run errored:", {
             agentId: this.agentId,
@@ -383,6 +501,7 @@ export abstract class AbstractAgent {
             threadId: this.threadId,
           });
           this.isRunning = false;
+          detachWatch.unsubscribe();
           void this.onFinalize(input, subscribers);
           resolveActiveRunCompletion?.();
           resolveActiveRunCompletion = undefined;
@@ -440,6 +559,19 @@ export abstract class AbstractAgent {
         resolveActiveRunCompletion = resolve;
       });
 
+      // Truncation is DETECTED on the event stream and RAISED after the
+      // reducer (see failOnTruncation). A detached run is not a truncated one:
+      // detaching is a deliberate stop, and `takeUntil` completes the
+      // downstream, which is indistinguishable at the tail from a stream that
+      // ended on its own — so the detachment is recorded here.
+      const truncation = watchForTruncation();
+      let runDetached = false;
+      // Same exemption for the consumer's own abort: see abortRun().
+      this.activeRunAborted = false;
+      const detachWatch = this.activeRunDetach$.subscribe(() => {
+        runDetached = true;
+      });
+
       const pipeline = pipe(
         () => defer(() => this.connect(input)),
         // The connect flow has no middleware chain, so the always-on inbound
@@ -448,11 +580,19 @@ export abstract class AbstractAgent {
         (source$: Observable<BaseEvent>) =>
           enforceEvents(this.debugLogger)(compatibilityBoundaryOperator()(source$)),
         transformChunks(this.debugLogger),
-        verifyEvents(this.debugLogger),
+        // Same watch, and the same reason, as the run pipeline above: a
+        // connected stream that stops mid-run is as truncated as a POSTed one.
+        (source$: Observable<BaseEvent>) =>
+          verifyEvents(this.debugLogger, { threadId: input.threadId })(source$).pipe(
+            tap((event) => truncation.observe(event)),
+          ),
         // Stop processing immediately when this run is detached
         (source$) => source$.pipe(takeUntil(this.activeRunDetach$!)),
         (source$) => this.apply(input, source$, subscribers),
-        (source$) => this.processApplyEvents(input, source$, subscribers),
+        (source$) =>
+          failOnTruncation<AgentStateMutation>(() =>
+            runDetached || this.activeRunAborted ? undefined : truncation.truncation(),
+          )(this.processApplyEvents(input, source$, subscribers)),
         catchError((error) => {
           this.isRunning = false;
           if (!(error instanceof AGUIConnectNotImplementedError)) {
@@ -462,6 +602,7 @@ export abstract class AbstractAgent {
         }),
         finalize(() => {
           this.isRunning = false;
+          detachWatch.unsubscribe();
           void this.onFinalize(input, subscribers);
           resolveActiveRunCompletion?.();
           resolveActiveRunCompletion = undefined;
@@ -482,7 +623,24 @@ export abstract class AbstractAgent {
     }
   }
 
-  public abortRun() {}
+  /**
+   * Whether the consumer aborted the active run. An abort is the consumer's
+   * own stop, not a truncation: the stream it cuts off may complete without a
+   * terminal event, and that completion must settle `runAgent()` as it always
+   * has (#2288) rather than earn the truncation failure. Reset at the start of
+   * every run; read by the truncation verdict at the end of the pipeline.
+   */
+  private activeRunAborted = false;
+
+  /**
+   * Aborts the active run. Subclasses that override this to cancel their
+   * transport or in-process stream MUST call `super.abortRun()`, so the base
+   * class knows the stream's early end was asked for and does not report it
+   * as a truncated run.
+   */
+  public abortRun() {
+    this.activeRunAborted = true;
+  }
 
   public async detachActiveRun(): Promise<void> {
     if (!this.activeRunDetach$) {

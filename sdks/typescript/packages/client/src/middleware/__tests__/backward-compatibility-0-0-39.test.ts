@@ -16,11 +16,23 @@ class LegacyAgent extends AbstractAgent {
 
   override run(input: RunAgentInput): Observable<BaseEvent> {
     this.receivedInput = input;
-    return of({
-      type: EventType.RUN_STARTED,
-      threadId: input.threadId,
-      runId: input.runId,
-    } as BaseEvent);
+    // RUN_FINISHED as well as RUN_STARTED: a stream that opens a run and then
+    // ends is a truncated one, and the client now fails it rather than
+    // reporting success (`transports/index.mdx`). These tests are about the
+    // INPUT this middleware shapes, not about the stream coming back, so the
+    // run simply has to close.
+    return of(
+      {
+        type: EventType.RUN_STARTED,
+        threadId: input.threadId,
+        runId: input.runId,
+      } as BaseEvent,
+      {
+        type: EventType.RUN_FINISHED,
+        threadId: input.threadId,
+        runId: input.runId,
+      } as BaseEvent,
+    );
   }
 
   protected override prepareRunAgentInput(

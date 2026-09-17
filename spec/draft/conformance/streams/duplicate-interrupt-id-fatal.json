@@ -1,0 +1,38 @@
+{
+  "name": "duplicate-interrupt-id-fatal",
+  "area": "interrupts",
+  "description": "two interrupts sharing one id in a RUN_FINISHED interrupt outcome is fatal — a resume entry answers an interrupt by its id, so a duplicate lets one answer cover two questions and the second is dropped in silence",
+  "specPage": "/spec/draft/basic/patterns/interrupt-resume",
+  "kill": "drop the duplicate-id scan over outcome.interrupts, and both land in the client's pending set where the set-based resume coverage check reports them fully answered by a single entry",
+  "stream": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-duplicate-interrupt",
+      "runId": "r-duplicate-interrupt"
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "t-duplicate-interrupt",
+      "runId": "r-duplicate-interrupt",
+      "outcome": {
+        "type": "interrupt",
+        "interrupts": [
+          {
+            "id": "i-duplicate-interrupt",
+            "reason": "approval",
+            "message": "approve the first tool call"
+          },
+          {
+            "id": "i-duplicate-interrupt",
+            "reason": "approval",
+            "message": "approve the second tool call"
+          }
+        ]
+      }
+    }
+  ],
+  "expect": {
+    "outcome": "failed",
+    "errorContains": "two interrupts carrying the id 'i-duplicate-interrupt'"
+  }
+}

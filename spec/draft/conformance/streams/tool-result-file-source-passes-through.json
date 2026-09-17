@@ -112,7 +112,7 @@
   },
   "expectOverrides": {
     "dotnet": {
-      "intentional": "the .NET client assembles history through Microsoft.Extensions.AI ChatMessages, and a FunctionResultContent holds one result object: the tool result's parts are flattened to their text (AGUIContent.ToString) and the tool message takes the tool call's id, so the file-sourced document part does not survive into the assembled messages. The event itself carries the part — AGUIToolMessage and ToolCallResultEvent hold AGUIContent, whose source union includes the file arm — and a parts-preserving mapping onto MEAI content is tracked separately.",
+      "intentional": "the .NET client assembles history through Microsoft.Extensions.AI ChatMessages, and a FunctionResultContent holds one result object: the tool result's parts are flattened to their text (AGUIContent.ToString) and the tool message takes the tool call's id, so the file-sourced document part does not survive into the assembled messages. The event itself carries the part — AGUIToolMessage and ToolCallResultEvent hold AGUIContent, whose source union includes the file arm — and a parts-preserving mapping onto MEAI content is tracked separately. The flattening is lossy, and the specification asks a consumer to announce a lossy rendering rather than let a dropped part look like one the producer never sent, so .NET warns once for the result — which is why `noWarnings` cannot hold on this lane and is replaced by the warning it does emit. TypeScript keeps the parts and so has nothing to announce.",
       "messages": [
         {
           "id": "toolfile-a1",
@@ -128,6 +128,10 @@
           "role": "assistant",
           "content": "The invoice is with the model now."
         }
+      ],
+      "noWarnings": false,
+      "warnings": [
+        "The result of tool call 'toolfile-c1' was flattened to text"
       ]
     }
   }

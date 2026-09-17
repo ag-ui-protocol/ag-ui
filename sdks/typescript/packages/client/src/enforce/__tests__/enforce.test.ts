@@ -10,7 +10,9 @@ import { EventSchema } from "@ag-ui/core/schemas";
 
 class MemoryAgent extends AbstractAgent {
   constructor(private events: BaseEvent[]) {
-    super({});
+    // The scripted streams open their run on "t1"; every run on a stream
+    // carries the input's threadId (run-input.mdx, "Identity").
+    super({ threadId: "t1" });
   }
   run(_input: RunAgentInput): Observable<BaseEvent> {
     return of(...this.events);
