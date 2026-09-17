@@ -1,6 +1,7 @@
 package sse
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -758,6 +759,7 @@ func BenchmarkReadStream(b *testing.B) {
 type holdingReader struct {
 	data    []byte
 	pos     int
+	chunk   int
 	release chan struct{}
 }
 
@@ -768,10 +770,22 @@ func newHoldingReader(t *testing.T, data []byte) *holdingReader {
 	return r
 }
 
+// newFragmentedHoldingReader serves at most chunk bytes per read before it
+// blocks, so one line arrives across many reads rather than in one.
+func newFragmentedHoldingReader(t *testing.T, data []byte, chunk int) *holdingReader {
+	t.Helper()
+	r := newHoldingReader(t, data)
+	r.chunk = chunk
+	return r
+}
+
 func (r *holdingReader) Read(p []byte) (int, error) {
 	if r.pos >= len(r.data) {
 		<-r.release
 		return 0, io.EOF
+	}
+	if r.chunk > 0 && len(p) > r.chunk {
+		p = p[:r.chunk]
 	}
 	n := copy(p, r.data[r.pos:])
 	r.pos += n
@@ -822,6 +836,33 @@ func dataLines(count, payload int) []byte {
 		b.Write(bytes.Repeat([]byte("x"), payload))
 		b.WriteByte('\n')
 	}
+	return b.Bytes()
+}
+
+// chunkedReader hands back one chunk per read, so a two-byte delimiter can be
+// split across the boundary the way a network read splits one.
+type chunkedReader struct{ chunks [][]byte }
+
+func (r *chunkedReader) Read(p []byte) (int, error) {
+	for len(r.chunks) > 0 && len(r.chunks[0]) == 0 {
+		r.chunks = r.chunks[1:]
+	}
+	if len(r.chunks) == 0 {
+		return 0, io.EOF
+	}
+	n := copy(p, r.chunks[0])
+	r.chunks[0] = r.chunks[0][n:]
+	return n, nil
+}
+
+// frameAtCap returns one `data:` line carrying payload, terminated by eol, plus
+// the blank line that dispatches it.
+func frameAtCap(payload []byte, eol string) []byte {
+	var b bytes.Buffer
+	b.WriteString("data: ")
+	b.Write(payload)
+	b.WriteString(eol)
+	b.WriteString(eol)
 	return b.Bytes()
 }
 
@@ -878,15 +919,58 @@ func TestReadStreamBounds(t *testing.T) {
 
 	t.Run("still dispatches a frame at the cap", func(t *testing.T) {
 		// The boundary is inclusive: a frame whose data is exactly MaxFrameBytes
-		// long is legitimate and has to get through.
+		// long is legitimate and has to get through. It has to get through on
+		// either terminator, since the line budget has to cover a two-byte CRLF
+		// as well as a one-byte LF.
 		payload := bytes.Repeat([]byte("y"), cap)
-		body := append(append([]byte("data: "), payload...), '\n', '\n')
 
-		frames, err := collectReadStream(t, newCappedClient(), bytes.NewReader(body))
+		bodies := map[string]func() io.Reader{
+			"LF": func() io.Reader {
+				return bytes.NewReader(frameAtCap(payload, "\n"))
+			},
+			"CRLF": func() io.Reader {
+				return bytes.NewReader(frameAtCap(payload, "\r\n"))
+			},
+			"CRLF split between the CR and the LF": func() io.Reader {
+				body := frameAtCap(payload, "\r\n")
+				split := len("data: ") + cap + 1
+				return &chunkedReader{chunks: [][]byte{body[:split], body[split:]}}
+			},
+		}
 
-		assert.NoError(t, err)
-		require.Len(t, frames, 1)
-		assert.Equal(t, payload, frames[0].Data)
+		for name, newBody := range bodies {
+			t.Run(name, func(t *testing.T) {
+				frames, err := collectReadStream(t, newCappedClient(), newBody())
+
+				assert.NoError(t, err)
+				require.Len(t, frames, 1)
+				assert.Equal(t, payload, frames[0].Data)
+			})
+		}
+	})
+
+	t.Run("refuses an ignored field that never ends", func(t *testing.T) {
+		// An `id:` line is never accumulated into a frame, so the per-line budget
+		// is the only thing bounding it.
+		body := newHoldingReader(t, append([]byte("id: "), bytes.Repeat([]byte("x"), 2*cap)...))
+
+		frames, err := collectReadStream(t, newCappedClient(), body)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "exceeded")
+		assert.Empty(t, frames, "an unterminated line must not be dispatched")
+	})
+
+	t.Run("refuses a line that never ends, arriving in fragments", func(t *testing.T) {
+		// Small reads never fill the reader's buffer, so a check that waits for a
+		// full buffer never runs.
+		body := newFragmentedHoldingReader(t, append([]byte("data: "), bytes.Repeat([]byte("x"), 2*cap)...), 7)
+
+		frames, err := collectReadStream(t, newCappedClient(), body)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "exceeded")
+		assert.Empty(t, frames, "an unterminated line must not be dispatched")
 	})
 
 	t.Run("defaults to the cap the Dart SDK uses", func(t *testing.T) {
@@ -898,4 +982,65 @@ func TestReadStreamBounds(t *testing.T) {
 		// A negative cap would otherwise reach the reader and refuse every frame.
 		assert.Equal(t, DefaultMaxFrameBytes, NewClient(Config{MaxFrameBytes: -1}).config.MaxFrameBytes)
 	})
+}
+
+func TestReadLineOnAnOpenSource(t *testing.T) {
+	/*
+	 * The budget has to be checked against bytes that have arrived. Checking it
+	 * only after ReadSlice returns means waiting for a delimiter, an I/O error or
+	 * a full reader buffer, and a source that sends one byte past the budget and
+	 * then holds the connection open supplies none of those. The line is already
+	 * over the limit and nothing reports it.
+	 */
+	limits := []int{32, 4096, DefaultMaxFrameBytes}
+
+	for _, limit := range limits {
+		t.Run(fmt.Sprintf("limit %d", limit), func(t *testing.T) {
+			t.Run("holds a line of exactly the limit open", func(t *testing.T) {
+				written, done := readLineOverPipe(t, limit, limit)
+				<-written
+
+				select {
+				case err := <-done:
+					require.FailNow(t, "readLine returned on a line that is still within its budget", "err=%v", err)
+				case <-time.After(200 * time.Millisecond):
+				}
+			})
+
+			t.Run("refuses one byte past the limit without waiting for more input", func(t *testing.T) {
+				_, done := readLineOverPipe(t, limit, limit+1)
+
+				select {
+				case err := <-done:
+					require.ErrorIs(t, err, errLineTooLong)
+				case <-time.After(5 * time.Second):
+					require.FailNow(t, "readLine never reported the overflow while the source stayed open")
+				}
+			})
+		})
+	}
+}
+
+// readLineOverPipe runs readLine with the given limit against a pipe that
+// carries count non-newline bytes and then stays open. It reports when the
+// write finished and what readLine returned.
+func readLineOverPipe(t *testing.T, limit, count int) (<-chan struct{}, <-chan error) {
+	t.Helper()
+
+	r, w := io.Pipe()
+	t.Cleanup(func() { _ = w.Close() })
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := readLine(bufio.NewReader(r), limit)
+		done <- err
+	}()
+
+	written := make(chan struct{})
+	go func() {
+		defer close(written)
+		_, _ = w.Write(bytes.Repeat([]byte("x"), count))
+	}()
+
+	return written, done
 }

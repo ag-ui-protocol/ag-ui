@@ -213,23 +213,49 @@ func isLineTooLong(err error) bool {
 // more than limit bytes.
 //
 // bufio.Reader.ReadBytes grows a buffer until it finds the delimiter, so a peer
-// that never sends one grows it for as long as the connection lasts. ReadSlice
-// returns bufio.ErrBufferFull rather than growing, which gives this loop
-// somewhere to check the running total before appending.
+// that never sends one grows it for as long as the connection lasts.
+//
+// Peek and Discard, rather than ReadSlice, are what let the budget be checked
+// against the bytes that have arrived. ReadSlice only returns on a delimiter, an
+// I/O error, or a full reader buffer, and a peer that sends one byte past the
+// budget and then holds the connection open supplies none of the three: the line
+// is already over the limit and nothing says so until more input, EOF or the
+// read timeout arrives. Taking at most the remaining budget plus one byte per
+// step means the first byte past the limit is the one that reports it.
 func readLine(reader *bufio.Reader, limit int) ([]byte, error) {
 	var line []byte
 	for {
-		chunk, err := reader.ReadSlice('\n')
-		if len(line)+len(chunk) > limit {
+		// Peek blocks until at least one byte is readable, so the loop makes
+		// progress on what has arrived rather than on what is still to come.
+		if _, err := reader.Peek(1); err != nil {
+			return line, err
+		}
+
+		n := reader.Buffered()
+		if budget := limit - len(line) + 1; n > budget {
+			n = budget
+		}
+		window, err := reader.Peek(n)
+		if err != nil {
+			return line, err
+		}
+		if i := bytes.IndexByte(window, '\n'); i >= 0 {
+			window = window[:i+1]
+		}
+
+		if len(line)+len(window) > limit {
 			return nil, errLineTooLong
 		}
-		// ReadSlice hands back the reader's own buffer, so append's copy is what
-		// keeps the bytes valid across iterations.
-		line = append(line, chunk...)
-		if stderrors.Is(err, bufio.ErrBufferFull) {
-			continue
+		// Peek hands back the reader's own buffer, so append's copy is what keeps
+		// the bytes valid across iterations.
+		line = append(line, window...)
+		if _, err := reader.Discard(len(window)); err != nil {
+			return line, err
 		}
-		return line, err
+
+		if line[len(line)-1] == '\n' {
+			return line, nil
+		}
 	}
 }
 
@@ -246,11 +272,16 @@ func (c *Client) readStream(ctx context.Context, resp *http.Response, frames cha
 	reader := bufio.NewReader(resp.Body)
 	maxFrameBytes := c.config.MaxFrameBytes
 	// The longest line the reader will hold: a "data: " line carrying a whole
-	// frame's budget, plus its terminator. A line longer than this cannot belong
-	// to a frame the accumulation cap below would accept, and a line with any
-	// other field name — "event:", "id:" — is bounded by the same figure, which
-	// is the only thing bounding it since those are not accumulated.
-	maxLineBytes := maxFrameBytes + len("data: ") + 1
+	// frame's budget, plus its terminator. The terminator is budgeted at CRLF,
+	// the longer of the two SSE allows, so that a frame sitting exactly on the
+	// cap is dispatched whichever one the peer uses. Budgeting one byte for it
+	// refused the CRLF form of a line the LF form got through.
+	//
+	// A line longer than this cannot belong to a frame the accumulation cap below
+	// would accept, and a line with any other field name — "event:", "id:" — is
+	// bounded by the same figure, which is the only thing bounding it since those
+	// are not accumulated.
+	maxLineBytes := maxFrameBytes + len("data: ") + len("\r\n")
 	var buffer bytes.Buffer
 	var frameCount int64
 	var byteCount int64
