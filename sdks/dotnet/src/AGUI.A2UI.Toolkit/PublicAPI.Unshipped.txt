@@ -102,7 +102,7 @@ AGUI.A2UI.A2UIValidationResult.Valid.get -> bool
 const AGUI.A2UI.A2UIConstants.A2UIOperationsKey = "a2ui_operations" -> string!
 const AGUI.A2UI.A2UIConstants.A2UIRecoveryActivityType = "a2ui_recovery" -> string!
 const AGUI.A2UI.A2UIConstants.A2UISchemaContextDescription = "A2UI Component Schema — available components for generating UI surfaces. Use these component names and properties when creating A2UI operations." -> string!
-const AGUI.A2UI.A2UIConstants.BasicCatalogId = "https://a2ui.org/specification/v0_9/basic_catalog.json" -> string!
+const AGUI.A2UI.A2UIConstants.BasicCatalogId = "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json" -> string!
 const AGUI.A2UI.A2UIConstants.DefaultSurfaceId = "dynamic-surface" -> string!
 const AGUI.A2UI.A2UIConstants.GenerateA2UIToolName = "generate_a2ui" -> string!
 const AGUI.A2UI.A2UIConstants.MaxA2UIAttempts = 3 -> int
@@ -134,7 +134,7 @@ static AGUI.A2UI.A2UIPromptDefaults.GenerationGuidelines.get -> string!
 static AGUI.A2UI.A2UIToolDefinitions.CreateRenderA2UIToolDefinition() -> System.Text.Json.Nodes.JsonObject!
 static AGUI.A2UI.A2UIToolDefinitions.ResolveA2UIToolParams(AGUI.A2UI.A2UIToolParams? parameters) -> AGUI.A2UI.A2UIResolvedToolParams!
 static AGUI.A2UI.A2UIToolkit.AssembleOps(string! intent, string! surfaceId, string! catalogId, System.Text.Json.Nodes.JsonArray! components, System.Text.Json.Nodes.JsonObject? data = null) -> System.Collections.Generic.IReadOnlyList<System.Text.Json.Nodes.JsonObject!>!
-static AGUI.A2UI.A2UIToolkit.BuildA2UIEnvelope(System.Text.Json.Nodes.JsonObject! args, bool isUpdate, string? targetSurfaceId, AGUI.A2UI.A2UIPriorSurface? prior, string! defaultSurfaceId = "dynamic-surface", string! defaultCatalogId = "https://a2ui.org/specification/v0_9/basic_catalog.json") -> string!
+static AGUI.A2UI.A2UIToolkit.BuildA2UIEnvelope(System.Text.Json.Nodes.JsonObject! args, bool isUpdate, string? targetSurfaceId, AGUI.A2UI.A2UIPriorSurface? prior, string! defaultSurfaceId = "dynamic-surface", string! defaultCatalogId = "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json") -> string!
 static AGUI.A2UI.A2UIToolkit.BuildContextPrompt(AGUI.A2UI.A2UIAgentState? state) -> string!
 static AGUI.A2UI.A2UIToolkit.BuildSubagentPrompt(string! contextPrompt, AGUI.A2UI.A2UIGuidelines? guidelines = null, AGUI.A2UI.A2UIEditContext? editContext = null) -> string!
 static AGUI.A2UI.A2UIToolkit.FindPriorSurface(System.Collections.Generic.IEnumerable<AGUI.A2UI.A2UIHistoryMessage!>! messages, string! surfaceId) -> AGUI.A2UI.A2UIPriorSurface?

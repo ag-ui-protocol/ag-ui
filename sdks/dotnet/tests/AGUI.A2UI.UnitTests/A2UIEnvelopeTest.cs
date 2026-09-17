@@ -204,6 +204,21 @@ public sealed class A2UIEnvelopeTest
     }
 
     [Fact]
+    public void BuildA2UIEnvelope_Create_UsesCanonicalCatalogByDefault()
+    {
+        // Arrange
+        var args = new JsonObject { ["components"] = RowComponents() };
+
+        // Act
+        JsonArray ops = ParseOperations(A2UIToolkit.BuildA2UIEnvelope(
+            args, isUpdate: false, targetSurfaceId: null, prior: null));
+
+        // Assert
+        Assert.Equal("https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json",
+            (string?)SingleOperation(ops, "createSurface")["catalogId"]);
+    }
+
+    [Fact]
     public void BuildA2UIEnvelope_Create_UsesConfiguredCatalogNotArgs()
     {
         // Arrange
@@ -259,7 +274,7 @@ public sealed class A2UIEnvelopeTest
         // Assert
         JsonObject createSurface = SingleOperation(ops, "createSurface");
         Assert.Equal(A2UIConstants.DefaultSurfaceId, (string?)createSurface["surfaceId"]);
-        Assert.Equal(A2UIConstants.BasicCatalogId, (string?)createSurface["catalogId"]);
+        Assert.Equal("https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json", (string?)createSurface["catalogId"]);
     }
 
     [Theory]
@@ -354,7 +369,7 @@ public sealed class A2UIEnvelopeTest
 
         // Assert
         Assert.Equal(A2UIConstants.DefaultSurfaceId, resolved.DefaultSurfaceId);
-        Assert.Equal(A2UIConstants.BasicCatalogId, resolved.DefaultCatalogId);
+        Assert.Equal("https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json", resolved.DefaultCatalogId);
         Assert.Equal(A2UIConstants.GenerateA2UIToolName, resolved.ToolName);
         Assert.Equal(A2UIToolDefinitions.GenerateA2UIToolDescription, resolved.ToolDescription);
         Assert.Null(resolved.Guidelines);
@@ -371,7 +386,7 @@ public sealed class A2UIEnvelopeTest
 
         // Assert
         Assert.Equal(A2UIConstants.GenerateA2UIToolName, resolved.ToolName);
-        Assert.Equal(A2UIConstants.BasicCatalogId, resolved.DefaultCatalogId);
+        Assert.Equal("https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json", resolved.DefaultCatalogId);
     }
 
     [Fact]
@@ -379,13 +394,14 @@ public sealed class A2UIEnvelopeTest
     {
         // Arrange
         var guidelines = new A2UIGuidelines { CompositionGuide = "g" };
-        var parameters = new A2UIToolParams { ToolName = "custom_tool", Guidelines = guidelines };
+        var parameters = new A2UIToolParams { ToolName = "custom_tool", Guidelines = guidelines, DefaultCatalogId = "cat://configured" };
 
         // Act
         A2UIResolvedToolParams resolved = A2UIToolDefinitions.ResolveA2UIToolParams(parameters);
 
         // Assert
         Assert.Equal("custom_tool", resolved.ToolName);
+        Assert.Equal("cat://configured", resolved.DefaultCatalogId);
         Assert.Same(guidelines, resolved.Guidelines);
     }
 }
