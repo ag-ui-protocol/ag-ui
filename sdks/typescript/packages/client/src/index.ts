@@ -14,3 +14,4 @@ export * from "./interrupts";
 export { Middleware, FilterToolCallsMiddleware } from "./middleware";
 export type { MiddlewareFunction } from "./middleware";
 export * from "./enforce";
+export * from "./activity-history";

@@ -1,3 +1,4 @@
+import { authoritativeActivityTypes } from "../activity-history";
 import type { AbstractAgent } from "@/agent/agent";
 import {
   type AgentStateMutation,
@@ -772,9 +773,8 @@ export const defaultApplyEvents = (
               return copy as typeof m;
             });
 
-            // Edit-based merge: update existing messages with snapshot data while
-            // preserving client-only messages the backend leaves out of the
-            // snapshot.
+            // Update existing messages in place and append new snapshot messages,
+            // preserving client-only messages the backend leaves out.
             const snapshotMap = new Map(newMessages.map((m) => [m.id, m]));
 
             // `activity` messages are only sometimes client-only. They never
@@ -800,20 +800,25 @@ export const defaultApplyEvents = (
             // copy would render the same reasoning twice. So when the snapshot
             // itself carries reasoning, treat it as the source of truth for
             // reasoning messages too and apply the normal replace semantics.
+            // Explicit null replaces all types, including an empty activity set.
+            // Arrays replace only their types; absent declarations use the rule above.
+            // Invalid declarations own no types. Matching IDs always update.
+            const ownedActivityTypes = authoritativeActivityTypes(event as MessagesSnapshotEvent);
             const snapshotHasActivity = newMessages.some((m) => m.role === "activity");
             const snapshotHasReasoning = newMessages.some((m) => m.role === "reasoning");
             const isPreservedClientOnly = (m: Message) =>
-              (m.role === "activity" && !snapshotHasActivity) ||
+              (m.role === "activity" &&
+                (ownedActivityTypes
+                  ? !ownedActivityTypes.includes(m.activityType)
+                  : ownedActivityTypes !== null && !snapshotHasActivity)) ||
               (m.role === "reasoning" && !snapshotHasReasoning);
 
-            // Step 1 + 2: Keep preserved client-only messages as-is, keep
-            // messages present in the snapshot (replaced with snapshot version),
-            // drop everything else.
+            // A matching ID updates even when this snapshot cannot delete that
+            // activity type. Authority applies only to messages omitted from it.
             messages = messages
-              .filter((m) => isPreservedClientOnly(m) || snapshotMap.has(m.id))
-              .map((m) => (isPreservedClientOnly(m) ? m : snapshotMap.get(m.id)!));
+              .filter((m) => snapshotMap.has(m.id) || isPreservedClientOnly(m))
+              .map((m) => snapshotMap.get(m.id) ?? m);
 
-            // Step 3: Append messages from the snapshot that we don't have yet.
             const existingIds = new Set(messages.map((m) => m.id));
             for (const snapshotMsg of newMessages) {
               if (!existingIds.has(snapshotMsg.id)) {

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.ag-ui.community</groupId>
+        <artifactId>ag-ui-spring-boot-parent</artifactId>
+        <version>4.1.0</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>ag-ui-spring-webmvc-server</artifactId>
+
+    <name>ag-ui-spring-webmvc-server</name>
+    <description>Spring WebMVC (Servlet) server integration for the AG-UI protocol</description>
+
+    <dependencies>
+        <!-- Shared serializer, mix-ins and AgentNotFoundException; brings ag-ui server transitively. -->
+        <dependency>
+            <groupId>com.ag-ui.community</groupId>
+            <artifactId>ag-ui-spring-server-core</artifactId>
+        </dependency>
+
+        <!-- WebMVC (Servlet) brings spring-web, spring-webmvc and Jackson. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!-- Auto-configuration support; optional for consumers that wire beans themselves. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-autoconfigure</artifactId>
+        </dependency>
+
+        <!-- MockMvc for the controller test. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>
