@@ -925,6 +925,11 @@ jobs:
                 continue
               fi
               TARBALL_NAME=$(echo "$PROJECT" | sed -e 's/^@//' -e 's|/|-|g')-${PKG_VERSION}.tgz
+              if ! node scripts/package-licenses/check.mjs archive "$PKG_PATH/$TARBALL_NAME" "$PKG_PATH"; then
+                echo "FAILED (license): ${PROJECT}"
+                TS_FAILED="${TS_FAILED} ${PROJECT}"
+                continue
+              fi
               # Capture publish output so we can distinguish EPUBLISHCONFLICT
               # (already-published; benign on retry) from real failures.
               #
@@ -1046,6 +1051,11 @@ jobs:
               continue
             fi
             TARBALL_NAME=$(echo "$PROJECT" | sed -e 's/^@//' -e 's|/|-|g')-${PKG_VERSION}.tgz
+            if ! node scripts/package-licenses/check.mjs archive "$PKG_PATH/$TARBALL_NAME" "$PKG_PATH"; then
+              echo "FAILED (license): ${PROJECT}"
+              TS_FAILED="${TS_FAILED} ${PROJECT}"
+              continue
+            fi
             PUBLISH_LOG=$(mktemp)
             echo "Publishing tarball ${TARBALL_NAME}... (output buffered until command completes)"
             if (cd "$PKG_PATH" && npx --yes npm@11.15.0 publish "$TARBALL_NAME" --tag canary --access public --provenance) >"$PUBLISH_LOG" 2>&1; then
