@@ -106,7 +106,7 @@ public class ManagedAgentsAgentTest
 
         var custom = Assert.IsType<CustomEvent>(events[2]);
         Assert.Equal(ManagedAgentsAgent.SessionCustomEventName, custom.Name);
-        AssertJson("""{"sessionId":"sesn_1","threadId":"thread_1"}""", custom.Value!.Value);
+        AssertJson("""{"sessionId":"sesn_1","threadId":"thread_1"}""", custom.Value);
         AssertJson("""{"type":"user.message","content":[{"type":"text","text":"Hello"}]}""", fake.Sent[0].Single());
     }
 
