@@ -1,0 +1,81 @@
+---
+source: crates/ag-ui/tests/snapshots.rs
+expression: "vec![Event::SubagentStarted(SubagentStartedEvent::new(\"sub-1\",\n\"researcher\").with_description(\"Finds sources for the brief\").with_parent_tool_call(\"call-1\",\nSome(\"msg-1\".into())),),\nEvent::text_message_start(\"msg-2\",\nTextMessageRole::Assistant).with_subagent_run_id(\"sub-1\"),\nEvent::text_message_content(\"msg-2\",\n\"Three sources found.\").with_subagent_run_id(\"sub-1\").with_metadata(json!({\n    \"finishReason\": \"stop\"\n}).as_object().unwrap().clone()),\nEvent::text_message_end(\"msg-2\").with_subagent_run_id(\"sub-1\"),\nEvent::SubagentStarted(SubagentStartedEvent::new(\"sub-2\",\n\"reviewer\").with_parent_subagent(\"sub-1\"),),\nEvent::subagent_finished_suspended(\"sub-2\", vec![\"int-1\".to_owned()]),\nEvent::SubagentFinished(SubagentFinishedEvent::new(\"sub-1\").with_result(json!({\n    \"sources\": 3\n})).with_outcome(SubagentOutcome::Success),),\nEvent::SubagentError(SubagentErrorEvent::new(\"sub-3\",\n\"rate limited\").with_code(\"429\")),\nEvent::run_finished_interrupt(\"thread-1\", \"run-1\",\nvec![Interrupt::new(\"int-1\",\n\"tool_approval\").with_subagent_run_id(\"sub-2\")],),]"
+---
+[
+  {
+    "type": "SUBAGENT_STARTED",
+    "subagentRunId": "sub-1",
+    "name": "researcher",
+    "description": "Finds sources for the brief",
+    "parentToolCallId": "call-1",
+    "parentMessageId": "msg-1"
+  },
+  {
+    "type": "TEXT_MESSAGE_START",
+    "messageId": "msg-2",
+    "role": "assistant",
+    "subagentRunId": "sub-1"
+  },
+  {
+    "type": "TEXT_MESSAGE_CONTENT",
+    "metadata": {
+      "finishReason": "stop"
+    },
+    "messageId": "msg-2",
+    "delta": "Three sources found.",
+    "subagentRunId": "sub-1"
+  },
+  {
+    "type": "TEXT_MESSAGE_END",
+    "messageId": "msg-2",
+    "subagentRunId": "sub-1"
+  },
+  {
+    "type": "SUBAGENT_STARTED",
+    "subagentRunId": "sub-2",
+    "name": "reviewer",
+    "parentSubagentRunId": "sub-1"
+  },
+  {
+    "type": "SUBAGENT_FINISHED",
+    "subagentRunId": "sub-2",
+    "outcome": {
+      "type": "suspended",
+      "interruptIds": [
+        "int-1"
+      ]
+    }
+  },
+  {
+    "type": "SUBAGENT_FINISHED",
+    "subagentRunId": "sub-1",
+    "result": {
+      "sources": 3
+    },
+    "outcome": {
+      "type": "success"
+    }
+  },
+  {
+    "type": "SUBAGENT_ERROR",
+    "subagentRunId": "sub-3",
+    "message": "rate limited",
+    "code": "429"
+  },
+  {
+    "type": "RUN_FINISHED",
+    "threadId": "thread-1",
+    "runId": "run-1",
+    "outcome": {
+      "type": "interrupt",
+      "interrupts": [
+        {
+          "id": "int-1",
+          "reason": "tool_approval",
+          "subagentRunId": "sub-2"
+        }
+      ]
+    }
+  }
+]

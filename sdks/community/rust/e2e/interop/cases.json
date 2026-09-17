@@ -1,0 +1,511 @@
+[
+  {
+    "name": "text empty delta",
+    "kind": "event",
+    "input": {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "not-a-uuid",
+      "delta": ""
+    },
+    "accepted": true
+  },
+  {
+    "name": "text unicode delta",
+    "kind": "event",
+    "input": {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "m",
+      "delta": "안녕\nworld"
+    },
+    "accepted": true
+  },
+  {
+    "name": "text absent delta",
+    "kind": "event",
+    "input": {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "m"
+    },
+    "accepted": false
+  },
+  {
+    "name": "text null delta",
+    "kind": "event",
+    "input": {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "m",
+      "delta": null
+    },
+    "accepted": false
+  },
+  {
+    "name": "text numeric delta",
+    "kind": "event",
+    "input": {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "m",
+      "delta": 3
+    },
+    "accepted": false
+  },
+  {
+    "name": "reasoning empty delta",
+    "kind": "event",
+    "input": {
+      "type": "REASONING_MESSAGE_CONTENT",
+      "messageId": "not-a-uuid",
+      "delta": ""
+    },
+    "accepted": true
+  },
+  {
+    "name": "reasoning unicode delta",
+    "kind": "event",
+    "input": {
+      "type": "REASONING_MESSAGE_CONTENT",
+      "messageId": "m",
+      "delta": "안녕\nworld"
+    },
+    "accepted": true
+  },
+  {
+    "name": "reasoning absent delta",
+    "kind": "event",
+    "input": {
+      "type": "REASONING_MESSAGE_CONTENT",
+      "messageId": "m"
+    },
+    "accepted": false
+  },
+  {
+    "name": "reasoning null delta",
+    "kind": "event",
+    "input": {
+      "type": "REASONING_MESSAGE_CONTENT",
+      "messageId": "m",
+      "delta": null
+    },
+    "accepted": false
+  },
+  {
+    "name": "reasoning numeric delta",
+    "kind": "event",
+    "input": {
+      "type": "REASONING_MESSAGE_CONTENT",
+      "messageId": "m",
+      "delta": 3
+    },
+    "accepted": false
+  },
+  {
+    "name": "default text role",
+    "kind": "event",
+    "input": {
+      "type": "TEXT_MESSAGE_START",
+      "messageId": "m"
+    },
+    "accepted": true
+  },
+  {
+    "name": "null text role",
+    "kind": "event",
+    "input": {
+      "type": "TEXT_MESSAGE_START",
+      "messageId": "m",
+      "role": null
+    },
+    "accepted": false
+  },
+  {
+    "name": "unknown text role",
+    "kind": "event",
+    "input": {
+      "type": "TEXT_MESSAGE_START",
+      "messageId": "m",
+      "role": "critic"
+    },
+    "accepted": false
+  },
+  {
+    "name": "empty metadata object",
+    "kind": "event",
+    "input": {
+      "type": "TEXT_MESSAGE_END",
+      "messageId": "m",
+      "metadata": {}
+    },
+    "accepted": true
+  },
+  {
+    "name": "null metadata value",
+    "kind": "event",
+    "input": {
+      "type": "TEXT_MESSAGE_END",
+      "messageId": "m",
+      "metadata": {
+        "trace": null
+      }
+    },
+    "accepted": true
+  },
+  {
+    "name": "null metadata object",
+    "kind": "event",
+    "input": {
+      "type": "TEXT_MESSAGE_END",
+      "messageId": "m",
+      "metadata": null
+    },
+    "accepted": false
+  },
+  {
+    "name": "array metadata",
+    "kind": "event",
+    "input": {
+      "type": "TEXT_MESSAGE_END",
+      "messageId": "m",
+      "metadata": []
+    },
+    "accepted": false
+  },
+  {
+    "name": "empty attribution identifier",
+    "kind": "event",
+    "input": {
+      "type": "TEXT_MESSAGE_END",
+      "messageId": "m",
+      "subagentRunId": ""
+    },
+    "accepted": true
+  },
+  {
+    "name": "null attribution identifier",
+    "kind": "event",
+    "input": {
+      "type": "TEXT_MESSAGE_END",
+      "messageId": "m",
+      "subagentRunId": null
+    },
+    "accepted": false
+  },
+  {
+    "name": "default activity replace",
+    "kind": "event",
+    "input": {
+      "type": "ACTIVITY_SNAPSHOT",
+      "messageId": "m",
+      "activityType": "task",
+      "content": {}
+    },
+    "accepted": true
+  },
+  {
+    "name": "null activity replace",
+    "kind": "event",
+    "input": {
+      "type": "ACTIVITY_SNAPSHOT",
+      "messageId": "m",
+      "activityType": "task",
+      "content": {},
+      "replace": null
+    },
+    "accepted": false
+  },
+  {
+    "name": "null tool parent normalization",
+    "kind": "event",
+    "input": {
+      "type": "TOOL_CALL_START",
+      "toolCallId": "c",
+      "toolCallName": "tool",
+      "parentMessageId": null
+    },
+    "accepted": true
+  },
+  {
+    "name": "null run outcome normalization",
+    "kind": "event",
+    "input": {
+      "type": "RUN_FINISHED",
+      "threadId": "t",
+      "runId": "r",
+      "outcome": null
+    },
+    "accepted": true
+  },
+  {
+    "name": "valid usage count",
+    "kind": "event",
+    "input": {
+      "type": "RUN_FINISHED",
+      "threadId": "t",
+      "runId": "r",
+      "usage": [
+        {
+          "inputTokens": 0,
+          "outputTokens": 5
+        }
+      ]
+    },
+    "accepted": true
+  },
+  {
+    "name": "negative usage count",
+    "kind": "event",
+    "input": {
+      "type": "RUN_FINISHED",
+      "threadId": "t",
+      "runId": "r",
+      "usage": [
+        {
+          "inputTokens": -1
+        }
+      ]
+    },
+    "accepted": false
+  },
+  {
+    "name": "fractional usage count",
+    "kind": "event",
+    "input": {
+      "type": "RUN_FINISHED",
+      "threadId": "t",
+      "runId": "r",
+      "usage": [
+        {
+          "inputTokens": 0.5
+        }
+      ]
+    },
+    "accepted": false
+  },
+  {
+    "name": "usage strips unknown content",
+    "kind": "event",
+    "input": {
+      "type": "RUN_FINISHED",
+      "threadId": "t",
+      "runId": "r",
+      "usage": [
+        {
+          "inputTokens": 1,
+          "prompt": "must not survive"
+        }
+      ]
+    },
+    "accepted": true
+  },
+  {
+    "name": "unknown event fields are discarded by typed Rust model",
+    "kind": "event",
+    "input": {
+      "type": "TEXT_MESSAGE_END",
+      "messageId": "m",
+      "future": {
+        "keep": true
+      }
+    },
+    "accepted": true,
+    "rustValue": {
+      "type": "TEXT_MESSAGE_END",
+      "messageId": "m"
+    },
+    "upstreamValue": {
+      "type": "TEXT_MESSAGE_END",
+      "messageId": "m",
+      "future": {
+        "keep": true
+      }
+    },
+    "difference": "Typed Rust events ignore unknown top-level fields; use metadata or retain the raw JSON when forwarding extensions."
+  },
+  {
+    "name": "unknown event type",
+    "kind": "event",
+    "input": {
+      "type": "FUTURE_EVENT"
+    },
+    "accepted": false
+  },
+  {
+    "name": "success outcome",
+    "kind": "outcome",
+    "input": {
+      "type": "success"
+    },
+    "accepted": true
+  },
+  {
+    "name": "valid interrupt outcome",
+    "kind": "outcome",
+    "input": {
+      "type": "interrupt",
+      "interrupts": [
+        {
+          "id": "i",
+          "reason": "approval"
+        }
+      ]
+    },
+    "accepted": true
+  },
+  {
+    "name": "empty interrupt outcome",
+    "kind": "outcome",
+    "input": {
+      "type": "interrupt",
+      "interrupts": []
+    },
+    "accepted": false
+  },
+  {
+    "name": "unknown success outcome field",
+    "kind": "outcome",
+    "input": {
+      "type": "success",
+      "future": true
+    },
+    "accepted": false
+  },
+  {
+    "name": "unknown interrupt outcome field",
+    "kind": "outcome",
+    "input": {
+      "type": "interrupt",
+      "interrupts": [
+        {
+          "id": "i",
+          "reason": "approval"
+        }
+      ],
+      "future": true
+    },
+    "accepted": false
+  },
+  {
+    "name": "suspended subagent without identifiers",
+    "kind": "subagentOutcome",
+    "input": {
+      "type": "suspended"
+    },
+    "accepted": true
+  },
+  {
+    "name": "suspended subagent with empty identifiers",
+    "kind": "subagentOutcome",
+    "input": {
+      "type": "suspended",
+      "interruptIds": []
+    },
+    "accepted": true
+  },
+  {
+    "name": "null suspended identifiers",
+    "kind": "subagentOutcome",
+    "input": {
+      "type": "suspended",
+      "interruptIds": null
+    },
+    "accepted": false
+  },
+  {
+    "name": "unknown subagent outcome field",
+    "kind": "subagentOutcome",
+    "input": {
+      "type": "suspended",
+      "future": true
+    },
+    "accepted": false
+  },
+  {
+    "name": "unknown subagent success field",
+    "kind": "subagentOutcome",
+    "input": {
+      "type": "success",
+      "future": true
+    },
+    "accepted": false
+  },
+  {
+    "name": "complete run input",
+    "kind": "input",
+    "input": {
+      "threadId": "t",
+      "runId": "r",
+      "state": null,
+      "messages": [],
+      "tools": [],
+      "context": [],
+      "forwardedProps": {}
+    },
+    "accepted": true
+  },
+  {
+    "name": "missing input messages",
+    "kind": "input",
+    "input": {
+      "threadId": "t",
+      "runId": "r",
+      "state": {},
+      "tools": [],
+      "context": [],
+      "forwardedProps": {}
+    },
+    "accepted": false
+  },
+  {
+    "name": "absent forwarded properties become null in Rust",
+    "kind": "input",
+    "input": {
+      "threadId": "t",
+      "runId": "r",
+      "messages": [],
+      "tools": [],
+      "context": []
+    },
+    "accepted": true,
+    "upstreamValue": {
+      "threadId": "t",
+      "runId": "r",
+      "messages": [],
+      "tools": [],
+      "context": []
+    },
+    "rustValue": {
+      "threadId": "t",
+      "runId": "r",
+      "messages": [],
+      "tools": [],
+      "context": [],
+      "forwardedProps": null
+    },
+    "difference": "Rust represents absent forwardedProps as JSON null; the upstream any schema accepts and preserves that value."
+  },
+  {
+    "name": "unknown nested run outcome field",
+    "kind": "event",
+    "input": {
+      "type": "RUN_FINISHED",
+      "threadId": "t",
+      "runId": "r",
+      "outcome": {
+        "type": "success",
+        "future": true
+      }
+    },
+    "accepted": false
+  },
+  {
+    "name": "unknown nested subagent outcome field",
+    "kind": "event",
+    "input": {
+      "type": "SUBAGENT_FINISHED",
+      "subagentRunId": "child",
+      "outcome": {
+        "type": "success",
+        "future": true
+      }
+    },
+    "accepted": false
+  }
+]

@@ -1,0 +1,39 @@
+---
+source: crates/ag-ui-core/tests/snapshots.rs
+expression: "vec![Event::run_started(\"thread-1\",\n\"run-1\").with_timestamp(1_700_000_000_000),\nEvent::text_message_start(\"msg-1\", TextMessageRole::Assistant),\nEvent::text_message_content(\"msg-1\", \"Hello, \"),\nEvent::text_message_content(\"msg-1\", \"world.\"),\nEvent::text_message_end(\"msg-1\"),\nEvent::run_finished_success(\"thread-1\", \"run-1\"),]"
+---
+[
+  {
+    "type": "RUN_STARTED",
+    "timestamp": 1700000000000,
+    "threadId": "thread-1",
+    "runId": "run-1"
+  },
+  {
+    "type": "TEXT_MESSAGE_START",
+    "messageId": "msg-1",
+    "role": "assistant"
+  },
+  {
+    "type": "TEXT_MESSAGE_CONTENT",
+    "messageId": "msg-1",
+    "delta": "Hello, "
+  },
+  {
+    "type": "TEXT_MESSAGE_CONTENT",
+    "messageId": "msg-1",
+    "delta": "world."
+  },
+  {
+    "type": "TEXT_MESSAGE_END",
+    "messageId": "msg-1"
+  },
+  {
+    "type": "RUN_FINISHED",
+    "threadId": "thread-1",
+    "runId": "run-1",
+    "outcome": {
+      "type": "success"
+    }
+  }
+]

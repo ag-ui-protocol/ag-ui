@@ -1,0 +1,51 @@
+---
+title: "Unified Rust SDK proposal"
+description: "Reviewing a feature-based Rust SDK and planning migration from the existing community packages"
+---
+
+The proposal adds the feature-based `ag-ui` crate and companion `ag-ui-a2ui`
+alongside `ag-ui-core` and `ag-ui-client`. Existing source, public APIs and package
+checks remain in place
+while the new implementation is reviewed. No package is published or ownership
+transferred. Adoption is under discussion
+in [#2256](https://github.com/ag-ui-protocol/ag-ui/issues/2256).
+
+The candidate includes protocol types, an agent server API, HTTP/SSE client,
+conversation state, interrupt/resume handling and Axum integration. Applications
+enable `server`, `client`, `http` or `axum` features as needed. JSON/SSE is supported;
+protobuf encoding is not implemented. The separate `ag-ui-a2ui` crate adds A2UI
+v0.9/v0.9.1 types, validation and provider-neutral authoring with optional AG-UI
+integration. Applications using only `ag-ui` do not acquire A2UI dependencies.
+
+## Review locally
+
+From a checkout containing the proposal:
+
+```sh
+cd sdks/community/rust
+cargo test --locked --workspace --all-features
+cargo run --locked -p ag-ui-xtask -- drift-check --local
+cargo run --locked -p ag-ui-migration-tests --example local_round_trip
+```
+
+The example hosts an agent on a loopback port and consumes its stream with the
+Rust client, without an API key or external service. See `sdks/community/rust/README.md`
+for dependency configuration and the independent TypeScript/Rust wire checks.
+
+## Migration boundary
+
+The old `run_agent(params, subscribers)` API and new `HttpAgent -> Thread -> RunStream`
+flow are not source-compatible. Old asynchronous, mutating subscribers cannot be
+replaced by the new synchronous read-only `on_event` observer unchanged. Follow
+`sdks/community/rust/MIGRATION.md` for examples and the decisions needed before adoption.
+
+Existing package maintainers and the team must agree on final legacy releases,
+publishing access and maintenance responsibilities. Any existing source removal
+would be a separate follow-up after agreement. The new implementation stays as
+one `ag-ui` crate with features.
+See the [transition checklist](/sdk/rust/transition) for the pending agreements.
+
+The imported public PR #11 tightens explicit-null roles and outcome fields,
+leaves JSON map ordering to consumers, and exposes the server event verifier.
+The semantic tests check both the pinned official SDK and the schemas in this
+checkout. Representation differences are documented rather than hidden.

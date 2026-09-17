@@ -1,12 +1,47 @@
 [workspace]
 resolver = "3"
-members = ["crates/*"]
+members = ["crates/*", "e2e", "xtask"]
+default-members = ["crates/ag-ui-core", "crates/ag-ui-client", "crates/ag-ui", "crates/ag-ui-a2ui"]
+
+[workspace.package]
+version = "0.4.2"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+repository = "https://github.com/ag-ui-protocol/ag-ui"
+keywords = ["ag-ui", "agent", "llm", "protocol"]
+categories = ["web-programming", "asynchronous"]
 
 [workspace.dependencies]
-thiserror = "^2"
-serde = { version = "^1", features = ["derive"] }
-serde_json = "^1"
+ag-ui = { path = "crates/ag-ui", version = "0.4.2" }
+ag-ui-a2ui = { path = "crates/ag-ui-a2ui", version = "0.4.2" }
 uuid = { version = "1.17.0", features = ["v4", "serde"] }
+
+# ---- runtime: core (must stay minimal) ----
+serde = { version = "1.0.229", features = ["derive"] }
+# JSON map ordering belongs to consumers; do not unify preserve_order into their graph.
+serde_json = "1.0.151"
+
+# ---- runtime: server / client (executor-agnostic) ----
+futures-core = "0.3.34"
+futures-channel = "0.3.34"
+futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
+json-patch = "4.2.0"
+jsonptr = "0.8.1"
+
+# ---- runtime: web binding (tokio enters here only) ----
+axum = "0.8.9"
+tokio = { version = "1.53.1", features = ["rt", "sync", "macros"] }
+tower = "0.5.3"
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "stream", "rustls", "charset", "http2"] }
+
+# ---- optional runtime (feature-gated) ----
+schemars = "1.2.2"
+utoipa = "5.5.0"
+
+# ---- compile-time only (proc-macro / dev) ----
+thiserror = "2.0.20"
+insta = { version = "1", features = ["json"] }
 
 [patch.crates-io]
 ag-ui-core = { path = "crates/ag-ui-core" }

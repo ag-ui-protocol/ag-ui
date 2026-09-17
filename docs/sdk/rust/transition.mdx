@@ -1,0 +1,40 @@
+---
+title: "Transition and versioning proposal"
+description: "Pending ownership, legacy-release and compatibility decisions for the Rust SDK"
+---
+
+This is a proposal for discussion with the upstream team and existing maintainers.
+It records the plan from [the migration coordination issue](https://github.com/KimSoungRyoul/ag-ui-rust/issues/10),
+not an approved ownership change or release policy.
+
+- Review `ag-ui` as a single crate with feature-selected runtimes alongside the
+  existing `ag-ui-core` and `ag-ui-client` packages.
+- Review `ag-ui-a2ui` as a separate companion crate, sharing the workspace version
+  and publishing workflow while keeping A2UI dependencies optional for consumers.
+- Coordinate final `ag-ui-core` and `ag-ui-client` releases with @wdoppenberg.
+  Preserve their current APIs, add migration guidance, then communicate maintenance
+  status. Existing published versions stay available.
+- Agree on a crates.io organization team and at least two individual maintainers,
+  as proposed by Mike. The upstream team decides the maintainers and CODEOWNERS.
+- Agree on review, release sign-off, publishing access and the next release version.
+- Mike offered branch review, a later Rust documentation rewrite, relevant client
+  middleware/verifier work, and 34 captured event fixtures. Those contributions
+  remain follow-up work; this branch does not claim to include them.
+
+The detailed checklist is `sdks/community/rust/docs/transition.md`. Existing source
+is retained in this branch. Its removal and final registry releases would be
+follow-up work after agreement. No package is published or ownership transferred.
+
+## Versioning for agreement
+
+`Event` and `EventType` are exhaustive Rust enums. A new variant can break a
+downstream exhaustive match, so it requires a compatibility-breaking release.
+Before 1.0, the proposed boundary is the next minor series (for example, 0.4 to
+0.5); from 1.0 onward it is the next major version. This follows
+[Cargo's SemVer conventions](https://doc.rust-lang.org/cargo/reference/semver.html).
+
+Changes to field requirements, accepted JSON values, serialization defaults and
+public APIs also need a compatibility review and release notes. An unchanged
+event count does not prove compatibility. The team must confirm this policy and
+the first upstream version before publishing; the source version remains 0.4.2
+as import provenance in the meantime.
