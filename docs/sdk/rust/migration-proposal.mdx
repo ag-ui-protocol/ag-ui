@@ -3,10 +3,10 @@ title: "Unified Rust SDK proposal"
 description: "Reviewing a feature-based Rust SDK and planning migration from the existing community packages"
 ---
 
-The proposal replaces the Rust source with `ag-ui`, imported from the standalone
-SDK's v0.4.2 baseline plus its merged public PR #11. It removes `ag-ui-core` and
-`ag-ui-client` from this workspace, but does not replace their published packages,
-transfer ownership or enable an upstream release. Adoption is under discussion
+The proposal adds the feature-based `ag-ui` crate alongside `ag-ui-core` and
+`ag-ui-client`. Existing source, public APIs and package checks remain in place
+while the new implementation is reviewed. No package is published or ownership
+transferred. Adoption is under discussion
 in [#2256](https://github.com/ag-ui-protocol/ag-ui/issues/2256).
 
 The candidate includes protocol types, an agent server API, HTTP/SSE client,
@@ -37,8 +37,9 @@ replaced by the new synchronous read-only `on_event` observer unchanged. Follow
 `sdks/community/rust/MIGRATION.md` for examples and the decisions needed before adoption.
 
 Existing package maintainers and the team must agree on final legacy releases,
-publishing access and maintenance responsibilities. Review the source removal as
-part of this proposal. The current feature-based layout stays as one `ag-ui` crate.
+publishing access and maintenance responsibilities. Any existing source removal
+would be a separate follow-up after agreement. The new implementation stays as
+one `ag-ui` crate with features.
 See the [transition checklist](/sdk/rust/transition) for the pending agreements.
 
 The imported public PR #11 tightens explicit-null roles and outcome fields,

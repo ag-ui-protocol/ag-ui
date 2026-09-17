@@ -7,8 +7,9 @@ AG-UI is the protocol between a user-facing application and an agent backend. A 
 stream of events: the agent opens messages, streams text and reasoning, calls tools,
 publishes state, reports subagent activity, and finishes — or pauses for human input.
 
-This is a proposed unified community SDK, imported for review as the replacement for
-`ag-ui-core` and `ag-ui-client` in this source tree. Adoption and publishing are not finalized.
+This is a proposed unified community SDK, imported for review alongside
+`ag-ui-core` and `ag-ui-client`. The existing packages remain unchanged while
+adoption and the transition plan are discussed.
 See the [migration proposal](../../MIGRATION.md) and [provenance](../../PROVENANCE.md).
 
 To host an agent behind axum:

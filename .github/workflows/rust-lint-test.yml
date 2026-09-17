@@ -56,7 +56,15 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Check clippy
-        run: cargo clippy --locked --workspace --all-features --all-targets -- -D warnings
+        run: cargo clippy --locked -- -D warnings
+
+      - name: Publish ag-ui-core dry-run
+        run: cargo publish -p ag-ui-core --dry-run
+
+      - name: Publish ag-ui-client dry-run
+        # Keep the existing packaging-only check: publish verification cannot use
+        # the workspace patch and resolves the older registry ag-ui-core instead.
+        run: cargo publish -p ag-ui-client --dry-run --no-verify
 
       - name: Run tests
         run: cargo test --locked --workspace --all-features

@@ -10,8 +10,8 @@ adoption decision. The upstream team makes that decision in
 
 - A single `ag-ui` crate provides protocol types and feature-selected server,
   client and Axum APIs. No core/client/server package split is needed.
-- Legacy source, patch overrides and legacy package CI are removed in this branch.
-  Existing published versions and the historical source revision remain available.
+- Existing source, patch overrides and package CI are retained during review.
+  The proposed `ag-ui` crate is independent of the two existing packages.
 - Local-source drift, representative event round trips and pinned semantic
   boundary cases cover different contracts; all remain part of the proposal.
 - Public SDK PR #11 is included. A2UI and private consumer policies are excluded.
@@ -22,6 +22,7 @@ adoption decision. The upstream team makes that decision in
 | --- | --- | --- |
 | Branch review | Mike offered to review the branch before a draft PR | Coordinate review timing; no approval is assumed |
 | Final legacy releases | Keep the current API/behavior, add migration links, then mark the old packages as no longer maintained | @wdoppenberg and the agreed maintainers |
+| Existing source removal | Consider a separate follow-up after agreeing on adoption and migration | Upstream team and existing maintainers |
 | `ag-ui` ownership | Organization team plus at least two individual maintainers, as proposed in #10 | Upstream team and current crate owner; everyone must accept |
 | CODEOWNERS | Align review responsibility with the maintainers actually taking on the SDK | Upstream team; this branch changes no CODEOWNERS |
 | Publishing | Agree on the next version, release sign-off and registry publishing configuration | Agreed maintainers; no credentials or publishing action added here |
@@ -29,10 +30,10 @@ adoption decision. The upstream team makes that decision in
 | Existing PRs | Map resolved requirements and retain still-useful client verifier/middleware work | Original contributors and upstream reviewers |
 | Captured fixtures | Mike offered 34 captured event JSON fixtures as a follow-up PR | Contributor review after the layout settles |
 
-The final legacy releases should be prepared from their historical implementation,
+Any final legacy releases should be prepared from their existing implementation,
 not by re-exporting `ag-ui` under the old names: the Rust APIs are incompatible.
-Do not yank old versions solely to redirect users. Removing source in this branch
-does not itself change any installed crates.io package.
+Do not yank old versions solely to redirect users. This branch keeps both existing
+packages available for comparison and changes no installed crates.io package.
 
 The existing server `EventVerifier` is now public, but that does not decide whether
 a client-specific verifier or middleware is useful. Review those requirements

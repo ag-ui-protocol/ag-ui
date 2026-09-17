@@ -231,7 +231,7 @@
               "sdk/rust/migration-proposal",
               "sdk/rust/transition",
               {
-                "group": "Legacy 0.1.0 reference",
+                "group": "Existing SDK",
                 "pages": [
                   "sdk/rust/core/overview",
                   "sdk/rust/core/types",

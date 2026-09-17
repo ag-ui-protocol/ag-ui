@@ -7,7 +7,8 @@ This is a proposal for discussion with the upstream team and existing maintainer
 It records the plan from [the migration coordination issue](https://github.com/KimSoungRyoul/ag-ui-rust/issues/10),
 not an approved ownership change or release policy.
 
-- Keep `ag-ui` as the single SDK crate, with feature-selected runtimes.
+- Review `ag-ui` as a single crate with feature-selected runtimes alongside the
+  existing `ag-ui-core` and `ag-ui-client` packages.
 - Coordinate final `ag-ui-core` and `ag-ui-client` releases with @wdoppenberg.
   Preserve their current APIs, add migration guidance, then communicate maintenance
   status. Existing published versions stay available.
@@ -18,9 +19,9 @@ not an approved ownership change or release policy.
   middleware/verifier work, and 34 captured event fixtures. Those contributions
   remain follow-up work; this branch does not claim to include them.
 
-The detailed checklist is `sdks/community/rust/docs/transition.md`. Source removal
-in this branch and final registry releases are separate operations. No package is
-published or ownership transferred by the migration.
+The detailed checklist is `sdks/community/rust/docs/transition.md`. Existing source
+is retained in this branch. Its removal and final registry releases would be
+follow-up work after agreement. No package is published or ownership transferred.
 
 ## Versioning for agreement
 

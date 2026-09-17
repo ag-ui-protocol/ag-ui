@@ -22,7 +22,7 @@ dependency name or re-exporting the new types does not preserve the old API.
 
 ### A complete client run
 
-The [legacy example at the pre-migration revision](https://github.com/ag-ui-protocol/ag-ui/blob/013905bba73f57509ff0f73bfdde61fd897a5deb/sdks/community/rust/crates/ag-ui-client/examples/basic_agent.rs)
+The [existing client example](crates/ag-ui-client/examples/basic_agent.rs)
 uses `run_agent(&params, subscribers)`. Its candidate equivalent keeps a
 caller-chosen thread ID across turns:
 
@@ -89,7 +89,8 @@ normalization details.
 
 ## Existing packages
 
-Previously published `ag-ui-core` and `ag-ui-client` versions remain available.
+The `ag-ui-core` and `ag-ui-client` source remains in this workspace, and their
+previously published versions remain available.
 The proposed final releases would preserve their existing APIs and link to this
 guide. Release and ownership arrangements are tracked in the
 [transition checklist](docs/transition.md).

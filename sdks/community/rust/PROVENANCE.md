@@ -12,11 +12,10 @@ merged publicly as `d228b0467a29f4e631b0f9b30628ab09d78765ed`; it is not a new
 crate release. The semantic probe, 44-case interoperability suite and AG-UI-only
 JSON ordering regression were brought over without the A2UI or website changes.
 
-The previous community SDK by @wdoppenberg and contributions by others remain
-available in Git history at `013905bba73f57509ff0f73bfdde61fd897a5deb` and in their
-published packages. This branch proposes removing its source from the workspace.
-It follows the coordination in upstream #2256/#972 and the standalone SDK's #10;
-it does not imply approval by those contributors or by the AG-UI team.
+The existing community SDK by @wdoppenberg and contributions by others is retained
+in `crates/ag-ui-core` and `crates/ag-ui-client`, unchanged from the upstream base.
+The proposal follows the coordination in upstream #2256/#972 and the standalone
+SDK's #10. It does not imply adoption, source removal, or package ownership changes.
 
 The import excludes `ag-ui-a2ui`, model-provider test helpers, live model tests,
 personal skills, website assets and publishing workflows. Integration changes
@@ -30,4 +29,4 @@ small HTTP errors and truncation across a UTF-8 boundary.
 
 The combined lockfile updates vulnerable/yanked `bytes`, `h2`, `rustls`,
 `rustls-webpki`, `slab` and `zerovec` dependencies within the existing manifest
-constraints. Dependencies used only by the removed legacy source are dropped.
+constraints. Existing package source and public APIs are retained.

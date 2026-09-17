@@ -1,13 +1,15 @@
 # Rust SDK migration proposal
 
-This branch proposes replacing the community Rust implementation with the
-feature-based `ag-ui` crate. It is a review candidate, not an approved adoption
-or a new release. The old `ag-ui-core` and `ag-ui-client` source is removed from
-this branch; their published packages remain available and are not overwritten.
+This branch adds the feature-based `ag-ui` crate alongside the existing community
+Rust SDK for review. The `ag-ui-core` and `ag-ui-client` source, public APIs and
+packaging checks remain in place. Whether to adopt the new implementation and
+remove the existing source is a separate decision for the upstream team and
+maintainers.
 
 | Package | Role |
 | --- | --- |
 | `ag-ui` | Proposed SDK: protocol types, server, client and Axum features |
+| `ag-ui-core`, `ag-ui-client` | Existing community SDK, retained during review |
 | `ag-ui-xtask` | Unpublished protocol drift checks |
 | `ag-ui-migration-tests` | Unpublished HTTP/SSE and documentation tests |
 
