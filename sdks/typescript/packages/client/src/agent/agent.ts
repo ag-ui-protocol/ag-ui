@@ -116,6 +116,7 @@ export abstract class AbstractAgent {
   public state: State;
   private _debug: ResolvedAgentDebugConfig;
   private _debugLogger: DebugLogger | undefined;
+  private _messageFilter?: (messages: Message[]) => Message[];
   public subscribers: AgentSubscriber[] = [];
   public isRunning: boolean = false;
   /** Interrupts emitted by the most recent run that have not yet been resolved.
@@ -228,6 +229,7 @@ export abstract class AbstractAgent {
     initialMessages,
     initialState,
     debug,
+    messageFilter,
   }: AgentConfig = {}) {
     this.agentId = agentId;
     this.description = description ?? "";
@@ -236,6 +238,7 @@ export abstract class AbstractAgent {
     this.state = structuredClone_(initialState ?? {});
     this._debug = resolveAgentDebugConfig(debug);
     this._debugLogger = createDebugLogger(this._debug);
+    this._messageFilter = messageFilter;
 
     // Resolved ONCE, and checked before it is compared. A subclass ceiling is
     // read through a getter, and this constructor runs before the subclass's
@@ -554,6 +557,9 @@ export abstract class AbstractAgent {
       }
     }
     const messagesWithoutActivity = clonedMessages.filter((message) => message.role !== "activity");
+    const messages = this._messageFilter
+      ? this._messageFilter(messagesWithoutActivity)
+      : messagesWithoutActivity;
 
     return {
       threadId: this.threadId,
@@ -568,7 +574,7 @@ export abstract class AbstractAgent {
       context: structuredClone_(parameters?.context ?? []),
       forwardedProps: structuredClone_(parameters?.forwardedProps ?? {}),
       state: structuredClone_(this.state),
-      messages: messagesWithoutActivity,
+      messages,
       ...(parameters?.resume !== undefined ? { resume: structuredClone_(parameters.resume) } : {}),
     };
   }
@@ -763,6 +769,7 @@ export abstract class AbstractAgent {
     cloned.state = structuredClone_(this.state);
     cloned._debug = this._debug;
     cloned._debugLogger = this._debugLogger;
+    cloned._messageFilter = this._messageFilter;
     cloned.isRunning = this.isRunning;
     cloned.subscribers = [...this.subscribers];
     cloned.middlewares = [...this.middlewares];
