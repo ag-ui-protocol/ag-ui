@@ -49,5 +49,5 @@ This branch proposes adopting the independent SDK under
 [`sdks/community/rust`](https://github.com/ag-ui-protocol/ag-ui/issues/2256#issuecomment-5689944347).
 Scope, ownership and publishing still require an upstream team decision. A discussion
 or successful conformance check is not that approval. This workspace includes
-`ag-ui`, the drift tool, and unpublished tests; it excludes A2UI and application
-integration policies.
+`ag-ui`, the optional `ag-ui-a2ui` companion, the drift tool, and unpublished
+tests. Application integration policies remain outside the SDK.

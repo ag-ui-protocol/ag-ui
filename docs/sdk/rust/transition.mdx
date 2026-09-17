@@ -9,6 +9,8 @@ not an approved ownership change or release policy.
 
 - Review `ag-ui` as a single crate with feature-selected runtimes alongside the
   existing `ag-ui-core` and `ag-ui-client` packages.
+- Review `ag-ui-a2ui` as a separate companion crate, sharing the workspace version
+  and publishing workflow while keeping A2UI dependencies optional for consumers.
 - Coordinate final `ag-ui-core` and `ag-ui-client` releases with @wdoppenberg.
   Preserve their current APIs, add migration guidance, then communicate maintenance
   status. Existing published versions stay available.

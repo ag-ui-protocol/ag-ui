@@ -1,10 +1,11 @@
-# Publishing `ag-ui`
+# Publishing `ag-ui` and `ag-ui-a2ui`
 
 The proposed `.github/workflows/publish-rust.yml` is a manual workflow for the
-official `ag-ui-protocol/ag-ui` repository. It publishes only the `ag-ui` crate;
+official `ag-ui-protocol/ag-ui` repository. It publishes `ag-ui`, waits for registry
+availability, then publishes the dependent `ag-ui-a2ui` crate at the same version;
 the existing `ag-ui-core` and `ag-ui-client` packages keep their own release plans.
 
-Configure the `ag-ui` crate's GitHub Trusted Publisher on crates.io with:
+Configure a GitHub Trusted Publisher on crates.io for **each** crate with:
 
 | Field | Value |
 | --- | --- |
@@ -18,14 +19,20 @@ does not merge the proposal, choose maintainers or publish a crate version.
 
 ## Manual release
 
-1. Prepare an agreed, unpublished `ag-ui` version in the manifest and merge it.
+1. Prepare an agreed, unpublished version for both crates: update the workspace
+   version and both internal dependency versions in `Cargo.toml`, refresh
+   `Cargo.lock`, and merge the change.
 2. Run **Publish Rust SDK** on `main`, enter that exact version, and keep
    `dry_run` enabled for verification. This does not request a publishing token.
 3. To publish, run it on official `main` with the same version and `dry_run`
    disabled. Verification runs again before a short-lived crates.io token is
    requested. The upload uses the exact commit that passed verification.
 
-The workflow checks tests, Clippy, dependency advisories, local protocol drift,
-TypeScript interoperability and the package build. A real publish is rejected
+The workflow requires both manifest versions to match the requested version. It
+checks tests, Clippy, dependency advisories, local protocol drift, TypeScript
+interoperability, official A2UI web-core interoperability, and both package builds.
+Cargo packages the two crates together so `ag-ui-a2ui` is verified against the
+candidate `ag-ui` even before that version is available on crates.io.
+A real publish is rejected
 from forks or other branches. Already published versions cannot be overwritten.
 No version bump, Git tag or GitHub Release is created by this workflow.

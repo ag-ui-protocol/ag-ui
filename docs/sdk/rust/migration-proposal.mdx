@@ -3,8 +3,9 @@ title: "Unified Rust SDK proposal"
 description: "Reviewing a feature-based Rust SDK and planning migration from the existing community packages"
 ---
 
-The proposal adds the feature-based `ag-ui` crate alongside `ag-ui-core` and
-`ag-ui-client`. Existing source, public APIs and package checks remain in place
+The proposal adds the feature-based `ag-ui` crate and companion `ag-ui-a2ui`
+alongside `ag-ui-core` and `ag-ui-client`. Existing source, public APIs and package
+checks remain in place
 while the new implementation is reviewed. No package is published or ownership
 transferred. Adoption is under discussion
 in [#2256](https://github.com/ag-ui-protocol/ag-ui/issues/2256).
@@ -12,7 +13,9 @@ in [#2256](https://github.com/ag-ui-protocol/ag-ui/issues/2256).
 The candidate includes protocol types, an agent server API, HTTP/SSE client,
 conversation state, interrupt/resume handling and Axum integration. Applications
 enable `server`, `client`, `http` or `axum` features as needed. JSON/SSE is supported;
-protobuf encoding is not implemented. A2UI is outside this proposal.
+protobuf encoding is not implemented. The separate `ag-ui-a2ui` crate adds A2UI
+v0.9/v0.9.1 types, validation and provider-neutral authoring with optional AG-UI
+integration. Applications using only `ag-ui` do not acquire A2UI dependencies.
 
 ## Review locally
 
