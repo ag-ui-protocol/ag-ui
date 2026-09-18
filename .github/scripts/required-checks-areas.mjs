@@ -97,7 +97,6 @@ export const AREAS = {
       "integrations/crew-ai/python/**",
       "integrations/claude-managed-agents/python/**",
       "integrations/copilot-sdk/python/**",
-      "integrations/copilot-sdk/fixtures/**",
       "integrations/agent-spec/python/**",
       "integrations/claude-agent-sdk/python/**",
       "integrations/antigravity/python/**",
