@@ -29,6 +29,8 @@ on:
       - "integrations/langroid/python/**"
       - "integrations/crew-ai/python/**"
       - "integrations/claude-managed-agents/python/**"
+      - "integrations/copilot-sdk/python/**"
+      - "integrations/copilot-sdk/fixtures/**"
       - "integrations/agent-spec/python/**"
       - "integrations/claude-agent-sdk/python/**"
       - "integrations/antigravity/python/**"
@@ -85,6 +87,8 @@ on:
       - "integrations/langroid/python/**"
       - "integrations/crew-ai/python/**"
       - "integrations/claude-managed-agents/python/**"
+      - "integrations/copilot-sdk/python/**"
+      - "integrations/copilot-sdk/fixtures/**"
       - "integrations/agent-spec/python/**"
       - "integrations/claude-agent-sdk/python/**"
       - "integrations/antigravity/python/**"
@@ -1354,6 +1358,35 @@ jobs:
       - name: Run tests
         working-directory: integrations/claude-agent-sdk/python
         run: uv run --locked python -m pytest tests/ -v
+      - name: Assert no lockfile was rewritten
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        # actionlint 1.7.12 does not support $/ references; checkout is gated above.
+        uses: ./.github/actions/assert-lockfiles-unchanged # zizmor: ignore[self-repository]
+
+  copilot-sdk-python:
+    name: copilot-sdk-python
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        working-directory: integrations/copilot-sdk/python
+        run: uv sync --locked --extra server
+
+      - name: Run deterministic adapter tests
+        working-directory: integrations/copilot-sdk/python
+        run: uv run --locked --extra server python -m pytest tests/ -v
+
       - name: Assert no lockfile was rewritten
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         # actionlint 1.7.12 does not support $/ references; checkout is gated above.
