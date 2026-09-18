@@ -356,6 +356,7 @@ async def test_subagent_lifecycle_and_message_tool_tags():
             },
         },
         {"type": "subagent.started", "data": child},
+        {"type": "session.idle", "data": {}},
         {
             "type": "assistant.message_delta",
             "data": {"messageId": "child-message", "deltaContent": "Found it"},
@@ -436,6 +437,23 @@ async def test_subagent_lifecycle_and_message_tool_tags():
     assert all(e.subagent_run_id == "child-1" for e in tagged)
     assert events[-1].type == "RUN_FINISHED"
 
+    mapper = EventMapper()
+    started = mapper.map_event({
+        "id": "paused-child", "type": "subagent.started", "agentId": "child-1", "data": child,
+    })
+    assert [(e.type, e.subagent_run_id, e.outcome.type) for e in mapper.suspend()] == [
+        ("SUBAGENT_FINISHED", "child-1", "suspended"),
+    ]
+    assert mapper.resume() == started
+    assert mapper.resume() == []
+    completed = mapper.map_event({
+        "id": "completed-child", "type": "subagent.completed", "agentId": "child-1", "data": child,
+    })
+    assert [(e.type, e.subagent_run_id, e.outcome.type) for e in completed] == [
+        ("SUBAGENT_FINISHED", "child-1", "success"),
+    ]
+    assert mapper.suspend() == []
+
 
 @pytest.mark.parametrize("with_text", [True, False], ids=["text-and-image", "image-only"])
 async def test_inline_image_and_legacy_binary_are_sent_as_blobs(with_text):
@@ -468,6 +486,8 @@ async def test_inline_image_and_legacy_binary_are_sent_as_blobs(with_text):
     ]
     if with_text:
         assert client.session.prompts[0] == "Describe these."
+    else:
+        assert client.session.prompts[0] == "Describe the attached media."
     assert events[-1].type == "RUN_FINISHED"
 
 
@@ -514,6 +534,7 @@ async def test_predict_state_and_immutable_snapshots_across_mutable_backend_hand
         ],
     )
     events = await collect(agent, make_input(state={"theme": {"history": ["dark"]}}))
+    assert client.options["tools"][0].skip_permission is False
     assert seen_states == [
         {"theme": {"history": ["dark"]}},
         {"theme": {"history": ["dark", "light"]}},
