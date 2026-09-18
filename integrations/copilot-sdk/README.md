@@ -47,10 +47,38 @@ server. `OPENAI_CHAT_MODEL_ID` selects the wire model (default `gpt-4o`).
 
 ## Dojo
 
-Both integrations currently serve the `agentic_chat` feature. Additional Dojo
-features are planned as a follow-up.
+Both languages expose the same feature routes:
+
+| Feature | Protocol path |
+|---------|---------------|
+| `agentic_chat` | Text streaming and frontend tools |
+| `backend_tool_rendering` | Backend `get_weather` tool (sample weather data) |
+| `human_in_the_loop` | Pending `generate_task_steps` frontend call |
+| `tool_based_generative_ui` | Frontend `generate_haiku` rendering |
+| `shared_state` | `generate_recipe` commits `STATE_SNAPSHOT` |
+| `agentic_generative_ui` | Streamed steps and committed progress snapshots |
+| `predictive_state_updates` | `PredictState` mirrors `write_document` arguments |
+| `agentic_chat_reasoning` | Native reasoning deltas |
+| `agentic_chat_multimodal` | Inline image/blob attachments |
+| `subgraphs` | Native specialist agents and travel selections |
+| `interrupt` | Suspended `schedule_meeting` with a time picker |
+| `deepagents_subagents` | Native research subagent with human approval |
+
+Tool arguments stream as `TOOL_CALL_ARGS`; providers without deltas fall back to
+one complete argument chunk. `PredictState` delegates partial-JSON handling to
+CopilotKit. Tool handlers commit complete state with `setState` / `set_state`.
+Subagent lifecycle and message attribution come from native SDK events, not
+synthetic activity snapshots. Reasoning and image support depend on the provider.
+
+The examples are loopback-only and unauthenticated. Their safe sample backend
+tools explicitly opt out of native permission prompts; application tools do not
+opt out by default.
 
 ```bash
 node apps/dojo/scripts/run-dojo-everything.js --only dojo,copilot-sdk-python
 node apps/dojo/scripts/run-dojo-everything.js --only dojo,copilot-sdk-typescript
 ```
+
+Browser specs live in `apps/dojo/e2e/tests/copilotSdkTests`. Set
+`PLAYWRIGHT_SUITE` to either integration id; optional `DOJO_SCREENSHOT_DIR`
+captures each feature after its test. Keep that directory outside the repository.
