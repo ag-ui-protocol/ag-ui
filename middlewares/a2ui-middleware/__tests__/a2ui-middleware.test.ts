@@ -9,6 +9,7 @@ import {
   ToolMessage,
 } from "@ag-ui/client";
 import { Observable, firstValueFrom, toArray } from "rxjs";
+import { BASIC_CATALOG_ID } from "../src/constants";
 
 import {
   A2UIMiddleware,
@@ -661,6 +662,123 @@ describe("A2UIMiddleware", () => {
       }
     });
 
+    it("pins the basic catalog id to the one the published catalog declares", () => {
+      // Asserted as a literal rather than against the constant: every other test
+      // here compares the emitted id to BASIC_CATALOG_ID, which would still pass
+      // if the constant itself drifted away from the spec.
+      expect(BASIC_CATALOG_ID).toBe("https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json");
+    });
+
+    it("falls back to the canonical basic catalog id when nothing else resolves", async () => {
+      // No configured defaultCatalogId, no frontend-registered catalog id and no
+      // streamed catalogId. The emitted createSurface must carry the id the
+      // published basic catalog declares as its own `$id`/`catalogId`; the older
+      // noncanonical id does not match what a renderer registers, so the surface
+      // fails to resolve with "Catalog not found".
+      const middleware = new A2UIMiddleware({});
+      const toolCallId = "tc-canonical-default";
+
+      const fullArgs = JSON.stringify({
+        surfaceId: "s-canonical",
+        components: [
+          { id: "root", component: "Row", children: { componentId: "card", path: "/items" } },
+          { id: "card", component: "HotelCard", name: { path: "name" } },
+        ],
+        data: { items: [{ name: "A" }] },
+      });
+
+      const mockAgent = new MockAgent([
+        { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
+        { type: EventType.TOOL_CALL_START, toolCallId, toolCallName: "render_a2ui" },
+        { type: EventType.TOOL_CALL_ARGS, toolCallId, delta: fullArgs } as BaseEvent,
+        { type: EventType.TOOL_CALL_END, toolCallId },
+        { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
+      ]);
+
+      const events = await collectEvents(middleware.run(createRunAgentInput(), mockAgent));
+      const snapshots = events.filter(isPaint);
+      expect(snapshots.length).toBeGreaterThan(0);
+      const createOps = snapshots.flatMap((snap) =>
+        ((snap as any).content.a2ui_operations as any[]).filter((op) => op.createSurface),
+      );
+      expect(createOps.length).toBeGreaterThan(0);
+      for (const op of createOps) {
+        expect(op.createSurface.catalogId).toBe(BASIC_CATALOG_ID);
+      }
+    });
+
+    it('maps a streamed catalogId of "basic" to the canonical basic catalog id', async () => {
+      // "basic" is a shorthand the model still emits; it is not an id any
+      // renderer registers. It must fall through to the canonical id.
+      const middleware = new A2UIMiddleware({});
+      const toolCallId = "tc-canonical-basic";
+
+      const fullArgs = JSON.stringify({
+        surfaceId: "s-basic",
+        catalogId: "basic",
+        components: [
+          { id: "root", component: "Row", children: { componentId: "card", path: "/items" } },
+          { id: "card", component: "HotelCard", name: { path: "name" } },
+        ],
+        data: { items: [{ name: "A" }] },
+      });
+
+      const mockAgent = new MockAgent([
+        { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
+        { type: EventType.TOOL_CALL_START, toolCallId, toolCallName: "render_a2ui" },
+        { type: EventType.TOOL_CALL_ARGS, toolCallId, delta: fullArgs } as BaseEvent,
+        { type: EventType.TOOL_CALL_END, toolCallId },
+        { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
+      ]);
+
+      const events = await collectEvents(middleware.run(createRunAgentInput(), mockAgent));
+      const snapshots = events.filter(isPaint);
+      expect(snapshots.length).toBeGreaterThan(0);
+      const createOps = snapshots.flatMap((snap) =>
+        ((snap as any).content.a2ui_operations as any[]).filter((op) => op.createSurface),
+      );
+      expect(createOps.length).toBeGreaterThan(0);
+      for (const op of createOps) {
+        expect(op.createSurface.catalogId).toBe(BASIC_CATALOG_ID);
+      }
+    });
+
+    it("keeps an explicitly configured defaultCatalogId ahead of the canonical basic catalog id", async () => {
+      // Precedence guard: the canonical fallback is the last resort only. A host
+      // override is emitted unchanged.
+      const middleware = new A2UIMiddleware({ defaultCatalogId: "server://explicit" });
+      const toolCallId = "tc-canonical-precedence";
+
+      const fullArgs = JSON.stringify({
+        surfaceId: "s-precedence",
+        catalogId: "basic",
+        components: [
+          { id: "root", component: "Row", children: { componentId: "card", path: "/items" } },
+          { id: "card", component: "HotelCard", name: { path: "name" } },
+        ],
+        data: { items: [{ name: "A" }] },
+      });
+
+      const mockAgent = new MockAgent([
+        { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
+        { type: EventType.TOOL_CALL_START, toolCallId, toolCallName: "render_a2ui" },
+        { type: EventType.TOOL_CALL_ARGS, toolCallId, delta: fullArgs } as BaseEvent,
+        { type: EventType.TOOL_CALL_END, toolCallId },
+        { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
+      ]);
+
+      const events = await collectEvents(middleware.run(createRunAgentInput(), mockAgent));
+      const snapshots = events.filter(isPaint);
+      expect(snapshots.length).toBeGreaterThan(0);
+      const createOps = snapshots.flatMap((snap) =>
+        ((snap as any).content.a2ui_operations as any[]).filter((op) => op.createSurface),
+      );
+      expect(createOps.length).toBeGreaterThan(0);
+      for (const op of createOps) {
+        expect(op.createSurface.catalogId).toBe("server://explicit");
+      }
+    });
+
     it("streaming intercept fires for a custom injectA2UITool name", async () => {
       // When the middleware injects the render tool under a non-default name,
       // the streaming intercept must recognize that name — otherwise the
@@ -760,7 +878,7 @@ describe("A2UIMiddleware", () => {
       const outer2 = "outer-2";
       const secondEnvelope = JSON.stringify({
         a2ui_operations: [
-          { version: "v0.9", createSurface: { surfaceId: "s-second", catalogId: "https://a2ui.org/specification/v0_9/basic_catalog.json" } },
+          { version: "v0.9", createSurface: { surfaceId: "s-second", catalogId: "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json" } },
           { version: "v0.9", updateComponents: { surfaceId: "s-second", components: [{ id: "root", component: "Text", text: "hi" }] } },
         ],
       });
@@ -819,7 +937,7 @@ describe("A2UIMiddleware", () => {
       // Final envelope from generate_a2ui re-wraps the SAME surface s-dup.
       const finalEnvelope = JSON.stringify({
         a2ui_operations: [
-          { version: "v0.9", createSurface: { surfaceId: "s-dup", catalogId: "https://a2ui.org/specification/v0_9/basic_catalog.json" } },
+          { version: "v0.9", createSurface: { surfaceId: "s-dup", catalogId: "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json" } },
           { version: "v0.9", updateComponents: { surfaceId: "s-dup", components: [
             { id: "root", component: "Row", children: { componentId: "card", path: "/items" } },
             { id: "card", component: "HotelCard", name: { path: "name" } },
@@ -871,7 +989,7 @@ describe("A2UIMiddleware", () => {
       });
       const otherEnvelope = JSON.stringify({
         a2ui_operations: [
-          { version: "v0.9", createSurface: { surfaceId: "s-other", catalogId: "https://a2ui.org/specification/v0_9/basic_catalog.json" } },
+          { version: "v0.9", createSurface: { surfaceId: "s-other", catalogId: "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json" } },
           { version: "v0.9", updateComponents: { surfaceId: "s-other", components: [{ id: "root", component: "Text", text: "other" }] } },
         ],
       });
