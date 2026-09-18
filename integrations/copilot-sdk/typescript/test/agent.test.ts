@@ -100,7 +100,7 @@ const TOOLS = [
 
 describe("CopilotAgent", () => {
   it("streams assistant text", async () => {
-    const events = await run(new CopilotAgent({ client: new FakeClient(TEXT_TURN) }), makeInput());
+    const events = await run(new CopilotAgent({ client: new FakeClient(TEXT_TURN), runTimeoutMs: 1_000 }), makeInput());
     expect(events[0]!.type).toBe("RUN_STARTED");
     expect(events.at(-1)!.type).toBe("RUN_FINISHED");
     const text = events
@@ -113,7 +113,7 @@ describe("CopilotAgent", () => {
   it("forwards RunAgentInput.context and state into the prompt", async () => {
     const client = new FakeClient(TEXT_TURN);
     let prompt = "";
-    const agent = new CopilotAgent({ client });
+    const agent = new CopilotAgent({ client, runTimeoutMs: 1_000 });
     const original = client.createSession.bind(client);
     client.createSession = async (config) => {
       const session = (await original(config)) as unknown as FakeSession;
@@ -281,7 +281,7 @@ describe("CopilotAgent", () => {
 
   it.each([true, false])("sends inline image and legacy binary blobs (with text: %s)", async (withText) => {
     const client = new FakeClient(TEXT_TURN);
-    const events = await run(new CopilotAgent({ client }), makeInput({
+    const events = await run(new CopilotAgent({ client, runTimeoutMs: 1_000 }), makeInput({
       messages: [{
         id: "image-user", role: "user", content: [
           ...(withText ? [{ type: "text" as const, text: "Describe these." }] : []),
@@ -320,7 +320,7 @@ describe("CopilotAgent", () => {
       return session;
     };
     const agent = new CopilotAgent({
-      client, predictState,
+      client, predictState, runTimeoutMs: 1_000,
       tools: [{
         name: "set_theme", description: "Update theme", parameters: { type: "object" },
         handler: (args, context) => {
