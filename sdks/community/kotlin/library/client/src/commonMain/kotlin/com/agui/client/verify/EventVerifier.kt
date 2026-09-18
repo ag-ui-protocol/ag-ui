@@ -30,7 +30,10 @@ class AGUIError(message: String) : Exception(message)
 fun Flow<BaseEvent>.verifyEvents(debug: Boolean = false): Flow<BaseEvent> {
     // State tracking - using Maps to support concurrent messages/tool calls like TypeScript SDK
     val activeMessages = mutableMapOf<String, Boolean>()
+    val messageRoles = mutableMapOf<String, Role>()
     val activeToolCalls = mutableMapOf<String, Boolean>()
+    val activeReasoningSpans = mutableSetOf<String>()
+    val activeReasoningMessages = mutableSetOf<String>()
     var runFinished = false
     var runError = false
     var firstEventReceived = false
@@ -38,6 +41,8 @@ fun Flow<BaseEvent>.verifyEvents(debug: Boolean = false): Flow<BaseEvent> {
     var activeThinkingStep = false
     var activeThinkingStepMessage = false
     var runStarted = false
+    var currentThreadId: String? = null
+    var currentRunId: String? = null
     
     return transform { event ->
         val eventType = event.eventType
@@ -77,6 +82,9 @@ fun Flow<BaseEvent>.verifyEvents(debug: Boolean = false): Flow<BaseEvent> {
             if (runFinished) {
                 activeMessages.clear()
                 activeToolCalls.clear()
+                activeReasoningSpans.clear()
+                activeReasoningMessages.clear()
+                messageRoles.clear()
                 activeSteps.clear()
                 activeThinkingStep = false
                 activeThinkingStepMessage = false
@@ -95,6 +103,11 @@ fun Flow<BaseEvent>.verifyEvents(debug: Boolean = false): Flow<BaseEvent> {
                         "Cannot send 'TEXT_MESSAGE_START' event: A text message with ID '$messageId' is already in progress. Complete it with 'TEXT_MESSAGE_END' first."
                     )
                 }
+                val priorRole = messageRoles[messageId]
+                if (priorRole != null && priorRole != event.role) {
+                    throw AGUIError("Cannot reopen text message '$messageId' with a different role")
+                }
+                messageRoles[messageId] = event.role
                 activeMessages[messageId] = true
             }
 
@@ -165,6 +178,9 @@ fun Flow<BaseEvent>.verifyEvents(debug: Boolean = false): Flow<BaseEvent> {
             }
             
             is RunFinishedEvent -> {
+                if (event.threadId != currentThreadId || event.runId != currentRunId) {
+                    throw AGUIError("RUN_FINISHED identifiers must match RUN_STARTED")
+                }
                 // Check that all steps are finished before run ends
                 if (activeSteps.isNotEmpty()) {
                     val unfinishedSteps = activeSteps.keys.joinToString(", ")
@@ -186,15 +202,55 @@ fun Flow<BaseEvent>.verifyEvents(debug: Boolean = false): Flow<BaseEvent> {
                         "Cannot send 'RUN_FINISHED' while tool calls are still active: $unfinishedToolCalls"
                     )
                 }
+                if (activeReasoningSpans.isNotEmpty() || activeReasoningMessages.isNotEmpty()) {
+                    throw AGUIError("Cannot send RUN_FINISHED while reasoning is still active")
+                }
+                val interruptIds = (event.outcome as? RunFinishedInterruptOutcome)
+                    ?.interrupts?.map { it.id }.orEmpty()
+                if (interruptIds.size != interruptIds.toSet().size) {
+                    throw AGUIError("Interrupt identifiers must be unique")
+                }
                 runFinished = true
             }
             
             is RunStartedEvent -> {
                 runStarted = true
+                currentThreadId = event.threadId
+                currentRunId = event.runId
             }
 
             is RunErrorEvent -> {
                 runError = true
+            }
+
+            is ReasoningStartEvent -> {
+                if (!activeReasoningSpans.add(event.messageId)) {
+                    throw AGUIError("Reasoning span '${event.messageId}' is already active")
+                }
+            }
+
+            is ReasoningEndEvent -> {
+                if (!activeReasoningSpans.remove(event.messageId)) {
+                    throw AGUIError("Reasoning span '${event.messageId}' was not started")
+                }
+            }
+
+            is ReasoningMessageStartEvent -> {
+                if (!activeReasoningMessages.add(event.messageId)) {
+                    throw AGUIError("Reasoning message '${event.messageId}' is already active")
+                }
+            }
+
+            is ReasoningMessageContentEvent -> {
+                if (event.messageId !in activeReasoningMessages) {
+                    throw AGUIError("Reasoning message '${event.messageId}' was not started")
+                }
+            }
+
+            is ReasoningMessageEndEvent -> {
+                if (!activeReasoningMessages.remove(event.messageId)) {
+                    throw AGUIError("Reasoning message '${event.messageId}' was not started")
+                }
             }
             
             // Thinking Events Validation
@@ -253,5 +309,9 @@ fun Flow<BaseEvent>.verifyEvents(debug: Boolean = false): Flow<BaseEvent> {
         }
         
         emit(event)
+    }.onCompletion { cause ->
+        if (cause == null && runStarted && !runFinished && !runError) {
+            throw AGUIError("Event stream ended before RUN_FINISHED or RUN_ERROR")
+        }
     }
 }

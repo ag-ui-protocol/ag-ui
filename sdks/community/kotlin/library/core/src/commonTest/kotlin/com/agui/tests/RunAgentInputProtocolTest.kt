@@ -24,6 +24,7 @@ class RunAgentInputProtocolTest {
         // Required fields
         assertEquals("thread_abc123", jsonObj["threadId"]?.jsonPrimitive?.content)
         assertEquals("run_xyz789", jsonObj["runId"]?.jsonPrimitive?.content)
+        assertEquals(AG_UI_PROTOCOL_VERSION, jsonObj["protocolVersion"]?.jsonPrimitive?.content)
 
         // Fields with default values should be present
         assertTrue(jsonObj.containsKey("state"))
