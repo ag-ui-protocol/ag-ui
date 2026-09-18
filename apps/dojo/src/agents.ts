@@ -787,6 +787,14 @@ export const agentsIntegrations = {
       },
     ),
 
+  "copilot-sdk-python": async () => ({
+    agentic_chat: new HttpAgent({ url: `${envVars.copilotSdkPythonUrl}/agent` }),
+  }),
+
+  "copilot-sdk-typescript": async () => ({
+    agentic_chat: new HttpAgent({ url: `${envVars.copilotSdkTypescriptUrl}/agent` }),
+  }),
+
   "claude-agent-sdk-python": async () =>
     mapAgents(
       (path) =>

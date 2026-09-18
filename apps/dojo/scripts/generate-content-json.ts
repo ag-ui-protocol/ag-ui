@@ -603,6 +603,20 @@ const agentFilesMapper: Record<
   a2a: () => ({}),
   // Built-in agent with A2UI middleware - uses dedicated API route
   builtin: () => ({}),
+  "copilot-sdk-python": (agentKeys: string[]) =>
+    Object.fromEntries(
+      agentKeys.map((agentId) => [
+        agentId,
+        [path.join(__dirname, integrationsFolderPath, "copilot-sdk/python/ag_ui_copilot_sdk/server.py")],
+      ]),
+    ),
+  "copilot-sdk-typescript": (agentKeys: string[]) =>
+    Object.fromEntries(
+      agentKeys.map((agentId) => [
+        agentId,
+        [path.join(__dirname, integrationsFolderPath, "copilot-sdk/typescript/examples/server.ts")],
+      ]),
+    ),
   "claude-agent-sdk-python": (agentKeys: string[]) => {
     return agentKeys.reduce(
       (acc, agentId) => ({
