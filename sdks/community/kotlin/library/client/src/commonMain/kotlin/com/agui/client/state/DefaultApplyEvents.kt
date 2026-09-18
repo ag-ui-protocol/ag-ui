@@ -27,6 +27,7 @@ private fun createStreamingMessage(messageId: String, role: Role): Message = whe
     Role.USER -> UserMessage(id = messageId, content = "")
     Role.TOOL -> ToolMessage(id = messageId, content = "", toolCallId = messageId)
     Role.ACTIVITY -> ActivityMessage(id = messageId, activityType = "", activityContent = kotlinx.serialization.json.JsonObject(emptyMap()))
+    Role.REASONING -> ReasoningMessage(id = messageId, content = "")
 }
 
 private fun Message.appendDelta(delta: String): Message = when (this) {
@@ -322,6 +323,7 @@ fun defaultApplyEvents(
                 } catch (e: Exception) {
                     logger.e(e) { "Failed to apply state delta" }
                     stateHandler?.onStateError(e, event.delta)
+                    throw e
                 }
             }
 

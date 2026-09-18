@@ -8,6 +8,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlin.test.assertFails
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
@@ -32,6 +33,15 @@ class SseParserTest {
         parsed.forEach { event ->
             val start = assertIs<TextMessageStartEvent>(event)
             assertEquals("stream-1", start.messageId)
+        }
+    }
+
+    @Test
+    fun strictV1ParserFailsInsteadOfDroppingMalformedEvents() = runTest {
+        val parser = SseParser(strictV1 = true)
+        assertFails {
+            parser.parseFlow(flowOf("""{"type":"TEXT_MESSAGE_END","messageId":"m","future":true}"""))
+                .toList()
         }
     }
 }
