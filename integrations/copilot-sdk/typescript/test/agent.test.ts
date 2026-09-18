@@ -233,6 +233,7 @@ describe("CopilotAgent", () => {
     const script: Payload[] = [
       { type: "subagent.started", agentId: "parent-agent", data: { toolCallId: "spawn-parent", agentName: "coordinator", agentDisplayName: "Coordinator", agentDescription: "Coordinate", parentId: "unknown-task-registry-id" } },
       { type: "subagent.started", data: child },
+      { type: "session.idle", data: {} },
       { type: "assistant.message_delta", data: { messageId: "child-message", deltaContent: "Found it" } },
       { type: "assistant.message", data: { messageId: "child-message", content: "Found it", toolRequests: [] } },
       { type: "assistant.tool_call_delta", data: { toolCallId: "child-tool", toolName: "lookup", inputDelta: "{}" } },
@@ -260,6 +261,22 @@ describe("CopilotAgent", () => {
     expect(tagged).toHaveLength(7);
     for (const event of tagged) expect(event).toHaveProperty("subagentRunId", "child-1");
     expect(events.at(-1)!.type).toBe("RUN_FINISHED");
+
+    const mapper = new CopilotEventMapper();
+    const started = mapper.mapEvent({
+      id: "paused-child", type: "subagent.started", agentId: "child-1", data: child,
+    } as SessionEvent);
+    expect(mapper.suspend()).toEqual([
+      { type: "SUBAGENT_FINISHED", subagentRunId: "child-1", outcome: { type: "suspended" } },
+    ]);
+    expect(mapper.resume()).toEqual(started);
+    expect(mapper.resume()).toEqual([]);
+    expect(mapper.mapEvent({
+      id: "completed-child", type: "subagent.completed", agentId: "child-1", data: child,
+    } as SessionEvent)).toEqual([
+      { type: "SUBAGENT_FINISHED", subagentRunId: "child-1", outcome: { type: "success" } },
+    ]);
+    expect(mapper.suspend()).toEqual([]);
   });
 
   it.each([true, false])("sends inline image and legacy binary blobs (with text: %s)", async (withText) => {
@@ -279,6 +296,7 @@ describe("CopilotAgent", () => {
       { type: "blob", data: "d29ybGQ=", mimeType: "image/jpeg" },
     ]);
     if (withText) expect(client.session!.sent[0]!.prompt).toBe("Describe these.");
+    else expect(client.session!.sent[0]!.prompt).toBe("Describe the attached media.");
     expect(events.at(-1)!.type).toBe("RUN_FINISHED");
   });
 
@@ -316,6 +334,7 @@ describe("CopilotAgent", () => {
       }],
     });
     const events = await run(agent, makeInput({ state: { theme: { history: ["dark"] } } }));
+    expect(client.config!.tools![0]!.skipPermission ?? false).toBe(false);
     expect(seenStates).toEqual([
       { theme: { history: ["dark"] } },
       { theme: { history: ["dark", "light"] } },
