@@ -1,9 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { firstValueFrom, toArray } from "rxjs";
 import type { BaseEvent, RunAgentInput } from "@ag-ui/core";
+import type { SessionConfig, SessionEvent } from "@github/copilot-sdk";
 import { CopilotAgent, type CopilotClientPort, type CopilotSessionPort } from "../src/index.js";
+import { CopilotEventMapper } from "../src/mapper.js";
 
-type Payload = { id: string; type: string; data?: Record<string, unknown> };
+type Payload = { id: string; type: string; agentId?: string; data?: Record<string, unknown> };
 
 const TEXT_TURN: Payload[] = [
   { id: "1", type: "assistant.message_start", data: { messageId: "m1" } },
@@ -27,11 +29,13 @@ const FRONTEND_TOOL_TURN: Payload[] = [
 
 class FakeClient implements CopilotClientPort {
   session?: FakeSession;
+  config?: SessionConfig;
   constructor(
     private readonly script: Payload[],
     private readonly stall = false,
   ) {}
-  async createSession(config: { onEvent?: (event: never) => void }): Promise<CopilotSessionPort> {
+  async createSession(config: SessionConfig): Promise<CopilotSessionPort> {
+    this.config = config;
     this.session = new FakeSession(config.onEvent!, this.script, this.stall);
     return this.session as unknown as CopilotSessionPort;
   }
@@ -40,6 +44,7 @@ class FakeClient implements CopilotClientPort {
 class FakeSession {
   sessionId = "fake-session";
   prompts: string[] = [];
+  sent: Parameters<CopilotSessionPort["send"]>[0][] = [];
   resolved: string[] = [];
   aborted = false;
   rpc = {
@@ -61,8 +66,9 @@ class FakeSession {
   emit(payload: Payload): void {
     this.onEvent(payload as never);
   }
-  async send(): Promise<void> {
-    this.prompts.push("sent");
+  async send(options: Parameters<CopilotSessionPort["send"]>[0]): Promise<void> {
+    this.prompts.push(options.prompt);
+    this.sent.push(options);
     if (this.stall) await new Promise(() => {});
     for (const payload of this.script) this.emit(payload);
   }
@@ -181,5 +187,186 @@ describe("CopilotAgent", () => {
     const events = await run(agent, makeInput());
     expect(events.at(-1)!.type).toBe("RUN_ERROR");
     expect(client.session!.aborted).toBe(true);
+  });
+
+  it.each([
+    ["tool.execution_start", true], ["external_tool.requested", true],
+    ["tool.execution_start", false], ["external_tool.requested", false],
+  ] as const)(
+    "streams args once before %s, with a no-stream fallback (name first: %s)",
+    (type, nameFirst) => {
+      const mapper = new CopilotEventMapper();
+      const chunks = ['{"color":', '"red"}'];
+      const streamed = chunks.flatMap((inputDelta, index) => {
+        const events = mapper.mapEvent({
+          id: `delta-${index}`, type: "assistant.tool_call_delta",
+          data: { toolCallId: "call-1", ...(index === (nameFirst ? 0 : 1) ? { toolName: "paint" } : {}), inputDelta },
+        } as SessionEvent);
+        if (!nameFirst && index === 0) expect(events).toEqual([]);
+        return events;
+      });
+      expect(streamed).toEqual([
+        { type: "TOOL_CALL_START", toolCallId: "call-1", toolCallName: "paint" },
+        ...(nameFirst ? chunks : [chunks.join("")]).map((delta) => ({ type: "TOOL_CALL_ARGS", toolCallId: "call-1", delta })),
+      ]);
+      const data = { toolCallId: "call-1", toolName: "paint", requestId: "req-1", arguments: { color: "red" } };
+      expect(mapper.mapEvent({ id: "end", type, data } as SessionEvent)).toEqual([
+        { type: "TOOL_CALL_END", toolCallId: "call-1" },
+      ]);
+      expect(mapper.mapEvent({
+        id: "final-message", type: "assistant.message",
+        data: { messageId: "m1", content: "", toolRequests: [{ toolCallId: "call-1", name: "paint", arguments: data.arguments }] },
+      } as SessionEvent)).toEqual([]);
+      expect(mapper.mapEvent({
+        id: "fallback", type, data: { ...data, toolCallId: "call-2", requestId: "req-2" },
+      } as SessionEvent)).toEqual([
+        { type: "TOOL_CALL_START", toolCallId: "call-2", toolCallName: "paint" },
+        { type: "TOOL_CALL_ARGS", toolCallId: "call-2", delta: '{"color":"red"}' },
+        { type: "TOOL_CALL_END", toolCallId: "call-2" },
+      ]);
+      expect(mapper.finish()).toEqual([]);
+    },
+  );
+
+  it("maps subagent lifecycle and tags its message and tool events", async () => {
+    const child = { toolCallId: "spawn-1", agentName: "research", agentDisplayName: "Research", agentDescription: "Find facts", parentId: "parent-agent" };
+    const script: Payload[] = [
+      { type: "subagent.started", agentId: "parent-agent", data: { toolCallId: "spawn-parent", agentName: "coordinator", agentDisplayName: "Coordinator", agentDescription: "Coordinate", parentId: "unknown-task-registry-id" } },
+      { type: "subagent.started", data: child },
+      { type: "assistant.message_delta", data: { messageId: "child-message", deltaContent: "Found it" } },
+      { type: "assistant.message", data: { messageId: "child-message", content: "Found it", toolRequests: [] } },
+      { type: "assistant.tool_call_delta", data: { toolCallId: "child-tool", toolName: "lookup", inputDelta: "{}" } },
+      { type: "tool.execution_start", data: { toolCallId: "child-tool", toolName: "lookup", arguments: {} } },
+      { type: "tool.execution_complete", data: { toolCallId: "child-tool", success: true, result: { content: "found" } } },
+      { type: "subagent.completed", data: child },
+      { type: "subagent.started", agentId: "child-2", data: { ...child, toolCallId: "spawn-2" } },
+      { type: "subagent.failed", agentId: "child-2", data: { ...child, toolCallId: "spawn-2", error: "Lookup failed" } },
+      { type: "subagent.completed", agentId: "parent-agent", data: { toolCallId: "spawn-parent", agentName: "coordinator", agentDisplayName: "Coordinator" } },
+    ].map((event, index) => ({ id: String(index), agentId: "child-1", ...event }));
+    script.push({ id: "root-idle", type: "session.idle", data: {} });
+    const events = await run(new CopilotAgent({ client: new FakeClient(script), runTimeoutMs: 1_000 }), makeInput());
+    const lifecycle = events.filter((event) => event.type.startsWith("SUBAGENT_"));
+    expect(lifecycle).toMatchObject([
+      { type: "SUBAGENT_STARTED", subagentRunId: "parent-agent", parentToolCallId: "spawn-parent" },
+      { type: "SUBAGENT_STARTED", subagentRunId: "child-1", parentToolCallId: "spawn-1", parentSubagentRunId: "parent-agent", name: "Research" },
+      { type: "SUBAGENT_FINISHED", subagentRunId: "child-1", outcome: { type: "success" } },
+      { type: "SUBAGENT_STARTED", subagentRunId: "child-2", parentToolCallId: "spawn-2" },
+      { type: "SUBAGENT_ERROR", subagentRunId: "child-2", message: "Lookup failed" },
+      { type: "SUBAGENT_FINISHED", subagentRunId: "parent-agent", outcome: { type: "success" } },
+    ]);
+    expect(lifecycle[1]).not.toHaveProperty("toolCallId");
+    expect(lifecycle[0]).not.toHaveProperty("parentSubagentRunId", "unknown-task-registry-id");
+    const tagged = events.filter((event) => /^(TEXT_MESSAGE_|TOOL_CALL_)/.test(event.type));
+    expect(tagged).toHaveLength(7);
+    for (const event of tagged) expect(event).toHaveProperty("subagentRunId", "child-1");
+    expect(events.at(-1)!.type).toBe("RUN_FINISHED");
+  });
+
+  it.each([true, false])("sends inline image and legacy binary blobs (with text: %s)", async (withText) => {
+    const client = new FakeClient(TEXT_TURN);
+    const events = await run(new CopilotAgent({ client }), makeInput({
+      messages: [{
+        id: "image-user", role: "user", content: [
+          ...(withText ? [{ type: "text" as const, text: "Describe these." }] : []),
+          { type: "image", source: { type: "data", value: "data:image/png;base64,aGVsbG8=", mimeType: "image/png" } },
+          { type: "binary", data: "d29ybGQ=", mimeType: "image/jpeg" },
+        ],
+      }],
+    }));
+    expect(client.session!.sent).toHaveLength(1);
+    expect(client.session!.sent[0]!.attachments).toEqual([
+      { type: "blob", data: "aGVsbG8=", mimeType: "image/png" },
+      { type: "blob", data: "d29ybGQ=", mimeType: "image/jpeg" },
+    ]);
+    if (withText) expect(client.session!.sent[0]!.prompt).toBe("Describe these.");
+    expect(events.at(-1)!.type).toBe("RUN_FINISHED");
+  });
+
+  it("emits PredictState and immutable snapshots across mutable backend handler steps", async () => {
+    const predictState = [{ state_key: "theme", tool: "set_theme", tool_argument: "theme" }];
+    const seenStates: unknown[] = [];
+    const client = new FakeClient([{ id: "idle", type: "session.idle", data: {} }]);
+    const create = client.createSession.bind(client);
+    client.createSession = async (config) => {
+      const session = await create(config);
+      const send = session.send.bind(session);
+      session.send = async (options) => {
+        for (const theme of ["light", "contrast"]) {
+          const args = { theme };
+          await config.tools![0]!.handler!(args, {
+            sessionId: session.sessionId, toolCallId: `backend-${theme}`, toolName: "set_theme", arguments: args,
+          });
+        }
+        return send(options);
+      };
+      return session;
+    };
+    const agent = new CopilotAgent({
+      client, predictState,
+      tools: [{
+        name: "set_theme", description: "Update theme", parameters: { type: "object" },
+        handler: (args, context) => {
+          const state = context.state as { theme: { history: string[] } };
+          seenStates.push(structuredClone(state));
+          state.theme.history.push(args.theme);
+          context.setState(state);
+          state.theme.history.push("unpublished");
+          return "updated";
+        },
+      }],
+    });
+    const events = await run(agent, makeInput({ state: { theme: { history: ["dark"] } } }));
+    expect(seenStates).toEqual([
+      { theme: { history: ["dark"] } },
+      { theme: { history: ["dark", "light"] } },
+    ]);
+    expect(events).toEqual([
+      { type: "RUN_STARTED", threadId: "t1", runId: "r1" },
+      { type: "CUSTOM", name: "PredictState", value: predictState },
+      { type: "STATE_SNAPSHOT", snapshot: { theme: { history: ["dark", "light"] } } },
+      { type: "STATE_SNAPSHOT", snapshot: { theme: { history: ["dark", "light", "contrast"] } } },
+      { type: "RUN_FINISHED", threadId: "t1", runId: "r1" },
+    ]);
+  });
+
+  it.each(["tool", "resume", "error"])("resumes an interrupt through the original native request (%s)", async (mode) => {
+    const client = new FakeClient(FRONTEND_TOOL_TURN.map((event) => ({ ...event, agentId: "approval-agent" })));
+    const resume = vi.fn((answer: unknown, args: unknown) => ({ answer, args }));
+    const agent = new CopilotAgent({
+      client, tools: TOOLS, interrupts: { change_background: resume }, runTimeoutMs: 5_000,
+    });
+    const first = await run(agent, makeInput());
+    expect(client.config!.tools![0]!.handler).toBeUndefined();
+    expect(client.config!.tools![0]!.skipPermission).toBe(true);
+    expect(first.at(-1)).toMatchObject({
+      type: "RUN_FINISHED",
+      outcome: { type: "interrupt", interrupts: [{
+        id: "call-1", reason: "tool_call", toolCallId: "call-1",
+        subagentRunId: "approval-agent", metadata: { reason: { color: "red" } },
+      }] },
+    });
+    const answer = { approved: true };
+    const second = await run(agent, makeInput({
+      runId: "r2",
+      ...(mode === "resume"
+        ? { resume: [{ interruptId: "call-1", status: "resolved", payload: answer }] }
+        : { messages: [
+          ...makeInput().messages,
+          { id: "answer", role: "tool", toolCallId: "call-1",
+            content: mode === "error" ? "unavailable" : JSON.stringify(answer),
+            ...(mode === "error" ? { error: "browser refused" } : {}) },
+        ] }),
+    }));
+    expect(second.at(-1)!.type).toBe("RUN_FINISHED");
+    expect(client.session!.resolved).toEqual(["req-1"]);
+    expect(client.session!.prompts).toHaveLength(1);
+    if (mode === "error") {
+      expect(client.session!.lastResult).toEqual({
+        textResultForLlm: "unavailable", resultType: "failure", error: "browser refused",
+      });
+    } else {
+      expect(resume).toHaveBeenCalledExactlyOnceWith(answer, { color: "red" });
+      expect(JSON.parse(client.session!.lastResult as string)).toEqual({ answer, args: { color: "red" } });
+    }
   });
 });

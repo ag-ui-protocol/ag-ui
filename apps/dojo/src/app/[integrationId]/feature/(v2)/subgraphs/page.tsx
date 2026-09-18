@@ -92,14 +92,15 @@ function InterruptHumanInTheLoop<TAgent extends AvailableAgents>({
   resolve: (value: string) => void;
 }) {
   // LangGraph's legacy interrupt events carry the options at the top level. A
-  // standard AG-UI interrupt carries them in `metadata`, the protocol's slot for
+  // standard AG-UI interrupt carries them in `metadata` (Copilot SDK nests the
+  // paused tool's args under `metadata.reason`), the protocol's slot for
   // integration data (a relaying runtime keeps only the protocol's fields).
   const value = event.value as InterruptEvent<TAgent> & {
-    metadata?: Partial<InterruptEvent<TAgent>>;
+    metadata?: Partial<InterruptEvent<TAgent>> & { reason?: InterruptEvent<TAgent> };
   };
   const { message, options, agent, recommendation } = value.metadata?.options
     ? { ...value, ...value.metadata }
-    : value;
+    : (value.metadata?.reason ?? value);
 
   // Format agent name with emoji
   const formatAgentName = (agent: string) => {

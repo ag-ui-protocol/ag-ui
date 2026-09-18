@@ -31,9 +31,31 @@ from ag_ui_copilot_sdk import add_copilot_fastapi_endpoint
 sys.path.insert(0, str(Path(__file__).parent))
 
 from agents.agentic_chat import create_agentic_chat_agent
+from agents.agentic_chat_multimodal import create_agentic_chat_multimodal_agent
+from agents.agentic_chat_reasoning import create_agentic_chat_reasoning_agent
+from agents.agentic_generative_ui import create_agentic_generative_ui_agent
+from agents.backend_tool_rendering import create_backend_tool_rendering_agent
+from agents.deepagents_subagents import create_deepagents_subagents_agent
+from agents.human_in_the_loop import create_human_in_the_loop_agent
+from agents.interrupt import create_interrupt_agent
+from agents.predictive_state_updates import create_predictive_state_updates_agent
+from agents.shared_state import create_shared_state_agent
+from agents.subgraphs import create_subgraphs_agent
+from agents.tool_based_generative_ui import create_tool_based_generative_ui_agent
 
 AGENT_FACTORIES = {
     "agentic_chat": create_agentic_chat_agent,
+    "agentic_chat_reasoning": create_agentic_chat_reasoning_agent,
+    "agentic_chat_multimodal": create_agentic_chat_multimodal_agent,
+    "backend_tool_rendering": create_backend_tool_rendering_agent,
+    "human_in_the_loop": create_human_in_the_loop_agent,
+    "tool_based_generative_ui": create_tool_based_generative_ui_agent,
+    "shared_state": create_shared_state_agent,
+    "agentic_generative_ui": create_agentic_generative_ui_agent,
+    "predictive_state_updates": create_predictive_state_updates_agent,
+    "interrupt": create_interrupt_agent,
+    "deepagents_subagents": create_deepagents_subagents_agent,
+    "subgraphs": create_subgraphs_agent,
 }
 
 

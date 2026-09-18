@@ -26,10 +26,32 @@ import type { RunAgentInput } from "@ag-ui/core";
 import type { CopilotAgent, CopilotClientPort } from "../dist/index.js";
 
 import { createAgenticChatAgent } from "./agentic_chat.js";
+import { createAgenticChatReasoningAgent } from "./agentic_chat_reasoning.js";
+import { createAgenticChatMultimodalAgent } from "./agentic_chat_multimodal.js";
+import { createBackendToolRenderingAgent } from "./backend_tool_rendering.js";
+import { createHumanInTheLoopAgent } from "./human_in_the_loop.js";
+import { createToolBasedGenerativeUIAgent } from "./tool_based_generative_ui.js";
+import { createSharedStateAgent } from "./shared_state.js";
+import { createAgenticGenerativeUIAgent } from "./agentic_generative_ui.js";
+import { createPredictiveStateUpdatesAgent } from "./predictive_state_updates.js";
+import { createInterruptAgent } from "./interrupt.js";
+import { createDeepagentsSubagentsAgent } from "./deepagents_subagents.js";
+import { createSubgraphsAgent } from "./subgraphs.js";
 
 function createAgents(client: CopilotClientPort): Record<string, CopilotAgent> {
   return {
     agentic_chat: createAgenticChatAgent(client),
+    agentic_chat_reasoning: createAgenticChatReasoningAgent(client),
+    agentic_chat_multimodal: createAgenticChatMultimodalAgent(client),
+    backend_tool_rendering: createBackendToolRenderingAgent(client),
+    human_in_the_loop: createHumanInTheLoopAgent(client),
+    tool_based_generative_ui: createToolBasedGenerativeUIAgent(client),
+    shared_state: createSharedStateAgent(client),
+    agentic_generative_ui: createAgenticGenerativeUIAgent(client),
+    predictive_state_updates: createPredictiveStateUpdatesAgent(client),
+    interrupt: createInterruptAgent(client),
+    deepagents_subagents: createDeepagentsSubagentsAgent(client),
+    subgraphs: createSubgraphsAgent(client),
   };
 }
 
