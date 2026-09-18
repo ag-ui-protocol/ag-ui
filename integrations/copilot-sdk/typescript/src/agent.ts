@@ -3,11 +3,18 @@ import {
   type BaseEvent,
   type Message,
   type RunAgentInput,
+  type RunFinishedEvent,
   type ToolMessage,
   type UserMessage,
 } from "@ag-ui/core";
 import { AbstractAgent, type AgentConfig } from "@ag-ui/client";
-import type { CopilotSession, SessionConfig, SessionEvent, Tool } from "@github/copilot-sdk";
+import type {
+  CopilotSession,
+  SessionConfig,
+  SessionEvent,
+  Tool,
+  ToolInvocation,
+} from "@github/copilot-sdk";
 import { Observable } from "rxjs";
 import { CopilotEventMapper } from "./mapper.js";
 
@@ -23,29 +30,76 @@ export interface CopilotClientPort {
   createSession(config: SessionConfig): Promise<CopilotSessionPort>;
 }
 
+/** What a server-side tool handler gets besides its arguments. */
+export interface ToolContext extends ToolInvocation {
+  /** Shared state the client sent with the current run. */
+  state: unknown;
+  /** Emit an AG-UI event into the current run, ordered with the native stream. */
+  emit(event: BaseEvent): void;
+  /** Replace the shared state (a STATE_SNAPSHOT). */
+  setState(snapshot: unknown): void;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export interface AGUITool<TArgs = any> extends Omit<Tool<TArgs>, "handler"> {
+  /** Omit the handler to make the call pause: the browser (or an interrupt) resolves it. */
+  handler?: (args: TArgs, context: ToolContext) => Promise<unknown> | unknown;
+}
+
+/** Tells CopilotKit which streamed tool argument to mirror into which state key. */
+export interface PredictStateEntry {
+  state_key: string;
+  tool: string;
+  tool_argument: string;
+}
+
 export interface CopilotAgentConfig extends AgentConfig {
   client: CopilotClientPort;
   model?: string;
   instructions?: string;
   /** Server-side tools the model may call directly. */
-  tools?: Tool[];
+  tools?: AGUITool[];
   sessionConfig?: Omit<SessionConfig, "onEvent" | "tools">;
+  /** Emitted as a `PredictState` CUSTOM event at the start of every run. */
+  predictState?: PredictStateEntry[];
+  /**
+   * Handler-less tools (by name) that pause the run with an interrupt outcome
+   * instead of a plain finish. The function maps the client's resume payload
+   * to the result the model sees when the paused call continues.
+   */
+  interrupts?: Record<string, (payload: unknown, args: unknown) => unknown>;
   /** Wall-clock budget for a single run; on expiry the native work is abandoned. */
   runTimeoutMs?: number;
   /** Bounds the in-process pending-tool registry. */
   maxPendingTools?: number;
 }
 
+interface PendingCall {
+  requestId: string;
+  toolName: string;
+  args: unknown;
+  subagentRunId?: string;
+}
+
+/** AG-UI events raised by tool handlers ride the native queue to keep ordering. */
+interface EmittedEvent {
+  type: "agui";
+  event: BaseEvent;
+}
+
 interface Thread {
   session?: CopilotSessionPort;
   mapper: CopilotEventMapper;
-  /** AG-UI toolCallId -> native requestId of the suspended external tool call. */
-  pending: Map<string, string>;
+  /** AG-UI toolCallId -> the suspended external tool call this process still holds. */
+  pending: Map<string, PendingCall>;
   sentUserIds: Set<string>;
-  events: SessionEvent[];
+  events: Array<SessionEvent | EmittedEvent>;
+  state: unknown;
   wake?: () => void;
   busy: boolean;
 }
+
+type Attachment = NonNullable<Parameters<CopilotSession["send"]>[0]["attachments"]>[number];
 
 /** Native sessions are process-local; a restart drops suspended tool calls. */
 const MAX_THREADS = 32;
@@ -82,13 +136,38 @@ function isToolMessage(message: Message): message is ToolMessage {
   return message.role === "tool";
 }
 
-/** This integration prompts with text; non-text parts are dropped, not silently mangled. */
-function textOf(content: UserMessage["content"]): string {
-  if (typeof content === "string") return content;
-  return (content ?? [])
-    .filter((part): part is { type: "text"; text: string } => part.type === "text")
-    .map((part) => part.text)
-    .join("\n");
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+/** Unsupported media retains a text placeholder rather than disappearing silently. */
+function userInput(content: UserMessage["content"]): { text: string; attachments: Attachment[] } {
+  if (typeof content === "string") return { text: content, attachments: [] };
+  const attachments: Attachment[] = [];
+  const text: string[] = [];
+  let warned = false;
+  for (const part of content) {
+    if (part.type === "text") {
+      text.push(part.text);
+      continue;
+    }
+    const data = part.type === "binary" ? part.data : part.type === "image" && part.source.type === "data" ? part.source.value : undefined;
+    const mimeType = part.type === "binary" ? part.mimeType : part.type === "image" ? part.source.mimeType : undefined;
+    if (data && mimeType) {
+      attachments.push({ type: "blob", data: data.replace(/^data:[^,]*,/, ""), mimeType });
+    } else {
+      text.push(`[Unsupported ${part.type} content]`);
+      if (!warned) {
+        console.warn("[copilot-sdk] Unsupported media: using text placeholders; only inline data is forwarded");
+        warned = true;
+      }
+    }
+  }
+  return { text: text.join("\n"), attachments };
 }
 
 /**
@@ -156,14 +235,20 @@ export class CopilotAgent extends AbstractAgent {
         pending: new Map(),
         sentUserIds: new Set(),
         events: [],
+        state: undefined,
         busy: false,
       };
       this.threads.set(input.threadId, thread);
     }
     if (thread.busy) throw new Error("Thread already has an active run");
     thread.busy = true;
+    thread.state = input.state;
 
     yield { type: E.RUN_STARTED, threadId: input.threadId, runId: input.runId };
+    yield* thread.mapper.resume();
+    if (this.config.predictState) {
+      yield { type: E.CUSTOM, name: "PredictState", value: this.config.predictState };
+    }
 
     // Only results that resolve a call this process still holds are actionable;
     // CopilotKit replays the whole transcript on every run.
@@ -174,10 +259,22 @@ export class CopilotAgent extends AbstractAgent {
       .reverse()
       .find((message): message is UserMessage => message.role === "user");
     const newUser =
-      lastUser && !thread.sentUserIds.has(lastUser.id) ? textOf(lastUser.content) : undefined;
+      lastUser && !thread.sentUserIds.has(lastUser.id) ? userInput(lastUser.content) : undefined;
 
     let failure: string | undefined;
     try {
+      for (const entry of input.resume ?? []) {
+        if (!thread.pending.has(entry.interruptId)) throw new Error("Unknown or expired interrupt");
+        if (!results.some((result) => result.toolCallId === entry.interruptId)) {
+          results.push({
+            id: `resume:${entry.interruptId}`, role: "tool", toolCallId: entry.interruptId,
+            content: JSON.stringify(entry.status === "cancelled" ? { cancelled: true } : entry.payload ?? null),
+          });
+        }
+      }
+      if (!thread.session && input.messages.some(isToolMessage)) {
+        throw new Error("Pending tool session was lost; start a new thread");
+      }
       if (!thread.session) {
         thread.session = await this.withDeadline(
           this.createSession(thread, input),
@@ -194,15 +291,20 @@ export class CopilotAgent extends AbstractAgent {
         );
       } else if (newUser) {
         thread.sentUserIds.add(lastUser!.id);
+        const { text, attachments } = newUser;
         await this.withDeadline(
-          thread.session.send({ prompt: buildPrompt(input, newUser) }),
+          thread.session.send({
+            prompt: buildPrompt(input, text || (attachments.length ? "Describe the attached media." : "")),
+            ...(attachments.length ? { attachments } : {}),
+          }),
           deadline,
           "Prompt dispatch timed out",
         );
       } else {
         // Nothing new to do: a replayed transcript with no unresolved work.
         yield* thread.mapper.finish();
-        yield { type: E.RUN_FINISHED, threadId: input.threadId, runId: input.runId };
+        yield* thread.mapper.suspend();
+        yield { type: E.RUN_FINISHED, threadId: input.threadId, runId: input.runId, ...this.interruptOutcome(thread) };
         return;
       }
 
@@ -214,21 +316,34 @@ export class CopilotAgent extends AbstractAgent {
           if (thread.pending.size) break;
           throw new Error("Run timed out");
         }
+        if (event.type === "agui") {
+          yield event.event;
+          continue;
+        }
         if (event.type === "session.error") throw new Error(event.data.message);
         if (event.type === "abort") throw new Error("Run cancelled");
         if (event.type === "external_tool.requested") {
-          const { toolCallId, requestId, toolName } = event.data;
+          const { toolCallId, requestId, toolName, arguments: args } = event.data;
           if (!thread.pending.has(toolCallId) && thread.pending.size >= maxPending) {
             throw new Error("Pending frontend tool limit exceeded");
           }
-          if (this.isFrontendTool(input, toolName)) thread.pending.set(toolCallId, requestId);
+          if (this.isPausedTool(input, toolName)) {
+            const subagentRunId = (event as { agentId?: string }).agentId;
+            thread.pending.set(toolCallId, { requestId, toolName, args, subagentRunId });
+          }
         }
         yield* thread.mapper.mapEvent(event);
-        if (event.type === "session.idle" && !thread.pending.size) break;
+        if (event.type === "session.idle" && !event.agentId && !thread.pending.size) break;
       }
 
       yield* thread.mapper.finish();
-      yield { type: E.RUN_FINISHED, threadId: input.threadId, runId: input.runId };
+      yield* thread.mapper.suspend();
+      yield {
+        type: E.RUN_FINISHED,
+        threadId: input.threadId,
+        runId: input.runId,
+        ...this.interruptOutcome(thread),
+      };
     } catch (error) {
       failure = error instanceof Error ? error.message : String(error);
       yield* thread.mapper.finish();
@@ -241,8 +356,50 @@ export class CopilotAgent extends AbstractAgent {
     }
   }
 
-  private isFrontendTool(input: RunAgentInput, name: string): boolean {
-    return input.tools.some((tool) => tool.name === name);
+  /** Frontend tools and interrupt tools both suspend until a later run resolves them. */
+  private isPausedTool(input: RunAgentInput, name: string): boolean {
+    return input.tools.some((tool) => tool.name === name) || name in (this.config.interrupts ?? {});
+  }
+
+  /** Suspended interrupt tools turn the finish into an interrupt outcome the client must resume. */
+  private interruptOutcome(thread: Thread): Pick<RunFinishedEvent, "outcome"> | Record<string, never> {
+    const interrupts = [...thread.pending]
+      .filter(([, call]) => call.toolName in (this.config.interrupts ?? {}))
+      .map(([toolCallId, call]) => ({
+        id: toolCallId,
+        reason: "tool_call" as const,
+        toolCallId,
+        message: `Paused in ${call.toolName}`,
+        metadata: { reason: call.args },
+        ...(call.subagentRunId ? { subagentRunId: call.subagentRunId } : {}),
+      }));
+    return interrupts.length ? { outcome: { type: "interrupt", interrupts } } : {};
+  }
+
+  private enqueue(thread: Thread, event: BaseEvent): void {
+    thread.events.push({ type: "agui", event });
+    thread.wake?.();
+  }
+
+  /** Server-side handlers get the AG-UI run context; handler-less tools pause. */
+  private bindTools(thread: Thread): Tool[] {
+    return (this.config.tools ?? []).map((tool) => {
+      const { handler } = tool;
+      if (!handler) return { ...tool, skipPermission: true } as Tool;
+      return {
+        ...tool,
+        handler: (args: unknown, invocation: ToolInvocation) =>
+          handler(args, {
+            ...invocation,
+            state: thread.state,
+            emit: (event) => this.enqueue(thread, event),
+            setState: (snapshot) => {
+              thread.state = structuredClone(snapshot);
+              this.enqueue(thread, { type: E.STATE_SNAPSHOT, snapshot: structuredClone(thread.state) });
+            },
+          }),
+      } as Tool;
+    });
   }
 
   private async createSession(thread: Thread, input: RunAgentInput): Promise<CopilotSessionPort> {
@@ -255,12 +412,13 @@ export class CopilotAgent extends AbstractAgent {
       parameters,
       skipPermission: true,
     }));
-    const tools = [...(this.config.tools ?? []), ...frontendTools];
+    const tools = [...this.bindTools(thread), ...frontendTools];
     return this.config.client.createSession({
       model: this.config.model ?? "gpt-5.4-mini",
       streaming: true,
-      // Only the tools registered here; no built-ins. Required by `mode: "empty"`.
-      availableTools: ["custom:*"],
+      // Only the tools registered here, plus the `task` built-in when custom
+      // agents exist (it is what dispatches them). Required by `mode: "empty"`.
+      availableTools: ["custom:*", ...(this.config.sessionConfig?.customAgents?.length ? ["builtin:task"] : [])],
       ...(this.config.instructions
         ? { systemMessage: { mode: "append", content: this.config.instructions } }
         : {}),
@@ -275,13 +433,18 @@ export class CopilotAgent extends AbstractAgent {
   }
 
   private async resolvePending(thread: Thread, result: ToolMessage): Promise<void> {
-    const requestId = thread.pending.get(result.toolCallId)!;
+    const call = thread.pending.get(result.toolCallId)!;
     thread.pending.delete(result.toolCallId);
+    const resume = this.config.interrupts?.[call.toolName];
+    // An interrupt's answer arrives as the tool result; the mapper decides what the model reads.
+    const content = resume && !result.error ? resume(parseJson(result.content), call.args) : result.content;
     const response = await thread.session!.rpc.tools.handlePendingToolCall({
-      requestId,
+      requestId: call.requestId,
       result: result.error
         ? { textResultForLlm: result.content, resultType: "failure", error: result.error }
-        : result.content,
+        : typeof content === "string"
+          ? content
+          : JSON.stringify(content),
     });
     if (!response.success) throw new Error("Native pending tool call could not be resolved");
   }
@@ -290,7 +453,10 @@ export class CopilotAgent extends AbstractAgent {
    * Returns the next native event, `undefined` once the stream goes quiet while
    * tool calls are suspended, and throws once the run deadline passes.
    */
-  private async nextEvent(thread: Thread, deadline: number): Promise<SessionEvent | undefined> {
+  private async nextEvent(
+    thread: Thread,
+    deadline: number,
+  ): Promise<SessionEvent | EmittedEvent | undefined> {
     while (!thread.events.length) {
       const remaining = deadline - Date.now();
       if (remaining <= 0) return undefined;

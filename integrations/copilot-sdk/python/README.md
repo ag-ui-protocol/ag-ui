@@ -39,6 +39,30 @@ and forwards extra keyword arguments to `app.post`.
 | Route | Description |
 |-------|-------------|
 | `/agentic_chat` | Basic conversational assistant |
+| `/backend_tool_rendering` | Sample weather tool |
+| `/human_in_the_loop` | Frontend task approval |
+| `/tool_based_generative_ui` | Haiku cards |
+| `/shared_state` | Recipe snapshots |
+| `/agentic_generative_ui` | Streamed steps and committed progress |
+| `/predictive_state_updates` | Document edits with accept/reject |
+| `/agentic_chat_reasoning` | Native reasoning stream |
+| `/agentic_chat_multimodal` | Inline images as blob attachments |
+| `/subgraphs` | Native travel specialist agents |
+| `/interrupt` | Meeting-time selection suspends the tool |
+| `/deepagents_subagents` | Research subagent with approval |
+
+Server-side `AGUITool` handlers receive a `ToolContext` with `state`, `emit`,
+and `set_state(snapshot)`. Set `skip_permission=True` only for tools the
+application explicitly authorizes (such as these safe sample tools).
+`predict_state=[{"state_key": ..., "tool": ..., "tool_argument": ...}]`
+emits the CopilotKit prediction mapping; `interrupts` maps a handler-less tool's
+browser answer into the original pending RPC result. Native specialists use
+`session_options={"custom_agents": [...]}`. Unsupported media retains a text
+placeholder and logs a warning.
+
+For the repository's pinned aimock, set `OPENAI_BASE_URL=http://localhost:5555/v1`,
+`OPENAI_API_KEY=sk-mock`, and `OPENAI_CHAT_MODEL_ID=gpt-4o`. Without BYOK the
+SDK uses the logged-in Copilot account. Pending calls remain process-local.
 
 ```bash
 cd integrations/copilot-sdk/python

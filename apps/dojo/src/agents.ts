@@ -711,13 +711,43 @@ export const agentsIntegrations = {
       tool_based_generative_ui: "tool_based_generative_ui",
     }),
 
-  "copilot-sdk-python": async () => ({
-    agentic_chat: new HttpAgent({ url: `${envVars.copilotSdkPythonUrl}/agentic_chat` }),
-  }),
+  "copilot-sdk-python": async () =>
+    mapAgents(
+      (path) => new HttpAgent({ url: `${envVars.copilotSdkPythonUrl}/${path}` }),
+      {
+        agentic_chat: "agentic_chat",
+        agentic_chat_reasoning: "agentic_chat_reasoning",
+        agentic_chat_multimodal: "agentic_chat_multimodal",
+        backend_tool_rendering: "backend_tool_rendering",
+        human_in_the_loop: "human_in_the_loop",
+        tool_based_generative_ui: "tool_based_generative_ui",
+        shared_state: "shared_state",
+        agentic_generative_ui: "agentic_generative_ui",
+        predictive_state_updates: "predictive_state_updates",
+        interrupt: "interrupt",
+        deepagents_subagents: "deepagents_subagents",
+        subgraphs: "subgraphs",
+      },
+    ),
 
-  "copilot-sdk-typescript": async () => ({
-    agentic_chat: new HttpAgent({ url: `${envVars.copilotSdkTypescriptUrl}/agentic_chat` }),
-  }),
+  "copilot-sdk-typescript": async () =>
+    mapAgents(
+      (path) => new HttpAgent({ url: `${envVars.copilotSdkTypescriptUrl}/${path}` }),
+      {
+        agentic_chat: "agentic_chat",
+        agentic_chat_reasoning: "agentic_chat_reasoning",
+        agentic_chat_multimodal: "agentic_chat_multimodal",
+        backend_tool_rendering: "backend_tool_rendering",
+        human_in_the_loop: "human_in_the_loop",
+        tool_based_generative_ui: "tool_based_generative_ui",
+        shared_state: "shared_state",
+        agentic_generative_ui: "agentic_generative_ui",
+        predictive_state_updates: "predictive_state_updates",
+        interrupt: "interrupt",
+        deepagents_subagents: "deepagents_subagents",
+        subgraphs: "subgraphs",
+      },
+    ),
 
   "claude-agent-sdk-python": async () =>
     mapAgents(
