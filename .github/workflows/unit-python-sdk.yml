@@ -30,7 +30,6 @@ on:
       - "integrations/crew-ai/python/**"
       - "integrations/claude-managed-agents/python/**"
       - "integrations/copilot-sdk/python/**"
-      - "integrations/copilot-sdk/fixtures/**"
       # agent-spec and claude-agent-sdk have no test lane, but they ship
       # committed lockfiles that the `lockfiles` job below verifies.
       - "integrations/agent-spec/python/**"
@@ -90,7 +89,6 @@ on:
       - "integrations/crew-ai/python/**"
       - "integrations/claude-managed-agents/python/**"
       - "integrations/copilot-sdk/python/**"
-      - "integrations/copilot-sdk/fixtures/**"
       - "integrations/agent-spec/python/**"
       - "integrations/claude-agent-sdk/python/**"
       - "integrations/antigravity/python/**"

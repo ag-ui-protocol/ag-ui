@@ -11,13 +11,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-server = ["starlette>=0.47,<1", "uvicorn>=0.35,<1"]
-
-[project.scripts]
-ag-ui-copilot-server = "ag_ui_copilot_sdk.server:main"
+server = ["fastapi>=0.100,<1", "uvicorn[standard]>=0.23,<1"]
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-asyncio>=1", "httpx>=0.28", "starlette>=0.47", "ruff>=0.12"]
+dev = ["pytest>=8", "pytest-asyncio>=1", "httpx>=0.28", "fastapi>=0.100", "ruff>=0.12"]
 
 [build-system]
 requires = ["hatchling"]
@@ -27,6 +24,7 @@ build-backend = "hatchling.build"
 packages = ["ag_ui_copilot_sdk"]
 
 [tool.uv.sources]
+# 1.0.14 is published on PyPI but not carried by every mirror; pin the public wheel.
 github-copilot-sdk = { url = "https://files.pythonhosted.org/packages/ed/e2/4d8c622545f55f06773548cf86ffe60f59e6a4cedcc412ff84fcac244b2b/github_copilot_sdk-1.0.14-py3-none-any.whl" }
 
 [tool.pytest.ini_options]

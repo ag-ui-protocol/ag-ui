@@ -460,8 +460,6 @@ jobs:
           # rate-limits CI's shared egress IPs and hangs the e2e tests. Return
           # canned weather data instead so these suites are deterministic.
           AG_UI_MOCK_WEATHER: "1"
-          # Explicit injected-SDK fixtures: these lanes never authenticate to Copilot.
-          COPILOT_DEMO_MODE: "fixture"
         with:
           run: |
             node ../scripts/run-dojo-everything.js --only ${{ join(matrix.services, ',') }}

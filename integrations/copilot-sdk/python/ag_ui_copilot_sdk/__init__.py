@@ -1,13 +1,7 @@
-"""Native Copilot SDK integration for AG-UI."""
+"""Native GitHub Copilot SDK integration for AG-UI."""
 
-from .agent import CopilotAgent, InputError, ThreadConflict, ThreadContext, validate_input
+from .agent import CopilotAgent
+from .endpoint import add_copilot_fastapi_endpoint
 from .mapper import EventMapper
 
-__all__ = [
-    "CopilotAgent",
-    "EventMapper",
-    "InputError",
-    "ThreadConflict",
-    "ThreadContext",
-    "validate_input",
-]
+__all__ = ["CopilotAgent", "EventMapper", "add_copilot_fastapi_endpoint"]

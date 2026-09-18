@@ -712,11 +712,11 @@ export const agentsIntegrations = {
     }),
 
   "copilot-sdk-python": async () => ({
-    agentic_chat: new HttpAgent({ url: `${envVars.copilotSdkPythonUrl}/agent` }),
+    agentic_chat: new HttpAgent({ url: `${envVars.copilotSdkPythonUrl}/agentic_chat` }),
   }),
 
   "copilot-sdk-typescript": async () => ({
-    agentic_chat: new HttpAgent({ url: `${envVars.copilotSdkTypescriptUrl}/agent` }),
+    agentic_chat: new HttpAgent({ url: `${envVars.copilotSdkTypescriptUrl}/agentic_chat` }),
   }),
 
   "claude-agent-sdk-python": async () =>
