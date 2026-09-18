@@ -128,12 +128,8 @@ class EventSerializationTest {
 
     @Test
     fun testTextMessageContentEmptyDeltaValidation() {
-        assertFailsWith<IllegalArgumentException> {
-            TextMessageContentEvent(
-                messageId = "msg_123",
-                delta = ""
-            )
-        }
+        val event = TextMessageContentEvent(messageId = "msg_123", delta = "")
+        assertEquals("", event.delta)
     }
 
     @Test
@@ -652,9 +648,8 @@ class EventSerializationTest {
 
     @Test
     fun testReasoningMessageContentEmptyDeltaValidation() {
-        assertFailsWith<IllegalArgumentException> {
-            ReasoningMessageContentEvent(messageId = "m", delta = "")
-        }
+        val event = ReasoningMessageContentEvent(messageId = "m", delta = "")
+        assertEquals("", event.delta)
     }
 
     @Test

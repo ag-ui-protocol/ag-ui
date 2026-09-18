@@ -13,11 +13,13 @@ private enum class ChunkMode { TEXT, TOOL }
 
 private data class TextState(
     val messageId: String,
+    val role: Role,
     var fromChunk: Boolean
 )
 
 private data class ToolState(
     val toolCallId: String,
+    val toolCallName: String,
     var fromChunk: Boolean
 )
 
@@ -111,6 +113,10 @@ fun Flow<BaseEvent>.transformChunks(debug: Boolean = false): Flow<BaseEvent> {
                     val needsNewMessage = mode != ChunkMode.TEXT ||
                         (messageId != null && messageId != textState?.messageId)
 
+                    if (!needsNewMessage && event.role != null && event.role != textState?.role) {
+                        throw IllegalArgumentException("TEXT_MESSAGE_CHUNK role disagrees with its opener")
+                    }
+
                     if (needsNewMessage) {
                         closePending(event.timestamp, event.rawEvent, this@flow::emit)
 
@@ -128,7 +134,7 @@ fun Flow<BaseEvent>.transformChunks(debug: Boolean = false): Flow<BaseEvent> {
                         )
 
                         mode = ChunkMode.TEXT
-                        textState = TextState(messageId, fromChunk = true)
+                        textState = TextState(messageId, event.role ?: Role.ASSISTANT, fromChunk = true)
                     }
 
                     val activeMessageId = textState?.messageId ?: messageId
@@ -154,6 +160,10 @@ fun Flow<BaseEvent>.transformChunks(debug: Boolean = false): Flow<BaseEvent> {
                     val needsNewToolCall = mode != ChunkMode.TOOL ||
                         (toolId != null && toolId != toolState?.toolCallId)
 
+                    if (!needsNewToolCall && toolName != null && toolName != toolState?.toolCallName) {
+                        throw IllegalArgumentException("TOOL_CALL_CHUNK name disagrees with its opener")
+                    }
+
                     if (needsNewToolCall) {
                         closePending(event.timestamp, event.rawEvent, this@flow::emit)
 
@@ -172,7 +182,7 @@ fun Flow<BaseEvent>.transformChunks(debug: Boolean = false): Flow<BaseEvent> {
                         )
 
                         mode = ChunkMode.TOOL
-                        toolState = ToolState(toolId, fromChunk = true)
+                        toolState = ToolState(toolId, toolName, fromChunk = true)
                     }
 
                     val activeToolCallId = toolState?.toolCallId ?: toolId
@@ -191,15 +201,18 @@ fun Flow<BaseEvent>.transformChunks(debug: Boolean = false): Flow<BaseEvent> {
                 }
 
                 is TextMessageStartEvent -> {
+                    if (textState?.fromChunk == true) {
+                        throw IllegalArgumentException("Cannot explicitly start a text message opened by a chunk")
+                    }
                     closePending(event.timestamp, event.rawEvent, this@flow::emit)
                     mode = ChunkMode.TEXT
-                    textState = TextState(event.messageId, fromChunk = false)
+                    textState = TextState(event.messageId, event.role, fromChunk = false)
                     emit(event)
                 }
 
                 is TextMessageContentEvent -> {
                     mode = ChunkMode.TEXT
-                    textState = TextState(event.messageId, fromChunk = false)
+                    textState = TextState(event.messageId, textState?.role ?: Role.ASSISTANT, fromChunk = false)
                     emit(event)
                 }
 
@@ -212,9 +225,12 @@ fun Flow<BaseEvent>.transformChunks(debug: Boolean = false): Flow<BaseEvent> {
                 }
 
                 is ToolCallStartEvent -> {
+                    if (toolState?.fromChunk == true) {
+                        throw IllegalArgumentException("Cannot explicitly start a tool call opened by a chunk")
+                    }
                     closePending(event.timestamp, event.rawEvent, this@flow::emit)
                     mode = ChunkMode.TOOL
-                    toolState = ToolState(event.toolCallId, fromChunk = false)
+                    toolState = ToolState(event.toolCallId, event.toolCallName, fromChunk = false)
                     emit(event)
                 }
 
@@ -223,7 +239,7 @@ fun Flow<BaseEvent>.transformChunks(debug: Boolean = false): Flow<BaseEvent> {
                     if (toolState?.toolCallId == event.toolCallId) {
                         toolState?.fromChunk = false
                     } else {
-                        toolState = ToolState(event.toolCallId, fromChunk = false)
+                        toolState = ToolState(event.toolCallId, toolState?.toolCallName ?: "", fromChunk = false)
                     }
                     emit(event)
                 }

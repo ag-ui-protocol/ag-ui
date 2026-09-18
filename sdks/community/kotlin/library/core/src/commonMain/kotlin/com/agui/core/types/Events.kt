@@ -1,12 +1,29 @@
 package com.agui.core.types
 
 import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.descriptors.buildClassSerialDescriptor
+import kotlinx.serialization.descriptors.element
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonClassDiscriminator
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonDecoder
+import kotlinx.serialization.json.JsonEncoder
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 
 /**
  * Enum defining all possible event types in the AG-UI protocol.
@@ -135,7 +152,15 @@ enum class EventType {
     @SerialName("REASONING_END")
     REASONING_END,
     @SerialName("REASONING_ENCRYPTED_VALUE")
-    REASONING_ENCRYPTED_VALUE
+    REASONING_ENCRYPTED_VALUE,
+
+    // Subagent Events
+    @SerialName("SUBAGENT_STARTED")
+    SUBAGENT_STARTED,
+    @SerialName("SUBAGENT_FINISHED")
+    SUBAGENT_FINISHED,
+    @SerialName("SUBAGENT_ERROR")
+    SUBAGENT_ERROR
 }
 
 /**
@@ -198,6 +223,10 @@ sealed class BaseEvent {
      * @see JsonElement
      */
     abstract val rawEvent: JsonElement?
+    @Transient
+    open val metadata: Metadata? = null
+    @Transient
+    open val subagentRunId: String? = null
 }
 
 // ============== Run Outcomes (2) ==============
@@ -213,9 +242,7 @@ sealed class BaseEvent {
  *
  * @see <a href="https://docs.ag-ui.com/concepts/interrupts">AG-UI Interrupts</a>
  */
-@OptIn(ExperimentalSerializationApi::class)
-@Serializable
-@JsonClassDiscriminator("type")
+@Serializable(with = RunFinishedOutcomeSerializer::class)
 sealed class RunFinishedOutcome
 
 /**
@@ -223,7 +250,17 @@ sealed class RunFinishedOutcome
  */
 @Serializable
 @SerialName("success")
-data object RunFinishedSuccessOutcome : RunFinishedOutcome()
+data class RunFinishedSuccessOutcome(
+    val pendingToolCallIds: List<String>? = null,
+) : RunFinishedOutcome() {
+    /** Source-compatible form of the pre-1.0 singleton success outcome. */
+    @Deprecated("Use RunFinishedSuccessOutcome()", ReplaceWith("RunFinishedSuccessOutcome()"))
+    companion object : RunFinishedOutcome()
+}
+
+@Serializable
+@SerialName("cancelled")
+data object RunFinishedCancelledOutcome : RunFinishedOutcome()
 
 /**
  * Outcome variant signalling that a run paused on one or more interrupts.
@@ -241,6 +278,46 @@ data class RunFinishedInterruptOutcome(
     init {
         require(interrupts.isNotEmpty()) {
             "outcome 'interrupt' requires at least one interrupt"
+        }
+    }
+}
+
+@Suppress("DEPRECATION")
+object RunFinishedOutcomeSerializer : KSerializer<RunFinishedOutcome> {
+    override val descriptor: SerialDescriptor = buildClassSerialDescriptor("RunFinishedOutcome")
+
+    override fun serialize(encoder: Encoder, value: RunFinishedOutcome) {
+        val jsonEncoder = encoder as JsonEncoder
+        val output = when (value) {
+            is RunFinishedSuccessOutcome -> buildJsonObject {
+                put("type", "success")
+                value.pendingToolCallIds?.let {
+                    put("pendingToolCallIds", jsonEncoder.json.encodeToJsonElement(ListSerializer(String.serializer()), it))
+                }
+            }
+            RunFinishedSuccessOutcome -> buildJsonObject { put("type", "success") }
+            is RunFinishedInterruptOutcome -> buildJsonObject {
+                put("type", "interrupt")
+                put("interrupts", jsonEncoder.json.encodeToJsonElement(ListSerializer(Interrupt.serializer()), value.interrupts))
+            }
+            RunFinishedCancelledOutcome -> buildJsonObject { put("type", "cancelled") }
+        }
+        jsonEncoder.encodeJsonElement(output)
+    }
+
+    override fun deserialize(decoder: Decoder): RunFinishedOutcome {
+        val jsonDecoder = decoder as JsonDecoder
+        val input = jsonDecoder.decodeJsonElement().jsonObject
+        val body = JsonObject(input - "type")
+        return when (input["type"]?.jsonPrimitive?.content) {
+            "success" -> if ("pendingToolCallIds" in body) {
+                jsonDecoder.json.decodeFromJsonElement(RunFinishedSuccessOutcome.serializer(), body)
+            } else {
+                RunFinishedSuccessOutcome
+            }
+            "interrupt" -> jsonDecoder.json.decodeFromJsonElement(RunFinishedInterruptOutcome.serializer(), body)
+            "cancelled" -> RunFinishedCancelledOutcome
+            else -> error("Unknown run outcome")
         }
     }
 }
@@ -264,8 +341,13 @@ data class RunFinishedInterruptOutcome(
 data class RunStartedEvent(
     val threadId: String,
     val runId: String,
+    @EncodeDefault(EncodeDefault.Mode.ALWAYS)
+    val protocolVersion: String? = AG_UI_PROTOCOL_VERSION,
+    val parentRunId: String? = null,
+    val input: RunAgentInput? = null,
     override val timestamp: Long? = null,
-    override val rawEvent: JsonElement? = null
+    override val rawEvent: JsonElement? = null,
+    override val metadata: Metadata? = null,
 ) : BaseEvent () {
     @Transient
     override val eventType: EventType = EventType.RUN_STARTED
@@ -297,8 +379,10 @@ data class RunFinishedEvent(
     val runId: String,
     val result: JsonElement? = null,
     val outcome: RunFinishedOutcome? = null,
+    val usage: List<TokenUsage>? = null,
     override val timestamp: Long? = null,
-    override val rawEvent: JsonElement? = null
+    override val rawEvent: JsonElement? = null,
+    override val metadata: Metadata? = null,
 ) : BaseEvent () {
     @Transient
     override val eventType: EventType = EventType.RUN_FINISHED
@@ -320,8 +404,10 @@ data class RunFinishedEvent(
 data class RunErrorEvent(
     val message: String,
     val code: String? = null,
+    val usage: List<TokenUsage>? = null,
     override val timestamp: Long? = null,
-    override val rawEvent: JsonElement? = null
+    override val rawEvent: JsonElement? = null,
+    override val metadata: Metadata? = null,
 ) : BaseEvent () {
     @Transient
     override val eventType: EventType = EventType.RUN_ERROR
@@ -388,8 +474,11 @@ data class StepFinishedEvent(
 data class TextMessageStartEvent(
     val messageId: String,
     val role: Role = Role.ASSISTANT,
+    val name: String? = null,
     override val timestamp: Long? = null,
-    override val rawEvent: JsonElement? = null
+    override val rawEvent: JsonElement? = null,
+    override val metadata: Metadata? = null,
+    override val subagentRunId: String? = null,
 ) : BaseEvent () {
     @Transient
     override val eventType: EventType = EventType.TEXT_MESSAGE_START
@@ -413,13 +502,12 @@ data class TextMessageContentEvent(
     val messageId: String,
     val delta: String,
     override val timestamp: Long? = null,
-    override val rawEvent: JsonElement? = null
+    override val rawEvent: JsonElement? = null,
+    override val metadata: Metadata? = null,
+    override val subagentRunId: String? = null,
 ) : BaseEvent () {
     @Transient
     override val eventType: EventType = EventType.TEXT_MESSAGE_CONTENT
-    init {
-        require(delta.isNotEmpty()) { "Text message content delta cannot be empty" }
-    }
 }
 
 /**
@@ -437,7 +525,9 @@ data class TextMessageContentEvent(
 data class TextMessageEndEvent(
     val messageId: String,
     override val timestamp: Long? = null,
-    override val rawEvent: JsonElement? = null
+    override val rawEvent: JsonElement? = null,
+    override val metadata: Metadata? = null,
+    override val subagentRunId: String? = null,
 ) : BaseEvent () {
     @Transient
     override val eventType: EventType = EventType.TEXT_MESSAGE_END
@@ -465,7 +555,9 @@ data class ToolCallStartEvent(
     val toolCallName: String,
     val parentMessageId: String? = null,
     override val timestamp: Long? = null,
-    override val rawEvent: JsonElement? = null
+    override val rawEvent: JsonElement? = null,
+    override val metadata: Metadata? = null,
+    override val subagentRunId: String? = null,
 ) : BaseEvent () {
     @Transient
     override val eventType: EventType = EventType.TOOL_CALL_START
@@ -489,7 +581,9 @@ data class ToolCallArgsEvent(
     val toolCallId: String,
     val delta: String,
     override val timestamp: Long? = null,
-    override val rawEvent: JsonElement? = null
+    override val rawEvent: JsonElement? = null,
+    override val metadata: Metadata? = null,
+    override val subagentRunId: String? = null,
 ) : BaseEvent () {
     @Transient
     override val eventType: EventType = EventType.TOOL_CALL_ARGS
@@ -512,7 +606,9 @@ data class ToolCallArgsEvent(
 data class ToolCallEndEvent(
     val toolCallId: String,
     override val timestamp: Long? = null,
-    override val rawEvent: JsonElement? = null
+    override val rawEvent: JsonElement? = null,
+    override val metadata: Metadata? = null,
+    override val subagentRunId: String? = null,
 ) : BaseEvent () {
     @Transient
     override val eventType: EventType = EventType.TOOL_CALL_END
@@ -534,7 +630,7 @@ data class ToolCallEndEvent(
  * @param timestamp Optional timestamp when the result was generated
  * @param rawEvent Optional raw JSON representation of the event
  */
-@Serializable
+@Serializable(with = ToolCallResultEventSerializer::class)
 @SerialName("TOOL_CALL_RESULT")
 data class ToolCallResultEvent(
     val messageId: String,
@@ -542,10 +638,92 @@ data class ToolCallResultEvent(
     val content: String,
     val role: String? = null,
     override val timestamp: Long? = null,
-    override val rawEvent: JsonElement? = null
+    override val rawEvent: JsonElement? = null,
+    override val metadata: Metadata? = null,
+    override val subagentRunId: String? = null,
+    @Transient val contentParts: List<ContentPart>? = null,
 ) : BaseEvent() {
     @Transient
     override val eventType: EventType = EventType.TOOL_CALL_RESULT
+
+    init {
+        require(role == null || role == "tool") { "ToolCallResultEvent.role must be tool" }
+    }
+
+    companion object {
+        fun multimodal(
+            messageId: String,
+            toolCallId: String,
+            parts: List<ContentPart>,
+            timestamp: Long? = null,
+            rawEvent: JsonElement? = null,
+            metadata: Metadata? = null,
+            subagentRunId: String? = null,
+        ) = ToolCallResultEvent(
+            messageId = messageId,
+            toolCallId = toolCallId,
+            content = "",
+            role = "tool",
+            timestamp = timestamp,
+            rawEvent = rawEvent,
+            metadata = metadata,
+            subagentRunId = subagentRunId,
+            contentParts = parts,
+        )
+    }
+}
+
+object ToolCallResultEventSerializer : KSerializer<ToolCallResultEvent> {
+    override val descriptor: SerialDescriptor = buildClassSerialDescriptor("TOOL_CALL_RESULT") {
+        element<String>("messageId")
+        element<String>("toolCallId")
+        element<JsonElement>("content")
+    }
+
+    override fun serialize(encoder: Encoder, value: ToolCallResultEvent) {
+        val jsonEncoder = encoder as JsonEncoder
+        jsonEncoder.encodeJsonElement(buildJsonObject {
+            put("messageId", value.messageId)
+            put("toolCallId", value.toolCallId)
+            value.contentParts?.let {
+                put("content", jsonEncoder.json.encodeToJsonElement(ListSerializer(ContentPart.serializer()), it))
+            } ?: put("content", value.content)
+            value.role?.let { put("role", it) }
+            value.timestamp?.let { put("timestamp", it) }
+            value.rawEvent?.let { put("rawEvent", it) }
+            value.metadata?.let { put("metadata", it) }
+            value.subagentRunId?.let { put("subagentRunId", it) }
+        })
+    }
+
+    override fun deserialize(decoder: Decoder): ToolCallResultEvent {
+        val jsonDecoder = decoder as JsonDecoder
+        val value = jsonDecoder.decodeJsonElement().jsonObject
+        if (!jsonDecoder.json.configuration.ignoreUnknownKeys) {
+            val unknown = value.keys - setOf(
+                "type", "messageId", "toolCallId", "content", "role", "timestamp", "rawEvent", "metadata", "subagentRunId",
+            )
+            require(unknown.isEmpty()) { "Unknown ToolCallResultEvent fields: $unknown" }
+        }
+        val messageId = value["messageId"]?.jsonPrimitive?.content ?: error("Missing messageId")
+        val toolCallId = value["toolCallId"]?.jsonPrimitive?.content ?: error("Missing toolCallId")
+        val role = value["role"]?.jsonPrimitive?.content
+        val timestamp = value["timestamp"]?.jsonPrimitive?.content?.toLong()
+        val rawEvent = value["rawEvent"]
+        val metadata = value["metadata"]?.jsonObject
+        val subagentRunId = value["subagentRunId"]?.jsonPrimitive?.content
+        val content = value["content"] ?: error("Missing content")
+        return if (content is JsonArray) {
+            ToolCallResultEvent.multimodal(
+                messageId, toolCallId,
+                jsonDecoder.json.decodeFromJsonElement(ListSerializer(ContentPart.serializer()), content),
+                timestamp, rawEvent, metadata, subagentRunId,
+            )
+        } else {
+            require(content is JsonPrimitive && content.isString) { "Tool result content must be a string or content-part array" }
+            ToolCallResultEvent(messageId, toolCallId, content.content, role, timestamp, rawEvent, metadata, subagentRunId)
+        }
+    }
 }
 
 // ============== State Management Events (3) ==============
@@ -567,7 +745,9 @@ data class ToolCallResultEvent(
 data class StateSnapshotEvent(
     val snapshot: State,
     override val timestamp: Long? = null,
-    override val rawEvent: JsonElement? = null
+    override val rawEvent: JsonElement? = null,
+    override val metadata: Metadata? = null,
+    override val subagentRunId: String? = null,
 ) : BaseEvent () {
     @Transient
     override val eventType: EventType = EventType.STATE_SNAPSHOT
@@ -591,7 +771,9 @@ data class StateSnapshotEvent(
 data class StateDeltaEvent(
     val delta: JsonArray,  // JSON Patch array as defined in RFC 6902
     override val timestamp: Long? = null,
-    override val rawEvent: JsonElement? = null
+    override val rawEvent: JsonElement? = null,
+    override val metadata: Metadata? = null,
+    override val subagentRunId: String? = null,
 ) : BaseEvent () {
     @Transient
     override val eventType: EventType = EventType.STATE_DELTA
@@ -836,8 +1018,11 @@ data class TextMessageChunkEvent(
     val messageId: String? = null,
     val role: Role? = null,
     val delta: String? = null,
+    val name: String? = null,
     override val timestamp: Long? = null,
-    override val rawEvent: JsonElement? = null
+    override val rawEvent: JsonElement? = null,
+    override val metadata: Metadata? = null,
+    override val subagentRunId: String? = null,
 ) : BaseEvent() {
     @Transient
     override val eventType: EventType = EventType.TEXT_MESSAGE_CHUNK
@@ -866,7 +1051,9 @@ data class ToolCallChunkEvent(
     val delta: String? = null,
     val parentMessageId: String? = null,
     override val timestamp: Long? = null,
-    override val rawEvent: JsonElement? = null
+    override val rawEvent: JsonElement? = null,
+    override val metadata: Metadata? = null,
+    override val subagentRunId: String? = null,
 ) : BaseEvent() {
     @Transient
     override val eventType: EventType = EventType.TOOL_CALL_CHUNK
@@ -893,10 +1080,12 @@ data class ToolCallChunkEvent(
 data class ActivitySnapshotEvent(
     val messageId: String,
     val activityType: String,
-    val content: JsonElement,
+    val content: JsonObject,
     val replace: Boolean = true,
     override val timestamp: Long? = null,
-    override val rawEvent: JsonElement? = null
+    override val rawEvent: JsonElement? = null,
+    override val metadata: Metadata? = null,
+    override val subagentRunId: String? = null,
 ) : BaseEvent() {
     @Transient
     override val eventType: EventType = EventType.ACTIVITY_SNAPSHOT
@@ -924,7 +1113,9 @@ data class ActivityDeltaEvent(
     val activityType: String,
     val patch: JsonArray,
     override val timestamp: Long? = null,
-    override val rawEvent: JsonElement? = null
+    override val rawEvent: JsonElement? = null,
+    override val metadata: Metadata? = null,
+    override val subagentRunId: String? = null,
 ) : BaseEvent() {
     @Transient
     override val eventType: EventType = EventType.ACTIVITY_DELTA
@@ -948,7 +1139,9 @@ data class ActivityDeltaEvent(
 data class ReasoningStartEvent(
     val messageId: String,
     override val timestamp: Long? = null,
-    override val rawEvent: JsonElement? = null
+    override val rawEvent: JsonElement? = null,
+    override val metadata: Metadata? = null,
+    override val subagentRunId: String? = null,
 ) : BaseEvent() {
     @Transient
     override val eventType: EventType = EventType.REASONING_START
@@ -973,7 +1166,9 @@ data class ReasoningMessageStartEvent(
     val messageId: String,
     val role: String = "reasoning",
     override val timestamp: Long? = null,
-    override val rawEvent: JsonElement? = null
+    override val rawEvent: JsonElement? = null,
+    override val metadata: Metadata? = null,
+    override val subagentRunId: String? = null,
 ) : BaseEvent() {
     @Transient
     override val eventType: EventType = EventType.REASONING_MESSAGE_START
@@ -998,13 +1193,12 @@ data class ReasoningMessageContentEvent(
     val messageId: String,
     val delta: String,
     override val timestamp: Long? = null,
-    override val rawEvent: JsonElement? = null
+    override val rawEvent: JsonElement? = null,
+    override val metadata: Metadata? = null,
+    override val subagentRunId: String? = null,
 ) : BaseEvent() {
     @Transient
     override val eventType: EventType = EventType.REASONING_MESSAGE_CONTENT
-    init {
-        require(delta.isNotEmpty()) { "Reasoning message content delta cannot be empty" }
-    }
 }
 
 /**
@@ -1019,7 +1213,9 @@ data class ReasoningMessageContentEvent(
 data class ReasoningMessageEndEvent(
     val messageId: String,
     override val timestamp: Long? = null,
-    override val rawEvent: JsonElement? = null
+    override val rawEvent: JsonElement? = null,
+    override val metadata: Metadata? = null,
+    override val subagentRunId: String? = null,
 ) : BaseEvent() {
     @Transient
     override val eventType: EventType = EventType.REASONING_MESSAGE_END
@@ -1043,7 +1239,9 @@ data class ReasoningMessageChunkEvent(
     val messageId: String? = null,
     val delta: String? = null,
     override val timestamp: Long? = null,
-    override val rawEvent: JsonElement? = null
+    override val rawEvent: JsonElement? = null,
+    override val metadata: Metadata? = null,
+    override val subagentRunId: String? = null,
 ) : BaseEvent() {
     @Transient
     override val eventType: EventType = EventType.REASONING_MESSAGE_CHUNK
@@ -1064,7 +1262,9 @@ data class ReasoningMessageChunkEvent(
 data class ReasoningEndEvent(
     val messageId: String,
     override val timestamp: Long? = null,
-    override val rawEvent: JsonElement? = null
+    override val rawEvent: JsonElement? = null,
+    override val metadata: Metadata? = null,
+    override val subagentRunId: String? = null,
 ) : BaseEvent() {
     @Transient
     override val eventType: EventType = EventType.REASONING_END
@@ -1090,7 +1290,9 @@ data class ReasoningEncryptedValueEvent(
     val entityId: String,
     val encryptedValue: String,
     override val timestamp: Long? = null,
-    override val rawEvent: JsonElement? = null
+    override val rawEvent: JsonElement? = null,
+    override val metadata: Metadata? = null,
+    override val subagentRunId: String? = null,
 ) : BaseEvent() {
     @Transient
     override val eventType: EventType = EventType.REASONING_ENCRYPTED_VALUE
@@ -1099,4 +1301,61 @@ data class ReasoningEncryptedValueEvent(
             "ReasoningEncryptedValueEvent.subtype must be \"tool-call\" or \"message\", got \"$subtype\""
         }
     }
+}
+
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
+@JsonClassDiscriminator("type")
+sealed class SubagentFinishedOutcome
+
+@Serializable
+@SerialName("success")
+data object SubagentFinishedSuccessOutcome : SubagentFinishedOutcome()
+
+@Serializable
+@SerialName("suspended")
+data class SubagentFinishedSuspendedOutcome(
+    val interruptIds: List<String>? = null,
+) : SubagentFinishedOutcome()
+
+@Serializable
+@SerialName("SUBAGENT_STARTED")
+data class SubagentStartedEvent(
+    override val subagentRunId: String,
+    val name: String,
+    val description: String? = null,
+    val parentSubagentRunId: String? = null,
+    val parentToolCallId: String? = null,
+    val parentMessageId: String? = null,
+    override val timestamp: Long? = null,
+    override val rawEvent: JsonElement? = null,
+    override val metadata: Metadata? = null,
+) : BaseEvent() {
+    @Transient override val eventType: EventType = EventType.SUBAGENT_STARTED
+}
+
+@Serializable
+@SerialName("SUBAGENT_FINISHED")
+data class SubagentFinishedEvent(
+    override val subagentRunId: String,
+    val result: JsonElement? = null,
+    val outcome: SubagentFinishedOutcome? = null,
+    override val timestamp: Long? = null,
+    override val rawEvent: JsonElement? = null,
+    override val metadata: Metadata? = null,
+) : BaseEvent() {
+    @Transient override val eventType: EventType = EventType.SUBAGENT_FINISHED
+}
+
+@Serializable
+@SerialName("SUBAGENT_ERROR")
+data class SubagentErrorEvent(
+    override val subagentRunId: String,
+    val message: String,
+    val code: String? = null,
+    override val timestamp: Long? = null,
+    override val rawEvent: JsonElement? = null,
+    override val metadata: Metadata? = null,
+) : BaseEvent() {
+    @Transient override val eventType: EventType = EventType.SUBAGENT_ERROR
 }

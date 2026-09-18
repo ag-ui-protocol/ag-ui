@@ -655,9 +655,7 @@ class EventVerifierTest {
     @Test
     fun testEmptyDeltaValidation() {
         // This tests the init block validation, not the verifier
-        assertFailsWith<IllegalArgumentException> {
-            TextMessageContentEvent(messageId = "m1", delta = "")
-        }
+        assertEquals("", TextMessageContentEvent(messageId = "m1", delta = "").delta)
 
         assertFailsWith<IllegalArgumentException> {
             ThinkingTextMessageContentEvent(delta = "")
