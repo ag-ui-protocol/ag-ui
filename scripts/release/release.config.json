@@ -189,6 +189,20 @@
         { "name": "ag-ui-claude-managed-agents", "path": "integrations/claude-managed-agents/python", "ecosystem": "python", "buildSystem": "uv" }
       ]
     },
+    "integration-copilot-sdk-ts": {
+      "description": "GitHub Copilot SDK integration (TypeScript)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "@ag-ui/copilot-sdk", "path": "integrations/copilot-sdk/typescript", "ecosystem": "typescript" }
+      ]
+    },
+    "integration-copilot-sdk-py": {
+      "description": "GitHub Copilot SDK integration (Python)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "ag-ui-copilot-sdk", "path": "integrations/copilot-sdk/python", "ecosystem": "python", "buildSystem": "uv" }
+      ]
+    },
     "integration-claude-managed-agents-dotnet": {
       "description": "Claude Managed Agents integration (.NET)",
       "sharedVersion": true,
