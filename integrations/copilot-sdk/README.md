@@ -1,71 +1,56 @@
-# GitHub Copilot SDK for AG-UI
+# AG-UI ⨯ GitHub Copilot SDK
 
-Native Python and TypeScript integration work for
-[github/copilot-sdk#2318](https://github.com/github/copilot-sdk/issues/2318):
-**Make Copilot SDK consumable for end-users by adding first-class AG-UI protocol
-support**.
+Implementation of the [AG-UI protocol](https://docs.ag-ui.com) for the native
+[GitHub Copilot SDK](https://www.npmjs.com/package/@github/copilot-sdk), in
+Python and TypeScript.
 
-Development fork: [ArlindNocaj/ag-ui](https://github.com/ArlindNocaj/ag-ui).
-Feature branch: `feature/add-copilot-sdk-support`. This is fork-only review
-against `ArlindNocaj/ag-ui:main`, not an upstream pull request or maintainer
-approval. No package publication is implied by this work.
+| SDK | Package | Port |
+|-----|---------|------|
+| Python | [`python/`](./python) — `ag_ui_copilot_sdk` | 8027 |
+| TypeScript | [`typescript/`](./typescript) — `@ag-ui/copilot-sdk` | 8028 |
 
-## Packages and examples
+Both expose the same surface: one native Copilot session per AG-UI thread, with
+`agent.run(input)` streaming AG-UI events.
 
-- [Python](./python): native `github-copilot-sdk==1.0.14`, managed with `uv`.
-- [TypeScript](./typescript): native `@github/copilot-sdk@1.0.14`.
-- [Shared mapping fixtures](./fixtures): the same synthetic event contract in
-  both languages, separate from live SDK evidence.
-- Dojo entries: `copilot-sdk-python` and `copilot-sdk-typescript`. Only
-  `agentic_chat` is advertised there. The bundled servers require no sibling
-  checkout; richer external application samples are not part of this package.
+## Frontend tools and the pending-tool mechanism
 
-The SDK manages its matching runtime. Authentication is inherited by the backend
-process; credentials are not extracted, copied into frontend configuration, or
-forwarded to another model provider.
+This is the piece worth understanding. A tool registered with the Copilot SDK
+**without a handler** is not executed by the runtime — the call is suspended and
+surfaced as an `external_tool.requested` event carrying a native `requestId`.
 
-The workspace keeps its normal release-age policy. Its exception is restricted
-to the verified SDK `1.0.14` release and that release's eight matching platform
-packages; it does not exempt future SDK versions. The SDK's Zod 4 dependency is
-scoped separately from AG-UI's Zod 3 dependency.
+That maps onto AG-UI's browser-executed tools as follows:
 
-## Frontend tools are ordinary tool continuations
+1. The model calls a frontend tool. The adapter emits `TOOL_CALL_START` /
+   `TOOL_CALL_ARGS` / `TOOL_CALL_END` and then `RUN_FINISHED`, leaving the
+   native call suspended.
+2. The browser executes the tool and sends the next `RunAgentInput`, which
+   carries a `role: "tool"` message.
+3. The adapter resolves the **original** suspended RPC with
+   `session.rpc.tools.handlePendingToolCall({ requestId, result })`
+   (`handle_pending_tool_call` in Python). The result is never re-prompted as
+   user text, so the model continues the same turn.
 
-A browser-owned tool uses a declaration-only SDK tool and this wire sequence:
+The native `requestId` and the AG-UI `toolCallId` are distinct identifiers; the
+adapter keeps the mapping between them.
 
-```text
-TOOL_CALL_START / TOOL_CALL_ARGS / TOOL_CALL_END
-RUN_FINISHED
-browser executes the tool
-next RunAgentInput includes a role:"tool" message
-the adapter resolves the original pending SDK request
-the original SDK conversation continues
+**Known limitation:** that mapping lives in an in-process registry. A server
+restart between the handoff and the browser's answer drops the suspended call,
+and the affected run ends with `RUN_ERROR`. There is no durable recovery.
+
+## Model access
+
+By default the SDK uses the machine's logged-in Copilot account. Set
+`OPENAI_BASE_URL` (and `OPENAI_API_KEY`) to route inference at any
+OpenAI-compatible endpoint through the SDK's BYOK provider instead — this is how
+the Dojo e2e suites drive both servers against the repository's pinned mock model
+server. `OPENAI_CHAT_MODEL_ID` selects the wire model (default `gpt-4o`).
+
+## Dojo
+
+Both integrations currently serve the `agentic_chat` feature. Additional Dojo
+features are planned as a follow-up.
+
+```bash
+node apps/dojo/scripts/run-dojo-everything.js --only dojo,copilot-sdk-python
+node apps/dojo/scripts/run-dojo-everything.js --only dojo,copilot-sdk-typescript
 ```
-
-Native `requestId` values remain server-owned. The browser answers using the
-original `toolCallId`. The adapter must not turn the result into a user prompt,
-re-submit the complete conversation to the model, or echo the browser's own
-`TOOL_CALL_RESULT`. Frontend handoff is not an AG-UI interrupt.
-
-The initial registry is in-process. Use one backend process or sticky routing;
-restarting the backend loses ownership/pending-request mappings. SDK session
-resumption alone is not a durable adapter-state implementation. Stale
-continuations must fail explicitly rather than silently start another session.
-
-## Protocol and source capability
-
-The tested protocol baselines are TypeScript `@ag-ui/*@0.0.59` and Python
-`ag-ui-protocol==0.1.22`. Child attribution uses the actual SDK `agentId`, not the
-chronological event-envelope `parentId`, and the standard AG-UI `SUBAGENT_*`
-events and `subagentRunId` fields.
-
-Tool execution output is distinct from argument streaming. The
-`copilot-sdk:tool` activity carries actual partial output, progress, status, and
-an exit code only when available. A successful tool invocation can still report
-a nonzero shell exit code; the command card must show failure without rewriting
-the original tool result.
-
-Readable reasoning is model/runtime-dependent. Absence of source reasoning is
-not fabricated, and encrypted/opaque reasoning is not broadcast as text.
-Deterministic fixtures and credential-free CI do not establish live model
-capabilities. Live verification remains a separate, local acceptance lane.

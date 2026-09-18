@@ -607,14 +607,14 @@ const agentFilesMapper: Record<
     Object.fromEntries(
       agentKeys.map((agentId) => [
         agentId,
-        [path.join(__dirname, integrationsFolderPath, "copilot-sdk/python/ag_ui_copilot_sdk/server.py")],
+        [path.join(__dirname, integrationsFolderPath, "copilot-sdk/python/examples/agents/agentic_chat.py")],
       ]),
     ),
   "copilot-sdk-typescript": (agentKeys: string[]) =>
     Object.fromEntries(
       agentKeys.map((agentId) => [
         agentId,
-        [path.join(__dirname, integrationsFolderPath, "copilot-sdk/typescript/examples/server.ts")],
+        [path.join(__dirname, integrationsFolderPath, "copilot-sdk/typescript/examples/agentic_chat.ts")],
       ]),
     ),
   "claude-agent-sdk-python": (agentKeys: string[]) => {
