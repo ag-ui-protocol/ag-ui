@@ -833,18 +833,6 @@ const _REMOVED_V08_SCHEMA = `"accountCircle","warning"
 export const A2UI_OPERATIONS_KEY = "a2ui_operations";
 
 /**
- * Canonical id of the published A2UI basic catalog. Mirrors the `$id` and
- * `catalogId` declared by the catalog document itself, so a surface built with
- * this id resolves against the catalog a renderer registers under its own id.
- *
- * Once the toolkit ships the same value (ag-ui-protocol/ag-ui#2696), the
- * middleware can import `BASIC_CATALOG_ID` from `@ag-ui/a2ui-toolkit` instead
- * of keeping its own copy.
- */
-export const BASIC_CATALOG_ID =
-  "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json";
-
-/**
  * Parsed A2UI container result.
  */
 export interface A2UIParseResult {

@@ -24,8 +24,9 @@ import {
   A2UIUserAction,
 } from "./types";
 import { RENDER_A2UI_TOOL, RENDER_A2UI_TOOL_NAME, RENDER_A2UI_TOOL_GUIDELINES, LOG_A2UI_EVENT_TOOL_NAME } from "./tools";
-import { getOperationSurfaceId, tryParseA2UIOperations, A2UI_OPERATIONS_KEY, BASIC_CATALOG_ID, extractCompleteItemsWithStatus, extractCompleteObject, extractDataArrayItems, extractStringField } from "./schema";
+import { getOperationSurfaceId, tryParseA2UIOperations, A2UI_OPERATIONS_KEY, extractCompleteItemsWithStatus, extractCompleteObject, extractDataArrayItems, extractStringField } from "./schema";
 import { validateA2UIComponents, MAX_A2UI_ATTEMPTS, type A2UIValidationCatalog } from "@ag-ui/a2ui-toolkit";
+import { BASIC_CATALOG_ID } from "./constants";
 
 /**
  * Detect a structured hard-failure envelope produced by the toolkit's recovery

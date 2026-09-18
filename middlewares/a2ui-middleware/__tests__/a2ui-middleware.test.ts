@@ -9,6 +9,7 @@ import {
   ToolMessage,
 } from "@ag-ui/client";
 import { Observable, firstValueFrom, toArray } from "rxjs";
+import { BASIC_CATALOG_ID } from "../src/constants";
 
 import {
   A2UIMiddleware,
@@ -18,7 +19,6 @@ import {
   LOG_A2UI_EVENT_TOOL_NAME,
   extractSurfaceIds,
   tryParseA2UIOperations,
-  BASIC_CATALOG_ID,
 } from "../src/index";
 
 /**
