@@ -711,6 +711,14 @@ export const agentsIntegrations = {
       tool_based_generative_ui: "tool_based_generative_ui",
     }),
 
+  "copilot-sdk-python": async () => ({
+    agentic_chat: new HttpAgent({ url: `${envVars.copilotSdkPythonUrl}/agent` }),
+  }),
+
+  "copilot-sdk-typescript": async () => ({
+    agentic_chat: new HttpAgent({ url: `${envVars.copilotSdkTypescriptUrl}/agent` }),
+  }),
+
   "claude-agent-sdk-python": async () =>
     mapAgents(
       (path) =>

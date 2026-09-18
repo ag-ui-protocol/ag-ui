@@ -29,6 +29,8 @@ on:
       - "integrations/langroid/python/**"
       - "integrations/crew-ai/python/**"
       - "integrations/claude-managed-agents/python/**"
+      - "integrations/copilot-sdk/python/**"
+      - "integrations/copilot-sdk/fixtures/**"
       # agent-spec and claude-agent-sdk have no test lane, but they ship
       # committed lockfiles that the `lockfiles` job below verifies.
       - "integrations/agent-spec/python/**"
@@ -87,6 +89,8 @@ on:
       - "integrations/langroid/python/**"
       - "integrations/crew-ai/python/**"
       - "integrations/claude-managed-agents/python/**"
+      - "integrations/copilot-sdk/python/**"
+      - "integrations/copilot-sdk/fixtures/**"
       - "integrations/agent-spec/python/**"
       - "integrations/claude-agent-sdk/python/**"
       - "integrations/antigravity/python/**"
@@ -1109,6 +1113,34 @@ jobs:
         # under .../assert-lockfiles-unchanged". That lands AFTER the real error and
         # reads as though the guard itself is broken, which is precisely the misleading
         # signal action.yml's header argues against.
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        uses: ./.github/actions/assert-lockfiles-unchanged
+
+  copilot-sdk-python:
+    name: copilot-sdk-python
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        working-directory: integrations/copilot-sdk/python
+        run: uv sync --locked --extra server
+
+      - name: Run deterministic adapter tests
+        working-directory: integrations/copilot-sdk/python
+        run: uv run --locked --extra server python -m pytest tests/ -v
+
+      - name: Assert no lockfile was rewritten
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         uses: ./.github/actions/assert-lockfiles-unchanged
 

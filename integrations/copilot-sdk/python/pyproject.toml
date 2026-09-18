@@ -1,0 +1,36 @@
+[project]
+name = "ag-ui-copilot-sdk"
+version = "0.1.0"
+description = "Native GitHub Copilot SDK adapter for AG-UI"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = [
+    "ag-ui-protocol==0.1.22",
+    "github-copilot-sdk==1.0.14",
+]
+
+[project.optional-dependencies]
+server = ["starlette>=0.47,<1", "uvicorn>=0.35,<1"]
+
+[project.scripts]
+ag-ui-copilot-server = "ag_ui_copilot_sdk.server:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=1", "httpx>=0.28", "starlette>=0.47", "ruff>=0.12"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["ag_ui_copilot_sdk"]
+
+[tool.uv.sources]
+github-copilot-sdk = { url = "https://files.pythonhosted.org/packages/ed/e2/4d8c622545f55f06773548cf86ffe60f59e6a4cedcc412ff84fcac244b2b/github_copilot_sdk-1.0.14-py3-none-any.whl" }
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100

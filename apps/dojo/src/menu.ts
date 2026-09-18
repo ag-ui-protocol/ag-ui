@@ -417,6 +417,16 @@ export const menuIntegrations = [
     ],
   },
   {
+    id: "copilot-sdk-python",
+    name: "GitHub Copilot SDK (Python)",
+    features: ["agentic_chat"],
+  },
+  {
+    id: "copilot-sdk-typescript",
+    name: "GitHub Copilot SDK (TypeScript)",
+    features: ["agentic_chat"],
+  },
+  {
     id: "claude-agent-sdk-python",
     name: "Claude Agent SDK (Python)",
     features: [
