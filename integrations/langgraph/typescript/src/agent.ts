@@ -309,7 +309,11 @@ export class LangGraphAgent extends AbstractAgent {
       activeRun: this.activeRun ? structuredClone(this.activeRun) : undefined,
       cancelRequested: this.cancelRequested,
       cancelSent: this.cancelSent,
-      abortBeforeStreamOpen: this.abortBeforeStreamOpen,
+      // Deliberately not copied. A pending pre-stream stop belongs to the run
+      // the original agent is in the middle of. runAgentStream turns it into
+      // cancelRequested on entry, so carrying it over would make the clone's
+      // first run cancel itself even though nobody stopped that run.
+      abortBeforeStreamOpen: false,
       subgraphs: this.subgraphs ? new Set(this.subgraphs) : new Set(),
       currentSubgraph: ROOT_SUBGRAPH_NAME,
     });

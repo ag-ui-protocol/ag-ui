@@ -78,24 +78,65 @@ function cancelSpy() {
   return Object.assign(fn, { accepted });
 }
 
+/**
+ * The client is injected through `config.client` rather than written onto the
+ * instance, so `clone()` carries the same stub instead of rebuilding a real
+ * LangGraphClient that would reach the network.
+ *
+ * `threads.getState` is stubbed because the end of every stream calls it. Left
+ * unmocked it throws, the agent reports the run as failed, and a test that
+ * swallows run errors then asserts against a run that never really happened.
+ */
 function createAgent(cancel: ReturnType<typeof cancelSpy>) {
+  const client = {
+    runs: { cancel },
+    threads: { getState: vi.fn(async () => threadState()) },
+  };
   const agent = new LangGraphAgent({
     deploymentUrl: "http://localhost:2024",
     graphId: "test-graph",
+    client: client as never,
   });
   agent.assistant = TEST_ASSISTANT;
-  (agent as any).client = { runs: { cancel } };
+  agent.threadId = THREAD_ID;
   return agent;
 }
 
-async function settle(
+/** Two chunks that both carry LangGraph's own run id. */
+async function* serverIdentifiedChunks(): AsyncGenerator<EventsStreamEvent> {
+  yield eventChunk({ langgraph_node: "agent", run_id: SERVER_RUN_ID });
+  yield eventChunk({ langgraph_node: "agent", run_id: SERVER_RUN_ID });
+}
+
+function useStream(
   agent: LangGraphAgent,
   chunks: () => AsyncGenerator<EventsStreamEvent>,
 ) {
   vi.spyOn(agent, "prepareStream").mockResolvedValue({
     streamResponse: chunks(),
     state: threadState(),
-  } as any);
+  } as never);
+}
+
+/**
+ * What a finished run must leave behind: no run in flight and no stop still
+ * pending, so the next run starts from a clean slate. `cancelSent` is not
+ * asserted anywhere — cleanup resets it, so reading it after a run says
+ * nothing about whether the stop ever reached LangGraph. `cancel.accepted`
+ * does.
+ */
+function expectSettled(agent: LangGraphAgent): void {
+  expect((agent as any).isRunning).toBe(false);
+  expect((agent as any).activeRun).toBeUndefined();
+  expect((agent as any).cancelRequested).toBe(false);
+  expect((agent as any).abortBeforeStreamOpen).toBe(false);
+}
+
+async function settle(
+  agent: LangGraphAgent,
+  chunks: () => AsyncGenerator<EventsStreamEvent>,
+) {
+  useStream(agent, chunks);
 
   const events: ProcessedEvents[] = [];
   await new Promise<void>((resolve) => {
@@ -136,29 +177,7 @@ describe("abortRun races", () => {
 
     await settle(agent, chunks);
 
-    const cancelledIds = cancel.mock.calls.map(([, runId]) => runId);
-    expect(cancelledIds).toContain(SERVER_RUN_ID);
-  });
-
-  it("does not report a stop it never delivered to LangGraph", async () => {
-    const cancel = cancelSpy();
-    const agent = createAgent(cancel);
-
-    async function* chunks() {
-      agent.abortRun();
-      yield eventChunk({ langgraph_node: "agent" });
-      yield eventChunk({ langgraph_node: "agent" });
-      yield eventChunk({ langgraph_node: "agent", run_id: SERVER_RUN_ID });
-    }
-
-    await settle(agent, chunks);
-
-    // The agent may only consider the stop delivered once LangGraph accepted
-    // one. Marking it delivered off the back of a 404 is the defect: the run
-    // then keeps going server-side while the caller is told it stopped.
-    if ((agent as any).cancelSent) {
-      expect(cancel.accepted).not.toEqual([]);
-    }
+    expect(cancel.accepted).toContain(SERVER_RUN_ID);
   });
 
   it("does not retry the cancel until LangGraph's own run id is known", async () => {
@@ -186,10 +205,63 @@ describe("abortRun races", () => {
     expect(cancel.accepted).toContain(SERVER_RUN_ID);
   });
 
+  it("delivers a stop that lands once the stream is open, then runs again", async () => {
+    const cancel = cancelSpy();
+    const agent = createAgent(cancel);
+
+    async function* chunks() {
+      // Stop window one: the run is streaming, but no chunk has carried
+      // metadata.run_id yet, so LangGraph's own run id is not in hand.
+      agent.abortRun();
+      yield eventChunk({ langgraph_node: "agent" });
+      yield eventChunk({ langgraph_node: "agent", run_id: SERVER_RUN_ID });
+      yield eventChunk({ langgraph_node: "agent", run_id: SERVER_RUN_ID });
+    }
+    useStream(agent, chunks);
+
+    await agent.runAgent({ runId: CLIENT_RUN_ID });
+
+    expect(cancel.accepted).toEqual([SERVER_RUN_ID]);
+    expectSettled(agent);
+
+    // The stop belonged to that run alone: the next one is not cancelled.
+    useStream(agent, serverIdentifiedChunks);
+    await agent.runAgent({ runId: "client-run-2" });
+
+    expect(cancel.accepted).toEqual([SERVER_RUN_ID]);
+    expectSettled(agent);
+  });
+
+  it("delivers a stop that lands before the stream opens, then runs again", async () => {
+    const cancel = cancelSpy();
+    const agent = createAgent(cancel);
+
+    // Stop window two: runAgent sets isRunning, then awaits onInitialize, and
+    // only afterwards reaches runAgentStream. A stop in that window has no
+    // activeRun to cancel and no stream loop to observe it.
+    const stopping = vi
+      .spyOn(agent as any, "onInitialize")
+      .mockImplementation(async () => {
+        agent.abortRun();
+      });
+    useStream(agent, serverIdentifiedChunks);
+
+    await agent.runAgent({ runId: CLIENT_RUN_ID });
+    stopping.mockRestore();
+
+    expect(cancel.accepted).toEqual([SERVER_RUN_ID]);
+    expectSettled(agent);
+
+    useStream(agent, serverIdentifiedChunks);
+    await agent.runAgent({ runId: "client-run-2" });
+
+    expect(cancel.accepted).toEqual([SERVER_RUN_ID]);
+    expectSettled(agent);
+  });
+
   it("does not carry a pre-stream stop into the next run", async () => {
     const cancel = cancelSpy();
     const agent = createAgent(cancel);
-    agent.threadId = THREAD_ID;
 
     // First run: stopped before the stream opens, then it fails before
     // runAgentStream is ever reached, so nothing consumes the pending stop.
@@ -199,51 +271,48 @@ describe("abortRun races", () => {
         agent.abortRun();
         throw new Error("initialization failed");
       });
-    await agent.runAgent({ runId: "client-run-doomed" }).catch(() => {});
+    await expect(
+      agent.runAgent({ runId: "client-run-doomed" }),
+    ).rejects.toThrow("initialization failed");
     failing.mockRestore();
 
     // Second run: a fresh, un-stopped run. It must stream normally.
-    async function* chunks() {
-      yield eventChunk({ langgraph_node: "agent", run_id: SERVER_RUN_ID });
-      yield eventChunk({ langgraph_node: "agent", run_id: SERVER_RUN_ID });
-    }
-    vi.spyOn(agent, "prepareStream").mockResolvedValue({
-      streamResponse: chunks(),
-      state: threadState(),
-    } as any);
+    useStream(agent, serverIdentifiedChunks);
+    await agent.runAgent({ runId: CLIENT_RUN_ID });
 
-    await agent.runAgent({ runId: CLIENT_RUN_ID }).catch(() => {});
-
-    expect((agent as any).cancelRequested).toBe(false);
     expect(cancel.accepted).toEqual([]);
+    expectSettled(agent);
   });
 
-  it("keeps a stop that arrives before the LangGraph stream opens", async () => {
+  it("does not let a stop pending on the original cancel its clone's first run", async () => {
     const cancel = cancelSpy();
     const agent = createAgent(cancel);
 
-    // runAgent sets isRunning, then awaits onInitialize, and only afterwards
-    // reaches runAgentStream. A stop in that window has no activeRun to cancel
-    // and no stream loop to observe it.
-    vi.spyOn(agent as any, "onInitialize").mockImplementation(async () => {
-      agent.abortRun();
-    });
+    // The runtime clones an agent per request. If it clones while a stop is
+    // pending on the original's in-flight run, the clone must not inherit it.
+    let clone: LangGraphAgent | undefined;
+    const stopping = vi
+      .spyOn(agent as any, "onInitialize")
+      .mockImplementation(async () => {
+        agent.abortRun();
+        clone = agent.clone() as LangGraphAgent;
+      });
+    useStream(agent, serverIdentifiedChunks);
 
-    async function* chunks() {
-      yield eventChunk({ langgraph_node: "agent", run_id: SERVER_RUN_ID });
-      yield eventChunk({ langgraph_node: "agent", run_id: SERVER_RUN_ID });
-    }
-    vi.spyOn(agent, "prepareStream").mockResolvedValue({
-      streamResponse: chunks(),
-      state: threadState(),
-    } as any);
+    await agent.runAgent({ runId: CLIENT_RUN_ID });
+    stopping.mockRestore();
 
-    agent.threadId = THREAD_ID;
-    await agent
-      .runAgent({ runId: CLIENT_RUN_ID, forwardedProps: {} })
-      .catch(() => {});
+    // The original's own stop still lands.
+    expect(cancel.accepted).toEqual([SERVER_RUN_ID]);
 
-    const cancelledIds = cancel.mock.calls.map(([, runId]) => runId);
-    expect(cancelledIds).toContain(SERVER_RUN_ID);
+    // Nobody stopped the clone's run, so nothing may cancel it.
+    expect(clone).toBeDefined();
+    expect((clone as any).abortBeforeStreamOpen).toBe(false);
+    clone!.threadId = THREAD_ID;
+    useStream(clone!, serverIdentifiedChunks);
+    await clone!.runAgent({ runId: "clone-run-1" });
+
+    expect(cancel.accepted).toEqual([SERVER_RUN_ID]);
+    expectSettled(clone!);
   });
 });
