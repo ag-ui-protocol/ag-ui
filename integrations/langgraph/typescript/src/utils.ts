@@ -18,8 +18,13 @@ import {
 
 export const DEFAULT_SCHEMA_KEYS = ["messages", "tools"];
 
-export function filterObjectBySchemaKeys(obj: Record<string, any>, schemaKeys: string[]) {
-  return Object.fromEntries(Object.entries(obj).filter(([key]) => schemaKeys.includes(key)));
+export function filterObjectBySchemaKeys(
+  obj: Record<string, any>,
+  schemaKeys: string[],
+) {
+  return Object.fromEntries(
+    Object.entries(obj).filter(([key]) => schemaKeys.includes(key)),
+  );
 }
 
 export function getStreamPayloadInput({
@@ -34,7 +39,10 @@ export function getStreamPayloadInput({
   let input = mode === "start" ? state : null;
   // Do not input keys that are not part of the input schema
   if (input && schemaKeys?.input) {
-    input = filterObjectBySchemaKeys(input, [...DEFAULT_SCHEMA_KEYS, ...schemaKeys.input]);
+    input = filterObjectBySchemaKeys(input, [
+      ...DEFAULT_SCHEMA_KEYS,
+      ...schemaKeys.input,
+    ]);
   }
 
   return input;
@@ -185,7 +193,10 @@ function normalizedAudioMimeType(mimeType: unknown): string | undefined {
   // Parameters (`;codecs=…`, `;charset=…`) are part of a legal MIME type but not
   // part of its identity, and Python's translator would forward them into the
   // `format` enum verbatim.
-  const base = (firstNonEmptyString(mimeType) ?? "").split(";")[0].trim().toLowerCase();
+  const base = (firstNonEmptyString(mimeType) ?? "")
+    .split(";")[0]
+    .trim()
+    .toLowerCase();
   return OPENAI_AUDIO_MIME_TYPES.get(base);
 }
 
@@ -229,7 +240,7 @@ function normalizedAudioMimeType(mimeType: unknown): string | undefined {
  * Mirrors `_parse_base64_data_url` in the Python adapter.
  */
 function parseBase64DataUrl(
-  value: unknown
+  value: unknown,
 ): { mimeType: string | undefined; data: string } | null {
   // Read through the same helper as every other off-the-wire string in this
   // file: a non-string `url` reaches both call sites (an inbound block relayed
@@ -251,7 +262,11 @@ function parseBase64DataUrl(
   // Scanning the parameters rather than testing the last one: `;base64` is
   // documented as trailing, but `data:audio/wav;codecs=1;base64,…` is a shape
   // this can be handed and the encoding is still base64.
-  if (!parameters.slice(1).some((parameter) => parameter.trim().toLowerCase() === "base64")) {
+  if (
+    !parameters
+      .slice(1)
+      .some((parameter) => parameter.trim().toLowerCase() === "base64")
+  ) {
     return null;
   }
   return { mimeType: firstNonEmptyString(parameters[0].trim()), data };
@@ -297,7 +312,7 @@ function parseBase64DataUrl(
  * Mirrors `_inline_media_data` in the Python adapter.
  */
 function inlineMediaData(
-  source: PartSource | null | undefined
+  source: PartSource | null | undefined,
 ): { value: string; mimeType: unknown } | null {
   // Read optionally for the reason {@link mediaSourceToUrl} gives: `source` is
   // declared required but arrives off the wire, and the two functions must not
@@ -308,7 +323,11 @@ function inlineMediaData(
   }
   if (source?.type === "url") {
     const parsed = parseBase64DataUrl(source.value);
-    if (parsed) return { value: parsed.data, mimeType: parsed.mimeType ?? source.mimeType };
+    if (parsed)
+      return {
+        value: parsed.data,
+        mimeType: parsed.mimeType ?? source.mimeType,
+      };
   }
   // Everything else — a `file` source included — carries no bytes this adapter
   // can reach. A `file` source names bytes ALREADY HELD BY A MODEL PROVIDER,
@@ -379,7 +398,7 @@ function standardBlockTypeFor(
    * rather than the payload. `unknown` because it arrives off the wire and every
    * read of it here goes through {@link firstNonEmptyString}.
    */
-  mimeType: unknown
+  mimeType: unknown,
 ): { type: "audio" | "file"; mimeType?: string } | null {
   if (mediaType === "audio") {
     const normalized = normalizedAudioMimeType(mimeType);
@@ -447,11 +466,17 @@ const FILENAME_EXTENSIONS = new Map<string, string>([
   ["application/xml", "xml"],
   // Office
   ["application/msword", "doc"],
-  ["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx"],
+  [
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "docx",
+  ],
   ["application/vnd.ms-excel", "xls"],
   ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx"],
   ["application/vnd.ms-powerpoint", "ppt"],
-  ["application/vnd.openxmlformats-officedocument.presentationml.presentation", "pptx"],
+  [
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "pptx",
+  ],
   ["application/vnd.oasis.opendocument.text", "odt"],
   ["application/vnd.oasis.opendocument.spreadsheet", "ods"],
   ["application/vnd.oasis.opendocument.presentation", "odp"],
@@ -603,7 +628,10 @@ function deriveFilename(mimeType: string | undefined): string {
  * downstream. A `Map` sees only what was put in it, and `get` returns the media
  * type in the same lookup that decides the branch.
  */
-const AGUI_MEDIA_TYPES = new Map<string, "audio" | "video" | "document" | "image">([
+const AGUI_MEDIA_TYPES = new Map<
+  string,
+  "audio" | "video" | "document" | "image"
+>([
   ["audio", "audio"],
   ["video", "video"],
   ["file", "document"],
@@ -662,12 +690,16 @@ const MEDIA_TYPES_BY_MIME_MAJOR = new Map<string, "audio" | "video" | "image">([
  * `metadata.filename` is lost on this path in both directions regardless — the
  * `image_url` block has nowhere to carry it.
  */
-function aguiMediaTypeForMimeType(mimeType: string): "audio" | "video" | "document" | "image" {
+function aguiMediaTypeForMimeType(
+  mimeType: string,
+): "audio" | "video" | "document" | "image" {
   const [major, subtype] = mimeType.split("/");
   // A string that is not `major/subtype` carries no modality; keep the historical
   // answer rather than inventing a new wrong one.
   if (!major || !subtype) return "image";
-  return MEDIA_TYPES_BY_MIME_MAJOR.get(major.trim().toLowerCase()) ?? "document";
+  return (
+    MEDIA_TYPES_BY_MIME_MAJOR.get(major.trim().toLowerCase()) ?? "document"
+  );
 }
 
 /**
@@ -817,7 +849,7 @@ type LangchainContentBlock =
  * to announce.
  */
 function mediaSourceToUrl(
-  source: PartSource | null | undefined
+  source: PartSource | null | undefined,
 ): string | null {
   if (source?.type === "data") {
     // `mimeType` is declared required, but this source arrives off the wire and
@@ -910,7 +942,7 @@ function standardMediaBlock(
   type: StandardMediaBlock["type"],
   data: string,
   mimeType: string | undefined,
-  filename?: string
+  filename?: string,
 ): StandardMediaBlock {
   const block: StandardMediaBlock = {
     type,
@@ -923,7 +955,8 @@ function standardMediaBlock(
   // `if (name)` below — emitting a file block with no filename at all, which is
   // the one thing `@langchain/openai` throws on. An empty name is an absent
   // name. Python's `_standard_media_block` reads it the same way.
-  const name = filename || (type === "file" ? deriveFilename(mimeType) : undefined);
+  const name =
+    filename || (type === "file" ? deriveFilename(mimeType) : undefined);
   if (name) block.metadata = { filename: name };
   return block;
 }
@@ -991,7 +1024,7 @@ function readIncomingMediaBlock(item: IncomingMediaBlock): {
     item.metadata?.filename,
     item.metadata?.name,
     item.metadata?.title,
-    item.filename
+    item.filename,
   );
   // Same scan, same reason. `??` stops on a present-but-empty `mimeType` and
   // throws away the `mime_type` behind it — the Python-shaped key that a Python
@@ -1031,7 +1064,12 @@ function readIncomingMediaBlock(item: IncomingMediaBlock): {
     // url sources exactly as before.
     const dataUrl = parseBase64DataUrl(url);
     if (dataUrl) {
-      return { value: dataUrl.data, isUrl: false, mimeType: dataUrl.mimeType ?? mimeType, filename };
+      return {
+        value: dataUrl.data,
+        isUrl: false,
+        mimeType: dataUrl.mimeType ?? mimeType,
+        filename,
+      };
     }
     return { value: url, isUrl: true, mimeType, filename };
   }
@@ -1065,10 +1103,11 @@ function readIncomingMediaBlock(item: IncomingMediaBlock): {
 function suppliedFilename(
   blockType: string,
   filename: string | undefined,
-  mimeType: string | undefined
+  mimeType: string | undefined,
 ): string | undefined {
   if (!filename) return undefined;
-  if (blockType === "file" && filename === deriveFilename(mimeType)) return undefined;
+  if (blockType === "file" && filename === deriveFilename(mimeType))
+    return undefined;
   return filename;
 }
 
@@ -1154,7 +1193,9 @@ function incomingImageUrl(payload: unknown): string | undefined {
  * MESSAGES_SNAPSHOT — a block kind missing here is an attachment that vanishes
  * from a reopened thread.
  */
-function convertLangchainMultimodalToAgui(content: (IncomingMediaBlock | string)[]): InputContent[] {
+function convertLangchainMultimodalToAgui(
+  content: (IncomingMediaBlock | string)[],
+): InputContent[] {
   const aguiContent: InputContent[] = [];
 
   for (const item of content) {
@@ -1177,7 +1218,9 @@ function convertLangchainMultimodalToAgui(content: (IncomingMediaBlock | string)
     // of those aborts the conversion of every OTHER block and every other message.
     // One unusable block is dropped like any other unusable block.
     if (!item || typeof item !== "object") {
-      console.warn("[convertLangchainMultimodalToAgui] Dropping content block: not an object");
+      console.warn(
+        "[convertLangchainMultimodalToAgui] Dropping content block: not an object",
+      );
       continue;
     }
 
@@ -1197,7 +1240,7 @@ function convertLangchainMultimodalToAgui(content: (IncomingMediaBlock | string)
       const text = item.text === undefined ? "" : item.text;
       if (typeof text !== "string") {
         console.warn(
-          `[convertLangchainMultimodalToAgui] Dropping text block: text is ${text === null ? "null" : typeof text}, not a string`
+          `[convertLangchainMultimodalToAgui] Dropping text block: text is ${text === null ? "null" : typeof text}, not a string`,
         );
         continue;
       }
@@ -1210,12 +1253,16 @@ function convertLangchainMultimodalToAgui(content: (IncomingMediaBlock | string)
 
       if (!incoming) {
         console.warn(
-          `[convertLangchainMultimodalToAgui] Dropping ${item.type} block: no data, base64 or url to carry back`
+          `[convertLangchainMultimodalToAgui] Dropping ${item.type} block: no data, base64 or url to carry back`,
         );
         continue;
       }
 
-      const filename = suppliedFilename(item.type, incoming.filename, incoming.mimeType);
+      const filename = suppliedFilename(
+        item.type,
+        incoming.filename,
+        incoming.mimeType,
+      );
       const metadata = filename ? { filename } : undefined;
 
       if (incoming.isUrl) {
@@ -1254,7 +1301,7 @@ function convertLangchainMultimodalToAgui(content: (IncomingMediaBlock | string)
 
       if (!imageUrl) {
         console.warn(
-          `[convertLangchainMultimodalToAgui] Dropping image_url block: no usable url in its ${describeType(item.image_url)} payload`
+          `[convertLangchainMultimodalToAgui] Dropping image_url block: no usable url in its ${describeType(item.image_url)} payload`,
         );
         continue;
       }
@@ -1291,7 +1338,7 @@ function convertLangchainMultimodalToAgui(content: (IncomingMediaBlock | string)
         // Python's b64decode ignore them.
         if (!data) {
           console.warn(
-            "[convertLangchainMultimodalToAgui] Dropping image_url block: data URL carries no payload"
+            "[convertLangchainMultimodalToAgui] Dropping image_url block: data URL carries no payload",
           );
           continue;
         }
@@ -1309,7 +1356,9 @@ function convertLangchainMultimodalToAgui(content: (IncomingMediaBlock | string)
         // whitespace, and unusable for the same reason the empty one is. Only a
         // blank one collapses — a padded but REAL mediatype keeps its padding,
         // which the parity table pins on both runtimes.
-        const rawMimeType = header.includes(":") ? header.split(":")[1].split(";")[0] : "";
+        const rawMimeType = header.includes(":")
+          ? header.split(":")[1].split(";")[0]
+          : "";
         const mimeType = (rawMimeType.trim() ? rawMimeType : "") || "image/png";
 
         aguiContent.push({
@@ -1343,7 +1392,7 @@ function convertLangchainMultimodalToAgui(content: (IncomingMediaBlock | string)
       // vanish from a reopened thread had no string to search for. A block kind
       // LangChain adds later lands here.
       console.warn(
-        `[convertLangchainMultimodalToAgui] Dropping unsupported content block of type ${JSON.stringify(item.type)}`
+        `[convertLangchainMultimodalToAgui] Dropping unsupported content block of type ${JSON.stringify(item.type)}`,
       );
     }
   }
@@ -1413,7 +1462,9 @@ function convertAguiMultimodalToLangchain(
     // validates it at this boundary in TypeScript, and `item.type` on a `null`
     // entry throws from inside the loop that converts the whole message list.
     if (!item || typeof item !== "object") {
-      console.warn("[convertAguiMultimodalToLangchain] Dropping content item: not an object");
+      console.warn(
+        "[convertAguiMultimodalToLangchain] Dropping content item: not an object",
+      );
       continue;
     }
 
@@ -1426,7 +1477,7 @@ function convertAguiMultimodalToLangchain(
       const text = item.text === undefined ? "" : item.text;
       if (typeof text !== "string") {
         console.warn(
-          `[convertAguiMultimodalToLangchain] Dropping text content: text is ${text === null ? "null" : typeof text}, not a string`
+          `[convertAguiMultimodalToLangchain] Dropping text content: text is ${text === null ? "null" : typeof text}, not a string`,
         );
         continue;
       }
@@ -1436,14 +1487,20 @@ function convertAguiMultimodalToLangchain(
       });
     } else if (MEDIA_CONTENT_TYPES.has(item.type)) {
       // ImageInputContent, AudioInputContent, VideoInputContent, DocumentInputContent
-      const mediaItem = item as ImageInputContent | AudioInputContent | VideoInputContent | DocumentInputContent;
+      const mediaItem = item as
+        | ImageInputContent
+        | AudioInputContent
+        | VideoInputContent
+        | DocumentInputContent;
       // {@link inlineMediaData} FIRST, so the standard-block decision is made on
       // what the source actually carries rather than on which of AG-UI's two
       // source kinds it was labelled with. A `url` source holding a `data:` URL
       // carries bytes, and classifying it as a remote reference is what sent a
       // PDF to the provider as `image_url`.
       const inline = inlineMediaData(mediaItem.source);
-      const standard = inline ? standardBlockTypeFor(item.type, inline.mimeType) : null;
+      const standard = inline
+        ? standardBlockTypeFor(item.type, inline.mimeType)
+        : null;
 
       if (standard && inline) {
         langchainContent.push(
@@ -1451,8 +1508,10 @@ function convertAguiMultimodalToLangchain(
             standard.type,
             inline.value,
             standard.mimeType,
-            filenameFromMetadata((mediaItem as { metadata?: unknown }).metadata)
-          )
+            filenameFromMetadata(
+              (mediaItem as { metadata?: unknown }).metadata,
+            ),
+          ),
         );
         continue;
       }
@@ -1464,7 +1523,9 @@ function convertAguiMultimodalToLangchain(
           image_url: { url },
         });
       } else {
-        console.warn(`[convertAguiMultimodalToLangchain] Dropping ${item.type} content: source could not be converted to URL`);
+        console.warn(
+          `[convertAguiMultimodalToLangchain] Dropping ${item.type} content: source could not be converted to URL`,
+        );
       }
     } else if (item.type === "binary") {
       // Legacy BinaryInputContent — backwards compatibility.
@@ -1505,8 +1566,14 @@ function convertAguiMultimodalToLangchain(
       // outranks `data` in the reference form built below — this branch must not
       // promote one payload while the fallback would have sent the other.
       const inlineUrl = parseBase64DataUrl(suppliedUrl);
-      const inlineValue = inlineUrl ? inlineUrl.data : suppliedUrl ? undefined : suppliedData;
-      const mimeType = inlineUrl ? (inlineUrl.mimeType ?? declaredMimeType) : declaredMimeType;
+      const inlineValue = inlineUrl
+        ? inlineUrl.data
+        : suppliedUrl
+          ? undefined
+          : suppliedData;
+      const mimeType = inlineUrl
+        ? (inlineUrl.mimeType ?? declaredMimeType)
+        : declaredMimeType;
       // Modality is read off a case-folded copy: MIME types are case-insensitive
       // (RFC 2045 §5.1), so `AUDIO/WAV` names the same modality as `audio/wav`
       // and must not be routed as a document. The ORIGINAL string is what gets
@@ -1514,12 +1581,22 @@ function convertAguiMultimodalToLangchain(
       // matched against an enum.
       const modality = mimeType.split(";")[0].trim().toLowerCase();
 
-      if (inlineValue && mimeType && !modality.startsWith("image/") && !modality.startsWith("video/")) {
+      if (
+        inlineValue &&
+        mimeType &&
+        !modality.startsWith("image/") &&
+        !modality.startsWith("video/")
+      ) {
         const mediaType = modality.startsWith("audio/") ? "audio" : "document";
         const standard = standardBlockTypeFor(mediaType, mimeType);
         if (standard) {
           langchainContent.push(
-            standardMediaBlock(standard.type, inlineValue, standard.mimeType, item.filename)
+            standardMediaBlock(
+              standard.type,
+              inlineValue,
+              standard.mimeType,
+              item.filename,
+            ),
           );
           continue;
         }
@@ -1541,7 +1618,9 @@ function convertAguiMultimodalToLangchain(
         // Use id as a reference
         url = suppliedId;
       } else {
-        console.warn("[convertAguiMultimodalToLangchain] Dropping BinaryInputContent: no url, data, or id provided");
+        console.warn(
+          "[convertAguiMultimodalToLangchain] Dropping BinaryInputContent: no url, data, or id provided",
+        );
         continue;
       }
 
@@ -1556,7 +1635,7 @@ function convertAguiMultimodalToLangchain(
       // behind — no block and no log — while every other drop in this same loop
       // says so. A new content type added to the AG-UI union lands here.
       console.warn(
-        `[convertAguiMultimodalToLangchain] Dropping unsupported content item of type ${JSON.stringify((item as { type?: unknown }).type)}`
+        `[convertAguiMultimodalToLangchain] Dropping unsupported content item of type ${JSON.stringify((item as { type?: unknown }).type)}`,
       );
     }
   }
@@ -1628,7 +1707,9 @@ function reasoningBlockToAguiMessage(
 
 // Rebuild the LangChain reasoning content block from an AG-UI ReasoningMessage
 // (inverse of reasoningBlockToAguiMessage).
-function aguiReasoningMessageToBlock(message: ReasoningMessage): ReasoningContentBlock {
+function aguiReasoningMessageToBlock(
+  message: ReasoningMessage,
+): ReasoningContentBlock {
   const block: ReasoningContentBlock = {
     type: "reasoning",
     id: message.id,
@@ -1640,7 +1721,9 @@ function aguiReasoningMessageToBlock(message: ReasoningMessage): ReasoningConten
   return block;
 }
 
-export function langchainMessagesToAgui(messages: LangGraphMessage[]): Message[] {
+export function langchainMessagesToAgui(
+  messages: LangGraphMessage[],
+): Message[] {
   const out: Message[] = [];
   for (const message of messages) {
     switch (message.type) {
@@ -1648,9 +1731,13 @@ export function langchainMessagesToAgui(messages: LangGraphMessage[]): Message[]
         // Handle multimodal content
         let userContent: string | InputContent[];
         if (Array.isArray(message.content)) {
-          userContent = convertLangchainMultimodalToAgui(message.content as any);
+          userContent = convertLangchainMultimodalToAgui(
+            message.content as any,
+          );
         } else {
-          userContent = stringifyIfNeeded(resolveMessageContent(message.content));
+          userContent = stringifyIfNeeded(
+            resolveMessageContent(message.content),
+          );
         }
 
         out.push({
@@ -1669,7 +1756,11 @@ export function langchainMessagesToAgui(messages: LangGraphMessage[]): Message[]
         if (Array.isArray(message.content)) {
           message.content.forEach((block, index) => {
             if (isReasoningBlock(block)) {
-              const reasoningMsg = reasoningBlockToAguiMessage(block, message.id!, index);
+              const reasoningMsg = reasoningBlockToAguiMessage(
+                block,
+                message.id!,
+                index,
+              );
               if (reasoningMsg) out.push(reasoningMsg);
             }
           });
@@ -1678,7 +1769,7 @@ export function langchainMessagesToAgui(messages: LangGraphMessage[]): Message[]
         out.push({
           id: message.id!,
           role: "assistant",
-          content: aiContent ? stringifyIfNeeded(aiContent) : '',
+          content: aiContent ? stringifyIfNeeded(aiContent) : "",
           toolCalls: message.tool_calls?.map((tc) => ({
             id: tc.id!,
             type: "function",
@@ -1719,7 +1810,11 @@ export function langchainMessagesToAgui(messages: LangGraphMessage[]): Message[]
           if (Array.isArray(aiMsg.content)) {
             aiMsg.content.forEach((block: any, index: number) => {
               if (isReasoningBlock(block)) {
-                const reasoningMsg = reasoningBlockToAguiMessage(block, aiMsg.id, index);
+                const reasoningMsg = reasoningBlockToAguiMessage(
+                  block,
+                  aiMsg.id,
+                  index,
+                );
                 if (reasoningMsg) out.push(reasoningMsg);
               }
             });
@@ -1728,7 +1823,7 @@ export function langchainMessagesToAgui(messages: LangGraphMessage[]): Message[]
           out.push({
             id: aiMsg.id,
             role: "assistant",
-            content: aiContent ? stringifyIfNeeded(aiContent) : '',
+            content: aiContent ? stringifyIfNeeded(aiContent) : "",
             toolCalls: aiMsg.tool_calls?.map((tc: any) => ({
               id: tc.id!,
               type: "function",
@@ -1740,13 +1835,17 @@ export function langchainMessagesToAgui(messages: LangGraphMessage[]): Message[]
           });
           break;
         }
-        throw new Error("message type returned from LangGraph is not supported.");
+        throw new Error(
+          "message type returned from LangGraph is not supported.",
+        );
     }
   }
   return out;
 }
 
-export function aguiMessagesToLangChain(messages: Message[]): LangGraphMessage[] {
+export function aguiMessagesToLangChain(
+  messages: Message[],
+): LangGraphMessage[] {
   const out: LangGraphMessage[] = [];
   // Reasoning is display-only at the AG-UI layer but lives as a content block ON
   // the assistant AIMessage at the LangChain layer. To round-trip reasoning
@@ -1773,7 +1872,7 @@ export function aguiMessagesToLangChain(messages: Message[]): LangGraphMessage[]
       case "user": {
         pendingReasoning = [];
         // Handle multimodal content
-        let content: UserMessage['content'];
+        let content: UserMessage["content"];
         if (typeof message.content === "string") {
           content = message.content;
         } else if (Array.isArray(message.content)) {
@@ -1792,12 +1891,15 @@ export function aguiMessagesToLangChain(messages: Message[]): LangGraphMessage[]
       }
       case "assistant": {
         // Fold any buffered reasoning blocks onto this assistant message.
-        let content: string | Array<ReasoningContentBlock | { type: "text"; text: string }>;
+        let content:
+          | string
+          | Array<ReasoningContentBlock | { type: "text"; text: string }>;
         if (pendingReasoning.length) {
-          const blocks: Array<ReasoningContentBlock | { type: "text"; text: string }> = [
-            ...pendingReasoning,
-          ];
-          if (message.content) blocks.push({ type: "text", text: message.content });
+          const blocks: Array<
+            ReasoningContentBlock | { type: "text"; text: string }
+          > = [...pendingReasoning];
+          if (message.content)
+            blocks.push({ type: "text", text: message.content });
           content = blocks;
           pendingReasoning = [];
         } else {
@@ -1819,7 +1921,7 @@ export function aguiMessagesToLangChain(messages: Message[]): LangGraphMessage[]
             .filter((tc: ToolCall) => {
               if (tc?.function) return true;
               console.warn(
-                "[aguiMessagesToLangChain] Dropping tool call: no function name or arguments"
+                "[aguiMessagesToLangChain] Dropping tool call: no function name or arguments",
               );
               return false;
             })
@@ -1828,7 +1930,9 @@ export function aguiMessagesToLangChain(messages: Message[]): LangGraphMessage[]
               name: tc.function.name,
               // Guard empty/absent arguments (parity with the Python side):
               // JSON.parse("") throws and would abort the whole conversion.
-              args: tc.function.arguments ? JSON.parse(tc.function.arguments) : {},
+              args: tc.function.arguments
+                ? JSON.parse(tc.function.arguments)
+                : {},
               type: "tool_call",
             })),
         } as LangGraphMessage);
@@ -1870,7 +1974,9 @@ export function aguiMessagesToLangChain(messages: Message[]): LangGraphMessage[]
         break;
       }
       default:
-        console.error(`Message role ${(message as { role: string }).role} is not implemented`);
+        console.error(
+          `Message role ${(message as { role: string }).role} is not implemented`,
+        );
         throw new Error("message role is not supported.");
     }
   }
@@ -1882,19 +1988,21 @@ function stringifyIfNeeded(item: any) {
   return JSON.stringify(item);
 }
 
-export function resolveReasoningContent(eventData: any): LangGraphReasoning | null {
-  const content = eventData.chunk?.content
+export function resolveReasoningContent(
+  eventData: any,
+): LangGraphReasoning | null {
+  const content = eventData.chunk?.content;
 
   if (content && Array.isArray(content) && content.length && content[0]) {
     const block = content[0];
 
     // Old langchain-anthropic format: { type: "thinking", thinking: "..." }
-    if (block.type === 'thinking' && block.thinking) {
+    if (block.type === "thinking" && block.thinking) {
       const result: LangGraphReasoning = {
         text: block.thinking,
-        type: 'text',
+        type: "text",
         index: block.index ?? 0,
-      }
+      };
       // Extract signature if present (Anthropic extended thinking signature)
       if (block.signature) {
         result.signature = block.signature;
@@ -1903,12 +2011,12 @@ export function resolveReasoningContent(eventData: any): LangGraphReasoning | nu
     }
 
     // New LangChain standardized format: { type: "reasoning", reasoning: "..." }
-    if (block.type === 'reasoning' && block.reasoning) {
+    if (block.type === "reasoning" && block.reasoning) {
       return {
         text: block.reasoning,
-        type: 'text',
+        type: "text",
         index: block.index ?? 0,
-      }
+      };
     }
 
     // OpenAI Responses API v1 format: { type: "reasoning", summary: [{ text: "..." }] }
@@ -1925,15 +2033,20 @@ export function resolveReasoningContent(eventData: any): LangGraphReasoning | nu
     // render nothing. Only the first summary part takes the id: later parts
     // belong to the same item, and reusing its id would mint two messages
     // with one id.
-    if (block.type === 'reasoning' && Array.isArray(block.summary)) {
+    if (block.type === "reasoning" && Array.isArray(block.summary)) {
       if (block.summary.length === 0 && block.id) {
-        return { type: 'text', text: '', index: block.index ?? 0, id: String(block.id) };
+        return {
+          type: "text",
+          text: "",
+          index: block.index ?? 0,
+          id: String(block.id),
+        };
       }
       const part = block.summary[0];
-      if (part && typeof part === 'object' && (part.text || block.id)) {
+      if (part && typeof part === "object" && (part.text || block.id)) {
         const result: LangGraphReasoning = {
-          type: 'text',
-          text: part.text ?? '',
+          type: "text",
+          text: part.text ?? "",
           index: part.index ?? 0,
         };
         if (block.id && (part.index ?? 0) === 0) {
@@ -1944,37 +2057,38 @@ export function resolveReasoningContent(eventData: any): LangGraphReasoning | nu
     }
 
     // Bedrock Converse API format: { type: "reasoning_content", reasoning_content: { type: "text", text: "..." } }
-    if (block.type === 'reasoning_content' && block.reasoning_content?.text) {
+    if (block.type === "reasoning_content" && block.reasoning_content?.text) {
       return {
-        type: 'text',
+        type: "text",
         text: block.reasoning_content.text,
         index: block.reasoning_content.index ?? 0,
-      }
+      };
     }
   }
 
   // OpenAI legacy format via additional_kwargs
   if (eventData.chunk?.additional_kwargs?.reasoning?.summary?.[0]) {
-    const data = eventData.chunk.additional_kwargs.reasoning.summary[0]
-    if (!data || !data.text) return null
+    const data = eventData.chunk.additional_kwargs.reasoning.summary[0];
+    if (!data || !data.text) return null;
     return {
-      type: 'text',
+      type: "text",
       text: data.text,
       index: data.index ?? 0,
-    }
+    };
   }
 
   // DeepSeek-style format: additional_kwargs.reasoning_content (plain string)
-  const reasoningContent = eventData.chunk?.additional_kwargs?.reasoning_content
-  if (reasoningContent && typeof reasoningContent === 'string') {
+  const reasoningContent =
+    eventData.chunk?.additional_kwargs?.reasoning_content;
+  if (reasoningContent && typeof reasoningContent === "string") {
     return {
-      type: 'text',
+      type: "text",
       text: reasoningContent,
       index: 0,
-    }
+    };
   }
 
-  return null
+  return null;
 }
 
 /**
@@ -1983,25 +2097,29 @@ export function resolveReasoningContent(eventData: any): LangGraphReasoning | nu
  * - `signature` fields on thinking blocks (cryptographic verification)
  * - `redacted_thinking` blocks with encrypted `data` (redacted chain-of-thought)
  */
-export function resolveEncryptedReasoningContent(eventData: any): string | null {
-  const content = eventData.chunk?.content
+export function resolveEncryptedReasoningContent(
+  eventData: any,
+): string | null {
+  const content = eventData.chunk?.content;
 
   if (!content || !Array.isArray(content) || !content.length || !content[0]) {
     return null;
   }
 
   // Anthropic redacted_thinking block: { type: "redacted_thinking", data: "..." }
-  if (content[0].type === 'redacted_thinking' && content[0].data) {
+  if (content[0].type === "redacted_thinking" && content[0].data) {
     return content[0].data;
   }
 
   return null;
 }
 
-export function resolveMessageContent(content?: LangGraphMessage['content']): string | null {
+export function resolveMessageContent(
+  content?: LangGraphMessage["content"],
+): string | null {
   if (!content) return null;
 
-  if (typeof content === 'string') {
+  if (typeof content === "string") {
     return content;
   }
 
@@ -2010,9 +2128,96 @@ export function resolveMessageContent(content?: LangGraphMessage['content']): st
     // message, and a `null` entry in it would throw out of `find` — aborting
     // the conversion of the whole message list rather than skipping the entry
     // and finding the text block that follows it.
-    const contentText = content.find(c => c?.type === 'text')?.text
+    const contentText = content.find((c) => c?.type === "text")?.text;
     return contentText ?? null;
   }
 
-  return null
+  return null;
+}
+
+/**
+ * Flatten an error and its `cause` chain into one message.
+ *
+ * `fetch failed` is undici's generic message for every transport failure: the
+ * actual reason (`connect ECONNREFUSED ::1:8123`, a DNS failure, a TLS error)
+ * only exists on `error.cause`. Reporting `error.message` alone tells the user
+ * that something failed but never what, which is the difference between "the
+ * agent server is not listening on the address you configured" and no lead at
+ * all.
+ */
+export function describeErrorChain(error: unknown): string {
+  const seen = new Set<unknown>();
+
+  /**
+   * One link of the chain, plus everything hanging below it. Siblings of an
+   * aggregate are joined with ", " and the descent is joined with ": ", so a
+   * dual-stack refusal reads
+   * `fetch failed: connect ECONNREFUSED ::1:8123, connect ECONNREFUSED 127.0.0.1:8123`.
+   */
+  const describe = (current: unknown): string | null => {
+    // A cause chain can be cyclic (`a.cause = b; b.cause = a`), so track
+    // visited links rather than trusting it to terminate.
+    if (!(current instanceof Error) || seen.has(current)) return null;
+    seen.add(current);
+
+    const below: string[] = [];
+
+    // An AggregateError carries the real failures on `errors` and often has an
+    // empty message of its own. Node puts the IPv6 and the IPv4 attempt there
+    // when neither address for a host accepts the connection, so following
+    // only `cause` would report a blank.
+    const aggregated = (current as AggregateError).errors;
+    if (Array.isArray(aggregated)) {
+      const siblings = aggregated
+        .map(describe)
+        .filter((part): part is string => part !== null);
+      if (siblings.length > 0) below.push(siblings.join(", "));
+    }
+
+    const fromCause = describe((current as Error & { cause?: unknown }).cause);
+    if (fromCause) below.push(fromCause);
+
+    if (!current.message) return below.length > 0 ? below.join(": ") : null;
+    return below.length > 0
+      ? `${current.message}: ${below.join(": ")}`
+      : current.message;
+  };
+
+  const described = describe(error);
+  if (described) return described;
+
+  return typeof error === "string" && error ? error : String(error);
+}
+
+/**
+ * Wrap a `fetch` so a transport failure carries its reason in the message.
+ *
+ * `@langchain/langgraph-sdk` replaces any connection failure with a fresh
+ * `ConnectionError` built from `error.message` alone, with no `cause`. undici's
+ * message for every transport failure is the generic `fetch failed`, so by the
+ * time the SDK hands the error back, `connect ECONNREFUSED ::1:8123` is gone
+ * and nothing downstream can recover it. Folding the chain into the message
+ * before the SDK sees it is the only place the reason survives that boundary.
+ *
+ * The message keeps its original text as its prefix, so the SDK's own
+ * `fetch failed` / `ECONNREFUSED` matching still classifies it the same way.
+ *
+ * `inner` is resolved per call, and defaults to the ambient `fetch`, so a
+ * caller that swaps `globalThis.fetch` still gets its own implementation.
+ * A caller that needs the SDK's `overrideFetchImplementation` singleton should
+ * construct its own client and pass it as `config.client`.
+ */
+export function withCauseInMessage(inner?: typeof fetch): typeof fetch {
+  return async (...args: Parameters<typeof fetch>) => {
+    try {
+      return await (inner ?? globalThis.fetch)(...args);
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      const described = describeErrorChain(error);
+      if (described === error.message) throw error;
+      const revealed = new Error(described, { cause: error });
+      revealed.name = error.name;
+      throw revealed;
+    }
+  };
 }
