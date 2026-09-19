@@ -83,6 +83,7 @@ import {
   resolveMessageContent,
   resolveReasoningContent,
   resolveEncryptedReasoningContent,
+  withCauseInMessage,
 } from "@/utils";
 import { ToolMessage } from "@langchain/core/messages";
 
@@ -277,6 +278,9 @@ export class LangGraphAgent extends AbstractAgent {
         apiUrl: config.deploymentUrl,
         apiKey: config.langsmithApiKey,
         defaultHeaders: { ...(config.propertyHeaders ?? {}) },
+        // Keeps the transport reason alive across the SDK boundary; see
+        // withCauseInMessage.
+        callerOptions: { fetch: withCauseInMessage() },
         onRequest: (url: URL, init: RequestInit): RequestInit => {
           const dynamicHeaders = headerFactory();
           if (!dynamicHeaders || Object.keys(dynamicHeaders).length === 0) {
@@ -325,6 +329,7 @@ export class LangGraphAgent extends AbstractAgent {
         apiUrl: this.config.deploymentUrl,
         apiKey: this.config.langsmithApiKey,
         defaultHeaders: { ...(this.config.propertyHeaders ?? {}) },
+        callerOptions: { fetch: withCauseInMessage() },
         onRequest: (url: URL, init: RequestInit): RequestInit => {
           const dynamicHeaders = headerFactory();
           if (!dynamicHeaders || Object.keys(dynamicHeaders).length === 0) {
