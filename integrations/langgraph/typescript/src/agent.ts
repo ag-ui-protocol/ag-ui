@@ -222,6 +222,10 @@ export class LangGraphAgent extends AbstractAgent {
   // Stop control flags
   private cancelRequested: boolean = false;
   private cancelSent: boolean = false;
+  // A stop that arrived after the run began but before runAgentStream opened
+  // the LangGraph stream. runAgentStream clears the per-run flags on entry, so
+  // without this the stop would be thrown away and the run would complete.
+  private abortBeforeStreamOpen: boolean = false;
   // Guards against double-streaming in the messages-tuple fallback path.
   // Set to true when events-mode (on_chat_model_stream) begins; thereafter
   // handleMessagesTupleEvent is skipped. Appears unused because it is only
@@ -305,6 +309,11 @@ export class LangGraphAgent extends AbstractAgent {
       activeRun: this.activeRun ? structuredClone(this.activeRun) : undefined,
       cancelRequested: this.cancelRequested,
       cancelSent: this.cancelSent,
+      // Deliberately not copied. A pending pre-stream stop belongs to the run
+      // the original agent is in the middle of. runAgentStream turns it into
+      // cancelRequested on entry, so carrying it over would make the clone's
+      // first run cancel itself even though nobody stopped that run.
+      abortBeforeStreamOpen: false,
       subgraphs: this.subgraphs ? new Set(this.subgraphs) : new Set(),
       currentSubgraph: ROOT_SUBGRAPH_NAME,
     });
@@ -445,8 +454,10 @@ export class LangGraphAgent extends AbstractAgent {
       usage: [],
     };
     this.pendingReasoningId = undefined;
-    // Reset per-run flags
-    this.cancelRequested = false;
+    // Reset per-run flags. A stop that landed between runAgent() and this
+    // point belongs to this run, so it survives the reset.
+    this.cancelRequested = this.abortBeforeStreamOpen;
+    this.abortBeforeStreamOpen = false;
     this.cancelSent = false;
     this.eventsStreamActive = false;
     this.subscriber = subscriber;
@@ -914,28 +925,37 @@ export class LangGraphAgent extends AbstractAgent {
 
       for await (let streamResponseChunk of streamResponse) {
         // If a cancel was requested and we haven't sent it yet, try now.
-        if (
-          this.cancelRequested &&
-          !this.cancelSent &&
-          this.activeRun?.threadId &&
-          this.activeRun?.id
-        ) {
-          try {
-            await this.client.runs.cancel(
-              this.activeRun.threadId,
-              this.activeRun.id,
-            );
-          } catch (_) {
-            // Ignore cancellation errors
-          } finally {
-            this.cancelSent = true;
+        if (this.cancelRequested) {
+          // Only retry once LangGraph's own run id is in hand. Until the stream
+          // reports metadata.run_id, activeRun.id is the client-generated id,
+          // which LangGraph does not know: retrying it here would fire one
+          // guaranteed-404 request per chunk. The cancel for this run is sent
+          // at the metadata.run_id site below; this is its retry.
+          if (
+            !this.cancelSent &&
+            this.activeRun?.serverRunIdKnown &&
+            this.activeRun?.threadId &&
+            this.activeRun?.id
+          ) {
+            try {
+              await this.client.runs.cancel(
+                this.activeRun.threadId,
+                this.activeRun.id,
+              );
+              this.cancelSent = true;
+            } catch (_) {
+              // Leave cancelSent false rather than reporting a stop that never
+              // reached LangGraph. The next chunk retries.
+            }
           }
-          // Best-effort: ask iterator to close early
-          try {
-            // Many async iterables used for streaming implement return()
-            await (streamResponse as any)?.return?.();
-          } catch (_) {}
-          break;
+          if (this.cancelSent) {
+            // Best-effort: ask iterator to close early
+            try {
+              // Many async iterables used for streaming implement return()
+              await (streamResponse as any)?.return?.();
+            } catch (_) {}
+            break;
+          }
         }
 
         const subgraphsStreamEnabled =
@@ -1118,10 +1138,11 @@ export class LangGraphAgent extends AbstractAgent {
                 this.activeRun.threadId!,
                 this.activeRun.id,
               );
-            } catch (_) {
-              // Ignore cancellation errors
-            } finally {
               this.cancelSent = true;
+            } catch (_) {
+              // Leave cancelSent false so the check at the top of the stream
+              // loop retries on the next chunk rather than reporting a stop
+              // that never reached LangGraph.
             }
           }
         }
@@ -1992,9 +2013,40 @@ export class LangGraphAgent extends AbstractAgent {
     return buildLgCommandResumeFromAgui(entries);
   }
 
+  public async runAgent(
+    ...args: Parameters<AbstractAgent["runAgent"]>
+  ): ReturnType<AbstractAgent["runAgent"]> {
+    try {
+      return await super.runAgent(...args);
+    } finally {
+      // runAgentStream consumes a pre-stream stop, but it is only reached once
+      // the run gets that far. A run that fails earlier (a throwing
+      // onInitialize or middleware) would otherwise leave the flag set and
+      // cancel the next run.
+      this.abortBeforeStreamOpen = false;
+    }
+  }
+
+  public async connectAgent(
+    ...args: Parameters<AbstractAgent["connectAgent"]>
+  ): ReturnType<AbstractAgent["connectAgent"]> {
+    try {
+      return await super.connectAgent(...args);
+    } finally {
+      this.abortBeforeStreamOpen = false;
+    }
+  }
+
   // Request cancellation of the current run via LangGraph Platform SDK
   public abortRun() {
     this.cancelRequested = true;
+    if (this.isRunning && !this.activeRun) {
+      // The run has begun but its LangGraph stream has not opened yet, so
+      // there is nothing to cancel and no loop to observe cancelRequested.
+      // Hand the stop to runAgentStream. Guarded on isRunning so a stop that
+      // arrives after a run has already finished cannot kill the next one.
+      this.abortBeforeStreamOpen = true;
+    }
     const threadId = this.activeRun?.threadId;
     const runId = this.activeRun?.id;
     if (threadId && runId && !this.cancelSent) {
