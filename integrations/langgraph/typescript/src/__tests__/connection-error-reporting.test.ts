@@ -1,7 +1,8 @@
+import { createServer } from "node:net";
 import { describe, it, expect, vi } from "vitest";
 import { EventType } from "@ag-ui/client";
 import { LangGraphAgent } from "../agent";
-import { describeErrorChain } from "../utils";
+import { describeErrorChain, withCauseInMessage } from "../utils";
 
 /**
  * A LangGraph dev server that binds one address family while the runtime dials
@@ -211,4 +212,165 @@ describe("describeErrorChain", () => {
     expect(describeErrorChain("boom")).toBe("boom");
     expect(describeErrorChain({ code: 500 })).toBe("[object Object]");
   });
+});
+
+describe("describeErrorChain follows an aggregate", () => {
+  it("reports both address families of a dual-stack refusal", () => {
+    // What Node produces for `localhost` when neither ::1 nor 127.0.0.1
+    // accepts the connection: the AggregateError's own message is empty and
+    // the two real failures are on `errors`.
+    const aggregate = new AggregateError([
+      new Error("connect ECONNREFUSED ::1:8123"),
+      new Error("connect ECONNREFUSED 127.0.0.1:8123"),
+    ]);
+    const error = new TypeError("fetch failed", { cause: aggregate });
+
+    expect(describeErrorChain(error)).toBe(
+      "fetch failed: connect ECONNREFUSED ::1:8123, connect ECONNREFUSED 127.0.0.1:8123",
+    );
+  });
+
+  it("keeps an aggregate's own message when it has one", () => {
+    const aggregate = new AggregateError(
+      [new Error("first"), new Error("second")],
+      "all attempts failed",
+    );
+
+    expect(describeErrorChain(aggregate)).toBe(
+      "all attempts failed: first, second",
+    );
+  });
+
+  it("terminates when an aggregated error points back at the aggregate", () => {
+    const inner = new Error("inner");
+    const aggregate = new AggregateError([inner]);
+    (inner as any).cause = aggregate;
+
+    expect(describeErrorChain(aggregate)).toBe("inner");
+  });
+});
+
+describe("withCauseInMessage", () => {
+  it("folds the cause into the message a transport failure carries", async () => {
+    const failing = withCauseInMessage(async () => {
+      throw new TypeError("fetch failed", {
+        cause: new Error("connect ECONNREFUSED ::1:8123"),
+      });
+    });
+
+    await expect(failing("http://localhost:8123")).rejects.toThrow(
+      "fetch failed: connect ECONNREFUSED ::1:8123",
+    );
+  });
+
+  it("keeps the SDK's own classification working", async () => {
+    // The SDK decides a failure is a connection failure by looking for
+    // "fetch failed" in the message, so the rewritten message must still
+    // contain it.
+    const failing = withCauseInMessage(async () => {
+      throw new TypeError("fetch failed", {
+        cause: new Error("connect ECONNREFUSED ::1:8123"),
+      });
+    });
+
+    const error = await failing("http://localhost:8123").catch(
+      (thrown: Error) => thrown,
+    );
+
+    expect((error as Error).message).toContain("fetch failed");
+    expect((error as Error).name).toBe("TypeError");
+  });
+
+  it("passes a successful response straight through", async () => {
+    const response = new Response("ok");
+    const wrapped = withCauseInMessage(async () => response);
+
+    await expect(wrapped("http://localhost:8123")).resolves.toBe(response);
+  });
+
+  it("rethrows an error that has nothing to add", async () => {
+    const plain = new Error("AbortError");
+    const wrapped = withCauseInMessage(async () => {
+      throw plain;
+    });
+
+    await expect(wrapped("http://localhost:8123")).rejects.toBe(plain);
+  });
+});
+
+/**
+ * The tests above drive the agent through a stubbed client. These drive the
+ * real `@langchain/langgraph-sdk` against a port nothing is listening on,
+ * because the SDK is exactly where the reason used to be lost: it replaces
+ * every transport failure with a fresh ConnectionError built from
+ * `error.message` alone, and undici's message is the generic "fetch failed".
+ */
+describe("against the real SDK", () => {
+  /** A localhost port that was bound and then released, so nothing answers. */
+  async function closedPort(): Promise<number> {
+    const server = createServer();
+    const port = await new Promise<number>((resolve) => {
+      server.listen(0, "127.0.0.1", () => {
+        resolve((server.address() as { port: number }).port);
+      });
+    });
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    return port;
+  }
+
+  it("names the refused connection when the deployment is not listening", async () => {
+    const port = await closedPort();
+    const agent = new LangGraphAgent({
+      graphId: "sample_agent",
+      deploymentUrl: `http://127.0.0.1:${port}`,
+    });
+    (agent as any).subscriber = { next: vi.fn(), error: vi.fn() };
+    (agent as any).dispatchEvent = () => true;
+
+    const message = await agent.getAssistant().then(
+      () => "",
+      (error: Error) => error.message,
+    );
+
+    expect(message).toContain(`from http://127.0.0.1:${port}`);
+    expect(message).toContain("ECONNREFUSED");
+  }, 20000);
+
+  it("puts the same reason on the RUN_ERROR event the frontend renders", async () => {
+    const port = await closedPort();
+    const agent = new LangGraphAgent({
+      graphId: "sample_agent",
+      deploymentUrl: `http://127.0.0.1:${port}`,
+    });
+    (agent as any).subscriber = { next: vi.fn(), error: vi.fn() };
+    const dispatched: any[] = [];
+    (agent as any).dispatchEvent = (event: any) => {
+      dispatched.push(event);
+      return true;
+    };
+
+    await expect(agent.getAssistant()).rejects.toThrow();
+
+    expect(dispatched).toHaveLength(1);
+    expect(dispatched[0].type).toBe(EventType.RUN_ERROR);
+    expect(dispatched[0].message).toContain("ECONNREFUSED");
+  }, 20000);
+
+  it("names the refused connection when the thread lookup fails", async () => {
+    const port = await closedPort();
+    const agent = new LangGraphAgent({
+      graphId: "sample_agent",
+      deploymentUrl: `http://127.0.0.1:${port}`,
+    });
+    (agent as any).subscriber = { next: vi.fn(), error: vi.fn() };
+    (agent as any).dispatchEvent = () => true;
+
+    const message = await agent.getOrCreateThread("thread-1").then(
+      () => "",
+      (error: Error) => error.message,
+    );
+
+    expect(message).toContain(`on http://127.0.0.1:${port}`);
+    expect(message).toContain("ECONNREFUSED");
+  }, 20000);
 });
