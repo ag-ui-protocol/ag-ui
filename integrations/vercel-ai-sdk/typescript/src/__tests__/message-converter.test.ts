@@ -1,6 +1,34 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import type { Message } from "@ag-ui/core";
+import type { ModelMessage, ToolResultPart } from "ai";
 import { convertMessagesToVercelAISDKMessages } from "../message-converter";
+
+// Every conversion that loses or synthesises content warns, so console.warn is
+// stubbed for the whole file: tests that care assert on it, the rest stay
+// quiet. Restoring happens in afterEach rather than inline, so a failing
+// expectation cannot leak the stub into the next test.
+let warn: Mock<typeof console.warn>;
+
+beforeEach(() => {
+  warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+// Narrows a converted message to the output of its first tool result, so
+// assertions can reach nested fields without casting.
+function toolResultOutput(message: ModelMessage | undefined): ToolResultPart["output"] {
+  if (message === undefined || message.role !== "tool") {
+    throw new Error(`expected a tool message, got ${message?.role ?? "nothing"}`);
+  }
+  const part = message.content[0];
+  if (part.type !== "tool-result") {
+    throw new Error(`expected a tool-result part, got ${part.type}`);
+  }
+  return part.output;
+}
 
 describe("convertMessagesToVercelAISDKMessages", () => {
   it("returns an empty array for empty input", () => {
@@ -57,14 +85,25 @@ describe("convertMessagesToVercelAISDKMessages", () => {
     expect(result).toEqual([{ role: "user", content: [{ type: "text", text: "hi" }] }]);
   });
 
-  it("falls back to empty string content when the parts array is empty", () => {
-    const result = convertMessagesToVercelAISDKMessages([
-      { id: "u1", role: "user", content: [] },
-    ]);
-    expect(result).toEqual([{ role: "user", content: "" }]);
+  it("omits a user message whose parts array is empty", () => {
+    // Empty content is not something a provider will take: Anthropic rejects
+    // both `[]` and `""`, so the message is left out entirely rather than sent
+    // as an empty turn.
+    const result = convertMessagesToVercelAISDKMessages([{ id: "u1", role: "user", content: [] }]);
+    expect(result).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("u1"));
   });
 
-  it("converts user image part with data source to a data URL", () => {
+  it("omits a user message whose string content is empty", () => {
+    const result = convertMessagesToVercelAISDKMessages([
+      { id: "u1", role: "user", content: "" },
+      { id: "u2", role: "user", content: "still here" },
+    ]);
+    expect(result).toEqual([{ role: "user", content: "still here" }]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("u1"));
+  });
+
+  it("converts user image part with data source to a data URL carrying its media type", () => {
     const result = convertMessagesToVercelAISDKMessages([
       {
         id: "u1",
@@ -83,13 +122,15 @@ describe("convertMessagesToVercelAISDKMessages", () => {
         role: "user",
         content: [
           { type: "text", text: "look" },
-          { type: "image", image: "data:image/png;base64,AAAA" },
+          { type: "image", image: "data:image/png;base64,AAAA", mediaType: "image/png" },
         ],
       },
     ]);
   });
 
-  it("converts user image part with url source by passthrough", () => {
+  it("forwards the media type of a URL image so providers accept it", () => {
+    // OpenAI and Anthropic reject a remote image they cannot type, so a known
+    // mimeType has to travel with the URL rather than being dropped.
     const result = convertMessagesToVercelAISDKMessages([
       {
         id: "u1",
@@ -97,7 +138,11 @@ describe("convertMessagesToVercelAISDKMessages", () => {
         content: [
           {
             type: "image",
-            source: { type: "url", value: "https://example.com/cat.png" },
+            source: {
+              type: "url",
+              value: "https://example.com/cat.png",
+              mimeType: "image/png",
+            },
           },
           { type: "text", text: "describe" },
         ],
@@ -107,10 +152,25 @@ describe("convertMessagesToVercelAISDKMessages", () => {
       {
         role: "user",
         content: [
-          { type: "image", image: "https://example.com/cat.png" },
+          { type: "image", image: "https://example.com/cat.png", mediaType: "image/png" },
           { type: "text", text: "describe" },
         ],
       },
+    ]);
+  });
+
+  it("omits the media type of a URL image when the producer did not state one", () => {
+    const result = convertMessagesToVercelAISDKMessages([
+      {
+        id: "u1",
+        role: "user",
+        content: [
+          { type: "image", source: { type: "url", value: "https://example.com/cat.png" } },
+        ],
+      },
+    ]);
+    expect(result).toEqual([
+      { role: "user", content: [{ type: "image", image: "https://example.com/cat.png" }] },
     ]);
   });
 
@@ -137,8 +197,129 @@ describe("convertMessagesToVercelAISDKMessages", () => {
     ]);
   });
 
-  it("warns and falls back to empty string content when every part is dropped", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  it.each([
+    ["audio", "audio"],
+    ["video", "video"],
+    ["document", "application"],
+  ] as const)(
+    "falls back to the top-level media segment for an untyped %s URL",
+    (partType, expected) => {
+      // FilePart.mediaType is required, so something must be sent. A top-level
+      // segment fails the SDK's isFullMediaType check, which makes it adopt the
+      // Content-Type it sees when downloading; "application/octet-stream" would
+      // instead be taken at face value and rejected by Anthropic.
+      const result = convertMessagesToVercelAISDKMessages([
+        {
+          id: "u1",
+          role: "user",
+          content: [{ type: partType, source: { type: "url", value: "https://example.com/f" } }],
+        },
+      ]);
+      expect(result).toEqual([
+        {
+          role: "user",
+          content: [{ type: "file", data: "https://example.com/f", mediaType: expected }],
+        },
+      ]);
+    },
+  );
+
+  it("carries a filename from part metadata onto the file part", () => {
+    const result = convertMessagesToVercelAISDKMessages([
+      {
+        id: "u1",
+        role: "user",
+        content: [
+          {
+            type: "document",
+            source: {
+              type: "url",
+              value: "https://example.com/report.pdf",
+              mimeType: "application/pdf",
+            },
+            metadata: { filename: "report.pdf" },
+          },
+        ],
+      },
+    ]);
+    expect(result).toEqual([
+      {
+        role: "user",
+        content: [
+          {
+            type: "file",
+            data: "https://example.com/report.pdf",
+            mediaType: "application/pdf",
+            filename: "report.pdf",
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("ignores a non-string filename in part metadata", () => {
+    const result = convertMessagesToVercelAISDKMessages([
+      {
+        id: "u1",
+        role: "user",
+        content: [
+          {
+            type: "document",
+            source: {
+              type: "url",
+              value: "https://example.com/report.pdf",
+              mimeType: "application/pdf",
+            },
+            metadata: { filename: 42 },
+          },
+        ],
+      },
+    ]);
+    expect(result).toEqual([
+      {
+        role: "user",
+        content: [
+          {
+            type: "file",
+            data: "https://example.com/report.pdf",
+            mediaType: "application/pdf",
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("drops a media part whose URL source carries an empty value", () => {
+    const result = convertMessagesToVercelAISDKMessages([
+      {
+        id: "u1",
+        role: "user",
+        content: [
+          { type: "text", text: "and this?" },
+          { type: "image", source: { type: "url", value: "" } },
+        ],
+      },
+    ]);
+    expect(result).toEqual([{ role: "user", content: [{ type: "text", text: "and this?" }] }]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("image"));
+  });
+
+  it("drops a media part whose data source carries no bytes", () => {
+    const result = convertMessagesToVercelAISDKMessages([
+      {
+        id: "u1",
+        role: "user",
+        content: [
+          { type: "text", text: "and this?" },
+          { type: "image", source: { type: "data", value: "", mimeType: "image/png" } },
+        ],
+      },
+    ]);
+    expect(result).toEqual([{ role: "user", content: [{ type: "text", text: "and this?" }] }]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("image"));
+  });
+
+  it("omits the user message when every part is dropped", () => {
     const result = convertMessagesToVercelAISDKMessages([
       {
         id: "u1",
@@ -151,16 +332,16 @@ describe("convertMessagesToVercelAISDKMessages", () => {
         ],
       },
     ]);
-    expect(result).toEqual([{ role: "user", content: "" }]);
-    expect(warn).toHaveBeenCalled();
-    warn.mockRestore();
+    expect(result).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("document"));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("u1"));
   });
 
   it("drops a media part whose bytes live behind a provider file handle", () => {
-    // A `file` source names bytes only the issuing provider can resolve, and
-    // the spec forbids fetching or parsing the handle — so there is nothing to
-    // hand the AI SDK and the part is dropped, like any unusable part.
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    // A `file` source names bytes only the issuing provider can resolve. The
+    // AI SDK could carry it as a provider reference, but only against a model
+    // from that same provider — which the converter is not told — so the part
+    // is dropped, like any part it cannot express.
     const result = convertMessagesToVercelAISDKMessages([
       {
         id: "u1",
@@ -177,17 +358,14 @@ describe("convertMessagesToVercelAISDKMessages", () => {
     expect(result).toEqual([
       { role: "user", content: [{ type: "text", text: "what is in this?" }] },
     ]);
-    expect(warn).toHaveBeenCalled();
-    warn.mockRestore();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("image"));
   });
 
   it("converts assistant message with content only", () => {
     const result = convertMessagesToVercelAISDKMessages([
       { id: "a1", role: "assistant", content: "sure" },
     ]);
-    expect(result).toEqual([
-      { role: "assistant", content: [{ type: "text", text: "sure" }] },
-    ]);
+    expect(result).toEqual([{ role: "assistant", content: [{ type: "text", text: "sure" }] }]);
   });
 
   it("converts assistant message with tool calls", () => {
@@ -204,28 +382,142 @@ describe("convertMessagesToVercelAISDKMessages", () => {
           },
         ],
       },
+      { id: "t1", role: "tool", toolCallId: "tc1", content: "sunny" },
+    ]);
+    expect(result[0]).toEqual({
+      role: "assistant",
+      content: [
+        { type: "text", text: "calling tool" },
+        {
+          type: "tool-call",
+          toolCallId: "tc1",
+          toolName: "get_weather",
+          input: { city: "Tokyo" },
+        },
+      ],
+    });
+  });
+
+  it("omits an assistant message with nothing to send", () => {
+    const result = convertMessagesToVercelAISDKMessages([{ id: "a1", role: "assistant" }]);
+    expect(result).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("a1"));
+  });
+
+  it("keeps an assistant message that carries only buffered reasoning", () => {
+    const result = convertMessagesToVercelAISDKMessages([
+      { id: "r1", role: "reasoning", content: "thinking" },
+      { id: "a1", role: "assistant" },
+    ]);
+    expect(result).toEqual([
+      { role: "assistant", content: [{ type: "reasoning", text: "thinking" }] },
+    ]);
+  });
+
+  it("back-fills an execution-denied result for an unanswered tool call", () => {
+    // Without a result for every tool call the AI SDK throws
+    // MissingToolResultsError while converting the prompt, which would brick
+    // every later run in the conversation.
+    const result = convertMessagesToVercelAISDKMessages([
+      {
+        id: "a1",
+        role: "assistant",
+        content: "",
+        toolCalls: [
+          { id: "tc1", type: "function", function: { name: "get_weather", arguments: "{}" } },
+        ],
+      },
     ]);
     expect(result).toEqual([
       {
         role: "assistant",
         content: [
-          { type: "text", text: "calling tool" },
+          { type: "tool-call", toolCallId: "tc1", toolName: "get_weather", input: {} },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
           {
-            type: "tool-call",
+            type: "tool-result",
             toolCallId: "tc1",
             toolName: "get_weather",
-            input: { city: "Tokyo" },
+            output: {
+              type: "execution-denied",
+              reason: "No result was provided for this tool call.",
+            },
           },
         ],
       },
     ]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("tc1"));
   });
 
-  it("returns empty string content for an assistant message with nothing to send", () => {
+  it("does not back-fill a tool call that is answered later in the history", () => {
     const result = convertMessagesToVercelAISDKMessages([
-      { id: "a1", role: "assistant" },
+      {
+        id: "a1",
+        role: "assistant",
+        content: "",
+        toolCalls: [
+          { id: "tc1", type: "function", function: { name: "get_weather", arguments: "{}" } },
+        ],
+      },
+      { id: "u1", role: "user", content: "any time now" },
+      { id: "t1", role: "tool", toolCallId: "tc1", content: "sunny" },
     ]);
-    expect(result).toEqual([{ role: "assistant", content: "" }]);
+    expect(result).toHaveLength(3);
+    expect(result[1]).toEqual({ role: "user", content: "any time now" });
+  });
+
+  it("back-fills only the unanswered call when an assistant turn makes two", () => {
+    const result = convertMessagesToVercelAISDKMessages([
+      {
+        id: "a1",
+        role: "assistant",
+        content: "",
+        toolCalls: [
+          { id: "tc1", type: "function", function: { name: "get_weather", arguments: "{}" } },
+          { id: "tc2", type: "function", function: { name: "get_time", arguments: "{}" } },
+        ],
+      },
+      { id: "t1", role: "tool", toolCallId: "tc1", content: "sunny" },
+    ]);
+    expect(result).toEqual([
+      {
+        role: "assistant",
+        content: [
+          { type: "tool-call", toolCallId: "tc1", toolName: "get_weather", input: {} },
+          { type: "tool-call", toolCallId: "tc2", toolName: "get_time", input: {} },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "tc2",
+            toolName: "get_time",
+            output: {
+              type: "execution-denied",
+              reason: "No result was provided for this tool call.",
+            },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "tc1",
+            toolName: "get_weather",
+            output: { type: "text", value: "sunny" },
+          },
+        ],
+      },
+    ]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("tc2"));
   });
 
   it("looks up the tool name on a tool message from a prior assistant message", () => {
@@ -277,6 +569,143 @@ describe("convertMessagesToVercelAISDKMessages", () => {
     ]);
   });
 
+  it("joins text-only tool result parts into a text output", () => {
+    const result = convertMessagesToVercelAISDKMessages([
+      {
+        id: "t1",
+        role: "tool",
+        toolCallId: "tc1",
+        content: [
+          { type: "text", text: "42" },
+          { type: "text", text: " degrees" },
+        ],
+      },
+    ]);
+    expect(toolResultOutput(result[0])).toEqual({ type: "text", value: "42 degrees" });
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("routes a tool result that mixes text and media through the content output", () => {
+    const result = convertMessagesToVercelAISDKMessages([
+      {
+        id: "t1",
+        role: "tool",
+        toolCallId: "tc1",
+        content: [
+          { type: "text", text: "here is the chart" },
+          { type: "image", source: { type: "data", value: "AAAA", mimeType: "image/png" } },
+        ],
+      },
+    ]);
+    expect(toolResultOutput(result[0])).toEqual({
+      type: "content",
+      value: [
+        { type: "text", text: "here is the chart" },
+        { type: "file", mediaType: "image/png", data: { type: "data", data: "AAAA" } },
+      ],
+    });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("tc1"));
+  });
+
+  it("sends a media-only tool result as content rather than an empty text value", () => {
+    const result = convertMessagesToVercelAISDKMessages([
+      {
+        id: "t1",
+        role: "tool",
+        toolCallId: "tc1",
+        content: [
+          { type: "image", source: { type: "data", value: "AAAA", mimeType: "image/png" } },
+        ],
+      },
+    ]);
+    expect(toolResultOutput(result[0])).toEqual({
+      type: "content",
+      value: [{ type: "file", mediaType: "image/png", data: { type: "data", data: "AAAA" } }],
+    });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("tc1"));
+  });
+
+  it("carries a URL-sourced tool result file as tagged url file data", () => {
+    const result = convertMessagesToVercelAISDKMessages([
+      {
+        id: "t1",
+        role: "tool",
+        toolCallId: "tc1",
+        content: [
+          {
+            type: "document",
+            source: {
+              type: "url",
+              value: "https://example.com/report.pdf",
+              mimeType: "application/pdf",
+            },
+            metadata: { filename: "report.pdf" },
+          },
+        ],
+      },
+    ]);
+    const output = toolResultOutput(result[0]);
+    if (output.type !== "content") throw new Error(`expected content output, got ${output.type}`);
+    const item = output.value[0];
+    if (item.type !== "file") throw new Error(`expected a file item, got ${item.type}`);
+    expect(item.mediaType).toBe("application/pdf");
+    expect(item.filename).toBe("report.pdf");
+    if (item.data.type !== "url") throw new Error(`expected url data, got ${item.data.type}`);
+    expect(item.data.url.href).toBe("https://example.com/report.pdf");
+  });
+
+  it("drops a tool result file handle even when it names a provider", () => {
+    // Same rule as prompt parts: the AI SDK can carry the handle as a provider
+    // reference, but resolving it against a model from a DIFFERENT provider
+    // throws NoSuchProviderReferenceError and kills the whole run. The
+    // converter does not know the configured provider, so it cannot tell a
+    // usable handle from a fatal one — dropping (with a warning) is the only
+    // safe choice until provider identity is threaded through.
+    const result = convertMessagesToVercelAISDKMessages([
+      {
+        id: "t1",
+        role: "tool",
+        toolCallId: "tc1",
+        content: [
+          { type: "text", text: "see attachment" },
+          {
+            type: "document",
+            source: {
+              type: "file",
+              value: "file-abc123",
+              provider: "openai",
+              mimeType: "application/pdf",
+            },
+          },
+        ],
+      },
+    ]);
+    expect(toolResultOutput(result[0])).toEqual({
+      type: "content",
+      value: [{ type: "text", text: "see attachment" }],
+    });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("document"));
+  });
+
+  it("drops a tool result file handle that names no provider", () => {
+    const result = convertMessagesToVercelAISDKMessages([
+      {
+        id: "t1",
+        role: "tool",
+        toolCallId: "tc1",
+        content: [
+          { type: "text", text: "see attachment" },
+          { type: "document", source: { type: "file", value: "file-abc123" } },
+        ],
+      },
+    ]);
+    expect(toolResultOutput(result[0])).toEqual({
+      type: "content",
+      value: [{ type: "text", text: "see attachment" }],
+    });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("document"));
+  });
+
   it("skips activity messages", () => {
     const result = convertMessagesToVercelAISDKMessages([
       { id: "ac1", role: "activity", activityType: "typing", content: { foo: "bar" } },
@@ -307,15 +736,12 @@ describe("convertMessagesToVercelAISDKMessages", () => {
           },
         ],
       },
+      { id: "t1", role: "tool", toolCallId: "tc1", content: "ok" },
     ]);
-    expect(result).toEqual([
-      {
-        role: "assistant",
-        content: [
-          { type: "tool-call", toolCallId: "tc1", toolName: "broken", input: {} },
-        ],
-      },
-    ]);
+    expect(result[0]).toEqual({
+      role: "assistant",
+      content: [{ type: "tool-call", toolCallId: "tc1", toolName: "broken", input: {} }],
+    });
   });
 
   it("preserves whitespace in text-only user parts verbatim", () => {
@@ -365,6 +791,27 @@ describe("convertMessagesToVercelAISDKMessages", () => {
     ]);
   });
 
+  it("falls back to the message error when a failed tool result carries only media", () => {
+    // There is no error output that can carry content parts, so the media is
+    // dropped — and an empty error value would tell the model nothing.
+    const result = convertMessagesToVercelAISDKMessages([
+      {
+        id: "t1",
+        role: "tool",
+        toolCallId: "tc1",
+        content: [
+          { type: "image", source: { type: "data", value: "AAAA", mimeType: "image/png" } },
+        ],
+        error: "screenshot failed",
+      },
+    ]);
+    expect(toolResultOutput(result[0])).toEqual({
+      type: "error-text",
+      value: "screenshot failed",
+    });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("tc1"));
+  });
+
   it("attaches a reasoning message (with signature) to the following assistant message", () => {
     const result = convertMessagesToVercelAISDKMessages([
       { id: "r1", role: "reasoning", content: "thinking hard", encryptedValue: "sig-abc" },
@@ -396,16 +843,15 @@ describe("convertMessagesToVercelAISDKMessages", () => {
           { id: "tc1", type: "function", function: { name: "get_weather", arguments: "{}" } },
         ],
       },
+      { id: "t1", role: "tool", toolCallId: "tc1", content: "sunny" },
     ]);
-    expect(result).toEqual([
-      {
-        role: "assistant",
-        content: [
-          { type: "reasoning", text: "brief thought" },
-          { type: "tool-call", toolCallId: "tc1", toolName: "get_weather", input: {} },
-        ],
-      },
-    ]);
+    expect(result[0]).toEqual({
+      role: "assistant",
+      content: [
+        { type: "reasoning", text: "brief thought" },
+        { type: "tool-call", toolCallId: "tc1", toolName: "get_weather", input: {} },
+      ],
+    });
   });
 
   it("drops buffered reasoning when a non-assistant message follows", () => {
@@ -419,6 +865,4 @@ describe("convertMessagesToVercelAISDKMessages", () => {
       { role: "assistant", content: [{ type: "text", text: "ok" }] },
     ]);
   });
-
-
 });
