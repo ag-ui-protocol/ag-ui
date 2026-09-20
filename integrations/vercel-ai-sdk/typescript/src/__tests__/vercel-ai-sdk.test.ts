@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { firstValueFrom, toArray } from "rxjs";
-import { EventType, type BaseEvent, type RunAgentInput } from "@ag-ui/client";
+import {
+  EventType,
+  type BaseEvent,
+  type RunAgentInput,
+  type RunFinishedEvent,
+} from "@ag-ui/client";
 import { VercelAISDKAgent } from "../vercel-ai-sdk";
 import {
   makeInput,
@@ -165,6 +170,55 @@ describe("VercelAISDKAgent", () => {
 
     expect(seenSignals[0].aborted).toBe(true);
     sub.unsubscribe();
+  });
+
+  it("abortRun() ends the run as cancelled — RUN_FINISHED { outcome: { type: 'cancelled' } }, no RUN_ERROR", async () => {
+    // Deterministic timing: the stream blocks after the first delta until the
+    // test has called abortRun(). No wall-clock racing.
+    const { MockLanguageModelV3 } = await import("ai/test");
+    let releaseStream!: () => void;
+    const blockedUntilAbort = new Promise<void>((r) => {
+      releaseStream = r;
+    });
+    const model = new MockLanguageModelV3({
+      doStream: async () =>
+        ({
+          stream: new ReadableStream({
+            async start(controller) {
+              controller.enqueue(streamStart);
+              controller.enqueue(responseMetadata());
+              controller.enqueue({ type: "text-start", id: "t1" });
+              controller.enqueue({ type: "text-delta", id: "t1", delta: "Partial" });
+              await blockedUntilAbort;
+              controller.close();
+            },
+          }),
+        }) as never,
+    });
+    const agent = new VercelAISDKAgent({ model });
+
+    const events: BaseEvent[] = [];
+    await new Promise<void>((resolve, reject) => {
+      agent.run(makeInput({ messages: [{ id: "u", role: "user", content: "Hi" }] })).subscribe({
+        next: (e) => {
+          events.push(e);
+          if (e.type === EventType.TEXT_MESSAGE_CONTENT) {
+            agent.abortRun();
+            releaseStream();
+          }
+        },
+        complete: () => resolve(),
+        error: (err) => reject(err),
+      });
+    });
+
+    // The public stop API is not a failure path: the consumer sees a finished
+    // run with a `cancelled` outcome, not an error banner.
+    expect(events.filter((e) => e.type === EventType.RUN_ERROR)).toHaveLength(0);
+    const finished = events[events.length - 1] as RunFinishedEvent;
+    expect(finished.type).toBe(EventType.RUN_FINISHED);
+    expect(finished.outcome).toEqual({ type: "cancelled" });
+    expect(events.some((e) => e.type === EventType.MESSAGES_SNAPSHOT)).toBe(true);
   });
 
   it("forwards input.context to the model as a system message", async () => {

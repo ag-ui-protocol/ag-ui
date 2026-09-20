@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   EventType,
+  verifyEvents,
+  type AssistantMessage,
   type MessagesSnapshotEvent,
   type RunErrorEvent,
+  type RunFinishedEvent,
   type ToolCallResultEvent,
   type ToolMessage,
 } from "@ag-ui/client";
 import { jsonSchema, stepCountIs, streamText, tool } from "ai";
-import { Observable, Subscriber } from "rxjs";
+import { firstValueFrom, from, Observable, Subscriber, toArray } from "rxjs";
 import {
   collectEvents,
   eventsOfType,
@@ -232,7 +235,7 @@ describe("StreamHandler — error & cancel handling", () => {
     expect(results).toHaveLength(0);
   });
 
-  it("emits RUN_ERROR (code: 'aborted') and completes when the stream is aborted via abortSignal", async () => {
+  it("treats an abortSignal stop as a cancellation: RUN_FINISHED { outcome: { type: 'cancelled' } }, no RUN_ERROR", async () => {
     // Deterministic timing: the stream blocks after the first delta until the
     // test signals (after observing TEXT_MESSAGE_CONTENT). No wall-clock racing.
     const abortController = new AbortController();
@@ -289,15 +292,102 @@ describe("StreamHandler — error & cancel handling", () => {
       });
     });
 
-    const errors = eventsOfType<RunErrorEvent>(events, EventType.RUN_ERROR);
-    expect(errors).toHaveLength(1);
-    expect(errors[0].code).toBe("aborted");
-    // RUN_ERROR is terminal — no RUN_FINISHED, no MESSAGES_SNAPSHOT.
-    expect(events.find((e) => e.type === EventType.RUN_FINISHED)).toBeUndefined();
-    expect(events.find((e) => e.type === EventType.MESSAGES_SNAPSHOT)).toBeUndefined();
-    // Partial text streamed before the abort is preserved.
-    const contents = events.filter((e) => e.type === EventType.TEXT_MESSAGE_CONTENT);
-    expect(contents.length).toBeGreaterThanOrEqual(1);
+    // A user-requested stop is not a failure: protocol 1.0 models it as
+    // RUN_FINISHED with a `cancelled` outcome, which is what clears a pending
+    // interrupt and keeps UIs from showing an error banner for a deliberate stop.
+    expect(eventsOfType<RunErrorEvent>(events, EventType.RUN_ERROR)).toHaveLength(0);
+    const finished = eventsOfType<RunFinishedEvent>(events, EventType.RUN_FINISHED);
+    expect(finished).toHaveLength(1);
+    expect(finished[0].outcome).toEqual({ type: "cancelled" });
+    expect(events[events.length - 1].type).toBe(EventType.RUN_FINISHED);
+    // `totalUsage` only ever arrives on the terminal `finish` part, which an
+    // aborted stream never emits — so a cancelled run reports no usage.
+    expect(finished[0].usage).toBeUndefined();
+
+    const idx = (type: EventType) => events.findIndex((e) => e.type === type);
+    const finishedIdx = idx(EventType.RUN_FINISHED);
+    // Everything the abort left open is closed BEFORE RUN_FINISHED, so the
+    // sequence still passes client-side verification.
+    expect(idx(EventType.TEXT_MESSAGE_END)).toBeGreaterThan(-1);
+    expect(idx(EventType.TEXT_MESSAGE_END)).toBeLessThan(finishedIdx);
+    expect(idx(EventType.STEP_FINISHED)).toBeGreaterThan(-1);
+    expect(idx(EventType.STEP_FINISHED)).toBeLessThan(finishedIdx);
+
+    // Partial content streamed before the stop is persisted, not discarded.
+    const snapIdx = idx(EventType.MESSAGES_SNAPSHOT);
+    expect(snapIdx).toBeGreaterThan(-1);
+    expect(snapIdx).toBeLessThan(finishedIdx);
+    const snap = events[snapIdx] as MessagesSnapshotEvent;
+    const assistant = snap.messages.find((m) => m.role === "assistant") as AssistantMessage;
+    expect(assistant.content).toBe("Hello ");
+
+    await expect(
+      firstValueFrom(from(events).pipe(verifyEvents(), toArray())),
+    ).resolves.toHaveLength(events.length);
+  });
+
+  it("an `abort` part closes open reasoning/text/tool events and never synthesizes tool results", async () => {
+    async function* parts(): AsyncIterable<FullStreamPart> {
+      yield { type: "start" };
+      yield { type: "start-step", request: {}, warnings: [] };
+      yield { type: "text-start", id: "t1" };
+      yield { type: "text-delta", id: "t1", text: "Partial" };
+      yield { type: "tool-input-start", id: "tc-done", toolName: "noop" };
+      yield { type: "tool-input-end", id: "tc-done" };
+      yield {
+        type: "tool-call",
+        toolCallId: "tc-done",
+        toolName: "noop",
+        input: {},
+        dynamic: true,
+      };
+      // Left open on purpose: args were still streaming when the stop landed.
+      yield { type: "tool-input-start", id: "tc-open", toolName: "noop" };
+      yield { type: "tool-input-delta", id: "tc-open", delta: '{"a":' };
+      yield { type: "reasoning-start", id: "r1" };
+      yield { type: "reasoning-delta", id: "r1", text: "thinking" };
+      yield { type: "abort", reason: "user stopped" };
+    }
+
+    const events = await collectEvents(parts());
+
+    const finished = eventsOfType<RunFinishedEvent>(events, EventType.RUN_FINISHED);
+    expect(finished).toHaveLength(1);
+    expect(finished[0].outcome).toEqual({ type: "cancelled" });
+    expect(events[events.length - 1].type).toBe(EventType.RUN_FINISHED);
+    expect(eventsOfType<RunErrorEvent>(events, EventType.RUN_ERROR)).toHaveLength(0);
+
+    const idx = (type: EventType) => events.findIndex((e) => e.type === type);
+    const finishedIdx = idx(EventType.RUN_FINISHED);
+    for (const type of [
+      EventType.TEXT_MESSAGE_END,
+      EventType.TOOL_CALL_END,
+      EventType.REASONING_MESSAGE_END,
+      EventType.REASONING_END,
+      EventType.STEP_FINISHED,
+    ]) {
+      expect(idx(type)).toBeGreaterThan(-1);
+      expect(idx(type)).toBeLessThan(finishedIdx);
+    }
+    // Both tool calls are closed — the streamed-open one included.
+    const toolEnds = eventsOfType(events, EventType.TOOL_CALL_END).map(
+      (e) => (e as unknown as { toolCallId: string }).toolCallId,
+    );
+    expect(new Set(toolEnds)).toEqual(new Set(["tc-done", "tc-open"]));
+
+    // A cancelled run must not fabricate results for calls it never ran.
+    expect(eventsOfType<ToolCallResultEvent>(events, EventType.TOOL_CALL_RESULT)).toHaveLength(0);
+
+    const snap = events[idx(EventType.MESSAGES_SNAPSHOT)] as MessagesSnapshotEvent;
+    expect(snap.messages.some((m) => m.role === "tool")).toBe(false);
+    const assistant = snap.messages.find((m) => m.role === "assistant") as AssistantMessage;
+    expect(assistant.content).toBe("Partial");
+    expect(assistant.toolCalls?.map((tc) => tc.id)).toEqual(["tc-done"]);
+    expect(snap.messages.some((m) => m.role === "reasoning")).toBe(true);
+
+    await expect(
+      firstValueFrom(from(events).pipe(verifyEvents(), toArray())),
+    ).resolves.toHaveLength(events.length);
   });
 
   it("emits RUN_ERROR + completes (no MESSAGES_SNAPSHOT, no RUN_FINISHED) when the for-await throws", async () => {

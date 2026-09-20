@@ -12,7 +12,11 @@ import {
   type ToolCall,
   type ToolMessage,
 } from "@ag-ui/client";
-import { tokenUsageFromAiSdkUsage, type TokenUsage } from "@ag-ui/core";
+import {
+  tokenUsageFromAiSdkUsage,
+  type RunFinishedCancelledOutcome,
+  type TokenUsage,
+} from "@ag-ui/core";
 import type { Subscriber } from "rxjs";
 import type { LanguageModelUsage, TextStreamPart, ToolSet } from "ai";
 
@@ -142,6 +146,10 @@ export class StreamHandler {
   private currentMessagePushed = false;
   private finalMessages: Message[];
   private stepIndex = 0;
+  // A step is open between STEP_STARTED and STEP_FINISHED. Normal runs get
+  // their STEP_FINISHED from the provider's `finish-step` part; a cancelled
+  // one has to close the step itself — see finishRun().
+  private stepOpen = false;
   private completed = false;
 
   private openTextIds = new Set<string>();
@@ -185,7 +193,9 @@ export class StreamHandler {
 
     try {
       for await (const part of stream) {
-        if (this.subscriber.closed) break;
+        // `completed` covers the terminal parts (`abort`, `error`), which end
+        // the run from inside handlePart; `closed` covers an unsubscribe.
+        if (this.subscriber.closed || this.completed) break;
         this.handlePart(part);
       }
     } catch (error) {
@@ -198,17 +208,47 @@ export class StreamHandler {
       return;
     }
 
+    if (this.completed) return;
+    this.finishRun();
+  }
+
+  // The close-out shared by normal completion and cancellation: seal whatever
+  // the stream left open, snapshot the conversation, end the run.
+  //
+  // `outcome` is omitted on normal completion — an absent outcome reads as
+  // success, which is what this integration has always emitted — and set to
+  // `{ type: "cancelled" }` when the run was stopped.
+  private finishRun(outcome?: RunFinishedCancelledOutcome): void {
+    if (this.completed) return;
+    const cancelled = outcome?.type === "cancelled";
+
     this.closeAllOpenReasonings();
     this.closeAllOpenTexts();
     this.closeAllOpenToolCalls();
-    this.synthesizeMissingToolResults();
+    if (cancelled) {
+      // An `abort` part arrives with the step still open (the AI SDK enqueues
+      // it in place of `finish-step`), and client-side verifyEvents rejects
+      // RUN_FINISHED while any step, message or tool call is still active.
+      this.closeOpenStep();
+      // Deliberately NOT synthesizeMissingToolResults(): a cancelled run must
+      // not fabricate results for tool calls it never got to run.
+    } else {
+      this.synthesizeMissingToolResults();
+    }
 
+    // Emitted on cancellation too: the partial text, reasoning and tool calls
+    // that streamed before the stop are real conversation history, and a
+    // client that ignores the snapshot on a cancelled run simply drops it —
+    // whereas withholding it would lose the content for every client that
+    // keeps it.
     this.emit({
       type: EventType.MESSAGES_SNAPSHOT,
       messages: this.finalMessages,
     });
     // Omit `usage` when the provider reported no counts — an empty or
-    // labels-only entry would claim usage was measured when it wasn't.
+    // labels-only entry would claim usage was measured when it wasn't. A
+    // cancelled run is always in that case: `totalUsage` only arrives on the
+    // terminal `finish` part, which an aborted stream never emits.
     const usageEntry: TokenUsage | undefined = tokenUsageFromAiSdkUsage(
       flattenAiSdkUsage(this.totalUsage),
       this.modelIdentity,
@@ -217,6 +257,7 @@ export class StreamHandler {
       type: EventType.RUN_FINISHED,
       threadId: this.input.threadId,
       runId: this.input.runId,
+      ...(outcome ? { outcome } : {}),
       ...(usageEntry ? { usage: [usageEntry] } : {}),
     });
     this.complete();
@@ -287,16 +328,13 @@ export class StreamHandler {
         this.totalUsage = part.totalUsage;
         return;
       case "abort":
-        // RUN_ERROR + complete is terminal; mirrors the thrown-error path
-        // and prevents the cleanup phase from emitting a misleading
-        // RUN_FINISHED for an aborted run.
-        this.emit({
-          type: EventType.RUN_ERROR,
-          message: "Stream aborted",
-          code: "aborted",
-        });
-        this.complete();
-        return;
+        // A stop requested by whoever was running the agent is not a failure:
+        // protocol 1.0 models it as RUN_FINISHED with a `cancelled` outcome.
+        // Reporting RUN_ERROR here would show an error banner for a deliberate
+        // stop and would leave a pending interrupt uncleared, since the client
+        // only clears one on RUN_FINISHED. Terminal: finishRun() completes the
+        // subscriber, and process() stops iterating once `completed` is set.
+        return this.finishRun({ type: "cancelled" });
       case "error":
         this.emit({
           type: EventType.RUN_ERROR,
@@ -613,6 +651,7 @@ export class StreamHandler {
   // step lifecycle --------------------------------------------------------
   private onStartStep(): void {
     this.stepIndex += 1;
+    this.stepOpen = true;
     this.emit({
       type: EventType.STEP_STARTED,
       stepName: `step-${this.stepIndex}`,
@@ -628,11 +667,21 @@ export class StreamHandler {
     this.closeAllOpenReasonings();
     this.closeAllOpenTexts();
     this.closeAllOpenToolCalls();
+    this.stepOpen = false;
     this.emit({
       type: EventType.STEP_FINISHED,
       stepName: `step-${this.stepIndex}`,
     });
     this.rotateAssistantMessage();
+  }
+
+  private closeOpenStep(): void {
+    if (!this.stepOpen) return;
+    this.stepOpen = false;
+    this.emit({
+      type: EventType.STEP_FINISHED,
+      stepName: `step-${this.stepIndex}`,
+    });
   }
 
   private rotateAssistantMessage(): void {
@@ -656,7 +705,15 @@ export class StreamHandler {
     // next run. Only server-executed tools that dropped their result get a
     // synthesized placeholder.
     const clientToolNames = new Set((this.input.tools ?? []).map((t) => t.name));
-    for (const message of this.finalMessages) {
+    // Only the messages THIS run appended. Prior-run history is out of scope
+    // twice over: an orphaned tool call in it can't reach here (the AI SDK
+    // throws MissingToolResultsError while converting the prompt, before the
+    // stream ever starts), and a placeholder synthesized for one would be
+    // appended at the end of the conversation rather than after the call it
+    // answers. Snapshotting the slice also keeps the iteration off the array
+    // emitToolResult() pushes into.
+    const appendedThisRun = this.finalMessages.slice(this.input.messages.length);
+    for (const message of appendedThisRun) {
       if (message.role !== "assistant" || !message.toolCalls?.length) continue;
       for (const tc of message.toolCalls) {
         if (this.emittedToolResults.has(tc.id)) continue;
