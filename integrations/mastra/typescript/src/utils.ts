@@ -1,9 +1,4 @@
-import type {
-  InputContent,
-  InputContentDataSource,
-  InputContentUrlSource,
-  Message,
-} from "@ag-ui/client";
+import type { InputContent, Message, PartSource } from "@ag-ui/client";
 import { AbstractAgent } from "@ag-ui/client";
 import { MastraClient } from "@mastra/client-js";
 import type { Mastra } from "@mastra/core";
@@ -44,13 +39,51 @@ function toModelSafeMessageId(id: string): string {
     : id.replace(/[^A-Za-z0-9_-]/g, "-");
 }
 
-function mediaSourceToUrl(
-  source: InputContentDataSource | InputContentUrlSource,
-): string {
+/**
+ * The legacy binary content part, which left `@ag-ui/core` in 1.0. Old
+ * producers still send it, so this boundary keeps reading it — typed locally,
+ * because the protocol no longer knows the shape.
+ */
+interface LegacyBinaryInputContent {
+  type: "binary";
+  mimeType: string;
+  id?: string;
+  url?: string;
+  data?: string;
+  filename?: string;
+}
+
+/**
+ * The URL form of a media part's source, or `null` when this adapter has no way
+ * to express it.
+ *
+ * A `file` source names bytes that already sit at a model provider, under a
+ * handle only that provider can resolve. It is NOT a URL, and returning it as
+ * one put an opaque handle into `image`/`file.data` on the provider request —
+ * a fetch of a nonsense address, or a silently wrong attachment. This adapter
+ * has no provider-handle path in 1.0, so an unusable source is an ABSENT
+ * source: `null` here, and the caller drops the one part with one warning,
+ * which is what the specification asks of a producer that cannot use a content
+ * part ("it skips the part and continues, and SHOULD warn").
+ */
+function mediaSourceToUrl(source: PartSource): string | null {
   if (source.type === "data") {
     return `data:${source.mimeType};base64,${source.value}`;
   }
-  return source.value;
+  if (source.type === "url") {
+    return source.value;
+  }
+  return null;
+}
+
+/**
+ * Announce the one part this adapter drops, so an operator sees a missing
+ * attachment instead of a request that merely fails to mention it.
+ */
+function warnUnusableSource(partType: string): void {
+  console.warn(
+    `[toMastraContent] Dropping ${partType} content: a provider file handle cannot be forwarded by this adapter`,
+  );
 }
 
 const toMastraTextContent = (content: Message["content"]): string => {
@@ -96,21 +129,33 @@ const toMastraContent = (content: Message["content"]): string | any[] => {
       case "text":
         parts.push({ type: "text", text: part.text });
         break;
-      case "image":
-        parts.push({ type: "image", image: mediaSourceToUrl(part.source) });
+      case "image": {
+        const image = mediaSourceToUrl(part.source);
+        if (image === null) {
+          warnUnusableSource(part.type);
+          break;
+        }
+        parts.push({ type: "image", image });
         break;
+      }
       case "audio":
       case "video":
-      case "document":
+      case "document": {
+        const data = mediaSourceToUrl(part.source);
+        if (data === null) {
+          warnUnusableSource(part.type);
+          break;
+        }
         parts.push({
           type: "file",
-          data: mediaSourceToUrl(part.source),
+          data,
           mimeType: part.source.mimeType ?? "application/octet-stream",
         });
         break;
+      }
       case "binary": {
         // Deprecated BinaryInputContent
-        const binaryPart = part as Extract<InputContent, { type: "binary" }>;
+        const binaryPart = part as unknown as LegacyBinaryInputContent;
         if (binaryPart.url) {
           parts.push({ type: "image", image: binaryPart.url });
         } else if (binaryPart.data && binaryPart.mimeType) {
@@ -135,6 +180,88 @@ const toMastraContent = (content: Message["content"]): string | any[] => {
   return parts;
 };
 
+function parseReplayToolCallArguments(
+  raw: string | undefined,
+): { args: unknown; recovered: boolean } | undefined {
+  const trimmed = (raw ?? "").trim();
+  if (trimmed === "") {
+    return { args: {}, recovered: false };
+  }
+
+  try {
+    return { args: JSON.parse(trimmed), recovered: false };
+  } catch {
+    const recovered = recoverFirstJsonValue(trimmed);
+    if (recovered !== undefined) {
+      return { args: recovered, recovered: true };
+    }
+    return undefined;
+  }
+}
+
+function recoverFirstJsonValue(text: string): unknown | undefined {
+  const end = endOfFirstJsonContainer(text);
+  if (end <= 0 || end >= text.length) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(text.slice(0, end));
+  } catch {
+    return undefined;
+  }
+}
+
+function endOfFirstJsonContainer(text: string): number {
+  const open = text[0];
+  if (open !== "{" && open !== "[") {
+    return -1;
+  }
+
+  let objectDepth = 0;
+  let arrayDepth = 0;
+  let inString = false;
+  let escape = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escape = true;
+        continue;
+      }
+      if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === "{") {
+      objectDepth += 1;
+    } else if (ch === "}") {
+      objectDepth -= 1;
+    } else if (ch === "[") {
+      arrayDepth += 1;
+    } else if (ch === "]") {
+      arrayDepth -= 1;
+    }
+    if (objectDepth < 0 || arrayDepth < 0) {
+      return -1;
+    }
+    if (objectDepth === 0 && arrayDepth === 0) {
+      return i + 1;
+    }
+  }
+
+  return -1;
+}
+
 export function convertAGUIMessagesToMastra(
   messages: Message[],
   // Messages to resolve a tool message's toolName against. Defaults to
@@ -155,6 +282,9 @@ export function convertAGUIMessagesToMastra(
   // API when it is replayed as `input[].id` on later turns (deterministic, so
   // dedup is unaffected).
   const result: CoreMessageWithId[] = [];
+  // Track only calls skipped from this conversion. Calls in lookupMessages
+  // alone may already be stored in Mastra and still need their new results.
+  const skippedToolCallIds = new Set<string>();
 
   for (const message of messages) {
     if (message.role === "assistant") {
@@ -164,12 +294,30 @@ export function convertAGUIMessagesToMastra(
         parts.push({ type: "text", text: assistantContent });
       }
       for (const toolCall of message.toolCalls ?? []) {
+        const parsed = parseReplayToolCallArguments(
+          toolCall.function.arguments,
+        );
+        if (parsed === undefined) {
+          skippedToolCallIds.add(toolCall.id);
+          console.warn(
+            `[convertAGUIMessagesToMastra] Skipping tool-call ${toolCall.function.name} (${toolCall.id}): arguments are not valid JSON`,
+          );
+          continue;
+        }
+        if (parsed.recovered) {
+          console.warn(
+            `[convertAGUIMessagesToMastra] Recovered first JSON value from concatenated tool-call arguments for ${toolCall.function.name} (${toolCall.id})`,
+          );
+        }
         parts.push({
           type: "tool-call",
           toolCallId: toolCall.id,
           toolName: toolCall.function.name,
-          args: JSON.parse(toolCall.function.arguments),
+          args: parsed.args,
         });
+      }
+      if (parts.length === 0 && message.toolCalls?.length) {
+        continue;
       }
       result.push({
         ...(message.id !== undefined
@@ -186,6 +334,16 @@ export function convertAGUIMessagesToMastra(
           : {}),
         role: "user",
         content: userContent,
+      } as CoreMessage);
+    } else if (message.role === "developer") {
+      // Mastra has no developer role. Preserve app-injected instructions as
+      // system messages, separate from user input and persisted chat history.
+      result.push({
+        ...(message.id !== undefined
+          ? { id: toModelSafeMessageId(message.id) }
+          : {}),
+        role: "system",
+        content: message.content,
       } as CoreMessage);
     } else if (message.role === "tool") {
       let toolName = "unknown";
@@ -219,7 +377,18 @@ export function convertAGUIMessagesToMastra(
     }
   }
 
-  return result;
+  // Mastra reconstructs a call with {} arguments for an orphaned result.
+  // Remove results of skipped calls too, including results encountered before
+  // their calls, so malformed history cannot invent a successful invocation.
+  return result.filter(
+    (message) =>
+      message.role !== "tool" ||
+      message.content.every(
+        (part) =>
+          part.type !== "tool-result" ||
+          !skippedToolCallIds.has(part.toolCallId),
+      ),
+  );
 }
 
 export interface GetRemoteAgentsOptions {

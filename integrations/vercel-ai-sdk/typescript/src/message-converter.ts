@@ -1,8 +1,4 @@
-import type {
-  Message,
-  InputContentDataSource,
-  InputContentUrlSource,
-} from "@ag-ui/core";
+import { contentToText, type Message, type PartSource } from "@ag-ui/core";
 import type {
   ModelMessage,
   TextPart,
@@ -11,11 +7,24 @@ import type {
   ToolCallPart,
 } from "ai";
 
-function mediaSourceToUrl(source: InputContentDataSource | InputContentUrlSource): string {
+// A media part's bytes as something the AI SDK can carry: a data URL or a
+// plain URL. A `file` source is a handle only the issuing provider can
+// resolve, and the spec forbids a consumer from fetching or parsing it, so
+// there is nothing to hand the SDK — the caller drops the part.
+function mediaSourceToUrl(source: PartSource): string | undefined {
   if (source.type === "data") {
     return `data:${source.mimeType};base64,${source.value}`;
   }
-  return source.value;
+  if (source.type === "url") {
+    return source.value;
+  }
+  return undefined;
+}
+
+function warnDroppedFileSource(partType: string): void {
+  console.warn(
+    `[convertMessagesToVercelAISDKMessages] Dropping ${partType} part: a provider-issued file handle cannot be forwarded to the AI SDK`,
+  );
 }
 
 function safeJsonParse(input: string): unknown {
@@ -47,37 +56,28 @@ function toUserContent(content: UserContent): string | UserPart[] {
       case "text":
         parts.push({ type: "text", text: part.text });
         break;
-      case "image":
-        parts.push({ type: "image", image: mediaSourceToUrl(part.source) });
-        break;
-      case "audio":
-      case "video":
-      case "document":
-        parts.push({
-          type: "file",
-          data: mediaSourceToUrl(part.source),
-          mediaType: part.source.mimeType ?? "application/octet-stream",
-        });
-        break;
-      case "binary": {
-        const source = part.url
-          ? part.url
-          : part.data && part.mimeType
-            ? `data:${part.mimeType};base64,${part.data}`
-            : undefined;
-        if (!source) {
-          console.warn(
-            "[convertMessagesToVercelAISDKMessages] Dropping BinaryInputContent: no url or data provided",
-          );
+      case "image": {
+        const url = mediaSourceToUrl(part.source);
+        if (url === undefined) {
+          warnDroppedFileSource("image");
           break;
         }
-        // Route by mimeType: only image/* becomes an image part; PDFs, audio,
-        // video etc. are file parts carrying their real mediaType.
-        if (!part.mimeType || part.mimeType.startsWith("image/")) {
-          parts.push({ type: "image", image: source });
-        } else {
-          parts.push({ type: "file", data: source, mediaType: part.mimeType });
+        parts.push({ type: "image", image: url });
+        break;
+      }
+      case "audio":
+      case "video":
+      case "document": {
+        const url = mediaSourceToUrl(part.source);
+        if (url === undefined) {
+          warnDroppedFileSource(part.type);
+          break;
         }
+        parts.push({
+          type: "file",
+          data: url,
+          mediaType: part.source.mimeType ?? "application/octet-stream",
+        });
         break;
       }
     }
@@ -156,10 +156,14 @@ export function convertMessagesToVercelAISDKMessages(messages: Message[]): Model
               // Preserve failure signaling: providers map error-text to their
               // native is_error flag, so the model can distinguish a failed
               // or denied call from a tool that returned this text.
+              //
+              // A tool result may carry content parts; the AI SDK's text and
+              // error-text outputs take a plain string, so flatten with the
+              // protocol's own downgrade (text parts joined, media dropped).
               output:
                 message.error !== undefined
-                  ? { type: "error-text", value: message.content }
-                  : { type: "text", value: message.content },
+                  ? { type: "error-text", value: contentToText(message.content) }
+                  : { type: "text", value: contentToText(message.content) },
             },
           ],
         });

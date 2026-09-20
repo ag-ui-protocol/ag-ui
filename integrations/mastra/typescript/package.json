@@ -1,6 +1,6 @@
 {
   "name": "@ag-ui/mastra",
-  "version": "1.1.2",
+  "version": "1.1.4",
   "repository": {
     "type": "git",
     "url": "https://github.com/ag-ui-protocol/ag-ui.git"
@@ -68,6 +68,11 @@
     "@copilotkit/runtime": "^1.60.1",
     "@mastra/client-js": ">=1.0.0-0 <2.0.0-0",
     "@mastra/core": ">=1.29.0 <2.0.0-0"
+  },
+  "peerDependenciesMeta": {
+    "@copilotkit/runtime": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@ag-ui/core": "workspace:*",

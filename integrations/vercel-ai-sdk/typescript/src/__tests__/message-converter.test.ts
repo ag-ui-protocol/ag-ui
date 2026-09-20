@@ -137,31 +137,46 @@ describe("convertMessagesToVercelAISDKMessages", () => {
     ]);
   });
 
-  it("converts legacy binary content with url to image", () => {
-    const result = convertMessagesToVercelAISDKMessages([
-      {
-        id: "u1",
-        role: "user",
-        content: [
-          { type: "binary", url: "https://example.com/x.png", mimeType: "image/png" },
-        ],
-      },
-    ]);
-    expect(result).toEqual([
-      { role: "user", content: [{ type: "image", image: "https://example.com/x.png" }] },
-    ]);
-  });
-
   it("warns and falls back to empty string content when every part is dropped", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const result = convertMessagesToVercelAISDKMessages([
       {
         id: "u1",
         role: "user",
-        content: [{ type: "binary", mimeType: "application/octet-stream" }],
+        content: [
+          {
+            type: "document",
+            source: { type: "file", value: "file-abc123", provider: "openai" },
+          },
+        ],
       },
     ]);
     expect(result).toEqual([{ role: "user", content: "" }]);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("drops a media part whose bytes live behind a provider file handle", () => {
+    // A `file` source names bytes only the issuing provider can resolve, and
+    // the spec forbids fetching or parsing the handle — so there is nothing to
+    // hand the AI SDK and the part is dropped, like any unusable part.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const result = convertMessagesToVercelAISDKMessages([
+      {
+        id: "u1",
+        role: "user",
+        content: [
+          { type: "text", text: "what is in this?" },
+          {
+            type: "image",
+            source: { type: "file", value: "file-xyz789", provider: "anthropic" },
+          },
+        ],
+      },
+    ]);
+    expect(result).toEqual([
+      { role: "user", content: [{ type: "text", text: "what is in this?" }] },
+    ]);
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
   });
@@ -405,45 +420,5 @@ describe("convertMessagesToVercelAISDKMessages", () => {
     ]);
   });
 
-  it("routes non-image legacy binary data to a file part with its mediaType", () => {
-    const result = convertMessagesToVercelAISDKMessages([
-      {
-        id: "u1",
-        role: "user",
-        content: [{ type: "binary", mimeType: "application/pdf", data: "QUJD" }],
-      },
-    ]);
-    expect(result).toEqual([
-      {
-        role: "user",
-        content: [
-          {
-            type: "file",
-            data: "data:application/pdf;base64,QUJD",
-            mediaType: "application/pdf",
-          },
-        ],
-      },
-    ]);
-  });
 
-  it("routes non-image legacy binary url to a file part keeping its mediaType", () => {
-    const result = convertMessagesToVercelAISDKMessages([
-      {
-        id: "u1",
-        role: "user",
-        content: [
-          { type: "binary", mimeType: "application/pdf", url: "https://example.com/doc.pdf" },
-        ],
-      },
-    ]);
-    expect(result).toEqual([
-      {
-        role: "user",
-        content: [
-          { type: "file", data: "https://example.com/doc.pdf", mediaType: "application/pdf" },
-        ],
-      },
-    ]);
-  });
 });

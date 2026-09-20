@@ -1,7 +1,7 @@
 {
   "name": "create-ag-ui-app",
   "author": "Markus Ecker <markus.ecker@gmail.com>",
-  "version": "0.0.58",
+  "version": "0.0.59",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -55,5 +55,15 @@
       "import": "./dist/index.mjs"
     },
     "./package.json": "./package.json"
+  },
+  "nx": {
+    "targets": {
+      "test": {
+        "cache": false
+      },
+      "test:coverage": {
+        "cache": false
+      }
+    }
   }
 }

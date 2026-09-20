@@ -79,6 +79,8 @@ on:
       # authoritative trigger. Kept in step with release.config.json by
       # verify-release-scope-dropdowns.sh.
       - "sdks/community/java/ag-ui/pom.xml"
+      - "sdks/community/java/spring/spring-ai/pom.xml"
+      - "sdks/community/java/spring/spring-boot/pom.xml"
   workflow_dispatch:
     inputs:
       mode:
@@ -118,6 +120,8 @@ on:
           - integration-mastra
           - integration-pydantic-ai
           - integration-spring-ai
+          - integration-spring-ai-java
+          - integration-spring-boot-java
           - integration-vercel-ai-sdk
           - integration-watsonx-py
           - integration-watsonx-ts
@@ -159,6 +163,28 @@ env:
   # this file needs no frozen-mode exemption.
   UV_VERSION: "0.12.1"
   PYTHON_VERSION: "3.12"
+  # Budget for the post-publish registry visibility check, shared by the stable
+  # and canary TypeScript publish loops.
+  #
+  # npm's CDN can take minutes to serve a freshly published version back, and
+  # npm says so itself on every publish: "Your package is being processed and
+  # may take a few minutes to become available." The check has to outlast that,
+  # because timing out here fails the release AFTER the packages are already
+  # live and immutable on the registry -- no git tags, no GitHub Releases, and
+  # publish-dotnet / publish-maven (which `needs: publish`) never run at all.
+  #
+  # This has now been tuned upward twice from real false positives: 15s, then
+  # 60s. Run 33068467612 is the 60s case -- all four @ag-ui packages published
+  # fine, then each timed out at exactly 60s in turn, taking NuGet and Maven
+  # Central down with them and leaving npm/PyPI published but untagged.
+  #
+  # The asymmetry is what sets the value: a false positive breaks a release
+  # that already shipped and needs hand recovery, while a slow true negative
+  # only delays the error report in a rare failure mode (silent OIDC fallback).
+  # So this is deliberately generous. The fast path is unaffected -- the loop
+  # breaks as soon as the version is visible, usually on the first attempt.
+  NPM_VISIBILITY_ATTEMPTS: "30"
+  NPM_VISIBILITY_INTERVAL_SECONDS: "10"
 
 permissions:
   contents: read
@@ -229,7 +255,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86  # v6.0.10
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413  # v6.1.0
         with:
           version: "10.33.4"
 
@@ -239,7 +265,7 @@ jobs:
           node-version-file: ".node-version"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d  # v10.0.1
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4  # v10.1.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
@@ -539,24 +565,31 @@ jobs:
       # of this file.
       - name: Set up JDK 17 (stable)
         if: steps.meta.outputs.mode == 'stable' && steps.detect_java.outputs.count != '0'
-        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c  # v6.0.0
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6  # v6.0.1
         with:
           java-version: "17"
           distribution: "temurin"
           cache: maven
 
-      - name: Build and test Java packages (stable)
+      - name: Build, test, and check Java release artifacts (stable)
         if: steps.meta.outputs.mode == 'stable' && steps.detect_java.outputs.count != '0'
         env:
           JAVA_PACKAGES: ${{ steps.detect_java.outputs.packages }}
         run: |
           set -euo pipefail
           # One reactor per distinct versionSource, so a second Maven scope
-          # builds its own tree instead of silently riding on the first.
+          # builds its own tree instead of silently riding on the first. Dedupe
+          # PRESERVING config order (not jq `unique`, which sorts): a reactor may
+          # depend on an earlier one's artifacts (e.g. the spring-ai line consumes
+          # the spring-boot server modules), so the earlier reactor must install
+          # first for the later build to resolve it from the local repo.
           while read -r pom; do
             echo "=== Building and testing Maven reactor ${pom} ==="
-            mvn -B -f "$pom" install
-          done < <(echo "$JAVA_PACKAGES" | jq -r '[.[].file] | unique | .[]')
+            # Exercise release packaging without signing or publishing. Missing
+            # sources/Javadoc archives must fail before the credentialed job.
+            mvn -B -f "$pom" -Prelease -Dgpg.skip=true install
+            python3 scripts/release/verify-maven-artifacts.py "$pom"
+          done < <(echo "$JAVA_PACKAGES" | jq -r '[.[].file] | reduce .[] as $f ([]; if any(.[]; . == $f) then . else . + [$f] end) | .[]')
 
       # ===== Prerelease mode: validate suffix, bump in place, build/test, upload =====
       # Validate user-supplied suffix against npm-safe charset BEFORE invoking
@@ -779,7 +812,7 @@ jobs:
       # --- TypeScript publish ---
       - name: Setup pnpm
         if: needs.build.outputs.ts_count != '0' || needs.build.outputs.pre_ts_count != '0'
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86  # v6.0.10
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413  # v6.1.0
         with:
           version: "10.33.4"
 
@@ -896,6 +929,11 @@ jobs:
                 continue
               fi
               TARBALL_NAME=$(echo "$PROJECT" | sed -e 's/^@//' -e 's|/|-|g')-${PKG_VERSION}.tgz
+              if ! node scripts/package-licenses/check.mjs archive "$PKG_PATH/$TARBALL_NAME" "$PKG_PATH"; then
+                echo "FAILED (license): ${PROJECT}"
+                TS_FAILED="${TS_FAILED} ${PROJECT}"
+                continue
+              fi
               # Capture publish output so we can distinguish EPUBLISHCONFLICT
               # (already-published; benign on retry) from real failures.
               #
@@ -913,12 +951,12 @@ jobs:
                 # Verify publish actually landed on the registry. Catches the
                 # silent-OIDC-fallback failure mode (npm returns 0 but the
                 # version never propagated) and transient registry/CDN issues.
-                # 6 attempts × 10s = up to 60s of CDN propagation tolerance. npm CDN can lag 30-60s
-                # during peak hours; 15s was too aggressive and produced false-positive failures.
+                # Budget comes from NPM_VISIBILITY_ATTEMPTS × NPM_VISIBILITY_INTERVAL_SECONDS
+                # (see the workflow-level env block for why it is set where it is).
                 PUBLISH_VERIFIED=0
                 VIEW_STDERR=$(mktemp)
                 VIEW_STDOUT=$(mktemp)
-                for ATTEMPT in 1 2 3 4 5 6; do
+                for ATTEMPT in $(seq 1 "$NPM_VISIBILITY_ATTEMPTS"); do
                   # exit 0 alone is not sufficient — npm view can return 0 with
                   # empty stdout (e.g. when the registry serves a stale doc that
                   # lacks the new version under a dist-tag) or with a different
@@ -929,14 +967,14 @@ jobs:
                     PUBLISH_VERIFIED=1
                     break
                   fi
-                  if [ "$ATTEMPT" -lt 6 ]; then
-                    sleep 10
+                  if [ "$ATTEMPT" -lt "$NPM_VISIBILITY_ATTEMPTS" ]; then
+                    sleep "$NPM_VISIBILITY_INTERVAL_SECONDS"
                   fi
                 done
                 if [ "$PUBLISH_VERIFIED" -eq 1 ]; then
                   echo "::notice::PUBLISHED: ${PROJECT}@${PKG_VERSION}"
                 else
-                  echo "::error::Publish returned 0 but ${PROJECT}@${PKG_VERSION} not visible on registry after 6 attempts (60s)"
+                  echo "::error::Publish returned 0 but ${PROJECT}@${PKG_VERSION} not visible on registry after ${NPM_VISIBILITY_ATTEMPTS} attempts ($((NPM_VISIBILITY_ATTEMPTS * NPM_VISIBILITY_INTERVAL_SECONDS))s)"
                   echo "::error::Last npm view stderr (may be empty if npm routed error to stdout):"
                   if [ -s "$VIEW_STDERR" ]; then cat "$VIEW_STDERR"; else echo "  (empty)"; fi
                   echo "::error::Last npm view stdout:"
@@ -1017,6 +1055,11 @@ jobs:
               continue
             fi
             TARBALL_NAME=$(echo "$PROJECT" | sed -e 's/^@//' -e 's|/|-|g')-${PKG_VERSION}.tgz
+            if ! node scripts/package-licenses/check.mjs archive "$PKG_PATH/$TARBALL_NAME" "$PKG_PATH"; then
+              echo "FAILED (license): ${PROJECT}"
+              TS_FAILED="${TS_FAILED} ${PROJECT}"
+              continue
+            fi
             PUBLISH_LOG=$(mktemp)
             echo "Publishing tarball ${TARBALL_NAME}... (output buffered until command completes)"
             if (cd "$PKG_PATH" && npx --yes npm@11.15.0 publish "$TARBALL_NAME" --tag canary --access public --provenance) >"$PUBLISH_LOG" 2>&1; then
@@ -1027,11 +1070,11 @@ jobs:
               # propagated) and transient registry/CDN issues. Without this, a
               # green workflow run can hide a publish that never actually
               # reached the canary dist-tag.
-              # 6 attempts × 10s = up to 60s of CDN propagation tolerance.
+              # Same budget as the stable loop -- see the workflow-level env block.
               PUBLISH_VERIFIED=0
               VIEW_STDERR=$(mktemp)
               VIEW_STDOUT=$(mktemp)
-              for ATTEMPT in 1 2 3 4 5 6; do
+              for ATTEMPT in $(seq 1 "$NPM_VISIBILITY_ATTEMPTS"); do
                 # exit 0 alone is not sufficient — npm view can return 0 with
                 # empty stdout (e.g. when the registry serves a stale doc that
                 # lacks the new version under a dist-tag) or with a different
@@ -1042,14 +1085,14 @@ jobs:
                   PUBLISH_VERIFIED=1
                   break
                 fi
-                if [ "$ATTEMPT" -lt 6 ]; then
-                  sleep 10
+                if [ "$ATTEMPT" -lt "$NPM_VISIBILITY_ATTEMPTS" ]; then
+                  sleep "$NPM_VISIBILITY_INTERVAL_SECONDS"
                 fi
               done
               if [ "$PUBLISH_VERIFIED" -eq 1 ]; then
                 echo "::notice::PUBLISHED: ${PROJECT}@${PKG_VERSION} (canary)"
               else
-                echo "::error::Canary publish returned 0 but ${PROJECT}@${PKG_VERSION} not visible on registry after 6 attempts (60s)"
+                echo "::error::Canary publish returned 0 but ${PROJECT}@${PKG_VERSION} not visible on registry after ${NPM_VISIBILITY_ATTEMPTS} attempts ($((NPM_VISIBILITY_ATTEMPTS * NPM_VISIBILITY_INTERVAL_SECONDS))s)"
                 echo "::error::Last npm view stderr (may be empty if npm routed error to stdout):"
                 if [ -s "$VIEW_STDERR" ]; then cat "$VIEW_STDERR"; else echo "  (empty)"; fi
                 echo "::error::Last npm view stdout:"
@@ -1076,7 +1119,7 @@ jobs:
       # --- Python publish ---
       - name: Install uv
         if: needs.build.outputs.py_count != '0' || needs.build.outputs.pre_has_py_packages == 'true'
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d  # v10.0.1
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4  # v10.1.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
@@ -1501,7 +1544,7 @@ jobs:
       # long-lived client secret is stored.
       - name: Azure login (OIDC)
         if: vars.SIGNING_PROVIDER == 'keyvault'
-        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c  # v3.0.2
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906  # v3.1.0
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -1738,7 +1781,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up JDK 17
-        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c  # v6.0.0
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6  # v6.0.1
         with:
           java-version: "17"
           distribution: "temurin"
@@ -1795,11 +1838,15 @@ jobs:
           MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: |
           set -euo pipefail
-          # One deploy per reactor, matching the build job's grouping.
+          # One deploy per reactor, matching the build job's grouping. Dedupe
+          # PRESERVING config order (not jq `unique`, which sorts): a later reactor
+          # may depend on an earlier one (the spring-ai line consumes the spring-boot
+          # server modules), and `deploy` installs locally before uploading, so the
+          # earlier reactor must deploy first for the later build to resolve it.
           while read -r pom; do
             echo "🚀 Deploying Maven reactor ${pom} to Maven Central..."
             mvn -B -f "$pom" -Prelease deploy -DskipTests
-          done < <(jq -r '[.[].file] | unique | .[]' maven-packages.json)
+          done < <(jq -r '[.[].file] | reduce .[] as $f ([]; if any(.[]; . == $f) then . else . + [$f] end) | .[]' maven-packages.json)
 
       # The central plugin's <waitUntil>published</waitUntil> returns once the
       # portal has published, but repo1 sync lags behind that by minutes. Verify
@@ -1985,7 +2032,7 @@ jobs:
               case "$SCOPE" in
                 integration-claude-managed-agents-dotnet|sdk-dotnet)
                   NUGET_INTENDED=true ;;
-                sdk-java)
+                integration-spring-ai-java|integration-spring-boot-java|sdk-java)
                   MAVEN_INTENDED=true ;;
                 integration-agent-spec|integration-langroid|sdk-py-a2ui-toolkit)
                   PY_INTENDED=true ;;
@@ -2072,7 +2119,7 @@ jobs:
                 # this a failed build on a Maven bump reads as "Maven Central was
                 # never intended" and the failure page is swallowed. Kept in step
                 # with release.config.json by verify-release-scope-dropdowns.sh.
-                MAVEN_VERSION_SOURCES="sdks/community/java/ag-ui/pom.xml"
+                MAVEN_VERSION_SOURCES="sdks/community/java/ag-ui/pom.xml sdks/community/java/spring/spring-boot/pom.xml sdks/community/java/spring/spring-ai/pom.xml"
                 for pom in $MAVEN_VERSION_SOURCES; do
                   if printf '%s\n' "$FILES" | grep -qxF "$pom"; then
                     MAVEN_INTENDED=true
@@ -2096,7 +2143,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           version: "10.33.4"
 

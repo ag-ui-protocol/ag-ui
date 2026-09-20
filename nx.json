@@ -50,10 +50,7 @@
   },
   "targetDefaults": {
     "generate": {
-      "outputs": [
-        "{projectRoot}/src/generated"
-      ],
-      "cache": true
+      "cache": false
     },
     "build": {
       "dependsOn": [

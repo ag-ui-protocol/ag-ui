@@ -1,0 +1,170 @@
+[
+  {
+    "directory": "integrations/a2a/typescript",
+    "names": ["@ag-ui/a2a"],
+    "license": "MIT",
+    "notice": "integrations/a2a/typescript/LICENSE"
+  },
+  {
+    "directory": "integrations/adk-middleware/typescript",
+    "names": ["@ag-ui/adk"],
+    "license": "MIT",
+    "notice": "integrations/adk-middleware/typescript/LICENSE"
+  },
+  {
+    "directory": "integrations/ag2/typescript",
+    "names": ["@ag-ui/ag2"],
+    "license": "MIT",
+    "notice": "integrations/ag2/typescript/LICENSE"
+  },
+  {
+    "directory": "integrations/agno/typescript",
+    "names": ["@ag-ui/agno"],
+    "license": "MIT",
+    "notice": "integrations/agno/typescript/LICENSE"
+  },
+  {
+    "directory": "integrations/aws-strands/typescript",
+    "names": ["@ag-ui/aws-strands"],
+    "license": "MIT",
+    "notice": "integrations/aws-strands/typescript/LICENSE"
+  },
+  {
+    "directory": "integrations/claude-agent-sdk/typescript",
+    "names": ["@ag-ui/claude-agent-sdk"],
+    "license": "MIT",
+    "notice": "integrations/claude-agent-sdk/typescript/LICENSE"
+  },
+  {
+    "directory": "integrations/claude-managed-agents/typescript",
+    "names": ["@ag-ui/claude-managed-agents"],
+    "license": "MIT",
+    "notice": "integrations/claude-managed-agents/typescript/LICENSE"
+  },
+  {
+    "directory": "integrations/community/cloudflare-agents/typescript",
+    "names": ["@ag-ui/cloudflare-agents"],
+    "license": "MIT",
+    "notice": "integrations/community/cloudflare-agents/typescript/LICENSE"
+  },
+  {
+    "directory": "integrations/community/spring-ai/typescript",
+    "names": ["@ag-ui/spring-ai"],
+    "license": "Apache-2.0",
+    "notice": "integrations/community/spring-ai/typescript/LICENSE"
+  },
+  {
+    "directory": "integrations/crew-ai/typescript",
+    "names": ["@ag-ui/crewai"],
+    "license": "MIT",
+    "notice": "integrations/crew-ai/typescript/LICENSE"
+  },
+  {
+    "directory": "integrations/langchain/typescript",
+    "names": ["@ag-ui/langchain"],
+    "license": "MIT",
+    "notice": "integrations/langchain/typescript/LICENSE"
+  },
+  {
+    "directory": "integrations/langgraph/typescript",
+    "names": ["@ag-ui/langgraph"],
+    "license": "MIT",
+    "notice": "integrations/langgraph/typescript/LICENSE"
+  },
+  {
+    "directory": "integrations/llama-index/typescript",
+    "names": ["@ag-ui/llamaindex"],
+    "license": "MIT",
+    "notice": "integrations/llama-index/typescript/LICENSE"
+  },
+  {
+    "directory": "integrations/mastra/typescript",
+    "names": ["@ag-ui/mastra"],
+    "license": "Apache-2.0",
+    "notice": "integrations/mastra/typescript/LICENSE"
+  },
+  {
+    "directory": "integrations/pydantic-ai/typescript",
+    "names": ["@ag-ui/pydantic-ai"],
+    "license": "MIT",
+    "notice": "integrations/pydantic-ai/typescript/LICENSE"
+  },
+  {
+    "directory": "integrations/vercel-ai-sdk/typescript",
+    "names": ["@ag-ui/vercel-ai-sdk"],
+    "license": "MIT",
+    "notice": "integrations/vercel-ai-sdk/typescript/LICENSE"
+  },
+  {
+    "directory": "integrations/watsonx/typescript",
+    "names": ["@ag-ui/watsonx"],
+    "license": "MIT",
+    "notice": "integrations/watsonx/typescript/LICENSE"
+  },
+  {
+    "directory": "middlewares/a2a-middleware",
+    "names": ["@ag-ui/a2a-middleware"],
+    "license": "MIT",
+    "notice": "middlewares/a2a-middleware/LICENSE"
+  },
+  {
+    "directory": "middlewares/a2ui-middleware",
+    "names": ["@ag-ui/a2ui-middleware"],
+    "license": "MIT",
+    "notice": "middlewares/a2ui-middleware/LICENSE"
+  },
+  {
+    "directory": "middlewares/event-throttle-middleware",
+    "names": ["@ag-ui/event-throttle-middleware"],
+    "license": "MIT",
+    "notice": "middlewares/event-throttle-middleware/LICENSE"
+  },
+  {
+    "directory": "middlewares/mcp-apps-middleware",
+    "names": ["@ag-ui/mcp-apps-middleware"],
+    "license": "MIT",
+    "notice": "middlewares/mcp-apps-middleware/LICENSE"
+  },
+  {
+    "directory": "middlewares/mcp-middleware",
+    "names": ["@ag-ui/mcp-middleware"],
+    "license": "MIT",
+    "notice": "middlewares/mcp-middleware/LICENSE"
+  },
+  {
+    "directory": "sdks/typescript/packages/a2ui-toolkit",
+    "names": ["@ag-ui/a2ui-toolkit"],
+    "license": "MIT",
+    "notice": "sdks/typescript/packages/a2ui-toolkit/LICENSE"
+  },
+  {
+    "directory": "sdks/typescript/packages/cli",
+    "names": ["create-ag-ui-app"],
+    "license": "MIT",
+    "notice": "sdks/typescript/packages/cli/LICENSE"
+  },
+  {
+    "directory": "sdks/typescript/packages/client",
+    "names": ["@ag-ui/client"],
+    "license": "MIT",
+    "notice": "sdks/typescript/packages/client/LICENSE"
+  },
+  {
+    "directory": "sdks/typescript/packages/core",
+    "names": ["@ag-ui/core"],
+    "license": "MIT",
+    "notice": "sdks/typescript/packages/core/LICENSE"
+  },
+  {
+    "directory": "sdks/typescript/packages/encoder",
+    "names": ["@ag-ui/encoder"],
+    "license": "MIT",
+    "notice": "sdks/typescript/packages/encoder/LICENSE"
+  },
+  {
+    "directory": "sdks/typescript/packages/proto",
+    "names": ["@ag-ui/proto"],
+    "license": "MIT",
+    "notice": "sdks/typescript/packages/proto/LICENSE"
+  }
+]

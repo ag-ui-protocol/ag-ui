@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { firstValueFrom, toArray } from "rxjs";
 import { EventType, type BaseEvent, type RunFinishedEvent } from "@ag-ui/client";
-import { RunFinishedEventSchema } from "@ag-ui/core";
+import { RunFinishedEventSchema } from "@ag-ui/core/schemas";
 import { jsonSchema, stepCountIs, streamText, tool } from "ai";
 import type { LanguageModelUsage } from "ai";
 import { VercelAISDKAgent } from "../vercel-ai-sdk";

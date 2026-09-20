@@ -47,4 +47,5 @@ public sealed class AGUIChatClientOptions
     /// <see langword="null"/>, the AG-UI source-generated defaults are used.
     /// </summary>
     public JsonSerializerOptions? JsonSerializerOptions { get; init; }
+
 }

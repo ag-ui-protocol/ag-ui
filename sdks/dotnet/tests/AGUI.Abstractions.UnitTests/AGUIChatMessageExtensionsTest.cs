@@ -128,7 +128,7 @@ public sealed class AGUIChatMessageExtensionsTest
         Assert.Single(aguiMessages);
         var toolMsg = Assert.IsType<AGUIToolMessage>(aguiMessages[0]);
         Assert.Equal("tc_1", toolMsg.ToolCallId);
-        Assert.Equal("72°F, sunny", toolMsg.Content);
+        Assert.Equal("72°F, sunny", toolMsg.Content.Value);
         // Tool messages are keyed on the tool call id in both directions (the response side
         // likewise sets TOOL_CALL_RESULT.messageId = toolCallId), so the AG-UI message id is the
         // call id rather than the dropped/echoed ChatMessage.MessageId.
@@ -166,8 +166,8 @@ public sealed class AGUIChatMessageExtensionsTest
         // Each message is keyed on its own call id (distinct), never on the shared MessageId.
         Assert.Equal("call_weather", weather.Id);
         Assert.Equal("call_time", time.Id);
-        Assert.Equal("Paris: 22°C, sunny", weather.Content);
-        Assert.Equal("Asia/Tokyo: 2026-06-18 18:30", time.Content);
+        Assert.Equal("Paris: 22°C, sunny", weather.Content.Value);
+        Assert.Equal("Asia/Tokyo: 2026-06-18 18:30", time.Content.Value);
     }
 
     [Fact]
@@ -236,7 +236,7 @@ public sealed class AGUIChatMessageExtensionsTest
         Assert.Equal("tc_1", toolMsg.ToolCallId);
 
         // Verify the content is valid JSON, not a type name
-        var parsed = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(toolMsg.Content);
+        var parsed = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(toolMsg.Content.ToString());
         Assert.NotNull(parsed);
         Assert.Equal("sunny", parsed!["condition"].GetString());
     }
@@ -362,7 +362,7 @@ public sealed class AGUIChatMessageExtensionsTest
         var roundTripped = Assert.IsType<AGUIToolMessage>(deserialized);
         Assert.Equal("tool", roundTripped.Role);
         Assert.Equal("tc_1", roundTripped.ToolCallId);
-        Assert.Equal("plain string result", roundTripped.Content);
+        Assert.Equal("plain string result", roundTripped.Content.Value);
     }
 
     [Fact]
@@ -438,51 +438,6 @@ public sealed class AGUIChatMessageExtensionsTest
 
         Assert.Equal(ChatRole.Tool, chatMessage.Role);
         Assert.Equal("tool-msg-1", chatMessage.MessageId);
-    }
-
-    // https://github.com/microsoft/agent-framework/issues/3729
-    [Fact]
-    public void RunAgentInput_LegacyBinaryUserMessageContent_DeserializesAndMapsToChatContents()
-    {
-        var json = """
-            {
-              "threadId": "thread-1",
-              "runId": "run-1",
-              "messages": [
-                {
-                  "id": "m1",
-                  "role": "user",
-                  "content": [
-                    { "type": "text", "text": "What is in this image?" },
-                    {
-                      "type": "binary",
-                      "mimeType": "image/png",
-                      "filename": "pixel.png",
-                      "data": "AQIDBA=="
-                    }
-                  ]
-                }
-              ],
-              "context": []
-            }
-            """;
-
-        var input = JsonSerializer.Deserialize(json, AGUIJsonSerializerContext.Default.RunAgentInput);
-
-        Assert.NotNull(input);
-        var userMessage = Assert.IsType<AGUIUserMessage>(Assert.Single(input.Messages));
-        Assert.Equal(2, userMessage.Content.Count);
-        Assert.IsType<AGUITextInputContent>(userMessage.Content[0]);
-        var binaryContent = Assert.IsType<AGUIBinaryInputContent>(userMessage.Content[1]);
-        Assert.Equal("image/png", binaryContent.MimeType);
-
-        var chatMessage = Assert.Single(input.Messages.AsChatMessages().ToList());
-        Assert.Equal(ChatRole.User, chatMessage.Role);
-        Assert.IsType<TextContent>(chatMessage.Contents[0]);
-        var dataContent = Assert.IsType<DataContent>(chatMessage.Contents[1]);
-        Assert.Equal("image/png", dataContent.MediaType);
-        Assert.Equal("pixel.png", dataContent.AdditionalProperties?["filename"]);
-        Assert.Equal(System.Convert.FromBase64String("AQIDBA=="), dataContent.Data.ToArray());
     }
 
     // https://github.com/ag-ui-protocol/ag-ui/issues/2447
@@ -889,6 +844,90 @@ public sealed class AGUIChatMessageExtensionsTest
         var assistantMessages = chatMessages.Where(m => m.Role == ChatRole.Assistant).ToList();
         Assert.Equal(2, assistantMessages.Count);
         Assert.All(assistantMessages, m => Assert.Single(m.Contents.OfType<FunctionCallContent>()));
+    }
+
+    [Fact]
+    public void AsChatMessages_FileSource_MapsToHostedFileContent()
+    {
+        var message = new AGUIUserMessage
+        {
+            Id = "message-1",
+            Content =
+            [
+                new AGUIDocumentInputContent
+                {
+                    Source = new AGUIInputContentFileSource
+                    {
+                        Value = "file-abc123",
+                        Provider = "openai",
+                        MimeType = "application/pdf"
+                    }
+                }
+            ]
+        };
+
+        var chatMessage = Assert.Single(new[] { message }.AsChatMessages());
+        var hostedFile = Assert.IsType<HostedFileContent>(Assert.Single(chatMessage.Contents));
+
+        Assert.Equal("file-abc123", hostedFile.FileId);
+        Assert.Equal("application/pdf", hostedFile.MediaType);
+    }
+
+    [Fact]
+    public void AsChatMessages_FileSourceWithoutMimeType_LeavesMediaTypeUnset()
+    {
+        var message = new AGUIUserMessage
+        {
+            Id = "message-1",
+            Content = [new AGUIDocumentInputContent { Source = new AGUIInputContentFileSource { Value = "file-abc123" } }]
+        };
+
+        var chatMessage = Assert.Single(new[] { message }.AsChatMessages());
+        var hostedFile = Assert.IsType<HostedFileContent>(Assert.Single(chatMessage.Contents));
+
+        Assert.Equal("file-abc123", hostedFile.FileId);
+        Assert.Null(hostedFile.MediaType);
+    }
+
+    [Theory]
+    [InlineData("image/png", typeof(AGUIImageInputContent))]
+    [InlineData("audio/wav", typeof(AGUIAudioInputContent))]
+    [InlineData("video/mp4", typeof(AGUIVideoInputContent))]
+    [InlineData("application/pdf", typeof(AGUIDocumentInputContent))]
+    [InlineData(null, typeof(AGUIDocumentInputContent))]
+    public void AsAGUIMessages_HostedFileContent_MapsToFileSource(string? mediaType, Type expectedContentType)
+    {
+        var content = new HostedFileContent("file-abc123")
+        {
+            MediaType = mediaType,
+            AdditionalProperties = new AdditionalPropertiesDictionary { ["detail"] = "high" }
+        };
+        var message = new ChatMessage(ChatRole.User, [content]);
+
+        var aguiMessage = Assert.IsType<AGUIUserMessage>(
+            Assert.Single(new[] { message }.AsAGUIMessages(AGUIJsonSerializerContext.Default.Options)));
+        var media = Assert.IsAssignableFrom<AGUIMediaInputContent>(Assert.Single(aguiMessage.Content));
+
+        Assert.IsType(expectedContentType, media);
+        var source = Assert.IsType<AGUIInputContentFileSource>(media.Source);
+        Assert.Equal("file-abc123", source.Value);
+        Assert.Equal(mediaType, source.MimeType);
+        Assert.Equal("high", media.Metadata?.GetProperty("detail").GetString());
+    }
+
+    [Fact]
+    public void HostedFileContent_RoundTripsThroughAGUIAndBack()
+    {
+        var message = new ChatMessage(
+            ChatRole.User,
+            [new HostedFileContent("file-abc123") { MediaType = "application/pdf" }]);
+
+        var aguiMessages = new[] { message }.AsAGUIMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+        var roundTripped = Assert.Single(aguiMessages.AsChatMessages());
+        var hostedFile = Assert.IsType<HostedFileContent>(Assert.Single(roundTripped.Contents));
+
+        Assert.Equal("file-abc123", hostedFile.FileId);
+        Assert.Equal("application/pdf", hostedFile.MediaType);
     }
 
     private static AGUIMediaInputContent CreateMediaInputContent(

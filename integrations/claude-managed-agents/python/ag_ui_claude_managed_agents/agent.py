@@ -62,6 +62,54 @@ def _user_text(message: Any) -> str:
     return "".join(parts)
 
 
+
+_MEDIA_BLOCK_TYPES = {"image": "image", "document": "document"}
+
+
+def _tool_result_blocks(content: Any, error_text: str | None) -> list[dict[str, Any]]:
+    """Anthropic content blocks for a tool result.
+
+    A string result is one text block, with the error text appended on its own
+    line as before. A list of parts (AG-UI 1.0) maps each part onto the block
+    Claude accepts in a tool result: text to a text block, an image or document
+    to the matching block with a base64 or URL source. Audio and video have no
+    place in a Claude tool result and are dropped, as the specification says a
+    producer does with a part its model cannot take; the call is still
+    answered, with an empty text block if nothing else remains.
+    """
+    blocks: list[dict[str, Any]] = []
+    if isinstance(content, str) or content is None:
+        text = "\n".join(part for part in (content or "", error_text or "") if part)
+        return [{"type": "text", "text": text}]
+    for part in content:
+        part_type = get(part, "type")
+        if part_type == "text":
+            blocks.append({"type": "text", "text": get(part, "text") or ""})
+            continue
+        block_type = _MEDIA_BLOCK_TYPES.get(part_type)
+        source = get(part, "source")
+        if block_type is None or source is None:
+            continue
+        if get(source, "type") == "data":
+            blocks.append(
+                {
+                    "type": block_type,
+                    "source": {
+                        "type": "base64",
+                        "media_type": get(source, "mime_type") or get(source, "mimeType"),
+                        "data": get(source, "value"),
+                    },
+                }
+            )
+        else:
+            blocks.append({"type": block_type, "source": {"type": "url", "url": get(source, "value")}})
+    if error_text:
+        blocks.append({"type": "text", "text": error_text})
+    if not blocks:
+        blocks.append({"type": "text", "text": ""})
+    return blocks
+
+
 @dataclass
 class _Outbound:
     events: list[dict[str, Any]] = field(default_factory=list)
@@ -519,14 +567,11 @@ class ManagedAgentsAgent:
             if tool_call_id not in pending:
                 continue
             error_text = getattr(message, "error", None)
-            result_text = "\n".join(
-                part for part in (message.content or "", error_text or "") if part
-            )
             events.append(
                 {
                     "type": "user.custom_tool_result",
                     "custom_tool_use_id": tool_call_id,
-                    "content": [{"type": "text", "text": result_text}],
+                    "content": _tool_result_blocks(message.content, error_text),
                     "is_error": bool(error_text),
                 }
             )

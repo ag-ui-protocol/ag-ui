@@ -1,3 +1,4 @@
+import { vi } from "vitest";
 import { convertAGUIMessagesToMastra } from "../utils";
 import type { Message } from "@ag-ui/client";
 
@@ -446,6 +447,165 @@ describe("convertAGUIMessagesToMastra", () => {
       ]);
     });
 
+    it("recovers the first JSON object when replayed arguments are concatenated", () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const messages: Message[] = [
+        {
+          id: "1",
+          role: "assistant",
+          content: "",
+          toolCalls: [
+            {
+              id: "tc-1",
+              type: "function",
+              function: {
+                name: "anyTool",
+                arguments: '{"mine":true}{"mine":true}',
+              },
+            },
+          ],
+        },
+      ];
+
+      const first = convertAGUIMessagesToMastra(messages);
+      const second = convertAGUIMessagesToMastra(messages);
+
+      expect(first).toEqual(second);
+      expect(first).toEqual([
+        {
+          id: "1",
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "tc-1",
+              toolName: "anyTool",
+              args: { mine: true },
+            },
+          ],
+        },
+      ]);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("Recovered first JSON value"),
+      );
+      warn.mockRestore();
+    });
+
+    it("does not truncate a recovered object at a brace that is inside a string", () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const messages: Message[] = [
+        {
+          id: "1",
+          role: "assistant",
+          content: "",
+          toolCalls: [
+            {
+              id: "tc-1",
+              type: "function",
+              function: {
+                name: "anyTool",
+                arguments: '{"note":"use } here"}{"note":"dup"}',
+              },
+            },
+          ],
+        },
+      ];
+
+      const result = convertAGUIMessagesToMastra(messages);
+
+      expect(result[0].content).toEqual([
+        {
+          type: "tool-call",
+          toolCallId: "tc-1",
+          toolName: "anyTool",
+          args: { note: "use } here" },
+        },
+      ]);
+      warn.mockRestore();
+    });
+
+    it("skips a malformed tool-call instead of failing the whole conversion", () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const messages: Message[] = [
+        {
+          id: "1",
+          role: "assistant",
+          content: "still usable",
+          toolCalls: [
+            {
+              id: "tc-bad",
+              type: "function",
+              function: {
+                name: "broken",
+                arguments: "not-json",
+              },
+            },
+            {
+              id: "tc-good",
+              type: "function",
+              function: {
+                name: "search",
+                arguments: JSON.stringify({ q: "ok" }),
+              },
+            },
+          ],
+        },
+      ];
+
+      const result = convertAGUIMessagesToMastra(messages);
+
+      expect(result).toEqual([
+        {
+          id: "1",
+          role: "assistant",
+          content: [
+            { type: "text", text: "still usable" },
+            {
+              type: "tool-call",
+              toolCallId: "tc-good",
+              toolName: "search",
+              args: { q: "ok" },
+            },
+          ],
+        },
+      ]);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("Skipping tool-call broken (tc-bad)"),
+      );
+      warn.mockRestore();
+    });
+
+    it("treats empty tool-call arguments as an empty object", () => {
+      const messages: Message[] = [
+        {
+          id: "1",
+          role: "assistant",
+          content: "",
+          toolCalls: [
+            {
+              id: "tc-1",
+              type: "function",
+              function: {
+                name: "noop",
+                arguments: "   ",
+              },
+            },
+          ],
+        },
+      ];
+
+      const result = convertAGUIMessagesToMastra(messages);
+
+      expect(result[0].content).toEqual([
+        {
+          type: "tool-call",
+          toolCallId: "tc-1",
+          toolName: "noop",
+          args: {},
+        },
+      ]);
+    });
+
     it("omits text part when content is empty", () => {
       const messages: Message[] = [
         {
@@ -571,6 +731,33 @@ describe("convertAGUIMessagesToMastra", () => {
         result: "Tool failed: invalid id",
         isError: true,
       });
+    });
+  });
+
+  describe("developer messages", () => {
+    it("forwards a developer message as a system message", () => {
+      const messages: Message[] = [
+        { id: "d1", role: "developer", content: "Answer in German." },
+      ];
+
+      const result = convertAGUIMessagesToMastra(messages);
+
+      expect(result).toEqual([
+        { id: "d1", role: "system", content: "Answer in German." },
+      ]);
+    });
+
+    it("keeps a developer message in its position between other messages", () => {
+      const messages: Message[] = [
+        { id: "u1", role: "user", content: "Hi" },
+        { id: "d1", role: "developer", content: "Be brief." },
+        { id: "a1", role: "assistant", content: "Hello" },
+      ];
+
+      const result = convertAGUIMessagesToMastra(messages);
+
+      expect(result.map((m) => (m as any).id)).toEqual(["u1", "d1", "a1"]);
+      expect(result[1]).toEqual({ id: "d1", role: "system", content: "Be brief." });
     });
   });
 
@@ -725,5 +912,84 @@ describe("convertAGUIMessagesToMastra", () => {
 
       expect((first[0] as any).id).toBe((second[0] as any).id);
     });
+  });
+});
+
+describe("file-sourced media parts", () => {
+  // A `file` source names bytes that already sit at a model provider, under a
+  // handle only that provider can resolve. This adapter has no way to hand such
+  // a handle to Mastra, and the value is NOT a URL — shipping it as one is the
+  // bug this pins. The spec's rule for a part a producer cannot use is: drop it,
+  // warn, and keep the run alive.
+  it("drops a document part with a file source, keeps the text, and warns", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const messages: Message[] = [
+        {
+          id: "1",
+          role: "user",
+          content: [
+            { type: "text", text: "read this" },
+            {
+              type: "document",
+              source: {
+                type: "file",
+                value: "file-abc123",
+                provider: "openai",
+                mimeType: "application/pdf",
+              },
+            },
+          ] as any,
+        },
+      ];
+
+      const result = convertAGUIMessagesToMastra(messages);
+
+      expect(result).toEqual([
+        {
+          id: "1",
+          role: "user",
+          content: [{ type: "text", text: "read this" }],
+        },
+      ]);
+
+      const warned = warn.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(warned).toContain("document");
+      expect(warned).toMatch(/file handle/i);
+      // The handle must never reach the provider request, as a URL or otherwise.
+      expect(JSON.stringify(result)).not.toContain("file-abc123");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("drops an image part with a file source rather than sending it as a URL", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const messages: Message[] = [
+        {
+          id: "1",
+          role: "user",
+          content: [
+            { type: "text", text: "look" },
+            {
+              type: "image",
+              source: { type: "file", value: "file-img", mimeType: "image/png" },
+            },
+          ] as any,
+        },
+      ];
+
+      const result = convertAGUIMessagesToMastra(messages);
+
+      expect(result).toEqual([
+        { id: "1", role: "user", content: [{ type: "text", text: "look" }] },
+      ]);
+      expect(warn.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
+        "image",
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
