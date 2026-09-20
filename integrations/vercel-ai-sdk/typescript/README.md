@@ -18,10 +18,10 @@ yarn add @ag-ui/vercel-ai-sdk
 Install the required peer dependencies along with at least one AI SDK provider:
 
 ```bash
-npm install @ag-ui/client rxjs ai @ai-sdk/openai
+npm install @ag-ui/core @ag-ui/client rxjs ai @ai-sdk/openai
 ```
 
-The package targets `ai@^7.0.0` and requires `@ag-ui/client >=0.0.58` (for the reasoning events, multimodal content types, and token-usage reporting it emits) and `rxjs`. Any AI SDK v7 provider package works (`@ai-sdk/openai`, `@ai-sdk/anthropic`, `@ai-sdk/google`, etc.) — pick whichever one matches the model you want to use.
+The package targets `ai@^7.0.0` and requires `@ag-ui/core >=1.0.0`, `@ag-ui/client >=1.0.0`, and `rxjs`. Both `@ag-ui/*` floors are 1.0 because the integration is built on the protocol 1.0 content-parts model — the message converter reads the typed content parts and their sources from `@ag-ui/core` and calls its `contentToText` helper at runtime, alongside the reasoning events and token-usage reporting the stream handler emits. Any AI SDK v7 provider package works (`@ai-sdk/openai`, `@ai-sdk/anthropic`, `@ai-sdk/google`, etc.) — pick whichever one matches the model you want to use; for multimodal content the provider package must itself be on the v7 line, see [Limitations & Future Work](#limitations--future-work).
 
 ## Quick Start
 
@@ -178,7 +178,7 @@ Reasoning messages enter `MESSAGES_SNAPSHOT` as their own message entries (role 
 
 An entry carries `inputTokens`, `outputTokens`, `totalTokens`, `reasoningTokens`, and `cachedInputTokens`. AI SDK v7 nests the last two under `inputTokenDetails.cacheReadTokens` and `outputTokenDetails.reasoningTokens`; the integration lifts them back out so cache savings and reasoning spend stay visible. Entries are labelled with the provider and model id the agent was *configured* with. That is deliberate: `totalUsage` aggregates the whole run, whereas the model that actually answered is only reported per step (`finish-step.response.modelId`), so labelling the aggregate with any one step's responding model could misattribute it when steps use different models. A bare model-id string routed through the gateway yields the model label only.
 
-The field is omitted entirely when the provider reports no counts, rather than emitting a labels-only entry implying usage was measured. Runs that end in `RUN_ERROR` — stream errors and aborts — carry no usage.
+The field is omitted entirely when the provider reports no counts, rather than emitting a labels-only entry implying usage was measured. A run that ends in `RUN_ERROR` reports no usage at all, and a stopped run reports none either — the counts come from the stream's terminal `finish` part, which an aborted stream never delivers. A stop is not an error: it ends the run with `RUN_FINISHED` carrying `outcome: cancelled`, see [Limitations & Future Work](#limitations--future-work).
 
 ## Provider Flexibility
 
@@ -193,6 +193,8 @@ new VercelAISDKAgent({ model: openai("gpt-4o-mini") });
 new VercelAISDKAgent({ model: anthropic("claude-sonnet-4-5") });
 new VercelAISDKAgent({ model: google("gemini-2.5-pro") });
 ```
+
+"v7-compatible" means a provider package built against the v7 model interface (spec v4). Older spec-v3 provider packages still install and load under `ai@7`, and text generation keeps working — but they serialize file parts to the older shape, so multimodal content breaks silently. See [Limitations & Future Work](#limitations--future-work).
 
 ## API Reference
 
@@ -220,7 +222,7 @@ import {
 } from "@ag-ui/vercel-ai-sdk";
 ```
 
-- `convertMessagesToVercelAISDKMessages(messages)` — converts AG-UI `Message[]` to AI SDK `ModelMessage[]`. Handles roles, multimodal user content (text / image / audio / video / document), assistant tool calls, and tool messages (with tool-name lookup against the conversation history; `ToolMessage.error` becomes an `error-text` output so providers flag it as a failure). Reasoning messages are folded into the following assistant message as reasoning parts, carrying the Anthropic signature when present.
+- `convertMessagesToVercelAISDKMessages(messages)` — converts AG-UI `Message[]` to AI SDK `ModelMessage[]`. Handles roles, multimodal user content (text / image / audio / video / document), assistant tool calls, and tool messages (with tool-name lookup against the conversation history). Media parts are forwarded when their source is inline `data` or a `url`; a part sourced from a provider file handle (`source.type: "file"`) is dropped with a warning — see [Limitations & Future Work](#limitations--future-work). Tool results reach the model through the AI SDK's tool output: a text-only result is sent as text (as `error-text` when `ToolMessage.error` is set, so providers flag it as a failure), while a result carrying media is sent as `content` parts, with a warning for any part that cannot be represented. Reasoning messages are folded into the following assistant message as reasoning parts, carrying the Anthropic signature when present.
 - `convertToolsToVercelAISDKTools(tools)` — converts AG-UI `Tool[]` to an AI SDK `ToolSet`. Each tool's JSON Schema is wrapped via the SDK's `jsonSchema()` helper. No `execute` function is attached — tool calls are surfaced back to the AG-UI client.
 
 `convertToolToVerlAISDKTools` is exported as a backward-compatible alias for the typo'd name from earlier versions of the package; new code should use `convertToolsToVercelAISDKTools`.
@@ -228,10 +230,14 @@ import {
 ## Limitations & Future Work
 
 - `RunAgentInput.context` is forwarded to the model as a leading system message (`streamText` has no request-context channel). `RunAgentInput.state` and `forwardedProps` are not consumed — the integration is stateless between runs and emits no `STATE_SNAPSHOT`/`STATE_DELTA` events.
+- Content parts backed by a provider file handle (`source.type: "file"`) are not forwarded yet. AI SDK v7 can carry such a handle as a `ProviderReference`, but only for the provider that issued it, and the converter has no knowledge of the provider the agent is configured with — so those parts are dropped with a warning instead of being mis-addressed. Forwarding a handle when its provider matches the configured one is future work.
+- A message whose parts are all dropped is omitted from the prompt entirely, with a warning, because providers reject a message with empty content.
 - The `source`, `file`, `reasoning-file`, and `raw` AI SDK stream parts are not currently mapped to AG-UI events. They may be exposed as `CUSTOM` events in a future release.
 - Reasoning continuity across runs is Anthropic-only. The stream handler persists just the Anthropic thinking signature (`providerMetadata.anthropic.signature` -> `ReasoningMessage.encryptedValue`), and the message converter replays it only as `providerOptions.anthropic` on the next run's assistant message. OpenAI's Responses-API reasoning metadata (`itemId`, `reasoningEncryptedContent`) is neither captured nor replayed, so OpenAI reasoning and tool continuations start each run without the previous turn's reasoning state. Capturing those fields — and generalising `encryptedValue` into per-provider reasoning metadata — is future work.
 - The tool-approval lifecycle is surfaced as `CUSTOM` events: `tool-approval-request` → `name: "tool_approval_request"`, and `tool-approval-response` → `name: "tool_approval_response"` (carrying the `approved` flag and optional `reason`). Clients are responsible for their own approval UX.
 - Provider `custom` stream parts are passed through as `CUSTOM` events whose `name` is the part's namespaced `kind` (e.g. `"acme.telemetry"`), with the provider metadata as the event `value`.
+- Stopping a run — `abortRun()`, or unsubscribing from the observable — aborts the in-flight `streamText` request and ends the run with `RUN_FINISHED` carrying `outcome: cancelled`, as protocol 1.0 prescribes, rather than `RUN_ERROR`. A cancelled run reports no token usage, since the stream's terminal `finish` part never arrives.
+- Multimodal content needs a provider package on the AI SDK v7 (spec v4) line — for example `@ai-sdk/openai@^4` or `@ai-sdk/anthropic@^4`. The spec-v3 packages that shipped with `ai@6` (`@ai-sdk/openai@^3` and its siblings) still load under `ai@7`, so text works and the mismatch is easy to miss, but they serialize v4 file parts incorrectly and media silently breaks. Pin the provider major that matches `ai@7`.
 - This package only covers the backend direction (AI SDK `streamText` -> AG-UI events). The reverse direction (AG-UI backend -> AI SDK `useChat` frontend) is intentionally out of scope and would ship as a separate package.
 - Targets AI SDK v7 stable.
 
