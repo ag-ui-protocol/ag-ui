@@ -2431,6 +2431,21 @@ export class LangGraphAgent extends AbstractAgent {
     // so they can be cut off. We close any leftover before RUN_FINISHED to
     // satisfy AG-UI verify (no RUN_FINISHED while a step is active).
     const openTransformerSteps = new Set<string>();
+    // Root tasks describe actual graph nodes (including middleware). Lifecycle
+    // graph_name describes the enclosing graph, not each of those nodes.
+    // Track identities independently: sibling tasks can run concurrently and
+    // multiple tasks may share a step name, which AG-UI permits only once open.
+    const openTaskSteps = new Map<string, string>();
+    const seenTaskIds = new Set<string>();
+    let taskStepsActive = false;
+    let initialRootValues: State | undefined;
+    let initialSnapshotEmitted = false;
+    const closeTaskSteps = () => {
+      for (const stepName of new Set(openTaskSteps.values())) {
+        this.dispatchEvent({ type: EventType.STEP_FINISHED, stepName });
+      }
+      openTaskSteps.clear();
+    };
     // Set once a RUN_ERROR has been emitted (passthrough or raw `error`).
     // AG-UI verify forbids ANY event after RUN_ERROR, so all post-loop
     // dispatching (step closes, snapshots, RUN_FINISHED) must be skipped.
@@ -2553,6 +2568,7 @@ export class LangGraphAgent extends AbstractAgent {
             // first transformer event. Close it before ownership switches,
             // especially when the transformer opens that same step name.
             this.handleNodeChange(undefined);
+            closeTaskSteps();
           }
           transformerMode = true;
           // Track step balance so we can close any the transformer's
@@ -2589,6 +2605,7 @@ export class LangGraphAgent extends AbstractAgent {
         }
 
         if (eventType === "error") {
+          closeTaskSteps();
           this.dispatchEvent({
             type: EventType.RUN_ERROR,
             message: chunkData.message,
@@ -2598,11 +2615,61 @@ export class LangGraphAgent extends AbstractAgent {
           break;
         }
 
-        // Live interrupts. The `tasks` channel carries an `interrupts`
-        // array on its create/result/error frames; surface each as a
-        // CUSTOM OnInterrupt mid-run. Deduped (shared with the post-run
-        // getState scan) so the same interrupt renders once.
+        // Root task input/result frames bracket the graph's actual steps.
+        // Nested tasks belong to an already represented outer node; do not
+        // turn them into competing root steps. Interrupts still surface from
+        // every namespace, deduped against the post-run getState scan.
         if (eventType === "tasks") {
+          const { id, name } = chunkData;
+          if (
+            streamResponseChunk.params.namespace.length === 0 &&
+            typeof id === "string"
+          ) {
+            if (
+              "input" in chunkData &&
+              typeof name === "string" &&
+              name.length > 0 &&
+              name !== "__start__" &&
+              name !== "__end__" &&
+              !seenTaskIds.has(id)
+            ) {
+              if (!taskStepsActive) {
+                this.handleNodeChange(undefined);
+                taskStepsActive = true;
+              }
+              seenTaskIds.add(id);
+              if (![...openTaskSteps.values()].includes(name)) {
+                this.dispatchEvent({
+                  type: EventType.STEP_STARTED,
+                  stepName: name,
+                });
+              }
+              openTaskSteps.set(id, name);
+              // Match V2's initial delivery at first node entry. Later task
+              // results are partial updates, never full state snapshots.
+              if (initialRootValues && !initialSnapshotEmitted) {
+                initialSnapshotEmitted = true;
+                this.dispatchEvent({
+                  type: EventType.STATE_SNAPSHOT,
+                  snapshot: this.getStateSnapshot({
+                    ...state,
+                    values: initialRootValues,
+                  }),
+                });
+              }
+            } else if ("result" in chunkData || "error" in chunkData) {
+              const stepName = openTaskSteps.get(id);
+              if (stepName !== undefined) {
+                openTaskSteps.delete(id);
+                if (![...openTaskSteps.values()].includes(stepName)) {
+                  this.dispatchEvent({
+                    type: EventType.STEP_FINISHED,
+                    stepName,
+                  });
+                }
+              }
+            }
+          }
           const taskInterrupts = (chunkData?.interrupts ??
             []) as LangGraphInterrupt[];
           for (const interrupt of taskInterrupts) {
@@ -2637,6 +2704,12 @@ export class LangGraphAgent extends AbstractAgent {
         }
 
         if (eventType === "values") {
+          if (
+            streamResponseChunk.params.namespace.length === 0 &&
+            !taskStepsActive
+          ) {
+            initialRootValues = chunkData;
+          }
           latestStateValues = {
             ...latestStateValues,
             ...chunkData,
@@ -2651,7 +2724,14 @@ export class LangGraphAgent extends AbstractAgent {
           continue;
         }
 
-        const currentNodeName = chunkData.graph_name;
+        // Once task boundaries are available they own steps. In particular,
+        // root lifecycle events must not invent an `agentic_chat` step before
+        // before_agent or after after_agent. Retain nested lifecycle fallback
+        // for streams that do not expose root tasks.
+        const currentNodeName =
+          !taskStepsActive && streamResponseChunk.params.namespace.length > 0
+            ? chunkData.graph_name
+            : undefined;
 
         // TODO: figure this out
         // Subgraph detection via langgraph_checkpoint_ns
@@ -2732,39 +2812,6 @@ export class LangGraphAgent extends AbstractAgent {
         updatedState.values =
           this.activeRun!.manuallyEmittedState ?? latestStateValues;
 
-        if (!this.activeRun!.nodeName) {
-          continue;
-        }
-
-        // TODO: maybe remove
-        // const hasStateDiff =
-        //   JSON.stringify(updatedState) !== JSON.stringify(state);
-        // // Suppress STATE_SNAPSHOT while a message is in progress, or while a
-        // // predict_state tool call is streaming args (modelMadeToolCall=true).
-        // // During tool arg streaming the graph state does not yet reflect the
-        // // forthcoming update, so emitting a snapshot would clobber optimistic
-        // // UI state. Flag is cleared in OnToolEnd/OnToolError.
-        // //
-        // // Diverges from Python: TS blocks ALL snapshot kinds (state-diff,
-        // // node change, node exit) while the flag is set; Python only
-        // // suppresses on node exit. A post-run snapshot runs the safety net.
-        // if (
-        //   !this.activeRun!.modelMadeToolCall &&
-        //   (hasStateDiff ||
-        //     this.activeRun!.prevNodeName != this.activeRun!.nodeName ||
-        //     this.activeRun!.exitingNode) &&
-        //   !Boolean(this.getMessageInProgress(this.activeRun!.id))
-        // ) {
-        //   state = updatedState;
-        //   this.activeRun!.prevNodeName = this.activeRun!.nodeName;
-        //
-        //   this.dispatchEvent({
-        //     type: EventType.STATE_SNAPSHOT,
-        //     snapshot: this.getStateSnapshot(state),
-        //     rawEvent: streamResponseChunk,
-        //   });
-        // }
-
         this.dispatchEvent({
           type: EventType.RAW,
           event: chunkData,
@@ -2786,6 +2833,7 @@ export class LangGraphAgent extends AbstractAgent {
         this.closeOpenReasoningBlocks(this.activeRun!);
         this.closeOpenToolBlocks(this.activeRun!);
         this.handleNodeChange(undefined);
+        closeTaskSteps();
         for (const stepName of openTransformerSteps) {
           this.dispatchEvent({ type: EventType.STEP_FINISHED, stepName });
         }
@@ -2841,7 +2889,7 @@ export class LangGraphAgent extends AbstractAgent {
       // transformer emits STEP_* and STATE/MESSAGES snapshots itself, so
       // skip those. RUN_FINISHED stays — agent.ts owns run lifecycle in
       // both modes.
-      if (!transformerMode) {
+      if (!transformerMode && !taskStepsActive) {
         this.handleNodeChange(newNodeName);
       }
 
@@ -2852,6 +2900,7 @@ export class LangGraphAgent extends AbstractAgent {
       // transformer mode flipped. Without this close it dangles past
       // RUN_FINISHED and AG-UI verify rejects the terminal event.
       this.handleNodeChange(undefined);
+      closeTaskSteps();
 
       // Emit the canonical STATE/MESSAGES snapshot from the server's
       // persisted state at run end — in BOTH modes. This runs after every
