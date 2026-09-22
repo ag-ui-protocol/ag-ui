@@ -97,8 +97,8 @@ selected automatically (override with `CAO_AGUI_MODE=projection|mock`):
   (`cli_agent_orchestrator.services.agui.run_plane.run_plane_stream`). Highest
   fidelity: it exercises CAO's real AG-UI Phase 2 code, interrupt registry, and
   frame shapes. Enable with `uv sync --extra cao`, which resolves
-  `cli-agent-orchestrator[agui]>=2.4.1,<3` from PyPI — Phase 2 shipped in `2.4.1`
-  (2026-08-04), so no VCS pin is needed.
+  `cli-agent-orchestrator[agui]>=2.5.0,<3` from PyPI — Phase 2 shipped in `2.4.1`
+  (2026-08-04) and the floor now tracks `2.5.0` (2026-08-28), so no VCS pin is needed.
 - **mock** *(zero-dependency fallback)* — self-contained emitters in `_mock.py`
   built only on `ag_ui.core`/`ag_ui.encoder`, with **no `cli-agent-orchestrator`
   dependency**. A bare `uv sync` (and the keyless CI e2e) runs this path
@@ -147,10 +147,13 @@ Provenance (canonical awslabs CI): run [`30130556114`](https://github.com/awslab
 
 ## Upstream roadmap & scope boundary
 
-The projection backend resolves `cli-agent-orchestrator[agui]>=2.4.1,<3` from PyPI. `2.4.1`
+The projection backend resolves `cli-agent-orchestrator[agui]>=2.5.0,<3` from PyPI. `2.4.1`
 contains the cross-site-WebSocket-hijacking guard on the terminal socket (CWE-1385,
 awslabs/cli-agent-orchestrator#533 — the commit this integration previously pinned directly) and
-read-only profile search/template/preview endpoints (awslabs/cli-agent-orchestrator#523).
+read-only profile search/template/preview endpoints (awslabs/cli-agent-orchestrator#523). The
+floor was moved to `2.5.0` (2026-08-28), which additionally brings CAO's `cryptography>=50.0.0`
+CVE floor and its `libtmux<0.53.1` bound. `2.5.1` is tagged upstream but was never published to
+PyPI, so `2.5.0` is the newest installable release.
 
 Further AG-UI operator surfaces — an L3 fleet-operations dashboard and candidate new L2
 constructs (profile/agent catalog, interactive agent builder, run/team composition, cross-node

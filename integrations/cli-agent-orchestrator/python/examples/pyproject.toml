@@ -16,13 +16,15 @@ dependencies = [
 # High-fidelity PROJECTION backend: CAO's merged AG-UI run plane
 # (cli_agent_orchestrator.services.agui). Phase 2 reached PyPI in 2.4.1
 # (2026-08-04), which publishes the `agui` extra, so this is an ordinary version
-# constraint — no VCS pin and no local checkout. Floor is 2.4.1: it is the release
-# this suite is verified against, and it carries 2.4.0's dependency fixes. Capped
+# constraint — no VCS pin and no local checkout. Floor is 2.5.0 (2026-08-28): it is
+# the release this suite is verified against. It also carries CAO's own
+# `cryptography>=50.0.0` CVE floor and its `libtmux<0.53.1` bound, which pins away
+# a strict-zip regression in libtmux's listing parser. Capped
 # below 3 because a major bump may move or rename `services.agui.run_plane`,
 # `services.agui.base`, or `services.agui.handoff_approval`, which the projection
 # backend imports directly. Enable with: uv sync --extra cao
 cao = [
-    "cli-agent-orchestrator[agui]>=2.4.1,<3",
+    "cli-agent-orchestrator[agui]>=2.5.0,<3",
 ]
 test = [
     "pytest>=8.0",
@@ -36,12 +38,17 @@ dev = "server:main"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.hatch.metadata]
-# Required so the pinned VCS dependency in the optional 'cao' extra is accepted.
-allow-direct-references = true
-
 [tool.hatch.build.targets.wheel]
 packages = ["server"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Disable libtmux's bundled pytest plugin. CAO 2.5.0 caps `libtmux<0.53.1` (it pins away
+# a strict-zip regression in libtmux's listing parser), which resolves libtmux 0.53.0 —
+# and that release's `libtmux/pytest_plugin.py` applies `@pytest.mark.skipif` to a
+# fixture, which pytest 9 rejects outright ("Marks cannot be applied to fixtures").
+# libtmux registers the module as a `pytest11` entry point, so pytest auto-loads it and
+# the session dies before collecting anything. Nothing in this suite uses libtmux's
+# fixtures, so the plugin is simply switched off. Remove this once libtmux ships a
+# pytest-9-compatible plugin in a release CAO's bound admits.
+addopts = "-p no:libtmux"

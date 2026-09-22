@@ -16,9 +16,10 @@ Serves five features — `agentic_chat`, `shared_state`, `human_in_the_loop`,
 Selection is automatic (projection if the `cao` extra is installed, else mock).
 Force with `CAO_AGUI_MODE=projection|mock`.
 
-The `cao` extra resolves `cli-agent-orchestrator[agui]>=2.4.1,<3` from PyPI. AG-UI
+The `cao` extra resolves `cli-agent-orchestrator[agui]>=2.5.0,<3` from PyPI. AG-UI
 Phase 2 shipped in **2.4.1** (2026-08-04), which publishes the `agui` extra, so no
-VCS pin is needed. The upper bound guards the three modules the projection backend
+VCS pin is needed; the floor now tracks **2.5.0** (2026-08-28), the newest release
+published to PyPI. The upper bound guards the three modules the projection backend
 imports directly — `services.agui.run_plane`, `services.agui.base`, and
 `services.agui.handoff_approval` — against a major-version rename.
 
