@@ -1583,11 +1583,25 @@ class LangGraphAgent:
         if input.messages:
             update["messages"] = graph_messages
 
-        async for event_str in self._handle_stream_events(input.model_copy(update=update)):
-            # _dispatch_event returns None for events `subagent_visibility="hidden"`
-            # withholds; this is the one place every emission funnels through.
-            if event_str is not None:
-                yield event_str
+        started = False
+        terminal = False
+        try:
+            async for event_str in self._handle_stream_events(input.model_copy(update=update)):
+                # Hidden subagent events are withheld by _dispatch_event.
+                if event_str is not None:
+                    started = started or event_str.type == EventType.RUN_STARTED
+                    terminal = terminal or event_str.type in (EventType.RUN_ERROR, EventType.RUN_FINISHED)
+                    yield event_str
+        except Exception as exc:
+            # The public SSE boundary must deliver the provider's error rather
+            # than aborting the HTTP stream. Private helpers still raise, and
+            # CancelledError/GeneratorExit are deliberately not caught here.
+            if terminal:
+                raise
+            logger.exception("LangGraph run failed")
+            if not started:
+                yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=input.thread_id, run_id=input.run_id)
+            yield RunErrorEvent(type=EventType.RUN_ERROR, message=str(exc) or type(exc).__name__)
 
     async def _handle_stream_events(self, input: RunAgentInput) -> AsyncGenerator[ProcessedEvents, None]:
         thread_id = input.thread_id or str(uuid.uuid4())

@@ -4,6 +4,19 @@ Implementation of the AG-UI protocol for LangGraph.
 
 Provides a complete Python integration for LangGraph agents with the AG-UI protocol, including FastAPI endpoint creation and comprehensive event streaming.
 
+## Media inputs
+
+Non-image attachments keep their LangChain content type: audio becomes `audio`,
+video becomes `video`, and documents become `file`. Inline bytes, base64 data URLs,
+and remote URLs retain their payload and supplied filename; the adapter does not
+fetch URLs. Images continue to use `image_url`.
+
+Conversion does not imply model support. The graph's provider, model, and API
+must support the supplied media type and source. Unsupported input is reported
+as a `RUN_ERROR`; it is not relabeled as an image. Existing inline WAV/MP3 MIME aliases
+are normalized for compatibility, while other audio MIME types remain unchanged.
+Provider file handles remain unsupported and are skipped with a warning.
+
 ## Installation
 
 ```bash

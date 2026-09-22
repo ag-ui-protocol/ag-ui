@@ -423,13 +423,48 @@ export class LangGraphAgent extends AbstractAgent {
 
   run(input: RunAgentInput) {
     return new Observable<ProcessedEvents>((subscriber) => {
-      this.runAgentStream(input, subscriber).catch((err) => {
-        console.error(`[LangGraph] runAgentStream error:`, err);
-        if (!subscriber.closed) {
-          subscriber.error(err);
+      let started = false;
+      let terminal = false;
+      const start = () => {
+        if (!started) {
+          started = true;
+          subscriber.next({
+            type: EventType.RUN_STARTED,
+            threadId: input.threadId,
+            runId: input.runId,
+          });
         }
+      };
+      // Keep transport/provider errors in the public event stream. A separate
+      // subscriber preserves RxJS teardown and leaves consumer errors to RxJS.
+      const boundary = new Subscriber<ProcessedEvents>({
+        next: (event: ProcessedEvents) => {
+          if (subscriber.closed || terminal) return;
+          if (event.type === EventType.RUN_ERROR) start();
+          started ||= event.type === EventType.RUN_STARTED;
+          terminal =
+            event.type === EventType.RUN_ERROR ||
+            event.type === EventType.RUN_FINISHED;
+          subscriber.next(event);
+        },
+        error: (err: unknown) => {
+          if (subscriber.closed) return;
+          if (!terminal) {
+            console.error(`[LangGraph] runAgentStream error:`, err);
+            start();
+            subscriber.next({
+              type: EventType.RUN_ERROR,
+              message:
+                err instanceof Error ? err.message || err.name : String(err),
+            });
+          }
+          subscriber.complete();
+        },
+        complete: () => subscriber.complete(),
       });
-      return () => {};
+      subscriber.add(boundary);
+      this.runAgentStream(input, boundary).catch((err) => boundary.error(err));
+      return () => boundary.unsubscribe();
     });
   }
 
@@ -981,7 +1016,8 @@ export class LangGraphAgent extends AbstractAgent {
             message: streamResponseChunk.data.message,
             rawEvent: streamResponseChunk,
           });
-          break;
+          this.activeRun = undefined;
+          return subscriber.complete();
         }
 
         if (streamResponseChunk.event === "updates") {
