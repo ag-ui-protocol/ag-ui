@@ -72,8 +72,9 @@ CAO_AGUI_MODE=projection  # force CAO run plane (requires the `cao` extra)
 CAO_AGUI_MODE=mock        # force the zero-dependency backend
 ```
 
-The `cao` extra resolves `cli-agent-orchestrator[agui]>=2.4.1,<3` from PyPI (see
-`examples/pyproject.toml`); AG-UI Phase 2 shipped in `2.4.1` on 2026-08-04.
+The `cao` extra resolves `cli-agent-orchestrator[agui]>=2.5.0,<3` from PyPI (see
+`examples/pyproject.toml`); AG-UI Phase 2 shipped in `2.4.1` on 2026-08-04, and the floor now
+tracks `2.5.0` (2026-08-28).
 
 ## Agentic generative UI — the fleet's own lifecycle as the step list
 
